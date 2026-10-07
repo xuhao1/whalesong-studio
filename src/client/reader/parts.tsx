@@ -11,7 +11,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { alignScript, blocksOf, segmentsOf, type Block } from '../../shared/reader'
 import { countWords, proseOnly } from '../../shared/text'
-import type { AudioLine } from '../../shared/types'
+import type { AudioCue, AudioLine } from '../../shared/types'
 import { Icon } from '../icons'
 import { AMBIENCE } from '../labels'
 import type { LinePlayer, PlayerOptions, PlayerState } from '../stage/player'
@@ -27,10 +27,19 @@ export interface ReaderPrefs {
   size: number
   theme: 'auto' | 'paper' | 'night'
   serif: boolean
+  /** Show what is heard beside the text — the room, a door, the music — for the eye as well as the ear. */
+  notes: boolean
 }
 
 const PREFS_KEY = 'novel-studio:reader'
-const DEFAULT_PREFS: ReaderPrefs = { size: 18, theme: 'auto', serif: true }
+const DEFAULT_PREFS: ReaderPrefs = { size: 18, theme: 'auto', serif: true, notes: true }
+
+/** What a sound cue says to a reader: its caption, or for a plain bed the name of its preset. */
+export function cueCaption(cue: AudioCue, t: Translate): string | undefined {
+  const text = (cue.caption ?? cue.note)?.trim()
+  if (text !== undefined && text.length > 0) return text
+  return (cue.kind ?? 'bed') === 'bed' && cue.ambience !== 'none' ? t(...AMBIENCE[cue.ambience]) : undefined
+}
 
 function stored<T>(key: string, fallback: T): T {
   try {
@@ -82,6 +91,7 @@ export function PrefsControls({ prefs, update, t }: { prefs: ReaderPrefs; update
       <button type="button" className="nv-btn nv-btn-ghost nv-btn-sm" onClick={() => { update({ size: Math.max(14, prefs.size - 1) }) }} title={t('缩小字号', 'Smaller text')}><span>A−</span></button>
       <button type="button" className="nv-btn nv-btn-ghost nv-btn-sm" onClick={() => { update({ size: Math.min(30, prefs.size + 1) }) }} title={t('放大字号', 'Larger text')}><span>A+</span></button>
       <button type="button" className={cx('nv-btn nv-btn-ghost nv-btn-sm nv-btn-icon', prefs.serif && 'is-active')} onClick={() => { update({ serif: !prefs.serif }) }} title={t('衬线 / 无衬线', 'Serif / sans')}><Icon name="type" size={14} /></button>
+      <button type="button" className={cx('nv-btn nv-btn-ghost nv-btn-sm nv-btn-icon', prefs.notes && 'is-active')} onClick={() => { update({ notes: !prefs.notes }) }} title={t('声音注释：在正文旁边标出这里听得到什么（环境、音效、配乐）', 'Sound notes: mark beside the text what is heard here (the room, effects, music)')} aria-pressed={prefs.notes}><Icon name="volume" size={14} /></button>
       <select className="nv-input nv-select" value={prefs.theme} onChange={(event) => { update({ theme: event.target.value as ReaderPrefs['theme'] }) }} aria-label={t('纸张', 'Paper')}>
         <option value="auto">{t('跟随主题', 'App theme')}</option>
         <option value="paper">{t('纸张', 'Paper')}</option>
@@ -91,8 +101,8 @@ export function PrefsControls({ prefs, update, t }: { prefs: ReaderPrefs; update
   )
 }
 
-/** The switch between reading the chapter and listening to it. */
-export function ModeSwitch({ mode, onChange, t }: { mode: ReadMode; onChange: (mode: ReadMode) => void; t: Translate }) {
+/** The switch between reading the chapter and listening to it — and, where a host adds one, a further way of taking it in. */
+export function ModeSwitch({ mode, onChange, t, extra }: { mode: ReadMode | undefined; onChange: (mode: ReadMode) => void; t: Translate; extra?: ReactNode }) {
   return (
     <div className="nv-modes" role="tablist" aria-label={t('阅读方式', 'How to take in the chapter')}>
       <button type="button" role="tab" aria-selected={mode === 'read'} className={cx('nv-mode', mode === 'read' && 'is-active')} onClick={() => { onChange('read') }}>
@@ -103,6 +113,7 @@ export function ModeSwitch({ mode, onChange, t }: { mode: ReadMode; onChange: (m
         <Icon name="headphones" size={14} />
         <span>{t('听', 'Listen')}</span>
       </button>
+      {extra}
     </div>
   )
 }
@@ -124,6 +135,14 @@ export interface ReaderPageProps {
   active?: number | undefined
   /** Listening: a line of the prose was pressed. */
   onLine?: ((index: number) => void) | undefined
+  /**
+   * The chapter's sound, for the notes beside the text: where the script's
+   * lines sit, and the cues placed on them. Shown when the reader's
+   * preferences ask for notes, whether the chapter is being read or heard.
+   */
+  sound?: { lines: readonly AudioLine[]; cues: readonly AudioCue[] } | undefined
+  /** Ids of the cues being heard right now. */
+  sounding?: readonly string[] | undefined
   /** Offset of a paragraph to flash (a search hit). */
   flash?: number | undefined
   scroller: RefObject<HTMLDivElement | null>
@@ -135,7 +154,7 @@ export interface ReaderPageProps {
 }
 
 /** One chapter on the page. In listening mode every sentence of the prose can be pressed, and the one being spoken is lit. */
-export function ReaderPage({ t, bookTitle, chapter, text, prefs, media, lines, active, onLine, flash, scroller, footer, children, onSelect }: ReaderPageProps) {
+export function ReaderPage({ t, bookTitle, chapter, text, prefs, media, lines, active, onLine, sound, sounding, flash, scroller, footer, children, onSelect }: ReaderPageProps) {
   const blocks = useMemo<Block[]>(() => (text !== undefined ? blocksOf(text) : []), [text])
   const ranges = useMemo(() => {
     if (text === undefined || lines === undefined || lines.length === 0) return []
@@ -145,11 +164,46 @@ export function ReaderPage({ t, bookTitle, chapter, text, prefs, media, lines, a
       return range !== undefined ? [{ id: line.id, index, start: range.start, end: range.end }] : []
     }).sort((left, right) => left.start - right.start)
   }, [text, lines])
+  // Each note sits at the paragraph in which its sound begins.
+  const notes = useMemo(() => {
+    const placed = new Map<number, { cue: AudioCue; caption: string }[]>()
+    if (text === undefined || sound === undefined || !prefs.notes || sound.cues.length === 0) return placed
+    const found = alignScript(text, sound.lines)
+    const paragraphs = blocks.filter(block => block.kind === 'paragraph')
+    for (const cue of sound.cues) {
+      const caption = cueCaption(cue, t)
+      const range = found.get(cue.at)
+      if (caption === undefined || range === undefined) continue
+      const block = [...paragraphs].reverse().find(candidate => candidate.offset <= range.start) ?? paragraphs[0]
+      if (block === undefined) continue
+      placed.set(block.offset, [...(placed.get(block.offset) ?? []), { cue, caption }])
+    }
+    return placed
+  }, [text, sound, prefs.notes, blocks, t])
+  const live = useMemo(() => new Set(sounding ?? []), [sounding])
+  const noteRow = (offset: number): ReactNode => {
+    const here = notes.get(offset)
+    if (here === undefined) return null
+    return (
+      <div key={`notes-${offset}`} className="nv-sound-notes" aria-label={t('这里听得到', 'Heard here')}>
+        {here.map(({ cue, caption }, at) => {
+          const kind = cue.kind ?? 'bed'
+          return (
+            <span key={cue.id ?? at} className={cx('nv-sound-note', `is-${kind}`, cue.id !== undefined && live.has(cue.id) && 'is-sounding')} title={kind === 'bed' ? t('环境声', 'Ambience') : kind === 'music' ? t('配乐', 'Music') : t('音效', 'Sound effect')}>
+              <span className="nv-sound-mark" aria-hidden="true">{kind === 'music' ? '♪' : kind === 'effect' ? '◦' : '≋'}</span>
+              {caption}
+            </span>
+          )
+        })}
+      </div>
+    )
+  }
   const indexOf = useMemo(() => new Map(ranges.map(range => [range.id, range.index])), [ranges])
   const activeId = active !== undefined && active >= 0 ? lines?.[active]?.id : undefined
   const voiced = useMemo(() => new Set((lines ?? []).filter(line => line.audio !== undefined).map(line => line.id)), [lines])
+  const skipped = useMemo(() => new Set((lines ?? []).filter(line => line.skip === true).map(line => line.id)), [lines])
   // Lines without a voice are only worth telling apart once some have one.
-  const partly = voiced.size > 0 && voiced.size < (lines?.length ?? 0)
+  const partly = voiced.size > 0 && voiced.size + skipped.size < (lines?.length ?? 0)
   // The line being spoken stays in view; the reader's own scrolling is left alone otherwise.
   useEffect(() => {
     if (activeId === undefined) return
@@ -180,8 +234,8 @@ export function ReaderPage({ t, bookTitle, chapter, text, prefs, media, lines, a
           }
           if (block.kind === 'break') return <div key={block.offset} data-offset={block.offset} className="nv-scene-break" aria-hidden="true">＊　＊　＊</div>
           if (block.kind === 'heading') return <h3 key={block.offset} data-offset={block.offset}>{block.text}</h3>
-          if (!listening || ranges.length === 0) return <p key={block.offset} data-offset={block.offset} className={cx(flash === block.offset && 'is-flash')}>{block.text}</p>
-          return (
+          if (!listening || ranges.length === 0) return [noteRow(block.offset), <p key={block.offset} data-offset={block.offset} className={cx(flash === block.offset && 'is-flash')}>{block.text}</p>]
+          return [noteRow(block.offset), (
             <p key={block.offset} data-offset={block.offset} className={cx(flash === block.offset && 'is-flash')}>
               {segmentsOf(block, ranges).map((segment, at) => segment.line === undefined
                 ? <span key={at}>{segment.text}</span>
@@ -189,7 +243,8 @@ export function ReaderPage({ t, bookTitle, chapter, text, prefs, media, lines, a
                     <span
                       key={at}
                       data-line={segment.line}
-                      className={cx('nv-said', segment.line === activeId && 'is-speaking', partly && !voiced.has(segment.line) && 'is-unvoiced')}
+                      className={cx('nv-said', segment.line === activeId && 'is-speaking', skipped.has(segment.line) ? 'is-skipped' : partly && !voiced.has(segment.line) && 'is-unvoiced')}
+                      title={skipped.has(segment.line) ? t('有声版里这几个字不念', 'Left unspoken in the audio version') : undefined}
                       onClick={() => {
                         // A selection is being made, not a line chosen.
                         if ((window.getSelection()?.toString().length ?? 0) > 0) return
@@ -199,7 +254,7 @@ export function ReaderPage({ t, bookTitle, chapter, text, prefs, media, lines, a
                     >{segment.text}</span>
                   ))}
             </p>
-          )
+          )]
         })}
         {text !== undefined ? (
           <footer className="nv-reader-foot">
@@ -227,7 +282,7 @@ function timeline(lines: readonly AudioLine[]): { starts: number[]; total: numbe
   let at = 0
   for (const line of lines) {
     starts.push(at)
-    at += line.duration ?? Math.max(1.2, line.text.length * 0.19)
+    if (line.skip !== true) at += line.duration ?? Math.max(1.2, line.text.length * 0.19)
   }
   return { starts, total: at }
 }
@@ -242,6 +297,8 @@ export interface ListenBarProps {
   /** Go on to the next chapter when this one ends. */
   autoNext?: boolean | undefined
   onAutoNext?: ((value: boolean) => void) | undefined
+  /** The script's sound cues, so the bar can say what is heard under the line. */
+  cues?: readonly AudioCue[] | undefined
   /** Extra controls at the end of the bar. */
   children?: ReactNode
 }
@@ -251,10 +308,16 @@ export interface ListenBarProps {
  * is, how fast it is read and how loud the ambience is. It sits under the
  * page, where a thumb reaches it.
  */
-export function ListenBar({ t, player, state, lines, options, update, autoNext, onAutoNext, children }: ListenBarProps) {
+export function ListenBar({ t, player, state, lines, options, update, autoNext, onAutoNext, cues, children }: ListenBarProps) {
   const clock = useMemo(() => timeline(lines), [lines])
-  const voiced = lines.filter(line => line.audio !== undefined).length
+  const spoken = lines.filter(line => line.skip !== true)
+  const voiced = spoken.filter(line => line.audio !== undefined).length
   const [more, setMore] = useState(false)
+  // What sits under the line right now, in the words of its cue.
+  const under = (cues ?? []).filter(cue => cue.kind !== 'effect' && cue.id !== undefined && (state.sounding ?? []).includes(cue.id))
+  const bed = under.find(cue => (cue.kind ?? 'bed') === 'bed')
+  const music = under.find(cue => cue.kind === 'music')
+  const bedCaption = bed !== undefined ? cueCaption(bed, t) : state.ambience !== 'none' ? t(...AMBIENCE[state.ambience]) : undefined
   const at = state.index >= 0 ? clock.starts[state.index] ?? 0 : 0
   const playing = state.status === 'playing'
   const bar = useRef<HTMLDivElement>(null)
@@ -280,11 +343,12 @@ export function ListenBar({ t, player, state, lines, options, update, autoNext, 
         <span className="nv-listen-time">
           {state.index >= 0 ? `${formatDuration(at)} / ${formatDuration(clock.total)}` : formatDuration(clock.total)}
         </span>
-        {state.ambience !== 'none' ? <span className="nv-chip nv-chip-violet nv-listen-ambience">♪ {t(...AMBIENCE[state.ambience])}</span> : null}
-        {voiced < lines.length ? <span className="nv-muted nv-small nv-listen-note">{voiced === 0 ? t('还没有配音：按阅读速度逐句显示', 'Not voiced yet: lines are shown at reading pace') : t(`${lines.length - voiced} 句还没有配音，到那里会静默显示`, `${lines.length - voiced} lines are not voiced yet and pass in silence`)}</span> : null}
+        {options.ambienceOn && bedCaption !== undefined ? <span className="nv-chip nv-chip-violet nv-listen-ambience" title={bed?.audio !== undefined ? t('声音模型生成的环境声', 'Ambience made by the sound model') : t('浏览器合成的环境声', 'Ambience synthesized in the browser')}>≋ {bedCaption}</span> : null}
+        {options.ambienceOn && music?.audio !== undefined ? <span className="nv-chip nv-chip-violet nv-listen-ambience">♪ {cueCaption(music, t) ?? t('配乐', 'music')}</span> : null}
+        {voiced < spoken.length ? <span className="nv-muted nv-small nv-listen-note">{voiced === 0 ? t('还没有配音：按阅读速度逐句显示', 'Not voiced yet: lines are shown at reading pace') : t(`${spoken.length - voiced} 句还没有配音，到那里会静默显示`, `${spoken.length - voiced} lines are not voiced yet and pass in silence`)}</span> : null}
         <span className="nv-spacer" />
         {children}
-        <button type="button" className={cx('nv-btn nv-btn-ghost nv-btn-sm nv-btn-icon', more && 'is-active')} onClick={() => { setMore(value => !value) }} title={t('语速、环境音、连播', 'Speed, ambience, continuous play')} aria-expanded={more}><Icon name="settings" size={15} /></button>
+        <button type="button" className={cx('nv-btn nv-btn-ghost nv-btn-sm nv-btn-icon', more && 'is-active')} onClick={() => { setMore(value => !value) }} title={t('语速、环境与音效、连播', 'Speed, sound, continuous play')} aria-expanded={more}><Icon name="settings" size={15} /></button>
       </div>
       {more ? (
         <div className="nv-listen-more">
@@ -294,9 +358,9 @@ export function ListenBar({ t, player, state, lines, options, update, autoNext, 
               {['0.8', '1', '1.15', '1.3', '1.5', '1.8'].map(rate => <option key={rate} value={rate}>{rate}×</option>)}
             </select>
           </label>
-          <label className="nv-listen-option" title={t('环境音由浏览器实时合成', 'Ambience is synthesized live in the browser')}>
+          <label className="nv-listen-option" title={t('人声之下的一切：环境声、音效、配乐', 'Everything under the voice: ambience, effects, music')}>
             <input type="checkbox" checked={options.ambienceOn} onChange={(event) => { update({ ambienceOn: event.target.checked }) }} />
-            <span>{t('环境音', 'Ambience')}</span>
+            <span>{t('环境与音效', 'Sound')}</span>
             <input className="nv-range" type="range" min={0} max={1} step={0.05} value={options.ambienceVolume} disabled={!options.ambienceOn} onChange={(event) => { update({ ambienceVolume: Number(event.target.value) }) }} aria-label={t('环境音音量', 'Ambience volume')} />
           </label>
           {onAutoNext !== undefined ? (

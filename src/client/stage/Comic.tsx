@@ -15,39 +15,8 @@ import {
 } from '../ui'
 import { NeedsSetup } from '../views/Settings'
 import { formatDuration, JobProgress, PlayerControls, usePlayerOptions } from './Audio'
+import { place, secondsOf, Theater, useCurrentPanel } from '../reader/theater'
 import { useLinePlayer } from './player'
-
-/** How long a line takes: as voiced, or at reading pace while it has no voice. */
-const secondsOf = (line: AudioLine | undefined): number => line?.duration ?? Math.max(1.2, (line?.text.length ?? 10) * 0.19)
-
-interface Placed {
-  panel: ComicPanel
-  /** Where the panel comes on and goes off, as line index plus the fraction of that line. */
-  from: number
-  to: number
-  seconds: number
-}
-
-/** Put every panel on the script's line: a panel may begin and end inside a long line. */
-function place(panels: ComicPanel[], lines: AudioLine[]): Placed[] {
-  const indexOf = new Map(lines.map((line, index) => [line.id, index]))
-  const placed: Placed[] = []
-  for (const panel of panels) {
-    const first = indexOf.get(panel.lines[0] ?? '')
-    const last = indexOf.get(panel.lines.at(-1) ?? '')
-    if (first === undefined || last === undefined) continue
-    const from = first + (panel.begin ?? 0)
-    const to = last + (panel.end ?? 1)
-    let seconds = 0
-    for (let index = first; index <= last; index++) {
-      const start = index === first ? panel.begin ?? 0 : 0
-      const end = index === last ? panel.end ?? 1 : 1
-      seconds += secondsOf(lines[index]) * Math.max(0, end - start)
-    }
-    placed.push({ panel, from, to, seconds })
-  }
-  return placed
-}
 
 export function ComicStage({ chapter }: { chapter: ChapterInfo | undefined }) {
   const { controller } = useStudio()
@@ -67,24 +36,7 @@ export function ComicStage({ chapter }: { chapter: ChapterInfo | undefined }) {
   const panels = useMemo(() => board.data?.board?.panels ?? [], [board.data])
   const placed = useMemo(() => place(panels, lines), [panels, lines])
   const { player, state } = useLinePlayer(lines, cues, mediaUrl, options)
-  const line = state.index >= 0 ? lines[state.index] : undefined
-  // How far through the line on screen playback is: a picture may change in the middle of a long line.
-  const [fraction, setFraction] = useState(0)
-  useEffect(() => {
-    setFraction(0)
-    if (state.status !== 'playing') return
-    const timer = setInterval(() => { setFraction(player.fraction()) }, 160)
-    return () => { clearInterval(timer) }
-  }, [player, state.index, state.status])
-  const current = useMemo(() => {
-    if (placed.length === 0) return undefined
-    if (line === undefined) return placed[0]
-    const at = state.index + Math.min(0.999, fraction)
-    let found = placed[0]
-    for (const item of placed) if (item.from <= at + 1e-6) found = item
-    return found
-  }, [placed, line, state.index, fraction])
-  const panelSeconds = Math.max(4, (current?.seconds ?? 8) / options.rate + 1)
+  const current = useCurrentPanel(placed, player, state)
 
   // What the book asks of its storyboards; the controls below start from it.
   const saved = project.manifest.storyboard
@@ -94,20 +46,6 @@ export function ComicStage({ chapter }: { chapter: ChapterInfo | undefined }) {
     setDensity(saved?.density ?? 'balanced')
     setCeiling(saved?.maxPanels !== undefined ? String(saved.maxPanels) : '')
   }, [saved?.density, saved?.maxPanels])
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent): void => {
-      if (document.fullscreenElement !== stage.current) return
-      if (event.key === ' ') {
-        event.preventDefault()
-        player.toggle()
-      }
-      if (event.key === 'ArrowRight') player.step(1)
-      if (event.key === 'ArrowLeft') player.step(-1)
-    }
-    document.addEventListener('keydown', onKey)
-    return () => { document.removeEventListener('keydown', onKey) }
-  }, [player])
 
   if (chapter === undefined) return <Empty icon="film" title={t('还没有可以演出的章节', 'No chapter to perform yet')}>{t('先写出至少一章正文。', 'Write at least one chapter first.')}</Empty>
   if (board.data === undefined || audio.data === undefined) return <div className="nv-center">{board.error ?? audio.error ?? <Spinner />}</div>
@@ -141,7 +79,6 @@ export function ComicStage({ chapter }: { chapter: ChapterInfo | undefined }) {
       await controller.refreshJobs()
     })
   }
-  const speaker = line === undefined ? undefined : line.kind === 'narration' ? undefined : (project.characters.find(card => card.id === line.speaker)?.name ?? line.speakerName)
   // Only the button whose work is running says so; the others wait their turn.
   const storyboarding = job !== undefined && job.kind === 'comic' && job.title === 'storyboard'
   const drawing = job !== undefined && job.kind === 'comic' && job.title !== 'storyboard'
@@ -199,28 +136,9 @@ export function ComicStage({ chapter }: { chapter: ChapterInfo | undefined }) {
         </Empty>
       ) : (
         <>
-          <div className={cx('nv-theater', state.status !== 'idle' && 'is-playing')} ref={stage}>
-            <div className="nv-theater-screen" onClick={() => { player.toggle() }}>
-              {current?.panel.image !== undefined
-                ? <ProjectImage key={`${current.panel.id}-${state.status === 'idle' ? 'idle' : 'run'}`} className={cx('nv-theater-image', state.status !== 'idle' && `is-${current.panel.camera}`)} style={{ animationDuration: `${panelSeconds}s`, animationPlayState: state.status === 'paused' ? 'paused' : 'running' }} path={current.panel.image} alt={current.panel.description} />
-                : <div className="nv-theater-placeholder"><p>{current?.panel.description}</p><span className="nv-muted nv-small">{t('这一格还没有画', 'This panel is not drawn yet')}</span></div>}
-              {line !== undefined ? (
-                <div className={cx('nv-subtitle', `is-${line.kind}`)}>
-                  {speaker !== undefined ? <span className="nv-subtitle-speaker">{speaker}</span> : null}
-                  <span>{line.text}</span>
-                </div>
-              ) : state.status === 'idle' ? <div className="nv-theater-start"><span className="nv-theater-play">▶</span></div> : null}
-            </div>
-            <div className="nv-theater-bar">
-              <Button variant="primary" size="sm" icon={state.status === 'playing' ? 'pause' : 'play'} onClick={() => { player.toggle() }} />
-              <Button variant="ghost" size="sm" icon="chevronLeft" disabled={state.index <= 0} onClick={() => { player.step(-1) }} />
-              <Button variant="ghost" size="sm" icon="chevronRight" disabled={state.index < 0 || state.index >= lines.length - 1} onClick={() => { player.step(1) }} />
-              <div className="nv-theater-progress"><div style={{ width: `${lines.length > 0 ? ((state.index + 1) / lines.length) * 100 : 0}%` }} /></div>
-              {state.ambience !== 'none' ? <Chip tone="violet">♪ {t(...AMBIENCE[state.ambience])}</Chip> : null}
-              <PlayerControls options={options} update={updateOptions} t={t} />
-              <Button variant="ghost" size="sm" icon="maximize" onClick={() => { if (document.fullscreenElement !== null) void document.exitFullscreen().catch(() => {}); else void stage.current?.requestFullscreen?.().catch(() => {}) }} title={t('全屏', 'Fullscreen')} />
-            </div>
-          </div>
+          <Theater t={t} player={player} state={state} lines={lines} cues={cues} current={current} media={path => mediaUrl(path)} options={options} speakerOf={line => project.characters.find(card => card.id === line.speaker)?.name}>
+            <PlayerControls options={options} update={updateOptions} t={t} />
+          </Theater>
 
           <ol className="nv-cpanels">
             {placed.map(({ panel, from, seconds }, index) => (

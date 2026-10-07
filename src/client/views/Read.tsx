@@ -32,7 +32,22 @@ export function ReadView() {
   const [options, updateOptions] = usePlayerOptions()
   const [picked, setPicked] = useState<{ text: string; offset: number; top: number; left: number } | undefined>()
   const [flash, setFlash] = useState<number | undefined>()
-  const [body, setBody] = useState<'text' | 'script'>('text')
+  // Listening opens on the script: who says what, how, over which sound. The prose is one press away, and the choice is remembered.
+  const [body, setBodyState] = useState<'text' | 'script'>(() => {
+    try {
+      return localStorage.getItem('novel-studio:listen-body') === 'text' ? 'text' : 'script'
+    } catch {
+      return 'script'
+    }
+  })
+  const setBody = (next: 'text' | 'script'): void => {
+    setBodyState(next)
+    try {
+      localStorage.setItem('novel-studio:listen-body', next)
+    } catch {
+      // Kept for this visit only.
+    }
+  }
   const [sharing, setSharing] = useState(false)
   const [autoNext, setAutoNext] = useState(() => {
     try {
@@ -51,7 +66,9 @@ export function ReadView() {
   const job = jobs.find(item => item.status === 'running' && item.kind === 'audio' && item.title !== 'audition' && (item.target === chapter?.id || item.result?.chapterId === chapter?.id))
   const doc = useLoad(async signal => chapter !== undefined ? await controller.api.call('chapter.read', { root, id: chapter.id }, signal) : undefined, [root, chapter?.id, chapter?.updatedAt])
   // The script is fetched once the author listens; a running job keeps it fresh as lines come in.
-  const audio = useLoad<ScriptView | undefined>(async signal => chapter !== undefined && listening ? await controller.api.call('audio.script', { root, chapter: chapter.id }, signal) : undefined, [root, chapter?.id, listening, project.revision, job === undefined])
+  // The script is what is listened to — and what the sound notes beside the text come from, so a reader gets it too.
+  const wanted = listening || prefs.notes
+  const audio = useLoad<ScriptView | undefined>(async signal => chapter !== undefined && wanted ? await controller.api.call('audio.script', { root, chapter: chapter.id }, signal) : undefined, [root, chapter?.id, wanted, project.revision, job === undefined])
   const text = doc.data?.text
   const script = audio.data?.script
   const lines = useMemo(() => script?.lines ?? [], [script])
@@ -182,12 +199,12 @@ export function ReadView() {
       {listening ? (
         audio.data === undefined
           ? <div className="nv-desk-loading">{audio.error !== undefined ? <span className="nv-muted">{audio.error}</span> : <><Spinner size={13} /><span className="nv-muted nv-small">{t('正在读取有声脚本…', 'Loading the audio script…')}</span></>}</div>
-          : <AudioDesk chapter={chapter} view={audio.data} job={job} player={player} body={script === undefined ? 'text' : body} onBody={setBody} />
+          : <AudioDesk chapter={chapter} view={audio.data} job={job} player={player} body={script === undefined ? 'text' : body} onBody={setBody} onChanged={() => { audio.reload() }} />
       ) : null}
       {showScript ? (
         <div className="nv-reader-scroll" ref={scroller}>
           <div className="nv-script-wrap">
-            <ScriptTable chapter={chapter} lines={lines} cues={cues} state={state} player={player} job={job} onChanged={() => { audio.reload() }} />
+            <ScriptTable chapter={chapter} lines={lines} cues={cues} state={state} player={player} job={job} sound={audio.data?.sound} onChanged={() => { audio.reload() }} />
           </div>
         </div>
       ) : (
@@ -201,6 +218,8 @@ export function ReadView() {
           lines={listening && script !== undefined ? lines : undefined}
           active={listening ? state.index : undefined}
           onLine={listening && script !== undefined ? (index) => { player.play(index) } : undefined}
+          sound={script !== undefined ? { lines, cues } : undefined}
+          sounding={listening ? state.sounding : undefined}
           flash={flash}
           scroller={scroller}
           onSelect={onSelect}
@@ -231,7 +250,7 @@ export function ReadView() {
           ) : null}
         </ReaderPage>
       )}
-      {listening && script !== undefined ? <ListenBar t={t} player={player} state={state} lines={lines} options={options} update={updateOptions} autoNext={autoNext} onAutoNext={keepAutoNext} /> : null}
+      {listening && script !== undefined ? <ListenBar t={t} player={player} state={state} lines={lines} cues={cues} options={options} update={updateOptions} autoNext={autoNext} onAutoNext={keepAutoNext} /> : null}
       {sharing ? <ShareDialog onClose={() => { setSharing(false) }} /> : null}
     </div>
   )

@@ -2,7 +2,7 @@
 /** The reader: where the lines of the audio script sit in the prose, and the code a phone scans to open it. */
 import { describe, expect, it } from 'vitest'
 import { qrCode, qrPath } from '../src/shared/qr'
-import { alignScript, blocksOf, segmentsOf } from '../src/shared/reader'
+import { alignScript, blocksOf, segmentsOf, subtitleOf } from '../src/shared/reader'
 
 describe('the script in the prose', () => {
   const text = '更衣间的门开了一条缝。拍卖师探进半个头。\n\n“零七。”\n\n“在。”\n\n门开了。\n她走出去。\n\n![穹顶](assets/images/dome.png)\n\n她用“我”。手册上写她应该用“我们”。'
@@ -220,5 +220,16 @@ describe('the code a phone scans', () => {
     expect(drawn.size).toBe(size + 8)
     expect(drawn.path.startsWith('M')).toBe(true)
     expect(() => qrCode('x'.repeat(300))).toThrow()
+  })
+
+  it('shows under a picture the sentence the voice has reached, not the whole take', () => {
+    const take = '雨落在法租界旧书铺的青瓦上。沈蘅把未卖出的讣文纸收进抽屉，纸边泡软，墨香混着潮气。灯只剩一盏。\n门响，周衡进来。西装三件套没湿，怀表链横在马甲上，压出一道亮痕。'
+    expect(subtitleOf(take, 0)).toBe('雨落在法租界旧书铺的青瓦上。')
+    expect(subtitleOf(take, 0.3)).toBe('沈蘅把未卖出的讣文纸收进抽屉，纸边泡软，墨香混着潮气。灯只剩一盏。')
+    expect(subtitleOf(take, 0.99)).toBe('门响，周衡进来。西装三件套没湿，怀表链横在马甲上，压出一道亮痕。')
+    expect(subtitleOf(take, 1)).toBe('门响，周衡进来。西装三件套没湿，怀表链横在马甲上，压出一道亮痕。')
+    // A line of one sentence is its own subtitle.
+    expect(subtitleOf('零七。', 0.5)).toBe('零七。')
+    expect(subtitleOf('He stopped. Then he went on.', 0.9)).toBe('He stopped. Then he went on.')
   })
 })

@@ -26,15 +26,18 @@ The result of every call says what the picture was made of: the art direction an
 
 ## Audio drama
 
-1. `novel_audio action=script chapter=<n>` — the analyst cuts the chapter into narration, dialogue and inner voice, attributes every line to a speaker, adds delivery directions, and marks ambience cues by scene (rain, tavern, night, tension…). No audio yet; the author can correct speakers and directions in the Studio (the reader's Listen mode, *Script*).
+1. `novel_audio action=script chapter=<n>` — the analyst cuts the chapter into narration, dialogue and inner voice, attributes every line to a speaker, adds delivery directions, and designs the sound: the bed of each scene, spot effects, music, each with a caption the reader sees beside the text. Narration that follows narration is joined into takes spoken in one breath; a "he said" stranded between two spoken lines is marked as a tag and left unspoken unless the author has every word read (`tts.speechTags`). No audio yet; the author can correct speakers, directions and cues in the Studio (the reader's Listen mode opens on the script).
 2. `novel_audio action=synthesize chapter=<n>` — renders the lines that have no current audio. Unchanged lines are reused, so fixing three lines re-renders three lines. Every take is checked by measurement and spoken again when it is cut short, silent or not in the speaker's voice; lines rendered earlier that fail the check are redone as well. The result says how many were retaken and how many still stand out — pass that on.
-3. `novel_audio action=export chapter=<n>` — joins the voice track into one WAV. Ambience is synthesized live by the player and is not in the file.
+3. `novel_audio action=sound chapter=<n>` — generates the clips of the sound cues with the sound model: effects, music, and the beds unless the author keeps to browser-synthesized ones. It needs a sound model, which is the speech model itself when that is Bailian audio generation; without one the cues remain captions and beds are synthesized by the player — say so rather than promising sound. Sound models are uneven: tell the author that any cue can be heard in the script view, reworded (`novel_manage action=edit_cue`) and made again on its own (`cues=[id]`).
+4. `novel_audio action=export chapter=<n>` — joins the voice track into one WAV. Sound is laid under the voices at playback and is not in the file.
+
+A script made before narration was spoken in whole takes sounds choppy — the narrator starts over at every paragraph. `novel_audio action=reshape` brings it into the new shape without calling a model: dialogue keeps its recordings, joined narration is voiced again at the next synthesize.
 
 **Read what the script step says.** If it warns that passages "could not be directed" and were cut by rule, the dialogue in them has no speakers and will be read in the narrator's voice — synthesizing then wastes the author's money on a flat reading. The reason is given: most often the analyst's reply was cut off by an output cap someone set on that role (`novel_settings action=show`; remove it with `action=studio patch={models: {analyst: {…, maxTokens: null}}}`). Fix the cause, run `action=script` again with `force=true`, and only then synthesize.
 
 If a speaker is misattributed everywhere, the character card is probably missing an alias; add it and rebuild the script.
 
-The author can read and listen on a phone: `novel_share action=on` opens the book in play to devices on the same network and gives the address (they are asked to confirm first).
+The author can read, listen and watch the motion comic on a phone: `novel_share action=on` opens the book in play to devices on the same network and gives the address (they are asked to confirm first). `mode=edit` also lets the phone edit the text and play the book's interludes — offer it when they want to play an interlude on the sofa, and say that each turn uses the models set up on their computer.
 
 ## Motion comic
 

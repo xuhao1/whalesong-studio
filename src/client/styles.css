@@ -2618,9 +2618,72 @@ button.nv-stat:hover {
 }
 
 .nv-cue {
-  margin: 10px 0 4px 34px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 2px 34px;
+  padding: 2px 8px;
+  border-left: 2px solid color-mix(in srgb, var(--nv-violet) 50%, transparent);
   color: var(--nv-violet);
   font-size: 12px;
+}
+
+.nv-line:first-child > .nv-cue:first-child {
+  margin-top: 0;
+}
+
+.nv-cue.is-effect {
+  border-left-color: color-mix(in srgb, var(--nv-warn) 60%, transparent);
+  color: var(--nv-warn);
+}
+
+.nv-cue.is-sounding {
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
+
+.nv-cue-mark {
+  width: 1em;
+  text-align: center;
+}
+
+.nv-cue-kind {
+  opacity: 0.75;
+}
+
+.nv-cue-text {
+  flex: 1 1 12em;
+  min-width: 0;
+  color: var(--nv-text-2);
+  font-style: italic;
+}
+
+.nv-cue-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--nv-radius-s);
+  background: transparent;
+  color: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.nv-cue-tool:hover {
+  background: var(--nv-hover);
+}
+
+.nv-line.is-skipped .nv-line-body p {
+  color: var(--nv-text-3);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--nv-text-3) 50%, transparent);
+}
+
+.nv-line.is-skipped .nv-line-play {
+  visibility: hidden;
 }
 
 .nv-line-row {
@@ -3902,12 +3965,62 @@ button.nv-stat:hover {
   align-items: center;
   gap: 4px;
   padding: 2px 7px;
+  border: 0;
   border-radius: 999px;
   background: color-mix(in srgb, var(--nv-brand) 12%, transparent);
   color: var(--nv-brand-text);
   font-size: 11.5px;
   white-space: nowrap;
-  cursor: help;
+  cursor: pointer;
+}
+
+.nv-linked:hover,
+.nv-linked.is-open {
+  background: color-mix(in srgb, var(--nv-brand) 22%, transparent);
+}
+
+.nv-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(360px, 86vw);
+  max-height: 70vh;
+  padding: 12px 14px;
+  overflow: auto;
+  border: 1px solid var(--nv-border);
+  border-radius: var(--nv-radius);
+  background: var(--nv-bg);
+  box-shadow: var(--nv-shadow);
+  font-size: 12.5px;
+  line-height: 1.6;
+  white-space: normal;
+  text-align: left;
+}
+
+.nv-popover.is-end {
+  right: 0;
+  left: auto;
+}
+
+.nv-popover p,
+.nv-popover ul {
+  margin: 0;
+}
+
+.nv-popover ul {
+  padding-left: 1.2em;
+  color: var(--nv-text-2);
+}
+
+.nv-linked-books {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
 }
 
 .nv-shelf-title .nv-chip {
@@ -4609,4 +4722,584 @@ button.nv-stat:hover {
   .nv-listen-ambience {
     display: none;
   }
+}
+
+/* ───────────── people: portraits, groups, walk-ons ───────────── */
+
+.nv-people-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.nv-seg {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: var(--nv-radius-s);
+  background: var(--nv-surface-2);
+}
+
+.nv-seg > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: calc(var(--nv-radius-s) - 1px);
+  background: transparent;
+  color: var(--nv-text-2);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.nv-seg > button.is-active {
+  background: var(--nv-bg);
+  color: var(--nv-text);
+  box-shadow: 0 0 0 1px var(--nv-border);
+}
+
+.nv-people-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.nv-group-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 4px 2px;
+  border: 0;
+  background: transparent;
+  color: var(--nv-text-2);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nv-group-head:hover {
+  color: var(--nv-text);
+}
+
+.nv-people-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.nv-photo-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  padding: 0 0 5px;
+  overflow: hidden;
+  border: 1px solid var(--nv-border);
+  border-radius: var(--nv-radius-s);
+  background: var(--nv-bg);
+  text-align: left;
+  cursor: pointer;
+}
+
+.nv-photo-card:hover {
+  border-color: var(--nv-border-strong);
+}
+
+.nv-photo-card.is-active {
+  border-color: var(--nv-brand);
+  box-shadow: 0 0 0 1px var(--nv-brand);
+}
+
+.nv-photo {
+  display: block;
+  object-fit: cover;
+  object-position: top;
+  background-color: var(--nv-surface-2);
+}
+
+/* A design sheet shows the same person three times; a third of its width is the front view. */
+.nv-photo.is-sheet {
+  background-repeat: no-repeat;
+  background-position: 0% 8%;
+  background-size: 300% auto;
+}
+
+.nv-photo.is-empty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--nv-text-3);
+  font-weight: 600;
+}
+
+.nv-photo-card > .nv-photo {
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  font-size: 26px;
+}
+
+.nv-photo-status {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 8px;
+  height: 8px;
+  box-shadow: 0 0 0 2px var(--nv-bg);
+}
+
+.nv-photo-name,
+.nv-photo-meta {
+  padding: 0 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nv-photo-name {
+  margin-top: 4px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.nv-photo-meta {
+  color: var(--nv-text-3);
+  font-size: 11px;
+}
+
+.nv-split.has-photos {
+  grid-template-columns: minmax(240px, 340px) minmax(0, 1fr);
+}
+
+.nv-board-open {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nv-board-open:hover .nv-list-title {
+  color: var(--nv-brand-text);
+  text-decoration: underline;
+}
+
+.nv-presence-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.nv-presence-name:hover {
+  color: var(--nv-brand-text);
+  text-decoration: underline;
+}
+
+.nv-walkons {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.nv-walkon-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.nv-walkon {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 2px;
+  border-top: 1px solid var(--nv-border);
+}
+
+.nv-walkon:first-child {
+  border-top: 0;
+}
+
+.nv-walkon.is-ignored {
+  opacity: 0.6;
+}
+
+.nv-walkon-main {
+  display: flex;
+  flex: 1 1 240px;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.nv-walkon-note {
+  color: var(--nv-text-2);
+  font-size: 12.5px;
+}
+
+.nv-walkon-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.nv-walkon-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px 3px 3px;
+  border: 1px solid var(--nv-border);
+  border-radius: 999px;
+  background: var(--nv-bg);
+  cursor: pointer;
+}
+
+.nv-walkon-chip:hover {
+  border-color: var(--nv-border-strong);
+}
+
+.nv-walkon-chip > .nv-avatar {
+  width: 22px;
+  height: 22px;
+  font-size: 11px;
+}
+
+/* ───────────── the model's thought, read along ───────────── */
+
+.nv-thought {
+  display: flex;
+  flex-direction: column;
+  margin: 0 0 14px;
+  border: 1px solid var(--nv-border);
+  border-radius: var(--nv-radius-s);
+  background: var(--nv-surface);
+  font-family: var(--dsw-font-family, system-ui, sans-serif);
+  font-size: 12.5px;
+  line-height: 1.6;
+  text-indent: 0;
+}
+
+.nv-thought.is-plain {
+  margin: 0;
+}
+
+.nv-thought-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--nv-text-2);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nv-thought-head:hover {
+  color: var(--nv-text);
+}
+
+.nv-thought-peek {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--nv-text-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nv-thought-body {
+  max-height: min(42vh, 360px);
+  margin: 0;
+  padding: 2px 12px 10px;
+  overflow: auto;
+  border-top: 1px solid var(--nv-border);
+  color: var(--nv-text-2);
+  font-family: inherit;
+  font-size: 12.5px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.nv-thought.is-plain .nv-thought-body {
+  max-height: 62vh;
+}
+
+.nv-thought-open {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--nv-radius-s);
+  background: transparent;
+  color: var(--nv-text-3);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.nv-thought-open:hover {
+  background: var(--nv-hover);
+  color: var(--nv-text);
+}
+
+/* ───────────── sound notes beside the prose ───────────── */
+
+.nv-sound-notes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 0.9em 0 -0.35em;
+  font-family: var(--dsw-font-family, system-ui, sans-serif);
+  font-size: 0.72em;
+  line-height: 1.5;
+  text-indent: 0;
+  user-select: none;
+}
+
+.nv-sound-note {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  color: color-mix(in srgb, var(--nv-violet) 70%, var(--nv-text-3));
+  font-style: italic;
+  letter-spacing: 0.01em;
+  transition: color 0.3s;
+}
+
+.nv-sound-note.is-effect {
+  color: color-mix(in srgb, var(--nv-warn) 70%, var(--nv-text-3));
+}
+
+.nv-sound-note.is-sounding {
+  color: var(--nv-violet);
+}
+
+.nv-sound-note.is-effect.is-sounding {
+  color: var(--nv-warn);
+}
+
+.nv-sound-mark {
+  font-style: normal;
+  opacity: 0.8;
+}
+
+.nv-said.is-skipped {
+  opacity: 0.55;
+}
+
+/* ───────────── the book's record ───────────── */
+
+.nv-record {
+  display: flex;
+  flex-direction: column;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.nv-record-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 6px 0;
+  border-top: 1px solid var(--nv-border);
+  font-size: 12.5px;
+}
+
+.nv-record-row:first-child {
+  border-top: 0;
+}
+
+.nv-record-when {
+  flex: none;
+  color: var(--nv-text-3);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.nv-record-text {
+  flex: 1 1 16em;
+  min-width: 0;
+  color: var(--nv-text-2);
+}
+
+/* ───────────── sealed books ───────────── */
+
+.nv-lockscreen {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: min(12vh, 90px);
+}
+
+.nv-lock-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  align-self: center;
+  gap: 12px;
+  width: min(420px, 100%);
+  margin: 0 auto;
+  padding: 26px 24px 20px;
+  border: 1px solid var(--nv-border);
+  border-radius: var(--nv-radius);
+  background: var(--nv-surface);
+  text-align: center;
+}
+
+.nv-lock-card h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.nv-lock-card p {
+  margin: 0;
+}
+
+.nv-lock-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--nv-brand) 12%, transparent);
+  color: var(--nv-brand-text);
+}
+
+.nv-lock-form {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+.nv-lock-form > .nv-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.nv-seal {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.nv-seal h4 {
+  margin: 4px 0 0;
+  font-size: 13px;
+}
+
+.nv-seal p {
+  margin: 0;
+}
+
+.nv-seal-working {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 0;
+  text-align: center;
+}
+
+.nv-lock-ways {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.nv-lock-ways > li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 4px 0;
+  border-top: 1px solid var(--nv-border);
+  font-size: 13px;
+}
+
+.nv-lock-ways > li:first-child {
+  border-top: 0;
+}
+
+.nv-shelf-blank.is-locked {
+  color: var(--nv-text-3);
+}
+
+.nv-shelf-seal {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--nv-bg);
+  color: var(--nv-brand-text);
+  box-shadow: 0 0 0 1px var(--nv-border);
+}
+
+.nv-theater-caption {
+  position: absolute;
+  top: 10px;
+  left: 12px;
+  max-width: 70%;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.45);
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 11.5px;
+  font-style: italic;
+  pointer-events: none;
+}
+
+.nv-share-mode {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* A take of narration may hold several paragraphs; they stay paragraphs in the script. */
+.nv-line-body p {
+  white-space: pre-line;
+}
+
+.nv-theater-placeholder {
+  justify-content: flex-start;
+  padding-top: 9%;
 }

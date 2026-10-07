@@ -16,10 +16,21 @@ import type {
   PriceEntry,
   UsageSummary,
   TtsProviderKind,
-  AudioLine, AudioScript, ChapterMemory, ChapterPlan, ChapterReview, CharacterCard, ComicBoard, ComicPanel,
+  AmbiencePreset, AudioCue, AudioLine, AudioScript, BookLock, ChapterMemory, ChapterPlan, ChapterReview, CharacterCard, CharacterRole, ComicBoard, ComicPanel,
   IllustrationInfo, JobInfo, ModelRoute, NovelSettings, PlaySession, PlayTurn, ProjectManifest, ProjectRef, ProjectState,
-  Proposal, SearchHit, SearchSource, StoryboardDensity, StyleProfile, VersionInfo, WorkMode, WorldEntry,
+  Proposal, SearchHit, SearchSource, SoundKind, StoryboardDensity, StyleProfile, VersionInfo, WalkOn, WorkMode, WorldEntry,
 } from './types'
+
+/**
+ * How a book is locked, as a screen needs it: besides the book's own state,
+ * what this computer can do to unlock it.
+ */
+export interface LockView extends BookLock {
+  /** This computer's own unlock: a fingerprint or face, or the computer's password. */
+  device: { available: boolean; biometrics: boolean; method: 'touch-id' | 'windows-hello' | 'password' | 'none'; host: string }
+  /** The book opens with this computer's own unlock. */
+  deviceOn: boolean
+}
 
 export const RPC_ENDPOINT = 'novel/rpc'
 export const MEDIA_PATH = 'api/novel/media'
@@ -123,8 +134,8 @@ export interface ShareStatus {
   instead?: number
   /** Addresses a device on the same network can open, the likeliest first. Each carries the secret token. */
   urls: string[]
-  /** The books that can be read there. */
-  books: { root: string; id: string; title: string }[]
+  /** The books that can be read there, and whether they can also be changed from there. */
+  books: { root: string; id: string; title: string; /** read: nothing can be changed from another device. edit: text can be edited and interludes played there. */ mode?: 'read' | 'edit'; /** The book is sealed: a device shows its password once before it is let in. */ sealed?: boolean }[]
   /** Why it is not listening although it is switched on. */
   error?: string
 }
@@ -141,7 +152,7 @@ export interface SettingsView {
   keys: Record<string, KeyState>
   codex: CodexStatus
   /** What is usable right now, slot by slot. */
-  ready: { text: boolean; embedding: boolean; image: boolean; tts: boolean }
+  ready: { text: boolean; embedding: boolean; image: boolean; tts: boolean; /** Something can generate effects, music and beds. Absent on a Host from before there was sound. */ sound?: boolean }
   /** Nothing has been set up and the first-run guide has not been put aside. */
   setupNeeded: boolean
   version: string
@@ -193,6 +204,17 @@ export interface NovelRpc {
    * erased, and whatever else was in the book's folder stays (`left`).
    */
   'project.delete': { params: { root: string }; result: { title: string; where: 'trash' | 'holding' | 'beside'; path: string; left: string[]; folderRemoved: boolean } }
+  // ── sealed books ──
+  'lock.get': { params: { root: string }; result: LockView }
+  /** Seal a book: every file of it is encrypted where it lies. `device` also lets this computer's own unlock open it. */
+  'lock.seal': { params: { root: string; password: string; label?: string; device?: boolean }; result: JobStarted }
+  /** Take the seal off; the book has to be unlocked. */
+  'lock.unseal': { params: { root: string }; result: JobStarted }
+  /** Unlock with the password, or (`device`) with this computer's own unlock — the system asks for a fingerprint or its password. */
+  'lock.open': { params: { root: string; password?: string; device?: boolean }; result: LockView }
+  'lock.close': { params: { root: string }; result: LockView }
+  /** Change how an unlocked book opens: a new password, the name on the shelf, this computer's unlock on or off, or a device's grant withdrawn. */
+  'lock.change': { params: { root: string; password?: string; label?: string; device?: boolean; forget?: { kind: 'grant' | 'device'; id: string } }; result: LockView }
   'session.bind': { params: { sessionId: string; project?: string; mode?: WorkMode }; result: { mode: WorkMode; project?: string } }
   'events.wait': { params: { root?: string; revision: number; tick: number; timeoutMs?: number; /** With a session: also wake when its book in play is no longer `active`. */ sessionId?: string; active?: string }; result: { revision: number; tick: number; /** Root of the session's book in play. */ active?: string; mode?: WorkMode } }
 
@@ -209,6 +231,10 @@ export interface NovelRpc {
   'style.delete': { params: { root: string; id: string }; result: { deleted: boolean } }
   'style.extract': { params: { root: string; sample: string; name?: string; activate?: boolean }; result: JobStarted }
   'style.sample': { params: { root: string; style?: string; draft?: StyleProfile; scene?: string }; result: JobStarted }
+  /** People on the page without a card. */
+  'cast.walkons': { params: { root: string; ignored?: boolean }; result: { walkons: WalkOn[] } }
+  /** Give a walk-on a card, fold them into a character as an alias, or take them off the list. */
+  'cast.settle': { params: { root: string; name: string; action: 'card' | 'alias' | 'ignore' | 'restore'; target?: string; role?: CharacterRole }; result: { walkons: WalkOn[]; card?: CharacterCard; lines: number } }
   'suggestion.accept': { params: { root: string; id: string }; result: { ok: boolean } }
   'suggestion.dismiss': { params: { root: string; id: string }; result: { ok: boolean } }
 
@@ -242,7 +268,8 @@ export interface NovelRpc {
 
   // ── jobs ──
   'jobs.list': { params: { root?: string }; result: { jobs: JobInfo[] } }
-  'jobs.read': { params: { id: string; cursor?: number; waitMs?: number }; result: { text: string; cursor: number; info: JobInfo } }
+  /** `thoughtCursor` asks for the models' thought as well, from that many characters on. */
+  'jobs.read': { params: { id: string; cursor?: number; thoughtCursor?: number; waitMs?: number }; result: { text: string; cursor: number; info: JobInfo; thought?: string; thoughtCursor?: number } }
   'jobs.cancel': { params: { id: string }; result: { cancelled: boolean } }
 
   // ── stage: illustration ──
@@ -251,10 +278,18 @@ export interface NovelRpc {
   'image.delete': { params: { root: string; id: string }; result: { ok: boolean } }
 
   // ── stage: audio drama ──
-  'audio.script': { params: { root: string; chapter: string }; result: { script?: AudioScript; stale: boolean; /** The voice each speaker of this chapter has, or will get, in the audio drama. */ cast?: { characters: Record<string, string>; extras: Record<string, string> } } }
+  'audio.script': { params: { root: string; chapter: string }; result: { script?: AudioScript; stale: boolean; /** The voice each speaker of this chapter has, or will get, in the audio drama. */ cast?: { characters: Record<string, string>; extras: Record<string, string> }; /** What can make sound for this book, when something can. */ sound?: { model: string; shared: boolean; beds: 'generate' | 'browser' } } }
   'audio.build': { params: { root: string; chapter: string; force?: boolean }; result: JobStarted }
   'audio.synthesize': { params: { root: string; chapter: string; lines?: string[]; force?: boolean }; result: JobStarted }
-  'audio.updateLine': { params: { root: string; chapter: string; line: string; patch: Partial<Pick<AudioLine, 'text' | 'kind' | 'speaker' | 'speakerName' | 'direction'>> }; result: AudioScript }
+  /** `voiced`: false leaves the line unspoken, true has it spoken, null hands it back to the book's rule for speech tags. */
+  'audio.updateLine': { params: { root: string; chapter: string; line: string; patch: Partial<Pick<AudioLine, 'text' | 'kind' | 'speaker' | 'speakerName' | 'direction'>> & { voiced?: boolean | null } }; result: AudioScript }
+  /** Shape a script cut the older, finer way — narration in whole takes — without asking a model again. */
+  'audio.reshape': { params: { root: string; chapter: string }; result: { script: AudioScript; before: number; after: number; kept: number } }
+  /** Generate the clips of the chapter's sound cues: effects, music and beds. */
+  'audio.sound': { params: { root: string; chapter: string; cues?: string[]; kinds?: SoundKind[]; force?: boolean }; result: JobStarted }
+  /** Change one sound cue, drop its clip, or take the cue out. */
+  'audio.updateCue': { params: { root: string; chapter: string; cue: string; patch?: Partial<Pick<AudioCue, 'kind' | 'at' | 'caption' | 'prompt' | 'ambience' | 'intensity'>>; remove?: boolean; dropClip?: boolean }; result: AudioScript }
+  'audio.addCue': { params: { root: string; chapter: string; at: string; kind: SoundKind; caption?: string; prompt?: string; ambience?: AmbiencePreset; intensity?: number }; result: AudioScript }
   'audio.export': { params: { root: string; chapter: string }; result: { path: string; duration: number; missing: number } }
   /** A job whose output is `{ path, duration }`: a new voice is set up before it speaks, and that takes a while. */
   'voice.audition': { params: { root: string; voice?: string; /** Hear this character as their lines will sound, when no voice is named. */ character?: string; text: string; direction?: string }; result: JobStarted }
@@ -285,7 +320,7 @@ export interface NovelRpc {
   // ── reading on other devices ──
   'share.status': { params: Record<string, never>; result: ShareStatus }
   /** Switch the reader for other devices on or off, share or stop sharing a book, move it to another port, or replace its address (`renew`) so earlier links stop working. */
-  'share.update': { params: { enabled?: boolean; book?: { root: string; shared: boolean }; port?: number; renew?: boolean }; result: ShareStatus }
+  'share.update': { params: { enabled?: boolean; book?: { root: string; shared: boolean; mode?: 'read' | 'edit' }; port?: number; renew?: boolean }; result: ShareStatus }
 
   // ── settings ──
   'usage.summary': { params: { /** Only calls made for this book. */ root?: string; range?: 'today' | '7d' | '30d' | 'all' }; result: { summary: UsageSummary; prices: Record<string, PriceEntry>; /** When counting began: the first call on record. */ begun?: string } }

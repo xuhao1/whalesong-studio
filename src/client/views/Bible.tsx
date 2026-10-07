@@ -104,48 +104,156 @@ function useAssist(): { running: boolean; stream: string; start: (run: (onText: 
 
 // ───────────────────────────── characters ─────────────────────────────
 
+/** How the people list looks: with everyone's portrait, or names only. */
+type PeopleMode = 'photos' | 'minimal'
+const PEOPLE_KEY = 'novel-studio:people'
+
+function storedMode(): PeopleMode | undefined {
+  try {
+    const raw = localStorage.getItem(PEOPLE_KEY)
+    return raw === 'photos' || raw === 'minimal' ? raw : undefined
+  } catch {
+    return undefined
+  }
+}
+
+const GROUPS: { key: 'lead' | 'supporting' | 'minor'; roles: CharacterRole[]; label: [string, string] }[] = [
+  { key: 'lead', roles: ['protagonist', 'deuteragonist', 'antagonist'], label: ['主要人物', 'Leads'] },
+  { key: 'supporting', roles: ['supporting'], label: ['配角', 'Supporting'] },
+  { key: 'minor', roles: ['minor', 'cameo'], label: ['小人物与龙套', 'Minor parts and walk-ons'] },
+]
+
+/**
+ * A character's face for a list: their portrait, else the front view of their
+ * design sheet, else their initial.
+ */
+export function CardPhoto({ card, className }: { card: CharacterCard; className?: string }) {
+  const mediaUrl = useMediaUrl()
+  if (card.visual?.portrait !== undefined) return <ProjectImage className={cx('nv-photo', className)} path={card.visual.portrait} alt={card.name} />
+  // A sheet shows the same person three times; its left third is the front view.
+  if (card.visual?.sheet !== undefined) return <span className={cx('nv-photo is-sheet', className)} role="img" aria-label={card.name} style={{ backgroundImage: `url("${mediaUrl(card.visual.sheet)}")` }} />
+  return <span className={cx('nv-photo is-empty', className)} aria-hidden="true">{card.name.slice(0, 1)}</span>
+}
+
 function Characters() {
   const { controller } = useStudio()
   const t = useT()
   const { project, root } = useProject()
   const order: CharacterRole[] = ['protagonist', 'deuteragonist', 'antagonist', 'supporting', 'minor', 'cameo']
-  const [selected, setSelected] = useState<string | undefined>(() => [...project.characters].sort((left, right) => order.indexOf(left.role) - order.indexOf(right.role))[0]?.id)
+  const entity = useSnapshot(snapshot => snapshot.entity)
+  const [selected, setSelected] = useState<string | undefined>(() => (entity?.kind === 'character' ? entity.id : undefined) ?? [...project.characters].sort((left, right) => order.indexOf(left.role) - order.indexOf(right.role))[0]?.id)
+  // A link from elsewhere (the ensemble, a tool row) names the card to open.
+  useEffect(() => { if (entity?.kind === 'character') setSelected(entity.id) }, [entity?.nonce])
   const [creating, setCreating] = useState(false)
   const [query, setQuery] = useState('')
   const [name, setName] = useState('')
+  const settings = useSnapshot(snapshot => snapshot.settings)
+  useEffect(() => { if (settings === undefined) void controller.loadSettings().catch(() => {}) }, [controller, settings])
+  const canDraw = settings?.ready?.image === true
+  const faced = project.characters.filter(card => card.visual?.portrait !== undefined || card.visual?.sheet !== undefined)
+  const faceless = project.characters.filter(card => card.visual?.portrait === undefined)
+  const [choice, setChoice] = useState<PeopleMode | undefined>(storedMode)
+  // Portraits by default wherever there is something to show or a way to draw it.
+  const mode: PeopleMode = choice ?? (faced.length > 0 || canDraw ? 'photos' : 'minimal')
+  const pick = (next: PeopleMode): void => {
+    setChoice(next)
+    try { localStorage.setItem(PEOPLE_KEY, next) } catch { /* private windows keep it for this visit only */ }
+  }
   const visible = project.characters
     .filter(card => query.trim().length === 0 || `${card.name} ${card.aliases?.join(' ') ?? ''} ${card.tagline ?? ''}`.toLowerCase().includes(query.trim().toLowerCase()))
     .sort((left, right) => order.indexOf(left.role) - order.indexOf(right.role))
   const card = project.characters.find(candidate => candidate.id === selected)
   const { busy, run } = useAction()
+  const confirm = useConfirm()
   const create = (): Promise<unknown> => run(async () => {
     const created = await controller.api.call('character.save', { root, card: { name: name.trim(), role: 'supporting', status: 'planned' } })
     setSelected(created.id)
     setCreating(false)
     setName('')
   })
+  const drawingAny = useRunningJob(job => job.kind === 'illustrate' && job.title === 'illustrate portrait')
+  const [batch, setBatch] = useState<{ done: number; total: number } | undefined>()
+  const drawAll = (): void => {
+    if (!controller.need('image')) return
+    const todo = faceless.map(item => item.id)
+    confirm.ask(t(`要为还没有定妆照的 ${todo.length} 个人物各画一张吗？每张调用一次绘图模型，一张一张画，随时可以在底部停下。`, `Draw a portrait for each of the ${todo.length} characters without one? One image-model call each, one after another; stop any time from the bar below.`), () => {
+      void controller.guard(async () => {
+        setBatch({ done: 0, total: todo.length })
+        try {
+          for (const [index, id] of todo.entries()) {
+            // Stopping one portrait stops the batch: the rejection ends the loop.
+            await controller.run('image.create', { root, kind: 'portrait', target: id })
+            setBatch({ done: index + 1, total: todo.length })
+          }
+          controller.toast('success', t('定妆照都画好了', 'All portraits are ready'))
+        } finally {
+          setBatch(undefined)
+        }
+      })
+    })
+  }
+  const [folded, setFolded] = useState<Record<string, boolean>>({})
+  const groups = GROUPS.map(group => ({ ...group, cards: visible.filter(item => group.roles.includes(item.role)) })).filter(group => group.cards.length > 0)
   return (
-    <div className="nv-split">
+    <div className={cx('nv-split', mode === 'photos' && 'has-photos')}>
       <aside className="nv-split-list">
         <div className="nv-list-tools">
           <TextInput value={query} placeholder={t('搜索人物', 'Search characters')} onChange={(event) => { setQuery(event.target.value) }} />
           <Button size="sm" icon="plus" variant="primary" onClick={() => { setCreating(true) }} title={t('新建人物', 'New character')} />
         </div>
-        <ul className="nv-list">
-          {visible.map(item => (
-            <li key={item.id}>
-              <button type="button" className={cx('nv-list-row nv-person', item.id === selected && 'is-active')} onClick={() => { setSelected(item.id) }}>
-                {item.visual?.portrait !== undefined ? <ProjectImage className="nv-avatar" path={item.visual.portrait} alt={item.name} /> : <span className="nv-avatar nv-avatar-empty">{item.name.slice(0, 1)}</span>}
-                <span className="nv-person-text">
-                  <span className="nv-list-title">{item.name}</span>
-                  <span className="nv-list-meta">{t(...ROLE_LABELS[item.role])}{item.tagline !== undefined ? ` · ${item.tagline}` : ''}</span>
-                </span>
-                <Chip tone={STATUS_TONES[item.status]}>{t(...STATUS_LABELS[item.status])}</Chip>
+        <div className="nv-people-tools">
+          <div className="nv-seg" role="group" aria-label={t('人物列表的样子', 'How the list looks')}>
+            <button type="button" className={cx(mode === 'photos' && 'is-active')} onClick={() => { pick('photos') }} title={t('每个人显示定妆照（立绘；没有立绘时用人设图的正面）', 'Show everyone\'s portrait (or the front view of their design sheet)')}><Icon name="image" size={13} /><span>{t('定妆照', 'Portraits')}</span></button>
+            <button type="button" className={cx(mode === 'minimal' && 'is-active')} onClick={() => { pick('minimal') }} title={t('只看名字和定位，不显示图片', 'Names and roles only, no pictures')}><Icon name="list" size={13} /><span>{t('极简', 'Minimal')}</span></button>
+          </div>
+          {mode === 'photos' && faceless.length > 0 ? (
+            <Button size="sm" variant="ghost" icon="sparkles" busy={batch !== undefined} disabled={drawingAny !== undefined && batch === undefined} pending={batch !== undefined ? t(`正在画定妆照 ${batch.done}/${batch.total}…`, `Drawing portraits ${batch.done}/${batch.total}…`) : undefined} onClick={drawAll} title={canDraw ? t('为还没有定妆照的人物各画一张立绘', 'Draw a portrait for every character without one') : t('还没有配置绘图模型——点一下去设置', 'No image model yet — click to set one up')}>{t(`补齐定妆照（${faceless.length}）`, `Draw the missing (${faceless.length})`)}</Button>
+          ) : null}
+        </div>
+        {groups.map((group) => {
+          // A long tail of walk-ons stays folded until someone looks for one of them.
+          const closed = folded[group.key] ?? (group.key === 'minor' && group.cards.length > 8 && query.trim().length === 0 && !group.cards.some(item => item.id === selected))
+          return (
+            <div key={group.key} className="nv-people-group">
+              <button type="button" className="nv-group-head" aria-expanded={!closed} onClick={() => { setFolded(previous => ({ ...previous, [group.key]: !closed })) }}>
+                <Icon name={closed ? 'chevronRight' : 'chevronDown'} size={12} />
+                <span>{t(...group.label)}</span>
+                <span className="nv-muted">{group.cards.length}</span>
               </button>
-            </li>
-          ))}
-        </ul>
+              {closed ? null : mode === 'photos' ? (
+                <ul className="nv-people-grid">
+                  {group.cards.map(item => (
+                    <li key={item.id}>
+                      <button type="button" className={cx('nv-photo-card', item.id === selected && 'is-active')} onClick={() => { setSelected(item.id) }} title={item.tagline}>
+                        <CardPhoto card={item} />
+                        <span className={cx('nv-dot nv-photo-status', `is-status-${item.status}`)} title={t(...STATUS_LABELS[item.status])} />
+                        <span className="nv-photo-name">{item.name}</span>
+                        <span className="nv-photo-meta">{t(...ROLE_LABELS[item.role])}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <ul className="nv-list">
+                  {group.cards.map(item => (
+                    <li key={item.id}>
+                      <button type="button" className={cx('nv-list-row nv-person', item.id === selected && 'is-active')} onClick={() => { setSelected(item.id) }}>
+                        <span className="nv-avatar nv-avatar-empty">{item.name.slice(0, 1)}</span>
+                        <span className="nv-person-text">
+                          <span className="nv-list-title">{item.name}</span>
+                          <span className="nv-list-meta">{t(...ROLE_LABELS[item.role])}{item.tagline !== undefined ? ` · ${item.tagline}` : ''}</span>
+                        </span>
+                        <Chip tone={STATUS_TONES[item.status]}>{t(...STATUS_LABELS[item.status])}</Chip>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )
+        })}
         {project.characters.length === 0 ? <p className="nv-muted nv-pad">{t('还没有人物。新建一个，或让总编/架构模型根据故事核起草。', 'No characters yet. Create one, or let the showrunner draft the cast from the premise.')}</p> : null}
+        <button type="button" className="nv-add-row" onClick={() => { controller.openCast('walkons') }}>{t('没立卡的路人、龙套在"群像 · 龙套"里管 →', 'People without a card are kept under Cast · Walk-ons →')}</button>
       </aside>
       <section className="nv-split-detail">
         {card !== undefined ? <CharacterEditor key={card.id} card={card} onDeleted={() => { setSelected(undefined) }} /> : <Empty icon="users" title={t('选择或新建一个人物', 'Select or create a character')} />}
@@ -155,6 +263,7 @@ function Characters() {
           <Field label={t('姓名', 'Name')}><TextInput autoFocus value={name} onChange={(event) => { setName(event.target.value) }} onKeyDown={(event) => { if (event.key === 'Enter' && name.trim().length > 0) create() }} /></Field>
         </Modal>
       ) : null}
+      {confirm.element}
     </div>
   )
 }
@@ -235,6 +344,7 @@ function CharacterEditor({ card, onDeleted }: { card: CharacterCard; onDeleted: 
           </div>
         </div>
         <div className="nv-row">
+          <Button variant="ghost" size="sm" icon="layers" onClick={() => { controller.openCast('presence') }} title={t('在群像里看这个人物的出场和关系', 'See this character in the ensemble: presence and relationships')}>{t('群像', 'Cast')}</Button>
           <Button variant="ghost" size="sm" icon="trash" busy={busy} onClick={() => { confirm.ask(t(`删除人物「${card.name}」？`, `Delete the character "${card.name}"?`), () => { void run(async () => { await controller.api.call('character.delete', { root, id: card.id }); onDeleted() }) }) }} />
           <Button variant="primary" busy={busy} pending={t('正在保存…', 'Saving…')} disabled={!dirty} onClick={save}>{t('保存', 'Save')}</Button>
         </div>

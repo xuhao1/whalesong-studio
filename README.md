@@ -4,6 +4,8 @@
 
 `dsh-novel-writer` turns [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) into a studio for long-form fiction. It is not a role-play front end and not a "generate a chapter" button. It is a way to carry one long story — its people, its world, its promises to the reader — across hundreds of thousands of words without losing the thread, with you deciding and models doing the labour they are each good at.
 
+<img src="./docs/images/icon.png" width="96" alt="Novel Studio's icon: DeepSeek-chan, the whale-girl maid, reading a novel" align="right" />
+
 ![Novel Studio beside the conversation: the showrunner reports, the writer's chapter is open in the editor](./docs/images/studio-session.jpg)
 
 ## The idea: a showrunner and a writer
@@ -57,6 +59,18 @@ Revisions arrive as **proposals** with a diff; you accept or reject. Every appli
 - *Motion comic* — a storyboard tied to the audio script, panels drawn with consistent characters, played with slow camera moves under the voices. How finely it is cut is yours to say: sparse, balanced, dense, or left to the director, with an optional ceiling on panels; a long stretch of narration changes picture midway.
 - *Interludes* — step into a scene as one of the characters (or direct it from outside) while the director plays everyone else: backgrounds, portraits, voices, ambience, choices — a visual novel generated on the fly. An interlude never touches the canon unless you turn it into a chapter; otherwise keep it as a side story or discard it.
 
+**Sound design.** Besides its lines an audio script says what each scene sounds like: the bed of the place, spot effects, music. These show as notes beside the text — when reading, too — and a sound model can make them audible under the voices; with Bailian audio generation as the speech model, nothing more needs setting up. The narrator no longer starts over at every paragraph: neighbouring narration is spoken in one take, and a "he said" between two spoken lines is left unspoken by default.
+
+**Reading along with the model.** While a chapter is written, or any other job runs, the model's chain of thought (or the summary of it, where the model gives only that) can be read as it thinks.
+
+**The showrunner has hands of its own, and one road.** A sentence you dictated, a name, a slip of fact: the showrunner changes it exactly with `novel_edit`, without going through the writer; what has to be *written* still goes to the writer. Every change keeps a version, digests memory again and goes on the book's record on the overview, with one-press undo for manuscript edits. A raw file tool aimed at the book's files is refused with the name of the right tool; files changed outside the Studio are noticed, recorded and digested again.
+
+**The small parts of the ensemble.** People the page names who have no card — the clerk, "that lady" — are gathered under Cast → Walk-ons: a card for those worth tracking, an alias for those who are a known character under another name, nothing for the rest. The character list shows everyone's portrait by default, or names only.
+
+**More than reading on a phone.** A book shared to a phone is read-only or changeable: changeable, its text can be edited and its interludes played there. The motion comic plays on the phone as well.
+
+**Sealed books.** A book can be sealed whole: text, bible, memory, pictures and audio are ciphertext on disk, file names included. It opens with its password or with the computer's own unlock (Touch ID or the Mac's password); while it is locked not even the showrunner sees it. A phone shows the password once.
+
 **Export** to Markdown, plain text, HTML or EPUB.
 
 ## A look around
@@ -78,7 +92,7 @@ Revisions arrive as **proposals** with a diff; you accept or reject. Every appli
 
 Writing a novel here is a conversation with the showrunner, with the book open beside it.
 
-- An **agent preset**, *小说家 Novelist*: sessions that select it get the showrunner persona, the 22 `novel_*` tools, a live project digest in the prompt, the `/novel` command and five workflow skills. Other sessions are untouched.
+- An **agent preset**, *小说家 Novelist*: sessions that select it get the showrunner persona, the 24 `novel_*` tools, a live project digest in the prompt, the `/novel` command and five workflow skills. Other sessions are untouched.
 - **The conversation is the interface.** Everything the Studio's screens can do can simply be said: "bring this epub in and continue it", "make the knock in chapter three a phone ringing", "draw a portrait of Shen Heng", "show me the outline", "set speech up with Bailian". The showrunner calls the right tool and opens the screen you need to look at.
 - **Novel Studio as a tab** in the right sidebar of a session: the book beside the conversation, opening by itself when the showrunner goes to work. What it does appears live (a chapter streams into the editor as the writer produces it), and anything you select can be handed to the conversation. For room to read and write, go **full screen** (the rightmost button of the Studio's header, or the sidebar's own switch) and come back with the same button.
 - The screens — bible, outline, write, read (and listen), cast, review, stage, settings — are where you **fine-tune and review by hand**: whatever a model did can be seen, changed and taken back there. Anything that takes a moment says so: the button that was pressed shows what it is doing, and a bar at the foot of the Studio lists everything in progress for the book, each with a way to stop it.
@@ -200,6 +214,8 @@ The package is one npm module with three entry points: a Host half (project stor
 ## License
 
 [GNU Lesser General Public License v3.0 or later](./LICENSE) (the LGPL supplements the [GNU GPL v3](./COPYING)). You may use the plugin with any Harness setup and combine it with other plugins under their own terms; changes to the plugin itself stay under the LGPL.
+
+**The icon is not under the LGPL.** It shows the fan mascot known as DeepSeek-chan, the "maid whale-girl" (女仆鲸鱼娘): the character is 溟月, an original character by 上善无形, opened to derivative works under [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/); her DeepSeek maid design is by ZipZipPipe, under the same terms. The drawings here (`icon.png`, `docs/images/icon.png`, `docs/images/icon-alt.webp`) were made for this project with GPT Image through Codex and are offered under CC BY-NC-SA 4.0 as well: keep the credit, share alike, and do not use them commercially. Anyone who distributes the plugin commercially must replace the icon.
 
 The novels you write with it are yours.
 

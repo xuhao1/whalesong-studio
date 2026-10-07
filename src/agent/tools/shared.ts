@@ -40,6 +40,35 @@ export interface ToolOutcome {
   text: string
   /** Structured result for programmatic callers (PTC mode). */
   data?: Json
+  /**
+   * How the change reads on the book's record, when the tool can say it better
+   * than the first line of its result — and, for a manuscript edit, the
+   * version that undoes it. `false` keeps the call off the record.
+   */
+  record?: { summary?: string | [zh: string, en: string]; chapter?: string; version?: string } | false
+}
+
+/** What each tool is to the author, for the book's record. */
+const RECORD_LABELS: Record<string, [string, string]> = {
+  novel_init: ['创建了这本书', 'Created the book'],
+  novel_bible: ['改了设定', 'Changed the bible'],
+  novel_outline: ['调整了大纲', 'Changed the outline'],
+  novel_derive: ['让架构模型推演', 'Had the architect derive'],
+  novel_write: ['让写手写作', 'Had the writer draft'],
+  novel_revise: ['让写手修订', 'Had the writer revise'],
+  novel_edit: ['亲手改了正文', 'Edited the text by hand'],
+  novel_memory: ['修正了记忆', 'Corrected the memory'],
+  novel_digest: ['收录了记忆', 'Digested memory'],
+  novel_review: ['做了审校', 'Reviewed'],
+  novel_import: ['导入了稿件', 'Imported a manuscript'],
+  novel_illustrate: ['画了图', 'Drew a picture'],
+  novel_audio: ['做了有声版的工作', 'Worked on the audio version'],
+  novel_comic: ['做了有声漫的工作', 'Worked on the motion comic'],
+  novel_play: ['进行了幕间', 'Ran an interlude'],
+  novel_settings: ['改了作品信息', 'Changed the book\'s details'],
+  novel_manage: ['做了一处手动调整', 'Made a hand edit'],
+  novel_share: ['改了在其他设备上阅读的开关', 'Changed reading on other devices'],
+  novel_export: ['导出了全书', 'Exported the book'],
 }
 
 export interface NovelToolSpec<S extends ParameterSchemaSpec> {
@@ -133,6 +162,27 @@ export function novelTool<const S extends ParameterSchemaSpec>(service: NovelSer
       try {
         if (named !== undefined && spec.book === 'switch') await switchTo(await service.resolveBook(named, workspace))
         const outcome = await spec.run(args as InferArgs<S>, env)
+        // Whatever changed the book goes on its record, where the author reads what the showrunner did.
+        if (used !== undefined && outcome.record !== false && MUTATING.get(spec.name)?.(args) === true) {
+          const how = (args as { action?: unknown; scope?: unknown; kind?: unknown; chapter?: unknown; target?: unknown; ref?: unknown })
+          const action = [how.action, how.scope, how.kind].find((value): value is string => typeof value === 'string')
+          // On the record in the book's own language: it is the author who reads it.
+          const zh = (await used.project.manifest().catch(() => undefined))?.language.toLowerCase().startsWith('zh') === true
+          const given = outcome.record?.summary
+          const about = [how.chapter, how.target, how.ref].find((value): value is string => typeof value === 'string' && value.trim().length > 0)
+          const label = RECORD_LABELS[spec.name]
+          const summary = given !== undefined
+            ? typeof given === 'string' ? given : given[zh ? 0 : 1]
+            : label !== undefined ? `${label[zh ? 0 : 1]}${action !== undefined ? `${zh ? '（' : ' ('}${action}${zh ? '）' : ')'}` : ''}${about !== undefined ? `${zh ? '：' : ': '}${about}` : ''}` : outcome.text.split('\n').find(line => line.trim().length > 0) ?? spec.name
+          await used.project.addActivity({
+            by: 'agent',
+            tool: spec.name,
+            ...(action !== undefined ? { action } : {}),
+            summary,
+            ...(outcome.record?.chapter !== undefined ? { chapter: outcome.record.chapter } : {}),
+            ...(outcome.record?.version !== undefined ? { version: outcome.record.version } : {}),
+          }).catch((error: unknown) => { service.log('could not put a change on the book\'s record', error) })
+        }
         // In a conversation that has been on more than one book, every result says which book it is about.
         const several = (service.sessions.peek(agent.id)?.books?.length ?? 0) > 1
         const label = used !== undefined && (book !== undefined || several) ? `[Book: "${(await used.project.manifest()).title}" — ${displayPath(workspace, used.project.root)}]\n` : ''

@@ -14,7 +14,7 @@ my-novel/
 │   └── ch001.md, ch002.md, …
 ├── assets/
 │   ├── images/          portraits, scene illustrations, panels, backgrounds
-│   └── audio/           one WAV per script line (per chapter), joined chapter tracks
+│   └── audio/           one WAV per script line and per generated sound cue (per chapter), joined chapter tracks
 ├── export/              <title>.md, .txt, .html, .epub
 └── .novel/              machine memory (see below)
 ```
@@ -161,7 +161,9 @@ Word counts, audio scripts and exports ignore image lines.
 | `proposals.json` | revision proposals and their status |
 | `suggestions.json` | bible and thread suggestions left by digest |
 | `reviews/<chapter>.json` | the latest editorial review |
-| `audio/<chapter>.json` | the audio script: lines, cues, and which clip belongs to which line. A line that was spoken more than once says so (`takes`), and one whose kept take the listening check still faults says how (`check`: `silent`, `short`, `long`, `drift`). `degraded` is set when part of the chapter could not be directed by the model and was cut by rule (how many passages, and why) |
+| `audio/<chapter>.json` | the audio script: lines, cues, and which clip belongs to which line. A line that was spoken more than once says so (`takes`), and one whose kept take the listening check still faults says how (`check`: `silent`, `short`, `long`, `drift`). `degraded` is set when part of the chapter could not be directed by the model and was cut by rule (how many passages, and why) A script shaped for speaking has `shape: 2`: narration is in whole takes, and a narration line that only says who spoke carries `tag: true` (left unspoken unless `voiced: true`, or the book reads every word; `voiced: false` silences any line). Cues have a `kind` (`bed`, `effect`, `music`), a `caption` for the reader, a `prompt` for the sound model and, once generated, the clip (`audio`, `duration`, `renderKey`) |
+| `activity.json` | the book's record: what changed it that the author did not do by hand on the panel — the showrunner's tool calls (`by: agent`), edits from another device (`device`), files changed outside the Studio (`outside`) — newest first, 300 kept. A manuscript edit carries the `version` that undoes it |
+| `walkons.json` | names of people without a card that the author took off the walk-on list |
 | `voices.json` | the book's voice sheet: for one speech provider and model, which voice each character was cast with (`characters`), which voice each speaker without a card got (`extras`), and the usual pitch of each voice (`prints`), which is what a take is compared with |
 | `comic/<chapter>.json` | the storyboard: its panels, each with the lines it covers and — when it starts or ends inside a long line — `begin` and `end` as fractions of that line; the `density` and `maxPanels` it was cut with; and a `note` when the cut came out other than asked |
 | `play/<id>.json` | interludes with every turn |
@@ -169,6 +171,26 @@ Word counts, audio scripts and exports ignore image lines.
 | `index/` | the search index and embedding cache — rebuildable, safe to delete |
 
 `.novel/` is safe to commit except `index/`, which is better ignored. Deleting `.novel/memory` loses nothing that cannot be recomputed with a digest; deleting `versions/` loses your undo history.
+
+## A sealed book
+
+A sealed book keeps the same folders, but every file in them is encrypted (AES-256-GCM) and so is its name:
+
+```
+my-novel/
+├── novel.json                       the one readable file: id, shelf name, wrapped keys
+├── <52+ letters and digits>.nvs     the manifest, the outline
+├── manuscript/<…>.nvs
+├── bible/characters/<…>.nvs
+├── assets/audio/ch001/<…>.nvs
+└── .novel/memory/<…>.nvs
+```
+
+- A sealed file is `NVS1` · a 12-byte nonce · a 16-byte tag · the ciphertext. Its content is bound to its place in the book (the path is authenticated with it), so a file moved to where another belongs does not open.
+- A sealed name is the base32 of nonce · tag · ciphertext of the real name, with a nonce derived from the name and its folder, so the same name always seals to the same file name. Folder names are not sealed.
+- `novel.json` of a sealed book is `{ schema, id, title, sealed: { v, slots, pending? } }`. `title` is the name the shelf shows while the book is locked. Each slot wraps the book's 32-byte key once: `password` (with its scrypt `salt` and cost `n`), `device` (unwrapped by a secret in one computer's credential store; `id` names the computer), `grant` (unwrapped by the secret in a device's cookie). `pending` is set while files are being sealed or unsealed, and has the work finished at the next unlock.
+
+Nothing in a sealed book can be edited by hand, and the watch that follows hand edits has nothing to follow. To work on the files directly, unseal the book first.
 
 ## Outside the book
 

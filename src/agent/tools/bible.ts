@@ -69,7 +69,11 @@ export function bibleTools(service: NovelService): ToolDefinition[] {
               fields.visual = { ...visual, looks: upsertLooks(target?.visual?.looks ?? [], (visual as { looks: unknown }).looks) }
             }
             const card = await project.saveCharacter({ ...(fields as Partial<CharacterCard>), ...(existing !== undefined ? { id: existing.id } : {}) })
-            return { text: `${existing !== undefined ? 'Updated' : 'Created'} character "${card.name}" (${card.id}).\n\n${renderCharacter(card, lang)}`, data: toJson(card) }
+            // A card changed after its character is on the page can contradict the page: say how much page there is.
+            const canon = ['name', 'aliases', 'gender', 'age', 'appearance', 'personality', 'background', 'abilities', 'relationships', 'status', 'voice', 'persona'].filter(key => fields[key] !== undefined)
+            const seen = existing !== undefined && canon.length > 0 ? (await project.presence()).find(entry => entry.character === card.id)?.chapters ?? [] : []
+            const impact = seen.length > 0 ? `\n\nOn the page already: ${card.name} appears in ${seen.length} written chapter(s) (${seen.slice(0, 8).join(', ')}${seen.length > 8 ? ', …' : ''}), and you changed ${canon.join(', ')}. The text may now disagree with the card — search it (novel_search), tell the author what you find, and fix it by novel_edit (a word, a fact) or novel_revise (a scene).` : ''
+            return { text: `${existing !== undefined ? 'Updated' : 'Created'} character "${card.name}" (${card.id}).${impact}\n\n${renderCharacter(card, lang)}`, data: toJson(card) }
           }
           if (args.kind === 'world') {
             const existing = args.ref !== undefined ? await project.findWorld(args.ref) : undefined

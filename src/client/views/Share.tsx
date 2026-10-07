@@ -7,7 +7,8 @@
 import { useMemo, useState } from 'react'
 import { qrPath } from '../../shared/qr'
 import type { ShareStatus } from '../../shared/rpc'
-import { Button, Chip, Field, Modal, Spinner, TextInput, useLoad, useProject, useStudio, useT } from '../ui'
+import { Icon } from '../icons'
+import { Button, Chip, Field, Modal, Spinner, TextInput, useLoad, useProject, useSnapshot, useStudio, useT } from '../ui'
 
 function Code({ text }: { text: string }) {
   const drawn = useMemo(() => {
@@ -35,8 +36,10 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
   const [picked, setPicked] = useState(0)
   const [port, setPort] = useState<string | undefined>()
   const status: ShareStatus | undefined = loaded.data
-  const shared = status?.books.some(book => book.root === root) === true
+  const mine = status?.books.find(book => book.root === root)
+  const shared = mine !== undefined
   const on = status !== undefined && status.enabled && shared
+  const mode = mine?.mode ?? 'read'
   const update = (params: Parameters<typeof controller.api.call<'share.update'>>[1]): Promise<unknown> => controller.guard(async () => {
     loaded.set(await controller.api.call('share.update', params))
   })
@@ -49,16 +52,29 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
     controller.toast('success', t('链接已复制', 'Link copied'))
   })
   const others = status?.books.filter(book => book.root !== root) ?? []
+  const sealedHere = useSnapshot(snapshot => snapshot.workspaces.flatMap(workspace => workspace.projects).find(ref => ref.root === root)?.sealed) === true
   const wanted = port !== undefined ? Number(port) : undefined
   return (
     <Modal title={t('在手机上读', 'Read on another device')} onClose={onClose} wide>
       {status === undefined ? <div className="nv-center">{loaded.error !== undefined ? <p className="nv-muted">{t('这个版本的工坊服务还不支持手机阅读——重启一次 Harness 就有了。', 'This Studio service does not offer reading on other devices yet — restart the Harness once.')}</p> : <Spinner />}</div> : (
         <div className="nv-share">
           <p>
-            {t(`打开之后，和这台电脑连着同一个 Wi-Fi 的手机、平板，用浏览器打开下面的地址，就能读《${project.manifest.title}》，有配音的章节也能听。`, `Once on, a phone or tablet on the same Wi-Fi as this computer can open the address below in its browser and read "${project.manifest.title}" — and listen to the chapters that have a voice.`)}
+            {t(`打开之后，和这台电脑连着同一个 Wi-Fi 的手机、平板，用浏览器打开下面的地址，就能读《${project.manifest.title}》，有配音的章节能听，画好的有声漫也能看。`, `Once on, a phone or tablet on the same Wi-Fi as this computer can open the address below in its browser and read "${project.manifest.title}" — listen to the chapters that have a voice, and watch the motion comics that are drawn.`)}
           </p>
+          {on ? (
+            <div className="nv-share-mode">
+              <span className="nv-muted nv-small">{t('在那边可以', 'From there one can')}</span>
+              <div className="nv-seg" role="group">
+                <button type="button" className={mode === 'read' ? 'is-active' : undefined} onClick={() => { void update({ book: { root, shared: true, mode: 'read' } }) }}><Icon name="eye" size={13} /><span>{t('仅阅读', 'Read only')}</span></button>
+                <button type="button" className={mode === 'edit' ? 'is-active' : undefined} onClick={() => { void update({ book: { root, shared: true, mode: 'edit' } }) }}><Icon name="pen" size={13} /><span>{t('可编辑', 'Read and change')}</span></button>
+              </div>
+            </div>
+          ) : null}
           <ul className="nv-share-facts">
-            <li>{t('只读：那边不能改任何东西，也碰不到模型、密钥和没分享的书。', 'Read-only: nothing can be changed from there, and models, keys and books you have not shared are out of reach.')}</li>
+            {mode === 'edit' && on
+              ? <li>{t('可编辑：那边可以改这本书的正文（每次保存前这边都会留一个版本，并记进"改动记录"），也可以玩幕间——每一回合会调用这台电脑上配置的模型，花的是你的用量。设置、密钥和没分享的书仍然碰不到。', 'Read and change: the text of this book can be edited from there (a version is kept here before each save, and the change goes on the record), and its interludes played — every turn calls the models set up on this computer, on your usage. Settings, keys and books you have not shared stay out of reach.')}</li>
+              : <li>{t('仅阅读：那边不能改任何东西，也碰不到模型、密钥和没分享的书。想在手机上改稿、玩幕间，开启后选"可编辑"。', 'Read only: nothing can be changed from there, and models, keys and books you have not shared are out of reach. To edit or play interludes on the phone, choose "Read and change" once it is on.')}</li>}
+            {mine?.sealed === true || sealedHere ? <li>{t('这本书加了密：每台设备第一次打开要输入它的密码，之后那台设备会被记住（在"加密与上锁"里可以逐台收回）。注意手机和电脑之间走的是局域网里的普通连接，密码和内容在这一段不加密——只在信得过的网络里开。', 'This book is sealed: every device is asked for its password the first time, and remembered afterwards (each can be withdrawn under "Seal and lock"). Mind that the link between phone and computer is an ordinary one inside the local network: the password and the content are not encrypted on that stretch — switch this on only on a network you trust.')}</li> : null}
             <li>{t('地址里带一段随机口令，拿到这个地址的人都能读——别发到不相干的地方。想让旧链接失效，点"换一个地址"。', 'The address carries a random token: whoever has it can read. To make links you gave out stop working, choose "New address".')}</li>
             <li>{t('电脑要开着、Harness 要开着才读得到；第一次打开时系统可能会问是否允许接入网络连接，选允许。', 'The computer and the Harness must be running; the first time, the system may ask whether to allow incoming connections — allow it.')}</li>
           </ul>

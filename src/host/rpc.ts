@@ -5,8 +5,10 @@ import type { NovelCore, ProjectRuntime, TaskContext } from '../core/core'
 import type { JobContext } from '../core/jobs'
 import { stockVoices } from '../core/media/voices'
 import {
-  audition, buildAudioScript, designCharacterVoice, exportChapterAudio, previewVoices, synthesizeChapter, updateAudioLine,
+  audition, buildAudioScript, designCharacterVoice, exportChapterAudio, playable, previewVoices, reshapeAudioScript, soundPlan, synthesizeChapter, updateAudioLine,
 } from '../core/pipelines/audio'
+import { addCue, renderSound, updateCue } from '../core/pipelines/sound'
+import { soundSetup } from '../core/media/sound'
 import { acceptSuggestion, dismissSuggestion, expandCharacter, expandWorld, extractStyle, styleSample } from '../core/pipelines/bible'
 import { buildStoryboard, renderPanels, updateComicPanel } from '../core/pipelines/comic'
 import { digestPending } from '../core/pipelines/digest'
@@ -22,6 +24,8 @@ import { resolveIssue, reviewChapter } from '../core/pipelines/review'
 import { acceptProposal, rejectProposal, reviseBook, reviseChapter, reviseSpan } from '../core/pipelines/revise'
 import { writeChapter } from '../core/pipelines/write'
 import { ProjectError } from '../core/project'
+import { listWalkOns, settleWalkOn } from '../core/walkons'
+import { checkPassword, readStub, VaultError } from '../core/util/vault'
 import type { DeepPartial } from '../core/settings'
 import { rangeStart, summarize, type UsageRange } from '../core/usage'
 import { sleep } from '../core/util/async'
@@ -134,6 +138,54 @@ export function createHandlers(service: NovelService): Handlers {
     'project.state': async ({ root }) => await (await open(root)).project.state(),
     'project.update': async ({ root, patch }) => await (await open(root)).project.updateManifest(patch),
     'project.delete': async ({ root }) => await service.deleteBook(requireString(root, 'root')),
+    // ── sealed books ──
+    'lock.get': async ({ root }) => await service.lockView(requireString(root, 'root')),
+    'lock.seal': async ({ root, password, label, device }) => {
+      const runtime = await open(root)
+      const secret = requireString(password, 'password')
+      try {
+        checkPassword(secret)
+      } catch (error) {
+        throw new ProjectError('novel/invalid', error instanceof Error ? error.message : String(error))
+      }
+      return job(runtime, 'seal', 'seal', undefined, async (task) => {
+        const sealed = await core.sealBook(runtime.project.root, { password: secret, ...(label !== undefined && label.trim().length > 0 ? { label } : {}) }, (done) => { task.job?.progress(done, 0) })
+        // This computer's own unlock is added once the book is under its seal; failing here leaves a book that opens with its password.
+        let deviceOn = false
+        if (device === true) deviceOn = await service.setDeviceUnlock(runtime.project.root, true).then(() => true, (error: unknown) => { service.log('this computer\'s unlock could not be set up for a sealed book', error); return false })
+        return { files: sealed.files, deviceOn }
+      })
+    },
+    'lock.unseal': async ({ root }) => {
+      const runtime = await open(root)
+      return job(runtime, 'seal', 'unseal', undefined, async (task) => {
+        const stub = await readStub(runtime.project.root)
+        const result = await core.unsealBook(runtime.project.root, (done) => { task.job?.progress(done, 0) })
+        // A plain book needs no keeper: what this computer held for it goes.
+        if (result.left === 0 && stub !== undefined) await service.device?.remove(stub.id).catch(() => {})
+        return result
+      })
+    },
+    'lock.open': async ({ root, password, device }, signal) => {
+      await service.unlockBook(requireString(root, 'root'), { ...(password !== undefined ? { password } : {}), ...(device !== undefined ? { device } : {}) }, signal)
+      return await service.lockView(root)
+    },
+    'lock.close': async ({ root }) => {
+      await core.lockBook(requireString(root, 'root'))
+      return await service.lockView(root)
+    },
+    'lock.change': async ({ root, password, label, device, forget }) => {
+      try {
+        if (password !== undefined && password.length > 0) await core.rekeyBook(root, { password })
+        if (label !== undefined && label.trim().length > 0) await core.rekeyBook(root, { label })
+        if (device !== undefined) await service.setDeviceUnlock(root, device)
+        if (forget !== undefined) await core.rekeyBook(root, { remove: forget })
+      } catch (error) {
+        if (error instanceof VaultError) throw new ProjectError('novel/invalid', error.message)
+        throw error
+      }
+      return await service.lockView(root)
+    },
     'session.bind': async ({ sessionId, project, mode }) => await service.bind(requireString(sessionId, 'sessionId'), {
       ...(project !== undefined ? { project } : {}),
       ...(mode !== undefined ? { mode } : {}),
@@ -200,6 +252,12 @@ export function createHandlers(service: NovelService): Handlers {
     'style.sample': async ({ root, style, draft, scene }) => {
       const runtime = await open(root)
       return job(runtime, 'bible', 'style sample', undefined, async task => ({ text: await styleSample(core, runtime, { ...(style !== undefined ? { style } : {}), ...(draft !== undefined ? { draft } : {}), ...(scene !== undefined ? { scene } : {}) }, task) }))
+    },
+    'cast.walkons': async ({ root, ignored }) => ({ walkons: await listWalkOns((await open(root)).project, { ignored: ignored === true }) }),
+    'cast.settle': async ({ root, name, action, target, role }) => {
+      const { project } = await open(root)
+      const settled = await settleWalkOn(project, { name: requireString(name, 'name'), action, ...(target !== undefined ? { target } : {}), ...(role !== undefined ? { role } : {}) })
+      return { walkons: await listWalkOns(project, { ignored: true }), lines: settled.lines, ...(settled.card !== undefined ? { card: settled.card } : {}) }
     },
     'suggestion.accept': async ({ root, id }) => {
       await acceptSuggestion(await open(root), id)
@@ -379,15 +437,17 @@ export function createHandlers(service: NovelService): Handlers {
 
     // ── jobs ──
     'jobs.list': async ({ root }) => ({ jobs: core.jobs.list(root) }),
-    'jobs.read': async ({ id, cursor, waitMs }, signal) => {
+    'jobs.read': async ({ id, cursor, thoughtCursor, waitMs }, signal) => {
       const read = (): RpcResult<'jobs.read'> => {
-        const state = core.jobs.read(id, cursor ?? 0)
+        const state = core.jobs.read(id, cursor ?? 0, thoughtCursor)
         if (state === undefined) throw new ProjectError('novel/not-found', `no job "${id}"`)
         return state
       }
+      // Something new for this reader: more text, more thought (when it follows the thought), or the end.
+      const fresh = (state: RpcResult<'jobs.read'>): boolean => state.text.length > 0 || (state.thought?.length ?? 0) > 0 || state.info.status !== 'running'
       let state = read()
-      // Long-poll: hold the request until there is more text or the job settles.
-      if (waitMs !== undefined && waitMs > 0 && state.text.length === 0 && state.info.status === 'running') {
+      // Long-poll: hold the request until there is more to read or the job settles.
+      if (waitMs !== undefined && waitMs > 0 && !fresh(state)) {
         await new Promise<void>((resolve) => {
           const done = (): void => {
             off()
@@ -396,8 +456,8 @@ export function createHandlers(service: NovelService): Handlers {
             resolve()
           }
           const off = core.jobs.onChange(() => {
-            const next = core.jobs.read(id, cursor ?? 0)
-            if (next === undefined || next.text.length > 0 || next.info.status !== 'running') done()
+            const next = core.jobs.read(id, cursor ?? 0, thoughtCursor)
+            if (next === undefined || fresh(next)) done()
           })
           const timer = setTimeout(done, Math.min(20_000, waitMs))
           signal.addEventListener('abort', done, { once: true })
@@ -426,9 +486,17 @@ export function createHandlers(service: NovelService): Handlers {
       if (located === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${chapter}"`)
       const script = await project.audioScript(located.plan.id)
       const stale = script !== undefined && script.textHash !== hashText(proseOnly(await project.chapterText(located.plan.id)))
+      const settings = await core.settings.get()
       // Who sounds like whom in this chapter: what was cast, and what will be for those who have not spoken yet.
-      const cast = script !== undefined ? await previewVoices(project, (await core.settings.get()).tts, script.lines).catch(() => undefined) : undefined
-      return { ...(script !== undefined ? { script } : {}), stale, ...(cast !== undefined ? { cast } : {}) }
+      const cast = script !== undefined ? await previewVoices(project, settings.tts, script.lines).catch(() => undefined) : undefined
+      const sound = soundSetup(settings)
+      return {
+        // Handed over as it will play: lines left unspoken say so.
+        ...(script !== undefined ? { script: playable(script, settings.tts) } : {}),
+        stale,
+        ...(cast !== undefined ? { cast } : {}),
+        ...(sound !== undefined ? { sound: { model: sound.model, shared: sound.shared, beds: soundPlan(settings).beds } } : {}),
+      }
     },
     'audio.build': async ({ root, chapter, force }) => {
       const runtime = await open(root)
@@ -441,8 +509,18 @@ export function createHandlers(service: NovelService): Handlers {
       const runtime = await open(root)
       return job(runtime, 'audio', 'synthesize', chapter, async task => await synthesizeChapter(core, runtime, { chapter, ...(lines !== undefined ? { lines } : {}), ...(force !== undefined ? { force } : {}) }, task))
     },
-    'audio.updateLine': async ({ root, chapter, line, patch }) => await updateAudioLine(await open(root), chapter, line, patch),
-    'audio.export': async ({ root, chapter }) => await exportChapterAudio(await open(root), chapter),
+    'audio.updateLine': async ({ root, chapter, line, patch }) => playable(await updateAudioLine(await open(root), chapter, line, patch), (await core.settings.get()).tts),
+    'audio.reshape': async ({ root, chapter }) => {
+      const result = await reshapeAudioScript(await open(root), chapter)
+      return { ...result, script: playable(result.script, (await core.settings.get()).tts) }
+    },
+    'audio.sound': async ({ root, chapter, cues, kinds, force }) => {
+      const runtime = await open(root)
+      return job(runtime, 'audio', 'sound', chapter, async task => await renderSound(core, runtime, { chapter, ...(cues !== undefined ? { cues } : {}), ...(kinds !== undefined ? { kinds } : {}), ...(force !== undefined ? { force } : {}) }, task))
+    },
+    'audio.updateCue': async ({ root, chapter, cue, patch, remove, dropClip }) => playable(await updateCue(await open(root), { chapter, cue, ...(patch !== undefined ? { patch } : {}), ...(remove !== undefined ? { remove } : {}), ...(dropClip !== undefined ? { dropClip } : {}) }), (await core.settings.get()).tts),
+    'audio.addCue': async ({ root, chapter, at, kind, caption, prompt, ambience, intensity }) => playable((await addCue(await open(root), { chapter, at, kind, ...(caption !== undefined ? { caption } : {}), ...(prompt !== undefined ? { prompt } : {}), ...(ambience !== undefined ? { ambience } : {}), ...(intensity !== undefined ? { intensity } : {}) })).script, (await core.settings.get()).tts),
+    'audio.export': async ({ root, chapter }) => await exportChapterAudio(await open(root), chapter, (await core.settings.get()).tts),
     'voice.audition': async ({ root, voice, character, text, direction }) => {
       const runtime = await open(root)
       const sample = requireString(text, 'text')
@@ -529,7 +607,7 @@ export function createHandlers(service: NovelService): Handlers {
     'share.status': async () => await service.share.status(),
     'share.update': async ({ enabled, book, port, renew }) => await service.updateShare({
       ...(typeof enabled === 'boolean' ? { enabled } : {}),
-      ...(book !== undefined && typeof book.root === 'string' ? { book: { root: book.root, shared: book.shared === true } } : {}),
+      ...(book !== undefined && typeof book.root === 'string' ? { book: { root: book.root, shared: book.shared === true, ...(book.mode === 'edit' || book.mode === 'read' ? { mode: book.mode } : {}) } } : {}),
       ...(typeof port === 'number' ? { port } : {}),
       ...(renew === true ? { renew: true } : {}),
     }),

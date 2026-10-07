@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * Plays an audio script line by line: the synthesized voice of each line in
- * order, the ambience cue in force underneath. Lines without audio are held
+ * order, and under it the sound the script's cues call for — the bed of the
+ * scene, music, an effect where a line begins. Lines without audio are held
  * for their reading time, so a script (and a motion comic) can be previewed
- * before any speech is synthesized.
+ * before any speech is synthesized; lines left unspoken are passed over.
  */
 import { useEffect, useMemo, useSyncExternalStore } from 'react'
 import type { AmbiencePreset, AudioCue, AudioLine } from '../../shared/types'
@@ -14,6 +15,8 @@ export interface PlayerState {
   /** Index of the line being played; -1 when idle. */
   index: number
   ambience: AmbiencePreset
+  /** Ids of the sound cues in force at the line being played: the bed and the music under it, the effects on it. */
+  sounding?: string[]
 }
 
 export interface PlayerOptions {
@@ -76,22 +79,28 @@ export class LinePlayer {
       const index = current !== undefined ? lines.findIndex(line => line.id === current) : -1
       if (index < 0) this.stop()
       else if (index !== this.state.index) this.set({ index })
+      // A clip that was generated while the scene plays comes in under it.
+      if (index >= 0 && this.state.status === 'playing') this.set({ sounding: this.sound(index, false) })
     }
   }
 
   configure(options: Partial<PlayerOptions>): void {
+    const was = this.options.ambienceOn
     this.options = { ...this.options, ...options }
     this.audio.playbackRate = this.options.rate
     this.audio.volume = this.options.voiceVolume
     this.ambience.setVolume(this.options.ambienceOn ? this.options.ambienceVolume : 0)
+    // Switched on in the middle of a line: the scene's sound comes in at once, without replaying its effects.
+    if (was !== this.options.ambienceOn && this.state.status === 'playing' && this.state.index >= 0) this.sound(this.state.index, false)
   }
 
-  /** The cue in force at a line: the latest one at or before it. */
-  private cueAt(index: number): AudioCue | undefined {
+  /** The cue of a kind in force at a line: the latest one at or before it. */
+  private cueAt(index: number, kind: 'bed' | 'music' = 'bed'): AudioCue | undefined {
     const position = new Map(this.lines.map((line, at) => [line.id, at]))
     let best: AudioCue | undefined
     let bestAt = -1
     for (const cue of this.cues) {
+      if ((cue.kind ?? 'bed') !== kind) continue
       const at = position.get(cue.at)
       if (at !== undefined && at <= index && at >= bestAt) {
         best = cue
@@ -101,10 +110,43 @@ export class LinePlayer {
     return best
   }
 
+  /** The nearest line that is spoken, from `index` on in a direction; -1 when there is none. */
+  private spoken(index: number, direction: 1 | -1 = 1): number {
+    let at = index
+    while (at >= 0 && at < this.lines.length && this.lines[at]!.skip === true) at += direction
+    return at >= 0 && at < this.lines.length ? at : -1
+  }
+
   play(index = 0): void {
     if (this.lines.length === 0) return
     this.clearTimer()
-    this.start(Math.max(0, Math.min(this.lines.length - 1, index)))
+    const from = Math.max(0, Math.min(this.lines.length - 1, index))
+    const at = this.spoken(from)
+    this.start(at >= 0 ? at : this.spoken(from, -1))
+  }
+
+  /** Put under the line the sound its cues call for. */
+  private sound(index: number, entering: boolean): string[] {
+    const line = this.lines[index]!
+    const bed = this.cueAt(index, 'bed')
+    const music = this.cueAt(index, 'music')
+    const effects = this.cues.filter(cue => cue.kind === 'effect' && cue.at === line.id)
+    this.ambience.suspend(false)
+    if (!this.options.ambienceOn) {
+      this.ambience.stop()
+    } else {
+      // A generated bed plays when there is one; until then, and without a sound model, the synthesized one does.
+      if (bed?.audio !== undefined) {
+        this.ambience.set('none')
+        this.ambience.loop('bed', this.url(bed.audio, bed.renderKey), 0.6 + (bed.intensity ?? 0.6) * 0.7)
+      } else {
+        this.ambience.loop('bed', undefined)
+        this.ambience.set(bed?.ambience ?? 'none', bed?.intensity ?? 0.6)
+      }
+      this.ambience.loop('music', music?.audio !== undefined && music.ambience === 'none' ? this.url(music.audio, music.renderKey) : undefined)
+      if (entering) for (const effect of effects) if (effect.audio !== undefined) this.ambience.shot(this.url(effect.audio, effect.renderKey))
+    }
+    return [bed, music, ...effects].flatMap(cue => (cue?.id !== undefined ? [cue.id] : []))
   }
 
   private start(index: number): void {
@@ -113,11 +155,8 @@ export class LinePlayer {
       this.stop()
       return
     }
-    const cue = this.cueAt(index)
-    const preset = cue?.ambience ?? 'none'
-    this.ambience.suspend(false)
-    this.ambience.set(this.options.ambienceOn ? preset : 'none', cue?.intensity ?? 0.6)
-    this.set({ status: 'playing', index, ambience: preset })
+    const sounding = this.sound(index, true)
+    this.set({ status: 'playing', index, ambience: this.cueAt(index)?.ambience ?? 'none', sounding })
     if (line.audio !== undefined) {
       this.holding = false
       this.audio.src = this.url(line.audio, line.renderKey)
@@ -150,8 +189,8 @@ export class LinePlayer {
   private readonly advance = (): void => {
     if (this.state.status !== 'playing') return
     this.clearTimer()
-    const next = this.state.index + 1
-    if (next >= this.lines.length) {
+    const next = this.spoken(this.state.index + 1)
+    if (next < 0) {
       this.stop()
       this.onEnd?.()
       return
@@ -202,10 +241,11 @@ export class LinePlayer {
   }
 
   step(delta: number): void {
-    const index = this.state.index < 0 ? 0 : this.state.index + delta
-    if (index < 0 || index >= this.lines.length) return
+    const index = this.spoken(this.state.index < 0 ? 0 : this.state.index + delta, delta < 0 ? -1 : 1)
+    if (index < 0) return
     this.audio.pause()
-    this.play(index)
+    this.clearTimer()
+    this.start(index)
   }
 
   stop(): void {
@@ -214,7 +254,7 @@ export class LinePlayer {
     this.audio.pause()
     this.ambience.suspend(false)
     this.ambience.stop()
-    this.set({ status: 'idle', index: -1, ambience: 'none' })
+    this.set({ status: 'idle', index: -1, ambience: 'none', sounding: [] })
   }
 
   dispose(): void {

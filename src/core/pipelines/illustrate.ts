@@ -20,7 +20,6 @@
  *
  * Every picture records what its prompt was assembled from.
  */
-import { readFile } from 'node:fs/promises'
 import { mergeAvoid, resolveArtStyle, splitAvoid, type ArtSource } from '../../shared/art'
 import type { CharacterCard, CharacterLook, IllustrationInfo, IllustrationParts, WorldEntry } from '../../shared/types'
 import { clip, fuzzyFind, hashText, newId, sameName, slugify } from '../../shared/text'
@@ -215,7 +214,7 @@ export async function renderImage(core: NovelCore, runtime: ProjectRuntime, inpu
   for (const reference of input.references ?? []) {
     if (references.length >= MAX_REFERENCES || references.some(known => known.path === reference.path)) continue
     try {
-      const data = await readFile(project.path(reference.path))
+      const data = await project.readFile(reference.path)
       references.push({ ...reference, image: { data, mime: /\.jpe?g$/i.test(reference.path) ? 'image/jpeg' : /\.webp$/i.test(reference.path) ? 'image/webp' : 'image/png', label: reference.label } })
     } catch {
       // A reference whose file is gone is simply not sent.

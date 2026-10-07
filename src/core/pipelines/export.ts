@@ -4,7 +4,6 @@
  * a self-contained HTML book, or an EPUB. Files land in `export/` inside the
  * project.
  */
-import { readFile } from 'node:fs/promises'
 import { extname } from 'node:path'
 import type { ProjectManifest } from '../../shared/types'
 import { embeddedImages, proseOnly } from '../../shared/text'
@@ -134,7 +133,7 @@ export async function exportBook(runtime: ProjectRuntime, params: { format?: Exp
   } else if (format === 'html') {
     const inline = async (path: string): Promise<string | undefined> => {
       try {
-        const bytes = await readFile(project.path(path))
+        const bytes = await project.readFile(path)
         return `data:${MIME[extname(path).toLowerCase()] ?? 'image/png'};base64,${bytes.toString('base64')}`
       } catch {
         return undefined
@@ -153,9 +152,9 @@ export async function exportBook(runtime: ProjectRuntime, params: { format?: Exp
     data = await buildEpub(project, manifest, compiled, zh)
     extension = 'epub'
   }
-  const path = project.path('export', `${safeTitle}.${extension}`)
-  await writeAtomic(path, data)
-  return { format, path: project.relative(path), chapters: compiled.length, bytes: data.byteLength }
+  // Kept with the book — and sealed with it when the book is: the author takes the file out by downloading it.
+  const path = await project.writeFile(`export/${safeTitle}.${extension}`, data)
+  return { format, path, chapters: compiled.length, bytes: data.byteLength }
 }
 
 // ───────────────────────────── EPUB ─────────────────────────────
@@ -172,7 +171,7 @@ async function buildEpub(project: Project, manifest: ProjectManifest, compiled: 
     const known = images.get(path)
     if (known !== undefined) return `images/${known.name}`
     try {
-      const bytes = await readFile(project.path(path))
+      const bytes = await project.readFile(path)
       const extension = extname(path).toLowerCase()
       const name = `img${images.size + 1}${extension || '.png'}`
       images.set(path, { name, mime: MIME[extension] ?? 'image/png' })

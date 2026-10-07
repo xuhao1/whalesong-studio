@@ -7,7 +7,7 @@
 import type { ChapterInfo } from '../../shared/types'
 import { clipTail, countWords, normalizeProse } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
-import type { LlmResponse } from '../llm'
+import { LlmCallError, type LlmResponse } from '../llm'
 import type { LocatedChapter } from '../project'
 import { ProjectError } from '../project'
 import { writerSystem, writerTask } from '../prompts'
@@ -143,6 +143,11 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
         },
       })
     } catch (error) {
+      // A continuation that comes back with nothing leaves the chapter as far as it got; the rounds before it are not thrown away.
+      if (soFar.length > 0 && error instanceof LlmCallError && (error.code === 'EMPTY_RESPONSE' || error.code === 'TRUNCATED')) {
+        core.log(`continuing ${chapter.plan.id} got no further`, error)
+        break
+      }
       // Stopped mid-chapter: what was written is kept when it replaces nothing (an empty chapter, or a continuation).
       const kept = [soFar, cleanProse(partial, chapter.plan.title)].filter(part => part.trim().length > 0).join('\n\n')
       if (task.signal?.aborted === true && kept.length > 0 && (mode === 'continue' || existing.length === 0)) {
@@ -155,7 +160,8 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
     if (response.finish !== 'max-tokens' || countWords(written) >= target * 1.4) break
     continued = true
   }
-  if (written.trim().length === 0) throw new ProjectError('novel/empty', 'the writer model returned no prose')
+  // The model wrote something, and all of it was a heading or a fence.
+  if (written.trim().length === 0) throw new ProjectError('novel/empty', lang === 'zh' ? '写手模型的回复里没有正文（只有标题或空白）。请再试一次。' : 'the writer model\'s reply held no prose (only a heading or blank lines) — try again')
 
   const finalText = mode === 'continue' ? `${existing}\n\n${written}` : written
   task.job?.rewrite(written)

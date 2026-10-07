@@ -5,7 +5,10 @@
  * these, nothing the Studio can do needs a click — the screens stay for
  * reading, checking and fine-tuning.
  */
-import { audition, updateAudioLine } from '../../core/pipelines/audio'
+import { audition, isSkipped, updateAudioLine } from '../../core/pipelines/audio'
+import { soundSetup } from '../../core/media/sound'
+import { addCue, updateCue } from '../../core/pipelines/sound'
+import { listWalkOns, settleWalkOn } from '../../core/walkons'
 import { artDirectionOf } from '../../core/pipelines/illustrate'
 import { updateComicPanel } from '../../core/pipelines/comic'
 import { rewindPlay, setPlayOutcome } from '../../core/pipelines/play'
@@ -15,14 +18,14 @@ import type { DeepPartial } from '../../core/settings'
 import { describeRow, rangeStart, summarize, type UsageRange } from '../../core/usage'
 import type { NovelService } from '../../host/service'
 import { hostOf, SERVICES, type ServiceId, type SetupPart } from '../../shared/services'
-import type { CameraMove, ModelRoute, NovelSettings, ProjectManifest, TextRole } from '../../shared/types'
+import type { AmbiencePreset, CameraMove, ModelRoute, NovelSettings, ProjectManifest, SoundKind, TextRole } from '../../shared/types'
 import { brief, listOf, listParameter, novelTool, toJson } from './shared'
 
 const ROLES: TextRole[] = ['writer', 'analyst', 'architect', 'director']
 const VIEWS = ['home', 'bible', 'outline', 'write', 'read', 'listen', 'cast', 'review', 'stage', 'settings', 'setup', 'usage'] as const
 const STAGE_TABS = ['comic', 'play', 'gallery', 'audio'] as const
 const BOOK_FIELDS = ['title', 'author', 'language', 'genre', 'logline', 'premise', 'themes', 'targetWords', 'chapterWords', 'artStyle', 'artAvoid', 'storyboard', 'cover', 'notes', 'activeStyle'] as const
-const SECTIONS = ['models', 'context', 'embedding', 'image', 'tts', 'autoDigest', 'reviewAgentRevisions', 'prices'] as const
+const SECTIONS = ['models', 'context', 'embedding', 'image', 'tts', 'sound', 'autoDigest', 'reviewAgentRevisions', 'prices'] as const
 /** A key must never travel through the conversation; these names are refused wherever they appear. */
 const SECRET_FIELD = /^(api[-_]?key|key|secret|token|password|authorization)$/i
 
@@ -50,7 +53,7 @@ export function studioTools(service: NovelService) {
         'Read and change how Novel Studio is set up — everything its Settings screen does, except typing keys.',
         '- action=show: which model plays each role (writer, analyst, architect, director), whether embeddings, images and speech are configured and have a key, what a ChatGPT subscription can do here, and — with a book open — the art direction and avoid list its pictures get and where each comes from.',
         '- action=setup: one-click setup for `service` (bailian, openrouter, openai, or codex for images from a ChatGPT subscription). It fills `parts` (text, embedding, image, tts; default all the service offers) with recommended models, using the key already saved for that service or found in its usual environment variable. `origin` overrides the service address (a Bailian workspace domain, a proxy).',
-        '- action=studio: apply `patch` to the settings. Sections: models.{writer|analyst|architect|director} = {provider, model, baseURL?, reasoningEffort?, temperature?, maxTokens?, apiKeyRef?} (omit baseURL to use a model configured in the Harness; set a role to null to follow the chat model). The Studio sets no output limit of its own: a reply runs as long as the model allows, and maxTokens is only a cap the author may add — a model that reasons spends its reasoning out of it, so a low cap cuts chapters, scripts and storyboards off; set it to null to remove it. context {strategy: auto|retrieval|full, budgetTokens, tailChars}; embedding / image / tts {provider, baseURL, model, …; tts.retakes = how many more times a line is spoken when a take fails the listening check, 0-4}; autoDigest; reviewAgentRevisions; prices {"<model id>": {input, output, image, minute, chars10k, currency} | null}.',
+        '- action=studio: apply `patch` to the settings. Sections: models.{writer|analyst|architect|director} = {provider, model, baseURL?, reasoningEffort?, temperature?, maxTokens?, apiKeyRef?} (omit baseURL to use a model configured in the Harness; set a role to null to follow the chat model). The Studio sets no output limit of its own: a reply runs as long as the model allows, and maxTokens is only a cap the author may add — a model that reasons spends its reasoning out of it, so a low cap cuts chapters, scripts and storyboards off; set it to null to remove it. context {strategy: auto|retrieval|full, budgetTokens, tailChars}; embedding / image / tts {provider, baseURL, model, …; tts.retakes = how many more times a line is spoken when a take fails the listening check, 0-4; tts.speechTags = drop (a "he said" between two spoken lines is left unspoken, as in an audio drama) | read (every word is read, as in an audiobook)}; sound {provider: auto (follow the speech setup) | qwen-audiogen | none, model, effects, music (whether the director places them), beds: generate | browser}; autoDigest; reviewAgentRevisions; prices {"<model id>": {input, output, image, minute, chars10k, currency} | null}.',
         '- action=book: change the book\'s own information with `fields` (title, author, language, genre, logline, premise, themes[], targetWords, chapterWords, artStyle, artAvoid[], storyboard, cover, notes, activeStyle). artStyle is the art direction added to every picture of the book; artAvoid lists what no picture of it may show (objects, motifs, lettering, architectural or religious styles the setting does not have). storyboard = {density: auto|sparse|balanced|dense, maxPanels} says how finely its motion comics are cut. cover is the project-relative path of the picture shown as its cover (any illustration; the latest drawn cover when unset).',
         '- action=usage: what the Studio\'s model calls have used — tokens per role and model, pictures, minutes of speech — for the book in play and for all books, over `range` (today, 7d, 30d, all), with the cost for every model the author has priced. To price a model, action=studio with patch {prices: {"<model id>": {input, output (per million tokens), image (per picture), minute (per minute of speech), chars10k (per 10,000 characters), currency}}}. Your own turns in this conversation are counted by the Harness, not here.',
         'Keys are never passed here. When a key is missing, call novel_show view=settings and ask the author to paste it in the open screen.',
@@ -185,9 +188,9 @@ export function studioTools(service: NovelService) {
     novelTool(service, {
       name: 'novel_share',
       description: [
-        'Reading on another device: let the author read (and listen to) a book on a phone or tablet on the same network.',
-        '- action=status: whether it is on, which books are shared, and the addresses to open.',
-        '- action=on: share the book in play (or `book`) and start the reader; the author is asked to confirm. Give them the address — it carries a secret token, so whoever has it can read the shared books, and nothing else: the reader cannot write, and the Harness itself stays on this machine. Their computer may ask once whether to allow incoming connections.',
+        'A book on another device: let the author read a book on a phone or tablet on the same network — listen to its audio drama, watch its motion comic — and, when they want that, change it from there.',
+        '- action=status: whether it is on, which books are shared and how, and the addresses to open.',
+        '- action=on: share the book in play (or `book`) and start the reader; the author is asked to confirm. `mode`=read (default) lets a device read, listen and watch, and change nothing. `mode`=edit also lets it edit the chapters\' text (a version is kept before each save, and the change goes on the book\'s record) and play the book\'s interludes, which calls the models set up on this computer. Give the author the address — it carries a secret token, so whoever has it can do what the mode allows with the shared books, and nothing else: settings, keys and other books stay out of reach. A sealed book asks every device for its password once. Their computer may ask once whether to allow incoming connections.',
         '- action=off: stop sharing this book (`all`=true: switch the reader off altogether).',
         '- action=renew: replace the address, so links given out earlier stop working.',
         '`port` moves the reader to another port (default 4319) when the usual one is taken.',
@@ -195,13 +198,14 @@ export function studioTools(service: NovelService) {
       mutating: args => args.action !== 'status',
       parameters: {
         action: { type: 'string', required: true, enum: ['status', 'on', 'off', 'renew'] },
+        mode: { type: 'string', enum: ['read', 'edit'], description: 'on: what a device may do with the book. Default: read.' },
         all: { type: 'boolean', description: 'off: switch the reader off for every book.' },
         port: { type: 'integer', description: 'Port to listen on, 1024-65535.' },
       },
       async run(args, env) {
         const describe = async (status: Awaited<ReturnType<typeof service.share.status>>): Promise<string> => {
           if (!status.enabled || status.books.length === 0) return 'Reading on other devices is off.'
-          const shared = status.books.map(book => `"${book.title}"`).join(', ')
+          const shared = status.books.map(book => `"${book.title}" (${book.mode === 'edit' ? 'read and change' : 'read only'}${book.sealed === true ? ', sealed: asks each device for its password once' : ''})`).join(', ')
           if (!status.running) return `Reading on other devices is switched on for ${shared}, but the reader is not listening: ${status.error ?? 'unknown reason'}.`
           return [`Reading on other devices is on for ${shared}${status.instead !== undefined ? ` (port ${status.instead} was taken by another program, so it listens on ${status.port})` : ''}. On a phone or tablet on the same network, open:`, ...status.urls.map(url => `- ${url}`), 'The address carries a secret token: whoever has it can read these books. action=renew replaces it.'].join('\n')
         }
@@ -220,7 +224,7 @@ export function studioTools(service: NovelService) {
         const runtime = await env.project()
         const status = await service.updateShare({
           ...(args.action === 'on' ? { enabled: true } : {}),
-          book: { root: runtime.project.root, shared: args.action === 'on' },
+          book: { root: runtime.project.root, shared: args.action === 'on', ...(args.action === 'on' ? { mode: args.mode === 'edit' ? 'edit' as const : 'read' as const } : {}) },
           ...(args.port !== undefined ? { port: args.port } : {}),
         })
         return { text: await describe(status), data: toJson(status) }
@@ -234,18 +238,23 @@ export function studioTools(service: NovelService) {
         '- action=find: exact text search across the manuscript (`query`); novel_search is for meaning.',
         '- action=restore_version: put back an earlier version of `chapter` (`version` id from novel_read what=versions).',
         '- action=resolve_issue: mark review `issue` of `chapter` as dealt with (or reopen it with resolved=false).',
-        '- action=edit_line: change line `id` of the audio script of `chapter` — `fields` {text, kind: narration|dialogue|thought, speaker (character id, "" for the narrator), direction}.',
+        '- action=edit_line: change line `id` of the audio script of `chapter` — `fields` {text, kind: narration|dialogue|thought, speaker (character id, "" for the narrator), direction, voiced (false leaves the line unspoken, true has a speech tag spoken after all)}.',
+        '- action=edit_cue / add_cue / delete_cue: the sound cues of the audio script of `chapter` — `id` is the cue (edit, delete), `fields` {kind: bed|effect|music, at (line id), caption (what the reader sees), prompt (what the sound model is asked for), ambience (the browser\'s stand-in bed), intensity 0-1}. A changed cue keeps its old clip until sound is made again (novel_audio action=sound cues=[id]).',
+        '- action=walkons: the people the page names who have no character card — where each turns up, the voice the audio drama gave them, and whether they look like an existing character under another name.',
+        '- action=settle_walkon: settle one of them by `name` — `fields` {as: "card" (give them a card; role: minor|cameo), "alias" (they are character `of` under another name), "ignore" (not worth tracking), "restore"}. A new card keeps the voice they already had, and their lines in the audio scripts go to it.',
         '- action=edit_panel: change panel `id` of the storyboard of `chapter` — `fields` {prompt, description, camera}.',
         '- action=audition: speak `text` so the author can hear a voice — `voice` (a voice id or description), or `character` to hear that character as their lines will sound; neither = the narrator (`direction` optional).',
         '- action=list_images / delete_image (`id`).',
         '- action=rewind_interlude / keep_interlude (as a side story) / delete_interlude (`session`).',
+        '- action=lock_book: lock the book in play (or `book`) when it is sealed — its key is forgotten, and it cannot be read by anyone, you included, until the author unlocks it in the Studio. You cannot unlock a book, seal one or take a seal off: those are done by the author on the Studio\'s screens, where the password is typed.',
         '- action=delete_book: take the book in play (or `book`) off the shelf. Its own files — manuscript, bible, outline, pictures, audio — are moved to the system trash, where the author can put them back; anything else in its folder stays. Only when the author asked for exactly this; they are asked to confirm.',
       ].join('\n'),
-      mutating: args => args.action !== 'find' && args.action !== 'list_images',
+      mutating: args => args.action !== 'find' && args.action !== 'list_images' && args.action !== 'walkons',
       parameters: {
-        action: { type: 'string', required: true, enum: ['find', 'restore_version', 'resolve_issue', 'edit_line', 'edit_panel', 'audition', 'list_images', 'delete_image', 'rewind_interlude', 'keep_interlude', 'delete_interlude', 'delete_book'] },
+        action: { type: 'string', required: true, enum: ['find', 'restore_version', 'resolve_issue', 'edit_line', 'edit_cue', 'add_cue', 'delete_cue', 'edit_panel', 'walkons', 'settle_walkon', 'audition', 'list_images', 'delete_image', 'rewind_interlude', 'keep_interlude', 'delete_interlude', 'lock_book', 'delete_book'] },
         chapter: { type: 'string' },
-        id: { type: 'string', description: 'Line, panel or image id.' },
+        id: { type: 'string', description: 'Line, cue, panel or image id.' },
+        name: { type: 'string', description: 'settle_walkon: the name as the page writes it.' },
         version: { type: 'string' },
         issue: { type: 'string' },
         resolved: { type: 'boolean' },
@@ -303,9 +312,75 @@ export function studioTools(service: NovelService) {
               ...(kind !== undefined ? { kind: kind as 'narration' | 'dialogue' | 'thought' } : {}),
               ...(text('speaker') !== undefined ? { speaker: text('speaker')! } : {}),
               ...(text('direction') !== undefined ? { direction: text('direction')! } : {}),
+              ...(typeof fields.voiced === 'boolean' ? { voiced: fields.voiced } : fields.voiced === null ? { voiced: null } : {}),
             })
             const line = script.lines.find(entry => entry.id === args.id)
-            return { text: `Line ${args.id} is now: [${line?.speakerName ?? 'narrator'}] ${brief(line?.text, 120)}. Synthesize the chapter again to hear it.` }
+            const silent = line !== undefined && isSkipped(line, (await env.core.settings.get()).tts)
+            return { text: `Line ${args.id} is now: [${line?.speakerName ?? 'narrator'}] ${brief(line?.text, 120)}${silent ? ' — left unspoken' : ''}.${silent ? '' : ' Synthesize the chapter again to hear it.'}` }
+          }
+          case 'edit_cue':
+          case 'delete_cue': {
+            const chapter = need(args.chapter, 'chapter')
+            const cue = need(args.id, 'id')
+            if (args.action === 'delete_cue') {
+              await updateCue(runtime, { chapter, cue, remove: true })
+              return { text: `Sound cue ${cue} removed.` }
+            }
+            const sound = text('kind')
+            if (sound !== undefined && !['bed', 'effect', 'music'].includes(sound)) throw new ProjectError('novel/invalid', 'kind is bed, effect or music')
+            const script = await updateCue(runtime, { chapter, cue, patch: {
+              ...(sound !== undefined ? { kind: sound as SoundKind } : {}),
+              ...(text('at') !== undefined ? { at: text('at')! } : {}),
+              ...(text('caption') !== undefined ? { caption: text('caption')! } : {}),
+              ...(text('prompt') !== undefined ? { prompt: text('prompt')! } : {}),
+              ...(text('ambience') !== undefined ? { ambience: text('ambience') as AmbiencePreset } : {}),
+              ...(typeof fields.intensity === 'number' ? { intensity: fields.intensity } : {}),
+            } })
+            const now = script.cues.find(entry => entry.id === cue)
+            return { text: `Sound cue ${cue} is now: ${now?.kind ?? 'bed'} at ${now?.at} — ${now?.caption ?? now?.prompt ?? now?.ambience}.${now?.audio !== undefined ? ' Its clip is the old one until sound is made again (novel_audio action=sound cues=[…]).' : ''}` }
+          }
+          case 'add_cue': {
+            const sound = text('kind') ?? 'effect'
+            if (!['bed', 'effect', 'music'].includes(sound)) throw new ProjectError('novel/invalid', 'kind is bed, effect or music')
+            const added = await addCue(runtime, {
+              chapter: need(args.chapter, 'chapter'),
+              at: need(text('at'), 'fields.at'),
+              kind: sound as SoundKind,
+              ...(text('caption') !== undefined ? { caption: text('caption')! } : {}),
+              ...(text('prompt') !== undefined ? { prompt: text('prompt')! } : {}),
+              ...(text('ambience') !== undefined ? { ambience: text('ambience') as AmbiencePreset } : {}),
+              ...(typeof fields.intensity === 'number' ? { intensity: fields.intensity } : {}),
+            })
+            return { text: `Added sound cue ${added.cue.id}: ${added.cue.kind} at ${added.cue.at} — ${added.cue.caption ?? added.cue.prompt ?? added.cue.ambience}. It is a note beside the text now; novel_audio action=sound cues=["${added.cue.id}"] makes it audible.`, data: toJson(added.cue) }
+          }
+          case 'walkons': {
+            const list = await listWalkOns(project, { ignored: true })
+            const shown = list.filter(item => item.ignored !== true)
+            if (shown.length === 0) return { text: `Nobody on the page is without a card${list.length > 0 ? ` (${list.length} names were taken off the list by the author)` : ''}.` }
+            const cards = await project.characters()
+            const lines = shown.slice(0, 60).map((item) => {
+              const near = item.near !== undefined ? cards.find(card => card.id === item.near)?.name : undefined
+              return `- ${item.name}: ${item.chapters.length} chapter(s)${item.lines > 0 ? `, ${item.lines} spoken lines` : ''}${item.voice !== undefined ? `, voice "${brief(item.voice, 40)}"` : ''}${near !== undefined ? ` — may be ${near} under another name` : ''}${item.suggestion !== undefined ? ' — a card was suggested by the digest' : ''}${item.note !== undefined ? ` — ${brief(item.note, 80)}` : ''}`
+            })
+            return { text: `${shown.length} people on the page have no card:\n${lines.join('\n')}\nNot every passer-by needs one: give a card to those the story will come back to, fold other names of an existing character into their aliases (action=settle_walkon), and leave the rest.`, data: toJson(shown) }
+          }
+          case 'settle_walkon': {
+            const how = text('as') ?? 'card'
+            if (!['card', 'alias', 'ignore', 'restore'].includes(how)) throw new ProjectError('novel/invalid', 'fields.as is card, alias, ignore or restore')
+            const role = text('role')
+            const settled = await settleWalkOn(project, {
+              name: need(args.name ?? text('name'), 'name'),
+              action: how as 'card' | 'alias' | 'ignore' | 'restore',
+              ...(text('of') !== undefined ? { target: text('of')! } : {}),
+              ...(role === 'minor' || role === 'cameo' || role === 'supporting' ? { role } : {}),
+            })
+            if (how === 'ignore' || how === 'restore') return { text: how === 'ignore' ? `"${args.name ?? text('name')}" is off the list of people without a card.` : `"${args.name ?? text('name')}" is back on the list.` }
+            return {
+              text: how === 'alias'
+                ? `"${args.name ?? text('name')}" is now an alias of ${settled.card?.name}${settled.lines > 0 ? `; ${settled.lines} lines in the audio scripts now belong to that character and will be voiced as them at the next synthesize` : ''}.`
+                : `${settled.card?.name} has a card now (${settled.card?.id}, ${settled.card?.role})${settled.lines > 0 ? `; ${settled.lines} lines in the audio scripts belong to it and keep the voice they had` : ''}. Fill it in with novel_bible when they start to matter.`,
+              ...(settled.card !== undefined ? { data: toJson(settled.card) } : {}),
+            }
           }
           case 'edit_panel': {
             const board = await updateComicPanel(runtime, need(args.chapter, 'chapter'), need(args.id, 'id'), {
@@ -319,6 +394,13 @@ export function studioTools(service: NovelService) {
           case 'audition': {
             const sample = await audition(env.core, runtime, { text: need(args.text, 'text'), ...(args.voice !== undefined ? { voice: args.voice } : {}), ...(args.character !== undefined ? { character: args.character } : {}), ...(args.direction !== undefined ? { direction: args.direction } : {}) }, env.task)
             return { text: `Audition sample (${sample.duration}s) saved at ${sample.path}; the author can play it from the character's card in Novel Studio → Bible.`, data: toJson(sample) }
+          }
+          case 'lock_book': {
+            const lock = await env.core.lockOf(project.root)
+            if (!lock.sealed) return { text: 'This book is not sealed, so there is nothing to lock. Sealing a book — encrypting all of its files — is done by the author in Novel Studio (the book menu → Seal and lock), where they choose its password.', record: false }
+            const title = (await project.manifest()).title
+            await env.core.lockBook(project.root)
+            return { text: `"${title}" is locked. Nothing of it can be read until the author unlocks it in Novel Studio; do not rely on what you remember of it.`, record: false }
           }
           case 'delete_book': {
             const removed = await service.deleteBook(project.root)
@@ -352,7 +434,7 @@ export function studioTools(service: NovelService) {
   ]
 }
 
-async function readiness(service: NovelService): Promise<{ embedding: boolean; image: boolean; tts: boolean }> {
+async function readiness(service: NovelService): Promise<{ embedding: boolean; image: boolean; tts: boolean; sound: boolean }> {
   const settings = await service.core.settings.get()
   return service.mediaReady(settings, await service.keyStates(settings), await service.codex())
 }
@@ -369,12 +451,14 @@ async function summary(service: NovelService, full = false): Promise<string> {
     `Semantic retrieval: ${settings.embedding.provider === 'none' ? 'off (keyword search only)' : `${settings.embedding.model ?? '?'} at ${hostOf(settings.embedding.baseURL) ?? '?'} — ${ready.embedding ? 'ready' : 'no key'}`}.`,
     `Images: ${settings.image.provider === 'none' ? 'off' : settings.image.provider === 'codex' ? `ChatGPT subscription — ${ready.image ? 'ready' : 'not signed in'}` : `${settings.image.model ?? '?'} (${settings.image.provider}) — ${ready.image ? 'ready' : 'no key'}`}.`,
     `Speech: ${settings.tts.provider === 'none' ? 'off' : `${settings.tts.model ?? '?'} (${settings.tts.provider}) — ${ready.tts ? 'ready' : 'no key'}`}.`,
+    `Sound (effects, music, generated ambience): ${ready.sound ? `${soundSetup(settings)?.model ?? '?'}${soundSetup(settings)?.shared === true ? ', the speech setup' : ''} — ready` : settings.sound?.provider === 'none' ? 'off (captions and browser-synthesized beds only)' : 'no sound model — it follows the speech setup when that is Bailian audio generation; cues stay captions and beds are synthesized by the player'}.`,
   ]
   if (full) {
     lines.push(
       `Context: strategy ${settings.context.strategy}, budget ${settings.context.budgetTokens} tokens, ${settings.context.tailChars} characters of preceding text.`,
       `Output: the Studio caps no reply itself — each runs as long as its model allows${ROLES.some(role => settings.models[role]?.maxTokens !== undefined) ? `, except where a role sets a cap (${ROLES.filter(role => settings.models[role]?.maxTokens !== undefined).map(role => `${role}: ${settings.models[role]!.maxTokens}`).join(', ')}); a reasoning model spends its reasoning out of that cap` : ''}.`,
-      `Speech takes: a line that fails the listening check is spoken up to ${settings.tts.retakes ?? 2} more time(s).`,
+      `Speech takes: a line that fails the listening check is spoken up to ${settings.tts.retakes ?? 2} more time(s). Speech tags between spoken lines are ${settings.tts.speechTags === 'read' ? 'read aloud' : 'left unspoken'}.`,
+      `Raw file tools on a book's own files (manuscript, bible, outline, records): ${settings.agentFiles === 'allow' ? 'let through, and reconciled afterwards' : settings.agentFiles === 'ask' ? 'the author is asked each time' : 'refused, with the novel_* tool to use instead'} — the author's setting, not yours to change.`,
       `Automatic digest after writing: ${settings.autoDigest ? 'on' : 'off'}. Agent revisions wait for review: ${settings.reviewAgentRevisions ? 'yes' : 'no'}.`,
       `ChatGPT subscription: Codex Connect ${codex.connect ? (codex.connectSignedIn ? 'signed in' : 'installed, not signed in') : 'not installed'}; Codex CLI ${codex.cli ? (codex.cliSignedIn ? 'signed in' : 'installed, not signed in') : 'not installed'}. It can draw images; it offers no embeddings and no speech.`,
       'One-click setups: bailian (text, embeddings, images, speech), openrouter (text, embeddings, GPT Image, speech), openai, codex (images).',

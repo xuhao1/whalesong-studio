@@ -5,16 +5,18 @@
  * and stays current through one long-poll on the Host's change counters.
  * Views read a snapshot and call actions; they never talk to the wire.
  */
-import type { EndpointCheck, JobStarted, RpcMethod, RpcParams, SettingsView, WorkspaceInfo } from '../shared/rpc'
+import type { EndpointCheck, JobStarted, LockView, RpcMethod, RpcParams, SettingsView, WorkspaceInfo } from '../shared/rpc'
 import type { ServiceId, SetupPart } from '../shared/services'
 import type { JobInfo, ProjectState, WorkMode } from '../shared/types'
-import { isCancelled, messageOf, type NovelApi } from './api'
+import { isCancelled, messageOf, RpcError, type NovelApi } from './api'
 
 export type StudioView = 'home' | 'bible' | 'outline' | 'write' | 'read' | 'cast' | 'review' | 'stage' | 'settings' | 'setup' | 'usage'
 /** `audio` is kept for links made before the audio drama moved into the reader: it opens the reader's listening mode. */
 export type StageTab = 'audio' | 'comic' | 'play' | 'gallery'
 /** The reader shows the same chapter two ways: to be read, or to be listened to. */
 export type ReadMode = 'read' | 'listen'
+
+export type CastTab = 'board' | 'presence' | 'relations' | 'walkons'
 
 /** A request to the Host that changes or makes something and has not answered yet. */
 export interface Activity {
@@ -81,6 +83,15 @@ export interface StudioSnapshot {
   /** Clicks still being worked on by the Host, oldest first. */
   activity: Activity[]
   toasts: Toast[]
+  /**
+   * The book this Studio was asked to show is sealed and locked: nothing of it
+   * can be read until its author unlocks it. `view` says how it opens.
+   */
+  lock?: { root: string; view?: LockView; /** Whether opening it was to move the conversation onto it as well. */ bind?: boolean }
+  /** A card a link asked the bible to open: the cast board, a tool row, a name in a script. */
+  entity?: { kind: 'character' | 'world'; id: string; nonce: number }
+  /** Tab of the cast view a link asked for. */
+  castTab?: CastTab
   /** A place in the manuscript a view was asked to show (a search hit, a review quote). */
   jump?: { chapterId: string; offset: number; length: number; nonce: number }
 }
@@ -234,7 +245,21 @@ export class StudioController {
    * (`bind`): the showrunner is told, and works on this book from its next step.
    */
   async openProject(root: string, bind = true): Promise<void> {
-    const project = await this.api.call('project.state', { root }, this.abort.signal)
+    let project: ProjectState
+    try {
+      project = await this.api.call('project.state', { root }, this.abort.signal)
+    } catch (error) {
+      // A sealed book that is locked: there is nothing to show but the way to unlock it.
+      if (error instanceof RpcError && error.code === 'novel/locked') {
+        await this.showLock(root, bind)
+        return
+      }
+      throw error
+    }
+    if (this.snapshot.lock !== undefined) {
+      const { lock: _lock, ...rest } = this.snapshot
+      this.snapshot = rest
+    }
     this.onShelf = false
     this.revision = project.revision
     const chapterId = this.snapshot.chapterId !== undefined && project.chapters.some(chapter => chapter.id === this.snapshot.chapterId)
@@ -276,11 +301,50 @@ export class StudioController {
     await this.followSession(info.active, info.mode)
   }
 
+  /** Stand before a locked book: its name, and the ways it opens. */
+  private async showLock(root: string, bind = false): Promise<void> {
+    this.onShelf = false
+    const { project: _project, chapterId: _chapter, ...rest } = this.snapshot
+    this.snapshot = { ...rest, root, jobs: [], status: 'ready', lock: { root, bind } }
+    for (const listener of [...this.listeners]) listener()
+    try {
+      const view = await this.api.call('lock.get', { root }, this.abort.signal)
+      if (this.snapshot.lock?.root === root) this.set({ lock: { root, view, bind } })
+    } catch {
+      // The lock screen works without the details; unlocking will say what is wrong.
+    }
+  }
+
+  /**
+   * Unlock the book this Studio stands before, with its password or with this
+   * computer's own unlock, and open it.
+   * @throws RpcError `novel/wrong-key` when it does not open that way.
+   */
+  async unlock(how: { password?: string; device?: boolean }): Promise<void> {
+    const lock = this.snapshot.lock
+    if (lock === undefined) return
+    await this.api.call('lock.open', { root: lock.root, ...how })
+    await this.loadWorkspaces().catch(() => {})
+    // Opened the way it was asked for before the lock stood in the way: with the conversation, or without.
+    await this.openProject(lock.root, lock.bind === true)
+  }
+
+  /** Lock the open book: its key is forgotten on the Host, and this Studio stands before it again. */
+  async lockBook(): Promise<void> {
+    const root = this.snapshot.root
+    if (root === undefined) return
+    await this.api.call('lock.close', { root })
+    await this.showLock(root)
+    await this.loadWorkspaces().catch(() => {})
+  }
+
   closeProject(): void {
     this.onShelf = true
-    const { root: _root, project: _project, chapterId: _chapter, ...rest } = this.snapshot
+    const { root: _root, project: _project, chapterId: _chapter, lock: _lock, ...rest } = this.snapshot
     this.snapshot = { ...rest, jobs: [], view: 'home' }
     for (const listener of [...this.listeners]) listener()
+    // The shelf shows the books as they are now: sealed, locked, renamed since it was last read.
+    void this.loadWorkspaces().catch(() => {})
   }
 
   setWorkspace(path: string): void {
@@ -351,6 +415,28 @@ export class StudioController {
     return created
   }
 
+  /** Open a character's card in the bible. */
+  openCharacter(id: string): void {
+    this.navigated = true
+    this.set({ view: 'bible', entity: { kind: 'character', id, nonce: Date.now() } })
+  }
+
+  /** Open a world entry in the bible. */
+  openWorld(id: string): void {
+    this.navigated = true
+    this.set({ view: 'bible', entity: { kind: 'world', id, nonce: Date.now() } })
+  }
+
+  /** Open the ensemble view, on one of its tabs. */
+  openCast(tab?: CastTab): void {
+    this.navigated = true
+    this.set({ view: 'cast', ...(tab !== undefined ? { castTab: tab } : {}) })
+  }
+
+  setCastTab(tab: CastTab): void {
+    if (this.snapshot.castTab !== tab) this.set({ castTab: tab })
+  }
+
   focusChapter(chapterId: string): void {
     this.set({ chapterId })
   }
@@ -384,7 +470,8 @@ export class StudioController {
     const signal = abort.signal
     while (!this.disposed && this.visible && !signal.aborted) {
       try {
-        const root = this.snapshot.root
+        // A locked book has nothing to watch; the session's own book is still followed.
+        const root = this.snapshot.lock !== undefined ? undefined : this.snapshot.root
         const next = await this.api.call('events.wait', {
           ...(root !== undefined ? { root } : {}),
           revision: this.revision,
@@ -402,6 +489,7 @@ export class StudioController {
         if (jobsChanged) await this.refreshJobs()
       } catch (error) {
         if (this.disposed || signal.aborted || isCancelled(error)) break
+        if (error instanceof RpcError && error.code === 'novel/locked' && this.snapshot.root !== undefined && this.snapshot.lock === undefined) await this.showLock(this.snapshot.root)
         // The Host restarted or the network blinked; back off and try again.
         await new Promise(resolve => setTimeout(resolve, 2500))
       }
@@ -414,13 +502,16 @@ export class StudioController {
   async refreshProject(): Promise<void> {
     const root = this.snapshot.root
     if (root === undefined) return
+    if (this.snapshot.lock?.root === root) return
     try {
       const project = await this.api.call('project.state', { root }, this.abort.signal)
       if (this.snapshot.root !== root) return
       this.revision = project.revision
       this.set({ project })
     } catch (error) {
-      if (!isCancelled(error) && !this.disposed) this.toast('error', messageOf(error))
+      // Locked from elsewhere — another window, the Harness restarted: this Studio stands before the lock too.
+      if (error instanceof RpcError && error.code === 'novel/locked' && this.snapshot.root === root) await this.showLock(root)
+      else if (!isCancelled(error) && !this.disposed) this.toast('error', messageOf(error))
     }
   }
 
@@ -466,15 +557,20 @@ export class StudioController {
     return await this.follow(started.jobId, onText).done
   }
 
-  /** Follow a running job by id. */
-  follow(jobId: string, onText?: (text: string, info: JobInfo) => void): JobFollower {
+  /**
+   * Follow a running job by id: its text as it is written and, when `onThought`
+   * is given, what its models think before and between the words.
+   */
+  follow(jobId: string, onText?: (text: string, info: JobInfo) => void, onThought?: (thought: string, info: JobInfo) => void): JobFollower {
     this.followed.add(jobId)
     const controller = new AbortController()
     const done = (async (): Promise<JobInfo> => {
       let cursor = 0
       let text = ''
+      let thoughtCursor = 0
+      let thought = ''
       for (;;) {
-        const state = await this.api.call('jobs.read', { id: jobId, cursor, waitMs: 15_000 }, controller.signal)
+        const state = await this.api.call('jobs.read', { id: jobId, cursor, waitMs: 15_000, ...(onThought !== undefined ? { thoughtCursor } : {}) }, controller.signal)
         // A rewrite restarts the buffer: the Host answers from the top when the cursor overshoots.
         if (state.cursor < cursor) text = ''
         if (state.text.length > 0) {
@@ -483,6 +579,12 @@ export class StudioController {
           onText?.(text, state.info)
         } else if (state.cursor !== cursor) {
           cursor = state.cursor
+        }
+        // A Host from before thought was kept answers without it; then there is simply nothing to show.
+        if (state.thought !== undefined && state.thought.length > 0) {
+          thought += state.thought
+          thoughtCursor = state.thoughtCursor ?? thoughtCursor + state.thought.length
+          onThought?.(thought, state.info)
         }
         if (state.info.status === 'done') return state.info
         if (state.info.status === 'failed') throw new Error(state.info.error ?? 'failed')

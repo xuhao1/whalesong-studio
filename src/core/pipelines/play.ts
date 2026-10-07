@@ -346,7 +346,7 @@ export async function novelizePlay(core: NovelCore, runtime: ProjectRuntime, par
     onText: (_delta, total) => { task.job?.rewrite(total) },
   })
   const text = cleanProse(response.text)
-  if (text.length === 0) throw new ProjectError('novel/empty', 'the writer model returned no prose')
+  if (text.length === 0) throw new ProjectError('novel/empty', L(lang, '写手模型的回复里没有正文（只有标题或空白）。请再试一次。', 'the writer model\'s reply held no prose (only a heading or blank lines) — try again'))
   const after = params.after !== undefined ? await project.findChapter(params.after) : anchor
   const title = params.title?.trim() || session.title
   const plan = await project.addChapter({

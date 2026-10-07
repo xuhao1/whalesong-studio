@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 /** Test doubles: a scripted LLM backend and a throwaway project directory. */
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { NovelCore, type ProjectRuntime } from '../../src/core/core'
-import type { LlmBackend, LlmRequest, LlmResponse } from '../../src/core/llm'
+import { DEFAULT_RETRY, type LlmBackend, type LlmRequest, type LlmResponse, type RetryPolicy } from '../../src/core/llm'
 import { DEFAULT_SETTINGS, SettingsStore } from '../../src/core/settings'
 import { UsageStore } from '../../src/core/usage'
 import type { NovelSettings } from '../../src/shared/types'
@@ -37,6 +37,11 @@ export class FakeLlm implements LlmBackend {
   defaultRoute() {
     return { provider: 'fake', model: 'fake-model' }
   }
+
+  /** The default policy, without the waiting. */
+  retryPolicy(): RetryPolicy {
+    return { ...DEFAULT_RETRY, initialDelayMs: 0, maxDelayMs: 0, jitterRatio: 0 }
+  }
 }
 
 export interface TestBed {
@@ -53,7 +58,9 @@ export async function createTestBed(options: { settings?: Partial<NovelSettings>
   const settings = new SettingsStore({ ...DEFAULT_SETTINGS, autoDigest: false, ...options.settings }, join(dir, 'settings.json'))
   // The ledger of a test goes where the test's book goes, never into the real Harness home.
   const usage = new UsageStore(join(dir, 'usage'))
-  const core = new NovelCore({ llm, credentials: namedKeySource(() => undefined), settings, usage, ...(options.bridges !== undefined ? { bridges: options.bridges } : {}) })
+  // Whatever a test takes off the shelf goes to a trash of its own, never to the real one.
+  await mkdir(join(dir, 'trash'))
+  const core = new NovelCore({ llm, credentials: namedKeySource(() => undefined), settings, usage, trash: { files: join(dir, 'trash') }, holding: join(dir, 'holding'), ...(options.bridges !== undefined ? { bridges: options.bridges } : {}) })
   await core.ready()
   const runtime = await core.create(join(dir, 'book'), { title: options.title ?? '测试之书', language: options.language ?? 'zh' })
   return {

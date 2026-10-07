@@ -103,6 +103,8 @@ A role is one of three things:
 
 A reply that is cut off at a limit all the same is not patched up and passed along: the step fails, or falls back visibly, and says that the limit was the reason.
 
+**When a call fails.** A model service is busy, limits its rate or drops a stream now and then; and now and then a model completes a reply that has reasoning in it and no answer. The Harness makes such a request again for its own agent, by the retry policy of the provider (`retryPolicy` on the provider in the Harness configuration; by default five more tries, waiting half a second and then longer, for `EMPTY_RESPONSE`, `RATE_LIMIT`, `SERVER`, `TIMEOUT` and `TRANSPORT`). It does not do so for calls a plugin makes — so the Studio runs the same policy itself, for every call: Harness routes use their provider's policy, direct routes the defaults. While it waits, the job's progress line says what happened and which try is next; every attempt is in the usage ledger, because every attempt was a call. A reply with no answer is asked for again unchanged, three times at most, since each of those cost its reasoning. What trying again cannot mend — a wrong key, an unknown model, an allowance spent entirely on reasoning, a provider's content filter — fails at once and says which it was.
+
 **Reasoning models.** A model that thinks before answering can take minutes per chapter and per digest. Lower or switch off reasoning for the writer and the analyst; keep some for the architect, where it pays. If the levels list of a Harness model is empty, declare them on the provider in the Harness configuration (`reasoningEfforts` on the model entry — see the Harness provider documentation).
 
 ## Context and memory
@@ -206,28 +208,55 @@ This narrows the gaps; it does not close them. A generative speech model such as
 
 **While a chapter is voiced** the reader's listening mode shows how many lines are done, which one is in the booth (and when one is being taken again, and why), the time taken and an estimate of what is left; finished lines appear as they come and can be played at once. Stopping keeps what is voiced.
 
+### A narrator who tells a story
+
+How a script is cut decides how it sounds. Every line is spoken in a take of its own, and a narrator who starts over at each paragraph never sounds like one person telling a story — so the script is shaped for speaking:
+
+- Narration that follows narration is spoken **in one take**, up to about 180 syllables; a paragraph too long for one take is cut at sentence ends, evenly. Paragraphs keep a break between them inside the take.
+- A few words of narration that only say who spoke — "he said," between two spoken lines — are marked as a **speech tag**. With a voice per speaker they tell the listener nothing, and a clip of two or three syllables is where a speech model is least steady. `tts.speechTags` says what happens to them: `drop` (default) leaves them unspoken, as an audio drama would; `read` has every word read, as an audiobook would. In the script view any line can be switched either way.
+- A script made before this (it says so above the script) is **reshaped** on request without calling a model: dialogue keeps its recordings, joined narration is voiced again.
+
+### Sound design (optional)
+
+Besides its lines a script says what each scene sounds like. A **bed** runs under the lines until the next bed; an **effect** is heard once where it is placed; **music** runs under a scene until the next music cue. Each cue has a *caption* — what the reader is shown beside the text, whether the chapter is being read or heard (the speaker button among the reader's controls switches these notes off) — and a *prompt*, what a sound model is asked for.
+
+Where sound comes from is set under *Sound design* in the settings:
+
+| Field | Meaning |
+|---|---|
+| `sound.provider` | `auto` (default): the speech setup's own model when it can generate sound as well as speech — Bailian audio generation, `qwen-audio-3.1-tts-next`. `qwen-audiogen`: an endpoint named for sound (`baseURL`, `model`, key). `none`: nothing is generated |
+| `sound.model` | the sound model; with `auto`, left empty, the speech model |
+| `sound.beds` | `generate` (default): beds are made by the model from each cue's description. `browser`: beds are synthesized by the player from a fixed set of presets |
+| `sound.effects`, `sound.music` | whether the director places spot effects and music (both on by default) |
+
+Without a sound model the cues are still captions, and beds are synthesized by the player; a bed that has no generated clip yet is synthesized the same way until it has one. *Make the sounds* on the production desk generates what is missing — clips are cached by what they were made from, so a second run only makes what changed. In the script view every cue can be heard, reworded, made again on its own, added or removed.
+
+Sound models are young. Measured on 2026-10-07 with `qwen-audio-3.1-tts-next`: spot effects and music come out as asked and without voices; ambience beds are the least reliable of the three. That is why the browser's beds stay as a choice, and why each cue can be redone by itself.
+
 ## Reading and listening
 
-*Read* is one page with two modes. **Read** shows the chapter as a reader meets it. **Listen** shows the same page with a player under it: the sentence being spoken is lit in the prose, any sentence can be pressed to play from there, and a chapter that ends goes on to the next. The author additionally gets the production desk of the audio version above the page — make it, check and repair it, export it, see who was cast with which voice — and can switch the page from the prose to the script line by line, to change a speaker, a delivery note or a take.
+*Read* is one page with two modes. **Read** shows the chapter as a reader meets it. **Listen** adds a player under it, and the production desk of the audio version above it — make it, check and repair it, make its sounds, export it, see who was cast with which voice. Listening opens on the **script**: line by line, who says what, how, and over which sound, with the tools to change a speaker, a delivery note, a take or a sound cue. One press switches to the **prose**, where the sentence being spoken is lit in the text and any sentence can be pressed to play from there; the choice is remembered. A chapter that ends goes on to the next. In both modes the sound notes of the chapter — the room, a door, the music — are shown beside the paragraphs they belong to, unless the reader switches them off.
 
 ### On another device
 
-The phone button in the reader's bar switches on reading on other devices for the book: the Studio then serves the same reader — both modes, nothing else — to phones and tablets on the same network, and shows the address as a link and as a code to scan.
+The phone button in the reader's bar switches on reading on other devices for the book: the Studio then serves a reader to phones and tablets on the same network — the chapters to read, their audio drama to listen to (with the sound notes beside the text), and their motion comic to watch.
 
 - It is **off until you switch it on**, book by book, and stays on across restarts until you switch it off.
-- The server is the Studio's own and **read-only**: it has no route that writes, and none that reaches a model, a key, the settings, the manuscript files as such, or a book you did not share. Pictures and audio are served from the shared books' `assets/` and from nowhere else.
-- The address carries a **random token**; whoever has the address can read. *New address* replaces the token, and every link given out before stops working.
-- It listens on port `4319` by default (`share.port`), on every network interface of the machine, over plain HTTP. On a network you do not trust, leave it off. The first time, the operating system may ask whether to allow incoming connections.
+- A shared book is **read-only** unless you make it changeable. *Read only*: nothing can be changed from another device. *Read and change*: the chapters' text can be edited there — a version of the text as it was is kept before every save, and the change goes on the book's record (see *One road for every change*) — and the book's **interludes** can be played there, which calls the models set up on this computer, on your usage. In either mode the server reaches no key, no setting, and no book you did not share.
+- The address carries a **random token**; whoever has the address can do what the book's mode allows. *New address* replaces the token, and every link given out before stops working.
+- A **sealed book** asks every device for its password the first time. The device is then remembered by a grant of its own (a cookie holding a key that opens the book), listed under *Seal and lock*, where each can be withdrawn. A grant opens the book for devices even when it is locked on the computer — after the Harness was restarted, say — but **for devices only**: on the computer the book stays locked, to the Studio and to the showrunner alike, until you unlock it there. A book that only devices opened is locked again once none of them has asked for it for half an hour.
+- It listens on port `4319` by default (`share.port`), on every network interface of the machine, over plain HTTP: what travels between the device and the computer — the text, and the password of a sealed book — is not encrypted on that stretch. On a network you do not trust, leave it off. The first time, the operating system may ask whether to allow incoming connections.
 - The computer and the Harness must be running for the phone to read.
 
 | Field | Meaning |
 |---|---|
 | `share.enabled` | whether the reader for other devices is on |
 | `share.books` | folders of the books that are shared |
+| `share.edit` | folders of the shared books that may also be changed from another device |
 | `share.port` | port to listen on (1024–65535, default 4319) |
 | `share.token` | the secret part of the address; made the first time sharing is switched on |
 
-The showrunner can do the same with `novel_share`; switching it on from the conversation asks you first.
+The showrunner can do the same with `novel_share` (`mode`=read or edit); switching it on from the conversation asks you first.
 
 ## Motion comics: how finely to cut
 
@@ -250,9 +279,32 @@ Each book on the shelf shows its cover: the picture chosen as cover (*Make it th
 
 **Removing a book** (the bin on its shelf card, or the book menu) moves everything that is the book's own — `novel.json`, `outline.json`, `bible/`, `manuscript/`, `assets/`, `export/`, `.novel/` — into one folder in the system trash, from where it can be put back by moving those entries to a folder again. Nothing is erased. Anything else in the book's folder is yours and stays where it is; the folder itself is removed only when it is left empty and is not a Harness workspace. Where the system trash cannot be reached, the folder goes to `<Harness home>/novel-writer/removed/` and you are told the path. The showrunner can remove a book only when asked to, and you confirm it.
 
+## One road for every change
+
+A book is plain files, and everything that is known about it — versions of each chapter, the memory digested from the text, the search index — has to follow the files. So every change takes the same road, whoever makes it:
+
+- **The showrunner** changes the book only through its `novel_*` tools. Prose that has to be written is briefed to the writer (`novel_write`, `novel_revise`); what is not writing — the words you dictated or pasted, a name, a slip of fact, a line you want gone — it changes exactly, with its own hands (`novel_edit`: replace, insert, append, delete, set). What the book remembers wrongly it corrects (`novel_memory`). Each of these keeps the text as it was as a version, digests the chapter's memory again, and tells the showrunner what to check next: the cards of the characters the change names, the chapters that come after.
+- **Raw file tools** (`write`, `edit`, a shell redirect) aimed at a book's own files — `manuscript/`, `bible/`, `outline.json`, `novel.json`, `.novel/` — leave all of that out of step. `agentFiles` says what happens when the showrunner reaches for them: `guide` (default) refuses and names the tool to use; `ask` puts the question to you each time; `allow` lets it through. Reading the files is never stopped.
+- **Files changed outside the Studio** — your own editor, a script, a file tool that was let through — are noticed. The change goes on the record, the chapter's memory is digested again (when automatic digest is on), and the showrunner is told in its context that it happened. No version of the earlier text exists in this case: the Studio only sees the file after it changed.
+- **The record** on the overview lists what changed the book that you did not do by hand on the panel: the showrunner's tool calls, edits from another device, changes from outside. A manuscript edit is undone from there with one press (the text in place is kept as a version first).
+
+With *agent revisions wait for review* switched on, the showrunner's exact edits are left as proposals like its revisions.
+
+## Sealed books
+
+A book can be **sealed** (the book menu → *Seal and lock*): every file of it is then encrypted where it lies — manuscript, bible, outline, memory, versions, pictures, audio, exports, the search index — with AES-256-GCM under a key of the book's own. File names are encrypted too; folders keep their names. What stays readable is `novel.json`, which for a sealed book holds only an id, the name the shelf shows while the book is locked (yours to choose, so the title can be hidden as well), and the book's key wrapped once per way of opening it.
+
+- **Unlocking.** With the book's **password** (the key is derived with scrypt), or with **this computer's own unlock**: the system asks for a fingerprint or the computer's password, and only on a yes is a secret taken from the account's credential store that unwraps the book's key. On macOS that is Touch ID, falling back to the Mac's password, and the login keychain. On Windows it is Windows Hello and DPAPI — written from the platform's documentation and not yet run on a Windows machine; where it does not work the password does. Elsewhere a book opens with its password only.
+- **While it is open** the book behaves like any other. Its key is held in memory by the Harness and nowhere else. **Locking** (the same dialog, or `novel_manage action=lock_book` from the conversation) forgets the key; quitting the Harness does too. Locking is about this computer: a device that was let in can still read by its grant (see *On another device*) — withdraw the grant, or stop sharing the book, to shut it out.
+- **While it is locked** nothing of it can be read: not by the Studio, not by the showrunner — which is told that its book is locked and that it must not rely on what it remembers of it — not by the reader for other devices. The showrunner cannot unlock, seal or unseal a book, and never asks for a password; passwords are typed on the Studio's lock screen only.
+- **There is no back door.** Without the password, and without the computer's unlock where that was set up, a sealed book cannot be opened. Keep the password somewhere else as well.
+- **Sealing and unsealing can be interrupted.** They work file by file; a crash or a power cut in the middle is finished the next time the book is unlocked.
+
+What sealing does not do: it does not erase plain copies that existed before — in free disk space, in backups, in a sync service's history; it does not change what is sent to model services, which read what they are given as before; it does not reach the Harness's own records of your conversations, where whatever the showrunner read or quoted of the book stays in the clear; and an export, though stored sealed, is plain once you download it. The usage ledger, which is kept outside the book, enters a sealed book under its shelf name. Pictures drawn through the Codex CLI pass their reference images through a temporary folder for the length of the call.
+
 ## What is being worked on
 
-Anything that takes a moment says so. A button that started work shows a spinner and what it is doing until the work ends, and cannot be pressed twice; a bar at the foot of the Studio lists everything in progress for the book — requests still waiting for an answer and running jobs, with what each is doing, for how long, and a way to stop it — whichever screen you are on, and whoever started it.
+Anything that takes a moment says so. A button that started work shows a spinner and what it is doing until the work ends, and cannot be pressed twice; a bar at the foot of the Studio lists everything in progress for the book — requests still waiting for an answer and running jobs, with what each is doing, for how long, and a way to stop it — whichever screen you are on, and whoever started it. While a model reasons before it answers, what it thinks can be read as it thinks it: above the prose on the write page, and behind the eye button on any job in that bar — the chain of thought where the model shows it, the summary of it where the model gives only that.
 
 ## What is not set up
 

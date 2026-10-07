@@ -17,10 +17,13 @@
  *               voice — and taken again when it is not; what is kept is brought
  *               to one level, so no line is a whisper beside a shout.
  *
- * Ambience is not rendered here: cues name procedural beds that the player
- * synthesizes in the browser, so no audio assets ship with the plugin.
+ *   sound       besides the lines the script carries cues: the bed a scene sits
+ *               on, a sound the page makes, a held chord. Each has a caption the
+ *               reader can see. Beds are synthesized by the player in the
+ *               browser; effects and music are generated when a sound model is
+ *               set up (pipelines/sound.ts), and stay captions when none is.
  */
-import type { AmbiencePreset, AudioCue, AudioLine, AudioScript, CharacterCard, TakeIssue, TtsSettings, VoiceCast, VoicePrint } from '../../shared/types'
+import type { AmbiencePreset, AudioCue, AudioLine, AudioScript, CharacterCard, NovelSettings, SoundKind, TakeIssue, TtsSettings, VoiceCast, VoicePrint } from '../../shared/types'
 import { clip as clipText, hashText, proseOnly, sameName } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { asArray, asRecord, asText, completeJson } from '../llm'
@@ -34,7 +37,6 @@ import { ProjectError } from '../project'
 import { audioScriptTask } from '../prompts'
 import { L, promptLanguage } from '../render'
 import { errorMessage, mapLimit, serializer } from '../util/async'
-import { readFile } from 'node:fs/promises'
 
 export const AMBIENCE: Record<AmbiencePreset, [string, string]> = {
   none: ['无环境声（安静的室内）', 'silence (a quiet room)'],
@@ -109,21 +111,8 @@ export function fallbackLines(text: string): Omit<AudioLine, 'id'>[] {
       const body = content.trim()
       if (kind === 'narration') buffer = ''
       if (body.replace(/[\p{P}\s]/gu, '').length === 0) return
-      // Long narration is cut on sentence ends so no single line runs for a minute.
-      if (kind === 'narration' && body.length > 160) {
-        const sentences = body.match(/[^。！？!?…]+[。！？!?…]*["”’」』）)]*/g) ?? [body]
-        let piece = ''
-        for (const sentence of sentences) {
-          if (piece.length + sentence.length > 140 && piece.length > 0) {
-            lines.push({ kind, text: piece.trim() })
-            piece = ''
-          }
-          piece += sentence
-        }
-        if (piece.trim().length > 0) lines.push({ kind, text: piece.trim() })
-      } else {
-        lines.push({ kind, text: body })
-      }
+      // How much narration goes into one take is decided once for the whole script (tidyLines).
+      lines.push({ kind, text: body })
     }
     for (let at = 0; at < paragraph.length; at++) {
       const char = paragraph[at]!
@@ -150,65 +139,156 @@ export function fallbackLines(text: string): Omit<AudioLine, 'id'>[] {
 
 type DraftLine = Omit<AudioLine, 'id'>
 
-/** Narration shorter than this many syllables does not stand alone when there is narration beside it. */
-const TINY_LINE = 8
-/** A line that has taken a fragment in stays under this many syllables. */
-const ROOMY_LINE = 220
+/**
+ * How much narration is spoken in one take, in syllables: long enough for the
+ * narrator to find a stride and keep it, short enough to be checked and, when
+ * a take goes wrong, taken again without redoing a page.
+ */
+export const TAKE_UNITS = 180
+/** A take may run this much over rather than leave a few words behind as a take of their own. */
+const TAKE_SLACK = 1.3
+/** A take this short is folded into the one before it when there is room. */
+const TAKE_TAIL = 40
+
+const SENTENCE_END = /[。！？!?…”’」』.]\s*$/u
 
 function joined(left: string, right: string): string {
-  return /[A-Za-z0-9.,;:!?'")\]]$/.test(left) && /^[A-Za-z0-9'"(\[]/.test(right) ? `${left} ${right}` : `${left}${right}`
+  // Paragraphs and sentences keep a break between them; pieces of one sentence run on.
+  if (SENTENCE_END.test(left)) return `${left}\n${right}`
+  return /[A-Za-z0-9,;:'")\]]$/.test(left) && /^[A-Za-z0-9'"(\[]/.test(right) ? `${left} ${right}` : `${left}${right}`
+}
+
+const SAID_ZH = /(?:说|道|问|答|喊|嚷|吼|念|讲|骂|劝|催促|补充|开口|解释|提醒|回答|追问|反问|低语|嘀咕|嘟囔|喃喃|应声|接口|插嘴)(?:着|了|道|说)?$/u
+const SAID_EN = /^(?:(?:[\w'’-]+\s){0,3}(?:said|says|asked|asks|replied|answered|whispered|shouted|muttered|murmured|added|called|cried|continued|went on)(?:\s[\w'’-]+){0,3}|(?:said|asked|replied|answered|whispered|shouted|muttered|added)\s(?:[\w'’-]+\s?){1,3})$/i
+
+/**
+ * Narration that only says who spoke: "他说，", "白页问道：", "she said quietly."
+ * One clause, a handful of syllables, ending on a verb of saying.
+ */
+export function isSpeechTag(text: string): boolean {
+  const body = text.trim().replace(/[，,：:。.！!？?…—\s]+$/u, '').replace(/^[，,—\s]+/u, '')
+  if (body.length === 0 || /[，,。！？!?；;：:]/u.test(body)) return false
+  // "没有回答", "不说" tell of a silence, which is something that happens.
+  if (/[\u4e00-\u9fff]/u.test(body)) return speechUnits(body) <= 7 && !/[没不未别无]/u.test(body) && SAID_ZH.test(body)
+  return body.split(/\s+/).length <= 6 && SAID_EN.test(body)
+}
+
+/** Cut a passage too long for one take at sentence ends, into pieces of about the same size. */
+function splitTake(text: string): string[] {
+  const total = speechUnits(text)
+  if (total <= TAKE_UNITS * TAKE_SLACK) return [text]
+  const sentences = text.match(/[^。！？!?…\n]+[。！？!?…]*["”’」』）)]*\s*|\n+/g) ?? [text]
+  const target = total / Math.ceil(total / TAKE_UNITS)
+  const pieces: string[] = []
+  let current = ''
+  for (const sentence of sentences) {
+    if (current.trim().length > 0 && speechUnits(current) + speechUnits(sentence) / 2 > target) {
+      pieces.push(current.trim())
+      current = ''
+    }
+    current += sentence
+  }
+  if (current.trim().length > 0) pieces.push(current.trim())
+  return pieces.length > 0 ? pieces : [text]
 }
 
 /**
- * Fold narration too short to stand alone into the narration next to it. A
- * speech model is at its least steady on a line of three or four syllables —
- * the voice wanders, the level jumps — and every line is a round trip, so a
- * script of fragments both sounds worse and costs more.
- * @returns the tidied lines, and for each line that came in the index it ended up at.
+ * Shape a script for speaking. Narration is where a fragmented script hurts
+ * most — every line is its own take, and a narrator who starts over at each
+ * paragraph never sounds like one person telling a story — so:
+ *
+ * - narration that follows narration is spoken in one take, up to TAKE_UNITS;
+ * - a paragraph too long for one take is cut at sentence ends, evenly;
+ * - a few words of narration that only say who spoke, stranded between two
+ *   spoken lines, are marked as a tag: with a voice per speaker they are
+ *   redundant, and they are the clips a speech model does worst.
+ *
+ * @returns the shaped lines, and for each line that came in the index of the line it ended up in.
  */
 export function tidyLines(lines: DraftLine[]): { lines: DraftLine[]; map: number[] } {
   const out: DraftLine[] = []
   const map = new Array<number>(lines.length).fill(0)
-  /** A tiny narration waiting to go in front of the narration that follows it. */
-  let waiting: { line: DraftLine; from: number } | undefined
-  const settle = (): void => {
-    if (waiting === undefined) return
-    out.push(waiting.line)
-    map[waiting.from] = out.length - 1
-    waiting = undefined
+  const narration = (index: number): boolean => lines[index]?.kind === 'narration'
+  let at = 0
+  while (at < lines.length) {
+    if (!narration(at)) {
+      out.push(lines[at]!)
+      map[at] = out.length - 1
+      at += 1
+      continue
+    }
+    // A run of narration: everything up to the next spoken line.
+    let end = at
+    while (end + 1 < lines.length && narration(end + 1)) end += 1
+    if (end === at && isSpeechTag(lines[at]!.text) && (at > 0 || at + 1 < lines.length)) {
+      out.push({ ...lines[at]!, tag: true })
+      map[at] = out.length - 1
+      at += 1
+      continue
+    }
+    const first = out.length
+    let take: DraftLine | undefined
+    const close = (): void => {
+      if (take === undefined) return
+      out.push(take)
+      take = undefined
+    }
+    for (let index = at; index <= end; index++) {
+      const line = lines[index]!
+      for (const piece of splitTake(line.text)) {
+        if (take !== undefined && speechUnits(take.text) + speechUnits(piece) > TAKE_UNITS) close()
+        take = take === undefined
+          ? { ...line, text: piece }
+          : { ...take, text: joined(take.text, piece), ...(take.direction === undefined && line.direction !== undefined ? { direction: line.direction } : {}) }
+        map[index] = out.length
+      }
+    }
+    close()
+    // A few words left over read better as the end of the take before them.
+    const last = out.at(-1)!
+    const before = out.length - 1 > first ? out[out.length - 2] : undefined
+    if (before !== undefined && speechUnits(last.text) < TAKE_TAIL && speechUnits(before.text) + speechUnits(last.text) <= TAKE_UNITS * TAKE_SLACK) {
+      out.pop()
+      out[out.length - 1] = { ...before, text: joined(before.text, last.text) }
+      for (let index = at; index <= end; index++) if (map[index]! > out.length - 1) map[index] = out.length - 1
+    }
+    at = end + 1
   }
-  lines.forEach((entry, index) => {
-    let line = entry
-    const narration = line.kind === 'narration'
-    if (waiting !== undefined) {
-      if (narration && speechUnits(waiting.line.text) + speechUnits(line.text) <= ROOMY_LINE) {
-        line = { ...line, text: joined(waiting.line.text, line.text), ...(line.direction === undefined && waiting.line.direction !== undefined ? { direction: waiting.line.direction } : {}) }
-        map[waiting.from] = out.length
-        waiting = undefined
-      } else settle()
-    }
-    const previous = out.at(-1)
-    const tiny = narration && speechUnits(line.text) < TINY_LINE
-    if (tiny && previous?.kind === 'narration' && speechUnits(previous.text) + speechUnits(line.text) <= ROOMY_LINE) {
-      out[out.length - 1] = { ...previous, text: joined(previous.text, line.text) }
-      map[index] = out.length - 1
-    } else if (tiny) {
-      waiting = { line, from: index }
-    } else {
-      out.push(line)
-      map[index] = out.length - 1
-    }
-  })
-  settle()
   return { lines: out, map }
+}
+
+/** How scripts are shaped now; one without this mark was cut the older, finer way. */
+export const SCRIPT_SHAPE = 2
+
+/**
+ * Whether a line is left unspoken: by the author's own word on it, or because
+ * it is a speech tag and the book is not set to read every word.
+ */
+export function isSkipped(line: Pick<AudioLine, 'tag' | 'voiced' | 'kind'>, settings: Pick<TtsSettings, 'speechTags'>): boolean {
+  if (line.voiced !== undefined) return !line.voiced
+  return line.tag === true && settings.speechTags !== 'read'
+}
+
+/** A script as a player needs it: every line that will not be spoken says so. */
+export function playable<T extends Pick<AudioScript, 'lines'>>(script: T, settings: Pick<TtsSettings, 'speechTags'>): T {
+  return { ...script, lines: script.lines.map((line) => { const { skip: _skip, ...rest } = line; return isSkipped(line, settings) ? { ...rest, skip: true } : rest }) }
 }
 
 interface DraftCue {
   at: number
+  kind: SoundKind
   ambience: AmbiencePreset
   intensity?: number
-  note?: string
+  caption?: string
+  prompt?: string
 }
+
+/** What the director may place besides beds, by the author's settings. */
+export function soundPlan(settings: NovelSettings): { effects: boolean; music: boolean; beds: 'generate' | 'browser' } {
+  return { effects: settings.sound?.effects !== false, music: settings.sound?.music !== false, beds: settings.sound?.beds ?? 'generate' }
+}
+
+const cueKey = (cue: Pick<AudioCue, 'kind' | 'caption' | 'prompt' | 'ambience'>): string => `${cue.kind ?? 'bed'}|${cue.ambience}|${cue.caption ?? ''}|${cue.prompt ?? ''}`
 
 /** Build (or rebuild) the performance script of a chapter. */
 export async function buildAudioScript(core: NovelCore, runtime: ProjectRuntime, params: { chapter: string; force?: boolean }, task: TaskContext): Promise<AudioScript> {
@@ -227,6 +307,7 @@ export async function buildAudioScript(core: NovelCore, runtime: ProjectRuntime,
   const resolve = (name: string): CharacterCard | undefined => characters.find(card => sameName(card.name, name) || card.aliases?.some(alias => sameName(alias, name)) === true)
   const castText = castFor(chapter, characters, text).map(card => `${card.name}${card.aliases !== undefined && card.aliases.length > 0 ? `(${card.aliases.join('/')})` : ''} | ${[card.gender, card.age, card.voice ?? card.personality].filter(Boolean).join('，')}`).join('\n')
   const ambienceText = AMBIENCE_KEYS.map(key => `${key}: ${AMBIENCE[key][lang === 'zh' ? 0 : 1]}`).join('\n')
+  const sounds = soundPlan(await core.settings.get())
   const route = await core.route('analyst', runtime, task)
   const blocks = blocksOf(text)
   let done = 0
@@ -239,7 +320,7 @@ export async function buildAudioScript(core: NovelCore, runtime: ProjectRuntime,
     try {
       const { value } = await completeJson(core.llm, {
         route,
-        prompt: audioScriptTask({ lang, language: manifest.language, title: manifest.title, text: block, cast: castText, ambience: ambienceText }),
+        prompt: audioScriptTask({ lang, language: manifest.language, title: manifest.title, text: block, cast: castText, ambience: ambienceText, effects: sounds.effects, music: sounds.music }),
         temperature: 0.2,
         ...(task.signal !== undefined ? { signal: task.signal } : {}),
         validate: (raw) => {
@@ -267,12 +348,26 @@ export async function buildAudioScript(core: NovelCore, runtime: ProjectRuntime,
           const covered = similarity(parsed.map(line => line.text).join(''), block)
           if (covered < 0.9) throw new Error(`the "text" of the lines covers only ${Math.round(covered * 100)}% of the passage — every word of the passage must appear in the lines, in order and unchanged`)
           const placed = asArray(record.cues).map(asRecord).map((cue): DraftCue | undefined => {
-            const ambience = asText(cue.ambience) as AmbiencePreset | undefined
+            const named = asText(cue.kind)
+            const kind: SoundKind = named === 'effect' || named === 'music' ? named : 'bed'
+            if ((kind === 'effect' && !sounds.effects) || (kind === 'music' && !sounds.music)) return undefined
+            const preset = asText(cue.ambience) as AmbiencePreset | undefined
+            const ambience: AmbiencePreset = kind === 'bed' && preset !== undefined && AMBIENCE_KEYS.includes(preset) ? preset : 'none'
             const at = Number(cue.at)
             const intensity = Number(cue.intensity)
-            const note = asText(cue.note)
-            if (ambience === undefined || !AMBIENCE_KEYS.includes(ambience) || !Number.isInteger(at) || at < 0 || at >= parsed.length) return undefined
-            return { at, ambience, ...(Number.isFinite(intensity) ? { intensity: Math.max(0, Math.min(1, intensity)) } : {}), ...(note !== undefined ? { note } : {}) }
+            const caption = (asText(cue.caption) ?? asText(cue.note))?.replace(/^[\[〔（(♪\s]+|[\]〕）)\s]+$/gu, '').slice(0, 60)
+            const prompt = asText(cue.prompt)?.slice(0, 400)
+            if (!Number.isInteger(at) || at < 0 || at >= parsed.length) return undefined
+            // A bed needs something to play — a preset the browser knows, or words a model can make it from; so does an effect or a piece of music.
+            if (kind === 'bed' ? ambience === 'none' && preset !== 'none' && caption === undefined && prompt === undefined : caption === undefined && prompt === undefined) return undefined
+            return {
+              at,
+              kind,
+              ambience,
+              ...(Number.isFinite(intensity) ? { intensity: Math.max(0, Math.min(1, intensity)) } : {}),
+              ...(caption !== undefined && caption.length > 0 ? { caption } : {}),
+              ...(prompt !== undefined ? { prompt } : {}),
+            }
           }).filter((cue): cue is DraftCue => cue !== undefined)
           return { lines: parsed, cues: placed }
         },
@@ -286,25 +381,44 @@ export async function buildAudioScript(core: NovelCore, runtime: ProjectRuntime,
     }
     done += 1
     task.job?.progress(done, blocks.length)
-    const tidy = tidyLines(lines ?? fallbackLines(block))
-    return { lines: tidy.lines, cues: cues.map(cue => ({ ...cue, at: tidy.map[cue.at] ?? 0 })), ...(reason !== undefined ? { reason } : {}) }
+    return { lines: lines ?? fallbackLines(block), cues, ...(reason !== undefined ? { reason } : {}) }
   }, task.signal)
 
-  const lines: AudioLine[] = []
-  const cues: AudioCue[] = []
+  // The passages are put back together before the takes are shaped, so narration runs on across the seams.
+  const drafted: DraftLine[] = []
+  const placed: DraftCue[] = []
   for (const block of results) {
-    const offset = lines.length
-    block.lines.forEach((line, index) => { lines.push({ ...line, id: `l${offset + index}` }) })
-    for (const cue of block.cues) {
-      const at = `l${offset + cue.at}`
-      // Consecutive blocks often restate the same bed; only real changes become cues.
-      if (cues.at(-1)?.ambience === cue.ambience || cues.at(-1)?.at === at) continue
-      cues.push({ at, ambience: cue.ambience, ...(cue.intensity !== undefined ? { intensity: cue.intensity } : {}), ...(cue.note !== undefined ? { note: cue.note } : {}) })
-    }
+    const offset = drafted.length
+    drafted.push(...block.lines)
+    for (const cue of block.cues) placed.push({ ...cue, at: offset + cue.at })
   }
-  if (cues.length === 0 || cues[0]!.at !== 'l0') cues.unshift({ at: 'l0', ambience: cues[0]?.ambience ?? 'none', intensity: 0.4 })
-  // Audio rendered for identical lines of the previous script is kept.
+  const tidy = tidyLines(drafted)
+  const lines: AudioLine[] = tidy.lines.map((line, index) => ({ ...line, id: `l${index}` }))
+  const cues: AudioCue[] = []
+  for (const cue of placed) {
+    const at = `l${tidy.map[cue.at] ?? 0}`
+    const kind = cue.kind
+    if (kind === 'bed') {
+      // Consecutive passages often restate the same bed; only real changes become cues.
+      const last = [...cues].reverse().find(item => (item.kind ?? 'bed') === 'bed')
+      if (last !== undefined && (last.at === at || (last.ambience === cue.ambience && (cue.caption === undefined || cue.caption === last.caption)))) continue
+    } else if (cues.some(item => item.kind === kind && item.at === at)) {
+      continue
+    }
+    cues.push({
+      id: `c${cues.length}`,
+      at,
+      kind,
+      ambience: cue.ambience,
+      ...(cue.intensity !== undefined ? { intensity: cue.intensity } : {}),
+      ...(cue.caption !== undefined ? { caption: cue.caption } : {}),
+      ...(cue.prompt !== undefined ? { prompt: cue.prompt } : {}),
+    })
+  }
+  const firstBed = cues.find(cue => (cue.kind ?? 'bed') === 'bed')
+  if (firstBed === undefined || firstBed.at !== 'l0') cues.unshift({ id: `c${cues.length}`, at: 'l0', kind: 'bed', ambience: firstBed?.ambience ?? 'none', intensity: 0.4 })
   if (existing !== undefined) {
+    // Audio rendered for identical lines of the previous script is kept.
     const byText = new Map(existing.lines.filter(line => line.audio !== undefined).map(line => [`${line.kind}|${line.speaker ?? ''}|${line.speakerName ?? ''}|${line.text}|${line.direction ?? ''}`, line]))
     for (const line of lines) {
       const previous = byText.get(`${line.kind}|${line.speaker ?? ''}|${line.speakerName ?? ''}|${line.text}|${line.direction ?? ''}`)
@@ -316,6 +430,15 @@ export async function buildAudioScript(core: NovelCore, runtime: ProjectRuntime,
         if (previous.check !== undefined) line.check = previous.check
       }
     }
+    // So are the sounds already generated for cues that say the same thing.
+    const made = new Map(existing.cues.filter(cue => cue.audio !== undefined).map(cue => [cueKey(cue), cue]))
+    for (const cue of cues) {
+      const previous = made.get(cueKey(cue))
+      if (previous?.audio === undefined) continue
+      cue.audio = previous.audio
+      if (previous.duration !== undefined) cue.duration = previous.duration
+      if (previous.renderKey !== undefined) cue.renderKey = previous.renderKey
+    }
   }
   // A passage the director could not deliver is cut by rule, which knows no speakers: say so, the script must not look finished when it is not.
   const failed = results.filter(block => block.reason !== undefined)
@@ -324,12 +447,42 @@ export async function buildAudioScript(core: NovelCore, runtime: ProjectRuntime,
     chapterId: chapter.plan.id,
     textHash,
     updatedAt: new Date().toISOString(),
+    shape: SCRIPT_SHAPE,
     lines,
     cues,
     ...(failed.length > 0 ? { degraded: { blocks: failed.length, of: blocks.length, reason: failed[0]!.reason! } } : {}),
   }
   await project.saveAudioScript(script)
   return script
+}
+
+/**
+ * Shape a script made before narration was spoken in whole takes, without
+ * asking a model again: neighbouring narration is joined, stranded speech tags
+ * are marked, cues follow their lines. Spoken lines that did not change keep
+ * their audio; narration that was joined has to be spoken anew.
+ */
+export async function reshapeAudioScript(runtime: ProjectRuntime, chapterRef: string): Promise<{ script: AudioScript; before: number; after: number; kept: number }> {
+  const { project } = runtime
+  const located = await project.findChapter(chapterRef)
+  const script = located !== undefined ? await project.audioScript(located.plan.id) : undefined
+  if (script === undefined) throw new ProjectError('novel/not-found', 'this chapter has no audio script')
+  const index = new Map(script.lines.map((line, at) => [line.id, at]))
+  const tidy = tidyLines(script.lines.map(({ id: _id, skip: _skip, ...line }) => line))
+  let kept = 0
+  const lines: AudioLine[] = tidy.lines.map((line, at) => {
+    // A line that went through untouched is the same recording; anything joined is new text.
+    const sources = script.lines.filter((_source, from) => tidy.map[from] === at)
+    const same = sources.length === 1 && sources[0]!.text === line.text
+    if (same && line.audio !== undefined) kept += 1
+    if (same) return { ...line, id: `l${at}` }
+    const { audio: _audio, duration: _duration, renderKey: _renderKey, takes: _takes, check: _check, error: _error, ...rest } = line
+    return { ...rest, id: `l${at}` }
+  })
+  const cues = script.cues.map((cue, at) => ({ ...cue, id: cue.id ?? `c${at}`, at: `l${tidy.map[index.get(cue.at) ?? 0] ?? 0}` }))
+  const next: AudioScript = { ...script, shape: SCRIPT_SHAPE, updatedAt: new Date().toISOString(), lines, cues }
+  await project.saveAudioScript(next)
+  return { script: next, before: script.lines.length, after: lines.length, kept }
 }
 
 function castFor(chapter: LocatedChapter, characters: CharacterCard[], text: string): CharacterCard[] {
@@ -539,7 +692,7 @@ export function voiceBank(core: NovelCore, runtime: ProjectRuntime, provider: Tt
   const clips = new Map<string, Promise<PcmAudio | undefined>>()
   const load = async (relative: string): Promise<PcmAudio | undefined> => {
     try {
-      return parseWav(await readFile(project.path(relative)))
+      return parseWav(await project.readFile(relative))
     } catch {
       return undefined
     }
@@ -702,7 +855,8 @@ export async function synthesizeChapter(core: NovelCore, runtime: ProjectRuntime
     report()
   }, cast)
   // Resolve voices in script order first so casting does not depend on which request finishes first.
-  const plan = script.lines.map((line) => {
+  // Lines left unspoken — speech tags, or whatever the author silenced — never reach the booth.
+  const plan = script.lines.filter(line => !isSkipped(line, settings)).map((line) => {
     const choice = voiceFor(line, characters, settings, cast.taken, cast.extras)
     const renderKey = hashText([settings.provider, settings.model ?? '', choice.voice ?? '', choice.direction ?? '', line.text].join('|'))
     return { line, choice, renderKey }
@@ -724,7 +878,7 @@ export async function synthesizeChapter(core: NovelCore, runtime: ProjectRuntime
       if (item.line.check !== undefined && (item.line.takes ?? 1) > retakes) continue
       let audio: PcmAudio
       try {
-        audio = parseWav(await readFile(project.path(item.line.audio)))
+        audio = parseWav(await project.readFile(item.line.audio))
       } catch {
         todo.push(item)
         again.add(item.line.id)
@@ -831,7 +985,7 @@ function stripUnset(line: AudioLine): AudioLine {
 }
 
 /** Join a chapter's rendered lines into one WAV file under `assets/audio/`. */
-export async function exportChapterAudio(runtime: ProjectRuntime, chapterRef: string): Promise<{ path: string; duration: number; missing: number }> {
+export async function exportChapterAudio(runtime: ProjectRuntime, chapterRef: string, settings: Pick<TtsSettings, 'speechTags'> = {}): Promise<{ path: string; duration: number; missing: number }> {
   const { project } = runtime
   const chapter = await project.findChapter(chapterRef)
   if (chapter === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${chapterRef}"`)
@@ -840,12 +994,13 @@ export async function exportChapterAudio(runtime: ProjectRuntime, chapterRef: st
   const segments: { audio: PcmAudio; gapSeconds: number }[] = []
   let missing = 0
   for (const line of script.lines) {
+    if (isSkipped(line, settings)) continue
     if (line.audio === undefined) {
       missing += 1
       continue
     }
     try {
-      const audio = parseWav(await readFile(project.path(line.audio)))
+      const audio = parseWav(await project.readFile(line.audio))
       segments.push({ audio, gapSeconds: line.kind === 'narration' ? 0.45 : 0.3 })
     } catch {
       missing += 1
@@ -927,7 +1082,7 @@ export async function designCharacterVoice(core: NovelCore, runtime: ProjectRunt
 }
 
 /** Change one line of a chapter's script by hand; a changed line re-renders on the next synthesis. */
-export async function updateAudioLine(runtime: ProjectRuntime, chapterRef: string, lineId: string, patch: Partial<Pick<AudioLine, 'text' | 'kind' | 'speaker' | 'speakerName' | 'direction'>>): Promise<AudioScript> {
+export async function updateAudioLine(runtime: ProjectRuntime, chapterRef: string, lineId: string, patch: Partial<Pick<AudioLine, 'text' | 'kind' | 'speaker' | 'speakerName' | 'direction'>> & { voiced?: boolean | null }): Promise<AudioScript> {
   const { project } = runtime
   const located = await project.findChapter(chapterRef)
   const script = located !== undefined ? await project.audioScript(located.plan.id) : undefined
@@ -939,7 +1094,12 @@ export async function updateAudioLine(runtime: ProjectRuntime, chapterRef: strin
     updatedAt: new Date().toISOString(),
     lines: script.lines.map((entry) => {
       if (entry.id !== lineId) return entry
-      const merged = { ...entry, ...patch }
+      const { voiced, ...fields } = patch
+      const merged: AudioLine = { ...entry, ...fields }
+      // `null` hands the line back to the book's own rule for speech tags.
+      if (voiced === null) delete merged.voiced
+      else if (voiced !== undefined) merged.voiced = voiced
+      delete merged.skip
       if (patch.speaker !== undefined) {
         const card = characters.find(candidate => candidate.id === patch.speaker)
         if (patch.speaker === '') {

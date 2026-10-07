@@ -199,7 +199,8 @@ describe('direct endpoints', () => {
   it('streams text, skips reasoning, and reports usage', async () => {
     const deltas: string[] = []
     const reply = await completeDirect(route('story-1'), { route: route('story-1'), system: 'sys', prompt: 'hi', onText: (delta) => { deltas.push(delta) } }, keys)
-    expect(reply).toEqual({ text: '雨停了，信还没寄。', finish: 'stop', usage: { inputTokens: 7, outputTokens: 5 } })
+    // The reasoning stays out of the text; how much of it there was is reported beside it.
+    expect(reply).toEqual({ text: '雨停了，信还没寄。', finish: 'stop', usage: { inputTokens: 7, outputTokens: 5 }, thought: 4 })
     expect(deltas).toEqual(['雨停了，', '信还没寄。'])
     const sent = seen.at(-1)!
     expect(sent.path).toBe('/v1/chat/completions')

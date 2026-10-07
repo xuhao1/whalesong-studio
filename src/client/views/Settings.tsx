@@ -15,7 +15,7 @@ import {
   bailianRealtime, compatibleBase, DIRECT_EFFORTS, hostOf, originOf, recommendedSetup, SERVICES, serviceOf, speechProtocol, type ServiceId,
 } from '../../shared/services'
 import type {
-  CodexBridgeKind, EmbeddingSettings, ImageSettings, ModelRoute, NovelSettings, TextRole, TtsProviderKind, TtsSettings,
+  CodexBridgeKind, EmbeddingSettings, ImageSettings, ModelRoute, NovelSettings, SoundProviderKind, SoundSettings, TextRole, TtsProviderKind, TtsSettings,
 } from '../../shared/types'
 import { messageOf } from '../api'
 import {
@@ -117,9 +117,11 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
       context: sectionPatch(view.settings.context, draft.context),
       image: sectionPatch(view.settings.image, draft.image),
       tts: sectionPatch(view.settings.tts, draft.tts),
+      sound: sectionPatch(view.settings.sound ?? { provider: 'auto' }, draft.sound ?? { provider: 'auto' }),
       embedding: sectionPatch(view.settings.embedding, draft.embedding),
       autoDigest: draft.autoDigest,
       reviewAgentRevisions: draft.reviewAgentRevisions,
+      agentFiles: draft.agentFiles ?? 'guide',
     }, Object.fromEntries(Object.values(typed).map(entry => [entry.url, entry.value.trim()])))
     controller.toast('success', t('设置已保存', 'Settings saved'))
   })
@@ -204,6 +206,13 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
           <input type="checkbox" checked={draft.reviewAgentRevisions} onChange={(event) => { update({ reviewAgentRevisions: event.target.checked }) }} />
           <span>{t('总编发起的正文修订先作为提案，等我确认后才生效', 'Revisions requested by the showrunner wait as proposals until I accept them')}</span>
         </label>
+        <Field label={t('总编想绕过工坊、直接用文件工具改书的文件时', 'When the showrunner reaches for a book\'s files with raw file tools')} hint={t('总编改书有专门的工具（改稿、改设定、改大纲、修正记忆），每一次改动都会留版本、重新收录记忆、记进"改动记录"。绕过它们直接写文件，这些就都对不上了。无论选哪一项，工坊之外的改动事后都会被发现并记录。', 'The showrunner has a tool for every kind of change — text, bible, outline, memory — and each keeps a version, digests memory again and puts the change on the record. A file written around them leaves all of that out of step. Whatever is chosen here, a change from outside is noticed and recorded afterwards.')}>
+          <Select<'guide' | 'ask' | 'allow'> value={draft.agentFiles ?? 'guide'} options={[
+            { value: 'guide', label: t('拦下，并告诉它该用哪个工具（推荐）', 'Refuse, and name the tool to use (recommended)') },
+            { value: 'ask', label: t('每次问我', 'Ask me each time') },
+            { value: 'allow', label: t('放行，事后对账', 'Let it through, reconcile afterwards') },
+          ]} onChange={(agentFiles) => { update({ agentFiles }) }} />
+        </Field>
       </section>
 
       <section className="nv-card" data-section="image">
@@ -216,6 +225,12 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
         <SectionTitle>{t('语音合成', 'Speech')}<Chip>{t('可选', 'optional')}</Chip></SectionTitle>
         <p className="nv-muted nv-small">{t('有声剧按人物卡选音色：人物指定的音色优先，其次是为他设计的专属声线，再按性别年龄自动选角，同一人物全书保持同一个声音。', 'The audio drama casts by character card: a voice set on the card wins, then a voice designed for them, then automatic casting by gender and age — one voice per character for the whole book.')}</p>
         <TtsSection value={draft.tts} keys={keys} voices={view.voices.map(voice => ({ id: voice.id, note: `${voice.note}${voice.accent !== undefined ? ` · ${voice.accent}` : ''}` }))} savedProvider={view.settings.tts.provider} t={t} onChange={(tts) => { update({ tts }) }} />
+      </section>
+
+      <section className="nv-card" data-section="sound">
+        <SectionTitle>{t('声音设计：环境声、音效、配乐', 'Sound design: ambience, effects, music')}<Chip>{t('可选', 'optional')}</Chip></SectionTitle>
+        <p className="nv-muted nv-small">{t('有声脚本除了台词，还会安排每个场景听得到什么——环境底声、音效、配乐。它们会作为注释显示在正文旁边给读者气氛，也可以由声音模型生成出来垫在人声下面。', 'Besides its lines an audio script says what each scene sounds like — the bed of the place, effects, music. These show as notes beside the text for atmosphere, and a sound model can make them audible under the voices.')}</p>
+        <SoundSection value={draft.sound ?? { provider: 'auto' }} tts={draft.tts} ready={view.ready.sound === true} keys={keys} t={t} onChange={(sound) => { update({ sound }) }} />
       </section>
 
       <section className="nv-card" data-section="embedding">
@@ -785,6 +800,9 @@ function TtsSection({ value, keys, voices, savedProvider, onChange, t }: { value
             <Field label={t('不合格时最多重念', 'Retakes when a line fails the check')} hint={t('每一句合成后都会"听检"：没念完、没声音，或明显不像这个角色的声音，就再念一次，留下最好的那次；音量也会统一。重念会多花一点合成用量，填 0 关闭重念（仍会标出有问题的句子）。', 'Every line is checked once voiced: cut short, silent, or plainly not in the speaker\'s voice, and it is spoken again — the best take is kept, and all lines are brought to one level. Retakes cost a little more synthesis; 0 switches them off (lines are still marked).')}>
               <TextInput inputMode="numeric" value={value.retakes !== undefined ? String(value.retakes) : ''} placeholder="2" onChange={(event) => { const count = number(event.target.value); onChange(without(value, 'retakes', count !== undefined ? Math.max(0, Math.min(4, Math.round(count))) : undefined)) }} />
             </Field>
+            <Field label={t('对白之间的"他说"', 'The "he said" between spoken lines')} hint={t('每个人物有自己的声音时，夹在两句对白之间、只交代谁在说的提示语是多余的，而且两三个字的短句正是语音模型最不稳的地方。"不念"更像广播剧；"照念"一字不落，更像有声书。脚本里可以逐行改。', 'With a voice per speaker, a tag that only says who speaks is redundant between two spoken lines, and a clip of two or three syllables is where a speech model is least steady. "Unspoken" is how an audio drama does it; "read" keeps every word, as an audiobook would. Any line can be changed in the script.')}>
+              <Select<'drop' | 'read'> value={value.speechTags ?? 'drop'} options={[{ value: 'drop', label: t('不念（广播剧）', 'Unspoken (audio drama)') }, { value: 'read', label: t('照念（有声书）', 'Read (audiobook)') }]} onChange={(speechTags) => { onChange(without(value, 'speechTags', speechTags === 'drop' ? undefined : speechTags)) }} />
+            </Field>
             {value.provider === 'openrouter' || value.provider === 'openai' ? (
               <Field label={t('PCM 采样率', 'PCM sample rate')} hint={t('接口返回裸 PCM 且没有说明采样率时使用，默认 24000', 'Used when the endpoint answers raw PCM without saying its rate; 24000 by default')}><TextInput inputMode="numeric" value={value.sampleRate !== undefined ? String(value.sampleRate) : ''} placeholder="24000" onChange={(event) => { const rate = number(event.target.value); onChange(without(value, 'sampleRate', rate !== undefined && rate >= 8000 ? Math.round(rate) : undefined)) }} /></Field>
             ) : null}
@@ -803,6 +821,52 @@ function TtsSection({ value, keys, voices, savedProvider, onChange, t }: { value
           <datalist id={id}>{voiceOptions.map(voice => <option key={voice.id} value={voice.id}>{voice.note}</option>)}</datalist>
         </>
       ) : null}
+    </>
+  )
+}
+
+const SOUND_OPTIONS: { value: SoundProviderKind; label: [string, string] }[] = [
+  { value: 'auto', label: ['跟随语音设置（推荐）', 'Follow the speech setup (recommended)'] },
+  { value: 'qwen-audiogen', label: ['百炼音频生成（单独指定接口）', 'Bailian audio generation (its own endpoint)'] },
+  { value: 'none', label: ['不生成，只用浏览器合成的环境声', 'Do not generate: browser-synthesized ambience only'] },
+]
+
+/** Where effects, music and generated ambience come from, and which of them the director places. */
+function SoundSection({ value, tts, ready, keys, onChange, t }: { value: SoundSettings; tts: TtsSettings; ready: boolean; keys: KeyBag; onChange: (value: SoundSettings) => void; t: Translate }) {
+  const own = value.provider === 'qwen-audiogen'
+  const follows = value.provider === 'auto'
+  const canFollow = tts.provider === 'qwen-audiogen'
+  const endpoint = value.baseURL ?? SERVICES.bailian.origin
+  return (
+    <>
+      <div className="nv-form-grid">
+        <Field label={t('声音从哪里来', 'Where sound comes from')}>
+          <Select<SoundProviderKind> value={value.provider} options={SOUND_OPTIONS.map(option => ({ value: option.value, label: t(...option.label) }))} onChange={(provider) => { onChange({ ...value, provider }) }} />
+        </Field>
+        {own ? (
+          <>
+            <EndpointField value={value.baseURL ?? ''} placeholder={endpoint} hint={t('百炼的域名；专属域名也可以', 'The Bailian domain; a workspace domain works too')} t={t} onChange={(baseURL) => { onChange(without(value, 'baseURL', baseURL)) }} />
+            <KeyField endpoint={endpoint} refName={value.apiKeyRef} keys={keys} t={t} onRef={(name) => { onChange(without(value, 'apiKeyRef', name)) }} />
+          </>
+        ) : null}
+        {value.provider !== 'none' ? (
+          <Field label={t('声音模型', 'Sound model')} hint={follows ? t('留空就用语音那一栏的模型', 'Left empty, the model of the speech section is used') : undefined}>
+            <TextInput value={value.model ?? ''} placeholder={follows ? tts.model ?? 'qwen-audio-3.1-tts-next' : 'qwen-audio-3.1-tts-next'} onChange={(event) => { onChange(without(value, 'model', event.target.value.trim())) }} />
+          </Field>
+        ) : null}
+        <Field label={t('环境底声', 'Ambience beds')} hint={t('"模型生成"按每个场景的描述做一段可循环的底声；没生成之前、以及没有声音模型时，播放时先用浏览器合成的顶上。', '"Generated" has the model make a loopable bed from each scene\'s description; until one is made, and without a sound model, the browser-synthesized bed stands in.')}>
+          <Select<'generate' | 'browser'> value={value.beds ?? 'generate'} options={[{ value: 'generate', label: t('模型生成（推荐）', 'Generated by the model (recommended)') }, { value: 'browser', label: t('只用浏览器合成', 'Browser-synthesized only') }]} onChange={(beds) => { onChange(without(value, 'beds', beds === 'generate' ? undefined : beds)) }} />
+        </Field>
+      </div>
+      <div className="nv-row-wrap">
+        <label className="nv-check"><input type="checkbox" checked={value.effects !== false} onChange={(event) => { onChange(without(value, 'effects', event.target.checked ? undefined : false)) }} /><span>{t('让导演安排音效（门、脚步、槌声……）', 'Have the director place effects (a door, steps, a gavel…)')}</span></label>
+        <label className="nv-check"><input type="checkbox" checked={value.music !== false} onChange={(event) => { onChange(without(value, 'music', event.target.checked ? undefined : false)) }} /><span>{t('让导演安排配乐', 'Have the director place music')}</span></label>
+      </div>
+      {value.provider === 'none'
+        ? <p className="nv-note">{t('不生成声音：脚本里的声音只作为正文旁的注释出现，环境底声由浏览器合成。', 'No generated sound: the script\'s sounds appear as notes beside the text only, and beds are synthesized by the browser.')}</p>
+        : follows && !canFollow
+          ? <p className="nv-note is-warn">{t('现在的语音服务不能生成声音（只有百炼的音频生成模型既能说话也能做声音）。声音仍会作为注释显示，环境底声由浏览器合成；想听到音效和配乐，把上面改成"百炼音频生成"并填密钥，或把语音换成百炼的 qwen-audio-3.1-tts-next。', 'The current speech service cannot make sound (only Bailian audio generation both speaks and makes sound). Sounds still show as notes and beds are synthesized by the browser; to hear effects and music, choose "Bailian audio generation" above and give it a key, or move speech to Bailian\'s qwen-audio-3.1-tts-next.')}</p>
+          : <p className="nv-note">{ready ? t('已就绪：在朗读页的"听"里点"生成声音"，环境声、音效和配乐会按脚本逐处生成。现在的声音模型还不够稳，哪一处不满意可以改描述后单独重做。', 'Ready: under Listen in the reader choose "Make the sounds" and ambience, effects and music are made cue by cue. Sound models are still uneven; any cue can be reworded and made again on its own.') : t('还缺密钥：保存语音那一栏的密钥后这里就能用。', 'A key is still missing: once the speech section has its key this is ready.')}</p>}
     </>
   )
 }

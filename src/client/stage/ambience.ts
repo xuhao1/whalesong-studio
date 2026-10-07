@@ -331,13 +331,29 @@ interface Scene {
   stop: Stop
 }
 
-/** One ambience channel: set a preset and it crossfades from whatever was playing. */
+/** A generated clip looping on a channel. */
+interface Loop {
+  url: string
+  gain: GainNode
+  source?: AudioBufferSourceNode
+  dead: boolean
+}
+
+export type LoopChannel = 'bed' | 'music'
+
+/**
+ * Everything under the voice. A synthesized bed (`set`) crossfades from
+ * whatever was playing; generated clips loop on a channel of their own (`loop`)
+ * or are heard once (`shot`). All of it shares one output, one volume.
+ */
 export class Ambience {
   private context: AudioContext | undefined
   private master: GainNode | undefined
   private scene: Scene | undefined
   private volume = 0.5
   private intensity = 0.6
+  private readonly loops = new Map<LoopChannel, Loop>()
+  private readonly clips = new Map<string, Promise<AudioBuffer | undefined>>()
 
   /** Must be called from a user gesture the first time (browser autoplay rules). */
   private ensure(): AudioContext | undefined {
@@ -359,6 +375,7 @@ export class Ambience {
 
   set(preset: AmbiencePreset, intensity = 0.6): void {
     if (this.scene?.preset === preset && Math.abs(this.intensity - intensity) < 0.05) return
+    if (preset === 'none' && this.scene === undefined) return
     const context = this.ensure()
     if (context === undefined || this.master === undefined) return
     this.intensity = intensity
@@ -383,17 +400,96 @@ export class Ambience {
     this.scene = { preset, gain, stop: kit.stop }
   }
 
+  /** A clip, fetched and decoded once. A clip that cannot be had is simply not heard. */
+  private clip(context: AudioContext, url: string): Promise<AudioBuffer | undefined> {
+    let held = this.clips.get(url)
+    if (held === undefined) {
+      held = (async () => {
+        try {
+          const response = await fetch(url, { credentials: 'same-origin' })
+          if (!response.ok) return undefined
+          return await context.decodeAudioData(await response.arrayBuffer())
+        } catch {
+          return undefined
+        }
+      })()
+      this.clips.set(url, held)
+      if (this.clips.size > 24) this.clips.delete(this.clips.keys().next().value!)
+    }
+    return held
+  }
+
+  /**
+   * Loop a generated clip on a channel, crossfading from whatever was on it;
+   * `undefined` fades the channel out. Asking for the clip already playing changes nothing.
+   */
+  loop(channel: LoopChannel, url: string | undefined, level = 1): void {
+    const playing = this.loops.get(channel)
+    if (playing?.url === url) return
+    if (url === undefined && playing === undefined) return
+    const context = this.ensure()
+    if (context === undefined || this.master === undefined) return
+    const now = context.currentTime
+    if (playing !== undefined) {
+      playing.dead = true
+      playing.gain.gain.cancelScheduledValues(now)
+      playing.gain.gain.setTargetAtTime(0, now, 0.5)
+      setTimeout(() => {
+        try { playing.source?.stop() } catch { /* never started */ }
+        playing.gain.disconnect()
+      }, 2600)
+      this.loops.delete(channel)
+    }
+    if (url === undefined) return
+    const gain = context.createGain()
+    gain.gain.value = 0
+    gain.connect(this.master)
+    const entry: Loop = { url, gain, dead: false }
+    this.loops.set(channel, entry)
+    void this.clip(context, url).then((buffer) => {
+      if (buffer === undefined || entry.dead || this.context !== context) return
+      const source = context.createBufferSource()
+      source.buffer = buffer
+      source.loop = true
+      source.connect(gain)
+      source.start()
+      entry.source = source
+      // The clips are leveled where they are made; this only brings them in gently.
+      gain.gain.setTargetAtTime(Math.max(0, Math.min(1.5, level)), context.currentTime, 0.8)
+    })
+  }
+
+  /** Let a clip be heard once: a door, a gavel. */
+  shot(url: string, level = 1): void {
+    const context = this.ensure()
+    if (context === undefined || this.master === undefined) return
+    const master = this.master
+    void this.clip(context, url).then((buffer) => {
+      if (buffer === undefined || this.context !== context) return
+      const gain = context.createGain()
+      gain.gain.value = Math.max(0, Math.min(1.5, level))
+      gain.connect(master)
+      const source = context.createBufferSource()
+      source.buffer = buffer
+      source.connect(gain)
+      source.onended = () => { gain.disconnect() }
+      source.start()
+    })
+  }
+
   setVolume(volume: number): void {
     this.volume = Math.max(0, Math.min(1, volume))
     if (this.master !== undefined && this.context !== undefined) this.master.gain.setTargetAtTime(this.volume, this.context.currentTime, 0.1)
   }
 
-  /** Fade out; the channel can be used again. */
+  /** Fade everything out; the channels can be used again. */
   stop(): void {
     this.set('none')
+    this.loop('bed', undefined)
+    this.loop('music', undefined)
   }
 
-  /** Hold or release the bed while the voice track is paused. */
+  /** Hold or release the sound while the voice track is paused. */
   suspend(paused: boolean): void {
     if (this.context === undefined) return
     if (paused && this.context.state === 'running') void this.context.suspend().catch(() => {})
@@ -403,6 +499,12 @@ export class Ambience {
   dispose(): void {
     this.scene?.stop()
     this.scene = undefined
+    for (const loop of this.loops.values()) {
+      loop.dead = true
+      try { loop.source?.stop() } catch { /* never started */ }
+    }
+    this.loops.clear()
+    this.clips.clear()
     void this.context?.close().catch(() => {})
     this.context = undefined
     this.master = undefined

@@ -11,7 +11,8 @@ Revision has one rule: change what was asked and nothing else. The tools enforce
 
 | The problem lives in | Use | Notes |
 |---|---|---|
-| a sentence to a few paragraphs | `novel_revise scope=passage` | Quote the passage exactly as it stands (copy from `novel_read`). Say what to change and what must survive. |
+| words the author gave you, a name, a fact, a typo | `novel_edit` | No model rewrites anything: `replace` / `insert` / `append` / `delete` / `set`, exactly. Copy `find` from `novel_read`; `all=true` for a term throughout a chapter. The result names the characters the change touches and how many later chapters exist — check them. |
+| a sentence to a few paragraphs that needs rewriting | `novel_revise scope=passage` | Quote the passage exactly as it stands (copy from `novel_read`). Say what to change and what must survive. |
 | one chapter | `novel_revise scope=chapter` | For structure, pacing or voice problems across the chapter. Not for adding plot — change the outline and redraft instead. |
 | the whole manuscript | `novel_revise scope=book` | One instruction ("rename X to Y and adjust the passages around it"). Triage decides which chapters it touches; each comes back as a proposal. |
 
@@ -41,7 +42,14 @@ A proposal whose passage has since been edited goes stale and cannot be applied;
 
 `novel_review` reads a chapter as an editor against the bible, memory and style, and returns issues anchored to quotes with suggested fixes. Each issue maps onto one `scope=passage` call. Review first when the author says "tighten this up" without saying where.
 
+## When memory is what is wrong
+
+Later chapters are written from the memory of earlier ones. If the text is right and the memory of it is not — the digest misread who took the key — correct the memory (`novel_memory`: summary, facts added or removed, a character's state at chapter end). Digesting again would only repeat the reading. If the text itself is wrong, change the text; its memory follows.
+
 ## What not to do
+
+- Do not reach for a raw file tool to change a chapter, a card or the outline. The Studio refuses it, and for a reason: no version would be kept and memory would describe a text that no longer exists. There is a tool for every kind of change.
+- Do not route a dictated sentence through the writer, and do not write a scene yourself because the edit tool would take it. `novel_edit` is for what is not writing — unless the author asks you, in so many words, to write it.
 
 - Do not rewrite a chapter to fix a paragraph.
 - Do not "improve" passages nobody asked about while you are in there.

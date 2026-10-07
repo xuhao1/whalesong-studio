@@ -6,10 +6,10 @@
  */
 import { mkdir, rename, rmdir, stat } from 'node:fs/promises'
 import { basename, dirname, join, relative, resolve } from 'node:path'
-import type { ModelRoute, NovelSettings, ProjectRef, TextRole } from '../shared/types'
+import type { BookLock, ModelRoute, NovelSettings, ProjectManifest, ProjectRef, TextRole } from '../shared/types'
 import { chooseStrategy, packContext, type ContextPack, type PackOptions } from './context'
-import { JobManager, type JobContext } from './jobs'
-import { resolveRoute, type LlmBackend } from './llm'
+import { currentJob, JobManager, type JobContext } from './jobs'
+import { resolveRoute, retrying, type LlmBackend } from './llm'
 import { createRoutedLlm } from './media/chat'
 import { createEmbedder } from './media/embedding'
 import type { KeySource } from './media/http'
@@ -17,11 +17,16 @@ import { createImageProvider, type ImageBridges, type ImageProvider } from './me
 import { meterEmbedder, meterImages, meterLlm, meterSpeech, UsageStore } from './usage'
 import { hostOf } from '../shared/services'
 import { createTtsProvider, type TtsProvider } from './media/tts'
+import { createSoundProvider, type SoundProvider } from './media/sound'
 import { BOOK_ENTRIES, MANIFEST_FILE, Project, ProjectError, type CreateProjectInput } from './project'
 import { RetrievalIndex, type Embedder } from './retrieval'
 import { DEFAULT_SETTINGS, resolveDshHome, SettingsStore } from './settings'
-import { exists, listDir } from './util/fs'
+import { exists, listDir, readJson, writeJson } from './util/fs'
 import { moveToTrash, type Trashed } from './util/trash'
+import {
+  newKey, openWithPassword, openWithSecret, passwordSlot, readStub, SEALED_SUFFIX, SealedFiles, sealTree, secretSlot, unsealTree, VaultError, writeStub,
+  type SealedStub, type SealSlot,
+} from './util/vault'
 
 export interface CoreOptions {
   /** Models configured in the Harness; routes that name their own endpoint are called by the core itself. */
@@ -75,6 +80,14 @@ export class NovelCore {
   /** Every call to a model, counted. */
   readonly usage: UsageStore
   private readonly rootsById = new Map<string, string>()
+  /** Keys of the sealed books that are unlocked right now. They live here and nowhere else, and go when the process does. */
+  private readonly bookKeys = new Map<string, Buffer>()
+  /**
+   * Sealed books that were opened by another device — its grant, or the
+   * password typed on it — and by nobody at this computer. They can be served
+   * to devices; to the Studio and the showrunner here they are still locked.
+   */
+  private readonly deviceOnly = new Set<string>()
   private snapshot: NovelSettings = DEFAULT_SETTINGS
   private embedderCache: { key: string; value: Embedder | undefined } | undefined
   private readonly unsubscribe: () => void
@@ -83,7 +96,8 @@ export class NovelCore {
   constructor(private readonly options: CoreOptions) {
     this.credentials = options.credentials
     this.usage = options.usage ?? new UsageStore(undefined, options.log)
-    this.llm = meterLlm(createRoutedLlm(options.llm, options.credentials), (event) => { this.usage.record(event) })
+    // Made again when a call fails the way calls do in passing; every attempt is a call, and is counted as one.
+    this.llm = retrying(meterLlm(createRoutedLlm(options.llm, options.credentials), (event) => { this.usage.record(event) }))
     this.settings = options.settings ?? new SettingsStore()
     this.unsubscribe = this.settings.onChange(() => { void this.refreshSettings() })
   }
@@ -111,6 +125,9 @@ export class NovelCore {
     this.disposed = true
     this.unsubscribe()
     this.jobs.cancelAll()
+    for (const key of this.bookKeys.values()) key.fill(0)
+    this.bookKeys.clear()
+    this.deviceOnly.clear()
     for (const pending of this.runtimes.values()) {
       void pending.then(runtime => runtime?.project.dispose(), () => {})
     }
@@ -119,16 +136,24 @@ export class NovelCore {
 
   // ───────────── projects ─────────────
 
-  /** Open the project at `root`, or undefined when the directory holds none. */
-  async tryRuntime(root: string): Promise<ProjectRuntime | undefined> {
+  /**
+   * Open the project at `root`, or undefined when the directory holds none.
+   * @param scope - `device`: asked for by the reader for other devices, which may read a book a device opened.
+   * @throws ProjectError `novel/locked` for a sealed book that is locked — or open to devices only, for anyone else.
+   */
+  async tryRuntime(root: string, scope?: 'device'): Promise<ProjectRuntime | undefined> {
     const key = resolve(root)
+    if (scope !== 'device' && this.deviceOnly.has(key)) throw new ProjectError('novel/locked', `"${(await readStub(key))?.title ?? 'this book'}" is locked — its author unlocks it in Novel Studio`)
     let pending = this.runtimes.get(key)
     if (pending === undefined) {
       pending = (async () => {
-        const project = await Project.open(key)
+        // A sealed book opens only with its key; without one this throws `novel/locked`.
+        const project = await Project.open(key, this.bookKeys.get(key))
         if (project === undefined) return undefined
         this.rootsById.set((await project.manifest()).id, key)
-        return { project, index: new RetrievalIndex(project, () => this.embedder()) }
+        const runtime: ProjectRuntime = { project, index: new RetrievalIndex(project, () => this.embedder()) }
+        this.announce(runtime)
+        return runtime
       })()
       this.runtimes.set(key, pending)
       // A directory without a project today may get one tomorrow: do not cache the miss.
@@ -149,7 +174,26 @@ export class NovelCore {
     const runtime: ProjectRuntime = { project, index: new RetrievalIndex(project, () => this.embedder()) }
     this.runtimes.set(key, Promise.resolve(runtime))
     this.rootsById.set((await project.manifest()).id, key)
+    this.announce(runtime)
     return runtime
+  }
+
+  private readonly openers = new Set<(runtime: ProjectRuntime) => void>()
+
+  /** Be told of every book this engine opens or creates from now on. */
+  onRuntime(listener: (runtime: ProjectRuntime) => void): () => void {
+    this.openers.add(listener)
+    return () => { this.openers.delete(listener) }
+  }
+
+  private announce(runtime: ProjectRuntime): void {
+    for (const listener of [...this.openers]) {
+      try {
+        listener(runtime)
+      } catch (error) {
+        this.log('a listener for opened books failed', error)
+      }
+    }
   }
 
   /**
@@ -162,13 +206,19 @@ export class NovelCore {
    */
   async removeBook(root: string, keepFolder: boolean): Promise<RemovedBook> {
     const key = resolve(root)
-    const runtime = await this.runtime(key)
-    const manifest = await runtime.project.manifest()
+    // A locked book can be taken off the shelf as it is: what goes to the trash is still sealed.
+    const stub = await readStub(key)
+    const locked = stub !== undefined && !this.bookKeys.has(key)
+    const runtime = locked ? undefined : await this.runtime(key)
+    const manifest = runtime !== undefined ? await runtime.project.manifest() : { id: stub!.id, title: stub!.title }
     for (const job of this.jobs.list(key)) if (job.status === 'running') this.jobs.cancel(job.id)
     // Nothing may be writing into the book while it is carried off.
-    runtime.project.dispose()
+    runtime?.project.dispose()
     this.runtimes.delete(key)
     this.rootsById.delete(manifest.id)
+    this.bookKeys.get(key)?.fill(0)
+    this.bookKeys.delete(key)
+    this.deviceOnly.delete(key)
     // The author's own clock: this name is what they will look for in the trash.
     const now = new Date()
     const two = (value: number): string => String(value).padStart(2, '0')
@@ -205,6 +255,228 @@ export class NovelCore {
     return { ...trashed, title: manifest.title, left, folderRemoved }
   }
 
+  // ───────────── sealed books ─────────────
+
+  private readonly lockWatchers = new Set<(root: string) => void>()
+
+  /** Be told whenever a book is locked, unlocked, sealed or unsealed. */
+  onLock(listener: (root: string) => void): () => void {
+    this.lockWatchers.add(listener)
+    return () => { this.lockWatchers.delete(listener) }
+  }
+
+  private lockChanged(root: string): void {
+    for (const listener of [...this.lockWatchers]) {
+      try {
+        listener(root)
+      } catch (error) {
+        this.log('a listener for locked books failed', error)
+      }
+    }
+  }
+
+  /** How a book is locked: whether it is sealed at all, whether it is open now, and the ways it opens. */
+  async lockOf(root: string): Promise<BookLock> {
+    const key = resolve(root)
+    const stub = await readStub(key)
+    if (stub === undefined) return { sealed: false, locked: false, ways: [] }
+    return {
+      sealed: true,
+      locked: !this.bookKeys.has(key) || this.deviceOnly.has(key),
+      title: stub.title,
+      ways: stub.sealed.slots.map(slot => ({ kind: slot.kind, ...(slot.id !== undefined ? { id: slot.id } : {}), ...(slot.label !== undefined ? { label: slot.label } : {}), ...(slot.at !== undefined ? { at: slot.at } : {}) })),
+    }
+  }
+
+  /** The key of a sealed book that is open now; for adding another way to open it. */
+  keyOf(root: string): Buffer | undefined {
+    return this.bookKeys.get(resolve(root))
+  }
+
+  /** Close a book's runtime so nothing reads or writes its files while they are being changed underneath. */
+  private async release(key: string): Promise<void> {
+    // Everything running on the book stops — except the job doing this very work.
+    const self = currentJob()?.id
+    for (const job of this.jobs.list(key)) if (job.status === 'running' && job.id !== self) this.jobs.cancel(job.id)
+    const pending = this.runtimes.get(key)
+    this.runtimes.delete(key)
+    const runtime = await pending?.catch(() => undefined)
+    runtime?.project.dispose()
+  }
+
+  /**
+   * Do something to a book's files that nothing else may watch: its runtime is
+   * closed, and whoever asks for the book meanwhile waits and gets it as it is
+   * afterwards — never a book half sealed.
+   */
+  private async exclusive<T>(key: string, work: () => Promise<T>): Promise<T> {
+    await this.release(key)
+    let finish!: (runtime: ProjectRuntime | undefined | Promise<ProjectRuntime | undefined>) => void
+    const gate = new Promise<ProjectRuntime | undefined>((resolve) => { finish = resolve })
+    // Nobody may be waiting; a book that ends up locked must not count as an unhandled failure.
+    gate.catch(() => {})
+    this.runtimes.set(key, gate)
+    try {
+      return await work()
+    } finally {
+      if (this.runtimes.get(key) === gate) this.runtimes.delete(key)
+      const fresh = this.tryRuntime(key)
+      fresh.catch(() => {})
+      finish(fresh)
+      this.lockChanged(key)
+    }
+  }
+
+  /**
+   * Seal a book: every file of it is encrypted where it lies, under a new key
+   * that `password` opens. The book stays open in this process afterwards.
+   * @param label - the name the shelf shows while the book is locked. Default: its title.
+   * @throws ProjectError `novel/invalid` when the book is sealed already; VaultError `weak` for a password too short.
+   */
+  async sealBook(root: string, input: { password: string; label?: string }, onProgress?: (done: number) => void): Promise<{ files: number }> {
+    const key = resolve(root)
+    if (await readStub(key) !== undefined) throw new ProjectError('novel/invalid', 'this book is sealed already')
+    const manifest = await readJson<ProjectManifest>(join(key, MANIFEST_FILE))
+    if (manifest === undefined) throw new ProjectError('novel/no-project', `no novel project in ${root}`)
+    const bookKey = newKey()
+    const slot = await passwordSlot(input.password, bookKey)
+    return await this.exclusive(key, async () => {
+      // The key is put in safekeeping before the first file is sealed with it: the manifest goes under the seal, then
+      // `novel.json` says the book is sealed and how it opens. Cut off after this point, the work is finished at the next unlock.
+      const store = new SealedFiles(key, bookKey)
+      await store.writeJson(join(key, MANIFEST_FILE), manifest)
+      const stub: SealedStub = { schema: 1, id: manifest.id, title: input.label?.trim() || manifest.title, sealed: { v: 1, slots: [slot], pending: true } }
+      await writeStub(key, stub)
+      const files = await sealTree(key, BOOK_ENTRIES, bookKey, onProgress)
+      await writeStub(key, { ...stub, sealed: { v: 1, slots: [slot] } })
+      this.bookKeys.set(key, bookKey)
+      return { files: files + 1 }
+    })
+  }
+
+  /**
+   * Take the seal off: every file becomes a plain file again. The book has to be unlocked.
+   * @throws ProjectError `novel/locked` when it is not.
+   */
+  async unsealBook(root: string, onProgress?: (done: number) => void): Promise<{ files: number; left: number }> {
+    const key = resolve(root)
+    const bookKey = this.bookKeys.get(key)
+    const stub = await readStub(key)
+    if (stub === undefined) throw new ProjectError('novel/invalid', 'this book is not sealed')
+    if (bookKey === undefined) throw new ProjectError('novel/locked', 'unlock the book first')
+    const store = new SealedFiles(key, bookKey)
+    const manifest = await store.readJson<ProjectManifest>(join(key, MANIFEST_FILE))
+    if (manifest === undefined) throw new ProjectError('novel/invalid', 'the sealed book has no manifest — it cannot be unsealed safely')
+    return await this.exclusive(key, async () => {
+      await writeStub(key, { ...stub, sealed: { ...stub.sealed, pending: true } })
+      const result = await unsealTree(key, BOOK_ENTRIES, bookKey, onProgress)
+      if (result.left > 0) {
+        // Something would not open: nothing is lost, but the book cannot be called plain. What was opened goes back under the seal.
+        await sealTree(key, BOOK_ENTRIES, bookKey)
+        await writeStub(key, { ...stub, sealed: { v: 1, slots: stub.sealed.slots } })
+        return { files: 0, left: result.left }
+      }
+      await writeJson(join(key, MANIFEST_FILE), manifest)
+      await store.removePath(join(key, MANIFEST_FILE))
+      this.bookKeys.delete(key)
+      bookKey.fill(0)
+      return { files: result.opened + 1, left: 0 }
+    })
+  }
+
+  /**
+   * Open a sealed book for this process: with its password, or with a secret
+   * another keeper holds (this computer's credential store, a device's grant).
+   * @throws VaultError `wrong-key`.
+   */
+  /**
+   * @param scope - `device`: the book is opened for the reader on other devices only; at this computer it stays locked.
+   */
+  async unlockBook(root: string, how: { password: string } | { kind: 'device' | 'grant'; id: string; secret: Buffer }, scope?: 'device'): Promise<void> {
+    const key = resolve(root)
+    const stub = await readStub(key)
+    if (stub === undefined) return
+    if (this.bookKeys.has(key)) {
+      // Open already: the way offered is still checked, so "it opened" always means "that was right".
+      if ('password' in how) await openWithPassword(stub, how.password)
+      else openWithSecret(stub, how.kind, how.id, how.secret)
+      // Opened by a device before, and now by its author at this computer: open here too.
+      if (scope !== 'device' && this.deviceOnly.delete(key)) this.lockChanged(key)
+      return
+    }
+    const bookKey = 'password' in how ? await openWithPassword(stub, how.password) : openWithSecret(stub, how.kind, how.id, how.secret)
+    if (stub.sealed.pending === true) {
+      // Sealing or unsealing was cut off last time: some files lie plain. They go under the seal before anything reads the book.
+      await sealTree(key, BOOK_ENTRIES, bookKey)
+      await writeStub(key, { ...stub, sealed: { v: 1, slots: stub.sealed.slots } })
+    }
+    this.bookKeys.set(key, bookKey)
+    if (scope === 'device') this.deviceOnly.add(key)
+    this.runtimes.delete(key)
+    try {
+      await this.tryRuntime(key, 'device')
+    } catch (error) {
+      this.bookKeys.delete(key)
+      this.deviceOnly.delete(key)
+      throw error
+    }
+    // To this computer nothing changed when a device opened the book for itself.
+    if (scope !== 'device') this.lockChanged(key)
+  }
+
+  /** Lock a sealed book: its key is forgotten, and nothing of it can be read until it is unlocked again. */
+  async lockBook(root: string): Promise<boolean> {
+    const key = resolve(root)
+    if (!this.bookKeys.has(key)) return false
+    await this.release(key)
+    this.bookKeys.get(key)?.fill(0)
+    this.bookKeys.delete(key)
+    this.deviceOnly.delete(key)
+    this.lockChanged(key)
+    return true
+  }
+
+  /** Whether a sealed book is open for other devices only — locked as far as this computer goes. */
+  openToDevicesOnly(root: string): boolean {
+    return this.deviceOnly.has(resolve(root))
+  }
+
+  /** Lock every sealed book that is open (the author stepped away; the Harness is quitting). */
+  async lockAll(): Promise<number> {
+    const open = [...this.bookKeys.keys()]
+    for (const key of open) await this.lockBook(key)
+    return open.length
+  }
+
+  /**
+   * Change how a sealed, unlocked book opens: set a new password, or add or
+   * remove another keeper's slot.
+   */
+  async rekeyBook(root: string, change: { password: string } | { add: SealSlot | ((key: Buffer) => SealSlot) } | { remove: { kind: SealSlot['kind']; id?: string } } | { label: string }): Promise<BookLock> {
+    const key = resolve(root)
+    const stub = await readStub(key)
+    const bookKey = this.bookKeys.get(key)
+    if (stub === undefined) throw new ProjectError('novel/invalid', 'this book is not sealed')
+    if (bookKey === undefined) throw new ProjectError('novel/locked', 'unlock the book first')
+    let slots = stub.sealed.slots
+    let title = stub.title
+    if ('password' in change) slots = [await passwordSlot(change.password, bookKey), ...slots.filter(slot => slot.kind !== 'password')]
+    else if ('add' in change) {
+      const slot = typeof change.add === 'function' ? change.add(bookKey) : change.add
+      slots = [...slots.filter(existing => !(existing.kind === slot.kind && existing.id === slot.id)), slot]
+    } else if ('remove' in change) {
+      slots = slots.filter(slot => !(slot.kind === change.remove.kind && (change.remove.id === undefined || slot.id === change.remove.id)))
+      if (!slots.some(slot => slot.kind === 'password')) throw new ProjectError('novel/invalid', 'a sealed book always keeps a password: it is what opens it when everything else is gone')
+    } else if (change.label.trim().length > 0) title = change.label.trim()
+    await writeStub(key, { ...stub, title, sealed: { v: 1, slots } })
+    return await this.lockOf(key)
+  }
+
+  /** A slot another keeper opens with a secret of 32 bytes; made here so the book's key never leaves the engine. */
+  slotFor(kind: 'device' | 'grant', id: string, secret: Buffer, label?: string): (key: Buffer) => SealSlot {
+    return key => secretSlot(kind, id, secret, key, label)
+  }
+
   /** The open project with this manifest id. */
   async runtimeById(id: string): Promise<ProjectRuntime | undefined> {
     const root = this.rootsById.get(id)
@@ -218,11 +490,18 @@ export class NovelCore {
     const consider = async (root: string): Promise<void> => {
       if (!(await exists(join(root, MANIFEST_FILE)))) return
       try {
+        const stub = await readStub(root)
+        if (stub !== undefined && (!this.bookKeys.has(resolve(root)) || this.deviceOnly.has(resolve(root)))) {
+          // Locked: on the shelf under the name its author chose to show, and nothing more.
+          this.rootsById.set(stub.id, resolve(root))
+          refs.push({ root, title: stub.title, relative: relative(base, root) || '.', id: stub.id, sealed: true, locked: true })
+          return
+        }
         const runtime = await this.tryRuntime(root)
         if (runtime === undefined) return
         const manifest = await runtime.project.manifest()
         const cover = await runtime.project.cover()
-        refs.push({ root, title: manifest.title, relative: relative(base, root) || '.', id: manifest.id, ...(cover !== undefined ? { cover } : {}) })
+        refs.push({ root, title: manifest.title, relative: relative(base, root) || '.', id: manifest.id, ...(cover !== undefined ? { cover } : {}), ...(stub !== undefined ? { sealed: true } : {}) })
       } catch (error) {
         this.log(`skipping unreadable project at ${root}`, error)
       }
@@ -310,9 +589,26 @@ export class NovelCore {
     return provider !== undefined ? meterSpeech(provider, settings.model ?? settings.provider, (event) => { this.usage.record(event) }, await this.bookTag(runtime)) : undefined
   }
 
+  /** The model that makes effects, music and generated beds — by default the speech setup, when it can. */
+  async soundProvider(runtime?: ProjectRuntime): Promise<SoundProvider | undefined> {
+    const provider = createSoundProvider(await this.settings.get(), this.credentials)
+    if (provider === undefined) return undefined
+    const tag = await this.bookTag(runtime)
+    const metered: SoundProvider = Object.create(provider) as SoundProvider
+    metered.generate = async (request) => {
+      const audio = await provider.generate(request)
+      // Billed like speech — by the second — and filed with it.
+      this.usage.record({ kind: 'speech', model: provider.model, via: provider.kind, chars: 0, seconds: Number((audio.pcm.length / audio.sampleRate).toFixed(2)), ...(tag !== undefined ? { book: tag.root, bookTitle: tag.title } : {}) })
+      return audio
+    }
+    return metered
+  }
+
   private async bookTag(runtime: ProjectRuntime | undefined): Promise<{ root: string; title: string } | undefined> {
     if (runtime === undefined) return undefined
-    return { root: runtime.project.root, title: (await runtime.project.manifest()).title }
+    // The usage ledger is kept outside the book, in the clear: a sealed book is entered there under the name its author chose for the shelf.
+    const sealed = runtime.project.sealed ? await readStub(runtime.project.root) : undefined
+    return { root: runtime.project.root, title: sealed?.title ?? (await runtime.project.manifest()).title }
   }
 
   // ───────────── context ─────────────

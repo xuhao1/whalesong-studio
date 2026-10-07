@@ -28,7 +28,20 @@ The conclusion: these are **not several creative tools but several working modes
 
 The other three roles exist because their demands conflict: the **architect** must reason and diverge (outlines, bible development), the **analyst** must be fast, literal and structured (digest, review, scripts), the **director** must be quick (you wait for it on every move of an interlude). Each role takes its own model; unset roles fall back (architect → writer; director → writer or analyst) and finally to the conversation model. "One model for everything" and "the best model for each step" are the two ends of the same setting.
 
-The showrunner is told not to write manuscript prose itself — not in a reply, not through file tools. The whole division of labour rests on that: prose that bypasses the pipeline bypasses style, memory and versions too.
+The showrunner is told not to *write* manuscript prose itself: prose that bypasses the writer's pipeline bypasses the bible, the characters' current states, the style. But a conversation is full of changes that are not writing — the author dictates a sentence, pastes a paragraph of their own, wants a name put right — and routing those through a model that rewrites is slow, costs money and is not exact. So the showrunner has hands of its own for exactly that (`novel_edit`: replace, insert, append, delete, set), and uses them when the words are the author's, when the change is mechanical, or when the author asks it, in so many words, to write something itself.
+
+### One road for every change
+
+The first version drew the line between the showrunner and the book by prohibition: use the tools, do not touch the files. Used for real, that left the showrunner with too little it could do directly — and nothing stopped it from reaching for a raw file tool when its own tools did not fit, changing a chapter with no version kept and with memory still describing the old text. The author's words for it: the main agent "偷偷暗改", out of step with memory and the bible.
+
+The answer is not more prohibition but one road, wide enough for everything:
+
+- **Every kind of change has a tool**, and each tool does the bookkeeping: the text as it was becomes a version, the chapter's memory is digested again, search is re-indexed, and the result tells the showrunner where the change leads — the cards of the characters it names, the chapters written after it. What memory records wrongly can be corrected directly (`novel_memory`) rather than by hoping a second digest reads better.
+- **The road around is closed, gently.** A raw `write` or `edit` (or a shell redirect) aimed at a book's own files is refused with the name of the tool that does the same thing properly. It is the author's setting, not the showrunner's, and can be loosened to "ask me" or "let it through".
+- **What gets around anyway is seen.** The Studio tells its own writes from anyone else's by the state of the file, not by timing; a chapter changed by an editor, a script or a tool that was let through goes on the record and is digested again, and the showrunner's context says that it happened.
+- **Nothing changes the book unseen.** The overview carries the book's record — what the showrunner did with its tools, what was done from another device, what changed from outside — with one-press undo for manuscript edits.
+
+This is what "agent-native" comes to here: the conversation can do everything the screens can, and what it does is as visible and as reversible as what a hand does on a screen.
 
 ## 3. What is remembered
 
@@ -157,6 +170,12 @@ Staging is where the money goes, and a writer's model at a million tokens of con
 - **Two prompt layers.** A fixed description of the division of labour sits in the system prompt (cache-friendly); the project digest and the working mode are dynamic context, re-sent only when they change.
 - **Working mode is session state** — ideate, bible, outline, draft, revise, review, stage, play — switched in the Studio or by the showrunner.
 
+### Sealed books
+
+A book is plain files so that anything can read it; a sealed book is one its author does not want read by anything — a backup, a sync service, whoever opens the folder. Encrypting "the manuscript" would not be enough: a portrait, a voiced line, a memory digest, the name of a character's file say as much. So sealing is done underneath everything else: every read and write of a book goes through one small interface, and a sealed book's implementation of it encrypts content and names alike. The rest of the code neither knows nor cares.
+
+The book's key is random and exists unwrapped only in the memory of a running Harness. On disk it is wrapped once per way of opening the book — a password, a computer's own unlock, a device that showed the password once — in the one file that stays readable. Presence is asked of the operating system (Touch ID, Windows Hello, the computer's password) by a helper that answers yes or no and holds no secret; the secret it gates sits in the account's credential store. The showrunner is on the outside of all of this by design: it can lock a book, never unlock one, and a password is never typed into a conversation.
+
 ## 8. Deliberately not done
 
-Collaborative editing (one author per book); bundled models or keys; video generation (the motion comic is a moving storyboard); a rich-text editor (chapters must stay plain text you can open anywhere).
+Collaborative editing (one author per book); bundled models or keys; video generation (the motion comic is a moving storyboard); a rich-text editor (chapters must stay plain text you can open anywhere); encryption in transit for the reader on other devices (it is plain HTTP inside the local network, and says so — a certificate a phone trusts is not something a plugin can conjure).

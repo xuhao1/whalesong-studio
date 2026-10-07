@@ -99,17 +99,24 @@ export function mountRoutes(ctx: Context, service: NovelService): void {
       const normalized = relative.replace(/\\/g, '/').replace(/^\/+/, '')
       if (!normalized.startsWith('assets/') && !normalized.startsWith('export/')) return new Response('not found', { status: 404 })
       let path: string
+      // A sealed book's files cannot be streamed off the disk: they are opened whole, and served from memory.
+      let opened: Buffer | undefined
+      let info: { size: number; mtimeMs: number }
       try {
+        // A locked book has no files to show: opening it throws, and the answer is the same as for no book at all.
         const runtime = await service.core.runtimeById(project)
         if (runtime === undefined) return new Response('not found', { status: 404 })
         path = runtime.project.path(normalized)
-      } catch {
-        return new Response('not found', { status: 404 })
-      }
-      let info: Awaited<ReturnType<typeof stat>>
-      try {
-        info = await stat(path)
-        if (!info.isFile()) return new Response('not found', { status: 404 })
+        if (runtime.project.sealed) {
+          const known = await runtime.project.fileInfo(normalized)
+          if (known === undefined) return new Response('not found', { status: 404 })
+          opened = await runtime.project.readFile(normalized)
+          info = { size: opened.length, mtimeMs: known.mtime }
+        } else {
+          const found = await stat(path)
+          if (!found.isFile()) return new Response('not found', { status: 404 })
+          info = { size: found.size, mtimeMs: found.mtimeMs }
+        }
       } catch {
         return new Response('not found', { status: 404 })
       }
@@ -120,6 +127,8 @@ export function mountRoutes(ctx: Context, service: NovelService): void {
         'cache-control': 'private, max-age=0, must-revalidate',
         etag,
       })
+      // What was sealed on disk is not left lying in a browser cache either.
+      if (opened !== undefined) headers.set('cache-control', 'no-store')
       if (url.searchParams.get('download') === '1') {
         headers.set('content-disposition', `attachment; filename*=UTF-8''${encodeURIComponent(path.split(/[\\/]/).at(-1) ?? 'file')}`)
       }
@@ -144,6 +153,7 @@ export function mountRoutes(ctx: Context, service: NovelService): void {
       }
       headers.set('content-length', String(info.size === 0 ? 0 : end - start + 1))
       if (request.method === 'HEAD' || info.size === 0) return new Response(null, { status, headers })
+      if (opened !== undefined) return new Response(new Uint8Array(opened.subarray(start, end + 1)), { status, headers })
       const stream = createReadStream(path, { start, end })
       // A client that goes away mid-download must not leave the file handle open.
       request.signal.addEventListener('abort', () => { stream.destroy() }, { once: true })

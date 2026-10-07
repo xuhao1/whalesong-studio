@@ -131,3 +131,32 @@ export function segmentsOf(block: { text: string; offset: number }, ranges: read
   if (at < to) segments.push({ text: block.text.slice(at - from) })
   return segments
 }
+
+/** A subtitle holds about this many characters before the next sentence waits its turn. */
+const SUBTITLE_CHARS = 38
+
+/**
+ * The part of a line that is being spoken now. A take of narration runs for
+ * half a minute and several paragraphs; what belongs under a picture is the
+ * sentence the voice has reached, found by how far through the line it is.
+ * @param fraction - how far through the line playback is, 0 to 1.
+ */
+export function subtitleOf(text: string, fraction: number): string {
+  const sentences = (text.match(/[^。！？!?…\n]+[。！？!?…]*["”’」』）)]*|\n+/g) ?? [text]).map(piece => piece.trim()).filter(piece => piece.length > 0)
+  if (sentences.length <= 1) return text.trim()
+  // Short sentences share a subtitle, so the words do not flicker past.
+  const groups: string[] = []
+  for (const sentence of sentences) {
+    const last = groups.at(-1)
+    if (last !== undefined && last.length + sentence.length <= SUBTITLE_CHARS) groups[groups.length - 1] = `${last}${/[A-Za-z0-9.,;:!?'")\]]$/.test(last) ? ' ' : ''}${sentence}`
+    else groups.push(sentence)
+  }
+  const total = groups.reduce((sum, group) => sum + group.length, 0)
+  const at = Math.max(0, Math.min(1, fraction)) * total
+  let passed = 0
+  for (const group of groups) {
+    passed += group.length
+    if (at < passed) return group
+  }
+  return groups.at(-1)!
+}

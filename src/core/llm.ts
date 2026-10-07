@@ -5,6 +5,7 @@
  * configured in Settings → Models can play any role, and tests plug in a fake.
  */
 import type { ModelRoute, NovelSettings, ProjectManifest, TextRole } from '../shared/types'
+import { currentJob } from './jobs'
 import { errorMessage, isAbort } from './util/async'
 
 export interface LlmRequest {
@@ -28,6 +29,8 @@ export interface LlmResponse {
   /** `stop`, `max-tokens`, … */
   finish: string
   usage?: LlmUsage
+  /** Characters of reasoning the model showed before its answer — or instead of one. */
+  thought?: number
 }
 
 export interface ModelDescriptor {
@@ -52,6 +55,8 @@ export interface LlmBackend {
   catalog?(): Promise<{ providers: ProviderListing[]; models: ModelDescriptor[] }>
   /** How long a reply on this route may run, and who says so. */
   outputCap?(route: ModelRoute): Promise<OutputCap>
+  /** The retry policy of the provider behind a route; absent or undefined means {@link DEFAULT_RETRY}. */
+  retryPolicy?(route: ModelRoute): RetryPolicy | undefined
 }
 
 export interface OutputCap {
@@ -76,9 +81,169 @@ export interface ReasoningInfo {
 }
 
 export class LlmCallError extends Error {
-  constructor(message: string, readonly code: string, options?: { cause?: unknown }) {
-    super(message, options)
+  /** How long the provider asked to be left alone, when it said. */
+  readonly retryAfterMs?: number
+  constructor(message: string, readonly code: string, options?: { cause?: unknown; retryAfterMs?: number }) {
+    super(message, options?.cause !== undefined ? { cause: options.cause } : undefined)
     this.name = 'LlmCallError'
+    if (options?.retryAfterMs !== undefined && Number.isFinite(options.retryAfterMs) && options.retryAfterMs > 0) this.retryAfterMs = options.retryAfterMs
+  }
+}
+
+/** When a failed call is made again, and how long to wait first. */
+export interface RetryPolicy {
+  /** Calls after the first; `Infinity` keeps trying until it works or is cancelled. */
+  maxRetries: number
+  /** Failure codes worth another try; `all` for every failure of the provider's. */
+  codes: readonly string[] | 'all'
+  initialDelayMs: number
+  maxDelayMs: number
+  /** Each wait is scaled by a random factor in 1 ± this. */
+  jitterRatio: number
+}
+
+/**
+ * The Harness's own defaults for a provider, used for endpoints the Studio
+ * calls itself. `NETWORK` is what those report for a connection that broke.
+ */
+export const DEFAULT_RETRY: RetryPolicy = {
+  maxRetries: 5,
+  codes: ['EMPTY_RESPONSE', 'RATE_LIMIT', 'SERVER', 'TIMEOUT', 'TRANSPORT', 'NETWORK'],
+  initialDelayMs: 500,
+  maxDelayMs: 10_000,
+  jitterRatio: 0.1,
+}
+
+/** A reply that came back whole and empty cost a full call; it is asked for again a few times, not for as long as a dropped connection is. */
+const SILENT_RETRIES = 3
+
+/** Failures no amount of asking again mends, whatever a provider's policy says. */
+const NEVER_RETRY = new Set(['TRUNCATED', 'FILTERED', 'NO_MODEL', 'NO_CREDENTIAL', 'INVALID_CREDENTIAL', 'MISSING_CREDENTIAL', 'UNKNOWN_MODEL', 'BAD_JSON'])
+
+/** The language to speak to whoever reads a job's label or its failure: the one the request itself is written in. */
+const inChinese = (request: LlmRequest): boolean => /[一-鿿]/.test(`${request.system ?? ''}${request.prompt}`.slice(0, 4000))
+
+/** A reply without a word in it, as the failure it is. */
+function silence(request: LlmRequest, response: LlmResponse): LlmCallError {
+  const zh = inChinese(request)
+  const model = request.route.model
+  if (response.finish === 'max-tokens') {
+    const limit = request.maxTokens ?? request.route.maxTokens
+    return new LlmCallError(
+      zh
+        ? `${model} 把输出上限${limit !== undefined ? `（${limit} tokens）` : ''}全部用在了思考上，一个字的回答都没写出来。请在「小说工坊 → 设置」里调高或清空这个角色的“最大输出 tokens”，或者把它的思考强度调低。`
+        : `${model} spent its whole output allowance${limit !== undefined ? ` of ${limit} tokens` : ''} on reasoning and wrote no answer — raise or clear "max output tokens" for this role in Novel Studio → Settings, or lower its reasoning effort`,
+      'TRUNCATED',
+    )
+  }
+  if (response.finish === 'content_filter') {
+    return new LlmCallError(
+      zh
+        ? `${model} 的服务方内容审核拦下了这次回复，没有返回任何内容。可以调整要求后重试，或换一个模型。`
+        : `the provider's content filter stopped ${model}'s reply before it said anything — adjust what is asked and try again, or pick another model`,
+      'FILTERED',
+    )
+  }
+  const thought = response.thought ?? 0
+  return new LlmCallError(
+    zh
+      ? `${model} 这次请求正常结束，却没有返回任何回答${thought > 0 ? `（只有 ${thought} 字的思考）` : ''}`
+      : `${model} completed the request without an answer${thought > 0 ? ` (only ${thought} characters of reasoning)` : ''}`,
+    'EMPTY_RESPONSE',
+  )
+}
+
+function waitLabel(zh: boolean, code: string, retry: number, delayMs: number): string {
+  const seconds = Math.max(1, Math.round(delayMs / 1000))
+  const wait = delayMs >= 1000 ? (zh ? `${seconds} 秒后` : ` in ${seconds}s`) : ''
+  const why = code === 'EMPTY_RESPONSE' ? (zh ? '模型没有返回回答' : 'the model returned no answer')
+    : code === 'RATE_LIMIT' ? (zh ? '模型服务限流' : 'the provider is rate-limiting')
+      : code === 'SERVER' ? (zh ? '模型服务繁忙' : 'the provider is busy')
+        : (zh ? '与模型服务的连接中断' : 'the connection to the provider broke')
+  return zh ? `${why}，${wait}重试（第 ${retry} 次）` : `${why} — trying again${wait} (${retry})`
+}
+
+function pause(ms: number, signal: AbortSignal | undefined): Promise<void> {
+  if (ms <= 0 || signal?.aborted === true) return Promise.resolve()
+  return new Promise((resolve) => {
+    const done = (): void => {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', done)
+      resolve()
+    }
+    const timer = setTimeout(done, ms)
+    signal?.addEventListener('abort', done, { once: true })
+  })
+}
+
+/**
+ * Make a failed call again when the failure is the kind that passes.
+ *
+ * The Harness gives its agent exactly this — a provider's retry policy, run on
+ * the agent loop — and gives it to nobody else: a plugin that calls a model
+ * directly gets the first failure as the final one. So a busy server, a rate
+ * limit or a dropped stream used to fail a whole chapter. This runs the same
+ * policy for every call the Studio makes.
+ *
+ * One more failure is treated the way the Harness treats a response with no
+ * content: a reply that completes with reasoning in it and not a word of
+ * answer. Providers do that now and then; the adapters only catch the case of
+ * nothing at all. Nothing came of the call, so it is safe to make again —
+ * unchanged — and whoever watches the job reads that it is being made again.
+ * @throws LlmCallError — the last failure, with how often it was tried.
+ */
+export function retrying(backend: LlmBackend, random: () => number = Math.random): LlmBackend {
+  return {
+    ...backend,
+    listModels: backend.listModels.bind(backend),
+    contextWindow: backend.contextWindow.bind(backend),
+    defaultRoute: backend.defaultRoute.bind(backend),
+    ...(backend.reasoning !== undefined ? { reasoning: backend.reasoning.bind(backend) } : {}),
+    ...(backend.catalog !== undefined ? { catalog: backend.catalog.bind(backend) } : {}),
+    ...(backend.outputCap !== undefined ? { outputCap: backend.outputCap.bind(backend) } : {}),
+    ...(backend.retryPolicy !== undefined ? { retryPolicy: backend.retryPolicy.bind(backend) } : {}),
+    async complete(request) {
+      const zh = inChinese(request)
+      const policy = backend.retryPolicy?.(request.route) ?? DEFAULT_RETRY
+      for (let retry = 0; ; retry++) {
+        let failure: LlmCallError
+        try {
+          const response = await backend.complete(request)
+          if (response.text.trim().length > 0) return response
+          failure = silence(request, response)
+        } catch (error) {
+          if (isAbort(error) || request.signal?.aborted === true || !(error instanceof LlmCallError)) throw error
+          failure = error
+        }
+        const silent = failure.code === 'EMPTY_RESPONSE'
+        const most = silent ? Math.min(policy.maxRetries, SILENT_RETRIES) : policy.maxRetries
+        const worth = !NEVER_RETRY.has(failure.code) && (policy.codes === 'all' || policy.codes.includes(failure.code))
+        // A provider that asks for longer than the policy waits is not asked again by a bounded policy.
+        const asked = failure.retryAfterMs
+        const patient = asked === undefined || asked <= policy.maxDelayMs || !Number.isFinite(policy.maxRetries)
+        if (!worth || !patient || retry >= most) {
+          if (retry === 0) throw failure
+          throw new LlmCallError(
+            zh
+              ? `${failure.message}——已重试 ${retry} 次，仍然如此。${silent ? '可以再试一次；如果反复出现，请在「小说工坊 → 设置」里把这个角色的思考强度调低，或换一个模型。模型想了什么，可以在这条任务的“思考”里看到。' : '请稍后再试。'}`
+              : `${failure.message} — tried ${retry + 1} times.${silent ? ' Try again; if it keeps happening, lower this role\'s reasoning effort in Novel Studio → Settings, or pick another model.' : ' Try again later.'}`,
+            failure.code,
+            { cause: failure },
+          )
+        }
+        const local = Math.min(Math.min(policy.initialDelayMs * 2 ** Math.min(retry, 30), policy.maxDelayMs) * (1 - policy.jitterRatio + 2 * policy.jitterRatio * random()), policy.maxDelayMs)
+        const delay = asked !== undefined && asked <= policy.maxDelayMs ? asked : local
+        const restore = currentJob()?.note(waitLabel(zh, failure.code, retry + 1, delay))
+        await pause(delay, request.signal)
+        // The label stays through the wait; the attempt that follows speaks for itself.
+        restore?.()
+        if (request.signal?.aborted === true) {
+          const error = new Error('aborted')
+          error.name = 'AbortError'
+          throw error
+        }
+      }
+    },
   }
 }
 

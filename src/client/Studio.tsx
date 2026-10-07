@@ -7,18 +7,19 @@
  */
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { formatCount } from '../shared/text'
-import { WORK_MODES, type JobInfo, type ProjectState, type WorkMode } from '../shared/types'
+import { WORK_MODES, type JobInfo, type ProjectRef, type ProjectState, type WorkMode } from '../shared/types'
 import type { NovelApi } from './api'
 import { Icon, type IconName } from './icons'
 import { jobTarget, jobTitle, waitingLabel } from './labels'
 import { StudioController, type Capability, type ReadMode, type StageTab, type StudioView } from './store'
 import {
-  Button, cx, Empty, Menu, Modal, OverlayRootProvider, Progress, Spinner, StudioProvider, Toasts, useSnapshot, useStudio, useT,
+  Button, cx, Empty, Menu, Modal, OverlayRootProvider, Popover, Progress, Spinner, StudioProvider, ThoughtButton, Toasts, useSnapshot, useStudio, useT,
   type StudioHost, type Translate,
 } from './ui'
 import { BibleView } from './views/Bible'
 import { CastView } from './views/Cast'
 import { HomeView, Onboarding, useRemoveBook } from './views/Home'
+import { LockScreen, SealDialog } from './views/Lock'
 import { OutlineView } from './views/Outline'
 import { ReadView } from './views/Read'
 import { ReviewView } from './views/Review'
@@ -208,6 +209,7 @@ function Shell() {
   const error = useSnapshot(snapshot => snapshot.error)
   const project = useSnapshot(snapshot => snapshot.project)
   const view = useSnapshot(snapshot => snapshot.view)
+  const lock = useSnapshot(snapshot => snapshot.lock)
   const [searching, setSearching] = useState(false)
 
   if (status === 'loading') return <div className="nv-center"><Spinner size={20} /></div>
@@ -219,6 +221,8 @@ function Shell() {
       </Empty>
     )
   }
+  // A sealed book that is locked: nothing of it can be shown but the way to open it.
+  if (lock !== undefined && view !== 'settings' && view !== 'setup' && view !== 'usage') return <><BareHeader /><div className="nv-body"><LockScreen /></div></>
   if (project === undefined) {
     if (view === 'settings') return <><BareHeader title={t('小说工坊设置', 'Novel Studio settings')} /><div className="nv-body"><SettingsView /></div></>
     if (view === 'setup') return <><BareHeader title={t('开始之前', 'Before you start')} /><div className="nv-body"><SetupView /></div></>
@@ -287,6 +291,7 @@ function Header({ onSearch }: { onSearch: () => void }) {
   // In a session's Studio the open book is the conversation's book: changing one changes the other.
   const linked = controller.sessionId !== undefined && sessionBook === root
   const removal = useRemoveBook()
+  const [sealing, setSealing] = useState(false)
   return (
     <header className="nv-header">
       <Menu
@@ -297,16 +302,13 @@ function Header({ onSearch }: { onSearch: () => void }) {
           ...(others.length > 0 ? ['separator' as const] : []),
           { label: t('书架 / 新建项目', 'Bookshelf / new project'), icon: 'plus', onSelect: () => { controller.closeProject() } },
           'separator' as const,
+          { label: t('加密与上锁…', 'Seal and lock…'), icon: 'lock', onSelect: () => { setSealing(true) } },
           { label: t('删除这本书…', 'Remove this book…'), icon: 'trash', danger: true, onSelect: () => { if (root !== undefined) removal.ask({ root, title: project.manifest.title }) } },
         ]}
       />
       {removal.element}
-      {linked ? (
-        <span className="nv-linked" title={t('左边的对话正在这本书上：Agent 的工具调用默认作用于它。在这里换书，对话跟着换；让 Agent 换书，这里也跟着换。', 'The conversation beside this panel is on this book: the agent\'s tool calls act on it. Change book here and the conversation follows; have the agent change book and this panel follows.')}>
-          <Icon name="chat" size={12} />
-          <span>{t('对话同步', 'In sync')}</span>
-        </span>
-      ) : null}
+      {sealing ? <SealDialog onClose={() => { setSealing(false) }} /> : null}
+      {linked ? <LinkedChip title={project.manifest.title} others={others} /> : null}
       <span className="nv-header-stats" title={t(`${stats.chaptersWithText}/${stats.chapters} 章已写`, `${stats.chaptersWithText}/${stats.chapters} chapters written`)}>
         {formatCount(stats.words, locale)}{t(' 字', ' words')}
       </span>
@@ -327,6 +329,49 @@ function Header({ onSearch }: { onSearch: () => void }) {
         <MaximizeButton />
       </div>
     </header>
+  )
+}
+
+/**
+ * Says that the conversation beside this panel and the panel itself are on the
+ * same book — and, when asked, what that means and how to change it.
+ */
+function LinkedChip({ title, others }: { title: string; others: ProjectRef[] }) {
+  const { controller } = useStudio()
+  const t = useT()
+  return (
+    <Popover
+      className="nv-linked-card"
+      trigger={({ open, toggle }) => (
+        <button type="button" className={cx('nv-linked', open && 'is-open')} aria-expanded={open} onClick={toggle} title={t('对话和这块面板在同一本书上——点开看这是什么意思', 'The conversation and this panel are on the same book — click for what that means')}>
+          <Icon name="chat" size={12} />
+          <span>{t('对话同步', 'In sync')}</span>
+        </button>
+      )}
+    >
+      {close => (
+        <>
+          <strong>{t(`对话正在《${title}》上`, `The conversation is on "${title}"`)}</strong>
+          <p>{t('你在左边对总编说的话、它调用的工具，默认都作用在这本书上；这块面板显示的也是这本书。两边始终是同一本。', 'What you say to the showrunner on the left, and the tools it calls, act on this book; this panel shows the same book. The two always stay together.')}</p>
+          <ul>
+            <li>{t('在这里换书，对话跟着换过去——之后说的话就是在说新那本。', 'Change book here and the conversation moves with you — what you say next is about the new one.')}</li>
+            <li>{t('让总编换书（"我们来写另一本"），这块面板也跟着换。', 'Ask the showrunner to change book and this panel follows.')}</li>
+            <li>{t('只想让总编碰一下别的书（比如抄一个人物过来），直接说书名，不用换。', 'To have the showrunner touch another book once (copying a character over, say), just name it — no need to move.')}</li>
+          </ul>
+          {others.length > 0 ? (
+            <div className="nv-linked-books">
+              <span className="nv-muted nv-small">{t('换到：', 'Move to:')}</span>
+              {others.slice(0, 6).map(ref => (
+                <Button key={ref.root} size="sm" icon="book" onClick={() => { close(); void controller.guard(async () => { await controller.openProject(ref.root) }) }}>{ref.title}</Button>
+              ))}
+            </div>
+          ) : null}
+          <div className="nv-row-wrap">
+            <Button size="sm" variant="ghost" icon="plus" onClick={() => { close(); controller.closeProject() }}>{t('书架 / 新建', 'Bookshelf / new')}</Button>
+          </div>
+        </>
+      )}
+    </Popover>
   )
 }
 
@@ -364,6 +409,7 @@ const JOB_LABELS: Record<JobInfo['kind'], [string, string]> = {
   play: ['幕间', 'Interlude'],
   export: ['导出', 'Exporting'],
   index: ['索引', 'Indexing'],
+  seal: ['加密', 'Sealing'],
 }
 
 /** What a running job is doing right now, when it says so. */
@@ -425,6 +471,7 @@ function ActivityDock() {
             <span className="nv-dock-title">{jobLabel(job, t, project)}</span>
             {total > 1 ? <span className="nv-dock-count">{done}/{total}</span> : null}
             <span className="nv-dock-pulse">{pulse ?? t('进行中…', 'working…')}</span>
+            <ThoughtButton job={job} />
             <span className="nv-dock-time">{elapsedOf(Date.parse(job.startedAt), now)}</span>
             {job.origin === 'agent' ? <span className="nv-dock-tag" title={t('这是对话里的总编发起的', 'Started by the showrunner in the conversation')}>{t('总编', 'agent')}</span> : null}
             <button type="button" className="nv-dock-stop" onClick={() => { void controller.cancelJob(job.id) }} title={t('停止', 'Stop')} aria-label={t('停止', 'Stop')}><Icon name="stop" size={11} /></button>
@@ -473,6 +520,7 @@ function JobsButton() {
                   {job.status === 'running' && (job.progress !== undefined || job.thinking !== undefined) ? <Progress done={job.progress?.done ?? 0} total={job.progress?.total ?? 0} label={jobPulse(job, t)} /> : null}
                   {job.error !== undefined ? <span className="nv-job-error">{job.error}</span> : null}
                 </div>
+                <ThoughtButton job={job} label />
                 {job.status === 'running'
                   ? <Button size="sm" variant="ghost" icon="stop" onClick={() => { void controller.cancelJob(job.id) }}>{t('停止', 'Stop')}</Button>
                   : <span className="nv-job-status">{job.status === 'done' ? t('完成', 'done') : job.status === 'failed' ? t('失败', 'failed') : t('已取消', 'cancelled')}</span>}

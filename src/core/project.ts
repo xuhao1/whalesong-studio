@@ -15,10 +15,9 @@
  * Files edited by hand or by other tools are picked up through a directory watch.
  */
 import { watch, type FSWatcher } from 'node:fs'
-import { stat } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import type {
-  CharacterLook,
+  ActivityEntry, CharacterLook,
   AudioScript, CastPresence, ChapterInfo, ChapterMemory, ChapterPlan, ChapterReview, ChapterStatus, CharacterCard,
   ComicBoard, IllustrationInfo, Outline, PlaySession, PlotThread, ProjectManifest, ProjectState, ProjectStats, Proposal,
   StyleProfile, Suggestion, VersionInfo, VoiceCast, Volume, WorldEntry,
@@ -29,6 +28,7 @@ import {
   containedPath, ensureDir, exists, listDir, mtimeOf, readJson, readText, relativePosix, removePath, writeAtomic, writeJson,
 } from './util/fs'
 import { parseFrontMatter, renderFrontMatter } from './util/frontmatter'
+import { PlainFiles, readStub, SealedFiles, type FileStore } from './util/vault'
 
 export const MANIFEST_FILE = 'novel.json'
 const OUTLINE_FILE = 'outline.json'
@@ -77,18 +77,36 @@ export class Project {
   private readonly mutex = new KeyedMutex()
   private watcher: FSWatcher | undefined
   private watchTimer: NodeJS.Timeout | undefined
-  /** Paths this process wrote recently; their watch events are not external edits. */
-  private readonly ownWrites = new Map<string, number>()
+  /**
+   * What this process itself put on disk: for each path, when, and the
+   * modification time the file had right after. A watch event for a file that
+   * still has that time is the Studio's own write coming back, however late
+   * the event arrives; anything else was changed by someone else.
+   */
+  private readonly ownWrites = new Map<string, { at: number; mtime: number }>()
+  private readonly outsiders = new Set<(paths: string[]) => void>()
+  /** Files changed from outside since the last report. */
+  private readonly outside = new Set<string>()
   private disposed = false
 
-  private constructor(readonly root: string) {}
+  /**
+   * @param files - how the book's files are read and written: as they are, or
+   *   through the book's key when it is sealed.
+   */
+  private constructor(readonly root: string, readonly files: FileStore = new PlainFiles()) {}
 
   // ───────────── lifecycle ─────────────
 
   /** Open an existing project. @returns undefined when `root` holds no manifest. */
-  static async open(root: string): Promise<Project | undefined> {
+  /**
+   * @param key - the key of a sealed book.
+   * @throws ProjectError `novel/locked` when the book is sealed and no key was given.
+   */
+  static async open(root: string, key?: Buffer): Promise<Project | undefined> {
     if (!(await exists(join(root, MANIFEST_FILE)))) return undefined
-    const project = new Project(root)
+    const stub = await readStub(root)
+    if (stub !== undefined && key === undefined) throw new ProjectError('novel/locked', `"${stub.title}" is locked — its author unlocks it in Novel Studio`)
+    const project = new Project(root, stub !== undefined ? new SealedFiles(root, key!) : new PlainFiles())
     await project.manifest()
     project.startWatching()
     return project
@@ -131,6 +149,11 @@ export class Project {
     await writeAtomic(join(root, 'bible/styles/default.md'), renderFrontMatter(defaultStyle(zh), ''))
     await writeAtomic(join(root, STATE_DIR, 'README.md'), stateReadme(zh))
     const project = new Project(root)
+    // What was just laid down is the Studio's own, though it was written before there was a project to write it.
+    for (const file of [MANIFEST_FILE, OUTLINE_FILE, 'bible/styles/default.md', join(STATE_DIR, 'README.md')]) {
+      const path = join(root, file)
+      project.ownWrites.set(path, { at: Date.now(), mtime: await mtimeOf(path) })
+    }
     project.startWatching()
     return project
   }
@@ -141,10 +164,21 @@ export class Project {
     this.watcher = undefined
     if (this.watchTimer !== undefined) clearTimeout(this.watchTimer)
     this.listeners.clear()
+    this.outsiders.clear()
   }
 
   get revision(): number {
     return this.revisionValue
+  }
+
+  /**
+   * Subscribe to changes made to the book's files by something other than the
+   * Studio — an editor, a script, a file tool. The listener gets the
+   * project-relative paths that changed, a moment after the last of them.
+   */
+  onOutside(listener: (paths: string[]) => void): () => void {
+    this.outsiders.add(listener)
+    return () => { this.outsiders.delete(listener) }
   }
 
   /** Subscribe to revision changes. @returns the unsubscriber. */
@@ -171,12 +205,11 @@ export class Project {
         if (this.disposed || filename === null) return
         const name = String(filename)
         if (name.endsWith('.tmp') || name.includes('.novel/index') || name.includes('.novel\\index') || name.includes('node_modules')) return
-        const own = this.ownWrites.get(join(this.root, name))
-        if (own !== undefined && Date.now() - own < 1500) return
+        this.outside.add(name)
         if (this.watchTimer !== undefined) clearTimeout(this.watchTimer)
         this.watchTimer = setTimeout(() => {
           this.watchTimer = undefined
-          if (!this.disposed) this.touch()
+          void this.sift().catch(() => {})
         }, 200)
       })
       // Watch failures (EMFILE, unmounted volumes) degrade to "no live external updates".
@@ -186,6 +219,49 @@ export class Project {
       })
     } catch {
       this.watcher = undefined
+    }
+  }
+
+  /** Tell the changes somebody else made from the Studio's own writes coming back, and pass the former on. */
+  private async sift(): Promise<void> {
+    if (this.disposed) return
+    const names = [...this.outside]
+    this.outside.clear()
+    const paths: string[] = []
+    for (const name of names) {
+      const physical = join(this.root, name)
+      const own = this.ownWrites.get(physical)
+      if (own !== undefined) {
+        // Still being written, or exactly as the Studio left it (gone, when the Studio removed it).
+        if (own.mtime < 0 ? Date.now() - own.at < 5000 : await mtimeOf(physical) === own.mtime) continue
+      }
+      // A sealed file is known to the rest of the Studio by the path it stands for.
+      const known = this.files.logical(name)
+      if (known !== undefined) paths.push(known)
+    }
+    if (this.disposed || paths.length === 0) return
+    this.touch()
+    for (const listener of [...this.outsiders]) {
+      try {
+        listener(paths)
+      } catch {
+        // A broken subscriber must not stop the others from hearing of the change.
+      }
+    }
+  }
+
+  /** Note that the Studio is about to write (or remove) a file, and afterwards how it left it. */
+  private async own(path: string, work: () => Promise<void>): Promise<void> {
+    const physical = this.files.physical(path)
+    this.ownWrites.set(physical, { at: Date.now(), mtime: -1 })
+    if (this.ownWrites.size > 4000) {
+      const cutoff = Date.now() - 60_000
+      for (const [key, entry] of this.ownWrites) if (entry.at < cutoff) this.ownWrites.delete(key)
+    }
+    try {
+      await work()
+    } finally {
+      this.ownWrites.set(physical, { at: Date.now(), mtime: await mtimeOf(physical).catch(() => 0) })
     }
   }
 
@@ -205,7 +281,7 @@ export class Project {
   }
 
   private async cached<T>(path: string, load: (mtime: number) => Promise<T>): Promise<T> {
-    const mtime = await mtimeOf(path)
+    const mtime = await this.files.mtimeOf(path)
     const hit = this.cache.get(path) as CachedDoc<T> | undefined
     if (hit !== undefined && hit.mtime === mtime) return hit.value
     const value = await load(mtime)
@@ -214,12 +290,7 @@ export class Project {
   }
 
   private async write(path: string, data: string | Uint8Array, notify = true): Promise<void> {
-    this.ownWrites.set(path, Date.now())
-    if (this.ownWrites.size > 500) {
-      const cutoff = Date.now() - 5000
-      for (const [key, at] of this.ownWrites) if (at < cutoff) this.ownWrites.delete(key)
-    }
-    await writeAtomic(path, data)
+    await this.own(path, async () => { await this.files.writeAtomic(path, data) })
     this.cache.delete(path)
     if (notify) this.touch()
   }
@@ -229,8 +300,7 @@ export class Project {
   }
 
   private async remove(path: string): Promise<void> {
-    this.ownWrites.set(path, Date.now())
-    await removePath(path)
+    await this.own(path, async () => { await this.files.removePath(path) })
     this.cache.delete(path)
     this.touch()
   }
@@ -238,7 +308,7 @@ export class Project {
   /** Read a JSON document under `.novel/`. */
   async readState<T>(...parts: string[]): Promise<T | undefined> {
     const path = this.statePath(...parts)
-    return await this.cached(path, async () => await readJson<T>(path))
+    return await this.cached(path, async () => await this.files.readJson<T>(path))
   }
 
   /** Write a JSON document under `.novel/`. */
@@ -254,7 +324,7 @@ export class Project {
   async updateState<T>(parts: string[], fallback: T, mutate: (current: T) => T | Promise<T>): Promise<T> {
     const path = this.statePath(...parts)
     return await this.mutex.run(path, async () => {
-      const current = (await readJson<T>(path)) ?? fallback
+      const current = (await this.files.readJson<T>(path)) ?? fallback
       const next = await mutate(current)
       await this.writeDoc(path, next)
       return next
@@ -273,7 +343,7 @@ export class Project {
   async manifest(): Promise<ProjectManifest> {
     const path = this.path(MANIFEST_FILE)
     return await this.cached(path, async () => {
-      const manifest = await readJson<ProjectManifest>(path)
+      const manifest = await this.files.readJson<ProjectManifest>(path)
       if (manifest === undefined) throw new ProjectError('novel/no-project', `no ${MANIFEST_FILE} in ${this.root}`)
       return {
         ...manifest,
@@ -301,12 +371,12 @@ export class Project {
 
   private async cards<T extends { id: string; updatedAt?: string }>(dir: string, normalize: (data: Partial<T>, body: string, id: string) => T): Promise<T[]> {
     const base = this.path('bible', dir)
-    const names = (await listDir(base)).filter(name => name.endsWith('.md'))
+    const names = (await this.files.listDir(base)).filter(name => name.endsWith('.md'))
     const cards: T[] = []
     for (const name of names) {
       const path = join(base, name)
       const card = await this.cached(path, async (mtime) => {
-        const text = (await readText(path)) ?? ''
+        const text = (await this.files.readText(path)) ?? ''
         const { data, body } = parseFrontMatter<T>(text)
         const card = normalize(data, body, name.slice(0, -3))
         if (card.updatedAt === undefined && mtime > 0) card.updatedAt = new Date(mtime).toISOString()
@@ -323,7 +393,7 @@ export class Project {
 
   private async uniqueId(dir: string, name: string, fallback: string): Promise<string> {
     const base = slugify(name, fallback)
-    const taken = new Set((await listDir(this.path('bible', dir))).map(file => file.replace(/\.md$/, '')))
+    const taken = new Set((await this.files.listDir(this.path('bible', dir))).map(file => file.replace(/\.md$/, '')))
     if (!taken.has(base)) return base
     for (let n = 2; ; n++) if (!taken.has(`${base}-${n}`)) return `${base}-${n}`
   }
@@ -488,7 +558,7 @@ export class Project {
   async outline(): Promise<Outline> {
     const path = this.path(OUTLINE_FILE)
     return await this.cached(path, async () => {
-      const outline = await readJson<Outline>(path)
+      const outline = await this.files.readJson<Outline>(path)
       return normalizeOutline(outline)
     })
   }
@@ -529,7 +599,7 @@ export class Project {
   }
 
   private async nextChapterId(outline: Outline): Promise<string> {
-    const files = await listDir(this.path('manuscript'))
+    const files = await this.files.listDir(this.path('manuscript'))
     let max = 0
     const scan = (id: string): void => {
       const match = /^ch(\d+)$/.exec(id)
@@ -624,7 +694,7 @@ export class Project {
   /** Chapter prose, or an empty string when nothing is written yet. */
   async chapterText(id: string): Promise<string> {
     const path = this.chapterPath(id)
-    return await this.cached(path, async () => normalizeProse((await readText(path)) ?? ''))
+    return await this.cached(path, async () => normalizeProse((await this.files.readText(path)) ?? ''))
   }
 
   /**
@@ -657,7 +727,7 @@ export class Project {
       const text = await this.chapterText(plan.id)
       const memory = text.length > 0 ? await this.memory(plan.id) : undefined
       const review = text.length > 0 ? await this.review(plan.id) : undefined
-      const mtime = text.length > 0 ? await mtimeOf(path) : 0
+      const mtime = text.length > 0 ? await this.files.mtimeOf(path) : 0
       infos.push({
         id: plan.id,
         title: plan.title,
@@ -683,15 +753,14 @@ export class Project {
     const stamp = new Date().toISOString().replace(/[:.]/g, '-')
     const id = `${stamp}__${slugify(reason, 'edit')}`
     const path = this.statePath('versions', chapterId, `${id}.md`)
-    this.ownWrites.set(path, Date.now())
-    await writeAtomic(path, content)
+    await this.own(path, async () => { await this.files.writeAtomic(path, content) })
     await this.pruneVersions(chapterId)
     return id
   }
 
   /** Whether an autosave should take a restore point: at most one `edit` snapshot per window. */
   async editSnapshotDue(chapterId: string, windowMs = 10 * 60_000): Promise<boolean> {
-    const names = (await listDir(this.statePath('versions', chapterId))).filter(name => name.endsWith('__edit.md')).sort()
+    const names = (await this.files.listDir(this.statePath('versions', chapterId))).filter(name => name.endsWith('__edit.md')).sort()
     const last = names.at(-1)
     if (last === undefined) return true
     const at = Date.parse(last.slice(0, last.indexOf('__')).replace(/^(\d{4}-\d{2}-\d{2}T\d{2})-(\d{2})-(\d{2})-(\d{3}Z)$/, '$1:$2:$3.$4'))
@@ -700,18 +769,18 @@ export class Project {
 
   private async pruneVersions(chapterId: string, keep = 40): Promise<void> {
     const dir = this.statePath('versions', chapterId)
-    const names = (await listDir(dir)).filter(name => name.endsWith('.md'))
-    for (const name of names.slice(0, Math.max(0, names.length - keep))) await removePath(join(dir, name))
+    const names = (await this.files.listDir(dir)).filter(name => name.endsWith('.md'))
+    for (const name of names.slice(0, Math.max(0, names.length - keep))) await this.files.removePath(join(dir, name))
   }
 
   async versions(chapterId: string): Promise<VersionInfo[]> {
     const dir = this.statePath('versions', chapterId)
-    const names = (await listDir(dir)).filter(name => name.endsWith('.md'))
+    const names = (await this.files.listDir(dir)).filter(name => name.endsWith('.md'))
     const versions: VersionInfo[] = []
     for (const name of names) {
       const id = name.slice(0, -3)
       const [stamp, reason] = id.split('__')
-      const text = (await readText(join(dir, name))) ?? ''
+      const text = (await this.files.readText(join(dir, name))) ?? ''
       const iso = (stamp ?? '').replace(/^(\d{4}-\d{2}-\d{2}T\d{2})-(\d{2})-(\d{2})-(\d{3}Z)$/, '$1:$2:$3.$4')
       versions.push({ id, chapterId, createdAt: iso, reason: reason ?? 'edit', words: countWords(text) })
     }
@@ -720,7 +789,7 @@ export class Project {
 
   async versionText(chapterId: string, versionId: string): Promise<string | undefined> {
     if (!/^[\w.-]+$/.test(versionId)) return undefined
-    return await readText(this.statePath('versions', chapterId, `${versionId}.md`))
+    return await this.files.readText(this.statePath('versions', chapterId, `${versionId}.md`))
   }
 
   async restoreVersion(chapterId: string, versionId: string): Promise<boolean> {
@@ -838,7 +907,7 @@ export class Project {
   }
 
   async playSessions(): Promise<PlaySession[]> {
-    const names = (await listDir(this.statePath('play'))).filter(name => name.endsWith('.json'))
+    const names = (await this.files.listDir(this.statePath('play'))).filter(name => name.endsWith('.json'))
     const sessions: PlaySession[] = []
     for (const name of names) {
       const session = await this.readState<PlaySession>('play', name)
@@ -914,9 +983,9 @@ export class Project {
   }
 
   async state(): Promise<ProjectState> {
-    const [manifest, outline, chapters, characters, world, styles, suggestions, proposals, presence, cover] = await Promise.all([
+    const [manifest, outline, chapters, characters, world, styles, suggestions, proposals, presence, cover, activity] = await Promise.all([
       this.manifest(), this.outline(), this.chapterInfos(), this.characters(), this.world(), this.styles(),
-      this.suggestions(), this.proposals(), this.presence(), this.cover(),
+      this.suggestions(), this.proposals(), this.presence(), this.cover(), this.activity(20),
     ])
     const stats: ProjectStats = {
       words: chapters.reduce((sum, chapter) => sum + chapter.words, 0),
@@ -943,17 +1012,57 @@ export class Project {
       proposals: proposals.filter(proposal => proposal.status === 'pending'),
       presence,
       ...(cover !== undefined ? { cover } : {}),
+      activity,
     }
   }
 
-  /** Whether an absolute path exists inside the project. */
+  // ───────────── activity ─────────────
+
+  /** What changed the book lately, newest first. */
+  async activity(limit = 40): Promise<ActivityEntry[]> {
+    return ((await this.readState<ActivityEntry[]>('activity.json')) ?? []).slice(0, limit)
+  }
+
+  /** Put a change on the record. The newest three hundred are kept. */
+  async addActivity(entry: Omit<ActivityEntry, 'id' | 'at'>): Promise<ActivityEntry> {
+    const record: ActivityEntry = { id: newId('act'), at: new Date().toISOString(), ...entry, summary: entry.summary.replace(/\s+/g, ' ').trim().slice(0, 240) }
+    await this.updateState<ActivityEntry[]>(['activity.json'], [], current => [record, ...current].slice(0, 300))
+    return record
+  }
+
+  /** Whether a file or folder exists inside the project. */
   async has(relativePath: string): Promise<boolean> {
-    try {
-      await stat(this.path(relativePath))
-      return true
-    } catch {
-      return false
-    }
+    return await this.files.exists(this.path(relativePath)).catch(() => false)
+  }
+
+  /**
+   * The bytes of one of the book's files, by its path inside the book — read
+   * through the book's key when it is sealed.
+   * @throws an ENOENT error when there is no such file.
+   */
+  async readFile(relativePath: string): Promise<Buffer> {
+    const data = await this.files.readBytes(this.path(relativePath))
+    if (data === undefined) throw Object.assign(new Error(`no such file in the book: ${relativePath}`), { code: 'ENOENT' })
+    return data
+  }
+
+  /** Write one of the book's files by its path inside the book. @returns the project-relative path. */
+  async writeFile(relativePath: string, data: string | Uint8Array): Promise<string> {
+    const path = this.path(relativePath)
+    await this.write(path, data)
+    return this.relative(path)
+  }
+
+  /** Size and modification time of a file of the book, or undefined when there is none. */
+  async fileInfo(relativePath: string): Promise<{ size: number; mtime: number } | undefined> {
+    const path = this.path(relativePath)
+    const size = await this.files.sizeOf(path)
+    return size !== undefined ? { size, mtime: await this.files.mtimeOf(path) } : undefined
+  }
+
+  /** Whether the book's files are encrypted where they lie. */
+  get sealed(): boolean {
+    return this.files.sealed
   }
 }
 

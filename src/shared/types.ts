@@ -578,6 +578,38 @@ export interface TtsSettings {
    * 0 switches the retakes off; the check still marks such lines.
    */
   retakes?: number
+  /**
+   * What happens to narration that only says who spoke, between two spoken
+   * lines: `drop` (default) leaves it unspoken, as an audio drama would; `read`
+   * has the narrator read every word, as an audiobook would.
+   */
+  speechTags?: 'drop' | 'read'
+}
+
+/** Where sounds that are not speech come from: effects, music, generated ambience. */
+export type SoundProviderKind = 'auto' | 'qwen-audiogen' | 'none'
+export interface SoundSettings {
+  /**
+   * `auto` (default) uses the speech setup when its model can generate sound
+   * as well as speech (Bailian audio generation); `none` keeps to the beds the
+   * browser synthesizes; `qwen-audiogen` names an endpoint of its own.
+   */
+  provider: SoundProviderKind
+  baseURL?: string
+  /** Read the key from this environment variable / Harness credential instead of the one saved for the endpoint. */
+  apiKeyRef?: string
+  model?: string
+  /** Have the director place spot effects (default true). */
+  effects?: boolean
+  /** Have the director place music (default true). */
+  music?: boolean
+  /**
+   * Where the ambience under a scene comes from: `generate` (default) has the
+   * sound model make it from the cue's description; `browser` keeps to the
+   * beds the player synthesizes. Without a sound model, and until a bed has
+   * been generated, the synthesized one plays in either case.
+   */
+  beds?: 'generate' | 'browser'
 }
 
 export type EmbeddingProviderKind = 'openai' | 'none'
@@ -596,11 +628,21 @@ export interface NovelSettings {
   context: ContextSettings
   image: ImageSettings
   tts: TtsSettings
+  /** Effects, music and generated ambience; absent in settings saved before there were any. */
+  sound?: SoundSettings
   embedding: EmbeddingSettings
   /** Run digest automatically after a chapter is written or revised. */
   autoDigest: boolean
   /** Manuscript revisions requested by the agent wait for review instead of applying directly. */
   reviewAgentRevisions: boolean
+  /**
+   * What happens when the showrunner reaches for a book's own files with raw
+   * file tools instead of the novel_* tools, which keep versions, memory and
+   * search in step: `guide` (default) refuses and names the tool to use; `ask`
+   * puts the question to the author each time; `allow` lets it through — the
+   * change is then noticed afterwards, recorded, and memory digested again.
+   */
+  agentFiles?: 'guide' | 'ask' | 'allow'
   /** The reader served to other devices on the local network. */
   share?: ShareSettings
   /** First-run guide: when it was completed or put aside, so it only opens by itself once. */
@@ -622,6 +664,12 @@ export interface ShareSettings {
   token?: string
   /** Roots of the books that are shared. */
   books?: string[]
+  /**
+   * Roots of the shared books that may also be changed from another device:
+   * their text edited, their interludes played (which calls the models set up
+   * here). Every other shared book is read-only there.
+   */
+  edit?: string[]
 }
 
 // ───────────────────────────── usage ─────────────────────────────
@@ -709,7 +757,7 @@ export interface UsageSummary {
 
 export type JobKind =
   | 'write' | 'revise' | 'digest' | 'derive' | 'review' | 'import' | 'bible'
-  | 'illustrate' | 'audio' | 'comic' | 'play' | 'export' | 'index'
+  | 'illustrate' | 'audio' | 'comic' | 'play' | 'export' | 'index' | 'seal'
 
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled'
 
@@ -736,6 +784,8 @@ export interface JobInfo {
   streamLength: number
   /** Set while a model reasons before answering: characters of thought so far. */
   thinking?: number
+  /** Characters of thought the job's models have shown so far, over all its calls. */
+  thoughtLength?: number
   /** Small JSON result for the UI (ids of what was produced). */
   result?: Record<string, unknown>
   origin: 'agent' | 'user'
@@ -766,6 +816,17 @@ export interface AudioLine {
   takes?: number
   /** What the listening check still finds wrong with the kept take. */
   check?: TakeIssue[]
+  /**
+   * Narration that only says who spoke ("他说，", "she asked.") and sits
+   * between two spoken lines. With a voice per speaker it tells the listener
+   * nothing, and a clip of two syllables is where a speech model is at its
+   * worst — so it is left unspoken unless the author wants every word read.
+   */
+  tag?: boolean
+  /** The author's own word on this line: `false` leaves it unspoken, `true` has it spoken even though it is a tag. */
+  voiced?: boolean
+  /** Not stored: set on scripts handed to a player when the line is left unspoken under the current settings. */
+  skip?: boolean
 }
 
 /**
@@ -780,13 +841,42 @@ export type AmbiencePreset =
   | 'none' | 'rain' | 'storm' | 'wind' | 'night' | 'forest' | 'sea' | 'river' | 'fire' | 'city' | 'crowd'
   | 'tavern' | 'battle' | 'cave' | 'snow' | 'train' | 'spaceship' | 'tension' | 'serene'
 
+/**
+ * What kind of sound a cue is. A bed runs under the lines until the next bed;
+ * an effect is heard once where it is placed; music runs under a scene until
+ * the next music cue.
+ */
+export type SoundKind = 'bed' | 'effect' | 'music'
+
+/**
+ * A sound the telling does not speak: the room, a door, a held chord. Each has
+ * a caption the reader can see beside the text — atmosphere for the eye as well
+ * as the ear — and may have a clip generated for it.
+ */
 export interface AudioCue {
+  /** Stable within the script; older scripts have none. */
+  id?: string
   /** Line id the cue starts at. */
   at: string
+  /** Bed and music are continuous, an effect is a single event. Absent on older scripts: a bed. */
+  kind?: SoundKind
+  /** The bed the browser synthesizes when there is no generated clip; `none` for effects and music. */
   ambience: AmbiencePreset
   /** 0…1 */
   intensity?: number
+  /** What the reader is shown: the sound in a few words of the manuscript's language. */
+  caption?: string
+  /** What the sound model is asked for. */
+  prompt?: string
+  /** Older scripts kept their caption here. */
   note?: string
+  /** Project-relative path of the generated clip. */
+  audio?: string
+  /** Duration of the clip in seconds. */
+  duration?: number
+  /** Hash of what the clip was generated from. */
+  renderKey?: string
+  error?: string
 }
 
 export interface AudioScript {
@@ -794,6 +884,11 @@ export interface AudioScript {
   chapterId: string
   textHash: string
   updatedAt: Timestamp
+  /**
+   * How the lines were shaped. 2: narration is spoken in whole takes and
+   * stranded speech tags are marked. Absent on scripts cut the older, finer way.
+   */
+  shape?: number
   lines: AudioLine[]
   cues: AudioCue[]
   /**
@@ -963,6 +1058,50 @@ export interface CastPresence {
   absentFor: number
 }
 
+/**
+ * Someone the page names who has no character card: a walk-on. Gathered from
+ * chapter memories, pending suggestions, the audio scripts and the voice sheet.
+ */
+export interface WalkOn {
+  name: string
+  /** What the page says of them, in a line. */
+  note?: string
+  /** Chapters they were seen in, in reading order. */
+  chapters: string[]
+  /** Lines they speak across the audio scripts. */
+  lines: number
+  /** The voice the audio drama cast them with. */
+  voice?: string
+  /** A pending suggestion that proposes a card for them. */
+  suggestion?: string
+  /** A character whose name is close enough that this may be them under another name. */
+  near?: string
+  /** The author took them off the list. */
+  ignored?: boolean
+}
+
+/**
+ * One thing that changed the book, kept so nothing changes it unseen: what
+ * the showrunner did with its tools, and what was changed in the files behind
+ * the Studio's back. The author reads these on the overview and can undo a
+ * manuscript edit from there.
+ */
+export interface ActivityEntry {
+  id: string
+  at: Timestamp
+  /** agent: a tool call of the showrunner. outside: files changed by something that is not the Studio. device: a change made from a phone or tablet through the shared reader. */
+  by: 'agent' | 'outside' | 'device'
+  /** The tool (`novel_edit`), or `files` for a change from outside. */
+  tool: string
+  action?: string
+  /** One line, in words the author can read. */
+  summary: string
+  /** Chapter the change was made to. */
+  chapter?: string
+  /** Version holding the chapter as it was before the change: restoring it undoes the change. */
+  version?: string
+}
+
 export interface ProjectStats {
   words: number
   chapters: number
@@ -993,6 +1132,8 @@ export interface ProjectState {
   presence: CastPresence[]
   /** Project-relative path of the cover picture, when the book has one. */
   cover?: string
+  /** What changed the book lately, newest first. Absent on a Host from before this was kept. */
+  activity?: ActivityEntry[]
 }
 
 export interface ProjectRef {
@@ -1004,4 +1145,22 @@ export interface ProjectRef {
   id?: string
   /** Project-relative path of the cover picture, when the book has one. */
   cover?: string
+  /** The book's files are encrypted where they lie. */
+  sealed?: boolean
+  /** Sealed, and not unlocked: only the name on the shelf can be shown. */
+  locked?: boolean
+}
+
+/**
+ * How a book is locked. A sealed book has every file of it encrypted on disk;
+ * it is read only after it was opened one of the listed ways, and only until
+ * it is locked again or the Harness quits.
+ */
+export interface BookLock {
+  sealed: boolean
+  locked: boolean
+  /** The name the shelf shows while it is locked. */
+  title?: string
+  /** The ways the book opens: a password, this computer's own unlock, a device that was let in. */
+  ways: { kind: 'password' | 'device' | 'grant'; id?: string; label?: string; at?: string }[]
 }

@@ -46,7 +46,7 @@ interface Described {
 export const NOVEL_TOOLS = [
   'novel_status', 'novel_init', 'novel_read', 'novel_search', 'novel_mode', 'novel_export', 'novel_bible', 'novel_outline', 'novel_derive',
   'novel_write', 'novel_revise', 'novel_digest', 'novel_review', 'novel_import', 'novel_illustrate', 'novel_audio', 'novel_comic', 'novel_play',
-  'novel_settings', 'novel_show', 'novel_manage', 'novel_share',
+  'novel_settings', 'novel_show', 'novel_manage', 'novel_share', 'novel_edit', 'novel_memory',
 ] as const
 
 const VIEWS: readonly string[] = ['home', 'bible', 'outline', 'write', 'read', 'cast', 'review', 'stage', 'settings', 'setup', 'usage']
@@ -78,6 +78,8 @@ function describe(tool: string, args: Record<string, unknown>): Described {
     case 'novel_derive': return { icon: 'sparkles', title: ['架构模型 · 推演', 'Architect · derive'], summary: join(text(args.kind), where, short(text(args.direction))), target: withChapter('outline') }
     case 'novel_write': return { icon: 'feather', title: ['写手 · 写作', 'Writer · draft'], summary: join(where ?? 'next', text(args.mode), short(text(args.brief))), target: withChapter('write') }
     case 'novel_revise': return { icon: 'pen', title: ['写手 · 修订', 'Writer · revise'], summary: join(text(args.scope), where, short(text(args.instruction))), target: text(args.scope) === 'book' ? { view: 'review' } : withChapter('write') }
+    case 'novel_edit': return { icon: 'pen', title: ['总编 · 亲手改稿', 'Showrunner · exact edit'], summary: join(text(args.action), where, short(text(args.reason) ?? text(args.find), 40)), target: withChapter('write') }
+    case 'novel_memory': return { icon: 'layers', title: ['总编 · 修正记忆', 'Showrunner · correct memory'], summary: join(where, Object.keys((args.fields as Record<string, unknown> | undefined) ?? {}).slice(0, 4).join(', ')), target: withChapter('write') }
     case 'novel_digest': return { icon: 'layers', title: ['分析 · 收录记忆', 'Analyst · digest'], summary: join(Array.isArray(args.chapters) ? args.chapters.join(', ') : where), target: { view: 'home' } }
     case 'novel_review': return { icon: 'checkCircle', title: ['分析 · 审校', 'Analyst · review'], summary: join(where, short(text(args.focus))), target: withChapter('write') }
     case 'novel_import': return { icon: 'upload', title: ['导入稿件', 'Import manuscript'], summary: join(text(args.path)), target: { view: 'home' } }

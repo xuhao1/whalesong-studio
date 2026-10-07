@@ -46,12 +46,15 @@ export function renderDigest(state: ProjectState, mode: WorkMode, relativeRoot: 
     .sort((left, right) => ['protagonist', 'deuteragonist', 'antagonist', 'supporting', 'minor', 'cameo'].indexOf(left.role) - ['protagonist', 'deuteragonist', 'antagonist', 'supporting', 'minor', 'cameo'].indexOf(right.role))
     .slice(0, 10)
     .map(card => card.name)
+  // What was done to the files behind the Studio's back in the last day is news the showrunner must have.
+  const outside = (state.activity ?? []).filter(entry => entry.by === 'outside' && Date.now() - Date.parse(entry.at) < 24 * 3600_000).slice(0, 2)
   const lines = zh
     ? [
         `【小说项目】《${state.manifest.title}》（${relativeRoot}）· 当前模式：${modeLabel(mode, true)}`,
         `进度：${stats.chaptersWithText}/${stats.chapters} 章已写，约 ${stats.words} 字；人物 ${stats.characters}，设定 ${stats.worldEntries}，未回收线索 ${stats.openThreads}`,
         leads.length > 0 ? `主要人物：${leads.join('、')}` : '',
         stats.pendingProposals + stats.pendingSuggestions > 0 ? `待处理：修订提案 ${stats.pendingProposals}，设定建议 ${stats.pendingSuggestions}` : '',
+        ...outside.map(entry => `【工坊之外的改动 ${entry.at.slice(0, 16).replace('T', ' ')} UTC】${entry.summary}`),
         nextStep(state, true),
       ]
     : [
@@ -59,6 +62,7 @@ export function renderDigest(state: ProjectState, mode: WorkMode, relativeRoot: 
         `Progress: ${stats.chaptersWithText}/${stats.chapters} chapters written, about ${stats.words} words; ${stats.characters} characters, ${stats.worldEntries} world entries, ${stats.openThreads} open threads`,
         leads.length > 0 ? `Main cast: ${leads.join(', ')}` : '',
         stats.pendingProposals + stats.pendingSuggestions > 0 ? `Waiting: ${stats.pendingProposals} revision proposals, ${stats.pendingSuggestions} bible suggestions` : '',
+        ...outside.map(entry => `[Changed outside the Studio, ${entry.at.slice(0, 16).replace('T', ' ')} UTC] ${entry.summary}`),
         nextStep(state, false),
       ]
   return lines.filter(line => line.length > 0).join('\n')
@@ -120,6 +124,11 @@ export async function renderStatus(runtime: ProjectRuntime, mode: WorkMode, rela
   if (state.suggestions.length > 0) {
     lines.push('', zh ? '## 待确认的设定建议（novel_bible action=accept_suggestion / dismiss_suggestion）' : '## Bible suggestions waiting (novel_bible action=accept_suggestion / dismiss_suggestion)')
     for (const suggestion of state.suggestions.slice(0, 20)) lines.push(`- ${suggestion.id}: ${suggestion.title}${suggestion.detail.length > 0 ? ` — ${suggestion.detail.slice(0, 80)}` : ''}`)
+  }
+  const recent = (state.activity ?? []).slice(0, detail === 'full' ? 20 : 6)
+  if (recent.length > 0) {
+    lines.push('', zh ? '## 最近的改动记录（总编的工具调用，和工坊之外对文件的改动）' : '## Recent changes on the record (the showrunner\'s tool calls, and changes made to the files outside the Studio)')
+    for (const entry of recent) lines.push(`- ${entry.at.slice(0, 16).replace('T', ' ')} ${entry.by === 'outside' ? (zh ? '[工坊之外]' : '[outside]') : `[${entry.tool}${entry.action !== undefined ? ` ${entry.action}` : ''}]`} ${entry.summary}`)
   }
   const running = jobs.filter(job => job.status === 'running')
   if (running.length > 0) {

@@ -2,7 +2,7 @@
 import { readFile } from 'node:fs/promises'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { packContext } from '../src/core/context'
-import { extractJson } from '../src/core/llm'
+import { extractJson, LlmCallError } from '../src/core/llm'
 import { fallbackLines } from '../src/core/pipelines/audio'
 import { acceptSuggestion } from '../src/core/pipelines/bible'
 import { digestChapter, digestPending } from '../src/core/pipelines/digest'
@@ -64,6 +64,100 @@ describe('pipelines', () => {
     expect(text.startsWith('上半章。')).toBe(true)
     expect(text.endsWith('下半章，到此结束。')).toBe(true)
     expect(bed.llm.requests[1]!.prompt).toContain('本章已有正文')
+  })
+
+  it('makes the call again when the model completes without an answer', async () => {
+    const { project } = bed.runtime
+    const plan = await project.addChapter({ title: '记录官', synopsis: '记录官翻开白页。' })
+    let calls = 0
+    // What providers do now and then: the reply completes with reasoning in it and no answer.
+    bed.llm.responder = () => (++calls === 1 ? { text: '', finish: 'stop', thought: 2400, usage: { inputTokens: 100, outputTokens: 3295 } } : '记录官翻开白页。纸上一个字也没有。')
+    const labels: string[] = []
+    const stop = bed.core.jobs.onChange(() => {
+      const label = bed.core.jobs.list()[0]?.progress?.label
+      if (label !== undefined && labels.at(-1) !== label) labels.push(label)
+    })
+    const { done } = bed.core.jobs.start({ kind: 'write', title: 'write', project: project.root, origin: 'user' }, async job => await writeChapter(bed.core, bed.runtime, { chapter: plan.id }, { origin: 'user', job, signal: job.signal }))
+    const result = await done
+    stop()
+    expect(calls).toBe(2)
+    expect(result.wordsWritten).toBeGreaterThan(0)
+    expect(await project.chapterText(plan.id)).toBe('记录官翻开白页。纸上一个字也没有。')
+    // The same request, unchanged: nothing came of the first one, so it is safe to repeat.
+    expect(bed.llm.requests[1]!.prompt).toBe(bed.llm.requests[0]!.prompt)
+    expect(bed.llm.requests[1]!.system).toBe(bed.llm.requests[0]!.system)
+    // Whoever watches the job reads that the call is being made again, and the label goes back afterwards.
+    expect(labels.some(label => label.includes('模型没有返回回答') && label.includes('重试（第 1 次）'))).toBe(true)
+    expect(labels.at(-1)).not.toContain('重试')
+    // Both calls were made, and both are counted — the empty one cost its reasoning.
+    await bed.core.usage.settled()
+    const counted = (await bed.core.usage.read()).filter(event => event.kind === 'text')
+    expect(counted.map(event => event.output)).toEqual([3295, expect.any(Number)])
+  })
+
+  it('says why when the model stays silent or thinks its allowance away', async () => {
+    const { project } = bed.runtime
+    const plan = await project.addChapter({ title: '沉默', synopsis: '什么也没有发生。' })
+    bed.llm.responder = () => ({ text: '', finish: 'stop', thought: 900 })
+    await expect(writeChapter(bed.core, bed.runtime, { chapter: plan.id }, { origin: 'user' })).rejects.toThrow(/没有返回任何回答（只有 900 字的思考）——已重试 3 次，仍然如此/)
+    expect(bed.llm.requests).toHaveLength(4)
+    expect(await project.chapterText(plan.id)).toBe('')
+
+    // The whole allowance spent on reasoning: asking again would spend it again, so it is said at once.
+    bed.llm.requests.length = 0
+    bed.llm.responder = () => ({ text: '', finish: 'max-tokens', thought: 30_000 })
+    await expect(writeChapter(bed.core, bed.runtime, { chapter: plan.id }, { origin: 'user' })).rejects.toThrow(/把输出上限全部用在了思考上/)
+    expect(bed.llm.requests).toHaveLength(1)
+
+    // A continuation that comes back empty keeps the rounds before it.
+    bed.llm.requests.length = 0
+    let calls = 0
+    bed.llm.responder = () => (++calls === 1 ? { text: '上半章。'.repeat(20), finish: 'max-tokens' } : { text: '', finish: 'stop' })
+    const kept = await writeChapter(bed.core, bed.runtime, { chapter: plan.id, words: 400 }, { origin: 'user' })
+    expect(kept.wordsWritten).toBeGreaterThan(0)
+    expect((await project.chapterText(plan.id)).startsWith('上半章。')).toBe(true)
+  })
+
+  it('rides out a busy provider the way the Harness does for its agent, and no further', async () => {
+    const { project } = bed.runtime
+    const plan = await project.addChapter({ title: '繁忙', synopsis: '服务器很忙。' })
+    let calls = 0
+    bed.llm.responder = () => {
+      calls += 1
+      if (calls === 1) throw new LlmCallError('fake/fake-model: server busy', 'SERVER')
+      if (calls === 2) throw new LlmCallError('fake/fake-model: slow down', 'RATE_LIMIT')
+      return '服务器很忙，但这一章还是写出来了。'
+    }
+    await writeChapter(bed.core, bed.runtime, { chapter: plan.id }, { origin: 'user' })
+    expect(calls).toBe(3)
+    expect(await project.chapterText(plan.id)).toBe('服务器很忙，但这一章还是写出来了。')
+
+    // Five retries, as the provider's policy has it; then the failure is the job's, with how often it was tried.
+    calls = 0
+    bed.llm.responder = () => {
+      calls += 1
+      throw new LlmCallError('fake/fake-model: server busy', 'SERVER')
+    }
+    await expect(writeChapter(bed.core, bed.runtime, { chapter: plan.id }, { origin: 'user' })).rejects.toThrow(/server busy——已重试 5 次，仍然如此。请稍后再试。/)
+    expect(calls).toBe(6)
+
+    // What asking again cannot mend is not asked again.
+    calls = 0
+    bed.llm.responder = () => {
+      calls += 1
+      throw new LlmCallError('fake/fake-model: bad key', 'INVALID_CREDENTIAL')
+    }
+    await expect(writeChapter(bed.core, bed.runtime, { chapter: plan.id }, { origin: 'user' })).rejects.toThrow('fake/fake-model: bad key')
+    expect(calls).toBe(1)
+
+    // A provider that asks for more patience than the policy has is not waited for.
+    calls = 0
+    bed.llm.responder = () => {
+      calls += 1
+      throw new LlmCallError('fake/fake-model: come back in an hour', 'RATE_LIMIT', { retryAfterMs: 3_600_000 })
+    }
+    await expect(writeChapter(bed.core, bed.runtime, { chapter: plan.id }, { origin: 'user' })).rejects.toThrow('come back in an hour')
+    expect(calls).toBe(1)
   })
 
   it('digests a chapter into memory, lifecycle and suggestions', async () => {

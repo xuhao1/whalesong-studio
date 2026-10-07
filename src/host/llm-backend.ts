@@ -8,7 +8,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { GenerateOptions } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import { currentJob } from '../core/jobs'
-import { LlmCallError, type LlmBackend, type LlmRequest, type LlmResponse, type ModelDescriptor, type ProviderListing } from '../core/llm'
+import { LlmCallError, type LlmBackend, type LlmRequest, type LlmResponse, type ModelDescriptor, type ProviderListing, type RetryPolicy } from '../core/llm'
 import { knownMaxOutput } from '../core/media/discovery'
 import type { ModelRoute } from '../shared/types'
 
@@ -67,7 +67,7 @@ export function createHarnessLlm(ctx: Context): LlmBackend {
         } else if (chunk.type === 'reasoning-delta') {
           // Reasoning models can think for a long while before the first word; let whoever watches the job know.
           thought += chunk.text.length
-          currentJob()?.thinking(thought)
+          currentJob()?.think(chunk.text)
         } else if (chunk.type === 'usage') {
           usage = { inputTokens: chunk.usage.inputTokens + (chunk.usage.cacheReadTokens ?? 0) + (chunk.usage.cacheWriteTokens ?? 0), outputTokens: chunk.usage.outputTokens }
         } else if (chunk.type === 'finish') {
@@ -78,12 +78,12 @@ export function createHarnessLlm(ctx: Context): LlmBackend {
             throw error
           }
           if (reason.kind === 'error') {
-            throw new LlmCallError(`${route.provider}/${route.model}: ${reason.failure.message}`, reason.failure.code)
+            throw new LlmCallError(`${route.provider}/${route.model}: ${reason.failure.message}`, reason.failure.code, reason.failure.providerRetryAfterMs !== undefined ? { retryAfterMs: reason.failure.providerRetryAfterMs } : undefined)
           }
           finish = reason.kind
         }
       }
-      return { text, finish, ...(usage !== undefined ? { usage } : {}) }
+      return { text, finish, ...(usage !== undefined ? { usage } : {}), ...(thought > 0 ? { thought } : {}) }
     },
 
     async listModels(): Promise<ModelDescriptor[]> {
@@ -111,6 +111,25 @@ export function createHarnessLlm(ctx: Context): LlmBackend {
       const info = await ctx.llm.resolveModelInfo(route.provider, route.model)
       const most = knownMaxOutput(route.model)
       return { ...(info.defaultMaxTokens !== undefined ? { cap: info.defaultMaxTokens } : {}), ...(most !== undefined ? { most } : {}), source: 'model' as const }
+    },
+
+    /**
+     * The policy the provider was registered with. The Harness runs it for its
+     * agent's turns only (`dsh-llm-retry`, on the agent loop); a call made
+     * through `ctx.llm.stream` gets no second try unless the caller makes one.
+     */
+    retryPolicy(route: ModelRoute): RetryPolicy | undefined {
+      try {
+        // Absent on a Harness older than the policy itself.
+        const policy = (ctx.llm as Partial<typeof ctx.llm>).providerRetryPolicy?.(route.provider)
+        if (policy === undefined) return undefined
+        const backoff = { initialDelayMs: policy.initialDelayMs, maxDelayMs: policy.maxDelayMs, jitterRatio: policy.jitterRatio }
+        return policy.mode === 'always'
+          ? { maxRetries: Number.POSITIVE_INFINITY, codes: 'all', ...backoff }
+          : { maxRetries: policy.maxRetries, codes: policy.retryableCodes, ...backoff }
+      } catch {
+        return undefined
+      }
     },
 
     defaultRoute(): ModelRoute | undefined {

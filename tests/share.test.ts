@@ -182,6 +182,164 @@ describe('the reader for other devices', () => {
     }
   })
 
+  const reader = { 'content-type': 'application/json', 'x-novel-reader': '1' }
+
+  it('changes nothing on a book shared for reading', async () => {
+    const base = await turnOn()
+    const { id } = await bed.runtime.project.manifest()
+    const before = await bed.runtime.project.chapterText(chapterId)
+    const { books } = await (await fetch(`${base}/api/books`)).json() as { books: { mode: string }[] }
+    expect(books[0]!.mode).toBe('read')
+    // Not a request of the reader at all: a form posted from another site looks like this.
+    expect((await fetch(`${base}/api/books/${id}/chapters/${chapterId}`, { method: 'PUT', body: '{"text":"x"}' })).status).toBe(400)
+    for (const [method, path, body] of [
+      ['PUT', `/api/books/${id}/chapters/${chapterId}`, { text: '被改掉的正文' }],
+      ['POST', `/api/books/${id}/plays`, { situation: '一场戏', cast: [] }],
+      ['POST', `/api/books/${id}/plays/play_x/turns`, { text: '你好' }],
+    ] as const) {
+      const response = await fetch(`${base}${path}`, { method, headers: reader, body: JSON.stringify(body) })
+      expect(response.status, path).toBe(403)
+      expect(await response.json()).toMatchObject({ error: 'read-only' })
+    }
+    for (const path of [`/api/books/${id}/plays`, `/api/books/${id}/cast`]) expect((await fetch(`${base}${path}`)).status, path).toBe(403)
+    expect(await bed.runtime.project.chapterText(chapterId)).toBe(before)
+    expect(bed.llm.requests).toHaveLength(0)
+  })
+
+  it('lets a device edit the text and play interludes once the author made the book changeable', async () => {
+    const { project } = bed.runtime
+    const { id } = await project.manifest()
+    const card = await project.saveCharacter({ name: '白页', role: 'protagonist', status: 'active' })
+    await bed.core.settings.update({ share: { enabled: true, port, books: [project.root], edit: [project.root] } })
+    await share.apply()
+    const base = `http://127.0.0.1:${port}/${(await bed.core.settings.get()).share!.token!}`
+    expect((await share.status()).books).toEqual([expect.objectContaining({ mode: 'edit' })])
+    const detail = await (await fetch(`${base}/api/books/${id}`)).json() as { book: { mode: string } }
+    expect(detail.book.mode).toBe('edit')
+    // The text is saved by the same road as an edit in the Studio: a version of what it was, and a line on the record.
+    const saved = await fetch(`${base}/api/books/${id}/chapters/${chapterId}`, { method: 'PUT', headers: reader, body: JSON.stringify({ text: '手机上重写的一章。\n“零七。”' }) })
+    expect(saved.status).toBe(200)
+    expect(await saved.json()).toMatchObject({ changed: true })
+    expect(await project.chapterText(chapterId)).toBe('手机上重写的一章。\n“零七。”')
+    const versions = await project.versions(chapterId)
+    expect(versions).toHaveLength(1)
+    expect(await project.versionText(chapterId, versions[0]!.id)).toContain('肋骨')
+    const record = (await project.activity())[0]!
+    expect(record).toMatchObject({ by: 'device', chapter: chapterId, version: versions[0]!.id })
+    expect((await fetch(`${base}/api/books/${id}/chapters/${chapterId}`, { method: 'PUT', headers: reader, body: JSON.stringify({ text: 'x'.repeat(3 * 1024 * 1024) }) })).status).toBe(413)
+    // An interlude: started, played a turn, a turn taken back.
+    const cast = await (await fetch(`${base}/api/books/${id}/cast`)).json() as { cast: { id: string; name: string }[] }
+    expect(cast.cast).toEqual([expect.objectContaining({ id: card.id, name: '白页' })])
+    bed.llm.responder = () => JSON.stringify({ narration: '货舱里只有一盏灯。', lines: [{ speaker: '白页', text: '在。' }], choices: ['走近一步', '转身离开'] })
+    const started = await fetch(`${base}/api/books/${id}/plays`, { method: 'POST', headers: reader, body: JSON.stringify({ situation: '拍卖结束的那天夜里。', cast: [card.id] }) })
+    expect(started.status).toBe(200)
+    const { play } = await started.json() as { play: { id: string; turns: { narration?: string; choices: string[] }[] } }
+    expect(play.turns).toHaveLength(1)
+    expect(play.turns[0]!.choices).toEqual(['走近一步', '转身离开'])
+    const turned = await (await fetch(`${base}/api/books/${id}/plays/${play.id}/turns`, { method: 'POST', headers: reader, body: JSON.stringify({ kind: 'choice', text: '走近一步' }) })).json() as { play: { turns: { input?: { kind: string; text: string } }[] } }
+    expect(turned.play.turns).toHaveLength(2)
+    expect(turned.play.turns[1]!.input).toEqual({ kind: 'choice', text: '走近一步' })
+    const list = await (await fetch(`${base}/api/books/${id}/plays`)).json() as { plays: { id: string; turns: number }[] }
+    expect(list.plays).toEqual([expect.objectContaining({ id: play.id, turns: 2 })])
+    const back = await (await fetch(`${base}/api/books/${id}/plays/${play.id}/rewind`, { method: 'POST', headers: reader, body: '{}' })).json() as { play: { turns: unknown[] } }
+    expect(back.play.turns).toHaveLength(1)
+    // Saying nothing is told to whoever holds the device, in words, not as a crash.
+    const empty = await fetch(`${base}/api/books/${id}/plays/${play.id}/turns`, { method: 'POST', headers: reader, body: JSON.stringify({ text: '  ' }) })
+    expect(empty.status).toBe(422)
+    // Back to read-only, the same requests are refused again.
+    await bed.core.settings.update({ share: { edit: [] } })
+    await share.apply()
+    expect((await fetch(`${base}/api/books/${id}/chapters/${chapterId}`, { method: 'PUT', headers: reader, body: JSON.stringify({ text: '再改' }) })).status).toBe(403)
+  })
+
+  it('serves the storyboard, the sound notes and the lines left unspoken with a chapter', async () => {
+    const { project } = bed.runtime
+    const { id } = await project.manifest()
+    const script = (await project.audioScript(chapterId))!
+    await project.saveAudioScript({
+      ...script,
+      lines: [...script.lines.slice(0, 1), { id: 'l1', kind: 'narration', text: '他说，', tag: true }, { id: 'l2', kind: 'dialogue', text: '零七。', speakerName: '拍卖师' }],
+      cues: [{ id: 'c0', at: 'l0', kind: 'bed', ambience: 'crowd', caption: '骨壁大厅里干净的回声', prompt: '只给声音模型看的描述' }, { id: 'c1', at: 'l2', kind: 'effect', ambience: 'none', caption: '嗒——银槌轻碰骨木', prompt: '小银槌碰骨木' }],
+    })
+    await project.saveComicBoard({ schema: 1, chapterId, textHash: script.textHash, updatedAt: new Date().toISOString(), style: '', panels: [{ id: 'p1', lines: ['l0'], description: '骨质穹顶下的拍卖厅', prompt: '画给绘图模型的提示词', camera: 'zoom-in', image: 'assets/images/dome.png' }, { id: 'p2', lines: ['l2'], begin: 0.5, description: '拍卖师探头', prompt: 'x', camera: 'still' }] })
+    const base = await turnOn()
+    const chapters = await (await fetch(`${base}/api/books/${id}`)).json() as { chapters: { panels: number; drawn: number }[] }
+    expect(chapters.chapters[0]).toMatchObject({ panels: 2, drawn: 1 })
+    const chapter = await (await fetch(`${base}/api/books/${id}/chapters/${chapterId}`)).json() as { script: { lines: { id: string; skip?: boolean }[]; cues: Record<string, unknown>[] }; board: { panels: Record<string, unknown>[] } }
+    expect(chapter.script.lines.map(line => line.skip === true)).toEqual([false, true, false])
+    expect(chapter.script.cues).toEqual([
+      { id: 'c0', at: 'l0', kind: 'bed', ambience: 'crowd', caption: '骨壁大厅里干净的回声' },
+      { id: 'c1', at: 'l2', kind: 'effect', ambience: 'none', caption: '嗒——银槌轻碰骨木' },
+    ])
+    expect(chapter.board.panels).toEqual([
+      { id: 'p1', lines: ['l0'], description: '骨质穹顶下的拍卖厅', camera: 'zoom-in', image: 'assets/images/dome.png' },
+      { id: 'p2', lines: ['l2'], description: '拍卖师探头', camera: 'still', begin: 0.5 },
+    ])
+    // What the models were asked is the author's business.
+    expect(JSON.stringify(chapter)).not.toContain('提示词')
+    expect(JSON.stringify(chapter)).not.toContain('只给声音模型')
+  })
+
+  it('asks every device for the password of a sealed book once, and remembers the device', async () => {
+    const { project } = bed.runtime
+    const root = project.root
+    await bed.core.sealBook(root, { password: 'open sesame', label: '锁着的书' })
+    const base = await turnOn()
+    const stub = (await bed.core.lockOf(root))
+    expect(stub.sealed).toBe(true)
+    const id = (await (await bed.core.runtime(root)).project.manifest()).id
+    // Unlocked on the computer or not, a device that never showed the password gets the name and a lock.
+    const shelf = await (await fetch(`${base}/api/books`)).json() as { books: Record<string, unknown>[] }
+    expect(shelf.books).toEqual([expect.objectContaining({ id, title: '锁着的书', locked: true })])
+    expect(JSON.stringify(shelf)).not.toContain('白页遗骸')
+    for (const path of [`/api/books/${id}`, `/api/books/${id}/chapters/${chapterId}`, `/media/${id}/assets/images/dome.png`]) {
+      const response = await fetch(`${base}${path}`)
+      expect(response.status, path).toBe(423)
+    }
+    const wrong = await fetch(`${base}/api/books/${id}/unlock`, { method: 'POST', headers: reader, body: JSON.stringify({ password: 'open sesam' }) })
+    expect(wrong.status).toBe(403)
+    expect(wrong.headers.get('set-cookie')).toBeNull()
+    const right = await fetch(`${base}/api/books/${id}/unlock`, { method: 'POST', headers: reader, body: JSON.stringify({ password: 'open sesame' }) })
+    expect(right.status).toBe(200)
+    const cookie = right.headers.get('set-cookie')!
+    expect(cookie).toContain('HttpOnly')
+    expect(cookie).toContain('SameSite=Strict')
+    const held = { cookie: cookie.split(';')[0]! }
+    const opened = await (await fetch(`${base}/api/books/${id}`, { headers: held })).json() as { book: { title: string } }
+    expect(opened.book.title).toBe('白页遗骸')
+    const picture = await fetch(`${base}/media/${id}/assets/images/dome.png`, { headers: held })
+    expect(picture.status).toBe(200)
+    expect(picture.headers.get('cache-control')).toBe('no-store')
+    expect(Buffer.from(await picture.arrayBuffer()).equals(Buffer.from(PIXEL))).toBe(true)
+    const part = await fetch(`${base}/media/${id}/assets/audio/${chapterId}/l0-abc.wav`, { headers: { ...held, range: 'bytes=0-43' } })
+    expect(part.status).toBe(206)
+    expect((await part.arrayBuffer()).byteLength).toBe(44)
+    // The author sees the device among the ways the book opens.
+    expect((await bed.core.lockOf(root)).ways.map(way => way.kind)).toEqual(['password', 'grant'])
+    // The Harness was restarted: the book is locked on the computer. The device's grant opens it again —
+    // for devices. At the computer it is as locked as before: a phone does not unlock the author's desk.
+    await bed.core.lockBook(root)
+    expect((await bed.core.lockOf(root)).locked).toBe(true)
+    expect((await fetch(`${base}/api/books/${id}/chapters/${chapterId}`, { headers: held })).status).toBe(200)
+    expect((await bed.core.lockOf(root)).locked).toBe(true)
+    await expect(bed.core.runtime(root)).rejects.toMatchObject({ code: 'novel/locked' })
+    expect(await bed.core.discover(bed.dir)).toEqual([expect.objectContaining({ title: '锁着的书', locked: true })])
+    // Unlocked by its author at the computer, it is open there as well.
+    await bed.core.unlockBook(root, { password: 'open sesame' })
+    expect((await bed.core.lockOf(root)).locked).toBe(false)
+    expect(await (await bed.core.runtime(root)).project.chapterText(chapterId)).toContain('肋骨')
+    // Another device, without the grant, is still outside.
+    expect((await fetch(`${base}/api/books/${id}`)).status).toBe(423)
+    // Withdrawn by the author, the grant opens nothing.
+    const grant = (await bed.core.lockOf(root)).ways.find(way => way.kind === 'grant')!
+    await bed.core.rekeyBook(root, { remove: { kind: 'grant', id: grant.id! } })
+    expect((await fetch(`${base}/api/books/${id}`, { headers: held })).status).toBe(423)
+    // Guessing is slowed down.
+    for (let n = 0; n < 3; n++) expect((await fetch(`${base}/api/books/${id}/unlock`, { method: 'POST', headers: reader, body: JSON.stringify({ password: `guess ${n}` }) })).status).toBe(403)
+    const slowed = await fetch(`${base}/api/books/${id}/unlock`, { method: 'POST', headers: reader, body: JSON.stringify({ password: 'open sesame' }) })
+    expect(slowed.status).toBe(429)
+  })
+
   it('offers addresses another device can reach', () => {
     const found = addresses()
     expect(found.every(address => !address.startsWith('127.') && !address.startsWith('169.254.'))).toBe(true)

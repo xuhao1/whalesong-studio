@@ -34,8 +34,18 @@ export interface JobContext {
   /** Replace the streamed text (a new attempt, a new section). */
   rewrite(text: string): void
   result(value: Record<string, unknown>): void
-  /** A model is reasoning before it answers: `chars` of thought so far. Cleared when text arrives. */
-  thinking(chars: number): void
+  /**
+   * A model is reasoning before it answers: `delta` is the next piece of what it
+   * thinks — the chain of thought itself where the model shows it, a summary of
+   * it where it does not. Kept beside the text for whoever watches the job.
+   */
+  think(delta: string): void
+  /**
+   * Say what is happening right now where the progress label is shown, without
+   * moving the progress itself — a call being repeated, a wait.
+   * @returns puts the earlier label back, unless the work has moved on since.
+   */
+  note(label: string): () => void
 }
 
 const active = new AsyncLocalStorage<JobContext>()
@@ -51,8 +61,15 @@ export function currentJob(): JobContext | undefined {
 interface JobRecord {
   info: JobInfo
   text: string
+  /** Everything the models of this job thought, in order; calls are set apart by a blank line. */
+  thought: string
+  /** Characters of thought in the burst that is running now. */
+  burst: number
   controller: AbortController
 }
+
+/** Thought is kept for reading along, not for the record: the tail is enough. */
+const THOUGHT_LIMIT = 400_000
 
 export class JobManager {
   private readonly jobs = new Map<string, JobRecord>()
@@ -100,6 +117,8 @@ export class JobManager {
         origin: spec.origin,
       },
       text: '',
+      thought: '',
+      burst: 0,
       controller,
     }
     this.jobs.set(id, record)
@@ -128,24 +147,44 @@ export class JobManager {
       },
       write: (delta) => {
         record.text += delta
+        record.burst = 0
         const { thinking: _thinking, ...info } = record.info
         record.info = { ...info, streamLength: record.text.length }
         throttled()
       },
       rewrite: (text) => {
         record.text = text
+        record.burst = 0
         const { thinking: _thinking, ...info } = record.info
         record.info = { ...info, streamLength: text.length }
         throttled()
       },
-      thinking: (chars) => {
-        if (record.info.thinking === chars) return
-        record.info = { ...record.info, thinking: chars }
+      think: (delta) => {
+        if (delta.length === 0) return
+        const before = record.thought.length
+        // A new burst — another call, or thought resumed after some text — starts its own paragraph.
+        if (record.burst === 0 && record.thought.length > 0) record.thought += '\n\n'
+        record.thought += delta
+        const added = record.thought.length - before
+        if (record.thought.length > THOUGHT_LIMIT) record.thought = record.thought.slice(-THOUGHT_LIMIT)
+        record.burst += delta.length
+        record.info = { ...record.info, thinking: record.burst, thoughtLength: (record.info.thoughtLength ?? 0) + added }
         throttled()
       },
       result: (value) => {
         record.info = { ...record.info, result: { ...record.info.result, ...value } }
         throttled()
+      },
+      note: (label) => {
+        const before = record.info.progress
+        record.info = { ...record.info, progress: { done: before?.done ?? 0, total: before?.total ?? 0, label } }
+        this.notify()
+        return () => {
+          const now = record.info.progress
+          if (record.info.status !== 'running' || now?.label !== label) return
+          record.info = { ...record.info, progress: { done: now.done, total: now.total, ...(before?.label !== undefined ? { label: before.label } : {}) } }
+          this.notify()
+        }
       },
     }
 
@@ -185,13 +224,18 @@ export class JobManager {
       .sort((left, right) => right.startedAt.localeCompare(left.startedAt))
   }
 
-  /** Streamed text from `cursor` on. */
-  read(id: string, cursor = 0): { text: string; cursor: number; info: JobInfo } | undefined {
+  /** Streamed text from `cursor` on — and, when `thoughtCursor` is given, the models' thought from there on. */
+  read(id: string, cursor = 0, thoughtCursor?: number): { text: string; cursor: number; info: JobInfo; thought?: string; thoughtCursor?: number } | undefined {
     const record = this.jobs.get(id)
     if (record === undefined) return undefined
     // A rewrite can shorten the buffer; start over from the top in that case.
     const from = cursor > record.text.length ? 0 : cursor
-    return { text: record.text.slice(from), cursor: record.text.length, info: record.info }
+    const state = { text: record.text.slice(from), cursor: record.text.length, info: record.info }
+    if (thoughtCursor === undefined) return state
+    // The thought buffer keeps its tail only; a reader that fell behind the cut starts from what is left.
+    const total = record.info.thoughtLength ?? record.thought.length
+    const start = Math.max(0, record.thought.length - Math.max(0, total - thoughtCursor))
+    return { ...state, thought: thoughtCursor > total ? record.thought : record.thought.slice(start), thoughtCursor: total }
   }
 
   cancel(id: string): boolean {

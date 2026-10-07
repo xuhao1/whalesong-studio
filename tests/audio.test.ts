@@ -6,8 +6,8 @@ import { completeJson, LlmCallError } from '../src/core/llm'
 import type { TtsProvider, TtsRequest, TtsResult } from '../src/core/media/tts'
 import { judge, leveled, measure, soundSpans, speechUnits, TARGET_LEVEL } from '../src/core/media/voiceprint'
 import { encodeWav, parseWav, type PcmAudio } from '../src/core/media/wav'
-import { audition, buildAudioScript, fallbackLines, openCast, previewVoices, speakChecked, synthesizeChapter, tidyLines, voiceFor } from '../src/core/pipelines/audio'
-import type { CharacterCard, TtsSettings } from '../src/shared/types'
+import { audition, buildAudioScript, fallbackLines, isSkipped, isSpeechTag, openCast, playable, previewVoices, reshapeAudioScript, speakChecked, synthesizeChapter, TAKE_UNITS, tidyLines, voiceFor } from '../src/core/pipelines/audio'
+import type { AudioLine, CharacterCard, TtsSettings } from '../src/shared/types'
 import { createTestBed, FakeLlm, type TestBed } from './support/harness'
 
 const RATE = 24000
@@ -139,26 +139,68 @@ describe('the script', () => {
     ])
   })
 
-  it('folds narration too short to stand alone into the narration beside it', () => {
+  it('speaks neighbouring narration in one take and leaves a stranded "he said" unspoken', () => {
     const { lines, map } = tidyLines([
       { kind: 'narration', text: '白页没有回答。她低头看自己的手，翻过来，掌心朝上，又翻回去。' },
       { kind: 'narration', text: '门开了。她走出去。' },
       { kind: 'dialogue', text: '零七。', speakerName: '拍卖师' },
       { kind: 'narration', text: '他顿了一下，' },
       { kind: 'dialogue', text: '上个月那个背多了两行。', speakerName: '拍卖师' },
+      { kind: 'narration', text: '白页说，' },
+      { kind: 'dialogue', text: '是第一次上机。', speakerName: '白页' },
       { kind: 'narration', text: '她开口。' },
       { kind: 'narration', text: '那段记忆不是她的。这一点写在拍卖手册第二页，她背过。' },
     ])
     expect(lines.map(line => line.text)).toEqual([
-      '白页没有回答。她低头看自己的手，翻过来，掌心朝上，又翻回去。门开了。她走出去。',
+      // Paragraphs keep a break between them inside the take.
+      '白页没有回答。她低头看自己的手，翻过来，掌心朝上，又翻回去。\n门开了。她走出去。',
       '零七。',
       '他顿了一下，',
       '上个月那个背多了两行。',
-      '她开口。那段记忆不是她的。这一点写在拍卖手册第二页，她背过。',
+      '白页说，',
+      '是第一次上机。',
+      '她开口。\n那段记忆不是她的。这一点写在拍卖手册第二页，她背过。',
     ])
-    expect(map).toEqual([0, 0, 1, 2, 3, 4, 4])
-    // English fragments are joined with a space.
-    expect(tidyLines([{ kind: 'narration', text: 'She stopped.' }, { kind: 'narration', text: 'The hall was narrower than she had pictured, but taller.' }]).lines[0]!.text).toBe('She stopped. The hall was narrower than she had pictured, but taller.')
+    expect(map).toEqual([0, 0, 1, 2, 3, 4, 5, 6, 6])
+    // A beat that is acted is narration; only the words that say who spoke are a tag.
+    expect(lines.map(line => line.tag === true)).toEqual([false, false, false, false, true, false, false])
+    // Pieces of one sentence run on; English fragments are joined with a space.
+    expect(tidyLines([{ kind: 'narration', text: '她停下来，' }, { kind: 'narration', text: '看了一眼台下。' }]).lines[0]!.text).toBe('她停下来，看了一眼台下。')
+    expect(tidyLines([{ kind: 'narration', text: 'She stopped,' }, { kind: 'narration', text: 'and looked at the hall.' }]).lines[0]!.text).toBe('She stopped, and looked at the hall.')
+  })
+
+  it('knows the words that only say who spoke', () => {
+    for (const tag of ['他说，', '白页说：', '她问道。', '拍卖师低声说，', 'he said.', 'she asked quietly,', 'said the auctioneer.']) expect(isSpeechTag(tag), tag).toBe(true)
+    for (const told of ['他顿了一下，', '她笑了。', '白页没有回答。', '他说完，转身走了。', '门开了。', 'He paused.', 'she said, and left the room at once.']) expect(isSpeechTag(told), told).toBe(false)
+  })
+
+  it('keeps a take to a length a narrator holds, and cuts a long paragraph evenly', () => {
+    const paragraph = (n: number): string => `第${n}段：海港的夜晚一点一点暗下去，灯一盏一盏亮起来，缆索在风里吱呀作响，远处有人在卸灯油。`
+    const run = tidyLines(Array.from({ length: 8 }, (_, index) => ({ kind: 'narration' as const, text: paragraph(index + 1) })))
+    // Eight paragraphs of narration are not eight clips, and no take runs far past its length.
+    expect(run.lines.length).toBeGreaterThan(1)
+    expect(run.lines.length).toBeLessThan(5)
+    for (const line of run.lines) expect(speechUnits(line.text)).toBeLessThanOrEqual(TAKE_UNITS * 1.3)
+    expect(run.lines.map(line => line.text).join('\n')).toBe(Array.from({ length: 8 }, (_, index) => paragraph(index + 1)).join('\n'))
+    // One paragraph too long for a take is cut at sentence ends into pieces of about the same size.
+    const long = Array.from({ length: 12 }, (_, index) => `这是很长的一段里的第${index + 1}句话，讲的还是同一件事，只是换了一个角度。`).join('')
+    const cut = tidyLines([{ kind: 'narration', text: long }])
+    const sizes = cut.lines.map(line => speechUnits(line.text))
+    expect(cut.lines.length).toBeGreaterThan(1)
+    expect(Math.max(...sizes) / Math.min(...sizes)).toBeLessThan(1.6)
+    expect(cut.lines.map(line => line.text).join('')).toBe(long)
+    expect(cut.map).toEqual([cut.lines.length - 1])
+  })
+
+  it('leaves a line unspoken by the book\'s rule or by the author\'s word', () => {
+    const tag = { kind: 'narration' as const, tag: true }
+    expect(isSkipped(tag, {})).toBe(true)
+    expect(isSkipped(tag, { speechTags: 'read' })).toBe(false)
+    expect(isSkipped({ ...tag, voiced: true }, {})).toBe(false)
+    expect(isSkipped({ kind: 'narration', voiced: false }, { speechTags: 'read' })).toBe(true)
+    const said: AudioLine[] = [{ id: 'l0', kind: 'narration', text: '他说，', tag: true }, { id: 'l1', kind: 'dialogue', text: '好。' }]
+    const script = playable({ lines: said }, {})
+    expect(script.lines.map(line => line.skip === true)).toEqual([true, false])
   })
 
   it('refuses a reply cut off at the output limit instead of repairing it', async () => {
@@ -371,20 +413,99 @@ describe('audio drama', () => {
     const { project } = bed.runtime
     const plan = await project.addChapter({ title: '长夜' })
     const paragraphs = Array.from({ length: 5 }, (_, index) => `第${index + 1}段旁白很长，讲的是海港的夜晚如何一点一点暗下去，灯又如何一盏一盏亮起来。`)
-    await project.saveChapterText(plan.id, paragraphs.join('\n'))
-    bed.llm.responder = () => JSON.stringify({ lines: paragraphs.map(text => ({ kind: 'narration', text })), cues: [] })
+    // A spoken line between the paragraphs keeps each of them a take of its own.
+    const reply = '我去看看缆索，一会儿就回来。'
+    await project.saveChapterText(plan.id, paragraphs.map((text, index) => (index < 4 ? `${text}\n“${reply}”` : text)).join('\n'))
+    bed.llm.responder = () => JSON.stringify({ lines: paragraphs.flatMap((text, index) => [{ kind: 'narration', text }, ...(index < 4 ? [{ kind: 'dialogue', speaker: '老周', text: reply }] : [])]), cues: [] })
     // The fifth paragraph comes back in another voice the first time it is spoken.
     const speech = new FakeSpeech(request => voice(request.text.startsWith('第5段') && (request.take ?? 0) === 0 ? 250 : 118, natural(request.text)))
     useSpeech(speech)
     await bed.core.settings.update({ tts: { concurrency: 1 } })
     const result = await synthesizeChapter(bed.core, bed.runtime, { chapter: plan.id }, { origin: 'user' })
-    expect(result).toMatchObject({ rendered: 5, retaken: 1, flagged: 0 })
+    expect(result).toMatchObject({ rendered: 9, retaken: 1, flagged: 0 })
     const cast = await openCast(project, (await bed.core.settings.get()).tts)
     // The narrator reads in the provider's own voice here; it is known by its lines all the same.
     expect(Math.abs((cast.print({}) ?? 0) / 118 - 1)).toBeLessThan(0.05)
-    const fifth = (await project.audioScript(plan.id))!.lines[4]!
+    const fifth = (await project.audioScript(plan.id))!.lines[8]!
     expect(fifth.takes).toBe(2)
     expect(Math.abs(measure(parseWav(await readFile(project.path(fifth.audio!)))).pitch! / 118 - 1)).toBeLessThan(0.05)
     expect(encodeWav(voice(118, 0.1)).length).toBeGreaterThan(44)
+  })
+
+  it('joins the narration of a whole chapter, drops the stranded tag, and voices it only when asked to', async () => {
+    const { project } = bed.runtime
+    const plan = await project.addChapter({ title: '舷梯' })
+    const text = '续页号的舷梯十七级，她数过。\n第九级上，靴底从骨木换到钢面。\n“第一次上机？”\n“不是第一次。”白页说，“是第一次上机。”\n伊瑟的眉皱起来。记录官把这句话抄进了本子。'
+    await project.saveChapterText(plan.id, text)
+    bed.llm.responder = () => JSON.stringify({
+      lines: [
+        { kind: 'narration', text: '续页号的舷梯十七级，她数过。' },
+        { kind: 'narration', text: '第九级上，靴底从骨木换到钢面。' },
+        { kind: 'dialogue', speaker: '伊瑟', text: '第一次上机？' },
+        { kind: 'dialogue', speaker: '白页', text: '不是第一次。' },
+        { kind: 'narration', text: '白页说，' },
+        { kind: 'dialogue', speaker: '白页', text: '是第一次上机。' },
+        { kind: 'narration', text: '伊瑟的眉皱起来。记录官把这句话抄进了本子。' },
+      ],
+      cues: [
+        { at: 0, kind: 'bed', ambience: 'sea', caption: '缆索吱呀，潮水拍着船壳', prompt: '港口停泊的铁壳船，缆索吱呀，水拍船壳' },
+        { at: 1, kind: 'effect', caption: '靴底踩上钢面，一声黏响', prompt: '靴子踩在刷过胶的钢板上，一声发黏的脚步，约两秒' },
+        { at: 6, kind: 'music', caption: '低沉的弦乐长音', prompt: '低沉的弦乐长音，克制，不安，纯器乐' },
+      ],
+    })
+    const script = await buildAudioScript(bed.core, bed.runtime, { chapter: plan.id }, { origin: 'user' })
+    expect(script.shape).toBe(2)
+    expect(script.lines.map(line => line.kind)).toEqual(['narration', 'dialogue', 'dialogue', 'narration', 'dialogue', 'narration'])
+    expect(script.lines[0]!.text).toBe('续页号的舷梯十七级，她数过。\n第九级上，靴底从骨木换到钢面。')
+    expect(script.lines[3]).toMatchObject({ text: '白页说，', tag: true })
+    // Cues follow the lines they were placed on through the joining.
+    expect(script.cues.map(cue => [cue.kind, cue.at])).toEqual([['bed', 'l0'], ['effect', 'l0'], ['music', 'l5']])
+    expect(script.cues[1]).toMatchObject({ caption: '靴底踩上钢面，一声黏响', ambience: 'none' })
+    const speech = new FakeSpeech(request => voice(130, natural(request.text)))
+    useSpeech(speech)
+    const first = await synthesizeChapter(bed.core, bed.runtime, { chapter: plan.id }, { origin: 'user' })
+    expect(first.rendered).toBe(5)
+    expect(speech.requests.some(request => request.text === '白页说，')).toBe(false)
+    // An audiobook reads every word: with that chosen, the tag is the one line still to speak.
+    await bed.core.settings.update({ tts: { speechTags: 'read' } })
+    speech.requests.length = 0
+    const second = await synthesizeChapter(bed.core, bed.runtime, { chapter: plan.id }, { origin: 'user' })
+    expect(second.rendered).toBe(1)
+    expect(speech.requests.map(request => request.text)).toEqual(['白页说，'])
+  })
+
+  it('reshapes a script cut the old way without asking a model, keeping what was recorded', async () => {
+    const { project } = bed.runtime
+    const plan = await project.addChapter({ title: '旧脚本' })
+    await project.saveChapterText(plan.id, '甲。\n乙。\n“好。”\n他说，\n“走。”\n丙。')
+    await project.saveAudioScript({
+      schema: 1,
+      chapterId: plan.id,
+      textHash: 'x',
+      updatedAt: new Date().toISOString(),
+      lines: [
+        { id: 'l0', kind: 'narration', text: '更衣间的门开了一条缝。', audio: 'assets/audio/a.wav', renderKey: 'k0' },
+        { id: 'l1', kind: 'narration', text: '拍卖师探进半个头。', audio: 'assets/audio/b.wav', renderKey: 'k1' },
+        { id: 'l2', kind: 'dialogue', speakerName: '拍卖师', text: '零七。', audio: 'assets/audio/c.wav', renderKey: 'k2' },
+        { id: 'l3', kind: 'narration', text: '他说，', audio: 'assets/audio/d.wav', renderKey: 'k3' },
+        { id: 'l4', kind: 'dialogue', speakerName: '拍卖师', text: '上台。', audio: 'assets/audio/e.wav', renderKey: 'k4' },
+        { id: 'l5', kind: 'narration', text: '白页没有回答。' },
+      ],
+      cues: [{ at: 'l0', ambience: 'none' }, { at: 'l4', ambience: 'crowd', note: '台下的人声' }],
+    })
+    const llmCalls = bed.llm.requests.length
+    const result = await reshapeAudioScript(bed.runtime, plan.id)
+    expect(bed.llm.requests.length).toBe(llmCalls)
+    expect(result).toMatchObject({ before: 6, after: 5, kept: 3 })
+    expect(result.script.lines.map(line => [line.id, line.text, line.audio !== undefined])).toEqual([
+      ['l0', '更衣间的门开了一条缝。\n拍卖师探进半个头。', false],
+      ['l1', '零七。', true],
+      ['l2', '他说，', true],
+      ['l3', '上台。', true],
+      ['l4', '白页没有回答。', false],
+    ])
+    expect(result.script.lines[2]!.tag).toBe(true)
+    expect(result.script.cues.map(cue => [cue.id, cue.at])).toEqual([['c0', 'l0'], ['c1', 'l3']])
+    expect(result.script.shape).toBe(2)
   })
 })

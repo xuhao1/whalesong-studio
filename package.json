@@ -14,7 +14,7 @@
   "license": "LGPL-3.0-or-later",
   "author": "Dr. Xu",
   "type": "module",
-  "icon": "./icon.svg",
+  "icon": "./icon.png",
   "main": "lib/index.js",
   "exports": {
     ".": "./lib/index.js",
@@ -27,7 +27,8 @@
   "files": [
     "lib",
     "cordis.patch.yml",
-    "icon.svg",
+    "icon.png",
+    "native/novel-auth.swift",
     "locale/*.json",
     "skills",
     "docs",

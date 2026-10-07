@@ -9,7 +9,6 @@
  * "the scene where…" questions land too. Embeddings are cached on disk per
  * chunk hash, so only new or changed text is ever embedded.
  */
-import { readFile } from 'node:fs/promises'
 import type { CharacterCard, SearchHit, SearchSource, WorldEntry } from '../shared/types'
 import { hashText, isCjk } from '../shared/text'
 import type { Project } from './project'
@@ -230,10 +229,13 @@ export class RetrievalIndex {
     this.vectorSpace = space
     this.vectorsLoaded = true
     try {
-      const meta = await readJson<VectorCache>(this.project.statePath('index', 'vectors.json'))
+      const meta = await this.project.files.readJson<VectorCache>(this.project.statePath('index', 'vectors.json'))
       if (meta === undefined || meta.space !== space || meta.dims <= 0) return
-      const buffer = await readFile(this.project.statePath('index', 'vectors.f32'))
-      const all = new Float32Array(buffer.buffer, buffer.byteOffset, Math.floor(buffer.byteLength / 4))
+      const buffer = await this.project.files.readBytes(this.project.statePath('index', 'vectors.f32'))
+      if (buffer === undefined) return
+      // Copied first: bytes that came through a cipher sit wherever they were put, not on a four-byte boundary.
+      const aligned = new Uint8Array(buffer)
+      const all = new Float32Array(aligned.buffer, 0, Math.floor(aligned.byteLength / 4))
       if (all.length < meta.keys.length * meta.dims) return
       meta.keys.forEach((key, index) => {
         this.vectors.set(key, all.slice(index * meta.dims, (index + 1) * meta.dims))
@@ -250,8 +252,8 @@ export class RetrievalIndex {
     const dims = keys.length > 0 ? this.vectors.get(keys[0]!)!.length : 0
     const all = new Float32Array(keys.length * dims)
     keys.forEach((key, index) => all.set(this.vectors.get(key)!, index * dims))
-    await writeAtomic(this.project.statePath('index', 'vectors.f32'), new Uint8Array(all.buffer))
-    await writeJson(this.project.statePath('index', 'vectors.json'), { space, dims, keys } satisfies VectorCache)
+    await this.project.files.writeAtomic(this.project.statePath('index', 'vectors.f32'), new Uint8Array(all.buffer))
+    await this.project.files.writeJson(this.project.statePath('index', 'vectors.json'), { space, dims, keys } satisfies VectorCache)
   }
 
   /**

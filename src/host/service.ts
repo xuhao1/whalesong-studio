@@ -18,17 +18,21 @@ import type {} from '@deepseek-ai/dsh-session-persistence'
 import type {} from '@deepseek-ai/dsh-workspace'
 import { randomBytes } from 'node:crypto'
 import { mkdir, stat } from 'node:fs/promises'
-import { homedir } from 'node:os'
+import { homedir, hostname } from 'node:os'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { NovelCore, type ProjectRuntime, type RemovedBook, type TaskContext } from '../core/core'
 import { listEndpointModels, modelsBase } from '../core/media/discovery'
 import { ProviderError } from '../core/media/http'
+import { soundSetup } from '../core/media/sound'
+import { attachReconciler } from '../core/reconcile'
+import { readStub, VaultError } from '../core/util/vault'
+import { createDeviceAuth, type DeviceAuth } from './device-auth'
 import { ProjectError } from '../core/project'
 import { SessionStateStore, type SwitchedBy } from '../core/session-state'
 import { DEFAULT_SETTINGS, mergeSettings, SettingsStore, type DeepPartial } from '../core/settings'
 import { errorMessage } from '../core/util/async'
 import { displayPath, exists } from '../core/util/fs'
-import type { CodexStatus, EndpointCheck, EndpointModel, KeyState, ModelKind, ShareStatus, WorkspaceInfo } from '../shared/rpc'
+import type { CodexStatus, EndpointCheck, EndpointModel, KeyState, LockView, ModelKind, ShareStatus, WorkspaceInfo } from '../shared/rpc'
 import { compatibleBase, hostOf, originOf, recommendedSetup, SERVICES, serviceOf, setupPatch, speechProtocol, UNLISTED_SPEECH, type ServiceId, type SetupPart } from '../shared/services'
 import type { ModelRoute, NovelSettings, ProjectRef, WorkMode } from '../shared/types'
 import { codexStatus, createCodexBridge } from './codex'
@@ -68,6 +72,8 @@ export class NovelService extends Service {
       settings: new SettingsStore(defaults),
       log: (message, error) => { this.log(message, error) },
     })
+    // Files changed behind the Studio's back are noticed, recorded and digested again.
+    attachReconciler(this.core)
     ctx.effect(() => () => { this.core.dispose() }, 'novel: studio engine')
     this.share = new ShareServer(this.core, (message, error) => { this.log(message, error) })
     ctx.effect(() => () => { void this.share.close().catch(() => {}) }, 'novel: reader for other devices')
@@ -83,8 +89,83 @@ export class NovelService extends Service {
    * put back; sessions that were on it are on no book, and it is no longer
    * shared with other devices.
    */
+  // ───────────── sealed books ─────────────
+
+  /** This computer's own way of proving its owner is present; undefined where the Studio knows none. */
+  readonly device: DeviceAuth | undefined = createDeviceAuth()
+
+  /** The slot id of this computer in a book's list of ways to open it. */
+  private deviceSlot(): string {
+    return `host:${hostname()}`
+  }
+
+  async lockView(root: string): Promise<LockView> {
+    const lock = await this.core.lockOf(root)
+    const device = await this.device?.info().catch(() => undefined) ?? { available: false, biometrics: false, method: 'none' as const, host: hostname() }
+    return { ...lock, device, deviceOn: lock.ways.some(way => way.kind === 'device' && way.id === this.deviceSlot()) }
+  }
+
+  /** Let this computer's own unlock open a book that is unlocked now, or stop letting it. */
+  async setDeviceUnlock(root: string, on: boolean): Promise<void> {
+    const stub = await readStub(resolve(root))
+    if (stub === undefined) throw new ProjectError('novel/invalid', 'this book is not sealed')
+    if (!on) {
+      await this.core.rekeyBook(root, { remove: { kind: 'device', id: this.deviceSlot() } })
+      await this.device?.remove(stub.id).catch(() => {})
+      return
+    }
+    const info = await this.device?.info()
+    if (this.device === undefined || info === undefined || !info.available) throw new ProjectError('novel/unsupported', 'this computer offers no way to prove its owner is present — the book opens with its password')
+    // A secret of its own for this computer, kept by the account's credential store; what it unwraps is in the book's novel.json.
+    const secret = randomBytes(32)
+    await this.device.store(stub.id, secret)
+    try {
+      await this.core.rekeyBook(root, { add: this.core.slotFor('device', this.deviceSlot(), secret, info.host) })
+    } finally {
+      secret.fill(0)
+    }
+  }
+
+  /**
+   * Unlock a sealed book: with its password, or by this computer's own unlock —
+   * the system asks for a fingerprint or the computer's password, and only on a
+   * yes is the book's key fetched from the credential store.
+   * @throws ProjectError `novel/wrong-key` when it does not open that way.
+   */
+  async unlockBook(root: string, how: { password?: string; device?: boolean }, signal?: AbortSignal): Promise<void> {
+    const stub = await readStub(resolve(root))
+    if (stub === undefined) return
+    try {
+      if (how.password !== undefined && how.password.length > 0) {
+        await this.core.unlockBook(root, { password: how.password })
+        return
+      }
+      if (how.device !== true || this.device === undefined) throw new ProjectError('novel/invalid', 'give the password, or ask for this computer\'s own unlock')
+      if (!stub.sealed.slots.some(slot => slot.kind === 'device' && slot.id === this.deviceSlot())) throw new ProjectError('novel/wrong-key', 'this book was not set up to open with this computer\'s unlock — use its password, then switch that on')
+      const zh = this.locale().startsWith('zh')
+      const confirmed = await this.device.confirm(zh ? `解锁《${stub.title}》` : `unlock "${stub.title}"`, signal)
+      if (!confirmed) throw new ProjectError('novel/wrong-key', 'the system did not confirm that it is you')
+      const secret = await this.device.load(stub.id)
+      if (secret === undefined) throw new ProjectError('novel/wrong-key', 'the key this computer kept for the book is gone — use the password, then switch this computer\'s unlock on again')
+      try {
+        await this.core.unlockBook(root, { kind: 'device', id: this.deviceSlot(), secret })
+      } finally {
+        secret.fill(0)
+      }
+    } catch (error) {
+      if (error instanceof VaultError) throw new ProjectError(error.code === 'wrong-key' ? 'novel/wrong-key' : 'novel/invalid', error.message)
+      throw error
+    }
+  }
+
+  /** The language the author reads system prompts in, as far as the Host can tell. */
+  private locale(): string {
+    return (process.env.LC_ALL ?? process.env.LC_MESSAGES ?? process.env.LANG ?? Intl.DateTimeFormat().resolvedOptions().locale ?? 'en').toLowerCase()
+  }
+
   async deleteBook(root: string): Promise<RemovedBook> {
-    const book = (await this.core.runtime(root)).project.root
+    // A locked book is taken off the shelf as it lies; its folder is found without opening it.
+    const book = (await this.core.lockOf(root)).locked ? resolve(root) : (await this.core.runtime(root)).project.root
     // A workspace folder is the Harness's, and other things may live in it: only the book leaves.
     const isWorkspace = (await this.workspaces()).some(workspace => resolve(workspace.path) === book)
     const removed = await this.core.removeBook(book, isWorkspace)
@@ -100,13 +181,17 @@ export class NovelService extends Service {
    * book, move it to another port, or replace its address.
    * @throws ProjectError `novel/invalid` for a port that cannot be listened on.
    */
-  async updateShare(input: { enabled?: boolean; book?: { root: string; shared: boolean }; port?: number; renew?: boolean }): Promise<ShareStatus> {
+  async updateShare(input: { enabled?: boolean; book?: { root: string; shared: boolean; mode?: 'read' | 'edit' }; port?: number; renew?: boolean }): Promise<ShareStatus> {
     const current = (await this.core.settings.get()).share ?? { enabled: false }
     const books = new Set(current.books ?? [])
+    const edit = new Set(current.edit ?? [])
     if (input.book !== undefined) {
       const root = (await this.core.runtime(input.book.root)).project.root
       if (input.book.shared) books.add(root)
       else books.delete(root)
+      // Being changeable from another device is asked for book by book, and goes when the book stops being shared.
+      if (input.book.shared && input.book.mode === 'edit') edit.add(root)
+      else if (!input.book.shared || input.book.mode === 'read') edit.delete(root)
     }
     if (input.port !== undefined && (!Number.isInteger(input.port) || input.port < 1024 || input.port > 65535)) {
       throw new ProjectError('novel/invalid', 'the port is a whole number between 1024 and 65535')
@@ -114,7 +199,7 @@ export class NovelService extends Service {
     await this.core.settings.update({
       share: {
         ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
-        ...(input.book !== undefined ? { books: [...books] } : {}),
+        ...(input.book !== undefined ? { books: [...books], edit: [...edit] } : {}),
         ...(input.port !== undefined ? { port: input.port } : {}),
         // A new address: whoever holds the old link can no longer read.
         ...(input.renew === true ? { token: randomBytes(18).toString('base64url') } : {}),
@@ -398,6 +483,8 @@ export class NovelService extends Service {
       { url: settings.embedding.provider !== 'none' ? settings.embedding.baseURL : undefined, ref: settings.embedding.apiKeyRef },
       { url: settings.image.provider !== 'none' && settings.image.provider !== 'codex' ? settings.image.baseURL ?? defaultEndpoint(settings.image.provider) : undefined, ref: settings.image.apiKeyRef },
       { url: settings.tts.provider !== 'none' ? settings.tts.baseURL ?? defaultEndpoint(settings.tts.provider) : undefined, ref: settings.tts.apiKeyRef },
+      // Sound with an endpoint of its own; when it rides on the speech setup, that slot already covers it.
+      { url: settings.sound?.provider === 'qwen-audiogen' ? settings.sound.baseURL ?? defaultEndpoint('qwen-audiogen') : undefined, ref: settings.sound?.apiKeyRef },
     ]
     return slots.filter((slot): slot is { url: string; ref: string | undefined } => slot.url !== undefined && slot.url.trim().length > 0)
       .map(slot => ({ url: slot.url, ...(slot.ref !== undefined && slot.ref.length > 0 ? { ref: slot.ref } : {}) }))
@@ -430,8 +517,10 @@ export class NovelService extends Service {
   }
 
   /** Which of the optional capabilities can be used right now. */
-  mediaReady(settings: NovelSettings, keys: Record<string, KeyState>, codex: CodexStatus): { embedding: boolean; image: boolean; tts: boolean } {
+  mediaReady(settings: NovelSettings, keys: Record<string, KeyState>, codex: CodexStatus): { embedding: boolean; image: boolean; tts: boolean; sound: boolean } {
+    const sound = soundSetup(settings)
     return {
+      sound: sound !== undefined && this.hasKey(keys, sound.baseURL ?? defaultEndpoint('qwen-audiogen'), sound.apiKeyRef),
       embedding: settings.embedding.provider !== 'none' && settings.embedding.model !== undefined && this.hasKey(keys, settings.embedding.baseURL, settings.embedding.apiKeyRef),
       image: settings.image.provider === 'codex'
         ? codexReady(codex, settings.image.bridge)

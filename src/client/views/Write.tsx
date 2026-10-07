@@ -13,7 +13,7 @@ import { Icon } from '../icons'
 import { jobKindLabel, jobPulse } from '../Studio'
 import { CHAPTER_STATUS, CHAPTER_STATUS_TONE, ISSUE_TYPE, SEVERITY, SEVERITY_TONE } from '../labels'
 import {
-  Button, Chip, cx, Empty, Menu, Modal, Progress, Select, Spinner, Tabs, TextInput, useAction, useConfirm, useJobStream, useLoad, useProject,
+  Button, Chip, cx, Empty, Menu, Modal, Progress, Select, Spinner, Tabs, TextInput, ThoughtButton, ThoughtPanel, useAction, useConfirm, useJobStream, useJobTail, useLoad, useProject,
   useQuote, useSnapshot, useStudio, useT, useWidth, type Translate,
 } from '../ui'
 
@@ -37,6 +37,8 @@ function versionReason(reason: string, t: Translate): string {
     'before-import': ['导入前', 'before an import'],
     'before-remove': ['删除章节前', 'before removal'],
     'manual': ['手动存档', 'manual'],
+    'agent-edit': ['总编亲手改动前', 'before an edit by the showrunner'],
+    'edit-device': ['在其他设备上改动前', 'before an edit from another device'],
   }
   const label = labels[reason]
   return label !== undefined ? t(...label) : reason
@@ -224,7 +226,7 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
   const running = jobsOf(jobs, chapter.id)
   const writing = running.find(job => job.kind === 'write')
   const revising = running.find(job => job.kind === 'revise')
-  const stream = useJobStream(writing?.id)
+  const { text: stream, thought } = useJobTail(writing?.id)
   const reviseStream = useJobStream(revising?.id)
   useEffect(() => {
     const element = live.current
@@ -530,6 +532,7 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
             <Spinner size={12} />
             <span>{jobKindLabel(job.kind, t)}{t('中…', '…')}</span>
             {job.progress !== undefined && job.progress.total > 1 ? <Progress done={job.progress.done} total={job.progress.total} label={jobPulse(job, t)} /> : job.thinking !== undefined ? <span className="nv-muted">{jobPulse(job, t)}</span> : null}
+            <ThoughtButton job={job} label />
             <span className="nv-spacer" />
             <Button size="sm" variant="ghost" icon="stop" onClick={() => { void controller.cancelJob(job.id) }} />
           </div>
@@ -546,7 +549,8 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
 
         {writing !== undefined ? (
           <div className="nv-live nv-prose" ref={live}>
-            {stream.length === 0 ? <p className="nv-muted nv-live-wait"><Spinner size={12} /> {jobPulse(writing, t) ?? t('准备中…', 'Getting ready…')}</p> : null}
+            {stream.length === 0 && thought.length === 0 ? <p className="nv-muted nv-live-wait"><Spinner size={12} /> {jobPulse(writing, t) ?? t('准备中…', 'Getting ready…')}</p> : null}
+            <ThoughtPanel thought={thought} thinking={writing.thinking !== undefined} wrote={stream.length > 0} />
             {appending ? text.split('\n').filter(line => line.trim().length > 0).slice(-6).map((line, index) => <p key={`old-${index}`} className="nv-live-old">{line}</p>) : null}
             {stream.split('\n').filter(line => line.trim().length > 0).map((line, index) => <p key={index}>{line}</p>)}
             <span className="nv-caret" />

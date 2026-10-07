@@ -3,6 +3,7 @@
 import { readFile } from 'node:fs/promises'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { digestPending } from '../../core/pipelines/digest'
+import { correctMemory, editChapter, type EditAction, type MemoryPatch } from '../../core/pipelines/edit'
 import { importManuscript, readBookFile } from '../../core/pipelines/import'
 import { reviewChapter } from '../../core/pipelines/review'
 import { acceptProposal, rejectProposal, reviseBook, reviseChapter, reviseSpan } from '../../core/pipelines/revise'
@@ -114,6 +115,96 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
         return {
           text: `${result.applied ? 'Rewrote' : `Proposed (${result.proposalId}) a rewrite of`} chapter ${result.index} "${result.title}": ${result.wordsBefore} → ${result.wordsAfter} words.\nOpens: ${result.after.slice(0, 200)}`,
           data: toJson({ ...result, before: undefined, after: undefined }),
+        }
+      },
+    }),
+
+    novelTool(service, {
+      name: 'novel_edit',
+      description: [
+        'Change the text of a chapter yourself, exactly — no writer model involved. For what is not writing: words the author dictated or pasted, a name, a slip of fact, a typo, a sentence the author wants gone, a paragraph of their own to put in. Prose that has to be *written* still goes to the writer (novel_write, novel_revise) — unless the author asks you, in so many words, to write it yourself.',
+        '- action=replace: put `text` in place of `find`. Copy `find` exactly from the chapter (novel_read); it must occur once, or pass all=true to change every occurrence (a name, a term).',
+        '- action=insert: put `text` before or after the passage `find` (`where`, default after).',
+        '- action=append: add `text` to the end of the chapter.',
+        '- action=delete: remove the passage `find` (all=true for every occurrence).',
+        '- action=set: make `text` the whole chapter — the author\'s own draft going in, or a chapter of theirs replacing what is there.',
+        'Every change keeps the text as it was as a version the author can restore, is put on the book\'s record, and has the chapter\'s memory digested again, so later chapters are written from what the page now says. The result names the characters the changed text mentions and how many later chapters already exist: check that the change agrees with their cards and with what follows (novel_search, novel_review), and say so to the author. When the author has agent changes wait for review, the change is left as a proposal instead.',
+      ].join('\n'),
+      mutating: true,
+      parameters: {
+        action: { type: 'string', required: true, enum: ['replace', 'insert', 'append', 'delete', 'set'] },
+        chapter: { type: 'string', required: true, description: 'Chapter id, number or title.' },
+        find: { type: 'string', description: 'replace/delete: the exact passage. insert: the passage the text goes next to.' },
+        text: { type: 'string', description: 'The new text.' },
+        where: { type: 'string', enum: ['before', 'after'], description: 'insert: which side of `find`.' },
+        all: { type: 'boolean', description: 'replace/delete: every occurrence.' },
+        reason: { type: 'string', description: 'Why, in a few words — kept with the version and on the record.' },
+        apply: { type: 'boolean', description: 'false leaves a proposal for the author instead of changing the text.' },
+      },
+      async run(args, env) {
+        const runtime = await env.project()
+        const result = await editChapter(env.core, runtime, {
+          chapter: args.chapter,
+          action: args.action as EditAction,
+          ...(args.find !== undefined ? { find: args.find } : {}),
+          ...(args.text !== undefined ? { text: args.text } : {}),
+          ...(args.where !== undefined ? { where: args.where } : {}),
+          ...(args.all !== undefined ? { all: args.all } : {}),
+          ...(args.reason !== undefined ? { reason: args.reason } : {}),
+          ...(args.apply !== undefined ? { apply: args.apply } : {}),
+        }, env.task)
+        const where = `chapter ${result.index} "${result.title}"`
+        const what = result.action === 'set' ? 'set the whole text of' : result.action === 'append' ? 'appended to' : result.action === 'insert' ? 'inserted into' : result.action === 'delete' ? `removed ${result.changes > 1 ? `${result.changes} passages` : 'a passage'} from` : `changed ${result.changes > 1 ? `${result.changes} places` : 'a passage'} in`
+        if (!result.applied) {
+          return {
+            text: `Proposed (${result.proposalId}): ${what} ${where}, ${result.wordsBefore} → ${result.wordsAfter} words. The author has agent changes wait for review: it is in Novel Studio → Review, or settle it with novel_revise scope=accept/reject.`,
+            data: toJson(result),
+            record: { summary: [`对第 ${result.index} 章《${result.title}》提了一处直接改动（等你确认）${args.reason !== undefined ? `——${brief(args.reason, 80)}` : ''}`, `Proposed a direct change to ${where}${args.reason !== undefined ? ` — ${brief(args.reason, 80)}` : ''}`], chapter: result.chapterId },
+          }
+        }
+        const lines = [
+          `Done: ${what} ${where}, ${result.wordsBefore} → ${result.wordsAfter} words.${result.version !== undefined ? ` The text as it was is version ${result.version} (novel_manage action=restore_version undoes this).` : ''}`,
+          result.action !== 'set' && result.before.length > 0 ? `Was: ${result.before}` : undefined,
+          result.after.length > 0 ? `Now: ${result.after}` : undefined,
+          result.memory === 'digesting' ? 'Memory: the chapter is being digested again; summary, facts and character states will follow the new text.' : 'Memory: auto-digest is off, so the chapter\'s memory is stale — run novel_digest before anything is written after it.',
+          result.characters.length > 0 ? `Mentions ${result.characters.join(', ')}: make sure the change agrees with their cards (novel_read what=character).` : undefined,
+          result.laterChapters > 0 ? `${result.laterChapters} later chapter(s) are already written and may rest on what changed — check them (novel_search, novel_review) and tell the author what you found.` : undefined,
+        ].filter((line): line is string => line !== undefined)
+        return {
+          text: lines.join('\n'),
+          data: toJson(result),
+          record: {
+            summary: [
+              `亲手${result.action === 'set' ? '换了整章正文' : result.action === 'append' ? '在章末加了一段' : result.action === 'insert' ? '插入了一段' : result.action === 'delete' ? `删了${result.changes > 1 ? ` ${result.changes} 处` : '一处'}` : `改了${result.changes > 1 ? ` ${result.changes} 处` : '一处'}`}：第 ${result.index} 章《${result.title}》（${result.wordsBefore} → ${result.wordsAfter} 字）${args.reason !== undefined ? `——${brief(args.reason, 80)}` : ''}`,
+              `${what.charAt(0).toUpperCase()}${what.slice(1)} ${where} by hand (${result.wordsBefore} → ${result.wordsAfter} words)${args.reason !== undefined ? ` — ${brief(args.reason, 80)}` : ''}`,
+            ],
+            chapter: result.chapterId,
+            ...(result.version !== undefined ? { version: result.version } : {}),
+          },
+        }
+      },
+    }),
+
+    novelTool(service, {
+      name: 'novel_memory',
+      description: [
+        'Put right what the book remembers of a chapter. Memory is what every later chapter is written from — the summary, the hard facts, where each character stands at chapter end; the digest reads like a careful reader and is sometimes wrong, or the author tells you what really happened. Correct it here rather than digesting again, which would only repeat the reading.',
+        '`fields` (only what changes): brief, summary, storyTime, locations [..], addFacts [{subject, statement, kind: state|relationship|knowledge|item|world|event}], removeFacts [text a wrong fact contains], characters [{name, stateAfter, location, emotion, learned [..], role}], openQuestions [..].',
+        'Read the memory first (novel_read what=memory). A correction holds until the chapter\'s text changes and it is digested again — if the text itself is wrong, change the text (novel_edit, novel_revise) instead.',
+      ].join('\n'),
+      mutating: true,
+      parameters: {
+        chapter: { type: 'string', required: true, description: 'Chapter id, number or title.' },
+        fields: { type: 'object', required: true, additionalProperties: true, description: 'What to correct.' },
+      },
+      async run(args, env) {
+        const runtime = await env.project()
+        const { memory, changed } = await correctMemory(runtime, args.chapter, args.fields as MemoryPatch)
+        const located = await runtime.project.findChapter(memory.chapterId)
+        return {
+          text: `Corrected the memory of chapter ${located?.index ?? '?'} "${located?.plan.title ?? memory.chapterId}": ${changed.join(', ')}. It now holds ${memory.facts.length} facts and the state of ${memory.characters.length} characters; later chapters are written from this.`,
+          data: toJson({ chapterId: memory.chapterId, changed }),
+          record: { summary: [`修正了第 ${located?.index ?? '?'} 章的记忆：${changed.join('、')}`, `Corrected the memory of chapter ${located?.index ?? '?'}: ${changed.join(', ')}`], chapter: memory.chapterId },
         }
       },
     }),

@@ -18,6 +18,8 @@ export const DEFAULT_SETTINGS: NovelSettings = {
   context: { strategy: 'auto', budgetTokens: 500_000, tailChars: 3000 },
   image: { provider: 'none', size: '1024x1024' },
   tts: { provider: 'none', concurrency: 3 },
+  // Effects, music and generated ambience ride on the speech setup wherever its model can make them.
+  sound: { provider: 'auto' },
   embedding: { provider: 'none' },
   autoDigest: true,
   reviewAgentRevisions: false,

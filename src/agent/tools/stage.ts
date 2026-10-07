@@ -2,7 +2,8 @@
 /** Tools for the stage: illustrations, audio drama, motion comic, interludes. */
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { stockVoices } from '../../core/media/voices'
-import { buildAudioScript, designCharacterVoice, exportChapterAudio, previewVoices, synthesizeChapter } from '../../core/pipelines/audio'
+import { buildAudioScript, designCharacterVoice, exportChapterAudio, isSkipped, previewVoices, reshapeAudioScript, synthesizeChapter } from '../../core/pipelines/audio'
+import { renderSound } from '../../core/pipelines/sound'
 import { buildStoryboard, renderPanels } from '../../core/pipelines/comic'
 import { illustrate, type IllustrateParams } from '../../core/pipelines/illustrate'
 import { novelizePlay, playTurn, setPlayOutcome, startPlay } from '../../core/pipelines/play'
@@ -80,27 +81,47 @@ export function stageTools(service: NovelService): ToolDefinition[] {
       name: 'novel_audio',
       description: [
         'Produce the audio drama of a chapter with the configured speech model.',
-        '- action=script: cut the chapter into narration, dialogue and inner-voice lines with delivery direction and ambience cues (no audio yet). A passage the director model could not deliver is cut by rule instead and has no speakers: the result says so and why — fix the cause and run it again with force=true.',
+        '- action=script: cut the chapter into narration, dialogue and inner-voice lines with delivery direction, and design its sound (no audio yet). Narration that follows narration is spoken in one take, so the narrator sounds like one person telling a story; a "he said" stranded between two spoken lines is marked as a tag and left unspoken unless the author has every word read. Sound cues say what is heard — the bed of each scene, spot effects, music — each with a caption the reader sees beside the text. A passage the director model could not deliver is cut by rule instead and has no speakers: the result says so and why — fix the cause and run it again with force=true.',
+        '- action=reshape: bring a script made before narration was spoken in whole takes into that shape without calling a model: dialogue keeps its recordings, joined narration is voiced again at the next synthesize.',
+        '- action=sound: generate the clips of the sound cues with the sound model — every effect and piece of music, and the beds unless the author keeps to browser-synthesized ones (`kinds` narrows it; `cues` names single ones). Needs a sound model: it follows the speech setup when that is Bailian audio generation. Without one the cues are still captions, and beds are synthesized by the player.',
         '- action=synthesize: render every line that has no current audio (builds the script first if needed). Every speaker keeps one voice across the book — the voice on their card, else one cast once and kept in the book\'s voice sheet (action=cast shows it), strangers without a card included. Each take is checked by measurement: a line that comes back cut short, silent, or plainly not in the speaker\'s voice is spoken again (the speech settings say how many times), every kept line is brought to one level, and lines rendered earlier that fail the check are spoken again too. The result counts what was retaken and what still stands out.',
         '- action=cast: the book\'s voice sheet — who speaks with which voice.',
         '- action=export: join the rendered lines into one WAV file.',
         '- action=design_voice: create a voice of their own for `character` from their persona (`prompt` overrides the description); needs a provider with voice design.',
         '- action=set_voice: assign `voice` (a provider voice id) and optional delivery `prompt` to `character`.',
         '- action=voices: list the stock voices of the configured provider.',
-        'The author listens in Novel Studio → Read, in its listening mode (novel_show view=listen), where ambience is mixed in live.',
+        'The author listens in Novel Studio → Read, in its listening mode (novel_show view=listen), where the sound is laid under the voices. Single lines and cues are changed with novel_manage (edit_line, edit_cue, add_cue).',
       ].join('\n'),
       mutating: args => args.action !== 'voices' && args.action !== 'cast',
       parameters: {
-        action: { type: 'string', required: true, enum: ['script', 'synthesize', 'cast', 'export', 'design_voice', 'set_voice', 'voices'] },
-        chapter: { type: 'string', description: 'script/synthesize/export: which chapter.' },
+        action: { type: 'string', required: true, enum: ['script', 'reshape', 'synthesize', 'sound', 'cast', 'export', 'design_voice', 'set_voice', 'voices'] },
+        chapter: { type: 'string', description: 'script/reshape/synthesize/sound/export: which chapter.' },
+        kinds: listParameter('sound: which kinds of cue to make. Default: all the book generates.', { enum: ['bed', 'effect', 'music'] as const }),
+        cues: listParameter('sound: ids of single cues to make (again).'),
         character: { type: 'string', description: 'design_voice/set_voice: which character.' },
         voice: { type: 'string', description: 'set_voice: provider voice id.' },
         prompt: { type: 'string', description: 'design_voice: voice description; set_voice: baseline delivery instructions.' },
-        force: { type: 'boolean', description: 'script/synthesize: redo even when current.' },
+        force: { type: 'boolean', description: 'script/synthesize/sound: redo even when current.' },
       },
       async run(args, env) {
         const runtime = await env.project()
         const { project } = runtime
+        if (args.action === 'reshape') {
+          if (args.chapter === undefined) throw new ProjectError('novel/invalid', 'action=reshape needs `chapter`')
+          const result = await reshapeAudioScript(runtime, args.chapter)
+          return { text: `Reshaped the script of ${result.script.chapterId}: ${result.before} lines → ${result.after}; ${result.kept} recordings kept. Joined narration has no audio now — run action=synthesize to voice it.`, data: toJson({ before: result.before, after: result.after, kept: result.kept }) }
+        }
+        if (args.action === 'sound') {
+          if (args.chapter === undefined) throw new ProjectError('novel/invalid', 'action=sound needs `chapter`')
+          const chapter = args.chapter
+          const kinds = listOf(args.kinds)?.filter((kind): kind is 'bed' | 'effect' | 'music' => kind === 'bed' || kind === 'effect' || kind === 'music')
+          const cues = listOf(args.cues)
+          const result = await env.job('audio', 'sound', chapter, async task => await renderSound(env.core, runtime, { chapter, ...(kinds !== undefined && kinds.length > 0 ? { kinds } : {}), ...(cues !== undefined && cues.length > 0 ? { cues } : {}), ...(args.force !== undefined ? { force: args.force } : {}) }, task))
+          return {
+            text: `Sound for ${result.chapterId} (${result.model}): ${result.rendered} clips made (${result.seconds}s), ${result.kept} already current${result.skipped > 0 ? `, ${result.skipped} cues have no description to make a sound from` : ''}${result.failed.length > 0 ? `, ${result.failed.length} failed (${result.failed.slice(0, 3).map(item => `${item.cue}: ${brief(item.error, 80)}`).join('; ')})` : ''}. Sound models are still uneven: the author can hear each cue in the script view and have any one made again after rewording it.`,
+            data: toJson(result),
+          }
+        }
         if (args.action === 'voices') {
           const settings = (await env.core.settings.get()).tts
           const voices = stockVoices(settings.provider)
@@ -148,8 +169,11 @@ export function stageTools(service: NovelService): ToolDefinition[] {
           const degraded = script.degraded !== undefined
             ? `\nWARNING: ${script.degraded.blocks} of ${script.degraded.of} passages could not be directed by the analyst model and were cut by rule instead — their dialogue has no speakers and will be read in the narrator's voice. Reason: ${script.degraded.reason}\nTell the author; once the cause is dealt with, run action=script again with force=true.`
             : ''
+          const settings = await env.core.settings.get()
+          const unspoken = script.lines.filter(line => isSkipped(line, settings.tts)).length
+          const count = (kind: string): number => script.cues.filter(cue => (cue.kind ?? 'bed') === kind).length
           return {
-            text: `Script for ${script.chapterId}: ${script.lines.length} lines (${script.lines.filter(line => line.kind === 'dialogue').length} dialogue), ${script.cues.length} ambience cues (${[...new Set(script.cues.map(cue => cue.ambience))].join(', ')}). Speakers: ${speakers.join(', ') || 'narrator only'}.${degraded}`,
+            text: `Script for ${script.chapterId}: ${script.lines.length} lines (${script.lines.filter(line => line.kind === 'dialogue').length} dialogue, ${script.lines.filter(line => line.kind === 'narration').length} narration takes${unspoken > 0 ? `, ${unspoken} speech tags left unspoken` : ''}). Sound design: ${count('bed')} beds, ${count('effect')} effects, ${count('music')} music cues — shown to the reader as notes beside the text; action=sound makes them audible. Speakers: ${speakers.join(', ') || 'narrator only'}.${degraded}`,
             data: toJson({ chapterId: script.chapterId, lines: script.lines.length, speakers, ...(script.degraded !== undefined ? { degraded: script.degraded } : {}) }),
           }
         }
@@ -166,7 +190,7 @@ export function stageTools(service: NovelService): ToolDefinition[] {
             data: toJson(result),
           }
         }
-        const result = await exportChapterAudio(runtime, chapter)
+        const result = await exportChapterAudio(runtime, chapter, (await env.core.settings.get()).tts)
         return { text: `Exported ${Math.round(result.duration)} seconds of audio to ${result.path}${result.missing > 0 ? ` (${result.missing} lines had no audio and were skipped)` : ''}.`, data: toJson(result) }
       },
     }),

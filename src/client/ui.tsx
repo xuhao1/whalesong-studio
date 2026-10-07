@@ -516,6 +516,40 @@ export function Menu({ label, icon, items, variant = 'ghost', size = 'sm', align
   )
 }
 
+/**
+ * A small anchored card with free content: what something means, and the few
+ * things that can be done about it. For anything a tooltip would hide.
+ */
+export function Popover({ trigger, children, align = 'start', className }: {
+  trigger: (state: { open: boolean; toggle: () => void }) => ReactNode
+  children: ReactNode | ((close: () => void) => ReactNode)
+  align?: 'start' | 'end'
+  className?: string
+}) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const onDown = (event: MouseEvent): void => {
+      if (ref.current !== null && !ref.current.contains(event.target as Node)) setOpen(false)
+    }
+    const onKey = (event: KeyboardEvent): void => { if (event.key === 'Escape') setOpen(false) }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+  const close = useCallback(() => { setOpen(false) }, [])
+  return (
+    <div className="nv-menu" ref={ref}>
+      {trigger({ open, toggle: () => { setOpen(value => !value) } })}
+      {open ? <div className={cx('nv-popover', align === 'end' && 'is-end', className)} role="dialog">{typeof children === 'function' ? children(close) : children}</div> : null}
+    </div>
+  )
+}
+
 export function Toasts() {
   const { controller } = useStudio()
   const toasts = useSnapshot(snapshot => snapshot.toasts)
@@ -605,6 +639,76 @@ export function useJobStream(jobId: string | undefined): string {
     return () => { follower.detach() }
   }, [controller, jobId])
   return text
+}
+
+/** Tail a job's text together with what its models think along the way. */
+export function useJobTail(jobId: string | undefined): { text: string; thought: string } {
+  const { controller } = useStudio()
+  const [tail, setTail] = useState({ text: '', thought: '' })
+  useEffect(() => {
+    setTail({ text: '', thought: '' })
+    if (jobId === undefined) return
+    const follower = controller.follow(
+      jobId,
+      (text) => { setTail(previous => ({ ...previous, text })) },
+      (thought) => { setTail(previous => ({ ...previous, thought })) },
+    )
+    return () => { follower.detach() }
+  }, [controller, jobId])
+  return tail
+}
+
+/**
+ * What the model is thinking, as it thinks it. Open while there is nothing else
+ * to read, folded to one line once the words arrive, and always a click away.
+ */
+export function ThoughtPanel({ thought, thinking, wrote, className }: { thought: string; thinking: boolean; wrote: boolean; className?: string }) {
+  const t = useT()
+  // Until the author chooses, it is open exactly while thought is all there is.
+  const [choice, setChoice] = useState<boolean | undefined>()
+  const open = choice ?? !wrote
+  const body = useRef<HTMLPreElement>(null)
+  useEffect(() => {
+    const element = body.current
+    if (element !== null && element.scrollHeight - element.scrollTop - element.clientHeight < 160) element.scrollTop = element.scrollHeight
+  }, [thought, open])
+  if (thought.length === 0) return null
+  return (
+    <div className={cx('nv-thought', open && 'is-open', className)}>
+      <button type="button" className="nv-thought-head" aria-expanded={open} onClick={() => { setChoice(!open) }} title={t('模型在落笔之前和中途想了什么。开源模型给出完整的思维链；闭源模型只给它自己写的摘要。', 'What the model thinks before and between the words. Open models show the chain of thought itself; closed ones show the summary they write of it.')}>
+        <Icon name={open ? 'chevronDown' : 'chevronRight'} size={12} />
+        {thinking ? <Spinner size={11} /> : null}
+        <span>{thinking ? t('模型正在思考', 'The model is thinking') : t('思考过程', 'Thought')}</span>
+        <span className="nv-muted">{t(`${thought.length} 字`, `${thought.length} chars`)}</span>
+        {!open ? <span className="nv-thought-peek">{`…${thought.slice(-44).replace(/\s+/g, ' ')}`}</span> : null}
+      </button>
+      {open ? <pre className="nv-thought-body" ref={body}>{thought}</pre> : null}
+    </div>
+  )
+}
+
+/** The thought of one job, followed for as long as this is on screen. */
+export function JobThought({ job }: { job: JobInfo }) {
+  const { thought } = useJobTail(job.id)
+  const t = useT()
+  if (thought.length === 0) return <p className="nv-muted">{job.status === 'running' ? t('模型还没有给出思考内容——有的模型不思考，有的不公开。', 'The model has shown no thought yet — some do not reason, some do not show it.') : t('这个任务没有留下思考内容。', 'This job left no thought behind.')}</p>
+  return <ThoughtPanel thought={thought} thinking={job.status === 'running' && job.thinking !== undefined} wrote={false} className="is-plain" />
+}
+
+/** A way to read along with a job's thought from wherever the job is listed. */
+export function ThoughtButton({ job, label }: { job: JobInfo; label?: boolean }) {
+  const t = useT()
+  const [open, setOpen] = useState(false)
+  if ((job.thoughtLength ?? 0) === 0 && job.thinking === undefined) return null
+  return (
+    <>
+      <button type="button" className="nv-thought-open" onClick={() => { setOpen(true) }} title={t('看模型在想什么', 'See what the model is thinking')}>
+        <Icon name="eye" size={12} />
+        {label === true ? <span>{t('看思考', 'Thought')}</span> : null}
+      </button>
+      {open ? <Modal title={t('模型的思考过程', 'What the model is thinking')} wide onClose={() => { setOpen(false) }}><JobThought job={job} /></Modal> : null}
+    </>
+  )
 }
 
 export function SectionTitle({ children, actions }: { children: ReactNode; actions?: ReactNode }) {

@@ -14,6 +14,9 @@ interface Base {
   title: string
 }
 
+/** A title without the marks its author may have typed around it; the prompts put their own. */
+const bare = (title: string): string => title.trim().replace(/^[《「『“"]+|[》」』”"]+$/gu, '').trim() || title
+
 const outputRule = (base: Base): string => L(
   base.lang,
   `正文语言：${languageName(base.language)}。`,
@@ -23,7 +26,7 @@ const outputRule = (base: Base): string => L(
 // ───────────────────────────── writing ─────────────────────────────
 
 export function writerSystem(base: Base & { style: string; words: number; continuing: boolean }): string {
-  return L(base.lang, `你是一位功力深厚的小说家，正在为长篇小说《${base.title}》执笔。编辑会给你设定、前情与本章章纲，你写出可以直接付印的正文。
+  return L(base.lang, `你是一位功力深厚的小说家，正在为长篇小说《${bare(base.title)}》执笔。编辑会给你设定、前情与本章章纲，你写出可以直接付印的正文。
 
 【写作纪律】
 1. 只输出小说正文本身。不要标题、章节号、提纲、解释、括号批注，也不要"以下是正文"之类的话。
@@ -36,7 +39,7 @@ export function writerSystem(base: Base & { style: string; words: number; contin
 8. ${outputRule(base)}
 
 【文风】
-${base.style}`, `You are an accomplished novelist writing the novel "${base.title}". Your editor gives you the story bible, the story so far and this chapter's outline; you deliver prose that could go to print as is.
+${base.style}`, `You are an accomplished novelist writing the novel "${bare(base.title)}". Your editor gives you the story bible, the story so far and this chapter's outline; you deliver prose that could go to print as is.
 
 RULES
 1. Output the prose only. No title, chapter number, outline, explanation, bracketed notes or lead-in.
@@ -64,7 +67,7 @@ export function writerTask(base: Base & { context: string; brief?: string; conti
 }
 
 export function reviseSpanSystem(base: Base & { style: string }): string {
-  return L(base.lang, `你是长篇小说《${base.title}》的作者，正在按编辑的意见改稿。你会看到设定、上下文、一段需要修改的原文和修改要求。
+  return L(base.lang, `你是长篇小说《${bare(base.title)}》的作者，正在按编辑的意见改稿。你会看到设定、上下文、一段需要修改的原文和修改要求。
 
 规则：
 1. 只输出修改后的那段文字，用来原样替换原文。不要解释，不要引号包裹，不要输出原文以外的上下文。
@@ -73,7 +76,7 @@ export function reviseSpanSystem(base: Base & { style: string }): string {
 4. ${outputRule(base)}
 
 【文风】
-${base.style}`, `You are the author of the novel "${base.title}", revising to your editor's note. You get the bible, the surrounding text, the passage to change and the instruction.
+${base.style}`, `You are the author of the novel "${bare(base.title)}", revising to your editor's note. You get the bible, the surrounding text, the passage to change and the instruction.
 
 Rules:
 1. Output only the rewritten passage, ready to replace the original as is. No explanation, no surrounding quotes, nothing outside the passage.
@@ -90,7 +93,7 @@ export function reviseSpanTask(base: Base & { context: string; before: string; p
 }
 
 export function reviseChapterSystem(base: Base & { style: string }): string {
-  return L(base.lang, `你是长篇小说《${base.title}》的作者，正在按编辑的意见重写一整章。你会看到设定、前情、本章现有正文与修改要求。
+  return L(base.lang, `你是长篇小说《${bare(base.title)}》的作者，正在按编辑的意见重写一整章。你会看到设定、前情、本章现有正文与修改要求。
 
 规则：
 1. 输出修改后的完整一章正文，只输出正文，不要标题和任何说明。
@@ -99,7 +102,7 @@ export function reviseChapterSystem(base: Base & { style: string }): string {
 4. ${outputRule(base)}
 
 【文风】
-${base.style}`, `You are the author of the novel "${base.title}", rewriting a whole chapter to your editor's note. You get the bible, the story so far, the chapter as it stands and the instruction.
+${base.style}`, `You are the author of the novel "${bare(base.title)}", rewriting a whole chapter to your editor's note. You get the bible, the story so far, the chapter as it stands and the instruction.
 
 Rules:
 1. Output the complete revised chapter — prose only, no title, no commentary.
@@ -117,7 +120,7 @@ export function reviseChapterTask(base: Base & { context: string; instruction: s
 
 /** Decide which chapters a book-wide instruction touches. */
 export function triageTask(base: Base & { instruction: string; chapters: string }): string {
-  return L(base.lang, `你是长篇小说《${base.title}》的责任编辑。作者提出了一条针对全书的修改要求，请判断哪些章节需要因此改动。
+  return L(base.lang, `你是长篇小说《${bare(base.title)}》的责任编辑。作者提出了一条针对全书的修改要求，请判断哪些章节需要因此改动。
 
 ## 修改要求
 
@@ -129,7 +132,7 @@ ${base.chapters}
 
 只输出 JSON：
 {"chapters": [{"index": 章节序号, "reason": "这一章需要怎么改（一句话，具体到位）"}], "note": "给作者的总体说明，可为空"}
-只列出确实需要改动的章节；如果要求是全局性的文风调整，可以列出全部有正文的章节。`, `You are the editor of the novel "${base.title}". The author asks for a book-wide change. Decide which chapters must change because of it.
+只列出确实需要改动的章节；如果要求是全局性的文风调整，可以列出全部有正文的章节。`, `You are the editor of the novel "${bare(base.title)}". The author asks for a book-wide change. Decide which chapters must change because of it.
 
 ## The requested change
 
@@ -151,7 +154,7 @@ export function digestSystem(lang: PromptLanguage): string {
 }
 
 export function digestTask(base: Base & { chapterLabel: string; text: string; knownCharacters: string; knownWorld: string; openThreads: string }): string {
-  return L(base.lang, `下面是长篇小说《${base.title}》${base.chapterLabel}的正文。请做场记。
+  return L(base.lang, `下面是长篇小说《${bare(base.title)}》${base.chapterLabel}的正文。请做场记。
 
 ## 已建档人物（姓名 | 别名）
 ${base.knownCharacters || '（暂无）'}
@@ -187,7 +190,7 @@ ${base.text}
   ],
   "openQuestions": ["读者此刻会追问的问题"]
 }
-facts 只收对后文有约束力的硬事实（8-15条），不要把情节复述成事实。只输出 JSON。`, `Below is ${base.chapterLabel} of the novel "${base.title}". Take continuity notes.
+facts 只收对后文有约束力的硬事实（8-15条），不要把情节复述成事实。只输出 JSON。`, `Below is ${base.chapterLabel} of the novel "${bare(base.title)}". Take continuity notes.
 
 ## Characters on file (name | aliases)
 ${base.knownCharacters || '(none)'}
@@ -227,9 +230,9 @@ Keep facts to the 8-15 hard facts that bind later chapters; do not restate the p
 }
 
 export function arcTask(base: Base & { range: string; summaries: string }): string {
-  return L(base.lang, `把长篇小说《${base.title}》${base.range}的章节摘要压缩成一段 300-500 字的阶段梗概。保留：主线推进、人物关系与处境的关键变化、埋下而未解的线索、重要的设定揭示。按时间顺序，只输出梗概本身。
+  return L(base.lang, `把长篇小说《${bare(base.title)}》${base.range}的章节摘要压缩成一段 300-500 字的阶段梗概。保留：主线推进、人物关系与处境的关键变化、埋下而未解的线索、重要的设定揭示。按时间顺序，只输出梗概本身。
 
-${base.summaries}`, `Compress the chapter summaries of ${base.range} of the novel "${base.title}" into one synopsis of 200-320 words. Keep: main-plot movement, key changes in relationships and situations, threads planted and still open, important world reveals. Chronological order; output the synopsis only.
+${base.summaries}`, `Compress the chapter summaries of ${base.range} of the novel "${bare(base.title)}" into one synopsis of 200-320 words. Keep: main-plot movement, key changes in relationships and situations, threads planted and still open, important world reveals. Chronological order; output the synopsis only.
 
 ${base.summaries}`)
 }
@@ -242,7 +245,7 @@ export function architectSystem(lang: PromptLanguage): string {
 
 export function deriveChaptersTask(base: Base & { context: string; count: number; direction?: string; volume: string }): string {
   const direction = base.direction !== undefined && base.direction.trim().length > 0 ? L(base.lang, `\n\n## 作者给的方向\n\n${base.direction.trim()}`, `\n\n## Direction from the author\n\n${base.direction.trim()}`) : ''
-  return `${base.context}${direction}\n\n---\n${L(base.lang, `请为《${base.title}》的「${base.volume}」推演接下来的 ${base.count} 章章纲。要求：
+  return `${base.context}${direction}\n\n---\n${L(base.lang, `请为《${bare(base.title)}》的「${base.volume}」推演接下来的 ${base.count} 章章纲。要求：
 - 从已写内容和人物此刻的处境、欲望出发推演，情节由人物的选择推动，每章都有不可逆的变化；
 - 兼顾群像：让久未出场但仍有未了之事的人物合理回归，不要让所有戏都压在主角身上；
 - 主动推进或回收"尚未回收的线索"，新埋的伏笔要有后续打算；
@@ -250,7 +253,7 @@ export function deriveChaptersTask(base: Base & { context: string; count: number
 
 只输出 JSON：
 {"chapters": [{"title": "章名", "synopsis": "120-200字梗概", "purpose": "这一章对全书的作用", "pov": "视角人物姓名", "location": "主要地点", "time": "故事时间", "characters": ["出场人物姓名"], "beats": [{"summary": "节拍：谁想要什么、遇到什么阻碍、如何转折", "conflict": "冲突", "outcome": "结果"}], "threads": [{"title": "线索名", "action": "plant|advance|payoff"}]}], "rationale": "这样安排的理由与可选的其他走向（给作者看）"}
-每章 3-6 个节拍。`, `Derive the outlines of the next ${base.count} chapters of "${base.title}", volume "${base.volume}". Requirements:
+每章 3-6 个节拍。`, `Derive the outlines of the next ${base.count} chapters of "${bare(base.title)}", volume "${base.volume}". Requirements:
 - Start from what is written and from what each character wants right now; choices drive the plot and every chapter changes something for good.
 - Serve the ensemble: bring back characters with unfinished business who have been off the page; do not hang every scene on the lead.
 - Advance or pay off open threads; any new setup needs a plan.
@@ -403,13 +406,13 @@ ${base.style}`)
 
 /** Merge per-chapter character sightings into bible cards during import. */
 export function castMergeTask(base: Base & { sightings: string }): string {
-  return L(base.lang, `下面是从小说《${base.title}》各章提取到的人物出场记录。请合并同一人物的不同称呼，为每个重要人物整理出人物卡。
+  return L(base.lang, `下面是从小说《${bare(base.title)}》各章提取到的人物出场记录。请合并同一人物的不同称呼，为每个重要人物整理出人物卡。
 
 ${base.sightings}
 
 只输出 JSON：
 {"characters": [{"name": "最常用的正式姓名", "aliases": ["其他称呼"], "role": "protagonist|deuteragonist|antagonist|supporting|minor", "gender": "", "age": "", "tagline": "一句话人设", "appearance": "", "personality": "", "background": "", "motivation": "", "flaw": "", "arc": "已发生的转变", "voice": "说话方式", "relationships": [{"target": "对方姓名", "kind": "关系", "note": ""}], "status": "active|offstage|retired|dead"}]}
-只收有名有姓、出场两次以上或对情节重要的人物；按重要性排序，最多 40 个。没有依据的字段留空，不要编造。`, `Below are character sightings extracted chapter by chapter from the novel "${base.title}". Merge different names of the same person and write a card for every important character.
+只收有名有姓、出场两次以上或对情节重要的人物；按重要性排序，最多 40 个。没有依据的字段留空，不要编造。`, `Below are character sightings extracted chapter by chapter from the novel "${bare(base.title)}". Merge different names of the same person and write a card for every important character.
 
 ${base.sightings}
 
@@ -419,13 +422,13 @@ Keep named characters who appear at least twice or matter to the plot; order by 
 }
 
 export function worldMergeTask(base: Base & { sightings: string }): string {
-  return L(base.lang, `下面是从小说《${base.title}》各章提取到的地点、组织、物品与专有名词。请合并重复项，整理成世界观设定条目，并补一条总览式的"世界概况"。
+  return L(base.lang, `下面是从小说《${bare(base.title)}》各章提取到的地点、组织、物品与专有名词。请合并重复项，整理成世界观设定条目，并补一条总览式的"世界概况"。
 
 ${base.sightings}
 
 只输出 JSON：
 {"entries": [{"name": "名称", "aliases": ["别名"], "category": "setting|location|faction|system|item|history|culture|rule|term|other", "importance": 1或2或3, "summary": "一句话", "body": "根据原文整理的说明"}]}
-importance：1=理解全书必须知道的核心设定（不超过 6 条），2=常规，3=细节。最多 40 条，没有依据的内容不要编造。`, `Below are places, groups, objects and terms extracted chapter by chapter from the novel "${base.title}". Merge duplicates into world entries, and add one overview entry describing the world at large.
+importance：1=理解全书必须知道的核心设定（不超过 6 条），2=常规，3=细节。最多 40 条，没有依据的内容不要编造。`, `Below are places, groups, objects and terms extracted chapter by chapter from the novel "${bare(base.title)}". Merge duplicates into world entries, and add one overview entry describing the world at large.
 
 ${base.sightings}
 
@@ -435,13 +438,13 @@ importance: 1 = core canon needed to follow the book (6 at most), 2 = normal, 3 
 }
 
 export function volumesTask(base: Base & { summaries: string }): string {
-  return L(base.lang, `下面是小说《${base.title}》按顺序排列的各章一句话摘要。请据此给全书划分卷（大的叙事段落），并写出一句话梗概与故事核。
+  return L(base.lang, `下面是小说《${bare(base.title)}》按顺序排列的各章一句话摘要。请据此给全书划分卷（大的叙事段落），并写出一句话梗概与故事核。
 
 ${base.summaries}
 
 只输出 JSON：
 {"logline": "一句话梗概", "premise": "200-300字故事核", "genre": "类型", "themes": ["主题"], "volumes": [{"title": "卷名", "from": 起始章序号, "to": 结束章序号, "synopsis": "本卷梗概", "goal": "本卷结束时故事到达哪里"}]}
-卷必须连续覆盖全部章节、互不重叠；章节很少时只分一卷。`, `Below are one-line summaries of every chapter of the novel "${base.title}", in order. Divide the book into volumes (large narrative movements) and write a logline and premise.
+卷必须连续覆盖全部章节、互不重叠；章节很少时只分一卷。`, `Below are one-line summaries of every chapter of the novel "${bare(base.title)}", in order. Divide the book into volumes (large narrative movements) and write a logline and premise.
 
 ${base.summaries}
 
@@ -478,8 +481,11 @@ Report only real problems; return an empty array when there are none. Do not nit
 
 // ───────────────────────────── stage ─────────────────────────────
 
-export function audioScriptTask(base: Base & { text: string; cast: string; ambience: string }): string {
-  return L(base.lang, `你是广播剧导演。请把下面这段小说正文改编成有声剧脚本：把文字切分成依次播出的台词行，标注由谁来读、怎么读，并安排环境声。
+export function audioScriptTask(base: Base & { text: string; cast: string; ambience: string; effects?: boolean; music?: boolean }): string {
+  const effects = base.effects !== false
+  const music = base.music === true
+  const cueShape = `{"at": 0, "kind": "bed", "ambience": "", "intensity": 0.5, "caption": "", "prompt": ""}${effects ? ', {"at": 3, "kind": "effect", "caption": "", "prompt": ""}' : ''}${music ? ', {"at": 0, "kind": "music", "caption": "", "prompt": ""}' : ''}`
+  return L(base.lang, `你是广播剧导演。请把下面这段小说正文改编成有声剧脚本：把文字切分成依次播出的台词行，标注由谁来读、怎么读，并做声音设计。
 
 ## 人物表（姓名 | 声音与性格提示）
 ${base.cast || '（无）'}
@@ -495,14 +501,17 @@ ${base.text}
 规则：
 1. 必须完整覆盖正文，不得删改、概括或增添任何文字；把所有行的 text 按顺序拼起来应当等于原文（空白与换行除外）。
 2. kind：narration=旁白叙述；dialogue=人物说出口的话（text 里不要带引号）；thought=人物的内心独白。引号里如果不是谁说出口的话——被提到的一个词、书名、拟声词——它不是对白，连同引号留在所在的旁白行里。
-3. 旁白尽量整段成行，不要把一句话或一小段拆成几行：每一行都要单独配音，行越碎，声音越不连贯。旁白一行 150 字以内，超过了再按语义断开。
-4. 不足十个字的旁白不要单独成行，并入相邻的旁白行。只有夹在两句对白之间的提示语（"他说""她冷笑道"）可以单独成行。
+3. 旁白以自然段为单位：一个自然段里连续的旁白就是一行，不要把一句话或一小段再拆开。相邻的旁白行之后会合在一起一口气配音，所以不需要你按长度去切。
+4. 夹在两句对白之间、只交代"谁在说"的提示语（"他说，""她冷笑道："）单独成一行旁白，不要并进别的行——有声剧里这种提示语可以不念。除此之外，不足十个字的旁白不要单独成行，并入相邻的旁白行。
 5. speaker 填说话人物的姓名：人物表里有的用表里的姓名；表里没有的（路人、店员、没有名字的人）用正文里对他的称呼，同一个人在整段里始终用同一个称呼。旁白不填。
 6. direction 是写给配音演员的表演提示（情绪、语速、音量、气息），10-25 字，要具体，例如"压低声音，咬字很慢，强忍怒意"。对白和心声要写；同一个人物在同一场戏里的演法要前后连贯，情绪没有变就沿用上一句的提示，不要每句换一种说法。旁白一般留空——叙述的语气确实变了（转入紧张、哀伤、轻快）才写。
-7. cues：在场景或氛围变化处安排环境声，at 填该处那一行的序号（从 0 开始），ambience 从"可用环境声"里选，intensity 0-1。开头必须有一条 at 为 0 的 cue。
+7. cues 是声音设计：正文没有逐字写出、但人在那个场景里会听到的声音。它们会被做成声音，也会作为注释显示在正文旁边给读者看，所以 caption 要写得让人"听得见"。at 填声音出现处那一行的序号（从 0 开始）。caption 和 prompt 都用中文写。
+   - kind=bed 环境底声：在场景或氛围变化处安排一条，一直持续到下一条 bed。caption 用一句话写这个场景具体听得到什么（例："骨壁大厅里干净的回声，偶尔有纸页翻动"），20 字以内；prompt 是写给声音模型的描述：这个地方持续不断的底声由哪些声音组成、远近和疏密如何，要平稳、可循环，不要写一次性的响声，不要出现人名和剧情；ambience 从"可用环境声"里选最接近的一个（没有声音模型时用它代替）；intensity 0-1。开头必须有一条 at 为 0 的 bed。${effects ? `
+   - kind=effect 音效：一个具体而短促的声音事件——门开了一条缝、槌子落下、铁桶撞在舱壁上、靴底踩上钢板。正文写到或明显带出的才放，平均四五行最多一个，对白密集的地方宁缺毋滥。caption 是给读者看的拟声或描述（例："嗒——银槌轻碰骨木"），20 字以内；prompt 是写给音效模型的描述：只说这个声音本身——什么东西、什么材质、怎么响、大约几秒——不要出现人名和剧情。` : ''}${music ? `
+   - kind=music 配乐：一场戏最多一条，放在情绪定调的那一行，一直持续到下一条 music。caption 写乐器和情绪（例："低沉的弦乐长音，屏息的不安"）；prompt 是写给音乐模型的描述：乐器、速度、情绪，并写明纯器乐、没有人声。` : ''}
 
 只输出 JSON：
-{"lines": [{"kind": "narration|dialogue|thought", "speaker": "", "text": "", "direction": ""}], "cues": [{"at": 0, "ambience": "", "intensity": 0.5, "note": ""}]}`, `You are an audio-drama director. Adapt the prose below into a performance script: cut it into lines played in order, say who reads each and how, and place ambience.
+{"lines": [{"kind": "narration|dialogue|thought", "speaker": "", "text": "", "direction": ""}], "cues": [${cueShape}]}`, `You are an audio-drama director. Adapt the prose below into a performance script: cut it into lines played in order, say who reads each and how, and design its sound.
 
 ## Cast (name | voice and personality notes)
 ${base.cast || '(none)'}
@@ -518,14 +527,17 @@ ${base.text}
 Rules:
 1. Cover the text completely. Do not cut, summarize, alter or add words; the "text" of all lines joined in order must equal the original (whitespace aside).
 2. kind: narration = narrator; dialogue = words a character says aloud (no quote marks in "text"); thought = a character's inner voice. Quoted words nobody says aloud — a word that is mentioned, a title, a sound — are not dialogue: they stay, quotes included, in the narration line they sit in.
-3. Keep narration whole: do not cut a sentence or a short paragraph into several lines. Every line is voiced on its own, and the more a passage is chopped up the less it sounds like one voice. A narration line runs to 60 words; only a longer one is broken, at a sense boundary.
-4. Narration of fewer than six words does not get a line of its own; it joins the narration next to it. Only a tag between two spoken lines ("he said", "she sneered") may stand alone.
+3. Narration goes by paragraph: the narration of one paragraph is one line. Do not cut a sentence or a short paragraph into several lines. Neighbouring narration lines are voiced together in one take afterwards, so there is no need to cut for length.
+4. A tag that only says who is speaking, between two spoken lines ("he said,", "she sneered:"), is a narration line of its own — do not fold it into another line; an audio drama may leave it unspoken. Any other narration of fewer than six words joins the narration next to it.
 5. speaker is the name of whoever speaks: the cast's name for a character in the cast; for anyone else (a passer-by, a clerk, someone unnamed) what the text calls them, the same every time. Empty for narration.
 6. direction tells the actor how to deliver the line (emotion, pace, volume, breath) in 5-14 words — concrete, e.g. "low and slow, anger barely held back". Give one for dialogue and thought; keep a character's delivery consistent within a scene — when the mood has not changed, repeat the previous direction rather than inventing a new one. Leave it empty for narration unless the telling really changes key (tense, mournful, light).
-7. cues: place ambience where the scene or mood changes. "at" is the index (from 0) of the line it starts on, "ambience" is one of the available beds, "intensity" 0-1. There must be a cue with at = 0.
+7. cues are the sound design: what someone in the scene would hear that the prose does not spell out. They are made into sound, and shown beside the text as notes for the reader, so a caption must let the reader hear it. "at" is the index (from 0) of the line the sound starts on. Write "caption" and "prompt" in the language of the text.
+   - kind=bed, the ambience: one wherever the scene or the mood changes, lasting until the next bed. "caption" says in a few words what is heard here (e.g. "a clean echo under the bone vault, pages turning"), at most 12 words; "prompt" describes it for a sound model: which continuous sounds make up the bed of this place, how near and how dense — steady and loopable, no one-off events, no names and no plot; "ambience" is the closest of the available beds (it stands in when there is no sound model); "intensity" 0-1. There must be a bed with at = 0.${effects ? `
+   - kind=effect, a spot effect: one short, concrete sound event — a door opening a crack, a gavel coming down, an iron drum hitting the hull, a boot on steel. Only what the text says or plainly implies; one in four or five lines at most, and rather none than too many where the dialogue is dense. "caption" is what the reader sees (e.g. "tok — the silver gavel touches bone"), at most 12 words; "prompt" describes the sound itself for a sound-effects model — what object, what material, how it sounds, roughly how many seconds — with no names and no plot.` : ''}${music ? `
+   - kind=music: at most one per scene, on the line that sets its mood, lasting until the next music cue. "caption" names instruments and mood (e.g. "low sustained strings, breath held"); "prompt" describes it for a music model: instruments, tempo, mood, and that it is instrumental with no voice.` : ''}
 
 Output JSON only:
-{"lines": [{"kind": "narration|dialogue|thought", "speaker": "", "text": "", "direction": ""}], "cues": [{"at": 0, "ambience": "", "intensity": 0.5, "note": ""}]}`)
+{"lines": [{"kind": "narration|dialogue|thought", "speaker": "", "text": "", "direction": ""}], "cues": [${cueShape}]}`)
 }
 
 export function storyboardTask(base: Base & {
@@ -680,7 +692,7 @@ export function directorSystem(base: Base & { style: string; player?: string }):
   const role = base.player !== undefined
     ? L(base.lang, `玩家扮演「${base.player}」。你绝不替「${base.player}」说话、行动或做决定，也不描写其内心；只写其他人物和世界对玩家言行的反应。`, `The player is "${base.player}". Never speak, act, decide or think for "${base.player}"; write only how the other characters and the world respond.`)
     : L(base.lang, '玩家是导演，不扮演任何人物；玩家的输入是对剧情走向的指示，由你让人物把它演出来。', 'The player directs from outside and plays nobody; their input steers the scene and you make the characters play it out.')
-  return L(base.lang, `你是互动小说《${base.title}》的游戏主持人，正在主持一段幕间互动剧情。${role}
+  return L(base.lang, `你是互动小说《${bare(base.title)}》的游戏主持人，正在主持一段幕间互动剧情。${role}
 
 主持规则：
 1. 所有人物必须严格符合人物卡：性格、动机、说话方式、此刻知道什么。他们有自己的打算，会主动推动场面，而不是等着被问。
@@ -696,7 +708,7 @@ export function directorSystem(base: Base & { style: string; player?: string }):
 ${base.style}
 
 输出格式：
-{"narration": "旁白", "lines": [{"speaker": "人物姓名", "text": "台词（不带引号）", "emotion": "neutral|happy|sad|angry|fear|surprise|shy|cold|serious 之一", "action": "伴随的动作神态，可空"}], "choices": ["选项1", "选项2", "选项3"], "scene": {"location": "地点", "time": "时间", "mood": "氛围", "ambience": "环境声预设，可空"}, "state": {"需要跟踪的变量名": "值"}, "ended": false}`, `You are the game master of the interactive fiction "${base.title}", running an interlude scene. ${role}
+{"narration": "旁白", "lines": [{"speaker": "人物姓名", "text": "台词（不带引号）", "emotion": "neutral|happy|sad|angry|fear|surprise|shy|cold|serious 之一", "action": "伴随的动作神态，可空"}], "choices": ["选项1", "选项2", "选项3"], "scene": {"location": "地点", "time": "时间", "mood": "氛围", "ambience": "环境声预设，可空"}, "state": {"需要跟踪的变量名": "值"}, "ended": false}`, `You are the game master of the interactive fiction "${bare(base.title)}", running an interlude scene. ${role}
 
 How to run it:
 1. Every character stays true to their card: personality, motive, voice, and what they know right now. They have plans of their own and push the scene instead of waiting to be asked.
@@ -722,7 +734,7 @@ export function directorTask(base: Base & { context: string; situation: string; 
 }
 
 export function novelizeSystem(base: Base & { style: string }): string {
-  return L(base.lang, `你是长篇小说《${base.title}》的作者。下面是一段互动演出的记录（旁白、人物对白和玩家的选择）。请把它改写成一章连贯的小说正文。
+  return L(base.lang, `你是长篇小说《${bare(base.title)}》的作者。下面是一段互动演出的记录（旁白、人物对白和玩家的选择）。请把它改写成一章连贯的小说正文。
 
 规则：
 1. 保留记录中发生的事件、关键对白和情感走向，但要用小说的方式重新讲述：补足动作、心理、环境与过渡，删去游戏痕迹（选项、回合感、重复的寒暄）。
@@ -731,7 +743,7 @@ export function novelizeSystem(base: Base & { style: string }): string {
 4. ${outputRule(base)}
 
 【文风】
-${base.style}`, `You are the author of the novel "${base.title}". Below is the log of an interactive scene (narration, character lines and the player's choices). Rewrite it as one coherent chapter of prose.
+${base.style}`, `You are the author of the novel "${bare(base.title)}". Below is the log of an interactive scene (narration, character lines and the player's choices). Rewrite it as one coherent chapter of prose.
 
 Rules:
 1. Keep the events, the key lines and the emotional movement of the log, but tell it as a novel: add action, interiority, setting and transitions; remove every trace of the game (options, turn-taking, repeated small talk).

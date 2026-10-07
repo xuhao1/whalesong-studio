@@ -1,20 +1,36 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 /**
- * Reading on another device: a small web server of the Studio's own that
- * serves a reader — the chapters, their pictures and their audio drama — to
- * phones and tablets on the same network.
+ * A book on another device: a small web server of the Studio's own that serves
+ * a reader — the chapters, their pictures, their audio drama and their motion
+ * comic — to phones and tablets on the same network.
  *
  * It is off until the author switches it on for a book, and it is deliberately
- * not the Harness: it has no way to write, no way to reach a model, a key or a
- * book that was not shared, and its address carries a random token, so "who can
- * read" is "who was given the link". The Harness itself stays on this machine.
+ * not the Harness: it reaches no key, no setting and no book that was not
+ * shared, and its address carries a random token, so "who can open it" is "who
+ * was given the link".
  *
- *   GET /<token>/                                   the reader page
- *   GET /<token>/app.js                             its script
- *   GET /<token>/api/books                          the shared books
- *   GET /<token>/api/books/<id>                     one book and its chapters
- *   GET /<token>/api/books/<id>/chapters/<chapter>  text and audio script of a chapter
- *   GET /<token>/media/<id>/assets/…                pictures and audio of a shared book
+ * A shared book is read-only there unless the author made it changeable. Then
+ * its text can be edited from the device and its interludes played — which
+ * calls the models set up on this computer — and nothing else.
+ *
+ * A sealed book asks every new device for its password once. The device is
+ * then given a grant of its own (a cookie holding a key that opens the book),
+ * which the author can withdraw.
+ *
+ *   GET  /<token>/                                    the reader page
+ *   GET  /<token>/app.js                              its script
+ *   GET  /<token>/api/books                           the shared books
+ *   GET  /<token>/api/books/<id>                      one book and its chapters
+ *   GET  /<token>/api/books/<id>/chapters/<chapter>   text, audio script and storyboard of a chapter
+ *   GET  /<token>/media/<id>/assets/…                 pictures and audio of a shared book
+ *   POST /<token>/api/books/<id>/unlock               a sealed book: the password, once per device
+ *   — on a changeable book only —
+ *   PUT  /<token>/api/books/<id>/chapters/<chapter>   save the chapter's text
+ *   GET  /<token>/api/books/<id>/cast                 who can be in an interlude
+ *   GET  /<token>/api/books/<id>/plays[/<play>]       the interludes, or one of them
+ *   POST /<token>/api/books/<id>/plays                start one
+ *   POST /<token>/api/books/<id>/plays/<play>/turns   say or do something in it
+ *   POST /<token>/api/books/<id>/plays/<play>/rewind  take the last turn back
  */
 import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { createReadStream } from 'node:fs'
@@ -24,11 +40,15 @@ import { hostname, networkInterfaces } from 'node:os'
 import { dirname, extname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { NovelCore, ProjectRuntime } from '../core/core'
+import { playable } from '../core/pipelines/audio'
+import { playTurn, rewindPlay, startPlay } from '../core/pipelines/play'
+import { ProjectError } from '../core/project'
 import type { DeepPartial } from '../core/settings'
 import { errorMessage } from '../core/util/async'
+import { openWithSecret, readStub, VaultError, type SealedStub } from '../core/util/vault'
 import type { ShareStatus } from '../shared/rpc'
 import { hashText, proseOnly } from '../shared/text'
-import type { AudioScript, NovelSettings, ShareSettings } from '../shared/types'
+import type { AudioCue, AudioLine, ComicPanel, NovelSettings, PlaySession, ShareSettings, TtsSettings } from '../shared/types'
 
 export const DEFAULT_SHARE_PORT = 4319
 /** How many ports, counting up from the one asked for, are tried before giving up. */
@@ -57,6 +77,9 @@ export interface SharedChapter {
   /** Lines of its audio script, and how many of them have a voice. */
   lines: number
   voiced: number
+  /** Panels of its motion comic, and how many of them are drawn. */
+  panels: number
+  drawn: number
 }
 
 export interface SharedBook {
@@ -68,6 +91,23 @@ export interface SharedBook {
   cover?: string
   words: number
   chapters: number
+  /** What a device may do with the book: read it, or also change it. */
+  mode: 'read' | 'edit'
+  /** The book is sealed and this device has not shown its password yet: only the name is known. */
+  locked?: boolean
+}
+
+/** The largest request body the server reads: a long chapter with room to spare. */
+const BODY_LIMIT = 2 * 1024 * 1024
+/** How long a device stays let in to a sealed book. */
+const GRANT_DAYS = 60
+/** A sealed book that only devices opened is locked again when none of them has asked for it this long. */
+const DEVICE_IDLE_MS = 30 * 60_000
+
+class Refused extends Error {
+  constructor(readonly status: number, message: string, readonly code = 'refused') {
+    super(message)
+  }
 }
 
 export class ShareServer {
@@ -78,6 +118,12 @@ export class ShareServer {
   private failure: string | undefined
   private token = ''
   private books: string[] = []
+  private edit = new Set<string>()
+  /** Wrong passwords per book: after a few, the next try has to wait. */
+  private readonly misses = new Map<string, { count: number; until: number }>()
+  /** When a device last read each sealed book; one that devices alone opened is locked again once they have gone quiet. */
+  private readonly seen = new Map<string, number>()
+  private readonly idle: NodeJS.Timeout
   private applying: Promise<void> = Promise.resolve()
   private readonly off: () => void
   private bundle: { at: number; body: Buffer; etag: string } | undefined
@@ -88,6 +134,14 @@ export class ShareServer {
   constructor(private readonly core: NovelCore, private readonly log: (message: string, error?: unknown) => void, private readonly host = '0.0.0.0') {
     // Whatever changes the settings — the Studio, the showrunner, another window — the server follows.
     this.off = core.settings.onChange(() => { void this.apply() })
+    this.idle = setInterval(() => {
+      for (const [root, at] of this.seen) {
+        if (Date.now() - at < DEVICE_IDLE_MS) continue
+        this.seen.delete(root)
+        if (core.openToDevicesOnly(root)) void core.lockBook(root).catch(() => {})
+      }
+    }, 60_000)
+    this.idle.unref()
   }
 
   /** Bring the server in line with the settings: listening when sharing is on and a book is shared, closed otherwise. */
@@ -108,6 +162,7 @@ export class ShareServer {
     const share: ShareSettings = (await this.core.settings.get()).share ?? { enabled: false }
     const books = (share.books ?? []).filter(root => typeof root === 'string' && root.length > 0)
     const wanted = share.enabled && books.length > 0
+    this.edit = new Set((share.edit ?? []).filter(root => books.includes(root)))
     if (!wanted) {
       this.books = books
       this.failure = undefined
@@ -190,6 +245,7 @@ export class ShareServer {
 
   async close(): Promise<void> {
     this.off()
+    clearInterval(this.idle)
     await this.applying.catch(() => {})
     await this.stop()
   }
@@ -199,10 +255,17 @@ export class ShareServer {
     const share = (await this.core.settings.get()).share
     const books: ShareStatus['books'] = []
     for (const root of share?.books ?? []) {
-      const runtime = await this.core.tryRuntime(root).catch(() => undefined)
+      const mode = share?.edit?.includes(root) === true ? 'edit' as const : 'read' as const
+      // A sealed book is listed by the name its author gave it for the shelf, locked or not.
+      const stub = await readStub(root)
+      if (stub !== undefined) {
+        books.push({ root, id: stub.id, title: stub.title, mode, sealed: true })
+        continue
+      }
+      const runtime = await this.core.tryRuntime(root, 'device').catch(() => undefined)
       if (runtime === undefined) continue
       const manifest = await runtime.project.manifest()
-      books.push({ root, id: manifest.id, title: manifest.title })
+      books.push({ root, id: manifest.id, title: manifest.title, mode })
     }
     const running = this.server !== undefined && this.port !== undefined
     return {
@@ -231,9 +294,11 @@ export class ShareServer {
       response.end(request.method === 'HEAD' ? undefined : data)
     }
     const missing = (): void => { send(404, 'not found', { 'content-type': 'text/plain; charset=utf-8' }) }
-    const json = (value: unknown): void => { send(200, JSON.stringify(value), { 'content-type': 'application/json; charset=utf-8' }) }
-    if (request.method !== 'GET' && request.method !== 'HEAD') {
-      send(405, 'method not allowed', { 'content-type': 'text/plain; charset=utf-8', allow: 'GET, HEAD' })
+    const json = (value: unknown, status = 200, headers: Record<string, string> = {}): void => { send(status, JSON.stringify(value), { 'content-type': 'application/json; charset=utf-8', ...headers }) }
+    const method = request.method ?? 'GET'
+    const reading = method === 'GET' || method === 'HEAD'
+    if (!reading && method !== 'POST' && method !== 'PUT') {
+      send(405, 'method not allowed', { 'content-type': 'text/plain; charset=utf-8', allow: 'GET, HEAD, POST, PUT' })
       return
     }
     const raw = request.url ?? '/'
@@ -254,7 +319,7 @@ export class ShareServer {
       return
     }
     const rest = parts.slice(1)
-    if (rest.length === 0) {
+    if (reading && rest.length === 0) {
       // The page addresses everything relative to itself, so its own address ends in a slash.
       if (!new URL(raw, 'http://reader.invalid').pathname.endsWith('/')) {
         response.writeHead(308, { location: `/${encodeURIComponent(parts[0]!)}/` })
@@ -264,7 +329,7 @@ export class ShareServer {
       send(200, page(), { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': PAGE_POLICY })
       return
     }
-    if (rest.length === 1 && rest[0] === 'app.js') {
+    if (reading && rest.length === 1 && rest[0] === 'app.js') {
       const bundle = await this.script()
       if (bundle === undefined) {
         send(503, 'the reader has not been built (lib/reader.js is missing)', { 'content-type': 'text/plain; charset=utf-8' })
@@ -278,41 +343,117 @@ export class ShareServer {
       send(200, bundle.body, { 'content-type': 'text/javascript; charset=utf-8', etag: bundle.etag, 'cache-control': 'no-cache' })
       return
     }
-    if (rest[0] === 'api' && rest[1] === 'books') {
-      if (rest.length === 2) {
-        const books: SharedBook[] = []
-        for (const runtime of await this.shared()) books.push(await describeBook(runtime))
-        json({ books })
-        return
+    try {
+      if (rest[0] === 'api' && rest[1] === 'books') {
+        if (rest.length === 2) {
+          if (!reading) throw new Refused(405, 'method not allowed')
+          json({ books: await this.shelf(request) })
+          return
+        }
+        const id = rest[2]!
+        if (!reading) this.checkWrite(request)
+        if (method === 'POST' && rest.length === 4 && rest[3] === 'unlock') {
+          const body = await readBody(request)
+          const grant = await this.letIn(id, typeof body.password === 'string' ? body.password : '', request)
+          json({ ok: true }, 200, { 'set-cookie': this.cookie(id, grant) })
+          return
+        }
+        const { runtime, mode } = await this.book(id, request)
+        const section = rest[3]
+        if (rest.length === 3 && reading) {
+          json({ book: await describeBook(runtime, mode), chapters: await listChapters(runtime) })
+          return
+        }
+        if (section === 'chapters' && rest.length === 5) {
+          if (reading) {
+            const chapter = await readChapter(runtime, rest[4]!, (await this.core.settings.get()).tts)
+            if (chapter === undefined) missing()
+            else json(chapter)
+            return
+          }
+          if (method === 'PUT') {
+            if (mode !== 'edit') throw new Refused(403, 'this book is read-only from other devices', 'read-only')
+            const body = await readBody(request)
+            json(await saveChapter(runtime, rest[4]!, body.text, deviceName(request)))
+            return
+          }
+        }
+        if (section === 'cast' && rest.length === 4 && reading) {
+          if (mode !== 'edit') throw new Refused(403, 'this book is read-only from other devices', 'read-only')
+          json({ cast: (await runtime.project.characters()).map(card => ({ id: card.id, name: card.name, role: card.role, ...(card.tagline !== undefined ? { tagline: card.tagline } : {}), ...(card.visual?.portrait !== undefined ? { portrait: card.visual.portrait } : {}) })) })
+          return
+        }
+        if (section === 'plays') {
+          // Interludes call the models set up on this computer: only a book the author made changeable has them.
+          if (mode !== 'edit') throw new Refused(403, 'this book is read-only from other devices', 'read-only')
+          const task = { origin: 'user' as const }
+          if (rest.length === 4 && reading) {
+            const sessions = await runtime.project.playSessions()
+            json({ plays: sessions.filter(session => session.outcome !== 'discarded').map(session => ({ id: session.id, title: session.title, updatedAt: session.updatedAt, turns: session.turns.length, ...(session.player !== undefined ? { player: session.player } : {}), ended: session.turns.at(-1)?.ended === true })) })
+            return
+          }
+          if (rest.length === 4 && method === 'POST') {
+            const body = await readBody(request)
+            const cast = Array.isArray(body.cast) ? body.cast.filter((item): item is string => typeof item === 'string').slice(0, 12) : []
+            const text = (key: string): string | undefined => (typeof body[key] === 'string' && (body[key] as string).trim().length > 0 ? (body[key] as string).trim().slice(0, 4000) : undefined)
+            const session = await startPlay(this.core, runtime, {
+              situation: text('situation') ?? '',
+              cast,
+              ...(text('title') !== undefined ? { title: text('title')! } : {}),
+              ...(text('player') !== undefined ? { player: text('player')! } : {}),
+              ...(text('anchor') !== undefined ? { anchor: text('anchor')! } : {}),
+              ...(text('location') !== undefined ? { location: text('location')! } : {}),
+              ...(text('tone') !== undefined ? { tone: text('tone')! } : {}),
+            }, task)
+            json({ play: sharedPlay(session) })
+            return
+          }
+          const playId = rest[4]
+          if (playId === undefined || !/^[\w-]{1,80}$/.test(playId)) throw new Refused(404, 'not found')
+          if (rest.length === 5 && reading) {
+            const session = await runtime.project.playSession(playId)
+            if (session === undefined) throw new Refused(404, 'not found')
+            json({ play: sharedPlay(session) })
+            return
+          }
+          if (rest.length === 6 && method === 'POST' && rest[5] === 'turns') {
+            const body = await readBody(request)
+            const kind = body.kind === 'do' || body.kind === 'choice' || body.kind === 'direct' ? body.kind : 'say'
+            const result = await playTurn(this.core, runtime, { session: playId, kind, text: typeof body.text === 'string' ? body.text.slice(0, 4000) : '' }, task)
+            json({ play: sharedPlay(result.session) })
+            return
+          }
+          if (rest.length === 6 && method === 'POST' && rest[5] === 'rewind') {
+            json({ play: sharedPlay(await rewindPlay(runtime, playId)) })
+            return
+          }
+        }
+        throw new Refused(reading ? 404 : 405, 'not found')
       }
-      const runtime = await this.book(rest[2]!)
-      if (runtime === undefined) {
-        missing()
-        return
-      }
-      if (rest.length === 3) {
-        json({ book: await describeBook(runtime), chapters: await listChapters(runtime) })
-        return
-      }
-      if (rest.length === 5 && rest[3] === 'chapters') {
-        const chapter = await readChapter(runtime, rest[4]!)
-        if (chapter === undefined) missing()
-        else json(chapter)
+      if (reading && rest[0] === 'media' && rest.length >= 4 && rest[2] === 'assets') {
+        const { runtime } = await this.book(rest[1]!, request)
+        await this.file(runtime, rest.slice(2), request, response, missing)
         return
       }
       missing()
-      return
-    }
-    if (rest[0] === 'media' && rest.length >= 4 && rest[2] === 'assets') {
-      const runtime = await this.book(rest[1]!)
-      if (runtime === undefined) {
-        missing()
+    } catch (error) {
+      if (error instanceof Refused) {
+        if (error.status === 404) missing()
+        else json({ error: error.code, message: error.message }, error.status)
         return
       }
-      await this.file(runtime, rest.slice(2), request, response, missing)
-      return
+      // What a pipeline says went wrong is for whoever is holding the device: a missing model, an empty line.
+      if (error instanceof ProjectError) {
+        json({ error: error.code, message: error.message }, error.code === 'novel/not-found' ? 404 : 422)
+        return
+      }
+      throw error
     }
-    missing()
+  }
+
+  /** A request that changes something says so in a way a page on another site cannot. */
+  private checkWrite(request: IncomingMessage): void {
+    if (request.headers['x-novel-reader'] !== '1' || !String(request.headers['content-type'] ?? '').startsWith('application/json')) throw new Refused(400, 'not a request of the reader')
   }
 
   private permits(candidate: string): boolean {
@@ -321,20 +462,112 @@ export class ShareServer {
     return real.length >= 16 && given.length === real.length && timingSafeEqual(given, real)
   }
 
-  /** The shared books that still exist. */
-  private async shared(): Promise<ProjectRuntime[]> {
-    const found: ProjectRuntime[] = []
+  /** The shared books as this device may see them. A sealed book it was not let in to is a name and a lock. */
+  private async shelf(request: IncomingMessage): Promise<SharedBook[]> {
+    const books: SharedBook[] = []
     for (const root of this.books) {
-      const runtime = await this.core.tryRuntime(root).catch(() => undefined)
-      if (runtime !== undefined) found.push(runtime)
+      const mode = this.edit.has(root) ? 'edit' as const : 'read' as const
+      const stub = await readStub(root)
+      if (stub !== undefined && !(await this.admitted(root, stub, request))) {
+        books.push({ id: stub.id, title: stub.title, language: 'zh', words: 0, chapters: 0, mode, locked: true })
+        continue
+      }
+      const runtime = await this.core.tryRuntime(root, 'device').catch(() => undefined)
+      if (runtime !== undefined) books.push(await describeBook(runtime, mode))
     }
-    return found
+    return books
   }
 
-  /** A shared book by its manifest id; a book that is not shared does not exist here. */
-  private async book(id: string): Promise<ProjectRuntime | undefined> {
-    for (const runtime of await this.shared()) if ((await runtime.project.manifest()).id === id) return runtime
+  /**
+   * A shared book by its id, for this device. A book that is not shared does
+   * not exist here; a sealed one exists only for a device that was let in.
+   * @throws Refused 404, or 423 `locked` when the device has to show the password first.
+   */
+  private async book(id: string, request: IncomingMessage): Promise<{ runtime: ProjectRuntime; mode: 'read' | 'edit' }> {
+    for (const root of this.books) {
+      const stub = await readStub(root)
+      if (stub !== undefined) {
+        if (stub.id !== id) continue
+        if (!(await this.admitted(root, stub, request))) throw new Refused(423, 'this book is sealed: its password is asked for once on every device', 'locked')
+      }
+      const runtime = await this.core.tryRuntime(root, 'device').catch(() => undefined)
+      if (runtime === undefined) continue
+      if (stub === undefined && (await runtime.project.manifest()).id !== id) continue
+      return { runtime, mode: this.edit.has(root) ? 'edit' : 'read' }
+    }
+    throw new Refused(404, 'not found')
+  }
+
+  private grantOf(request: IncomingMessage, id: string): { id: string; secret: Buffer } | undefined {
+    const name = `nvg_${id.replace(/[^\w-]/g, '')}`
+    for (const pair of String(request.headers.cookie ?? '').split(';')) {
+      const at = pair.indexOf('=')
+      if (at < 0 || pair.slice(0, at).trim() !== name) continue
+      const [grant, secret] = pair.slice(at + 1).trim().split('.')
+      if (grant === undefined || secret === undefined || !/^[\w-]{8,40}$/.test(grant)) return undefined
+      const key = Buffer.from(secret, 'base64url')
+      return key.length === 32 ? { id: grant, secret: key } : undefined
+    }
     return undefined
+  }
+
+  /**
+   * Whether this device was let in to a sealed book: it holds a grant that
+   * still opens it. A grant is a key, so a book that is locked on this
+   * computer — the Harness was restarted — is unlocked by it.
+   */
+  private async admitted(root: string, stub: SealedStub, request: IncomingMessage): Promise<boolean> {
+    const grant = this.grantOf(request, stub.id)
+    if (grant === undefined) return false
+    try {
+      openWithSecret(stub, 'grant', grant.id, grant.secret)
+    } catch {
+      return false
+    }
+    // Locked on this computer: the grant opens the book for devices, and for them only — here it stays locked.
+    if (this.core.keyOf(root) === undefined) await this.core.unlockBook(root, { kind: 'grant', id: grant.id, secret: grant.secret }, 'device').catch((error: unknown) => { this.log('a device\'s grant could not unlock its book', error) })
+    this.seen.set(root, Date.now())
+    return true
+  }
+
+  /**
+   * Let a device in to a sealed book: it showed the password, so it gets a
+   * grant of its own — a key in a cookie that opens the book until the author
+   * withdraws it.
+   * @throws Refused 403 for a wrong password, 429 after too many of them.
+   */
+  private async letIn(id: string, password: string, request: IncomingMessage): Promise<{ id: string; secret: Buffer }> {
+    for (const root of this.books) {
+      const stub = await readStub(root)
+      if (stub === undefined || stub.id !== id) continue
+      const missed = this.misses.get(root)
+      if (missed !== undefined && missed.until > Date.now()) throw new Refused(429, `too many wrong passwords — wait ${Math.ceil((missed.until - Date.now()) / 1000)} seconds`, 'wait')
+      try {
+        // The password typed on a device opens the book for devices; the Studio on this computer is not unlocked by it.
+        await this.core.unlockBook(root, { password }, 'device')
+      } catch (error) {
+        if (!(error instanceof VaultError)) throw error
+        // Guessing is slowed down: after three misses each further one doubles the wait, up to ten minutes.
+        const count = (missed?.count ?? 0) + 1
+        this.misses.set(root, { count, until: count >= 3 ? Date.now() + Math.min(600_000, 5000 * 2 ** (count - 3)) : 0 })
+        throw new Refused(403, 'that is not the password of this book', 'wrong-password')
+      }
+      this.misses.delete(root)
+      this.seen.set(root, Date.now())
+      // Grants whose cookie has run out open nothing any more; they are cleared away as new ones are made.
+      for (const slot of stub.sealed.slots) {
+        if (slot.kind === 'grant' && slot.id !== undefined && slot.at !== undefined && Date.now() - Date.parse(slot.at) > GRANT_DAYS * 86_400_000) await this.core.rekeyBook(root, { remove: { kind: 'grant', id: slot.id } }).catch(() => {})
+      }
+      const grant = { id: randomBytes(9).toString('base64url'), secret: randomBytes(32) }
+      await this.core.rekeyBook(root, { add: this.core.slotFor('grant', grant.id, grant.secret, `${deviceName(request)} · ${new Date().toLocaleDateString()}`) })
+      return grant
+    }
+    throw new Refused(404, 'not found')
+  }
+
+  private cookie(id: string, grant: { id: string; secret: Buffer }): string {
+    // Kept from scripts and from other sites, and sent only to this reader's own address.
+    return `nvg_${id.replace(/[^\w-]/g, '')}=${grant.id}.${grant.secret.toString('base64url')}; Path=/${encodeURIComponent(this.token)}/; Max-Age=${GRANT_DAYS * 86400}; HttpOnly; SameSite=Strict`
   }
 
   private async file(runtime: ProjectRuntime, parts: string[], request: IncomingMessage, response: ServerResponse, missing: () => void): Promise<void> {
@@ -352,7 +585,18 @@ export class ShareServer {
     const path = resolve(runtime.project.root, ...parts)
     let size: number
     let stamp: number
-    try {
+    // A sealed book's files are opened whole and served from memory.
+    let opened: Buffer | undefined
+    if (runtime.project.sealed) {
+      const info = await runtime.project.fileInfo(parts.join('/'))
+      if (info === undefined) {
+        missing()
+        return
+      }
+      opened = await runtime.project.readFile(parts.join('/'))
+      size = opened.length
+      stamp = info.mtime
+    } else try {
       // A link that leads out of the book's assets is not followed.
       const [real, realBase] = await Promise.all([realpath(path), realpath(base)])
       if (real !== realBase && !real.startsWith(realBase + sep)) {
@@ -374,7 +618,8 @@ export class ShareServer {
     const headers: Record<string, string> = {
       'content-type': type,
       'accept-ranges': 'bytes',
-      'cache-control': 'private, max-age=0, must-revalidate',
+      // What is sealed on disk is not left in a browser's cache either.
+      'cache-control': opened !== undefined ? 'no-store' : 'private, max-age=0, must-revalidate',
       'x-content-type-options': 'nosniff',
       etag,
     }
@@ -405,6 +650,10 @@ export class ShareServer {
     response.writeHead(status, headers)
     if (request.method === 'HEAD' || size === 0) {
       response.end()
+      return
+    }
+    if (opened !== undefined) {
+      response.end(opened.subarray(start, end + 1))
       return
     }
     const stream = createReadStream(path, { start, end })
@@ -450,7 +699,7 @@ export function addresses(): string[] {
   return [...new Set(found)]
 }
 
-async function describeBook(runtime: ProjectRuntime): Promise<SharedBook> {
+async function describeBook(runtime: ProjectRuntime, mode: 'read' | 'edit'): Promise<SharedBook> {
   const { project } = runtime
   const manifest = await project.manifest()
   const chapters = (await project.chapterInfos()).filter(chapter => chapter.hasText)
@@ -464,6 +713,7 @@ async function describeBook(runtime: ProjectRuntime): Promise<SharedBook> {
     ...(cover !== undefined ? { cover } : {}),
     words: chapters.reduce((sum, chapter) => sum + chapter.words, 0),
     chapters: chapters.length,
+    mode,
   }
 }
 
@@ -473,6 +723,7 @@ async function listChapters(runtime: ProjectRuntime): Promise<SharedChapter[]> {
   for (const chapter of await project.chapterInfos()) {
     if (!chapter.hasText) continue
     const script = await project.audioScript(chapter.id)
+    const board = await project.comicBoard(chapter.id)
     chapters.push({
       id: chapter.id,
       index: chapter.index,
@@ -480,20 +731,25 @@ async function listChapters(runtime: ProjectRuntime): Promise<SharedChapter[]> {
       words: chapter.words,
       lines: script?.lines.length ?? 0,
       voiced: script?.lines.filter(line => line.audio !== undefined).length ?? 0,
+      panels: board?.panels.length ?? 0,
+      drawn: board?.panels.filter(panel => panel.image !== undefined).length ?? 0,
     })
   }
   return chapters
 }
 
-/** A chapter for the reader: its text, and its audio script without anything only the author needs. */
-async function readChapter(runtime: ProjectRuntime, id: string): Promise<{ id: string; index: number; title: string; text: string; script?: Pick<AudioScript, 'lines' | 'cues'>; stale: boolean } | undefined> {
+/** A chapter for the reader: its text, its audio script and its storyboard, without anything only the author needs. */
+async function readChapter(runtime: ProjectRuntime, id: string, tts: Pick<TtsSettings, 'speechTags'>): Promise<{ id: string; index: number; title: string; text: string; script?: { lines: AudioLine[]; cues: AudioCue[] }; board?: { panels: Pick<ComicPanel, 'id' | 'lines' | 'begin' | 'end' | 'description' | 'camera' | 'image'>[] }; stale: boolean } | undefined> {
   const { project } = runtime
   if (!/^[\w-]{1,80}$/.test(id)) return undefined
   const located = await project.findChapter(id)
   if (located === undefined || located.plan.id !== id) return undefined
   const text = await project.chapterText(id)
   if (text.trim().length === 0) return undefined
-  const script = await project.audioScript(id)
+  const stored = await project.audioScript(id)
+  // As it will play: lines left unspoken say so.
+  const script = stored !== undefined ? playable(stored, tts) : undefined
+  const board = await project.comicBoard(id)
   return {
     id,
     index: located.index,
@@ -509,11 +765,103 @@ async function readChapter(runtime: ProjectRuntime, id: string): Promise<{ id: s
           ...(line.audio !== undefined ? { audio: line.audio } : {}),
           ...(line.duration !== undefined ? { duration: line.duration } : {}),
           ...(line.renderKey !== undefined ? { renderKey: line.renderKey } : {}),
+          ...(line.skip === true ? { skip: true } : {}),
         })),
-        cues: script.cues,
+        // What is heard and what the reader is told of it; how it was asked for is the author's business.
+        cues: script.cues.map(cue => ({
+          at: cue.at,
+          ambience: cue.ambience,
+          ...(cue.id !== undefined ? { id: cue.id } : {}),
+          ...(cue.kind !== undefined ? { kind: cue.kind } : {}),
+          ...(cue.intensity !== undefined ? { intensity: cue.intensity } : {}),
+          ...((cue.caption ?? cue.note) !== undefined ? { caption: (cue.caption ?? cue.note)! } : {}),
+          ...(cue.audio !== undefined ? { audio: cue.audio } : {}),
+          ...(cue.duration !== undefined ? { duration: cue.duration } : {}),
+          ...(cue.renderKey !== undefined ? { renderKey: cue.renderKey } : {}),
+        })),
       },
     } : {}),
-    stale: script !== undefined && script.textHash !== hashText(proseOnly(text)),
+    ...(board !== undefined && board.panels.length > 0 ? {
+      board: {
+        panels: board.panels.map(panel => ({
+          id: panel.id,
+          lines: panel.lines,
+          description: panel.description,
+          camera: panel.camera,
+          ...(panel.begin !== undefined ? { begin: panel.begin } : {}),
+          ...(panel.end !== undefined ? { end: panel.end } : {}),
+          ...(panel.image !== undefined ? { image: panel.image } : {}),
+        })),
+      },
+    } : {}),
+    stale: stored !== undefined && stored.textHash !== hashText(proseOnly(text)),
+  }
+}
+
+/** Save a chapter's text from another device: by the same road as an edit in the Studio, and on the book's record. */
+async function saveChapter(runtime: ProjectRuntime, id: string, text: unknown, device: string): Promise<{ words: number; changed: boolean }> {
+  const { project } = runtime
+  if (typeof text !== 'string') throw new Refused(400, 'no text')
+  const located = /^[\w-]{1,80}$/.test(id) ? await project.findChapter(id) : undefined
+  if (located === undefined || located.plan.id !== id) throw new Refused(404, 'not found')
+  const version = (await project.chapterText(id)).length > 0 ? await project.snapshot(id, 'edit-device') : undefined
+  const saved = await project.saveChapterText(id, text, { snapshot: false })
+  if (saved.changed) {
+    const zh = (await project.manifest()).language.toLowerCase().startsWith('zh')
+    await project.addActivity({
+      by: 'device',
+      tool: 'reader',
+      chapter: id,
+      ...(version !== undefined ? { version } : {}),
+      summary: zh ? `在「${device}」上改了第 ${located.index} 章《${located.plan.title}》（现在 ${saved.words} 字）` : `Chapter ${located.index} "${located.plan.title}" was edited on ${device} (now ${saved.words} words)`,
+    })
+  }
+  return saved
+}
+
+/** An interlude as the reader shows it. */
+function sharedPlay(session: PlaySession): Pick<PlaySession, 'id' | 'title' | 'player' | 'cast' | 'situation' | 'location' | 'turns' | 'outcome' | 'updatedAt'> {
+  return {
+    id: session.id,
+    title: session.title,
+    cast: session.cast,
+    situation: session.situation,
+    turns: session.turns,
+    updatedAt: session.updatedAt,
+    ...(session.player !== undefined ? { player: session.player } : {}),
+    ...(session.location !== undefined ? { location: session.location } : {}),
+    ...(session.outcome !== undefined ? { outcome: session.outcome } : {}),
+  }
+}
+
+/** What to call the device a request comes from, for the author's eyes. */
+function deviceName(request: IncomingMessage): string {
+  const agent = String(request.headers['user-agent'] ?? '')
+  const kind = /iPhone/.test(agent) ? 'iPhone' : /iPad/.test(agent) ? 'iPad' : /Android/.test(agent) ? 'Android' : /Macintosh/.test(agent) ? 'Mac' : /Windows/.test(agent) ? 'Windows' : 'a device'
+  const address = (request.socket.remoteAddress ?? '').replace(/^::ffff:/, '')
+  return address.length > 0 ? `${kind} (${address})` : kind
+}
+
+/** The JSON body of a request, within the size the server accepts. */
+async function readBody(request: IncomingMessage): Promise<Record<string, unknown>> {
+  const chunks: Buffer[] = []
+  let size = 0
+  for await (const chunk of request) {
+    const data = chunk as Buffer
+    size += data.length
+    // Too much is read to its end and thrown away, so the connection stays usable for the refusal — unless it is absurdly much.
+    if (size > BODY_LIMIT * 16) {
+      request.destroy()
+      throw new Refused(413, 'too much text in one request')
+    }
+    if (size <= BODY_LIMIT) chunks.push(data)
+  }
+  if (size > BODY_LIMIT) throw new Refused(413, 'too much text in one request')
+  try {
+    const value: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')
+    return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+  } catch {
+    throw new Refused(400, 'not JSON')
   }
 }
 

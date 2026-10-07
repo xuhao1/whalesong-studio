@@ -153,8 +153,10 @@ export async function completeDirect(route: ModelRoute & { baseURL: string }, re
             if (culprit.drop(body)) continue
           }
         }
-        const code = response.status === 401 || response.status === 403 ? 'INVALID_CREDENTIAL' : response.status === 429 ? 'RATE_LIMIT' : response.status === 404 ? 'UNKNOWN_MODEL' : 'PROVIDER'
-        throw new LlmCallError(`${label}: ${message}`, code)
+        const code = response.status === 401 || response.status === 403 ? 'INVALID_CREDENTIAL' : response.status === 429 ? 'RATE_LIMIT' : response.status === 404 ? 'UNKNOWN_MODEL' : response.status >= 500 ? 'SERVER' : 'PROVIDER'
+        // A busy endpoint may say how long to leave it alone, in seconds.
+        const after = Number(response.headers.get('retry-after'))
+        throw new LlmCallError(`${label}: ${message}`, code, Number.isFinite(after) && after > 0 ? { retryAfterMs: after * 1000 } : undefined)
       }
       if (response.body === null) throw new LlmCallError(`${label}: the endpoint answered without a body`, 'PROVIDER')
       return await readStream(response.body, request, label, touch, idle.signal)
@@ -207,7 +209,7 @@ async function readStream(stream: ReadableStream<Uint8Array>, request: LlmReques
     const reasoning = textOf(choice?.delta?.reasoning_content) || textOf(choice?.delta?.reasoning)
     if (reasoning.length > 0) {
       thought += reasoning.length
-      currentJob()?.thinking(thought)
+      currentJob()?.think(reasoning)
     }
     const delta = textOf(choice?.delta?.content)
     if (delta.length > 0) {
@@ -238,7 +240,7 @@ async function readStream(stream: ReadableStream<Uint8Array>, request: LlmReques
     reader.cancel().catch(() => {})
   }
   if (request.signal?.aborted === true) throw aborted()
-  return { text, finish, ...(usage !== undefined ? { usage } : {}) }
+  return { text, finish, ...(usage !== undefined ? { usage } : {}), ...(thought > 0 ? { thought } : {}) }
 }
 
 /**
@@ -262,6 +264,8 @@ export function createRoutedLlm(harness: LlmBackend, keys: KeySource): LlmBacken
       if (!isDirect(route)) return await harness.reasoning?.(route) ?? { efforts: [] }
       return { efforts: DIRECT_EFFORTS.map(effort => ({ id: effort.id, name: effort.name[1] })) }
     },
+    // An endpoint the Studio calls itself has no policy of its own and gets the default one.
+    retryPolicy: route => (isDirect(route) ? undefined : harness.retryPolicy?.(route)),
     async outputCap(route) {
       if (route.maxTokens !== undefined && route.maxTokens > 0) return { cap: route.maxTokens, source: 'role' as const }
       if (!isDirect(route)) return await harness.outputCap?.(route) ?? { source: 'model' as const }

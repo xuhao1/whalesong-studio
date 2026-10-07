@@ -31,6 +31,16 @@ Digest proposes status changes when the text shows an entrance, an exit or a dea
 - **More than a dozen active at once.** Readers hold five to seven comfortably. Rotate: send a group offstage with a visible reason and a promise of return.
 - **A lead without a motive or an arc on their card.** Fix the card before the next chapter leans on them.
 
+## The people without a card
+
+A long book fills with people who are named once or twice: a clerk, a recruit, "that lady". `novel_manage action=walkons` lists everyone the page names who has no card — gathered from chapter memories, digest suggestions, audio scripts and the voice sheet — with where each turns up. Settle them (`action=settle_walkon`):
+
+- **A card** (`as: card`, `role: minor` or `cameo`) for those the story will come back to. They keep the voice the audio drama gave them, and their lines in the scripts go to the card.
+- **An alias** (`as: alias`, `of: <character>`) when the name is a known character under another name — the list says when it looks that way. Unsettled aliases split one person into two in memory and in the audio drama.
+- **Nothing** (`as: ignore`) for a passer-by. Not every name needs a card; a cast list of forty cards hides the seven that matter.
+
+Do this after every few chapters rather than once at the end.
+
 ## Entrances
 
 Introduce at most two new named characters per chapter. Give each a first image, a want that is visible in their first scene, and a way of speaking the reader can recognise without a tag. Create the card before the chapter (`novel_bible action=save`, then `action=expand` to let the architect develop it); characters invented mid-draft arrive as digest suggestions and are thinner.

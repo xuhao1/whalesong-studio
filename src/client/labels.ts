@@ -172,6 +172,13 @@ const WAITING: Partial<Record<RpcMethod, Label>> = {
   'endpoint.check': ['正在检查这个接口…', 'Checking the endpoint…'],
   'endpoint.models': ['正在读取模型列表…', 'Listing the models…'],
   'share.update': ['正在更新手机阅读…', 'Updating reading on other devices…'],
+  'lock.open': ['正在解锁…', 'Unlocking…'],
+  'lock.close': ['正在上锁…', 'Locking…'],
+  'lock.change': ['正在更新这本书的开锁方式…', 'Updating how the book opens…'],
+  'audio.reshape': ['正在重新整理脚本…', 'Reshaping the script…'],
+  'audio.updateCue': ['正在保存这处声音…', 'Saving the sound…'],
+  'audio.addCue': ['正在添加声音…', 'Adding the sound…'],
+  'cast.settle': ['正在处理这个名字…', 'Settling the name…'],
 }
 
 export function waitingLabel(method: RpcMethod): Label {
@@ -209,6 +216,9 @@ const JOB_TITLES: [RegExp, Label][] = [
   [/^storyboard$/, ['编排分镜', 'Storyboarding']],
   [/^draw panels$/, ['绘制分镜画面', 'Drawing the panels']],
   [/^novelize$/, ['把幕间写成章节', 'Novelizing the interlude']],
+  [/^sound$/, ['生成环境声、音效与配乐', 'Making the sounds']],
+  [/^seal$/, ['加密这本书的全部文件', 'Sealing the book']],
+  [/^unseal$/, ['解除这本书的加密', 'Unsealing the book']],
 ]
 
 /** What a job is, in the author's words. */

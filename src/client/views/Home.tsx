@@ -238,9 +238,12 @@ export function Onboarding() {
               <div key={project.root} className={cx('nv-shelf-item', opening === project.root && 'is-opening')}>
                 <button type="button" className="nv-shelf-open" disabled={opening !== undefined} onClick={() => { setOpening(project.root); void run(async () => { await controller.openProject(project.root) }).finally(() => { setOpening(undefined) }) }} title={t(`打开《${project.title}》`, `Open "${project.title}"`)}>
                   <span className="nv-shelf-cover">
-                    {project.cover !== undefined && project.id !== undefined
-                      ? <img alt="" loading="lazy" src={controller.api.media(project.id, project.cover)} />
-                      : <span className="nv-shelf-blank"><Icon name="book" size={22} /><em>{project.title.slice(0, 8)}</em></span>}
+                    {project.locked === true
+                      ? <span className="nv-shelf-blank is-locked"><Icon name="lock" size={22} /><em>{t('已上锁', 'Locked')}</em></span>
+                      : project.cover !== undefined && project.id !== undefined
+                        ? <img alt="" loading="lazy" src={controller.api.media(project.id, project.cover)} />
+                        : <span className="nv-shelf-blank"><Icon name="book" size={22} /><em>{project.title.slice(0, 8)}</em></span>}
+                    {project.sealed === true && project.locked !== true ? <span className="nv-shelf-seal" title={t('这本书加了密，现在是解锁状态', 'This book is sealed, and unlocked right now')}><Icon name="unlock" size={11} /></span> : null}
                     {opening === project.root ? <span className="nv-shelf-busy"><span className="nv-spinner" style={{ width: 18, height: 18 }} aria-hidden="true" /></span> : null}
                   </span>
                   <span className="nv-shelf-title">{project.title}</span>
@@ -504,6 +507,8 @@ export function HomeView() {
         </section>
       </div>
 
+      <ChangeRecord />
+
       <section className="nv-card">
         <SectionTitle>{t('导出', 'Export')}</SectionTitle>
         <div className="nv-row-wrap">
@@ -515,6 +520,56 @@ export function HomeView() {
 
       {editing ? <ManifestEditor manifest={manifest} root={root} onClose={() => { setEditing(false) }} /> : null}
     </div>
+  )
+}
+
+/**
+ * What changed the book lately that the author did not do by hand: the
+ * showrunner's tool calls, and changes made to the files outside the Studio.
+ * Nothing changes the book unseen; a manuscript edit can be undone from here.
+ */
+function ChangeRecord() {
+  const { controller } = useStudio()
+  const t = useT()
+  const { project, root } = useProject()
+  const [all, setAll] = useState(false)
+  const confirm = useConfirm()
+  const entries = project.activity ?? []
+  if (entries.length === 0) return null
+  const shown = all ? entries : entries.slice(0, 5)
+  const title = (id: string | undefined): string | undefined => {
+    const chapter = id !== undefined ? project.chapters.find(candidate => candidate.id === id) : undefined
+    return chapter !== undefined ? t(`第 ${chapter.index} 章`, `ch. ${chapter.index}`) : undefined
+  }
+  const when = (at: string): string => {
+    const date = new Date(at)
+    return `${date.toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' })} ${date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}`
+  }
+  const undo = (chapter: string, version: string): void => {
+    confirm.ask(t('把这一章恢复到这次改动之前的样子？现在的正文会先存成一个版本，随时可以再换回来。', 'Put this chapter back to how it was before this change? The text in place is kept as a version first, so this can be reversed too.'), () => {
+      void controller.guard(async () => {
+        await controller.api.call('chapter.restore', { root, id: chapter, version })
+        controller.toast('success', t('已恢复到改动之前', 'Restored to before the change'))
+      })
+    })
+  }
+  return (
+    <section className="nv-card">
+      <SectionTitle actions={entries.length > 5 ? <Button size="sm" variant="ghost" onClick={() => { setAll(value => !value) }}>{all ? t('收起', 'Fold') : t(`全部 ${entries.length} 条`, `All ${entries.length}`)}</Button> : undefined}>{t('改动记录', 'What changed the book')}</SectionTitle>
+      <p className="nv-muted nv-small">{t('不是你在这块面板上亲手做的改动都记在这里：总编通过工具做的、在手机等其他设备上做的，和工坊之外对文件的直接改动。改过正文的可以一键撤销。', 'Every change not made by your own hand on this panel is listed here: what the showrunner did with its tools, what was done from a phone or another device, and changes made to the files outside the Studio. A change to the manuscript can be undone with one press.')}</p>
+      <ul className="nv-record">
+        {shown.map(entry => (
+          <li key={entry.id} className={cx('nv-record-row', entry.by === 'outside' && 'is-outside')}>
+            <span className="nv-record-when">{when(entry.at)}</span>
+            <Chip tone={entry.by === 'outside' ? 'amber' : entry.by === 'device' ? 'violet' : 'blue'}>{entry.by === 'outside' ? t('工坊之外', 'outside') : entry.by === 'device' ? t('其他设备', 'another device') : t('总编', 'showrunner')}</Chip>
+            <span className="nv-record-text">{entry.summary}</span>
+            {entry.chapter !== undefined ? <Button size="sm" variant="ghost" icon="eye" onClick={() => { controller.setView('write', entry.chapter) }} title={t('看这一章', 'Open the chapter')}>{title(entry.chapter)}</Button> : null}
+            {entry.chapter !== undefined && entry.version !== undefined ? <Button size="sm" variant="ghost" icon="undo" onClick={() => { undo(entry.chapter!, entry.version!) }}>{t('撤销', 'Undo')}</Button> : null}
+          </li>
+        ))}
+      </ul>
+      {confirm.element}
+    </section>
   )
 }
 

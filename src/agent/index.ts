@@ -8,7 +8,7 @@
  * in a read-only session. Everything is registered through `ctx`, so it
  * leaves with the preset.
  */
-import { basename } from 'node:path'
+import { basename, isAbsolute, relative, resolve, sep } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-commands'
@@ -16,12 +16,14 @@ import type {} from '@deepseek-ai/dsh-system-prompt'
 import type { PreToolDecision } from '@deepseek-ai/dsh-tools'
 import { digestPending } from '../core/pipelines/digest'
 import { exportBook, type ExportFormat } from '../core/pipelines/export'
+import { managedKind } from '../core/reconcile'
 import { promptLanguage } from '../core/render'
+import { ProjectError } from '../core/project'
 import { errorMessage } from '../core/util/async'
 import { displayPath } from '../core/util/fs'
 import type {} from '../host/service'
 import { WORK_MODES, type WorkMode } from '../shared/types'
-import { focusLines, modeRules, movedContext, noProjectContext, ORCHESTRATOR_SECTION } from './prompt'
+import { focusLines, lockedContext, modeRules, movedContext, noProjectContext, ORCHESTRATOR_SECTION } from './prompt'
 import { modeLabel, renderDigest, renderStatus } from './status'
 import { bibleTools } from './tools/bible'
 import { manuscriptTools } from './tools/manuscript'
@@ -105,6 +107,12 @@ export function apply(ctx: Context): void {
       const focus = focusLines({ title: project.manifest.title, path, zh, switched: from, others: near.filter(book => book.root !== root) })
       digests.set(agent.id, { text: `${focus}\n${renderDigest(project, state.mode, path)}\n${modeRules(state.mode, zh)}`, root, ...bound })
     } catch (error) {
+      if (error instanceof ProjectError && error.code === 'novel/locked') {
+        // The book in play is sealed and locked: whatever was known of it a moment ago is no longer the model's to use.
+        const bound = novel.sessions.peek(agent.id)?.project
+        if (!disposed && agents.has(agent.id)) digests.set(agent.id, { text: lockedContext(error.message), ...(bound !== undefined ? { bound } : {}) })
+        return
+      }
       novel.log(`could not refresh the project digest for ${agent.id}`, error)
     }
   }
@@ -144,6 +152,13 @@ export function apply(ctx: Context): void {
     const agent = agents.get(sessionId)
     if (agent !== undefined) void refresh(agent)
   }), 'novel: session state watch')
+  // A book locked or unlocked is news for every conversation on it: what the model may know changes at once.
+  ctx.effect(() => novel.core.onLock((root) => {
+    // The old runtime is gone with the lock; its watch would never fire again.
+    watches.get(root)?.()
+    watches.delete(root)
+    for (const [id, agent] of agents) if (roots.get(id) === root || novel.sessions.peek(id)?.project === root) void refresh(agent)
+  }), 'novel: lock watch')
   ctx.effect(() => () => {
     disposed = true
     for (const stop of watches.values()) stop()
@@ -152,8 +167,74 @@ export function apply(ctx: Context): void {
     timers.clear()
   }, 'novel: project watches')
 
+  // ── a book's own files are changed through the Studio, not around it ──
+  /**
+   * The book file a raw tool call is about to change, if it is one: the
+   * manuscript, the bible, the outline, the Studio's records. Reading is never
+   * stopped; neither is anything outside a book.
+   */
+  const rawTarget = async (exec: { name: string; arguments: unknown; agent?: Agent | undefined }): Promise<{ title: string; file: string; kind: NonNullable<ReturnType<typeof managedKind>> } | undefined> => {
+    if (exec.agent === undefined) return undefined
+    const args = (exec.arguments ?? {}) as Record<string, unknown>
+    const workspace = novel.workspaceOfAgent(exec.agent)
+    const books = [...await novel.booksNear(exec.agent.id, workspace)]
+    const inPlay = await novel.projectOfAgent(exec.agent).catch(() => undefined)
+    if (inPlay !== undefined && !books.some(book => book.root === inPlay.project.root)) books.push({ root: inPlay.project.root, title: (await inPlay.project.manifest()).title, relative: '.' })
+    if (books.length === 0) return undefined
+    const inBook = (path: string): { title: string; file: string; kind: NonNullable<ReturnType<typeof managedKind>> } | undefined => {
+      const absolute = isAbsolute(path) ? resolve(path) : resolve(workspace, path)
+      for (const book of books) {
+        const inside = relative(book.root, absolute)
+        if (inside.length === 0 || inside.startsWith('..') || isAbsolute(inside)) continue
+        const kind = managedKind(inside)
+        if (kind !== undefined) return { title: book.title, file: inside.split(sep).join('/'), kind }
+      }
+      return undefined
+    }
+    if (exec.name === 'write' || exec.name === 'edit') return typeof args.file_path === 'string' ? inBook(args.file_path) : undefined
+    if (exec.name === 'str_replace_editor') return typeof args.path === 'string' && args.command !== 'view' ? inBook(args.path) : undefined
+    if (exec.name === 'bash' && typeof args.command === 'string') {
+      // A shell line is not parsed, only looked at: something that writes, aimed at a path of a book.
+      const command = args.command
+      const managed = String.raw`(?:manuscript/|bible/|\.novel/|outline\.json|novel\.json)`
+      const writes = new RegExp(String.raw`>>?\s*["']?[^\s"';|&]*${managed}|\b(?:sed|perl)\s+-[a-zA-Z]*i[^|;&]*${managed}|\b(?:tee|mv|rm|truncate)\b[^|;&]*${managed}`)
+      const hit = writes.exec(command)
+      if (hit === null) return undefined
+      const named = new RegExp(String.raw`[^\s"';|&>]*${managed}[^\s"';|&]*`).exec(hit[0])?.[0]
+      // A path written relative to a book's own folder is that book's.
+      return named !== undefined ? inBook(named) ?? books.map(book => inBook(resolve(book.root, named))).find(found => found !== undefined) : undefined
+    }
+    return undefined
+  }
+  const INSTEAD: Record<NonNullable<ReturnType<typeof managedKind>>, string> = {
+    chapter: 'novel_edit (an exact change: replace, insert, append, delete, set) — or novel_write / novel_revise when prose has to be written',
+    bible: 'novel_bible action=save (characters, world entries, styles)',
+    outline: 'novel_outline (volumes, chapters, beats, threads)',
+    manifest: 'novel_settings action=book',
+    state: 'the tool that owns that record — novel_memory for what the book remembers, novel_digest, novel_audio and novel_manage for scripts, novel_comic for storyboards',
+  }
+
   // ── ask before writing in a read-only session ──
   ctx.on('tools/pre-execute', async (exec, next): Promise<PreToolDecision> => {
+    if (exec.name === 'write' || exec.name === 'edit' || exec.name === 'str_replace_editor' || exec.name === 'bash') {
+      const policy = novel.core.currentSettings().agentFiles ?? 'guide'
+      const target = policy === 'allow' ? undefined : await rawTarget(exec).catch(() => undefined)
+      if (target !== undefined) {
+        const why = `${target.file} belongs to the book "${target.title}". Novel Studio keeps a version of what its text was, the memory digested from it, the search index and the book's record in step with every change made through its tools; a change made around them leaves all of that describing a book that no longer exists.`
+        if (policy === 'ask') {
+          return {
+            kind: 'ask',
+            reason: `${why} Prefer ${INSTEAD[target.kind]}.`,
+            displayReason: {
+              en: `The showrunner wants to change ${target.file} of "${target.title}" with a raw file tool instead of Novel Studio's own. No version of the text is kept that way, and memory is only caught up afterwards.`,
+              zh: `总编想绕过小说工坊，直接用文件工具改《${target.title}》的 ${target.file}。这样改不会留下改动前的版本，记忆也只能事后补收录。`,
+            },
+          }
+        }
+        return { kind: 'deny', reason: `${why} Make this change with ${INSTEAD[target.kind]} instead. Reading these files with file tools is fine.` }
+      }
+      return await next()
+    }
     const mutates = MUTATING.get(exec.name)
     if (mutates === undefined || exec.agent === undefined) return await next()
     let writes = true
@@ -183,10 +264,13 @@ export function apply(ctx: Context): void {
       }
     }
     if (exec.name === 'novel_share' && action === 'on') {
+      const edit = (exec.arguments as { mode?: unknown }).mode === 'edit'
       return {
         kind: 'ask',
-        reason: 'novel_share wants to open a book to other devices on the local network.',
-        displayReason: { en: 'Open this book to other devices on the same network? Anyone there who has the link can read it.', zh: '要把这本书开放给同一网络下的其他设备阅读吗？拿到链接的人都能读到它。' },
+        reason: `novel_share wants to open a book to other devices on the local network${edit ? ', and let them change it' : ''}.`,
+        displayReason: edit
+          ? { en: 'Open this book to other devices on the same network, and let them change it? Anyone there who has the link can edit its text and play its interludes — which uses the models set up here.', zh: '要把这本书开放给同一网络下的其他设备，并且允许在那边修改吗？拿到链接的人可以改正文、玩幕间——幕间会调用这里配置的模型。' }
+          : { en: 'Open this book to other devices on the same network? Anyone there who has the link can read it.', zh: '要把这本书开放给同一网络下的其他设备阅读吗？拿到链接的人都能读到它。' },
       }
     }
     // Reaching out of the session's workspace to change another book is the model's own idea, not the author's click: ask.
