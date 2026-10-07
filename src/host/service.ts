@@ -38,6 +38,7 @@ import type { ModelRoute, NovelSettings, ProjectRef, WorkMode } from '../shared/
 import { codexStatus, createCodexBridge } from './codex'
 import { KeyStore } from './keys'
 import { createHarnessLlm } from './llm-backend'
+import { createRoleRunner } from './roles'
 import { ShareServer } from './share'
 
 declare module '@deepseek-ai/cordis' {
@@ -67,6 +68,22 @@ export class NovelService extends Service {
     const defaults = config.settings !== undefined ? mergeSettings(structuredClone(DEFAULT_SETTINGS), config.settings) : DEFAULT_SETTINGS
     this.core = new NovelCore({
       llm: createHarnessLlm(ctx),
+      // Roles that need to look before they decide run as agents on the Harness's own loop.
+      roles: createRoleRunner(ctx, {
+        log: (message, error) => { this.log(message, error) },
+        // The Harness meters these calls itself; the Studio's ledger, which the author reads by book and by role, counts them too.
+        onUsage: ({ route, inputTokens, outputTokens }) => {
+          const tag = route.for
+          this.core.usage.record({
+            kind: 'text',
+            model: route.model,
+            via: route.provider,
+            input: inputTokens,
+            output: outputTokens,
+            ...(tag !== undefined ? { role: tag.role as never, ...(tag.book !== undefined ? { book: tag.book } : {}), ...(tag.title !== undefined ? { bookTitle: tag.title } : {}) } : {}),
+          })
+        },
+      }),
       credentials: this.keys,
       bridges: { codex: createCodexBridge(ctx) },
       settings: new SettingsStore(defaults),
@@ -465,7 +482,7 @@ export class NovelService extends Service {
   /** Task context for work started by an agent's tool call. */
   agentTask(agent: Agent | undefined, signal: AbortSignal): TaskContext {
     const route = agent !== undefined ? this.routeOf(agent) : undefined
-    return { origin: 'agent', signal, ...(route !== undefined ? { agentRoute: route } : {}) }
+    return { origin: 'agent', signal, ...(route !== undefined ? { agentRoute: route } : {}), ...(agent !== undefined ? { caller: agent } : {}) }
   }
 
   routeOf(agent: Agent): ModelRoute | undefined {

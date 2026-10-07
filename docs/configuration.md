@@ -81,6 +81,8 @@ The showrunner never takes a key through the conversation. Asked to set somethin
 
 "Conversation model" is the model of the session that started the work when the showrunner calls a tool, and the Harness default model when you start work from the Studio.
 
+**One of the analyst's jobs is done by an agent, not by a call**: on import, an editor finds the book's chapters with tools over the text (see *Roles as agents* in [design.md](./design.md)). It runs on the Harness's agent loop, on the analyst's model, so that model has to be one the Harness knows — a model from *Settings → Models*, which is what an unset role and a role picked from the list are. A role pointed at an endpoint of its own (`baseURL`) cannot drive an agent: the import then cuts chapters by rule, as it used to, and says so in its result and on the book's record. A model that reasons does this job in far fewer steps than one that does not.
+
 A role is one of three things:
 
 - **unset** — it follows the conversation model;

@@ -1089,8 +1089,8 @@ export interface WalkOn {
 export interface ActivityEntry {
   id: string
   at: Timestamp
-  /** agent: a tool call of the showrunner. outside: files changed by something that is not the Studio. device: a change made from a phone or tablet through the shared reader. */
-  by: 'agent' | 'outside' | 'device'
+  /** agent: a tool call of the showrunner. outside: files changed by something that is not the Studio. device: a change made from a phone or tablet through the shared reader. editor: the agent that finds a manuscript's chapters on import. */
+  by: 'agent' | 'outside' | 'device' | 'editor'
   /** The tool (`novel_edit`), or `files` for a change from outside. */
   tool: string
   action?: string

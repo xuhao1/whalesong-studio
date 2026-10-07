@@ -252,7 +252,7 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
 
     novelTool(service, {
       name: 'novel_import',
-      description: 'Import an existing book into the project in one pass, so it can be continued, revised or staged: split it into volumes and chapters by its headings (or by size), digest every chapter, merge the cast into character cards, collect the world entries, write chapter synopses, a logline and a premise, and learn the style from the text. Give `path` (a .txt, .md, .epub or .docx file inside the workspace; UTF-8, UTF-16 and GB18030 are detected) or the text itself. Large books take several minutes.',
+      description: 'Import an existing book into the project in one pass, so it can be continued, revised or staged: an editor agent reads the text and finds its real chapters and volumes (headings written any way, a table of contents, site navigation left by a web page — it sorts them out and reports what it did), then the Studio digests every chapter, merges the cast into character cards, collects the world entries, writes chapter synopses, a logline and a premise, and learns the style from the text. Give `path` (a .txt, .md, .epub or .docx file inside the workspace; UTF-8, UTF-16 and GB18030 are detected) or the text itself. Large books take several minutes.',
       mutating: true,
       parameters: {
         path: { type: 'string', description: 'File inside the session workspace.' },
@@ -290,8 +290,10 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
         if (text.trim().length === 0) throw new ProjectError('novel/invalid', 'give `path` or `text`')
         const result = await env.job('import', 'import', undefined, async task => await importManuscript(env.core, runtime, { text, ...(args.analyze !== undefined ? { analyze: args.analyze } : {}) }, task))
         return {
-          text: `Imported ${result.chapters} chapters (${result.words} words) in ${result.volumes} volume(s): ${result.digested} digested, ${result.characters} character cards, ${result.worldEntries} world entries${result.style !== undefined ? `, style "${result.style}" learned` : ''}.${result.failed.length > 0 ? `\nSteps that failed and can be redone: ${result.failed.map(item => `${item.step} (${item.error})`).join('; ')}` : ''}\nReview the cast and outline with the author (novel_status detail=full).`,
+          text: `Imported ${result.chapters} chapters (${result.words} words) in ${result.volumes} volume(s): ${result.digested} digested, ${result.characters} character cards, ${result.worldEntries} world entries${result.style !== undefined ? `, style "${result.style}" learned` : ''}.${result.failed.length > 0 ? `\nSteps that failed and can be redone: ${result.failed.map(item => `${item.step} (${item.error})`).join('; ')}` : ''}\n${result.structure.by === 'agent' ? `The chapters were found by the editor agent in ${result.structure.steps ?? 0} steps${result.structure.bySize ? ' — it found no chapter marks and cut the text by length' : ''}.` : 'The chapters were cut by rule, not by the editor agent.'}${result.structure.note !== undefined ? ` Its account, for the author: ${result.structure.note}` : ''}\nReview the cast and outline with the author (novel_status detail=full).`,
           data: toJson(result),
+          // The import puts its own entry on the book's record, with the editor's account of how the book was cut.
+          record: false,
         }
       },
     }),

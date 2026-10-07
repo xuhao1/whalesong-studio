@@ -561,7 +561,7 @@ function ChangeRecord() {
         {shown.map(entry => (
           <li key={entry.id} className={cx('nv-record-row', entry.by === 'outside' && 'is-outside')}>
             <span className="nv-record-when">{when(entry.at)}</span>
-            <Chip tone={entry.by === 'outside' ? 'amber' : entry.by === 'device' ? 'violet' : 'blue'}>{entry.by === 'outside' ? t('工坊之外', 'outside') : entry.by === 'device' ? t('其他设备', 'another device') : t('总编', 'showrunner')}</Chip>
+            <Chip tone={entry.by === 'outside' ? 'amber' : entry.by === 'device' ? 'violet' : entry.by === 'editor' ? 'green' : 'blue'}>{entry.by === 'outside' ? t('工坊之外', 'outside') : entry.by === 'device' ? t('其他设备', 'another device') : entry.by === 'editor' ? t('导入编辑', 'import editor') : t('总编', 'showrunner')}</Chip>
             <span className="nv-record-text">{entry.summary}</span>
             {entry.chapter !== undefined ? <Button size="sm" variant="ghost" icon="eye" onClick={() => { controller.setView('write', entry.chapter) }} title={t('看这一章', 'Open the chapter')}>{title(entry.chapter)}</Button> : null}
             {entry.chapter !== undefined && entry.version !== undefined ? <Button size="sm" variant="ghost" icon="undo" onClick={() => { undo(entry.chapter!, entry.version!) }}>{t('撤销', 'Undo')}</Button> : null}

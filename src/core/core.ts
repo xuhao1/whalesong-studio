@@ -10,6 +10,7 @@ import type { BookLock, ModelRoute, NovelSettings, ProjectManifest, ProjectRef, 
 import { chooseStrategy, packContext, type ContextPack, type PackOptions } from './context'
 import { currentJob, JobManager, type JobContext } from './jobs'
 import { resolveRoute, retrying, type LlmBackend } from './llm'
+import type { RoleRunner } from './roles'
 import { createRoutedLlm } from './media/chat'
 import { createEmbedder } from './media/embedding'
 import type { KeySource } from './media/http'
@@ -35,6 +36,8 @@ export interface CoreOptions {
   credentials: KeySource
   /** Capabilities only the Host can provide (a ChatGPT subscription's image generation). */
   bridges?: ImageBridges
+  /** Runs a role as an agent on the Harness's agent loop; absent where there is no such loop (tests without one, a bare core). */
+  roles?: RoleRunner
   settings?: SettingsStore
   /** Where calls to models are counted; a store under the Harness home by default. */
   usage?: UsageStore
@@ -66,6 +69,8 @@ export interface TaskContext {
   signal?: AbortSignal
   /** Model of the calling agent; stands in for unconfigured roles. */
   agentRoute?: ModelRoute
+  /** The conversation's agent that asked for the work, as the Host knows it: an agent a role starts becomes its child. */
+  caller?: unknown
   /** Set when the task runs as an observable job. */
   job?: JobContext
 }
@@ -74,6 +79,8 @@ export class NovelCore {
   readonly jobs = new JobManager()
   readonly settings: SettingsStore
   readonly llm: LlmBackend
+  /** Roles that work as agents, where the Host can run them. */
+  readonly roles: RoleRunner | undefined
   readonly credentials: KeySource
   private readonly runtimes = new Map<string, Promise<ProjectRuntime | undefined>>()
   /** Manifest id → root of every project opened in this process; lets URLs name a project without its path. */
@@ -98,6 +105,7 @@ export class NovelCore {
     this.usage = options.usage ?? new UsageStore(undefined, options.log)
     // Made again when a call fails the way calls do in passing; every attempt is a call, and is counted as one.
     this.llm = retrying(meterLlm(createRoutedLlm(options.llm, options.credentials), (event) => { this.usage.record(event) }))
+    this.roles = options.roles
     this.settings = options.settings ?? new SettingsStore()
     this.unsubscribe = this.settings.onChange(() => { void this.refreshSettings() })
   }

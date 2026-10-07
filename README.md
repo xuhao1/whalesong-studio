@@ -46,7 +46,7 @@ The showrunner never writes manuscript prose itself: it calls `novel_write` with
 
 Revisions arrive as **proposals** with a diff; you accept or reject. Every applied change snapshots the previous text, and any version can be compared and restored.
 
-**One-click import.** Hand it an existing manuscript (`.txt` / `.md`, UTF-8 or GBK). It splits chapters, digests them, merges the cast into character cards, collects the world entries, rebuilds the outline with threads, and learns the style.
+**One-click import.** Hand it an existing manuscript (`.txt` / `.md`, UTF-8 or GBK). An editor agent finds its real chapters — reading the text, working out how the headings are written, removing what a web page left in it — then the Studio digests them, merges the cast into character cards, collects the world entries, rebuilds the outline with threads, and learns the style.
 
 **To read, and to listen — one page.** A reader with real typography, embedded illustrations, themes, and a selection toolbar — "edit here", "illustrate this", "discuss with the showrunner". A switch at the top turns the same page from **Read** to **Listen**: the prose stays, the sentence being spoken is lit in it, any sentence is a place to start from, and one chapter follows another. The author also gets the production desk of the audio version above the page.
 
@@ -215,7 +215,7 @@ The package is one npm module with three entry points: a Host half (project stor
 
 [GNU Lesser General Public License v3.0 or later](./LICENSE) (the LGPL supplements the [GNU GPL v3](./COPYING)). You may use the plugin with any Harness setup and combine it with other plugins under their own terms; changes to the plugin itself stay under the LGPL.
 
-**The icon is not under the LGPL.** It shows the fan mascot known as DeepSeek-chan, the "maid whale-girl" (女仆鲸鱼娘): the character is 溟月, an original character by 上善无形, opened to derivative works under [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/); her DeepSeek maid design is by ZipZipPipe, under the same terms. The drawings here (`icon.png`, `docs/images/icon.png`, `docs/images/icon-alt.webp`) were made for this project with GPT Image through Codex and are offered under CC BY-NC-SA 4.0 as well: keep the credit, share alike, and do not use them commercially. Anyone who distributes the plugin commercially must replace the icon.
+**Icon.** DeepSeek-chan, the "maid whale-girl" (女仆鲸鱼娘), drawn for this project with GPT Image through Codex. Character reference: 溟月 by 上善无形, in the DeepSeek maid design by ZipZipPipe.
 
 The novels you write with it are yours.
 

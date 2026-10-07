@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { NovelCore, type ProjectRuntime } from '../../src/core/core'
 import { DEFAULT_RETRY, type LlmBackend, type LlmRequest, type LlmResponse, type RetryPolicy } from '../../src/core/llm'
+import type { RoleOutcome, RoleRunner, RoleTask } from '../../src/core/roles'
 import { DEFAULT_SETTINGS, SettingsStore } from '../../src/core/settings'
 import { UsageStore } from '../../src/core/usage'
 import type { NovelSettings } from '../../src/shared/types'
@@ -44,9 +45,47 @@ export class FakeLlm implements LlmBackend {
   }
 }
 
+/**
+ * A role runner whose agent is a script: it gets the task and a way to call the
+ * task's tools, and plays the part of the model. Off by default, the way a
+ * Harness without an agent loop is.
+ */
+export class FakeRoles implements RoleRunner {
+  readonly tasks: RoleTask[] = []
+  enabled = false
+  script: (task: RoleTask, call: (tool: string, args?: Record<string, unknown>) => Promise<string>) => Promise<string | void> = async () => {}
+
+  can(): boolean {
+    return this.enabled
+  }
+
+  async run(task: RoleTask): Promise<RoleOutcome> {
+    this.tasks.push(task)
+    let steps = 0
+    const call = async (name: string, args: Record<string, unknown> = {}): Promise<string> => {
+      steps += 1
+      const tool = task.tools.find(candidate => candidate.name === name)
+      if (tool === undefined) throw new Error(`the task has no tool "${name}"`)
+      try {
+        const result = await tool.run(args)
+        task.onStep?.({ tool: name, args, ok: true, result })
+        return result
+      } catch (error) {
+        // What a model reads when a tool fails.
+        const message = error instanceof Error ? error.message : String(error)
+        task.onStep?.({ tool: name, args, ok: false, result: message })
+        return `ERROR: ${message}`
+      }
+    }
+    const text = await this.script(task, call)
+    return { text: text ?? '', stop: 'completed', steps }
+  }
+}
+
 export interface TestBed {
   dir: string
   llm: FakeLlm
+  roles: FakeRoles
   core: NovelCore
   runtime: ProjectRuntime
   cleanup(): Promise<void>
@@ -55,17 +94,19 @@ export interface TestBed {
 export async function createTestBed(options: { settings?: Partial<NovelSettings>; language?: string; title?: string; bridges?: ImageBridges } = {}): Promise<TestBed> {
   const dir = await mkdtemp(join(tmpdir(), 'novel-test-'))
   const llm = new FakeLlm()
+  const roles = new FakeRoles()
   const settings = new SettingsStore({ ...DEFAULT_SETTINGS, autoDigest: false, ...options.settings }, join(dir, 'settings.json'))
   // The ledger of a test goes where the test's book goes, never into the real Harness home.
   const usage = new UsageStore(join(dir, 'usage'))
   // Whatever a test takes off the shelf goes to a trash of its own, never to the real one.
   await mkdir(join(dir, 'trash'))
-  const core = new NovelCore({ llm, credentials: namedKeySource(() => undefined), settings, usage, trash: { files: join(dir, 'trash') }, holding: join(dir, 'holding'), ...(options.bridges !== undefined ? { bridges: options.bridges } : {}) })
+  const core = new NovelCore({ llm, roles, credentials: namedKeySource(() => undefined), settings, usage, trash: { files: join(dir, 'trash') }, holding: join(dir, 'holding'), ...(options.bridges !== undefined ? { bridges: options.bridges } : {}) })
   await core.ready()
   const runtime = await core.create(join(dir, 'book'), { title: options.title ?? '测试之书', language: options.language ?? 'zh' })
   return {
     dir,
     llm,
+    roles,
     core,
     runtime,
     async cleanup() {

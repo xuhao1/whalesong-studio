@@ -2,7 +2,7 @@
 /**
  * Import: an existing manuscript becomes a full project in one pass.
  *
- *   split     chapter (and volume) headings are recognized, or the text is cut by size
+ *   split     an editor agent finds the chapters and volumes (see structure.ts); rules stand in where no agent can run
  *   digest    every chapter gets its summary, facts and character moments
  *   cast      sightings across chapters are merged into character cards
  *   world     places, groups, objects and terms become world entries
@@ -10,7 +10,7 @@
  *   style     a style profile is learned from the text itself
  */
 import type { CharacterCard, StyleProfile, WorldCategory, WorldEntry } from '../../shared/types'
-import { clip, countWords, normalizeProse, sameName } from '../../shared/text'
+import { clip, countWords, sameName } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { asArray, asList, asRecord, asText, completeJson } from '../llm'
 import { ProjectError } from '../project'
@@ -19,71 +19,11 @@ import { L, promptLanguage } from '../render'
 import { extractStyle } from './bible'
 import { digestPending, updateArcs } from './digest'
 import { pickText } from './plot'
+import { findStructure } from './structure'
 
 export { decodeText, readBookFile } from '../util/bookfile'
 
-export interface SplitChapter {
-  title: string
-  text: string
-  /** Title of the volume this chapter opens, when a volume heading precedes it. */
-  volume?: string
-}
-
-const CN_NUM = '0-9０-９零〇一二三四五六七八九十百千万两壹贰叁肆伍陆柒捌玖拾'
-const CHAPTER_HEADING = new RegExp(`^\\s*(?:#{1,4}\\s*)?(?:(?:第\\s*[${CN_NUM}]+\\s*[章回节集话]|(?:chapter|chap\\.?)\\s+(?:\\d+|[ivxlcdm]+|[a-z-]+))(?:[\\s:：.、·—-]+.{0,40})?|(?:序章|序幕|楔子|引子|序言|前言|尾声|终章|后记|番外(?:[\\s:：·—-]*.{0,30})?|prologue|epilogue|interlude)(?:[\\s:：.-]+.{0,40})?)\\s*$`, 'i')
-const VOLUME_HEADING = new RegExp(`^\\s*(?:#{1,3}\\s*)?(?:第\\s*[${CN_NUM}]+\\s*[卷部篇册]|(?:volume|book|part)\\s+(?:\\d+|[ivxlcdm]+|[a-z-]+))(?:[\\s:：.、·—-]+.{0,40})?\\s*$`, 'i')
-const MARKDOWN_HEADING = /^\s*#{1,3}\s+(.{1,60})\s*$/
-
-/** Cut a manuscript into chapters by its headings, or by size when it has none. */
-export function splitChapters(source: string, options: { chunkChars?: number; zh?: boolean } = {}): SplitChapter[] {
-  const text = source.replace(/\r\n?/g, '\n').replace(/^﻿/, '')
-  const lines = text.split('\n')
-  const zh = options.zh ?? /[一-鿿]/.test(text.slice(0, 2000))
-  let headings = lines.map((line, index) => ({ index, line })).filter(({ line }) => line.length <= 80 && (CHAPTER_HEADING.test(line) || VOLUME_HEADING.test(line)))
-  // Markdown documents often title chapters with plain headings.
-  if (headings.filter(heading => !VOLUME_HEADING.test(heading.line)).length < 2) {
-    const markdown = lines.map((line, index) => ({ index, line })).filter(({ line }) => MARKDOWN_HEADING.test(line))
-    if (markdown.length >= 2) headings = markdown
-  }
-  const chapters: SplitChapter[] = []
-  const clean = (line: string): string => line.replace(/^\s*#{1,4}\s*/, '').trim()
-  if (headings.filter(heading => !VOLUME_HEADING.test(heading.line)).length >= 2) {
-    let volume: string | undefined
-    const preface = normalizeProse(lines.slice(0, headings[0]!.index).join('\n'))
-    if (countWords(preface) > 200) chapters.push({ title: zh ? '序' : 'Preface', text: preface })
-    for (let i = 0; i < headings.length; i++) {
-      const heading = headings[i]!
-      const end = i + 1 < headings.length ? headings[i + 1]!.index : lines.length
-      const body = normalizeProse(lines.slice(heading.index + 1, end).join('\n'))
-      if (VOLUME_HEADING.test(heading.line) && !CHAPTER_HEADING.test(heading.line)) {
-        volume = clean(heading.line)
-        // Text directly under a volume heading (an epigraph, an intro) stays with the volume's first chapter.
-        if (countWords(body) > 200) chapters.push({ title: volume, text: body, volume })
-        continue
-      }
-      if (body.length === 0) continue
-      chapters.push({ title: clean(heading.line), text: body, ...(volume !== undefined ? { volume } : {}) })
-      volume = undefined
-    }
-    if (chapters.length > 0) return chapters
-  }
-  // No usable headings: cut on paragraph boundaries near the target size.
-  const size = options.chunkChars ?? (zh ? 3200 : 9000)
-  const paragraphs = normalizeProse(text).split('\n').filter(line => line.trim().length > 0)
-  let current: string[] = []
-  let length = 0
-  for (const paragraph of paragraphs) {
-    if (length + paragraph.length > size && current.length > 0) {
-      chapters.push({ title: zh ? `第${chapters.length + 1}节` : `Part ${chapters.length + 1}`, text: current.join('\n\n') })
-      current = []
-      length = 0
-    }
-    current.push(paragraph)
-    length += paragraph.length
-  }
-  if (current.length > 0) chapters.push({ title: zh ? `第${chapters.length + 1}节` : `Part ${chapters.length + 1}`, text: current.join('\n\n') })
-  return chapters
-}
+export { splitChapters, type SplitChapter } from './structure'
 
 export interface ImportParams {
   text: string
@@ -102,6 +42,8 @@ export interface ImportResult {
   digested: number
   failed: { step: string; error: string }[]
   style?: string
+  /** How the chapters were found: by the editor agent or by rule, and what there is to say about it. */
+  structure: { by: 'agent' | 'rules'; bySize: boolean; note?: string; steps?: number }
 }
 
 const ROLES: CharacterCard['role'][] = ['protagonist', 'deuteragonist', 'antagonist', 'supporting', 'minor', 'cameo']
@@ -113,14 +55,21 @@ export async function importManuscript(core: NovelCore, runtime: ProjectRuntime,
   const manifest = await project.manifest()
   const lang = promptLanguage(manifest.language)
   const zh = lang === 'zh'
-  const split = splitChapters(params.text, { zh })
-  if (split.length === 0) throw new ProjectError('novel/empty', 'the text holds nothing to import')
   const failed: ImportResult['failed'] = []
-  const steps = params.analyze === false ? 1 : 6
+  const steps = params.analyze === false ? 2 : 7
   let step = 0
   const advance = (label: string): void => { task.job?.progress(step++, steps, label) }
 
-  // ── 1. split into volumes and chapters ──
+  // ── 1. find the chapters ──
+  advance(L(lang, '编辑正在查看书稿、找出章节', 'an editor is reading the manuscript for its chapters'))
+  const structure = await findStructure(core, runtime, params.text, task)
+  const split = structure.chapters
+  if (split.length === 0) throw new ProjectError('novel/empty', L(lang, '这份文本里没有可导入的内容。', 'the text holds nothing to import'))
+  if (structure.note !== undefined) task.job?.write(`${structure.note}\n`)
+  // A book that names itself knows better than the name its file was saved under.
+  if (structure.author !== undefined && manifest.author === undefined) await project.updateManifest({ author: structure.author })
+
+  // ── 2. make volumes and chapters of them ──
   advance(L(lang, `拆分为 ${split.length} 章`, `splitting into ${split.length} chapters`))
   const existing = await project.outline()
   const explicitVolumes = split.some(chapter => chapter.volume !== undefined)
@@ -149,7 +98,22 @@ export async function importManuscript(core: NovelCore, runtime: ProjectRuntime,
     task.signal?.throwIfAborted()
   }
   const words = split.reduce((sum, chapter) => sum + countWords(chapter.text), 0)
-  const result: ImportResult = { chapters: created.length, words, volumes: Math.max(1, volumeCount), characters: 0, worldEntries: 0, digested: 0, failed }
+  // How the book was cut is something its author will want to read again, long after the import's progress has scrolled away.
+  await project.addActivity({
+    by: 'editor',
+    tool: 'import',
+    summary: clip(`${L(lang, `导入了 ${created.length} 章${structure.by === 'agent' ? '' : '（按规则切分）'}。`, `Imported ${created.length} chapters${structure.by === 'agent' ? '' : ' (cut by rule)'}. `)}${structure.note ?? ''}`.replace(/\s+/g, ' '), 600),
+  }).catch((error: unknown) => { core.log('could not put the import on the book\'s record', error) })
+  const result: ImportResult = {
+    chapters: created.length,
+    words,
+    volumes: Math.max(1, volumeCount),
+    characters: 0,
+    worldEntries: 0,
+    digested: 0,
+    failed,
+    structure: { by: structure.by, bySize: structure.bySize, ...(structure.note !== undefined ? { note: structure.note } : {}), ...(structure.steps !== undefined ? { steps: structure.steps } : {}) },
+  }
   if (params.analyze === false) {
     task.job?.progress(steps, steps)
     return result
@@ -157,11 +121,11 @@ export async function importManuscript(core: NovelCore, runtime: ProjectRuntime,
 
   // ── 2. digest every chapter ──
   advance(L(lang, '逐章提取摘要与事实', 'digesting chapters'))
-  const digestTaskContext: TaskContext = { ...task, job: task.job === undefined ? undefined : { ...task.job, progress: (done, total, label) => { task.job!.progress(1 + done / Math.max(1, total), steps, `${L(lang, '逐章提取', 'digesting')} ${done}/${total}${label !== undefined ? ` · ${label}` : ''}`) } } } as TaskContext
+  const digestTaskContext: TaskContext = { ...task, job: task.job === undefined ? undefined : { ...task.job, progress: (done, total, label) => { task.job!.progress(2 + done / Math.max(1, total), steps, `${L(lang, '逐章提取', 'digesting')} ${done}/${total}${label !== undefined ? ` · ${label}` : ''}`) } } } as TaskContext
   const digest = await digestPending(core, runtime, digestTaskContext, { chapters: created, concurrency: 4 })
   result.digested = digest.digested.length
   for (const failure of digest.failed) failed.push({ step: `digest ${failure.chapter}`, error: failure.error })
-  step = 2
+  step = 3
 
   const memories = (await project.memories()).filter(entry => created.includes(entry.chapter.plan.id))
   const architect = await core.route('architect', runtime, task)
