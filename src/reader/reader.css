@@ -1,0 +1,247 @@
+/* SPDX-License-Identifier: LGPL-3.0-or-later */
+/*
+ * The reader as a page of its own, on a phone or a tablet. It wears the
+ * Studio's stylesheet; this sheet gives it what the Harness would otherwise
+ * provide (a dark theme, a page to stand on) and the screens only it has.
+ */
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  -webkit-text-size-adjust: 100%;
+}
+
+.nv-standalone {
+  height: 100dvh;
+  font-size: 15px;
+  padding-top: env(safe-area-inset-top);
+  --nv-bg: #f6f1e7;
+  --nv-surface: #ede6d6;
+  --nv-surface-2: #e3dac6;
+  --nv-text: #2b2620;
+  --nv-text-2: #655c4e;
+  --nv-text-3: #93897a;
+  --nv-border: rgba(70, 55, 25, 0.14);
+  --nv-border-strong: rgba(70, 55, 25, 0.28);
+  --nv-hover: rgba(70, 55, 25, 0.07);
+  --nv-active: rgba(70, 55, 25, 0.13);
+  --nv-brand: #7a5c2e;
+  --nv-brand-text: #7a5c2e;
+  --nv-primary: #5b4423;
+  --nv-on-accent: #fffaf0;
+}
+
+@media (prefers-color-scheme: dark) {
+  .nv-standalone {
+    --nv-bg: #16181d;
+    --nv-surface: #1e2027;
+    --nv-surface-2: #282b33;
+    --nv-text: #d2cdc2;
+    --nv-text-2: #96918a;
+    --nv-text-3: #6b6862;
+    --nv-border: rgba(255, 255, 255, 0.1);
+    --nv-border-strong: rgba(255, 255, 255, 0.2);
+    --nv-hover: rgba(255, 255, 255, 0.07);
+    --nv-active: rgba(255, 255, 255, 0.12);
+    --nv-brand: #c9a86a;
+    --nv-brand-text: #d7b97f;
+    --nv-primary: #c9a86a;
+    --nv-on-accent: #1a1710;
+  }
+}
+
+.nv-standalone .nv-btn {
+  min-height: 34px;
+}
+
+.nv-standalone .nv-btn-sm {
+  min-height: 32px;
+  min-width: 32px;
+}
+
+/* ── shelf ── */
+
+.nr-shelf {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 22px 18px calc(28px + env(safe-area-inset-bottom));
+}
+
+.nr-shelf h1 {
+  margin-bottom: 16px;
+  font-family: var(--nv-prose-font);
+  font-size: 24px;
+}
+
+.nr-shelf .nv-shelf {
+  grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+  gap: 18px 14px;
+}
+
+/* ── a book and its chapters ── */
+
+.nr-contents {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.nr-topbar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--nv-border);
+}
+
+.nr-book {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 20px 18px calc(28px + env(safe-area-inset-bottom));
+}
+
+.nr-book-head {
+  display: flex;
+  gap: 16px;
+  max-width: 720px;
+  margin: 0 auto 22px;
+}
+
+.nr-book-cover {
+  flex: none;
+  width: 112px;
+  aspect-ratio: 3 / 4;
+  border-radius: 6px;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.2);
+  object-fit: cover;
+}
+
+.nr-book-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.nr-book-text h1 {
+  font-family: var(--nv-prose-font);
+  font-size: 24px;
+  line-height: 1.3;
+}
+
+.nr-book-logline {
+  color: var(--nv-text-2);
+}
+
+.nr-chapters {
+  max-width: 720px;
+  margin: 0 auto;
+  border-top: 1px solid var(--nv-border);
+}
+
+.nr-chapter {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 48px;
+  padding: 8px 4px;
+  border: 0;
+  border-bottom: 1px solid var(--nv-border);
+  background: none;
+  font-size: 15.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nr-chapter:active {
+  background: var(--nv-hover);
+}
+
+.nr-chapter.is-last .nr-chapter-title {
+  color: var(--nv-brand-text);
+  font-weight: 600;
+}
+
+.nr-chapter-index {
+  flex: none;
+  width: 2em;
+  color: var(--nv-text-3);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.nr-chapter-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.nr-chapter-audio {
+  display: flex;
+  flex: none;
+  color: var(--nv-text-3);
+}
+
+.nr-chapter-words {
+  flex: none;
+  color: var(--nv-text-3);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── a chapter ── */
+
+.nr-bar {
+  flex-wrap: nowrap;
+  gap: 8px;
+}
+
+.nr-bar-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--nv-text-2);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nr-typing {
+  justify-content: flex-end;
+}
+
+.nv-standalone .nv-reader-page {
+  padding: 28px 20px 72px;
+}
+
+.nr-turn {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+
+.nr-novoice {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--nv-border);
+  color: var(--nv-text-2);
+  font-size: 13px;
+}
+
+.nv-standalone .nv-listenbar {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.nv-standalone .nv-listen-play {
+  width: 46px;
+  height: 46px;
+}

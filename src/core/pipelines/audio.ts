@@ -1,0 +1,956 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+/**
+ * Audio drama: a chapter becomes a performance script, then sound.
+ *
+ *   script      a director pass cuts the prose into lines — narration, dialogue,
+ *               inner voice — names who speaks, how, and where ambience changes.
+ *               Every word of the chapter is kept; a block whose script drifts
+ *               from the text falls back to a deterministic cut.
+ *   casting     each character speaks with one voice for the whole book: the
+ *               voice on their card, a voice designed from their persona, or a
+ *               stock voice picked once by gender and age. What was picked is
+ *               kept in the book's voice sheet, so the next chapter casts the
+ *               same way.
+ *   synthesis   lines render in parallel and are cached by content, so editing
+ *               one sentence re-renders one line. Every take is listened to by
+ *               measurement — is the whole line there, is it this speaker's
+ *               voice — and taken again when it is not; what is kept is brought
+ *               to one level, so no line is a whisper beside a shout.
+ *
+ * Ambience is not rendered here: cues name procedural beds that the player
+ * synthesizes in the browser, so no audio assets ship with the plugin.
+ */
+import type { AmbiencePreset, AudioCue, AudioLine, AudioScript, CharacterCard, TakeIssue, TtsSettings, VoiceCast, VoicePrint } from '../../shared/types'
+import { clip as clipText, hashText, proseOnly, sameName } from '../../shared/text'
+import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
+import { asArray, asRecord, asText, completeJson } from '../llm'
+import { ProviderError } from '../media/http'
+import { similarity, type TtsProvider, type TtsRequest } from '../media/tts'
+import { badness, judge, leveled, measure, speechUnits, TARGET_LEVEL, type TakeVerdict, type VoiceMeasure } from '../media/voiceprint'
+import { AUDIOGEN_NARRATOR, castVoice, describesVoices, describeVoice, guessGender, providerDefaultVoice, stockVoices } from '../media/voices'
+import { concatAudio, durationOf, encodeWav, parseWav, trimSilence, type PcmAudio } from '../media/wav'
+import type { LocatedChapter, Project } from '../project'
+import { ProjectError } from '../project'
+import { audioScriptTask } from '../prompts'
+import { L, promptLanguage } from '../render'
+import { errorMessage, mapLimit, serializer } from '../util/async'
+import { readFile } from 'node:fs/promises'
+
+export const AMBIENCE: Record<AmbiencePreset, [string, string]> = {
+  none: ['无环境声（安静的室内）', 'silence (a quiet room)'],
+  rain: ['雨声', 'rain'],
+  storm: ['暴风雨、雷声', 'storm and thunder'],
+  wind: ['风声（旷野、高处）', 'wind (open land, heights)'],
+  night: ['夜晚虫鸣', 'night insects'],
+  forest: ['林间鸟鸣与树叶声', 'forest: birds and leaves'],
+  sea: ['海浪', 'sea waves'],
+  river: ['溪流、水声', 'stream, running water'],
+  fire: ['篝火、炉火', 'fire crackle'],
+  city: ['城市街道的低噪', 'city street hum'],
+  crowd: ['人群嘈杂', 'crowd murmur'],
+  tavern: ['酒馆、集市的热闹', 'tavern or market bustle'],
+  battle: ['战场、打斗的紧张轰鸣', 'battle rumble'],
+  cave: ['洞穴的滴水与回响', 'cave drips and echo'],
+  snow: ['雪原的寂静风声', 'snowfield hush'],
+  train: ['列车、车厢行进声', 'train in motion'],
+  spaceship: ['飞船舱内的低频嗡鸣', 'spaceship hum'],
+  tension: ['悬疑紧张的低频氛围', 'low suspense drone'],
+  serene: ['宁静温暖的氛围垫音', 'warm serene pad'],
+}
+
+const AMBIENCE_KEYS = Object.keys(AMBIENCE) as AmbiencePreset[]
+const BLOCK_CHARS = 1600
+
+export async function requireSpeech(core: NovelCore, runtime?: ProjectRuntime): Promise<TtsProvider> {
+  const provider = await core.ttsProvider(runtime)
+  if (provider === undefined) throw new ProviderError('speech synthesis is not configured — set a speech endpoint in Novel Studio → Settings', undefined, 'NOT_CONFIGURED')
+  return provider
+}
+
+/** Cut prose into blocks on paragraph boundaries so each fits one director pass. */
+function blocksOf(text: string): string[] {
+  const blocks: string[] = []
+  let current: string[] = []
+  let length = 0
+  for (const paragraph of text.split('\n').filter(line => line.trim().length > 0)) {
+    if (length + paragraph.length > BLOCK_CHARS && current.length > 0) {
+      blocks.push(current.join('\n'))
+      current = []
+      length = 0
+    }
+    current.push(paragraph)
+    length += paragraph.length
+  }
+  if (current.length > 0) blocks.push(current.join('\n'))
+  return blocks
+}
+
+/** Opening quote → its closing partner. A straight quote closes itself. */
+const QUOTES: Record<string, string> = { '“': '”', '「': '」', '『': '』', '"': '"' }
+
+/**
+ * A quoted span that is talked about rather than spoken: a word in quotes, a
+ * title, a sound. It has no sentence of its own, sits inside the narrator's
+ * sentence, and stays there.
+ */
+function isMention(content: string, before: string, after: string): boolean {
+  if (content.length > 8 || /[。！？!?…—~，,；;]$/u.test(content.trim())) return false
+  // Introduced as speech ("她说：“好”") or standing alone as a paragraph: someone says it.
+  if (/[：:]\s*$/u.test(before) || (before.trim().length === 0 && after.trim().length === 0)) return false
+  return before.trim().length > 0 || /^[^\s，,。！？!?]/u.test(after)
+}
+
+/** Deterministic cut: quoted speech is dialogue, the rest narration. Used when the director pass cannot be trusted. */
+export function fallbackLines(text: string): Omit<AudioLine, 'id'>[] {
+  const lines: Omit<AudioLine, 'id'>[] = []
+  for (const paragraph of text.split('\n').map(line => line.trim()).filter(line => line.length > 0)) {
+    let buffer = ''
+    const flush = (kind: AudioLine['kind'], content = buffer): void => {
+      const body = content.trim()
+      if (kind === 'narration') buffer = ''
+      if (body.replace(/[\p{P}\s]/gu, '').length === 0) return
+      // Long narration is cut on sentence ends so no single line runs for a minute.
+      if (kind === 'narration' && body.length > 160) {
+        const sentences = body.match(/[^。！？!?…]+[。！？!?…]*["”’」』）)]*/g) ?? [body]
+        let piece = ''
+        for (const sentence of sentences) {
+          if (piece.length + sentence.length > 140 && piece.length > 0) {
+            lines.push({ kind, text: piece.trim() })
+            piece = ''
+          }
+          piece += sentence
+        }
+        if (piece.trim().length > 0) lines.push({ kind, text: piece.trim() })
+      } else {
+        lines.push({ kind, text: body })
+      }
+    }
+    for (let at = 0; at < paragraph.length; at++) {
+      const char = paragraph[at]!
+      const close = QUOTES[char]
+      if (close === undefined) {
+        buffer += char
+        continue
+      }
+      const end = paragraph.indexOf(close, at + 1)
+      // A quote that never closes runs to the end of the paragraph.
+      const content = paragraph.slice(at + 1, end < 0 ? paragraph.length : end)
+      const after = end < 0 ? '' : paragraph.slice(end + 1)
+      if (end >= 0 && isMention(content, buffer, after)) buffer += `${char}${content}${close}`
+      else {
+        flush('narration')
+        flush('dialogue', content)
+      }
+      at = end < 0 ? paragraph.length : end
+    }
+    flush('narration')
+  }
+  return lines
+}
+
+type DraftLine = Omit<AudioLine, 'id'>
+
+/** Narration shorter than this many syllables does not stand alone when there is narration beside it. */
+const TINY_LINE = 8
+/** A line that has taken a fragment in stays under this many syllables. */
+const ROOMY_LINE = 220
+
+function joined(left: string, right: string): string {
+  return /[A-Za-z0-9.,;:!?'")\]]$/.test(left) && /^[A-Za-z0-9'"(\[]/.test(right) ? `${left} ${right}` : `${left}${right}`
+}
+
+/**
+ * Fold narration too short to stand alone into the narration next to it. A
+ * speech model is at its least steady on a line of three or four syllables —
+ * the voice wanders, the level jumps — and every line is a round trip, so a
+ * script of fragments both sounds worse and costs more.
+ * @returns the tidied lines, and for each line that came in the index it ended up at.
+ */
+export function tidyLines(lines: DraftLine[]): { lines: DraftLine[]; map: number[] } {
+  const out: DraftLine[] = []
+  const map = new Array<number>(lines.length).fill(0)
+  /** A tiny narration waiting to go in front of the narration that follows it. */
+  let waiting: { line: DraftLine; from: number } | undefined
+  const settle = (): void => {
+    if (waiting === undefined) return
+    out.push(waiting.line)
+    map[waiting.from] = out.length - 1
+    waiting = undefined
+  }
+  lines.forEach((entry, index) => {
+    let line = entry
+    const narration = line.kind === 'narration'
+    if (waiting !== undefined) {
+      if (narration && speechUnits(waiting.line.text) + speechUnits(line.text) <= ROOMY_LINE) {
+        line = { ...line, text: joined(waiting.line.text, line.text), ...(line.direction === undefined && waiting.line.direction !== undefined ? { direction: waiting.line.direction } : {}) }
+        map[waiting.from] = out.length
+        waiting = undefined
+      } else settle()
+    }
+    const previous = out.at(-1)
+    const tiny = narration && speechUnits(line.text) < TINY_LINE
+    if (tiny && previous?.kind === 'narration' && speechUnits(previous.text) + speechUnits(line.text) <= ROOMY_LINE) {
+      out[out.length - 1] = { ...previous, text: joined(previous.text, line.text) }
+      map[index] = out.length - 1
+    } else if (tiny) {
+      waiting = { line, from: index }
+    } else {
+      out.push(line)
+      map[index] = out.length - 1
+    }
+  })
+  settle()
+  return { lines: out, map }
+}
+
+interface DraftCue {
+  at: number
+  ambience: AmbiencePreset
+  intensity?: number
+  note?: string
+}
+
+/** Build (or rebuild) the performance script of a chapter. */
+export async function buildAudioScript(core: NovelCore, runtime: ProjectRuntime, params: { chapter: string; force?: boolean }, task: TaskContext): Promise<AudioScript> {
+  const { project } = runtime
+  const chapter = await project.findChapter(params.chapter)
+  if (chapter === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${params.chapter}"`)
+  const text = proseOnly(await project.chapterText(chapter.plan.id))
+  if (text.length === 0) throw new ProjectError('novel/empty', `chapter ${chapter.index} has no text yet`)
+  const textHash = hashText(text)
+  const existing = await project.audioScript(chapter.plan.id)
+  if (existing !== undefined && existing.textHash === textHash && params.force !== true) return existing
+
+  const manifest = await project.manifest()
+  const lang = promptLanguage(manifest.language)
+  const characters = await project.characters()
+  const resolve = (name: string): CharacterCard | undefined => characters.find(card => sameName(card.name, name) || card.aliases?.some(alias => sameName(alias, name)) === true)
+  const castText = castFor(chapter, characters, text).map(card => `${card.name}${card.aliases !== undefined && card.aliases.length > 0 ? `(${card.aliases.join('/')})` : ''} | ${[card.gender, card.age, card.voice ?? card.personality].filter(Boolean).join('，')}`).join('\n')
+  const ambienceText = AMBIENCE_KEYS.map(key => `${key}: ${AMBIENCE[key][lang === 'zh' ? 0 : 1]}`).join('\n')
+  const route = await core.route('analyst', runtime, task)
+  const blocks = blocksOf(text)
+  let done = 0
+  task.job?.progress(0, blocks.length, L(lang, `编排有声脚本（共 ${blocks.length} 段）`, `directing the script (${blocks.length} passages)`))
+
+  const results = await mapLimit(blocks, 3, async (block) => {
+    let lines: DraftLine[] | undefined
+    let cues: DraftCue[] = []
+    let reason: string | undefined
+    try {
+      const { value } = await completeJson(core.llm, {
+        route,
+        prompt: audioScriptTask({ lang, language: manifest.language, title: manifest.title, text: block, cast: castText, ambience: ambienceText }),
+        temperature: 0.2,
+        ...(task.signal !== undefined ? { signal: task.signal } : {}),
+        validate: (raw) => {
+          const record = asRecord(raw)
+          const parsed: DraftLine[] = []
+          for (const entry of asArray(record.lines)) {
+            const item = asRecord(entry)
+            const content = asText(item.text)
+            if (content === undefined) continue
+            const kind = asText(item.kind)
+            const speakerName = asText(item.speaker)
+            const card = speakerName !== undefined ? resolve(speakerName) : undefined
+            const direction = asText(item.direction)
+            const lineKind: AudioLine['kind'] = kind === 'dialogue' || kind === 'thought' ? kind : 'narration'
+            parsed.push({
+              kind: lineKind,
+              text: lineKind === 'narration' ? content : content.replace(/^["“「『]+|["”」』]+$/g, ''),
+              ...(lineKind !== 'narration' && card !== undefined ? { speaker: card.id } : {}),
+              ...(lineKind !== 'narration' && speakerName !== undefined ? { speakerName: card?.name ?? speakerName } : {}),
+              ...(direction !== undefined ? { direction } : {}),
+            })
+          }
+          if (parsed.length === 0) throw new Error('"lines" is empty')
+          // The script must be the chapter, word for word; a director that paraphrases or stops early is told so and asked again.
+          const covered = similarity(parsed.map(line => line.text).join(''), block)
+          if (covered < 0.9) throw new Error(`the "text" of the lines covers only ${Math.round(covered * 100)}% of the passage — every word of the passage must appear in the lines, in order and unchanged`)
+          const placed = asArray(record.cues).map(asRecord).map((cue): DraftCue | undefined => {
+            const ambience = asText(cue.ambience) as AmbiencePreset | undefined
+            const at = Number(cue.at)
+            const intensity = Number(cue.intensity)
+            const note = asText(cue.note)
+            if (ambience === undefined || !AMBIENCE_KEYS.includes(ambience) || !Number.isInteger(at) || at < 0 || at >= parsed.length) return undefined
+            return { at, ambience, ...(Number.isFinite(intensity) ? { intensity: Math.max(0, Math.min(1, intensity)) } : {}), ...(note !== undefined ? { note } : {}) }
+          }).filter((cue): cue is DraftCue => cue !== undefined)
+          return { lines: parsed, cues: placed }
+        },
+      })
+      lines = value.lines
+      cues = value.cues
+    } catch (error) {
+      if (task.signal?.aborted === true) throw error
+      reason = errorMessage(error)
+      core.log(`audio script block for ${chapter.plan.id} fell back to the rule-based cut`, error)
+    }
+    done += 1
+    task.job?.progress(done, blocks.length)
+    const tidy = tidyLines(lines ?? fallbackLines(block))
+    return { lines: tidy.lines, cues: cues.map(cue => ({ ...cue, at: tidy.map[cue.at] ?? 0 })), ...(reason !== undefined ? { reason } : {}) }
+  }, task.signal)
+
+  const lines: AudioLine[] = []
+  const cues: AudioCue[] = []
+  for (const block of results) {
+    const offset = lines.length
+    block.lines.forEach((line, index) => { lines.push({ ...line, id: `l${offset + index}` }) })
+    for (const cue of block.cues) {
+      const at = `l${offset + cue.at}`
+      // Consecutive blocks often restate the same bed; only real changes become cues.
+      if (cues.at(-1)?.ambience === cue.ambience || cues.at(-1)?.at === at) continue
+      cues.push({ at, ambience: cue.ambience, ...(cue.intensity !== undefined ? { intensity: cue.intensity } : {}), ...(cue.note !== undefined ? { note: cue.note } : {}) })
+    }
+  }
+  if (cues.length === 0 || cues[0]!.at !== 'l0') cues.unshift({ at: 'l0', ambience: cues[0]?.ambience ?? 'none', intensity: 0.4 })
+  // Audio rendered for identical lines of the previous script is kept.
+  if (existing !== undefined) {
+    const byText = new Map(existing.lines.filter(line => line.audio !== undefined).map(line => [`${line.kind}|${line.speaker ?? ''}|${line.speakerName ?? ''}|${line.text}|${line.direction ?? ''}`, line]))
+    for (const line of lines) {
+      const previous = byText.get(`${line.kind}|${line.speaker ?? ''}|${line.speakerName ?? ''}|${line.text}|${line.direction ?? ''}`)
+      if (previous?.audio !== undefined) {
+        line.audio = previous.audio
+        if (previous.duration !== undefined) line.duration = previous.duration
+        if (previous.renderKey !== undefined) line.renderKey = previous.renderKey
+        if (previous.takes !== undefined) line.takes = previous.takes
+        if (previous.check !== undefined) line.check = previous.check
+      }
+    }
+  }
+  // A passage the director could not deliver is cut by rule, which knows no speakers: say so, the script must not look finished when it is not.
+  const failed = results.filter(block => block.reason !== undefined)
+  const script: AudioScript = {
+    schema: 1,
+    chapterId: chapter.plan.id,
+    textHash,
+    updatedAt: new Date().toISOString(),
+    lines,
+    cues,
+    ...(failed.length > 0 ? { degraded: { blocks: failed.length, of: blocks.length, reason: failed[0]!.reason! } } : {}),
+  }
+  await project.saveAudioScript(script)
+  return script
+}
+
+function castFor(chapter: LocatedChapter, characters: CharacterCard[], text: string): CharacterCard[] {
+  const planned = new Set(chapter.plan.characters ?? [])
+  return characters.filter(card => planned.has(card.id) || [card.name, ...(card.aliases ?? [])].some(name => name.length > 0 && text.includes(name)))
+}
+
+export interface VoiceChoice {
+  voice?: string
+  direction?: string
+  /** Project-relative clip of a voice made for this speaker; providers that imitate a clip speak with it. */
+  sample?: string
+}
+
+/** What a voice is known by in the voice sheet: the clip made for it, else its id or description, else "whatever the provider reads with". */
+function voiceKey(choice: VoiceChoice): string {
+  return choice.sample ?? choice.voice ?? '(default)'
+}
+
+// ───────────────────────────── the voice sheet ─────────────────────────────
+
+/**
+ * The book's casting, open for one piece of work. Voices picked for characters
+ * and for speakers without a card are read from the sheet first, so a speaker
+ * keeps one voice from chapter to chapter and from the audio drama to the
+ * interludes; what is newly picked, and what is learned about how each voice
+ * sounds, goes back into the sheet.
+ */
+export interface CastSession {
+  /** Character id → voice. */
+  readonly taken: Map<string, string>
+  /** Speaker without a card, by name → voice. */
+  readonly extras: Map<string, string>
+  /** The usual pitch of a voice, when it is known well enough to judge a take by. */
+  print(choice: VoiceChoice): number | undefined
+  /** Record what a reference clip of the voice sounds like. */
+  anchor(choice: VoiceChoice, clip: PcmAudio): void
+  /** Learn from a clean, long take of a voice that has no reference clip. */
+  learn(choice: VoiceChoice, measured: VoiceMeasure): void
+  /** Write what changed back to the project. */
+  save(): Promise<void>
+}
+
+function emptyCast(settings: TtsSettings): VoiceCast {
+  return { schema: 1, provider: settings.provider, ...(settings.model !== undefined ? { model: settings.model } : {}), characters: {}, extras: {}, prints: {}, updatedAt: new Date().toISOString() }
+}
+
+/** A print learned from lines is trusted once it rests on this many of them. */
+const PRINT_SAMPLES = 3
+
+export async function openCast(project: Project, settings: TtsSettings): Promise<CastSession> {
+  const stored = await project.voiceCast()
+  // Voices belong to the speech setup that speaks them: another provider or model casts afresh.
+  const sheet = stored !== undefined && stored.provider === settings.provider && (stored.model ?? '') === (settings.model ?? '') ? stored : emptyCast(settings)
+  const taken = new Map(Object.entries(sheet.characters))
+  const extras = new Map(Object.entries(sheet.extras))
+  const prints = new Map<string, VoicePrint>(Object.entries(sheet.prints))
+  let dirty = stored !== sheet
+  const before = { characters: JSON.stringify(sheet.characters), extras: JSON.stringify(sheet.extras) }
+  return {
+    taken,
+    extras,
+    print(choice) {
+      const print = prints.get(voiceKey(choice))
+      return print !== undefined && (print.anchored === true || print.samples >= PRINT_SAMPLES) ? print.pitch : undefined
+    },
+    anchor(choice, clip) {
+      const key = voiceKey(choice)
+      if (prints.get(key)?.anchored === true) return
+      const pitch = measure(clip).pitch
+      if (pitch === undefined) return
+      prints.set(key, { pitch: Math.round(pitch * 10) / 10, samples: 1, anchored: true })
+      dirty = true
+    },
+    learn(choice, measured) {
+      const key = voiceKey(choice)
+      if (measured.pitch === undefined || measured.voiced < 1) return
+      const known = prints.get(key)
+      if (known?.anchored === true || (known !== undefined && known.samples >= 12)) return
+      // A running mean on a log scale: pitch is heard in ratios.
+      const samples = (known?.samples ?? 0) + 1
+      const pitch = known === undefined ? measured.pitch : 2 ** ((Math.log2(known.pitch) * known.samples + Math.log2(measured.pitch)) / samples)
+      prints.set(key, { pitch: Math.round(pitch * 10) / 10, samples })
+      dirty = true
+    },
+    async save() {
+      const characters = Object.fromEntries(taken)
+      const others = Object.fromEntries(extras)
+      if (!dirty && JSON.stringify(characters) === before.characters && JSON.stringify(others) === before.extras) return
+      dirty = false
+      before.characters = JSON.stringify(characters)
+      before.extras = JSON.stringify(others)
+      await project.updateVoiceCast(sheet, (current) => {
+        // Another render may have cast in the meantime: its picks stay, ours are added.
+        const base = current.provider === sheet.provider && (current.model ?? '') === (sheet.model ?? '') ? current : sheet
+        return {
+          ...base,
+          characters: { ...base.characters, ...characters },
+          extras: { ...base.extras, ...others },
+          prints: { ...base.prints, ...Object.fromEntries(prints) },
+          updatedAt: new Date().toISOString(),
+        }
+      })
+    },
+  }
+}
+
+/**
+ * The voice each speaker has — or will get — in the audio drama, without
+ * deciding anything: the sheet is read, not written. For showing the author
+ * who sounds like whom before, and after, a chapter is voiced.
+ * @param lines - whose voices to look up; every character with a card when left out.
+ */
+export async function previewVoices(project: Project, settings: TtsSettings, lines?: readonly Pick<AudioLine, 'kind' | 'speaker' | 'speakerName'>[]): Promise<{ characters: Record<string, string>; extras: Record<string, string> }> {
+  const found = { characters: {} as Record<string, string>, extras: {} as Record<string, string> }
+  if (settings.provider === 'none') return found
+  const cast = await openCast(project, settings)
+  // Copies: looking must not cast.
+  const taken = new Map(cast.taken)
+  const extras = new Map(cast.extras)
+  const characters = await project.characters()
+  const speakers: Pick<AudioLine, 'kind' | 'speaker' | 'speakerName'>[] = lines !== undefined
+    ? lines.filter(line => line.kind !== 'narration' && (line.speaker !== undefined || line.speakerName !== undefined))
+    : characters.map(card => ({ kind: 'dialogue' as const, speaker: card.id, speakerName: card.name }))
+  for (const line of speakers) {
+    const known = line.speaker !== undefined && characters.some(card => card.id === line.speaker)
+    const name = (line.speakerName ?? '').trim()
+    if (known ? found.characters[line.speaker!] !== undefined : name.length === 0 || found.extras[name] !== undefined) continue
+    const voice = voiceFor(line, characters, settings, taken, extras).voice
+    if (voice === undefined) continue
+    if (known) found.characters[line.speaker!] = voice
+    else found.extras[name] = voice
+  }
+  return found
+}
+
+/** Decide which voice speaks a line and with what delivery. */
+export function voiceFor(line: Pick<AudioLine, 'kind' | 'speaker' | 'speakerName' | 'direction'>, characters: CharacterCard[], settings: TtsSettings, taken: Map<string, string>, extras: Map<string, string> = new Map()): VoiceChoice {
+  const join = (...parts: (string | undefined)[]): string | undefined => {
+    const text = parts.filter((part): part is string => part !== undefined && part.trim().length > 0).join('；')
+    return text.length > 0 ? text : undefined
+  }
+  const inWords = describesVoices(settings.provider)
+  const narrator = settings.narratorVoice ?? (inWords ? AUDIOGEN_NARRATOR : undefined)
+  if (line.kind === 'narration' || (line.speaker === undefined && line.speakerName === undefined)) {
+    const direction = join(settings.narratorInstructions, line.direction)
+    return { ...(narrator !== undefined ? { voice: narrator } : {}), ...(direction !== undefined ? { direction } : {}) }
+  }
+  const card = characters.find(candidate => candidate.id === line.speaker)
+  const who = card !== undefined
+    ? `${card.name}${card.gender !== undefined ? `，${card.gender}` : ''}${card.age !== undefined ? `，${card.age}` : ''}${card.voice !== undefined ? `，${card.voice}` : ''}`
+    : line.speakerName
+  const inner = line.kind === 'thought' ? '内心独白，轻声、贴近耳边' : undefined
+  // The narrator's voice is spoken for, also when it is only the provider's default.
+  const telling = narrator ?? providerDefaultVoice(settings.provider)
+  const inUse = (): Set<string> => new Set([...taken.values(), ...extras.values(), ...(telling !== undefined ? [telling] : [])])
+  let voice: string | undefined
+  if (card !== undefined) {
+    const profile = card.voiceProfile
+    const own = profile?.voice !== undefined && (profile.provider === undefined || profile.provider === settings.provider)
+    if (own) voice = profile.voice
+    else {
+      // Where voices are words, what the card says of the voice is the casting, and follows the card when it changes.
+      const described = inWords ? describeVoice(card) : undefined
+      voice = described ?? taken.get(card.id) ?? castVoice(card, settings.provider, inUse(), settings.model)
+      if (described === undefined && voice !== undefined) taken.set(card.id, voice)
+    }
+    // Where the voice itself is a description, who is speaking is already said.
+    const direction = join(!inWords && who !== undefined ? `角色：${who}` : undefined, profile?.instructions, inner, line.direction)
+    return {
+      ...(voice !== undefined ? { voice } : {}),
+      ...(direction !== undefined ? { direction } : {}),
+      ...(own && profile.sample !== undefined ? { sample: profile.sample } : {}),
+    }
+  }
+  // A speaker without a card still has a voice of their own: not the narrator's, and not the next stranger's.
+  const name = (line.speakerName ?? '').trim()
+  voice = extras.get(name)
+  if (voice === undefined) {
+    const gender = guessGender({ gender: name })
+    const configured = settings.defaultVoices?.[gender]
+    const pool = stockVoices(settings.provider, settings.model).filter(candidate => candidate.accent === undefined && candidate.age !== 'child' && (gender === 'neutral' || candidate.gender === gender))
+    const used = inUse()
+    const free = pool.filter(candidate => !used.has(candidate.id))
+    const from = free.length > 0 ? free : pool
+    voice = configured !== undefined && !used.has(configured) ? configured : from.length > 0 ? from[parseInt(hashText(name).slice(0, 6), 16) % from.length]!.id : configured
+    if (voice !== undefined && name.length > 0) extras.set(name, voice)
+  }
+  const direction = join(!inWords && who !== undefined ? `角色：${who}` : undefined, inner, line.direction)
+  return { ...(voice !== undefined ? { voice } : {}), ...(direction !== undefined ? { direction } : {}) }
+}
+
+/**
+ * Reference clips for providers whose voices are words. Each described voice
+ * gets one clip, made the first time it is needed and kept in the project;
+ * every later line imitates the clip, so a character keeps one voice for the
+ * whole book. Providers with voice ids need none of this.
+ */
+export interface VoiceBank {
+  (choice: VoiceChoice): Promise<PcmAudio | undefined>
+  /** The clip of a voice when the project already holds one; never makes one. */
+  kept(choice: VoiceChoice): Promise<PcmAudio | undefined>
+}
+
+export function voiceBank(core: NovelCore, runtime: ProjectRuntime, provider: TtsProvider, settings: TtsSettings, language: string, signal?: AbortSignal, onAnchor?: (voice: string, phase: 'start' | 'end') => void, cast?: CastSession): VoiceBank {
+  const { project } = runtime
+  const clips = new Map<string, Promise<PcmAudio | undefined>>()
+  const load = async (relative: string): Promise<PcmAudio | undefined> => {
+    try {
+      return parseWav(await readFile(project.path(relative)))
+    } catch {
+      return undefined
+    }
+  }
+  const anchorPath = (voice: string): string => `audio/voices/anchor-${hashText([settings.model ?? '', voice].join('|')).slice(0, 12)}.wav`
+  const kept = async (choice: VoiceChoice): Promise<PcmAudio | undefined> => {
+    if (provider.anchor === undefined) return undefined
+    const designed = choice.sample !== undefined ? await load(choice.sample) : undefined
+    const clip = designed ?? (choice.voice !== undefined ? await load(`assets/${anchorPath(choice.voice)}`) : undefined)
+    if (clip !== undefined) cast?.anchor(choice, clip)
+    return clip
+  }
+  const bank = async (choice: VoiceChoice): Promise<PcmAudio | undefined> => {
+    if (provider.anchor === undefined || (choice.sample === undefined && choice.voice === undefined)) return undefined
+    const key = voiceKey(choice)
+    let pending = clips.get(key)
+    if (pending === undefined) {
+      pending = (async () => {
+        const held = await kept(choice)
+        if (held !== undefined || choice.voice === undefined) return held
+        // The first line of a voice waits for this clip, which can take as long as a line: say so rather than sit silent.
+        onAnchor?.(choice.voice, 'start')
+        try {
+          const clip = leveled(trimSilence(await provider.anchor!(choice.voice, { language, ...(signal !== undefined ? { signal } : {}) })))
+          await project.writeAsset(anchorPath(choice.voice), encodeWav(clip))
+          cast?.anchor(choice, clip)
+          return clip
+        } catch (error) {
+          if (signal?.aborted === true) throw error
+          // Without a clip the line is still spoken from the description; it is only less steady.
+          core.log(`could not make a reference clip for "${choice.voice.slice(0, 40)}"`, error)
+          return undefined
+        } finally {
+          onAnchor?.(choice.voice, 'end')
+        }
+      })()
+      clips.set(key, pending)
+    }
+    return await pending
+  }
+  return Object.assign(bank, { kept })
+}
+
+/** The synthesis request for a line once its voice is decided. */
+export async function speechRequest(choice: VoiceChoice, text: string, language: string, reference: (choice: VoiceChoice) => Promise<PcmAudio | undefined>, signal?: AbortSignal): Promise<TtsRequest> {
+  const clip = await reference(choice)
+  return {
+    text,
+    ...(choice.voice !== undefined ? { voice: choice.voice } : {}),
+    ...(choice.direction !== undefined ? { direction: choice.direction } : {}),
+    ...(clip !== undefined ? { reference: clip } : {}),
+    language,
+    ...(signal !== undefined ? { signal } : {}),
+  }
+}
+
+/** How many more takes a line gets when the first does not pass, unless the settings say otherwise. */
+const DEFAULT_RETAKES = 2
+
+export function retakesOf(settings: TtsSettings): number {
+  const wanted = settings.retakes
+  return wanted !== undefined && Number.isFinite(wanted) ? Math.max(0, Math.min(4, Math.round(wanted))) : DEFAULT_RETAKES
+}
+
+export interface Take {
+  /** The kept take, trimmed and brought to the common level. */
+  audio: PcmAudio
+  measured: VoiceMeasure
+  verdict: TakeVerdict
+  /** How many times the line was spoken. */
+  takes: number
+}
+
+/**
+ * Speak a line and listen to it. A take that is silent, cut short, padded, or
+ * — where the voice's usual pitch is known — plainly someone else's voice is
+ * spoken again, up to `retakes` more times; the best take is kept either way,
+ * and its verdict says what is still wrong with it.
+ */
+export async function speakChecked(provider: TtsProvider, request: TtsRequest, options: { print?: number | undefined; retakes: number; onRetake?: (take: number, issues: TakeIssue[]) => void }): Promise<Take> {
+  let best: Take | undefined
+  for (let take = 0; take <= options.retakes; take++) {
+    let audio: PcmAudio
+    try {
+      audio = trimSilence(await provider.synthesize(take === 0 ? request : { ...request, take }))
+    } catch (error) {
+      // A retake that fails outright does not cost the line the take it already has.
+      if (best === undefined || request.signal?.aborted === true) throw error
+      break
+    }
+    const measured = measure(audio)
+    const verdict = judge(measured, request.text, options.print)
+    if (best === undefined || badness(verdict) < badness(best.verdict)) best = { audio, measured, verdict, takes: take + 1 }
+    else best = { ...best, takes: take + 1 }
+    if (verdict.issues.length === 0) break
+    if (take < options.retakes) options.onRetake?.(take + 1, verdict.issues)
+  }
+  return { ...best!, audio: leveled(best!.audio, best!.measured) }
+}
+
+export interface SynthesisResult {
+  chapterId: string
+  lines: number
+  rendered: number
+  cached: number
+  failed: number
+  /** Total spoken duration in seconds. */
+  duration: number
+  /** Lines that were spoken more than once before a take was kept. */
+  retaken: number
+  /** Lines whose kept take the listening check still faults. */
+  flagged: number
+  /** Lines rendered earlier that did not pass the check and were spoken again. */
+  rechecked: number
+  /** Lines rendered earlier that only needed bringing to the common level. */
+  leveled: number
+}
+
+const ISSUE_WORDS: Record<TakeIssue, [string, string]> = {
+  silent: ['没有声音', 'silent'],
+  short: ['没念完', 'cut short'],
+  long: ['念多了', 'too long'],
+  drift: ['不像这个声音', 'not this voice'],
+}
+
+/** Render every line of a chapter's script that has no current audio. */
+export async function synthesizeChapter(core: NovelCore, runtime: ProjectRuntime, params: { chapter: string; lines?: string[]; force?: boolean }, task: TaskContext): Promise<SynthesisResult> {
+  const { project } = runtime
+  const provider = await requireSpeech(core, runtime)
+  const settings = (await core.settings.get()).tts
+  let script = await buildAudioScript(core, runtime, { chapter: params.chapter }, task)
+  const manifest = await project.manifest()
+  const lang = promptLanguage(manifest.language)
+  const characters = await project.characters()
+  const cast = await openCast(project, settings)
+  const retakes = retakesOf(settings)
+  let rendered = 0
+  let failed = 0
+  let done = 0
+  let total = 0
+  let retaken = 0
+  let flagged = 0
+  let evened = 0
+  // What is being worked on right now: a long render says which lines are in the booth and when a voice is being set up.
+  const speaking = new Map<string, string>()
+  // Lines of this run that have not reached the booth yet.
+  const waiting = new Set<string>()
+  let tuning = 0
+  let note: string | undefined
+  const report = (): void => {
+    const now = [...speaking.values()].at(-1)
+    const label = tuning > 0
+      ? L(lang, '正在为新出场的声音定音色（只做一次，之后全书沿用）', 'setting up a new voice (once; the book keeps it)')
+      : note ?? (now !== undefined ? L(lang, `正在念：${now}`, `speaking: ${now}`) : L(lang, '合成语音', 'synthesizing'))
+    task.job?.progress(done, total, label)
+    task.job?.result({ chapterId: script.chapterId, active: [...speaking.keys()], waiting: [...waiting], rendered, failed, retaken, flagged })
+  }
+  const reference = voiceBank(core, runtime, provider, settings, manifest.language, task.signal, (_voice, phase) => {
+    tuning += phase === 'start' ? 1 : -1
+    report()
+  }, cast)
+  // Resolve voices in script order first so casting does not depend on which request finishes first.
+  const plan = script.lines.map((line) => {
+    const choice = voiceFor(line, characters, settings, cast.taken, cast.extras)
+    const renderKey = hashText([settings.provider, settings.model ?? '', choice.voice ?? '', choice.direction ?? '', line.text].join('|'))
+    return { line, choice, renderKey }
+  })
+  // What was just cast is kept before the first word is spoken: a render that is stopped has still decided who sounds like whom.
+  await cast.save()
+  const wanted = params.lines !== undefined ? new Set(params.lines) : undefined
+  const stale = (item: typeof plan[number]): boolean => params.force === true || item.line.audio === undefined || item.line.renderKey !== item.renderKey
+  const todo = plan.filter(item => (wanted === undefined || wanted.has(item.line.id)) && stale(item))
+  const updates = new Map<string, Partial<AudioLine>>()
+
+  // Lines rendered before are listened to again: the ones that do not pass are spoken again, the rest only evened out.
+  const again = new Set<string>()
+  if (wanted === undefined && params.force !== true) {
+    task.job?.progress(0, 0, L(lang, '听检已有的配音…', 'checking the lines already voiced…'))
+    for (const item of plan) {
+      if (stale(item) || item.line.audio === undefined) continue
+      // A line that has had its retakes and still stands out is the author's to decide.
+      if (item.line.check !== undefined && (item.line.takes ?? 1) > retakes) continue
+      let audio: PcmAudio
+      try {
+        audio = parseWav(await readFile(project.path(item.line.audio)))
+      } catch {
+        todo.push(item)
+        again.add(item.line.id)
+        continue
+      }
+      await reference.kept(item.choice)
+      const measured = measure(audio)
+      const verdict = judge(measured, item.line.text, cast.print(item.choice))
+      if (verdict.issues.length > 0 && retakes > 0) {
+        todo.push(item)
+        again.add(item.line.id)
+      } else if (verdict.issues.length > 0) {
+        if (item.line.check === undefined) updates.set(item.line.id, { check: verdict.issues })
+      } else if (Math.abs(measured.level - TARGET_LEVEL) > 1.5 && measured.speech >= 0.05) {
+        const even = leveled(audio, measured)
+        if (even !== audio) {
+          await project.writeAsset(item.line.audio.replace(/^assets\//, ''), encodeWav(even))
+          evened += 1
+        }
+      }
+    }
+    todo.sort((left, right) => script.lines.indexOf(left.line) - script.lines.indexOf(right.line))
+    if (again.size > 0) note = L(lang, `有 ${again.size} 句旧配音没通过听检（没念完，或不像原来的声音），正在重念`, `${again.size} earlier lines did not pass the check (cut short, or not in their voice) and are being spoken again`)
+  }
+
+  total = todo.length
+  for (const item of todo) waiting.add(item.line.id)
+  const who = (line: AudioLine): string => line.kind === 'narration' ? L(lang, '旁白', 'narrator') : line.speakerName ?? characters.find(card => card.id === line.speaker)?.name ?? L(lang, '角色', 'a character')
+  report()
+  let lastSave = Date.now()
+  const inOrder = serializer()
+  const flush = (): Promise<void> => inOrder(async () => {
+    if (updates.size === 0) return
+    lastSave = Date.now()
+    script = { ...script, lines: script.lines.map(line => updates.has(line.id) ? stripUnset({ ...line, ...updates.get(line.id) }) : line), updatedAt: new Date().toISOString() }
+    updates.clear()
+    await project.saveAudioScript(script)
+  })
+  await mapLimit(todo, Math.max(1, Math.min(8, settings.concurrency ?? 3)), async ({ line, choice, renderKey }) => {
+    waiting.delete(line.id)
+    const label = `${who(line)}「${clipText(line.text, 16, '…')}」`
+    speaking.set(line.id, label)
+    report()
+    try {
+      const request = await speechRequest(choice, line.text, manifest.language, reference, task.signal)
+      const take = await speakChecked(provider, request, {
+        print: cast.print(choice),
+        retakes,
+        onRetake: (number, issues) => {
+          speaking.set(line.id, L(lang, `${label}（${issues.map(issue => ISSUE_WORDS[issue][0]).join('、')}，重念第 ${number} 次）`, `${label} (${issues.map(issue => ISSUE_WORDS[issue][1]).join(', ')}: take ${number + 1})`))
+          report()
+        },
+      })
+      // A voice without a reference clip is learned from its clean, long lines.
+      if (take.verdict.issues.length === 0 && speechUnits(line.text) >= 12) cast.learn(choice, take.measured)
+      const path = await project.writeAsset(`audio/${script.chapterId}/${line.id}-${renderKey.slice(0, 8)}.wav`, encodeWav(take.audio))
+      updates.set(line.id, {
+        audio: path,
+        duration: Number(durationOf(take.audio).toFixed(2)),
+        renderKey,
+        error: undefined,
+        takes: take.takes > 1 ? take.takes : undefined,
+        check: take.verdict.issues.length > 0 ? take.verdict.issues : undefined,
+      })
+      rendered += 1
+      if (take.takes > 1) retaken += 1
+      if (take.verdict.issues.length > 0) flagged += 1
+    } catch (error) {
+      if (task.signal?.aborted === true) throw error
+      updates.set(line.id, { error: error instanceof Error ? error.message : String(error) })
+      failed += 1
+    } finally {
+      speaking.delete(line.id)
+    }
+    done += 1
+    report()
+    // Persist as we go so a long render can be listened to (and resumed) before it finishes.
+    if (Date.now() - lastSave > 4000) await flush()
+  }, task.signal).finally(async () => {
+    await flush()
+    await cast.save().catch((error: unknown) => { core.log('could not save the voice sheet', error) })
+  })
+  const duration = script.lines.reduce((sum, line) => sum + (line.duration ?? 0), 0)
+  task.job?.result({ chapterId: script.chapterId, active: [], waiting: [], rendered, failed, retaken, flagged })
+  return {
+    chapterId: script.chapterId,
+    lines: script.lines.length,
+    rendered,
+    cached: plan.length - todo.length,
+    failed,
+    duration: Number(duration.toFixed(1)),
+    retaken,
+    flagged,
+    rechecked: again.size,
+    leveled: evened,
+  }
+}
+
+/** Drop the fields an update cleared by setting them to undefined. */
+function stripUnset(line: AudioLine): AudioLine {
+  const out = { ...line } as Record<string, unknown>
+  for (const key of ['error', 'takes', 'check'] as const) if (out[key] === undefined) delete out[key]
+  return out as unknown as AudioLine
+}
+
+/** Join a chapter's rendered lines into one WAV file under `assets/audio/`. */
+export async function exportChapterAudio(runtime: ProjectRuntime, chapterRef: string): Promise<{ path: string; duration: number; missing: number }> {
+  const { project } = runtime
+  const chapter = await project.findChapter(chapterRef)
+  if (chapter === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${chapterRef}"`)
+  const script = await project.audioScript(chapter.plan.id)
+  if (script === undefined) throw new ProjectError('novel/empty', 'this chapter has no audio script yet')
+  const segments: { audio: PcmAudio; gapSeconds: number }[] = []
+  let missing = 0
+  for (const line of script.lines) {
+    if (line.audio === undefined) {
+      missing += 1
+      continue
+    }
+    try {
+      const audio = parseWav(await readFile(project.path(line.audio)))
+      segments.push({ audio, gapSeconds: line.kind === 'narration' ? 0.45 : 0.3 })
+    } catch {
+      missing += 1
+    }
+  }
+  if (segments.length === 0) throw new ProjectError('novel/empty', 'no line of this chapter has been synthesized yet')
+  const mixed = concatAudio(segments)
+  const path = await project.writeAsset(`audio/${chapter.plan.id}.wav`, encodeWav(mixed))
+  return { path, duration: Number(durationOf(mixed).toFixed(1)), missing }
+}
+
+/**
+ * Speak a sample so a voice can be judged by ear: a voice named outright, the
+ * voice a character speaks with in the audio drama (whatever was cast for them
+ * when their card names none), or the narrator's.
+ * @returns the project-relative path of the sample.
+ */
+export async function audition(core: NovelCore, runtime: ProjectRuntime, params: { voice?: string; character?: string; text: string; direction?: string }, task: TaskContext): Promise<{ path: string; duration: number }> {
+  const provider = await requireSpeech(core, runtime)
+  const manifest = await runtime.project.manifest()
+  const lang = promptLanguage(manifest.language)
+  const settings = (await core.settings.get()).tts
+  const cast = await openCast(runtime.project, settings)
+  // No voice named: the narrator's, which is what a line without a speaker is read in.
+  const narrator = settings.narratorVoice ?? (describesVoices(settings.provider) ? AUDIOGEN_NARRATOR : undefined)
+  const card = params.voice === undefined && params.character !== undefined ? await runtime.project.findCharacter(params.character) : undefined
+  // A character is heard exactly as a line of theirs would be: same casting, same baseline delivery.
+  const choice: VoiceChoice = card !== undefined
+    ? voiceFor({ kind: 'dialogue', speaker: card.id, speakerName: card.name, ...(params.direction !== undefined ? { direction: params.direction } : {}) }, await runtime.project.characters(), settings, cast.taken, cast.extras)
+    : { ...((params.voice ?? narrator) !== undefined ? { voice: (params.voice ?? narrator)! } : {}), ...(params.direction !== undefined ? { direction: params.direction } : {}) }
+  const voice = choice.voice
+  task.job?.progress(0, 2, L(lang, '准备声音…', 'getting the voice ready…'))
+  const reference = voiceBank(core, runtime, provider, settings, manifest.language, task.signal, (_voice, phase) => {
+    if (phase === 'start') task.job?.progress(0, 2, L(lang, '这个声音第一次用，先给它定音色（只做一次）…', 'first use of this voice: setting it up (once)…'))
+  }, cast)
+  const text = params.text.slice(0, 300)
+  const request = await speechRequest(choice, text, manifest.language, reference, task.signal)
+  task.job?.progress(1, 2, L(lang, '正在生成试听语音…', 'speaking the sample…'))
+  const take = await speakChecked(provider, request, { print: cast.print(choice), retakes: Math.min(1, retakesOf(settings)) })
+  const key = hashText([voice ?? '', params.direction ?? '', params.text].join('|')).slice(0, 10)
+  const path = await runtime.project.writeAsset(`audio/auditions/${key}.wav`, encodeWav(take.audio))
+  await cast.save().catch(() => {})
+  task.job?.progress(2, 2)
+  return { path, duration: Number(durationOf(take.audio).toFixed(2)) }
+}
+
+/** Create a voice of their own for a character from their persona, and store it on the card. */
+export async function designCharacterVoice(core: NovelCore, runtime: ProjectRuntime, params: { character: string; prompt?: string; previewText?: string }, task: TaskContext): Promise<{ character: string; voice: string; sample?: string }> {
+  const { project } = runtime
+  const provider = await requireSpeech(core, runtime)
+  if (provider.designVoice === undefined) {
+    throw new ProviderError('the configured speech provider cannot design voices — switch to Bailian audio generation or Qwen TTS, or pick a stock voice for the character', undefined, 'UNSUPPORTED')
+  }
+  const card = await project.findCharacter(params.character)
+  if (card === undefined) throw new ProjectError('novel/not-found', `no character matches "${params.character}"`)
+  const manifest = await project.manifest()
+  const zh = promptLanguage(manifest.language) === 'zh'
+  const prompt = params.prompt ?? card.voiceProfile?.designPrompt ?? [
+    card.gender, card.age !== undefined ? (zh ? `${card.age}` : `aged ${card.age}`) : undefined, card.voice, card.personality,
+  ].filter((part): part is string => part !== undefined && part.length > 0).join(zh ? '，' : ', ')
+  if (prompt.trim().length === 0) throw new ProjectError('novel/invalid', `${card.name} has no gender, age, voice or personality to design a voice from`)
+  const memories = await project.memories()
+  const quote = memories.flatMap(entry => entry.memory.characters).find(moment => moment.character === card.id && moment.quote !== undefined)?.quote
+  const previewText = params.previewText ?? quote ?? (zh ? '我说过的话，从来不会收回。你要是不信，尽管试试看。' : 'I never take back what I have said. Try me, if you doubt it.')
+  const designed = await provider.designVoice({
+    prompt,
+    previewText,
+    name: card.id.replace(/[^A-Za-z0-9]/g, '') || `c${hashText(card.id).slice(0, 6)}`,
+    language: manifest.language,
+    ...(task.signal !== undefined ? { signal: task.signal } : {}),
+  })
+  let sample: string | undefined
+  if (designed.preview !== undefined) sample = await project.writeAsset(`audio/voices/${card.id}-${hashText(designed.voice).slice(0, 6)}.wav`, encodeWav(designed.preview))
+  await project.saveCharacter({
+    id: card.id,
+    voiceProfile: { ...card.voiceProfile, provider: provider.kind, voice: designed.voice, designPrompt: prompt, ...(sample !== undefined ? { sample } : {}) },
+  })
+  return { character: card.id, voice: designed.voice, ...(sample !== undefined ? { sample } : {}) }
+}
+
+/** Change one line of a chapter's script by hand; a changed line re-renders on the next synthesis. */
+export async function updateAudioLine(runtime: ProjectRuntime, chapterRef: string, lineId: string, patch: Partial<Pick<AudioLine, 'text' | 'kind' | 'speaker' | 'speakerName' | 'direction'>>): Promise<AudioScript> {
+  const { project } = runtime
+  const located = await project.findChapter(chapterRef)
+  const script = located !== undefined ? await project.audioScript(located.plan.id) : undefined
+  if (script === undefined) throw new ProjectError('novel/not-found', 'this chapter has no audio script')
+  if (!script.lines.some(entry => entry.id === lineId)) throw new ProjectError('novel/not-found', `the script has no line "${lineId}"`)
+  const characters = await project.characters()
+  const next: AudioScript = {
+    ...script,
+    updatedAt: new Date().toISOString(),
+    lines: script.lines.map((entry) => {
+      if (entry.id !== lineId) return entry
+      const merged = { ...entry, ...patch }
+      if (patch.speaker !== undefined) {
+        const card = characters.find(candidate => candidate.id === patch.speaker)
+        if (patch.speaker === '') {
+          delete merged.speaker
+          delete merged.speakerName
+        } else if (card !== undefined) merged.speakerName = card.name
+      }
+      if (merged.direction === '') delete merged.direction
+      return merged
+    }),
+  }
+  await project.saveAudioScript(next)
+  return next
+}

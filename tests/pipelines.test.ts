@@ -1,0 +1,250 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+import { readFile } from 'node:fs/promises'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { packContext } from '../src/core/context'
+import { extractJson } from '../src/core/llm'
+import { fallbackLines } from '../src/core/pipelines/audio'
+import { acceptSuggestion } from '../src/core/pipelines/bible'
+import { digestChapter, digestPending } from '../src/core/pipelines/digest'
+import { exportBook, zipStore } from '../src/core/pipelines/export'
+import { decodeText, importManuscript, splitChapters } from '../src/core/pipelines/import'
+import { deriveChapters } from '../src/core/pipelines/plot'
+import { acceptProposal, reviseSpan } from '../src/core/pipelines/revise'
+import { cleanProse, writeChapter } from '../src/core/pipelines/write'
+import { chunkProse, tokenize } from '../src/core/retrieval'
+import { createTestBed, type TestBed } from './support/harness'
+
+const DIGEST = JSON.stringify({
+  brief: '沈璃雨夜归家，发现断剑。',
+  summary: '沈璃在雨夜回到青冥山下的旧居，在梁上找到师父留下的断剑，决定下山寻找真相。',
+  storyTime: '第一夜',
+  locations: ['旧居'],
+  characters: [
+    { name: '沈璃', role: '回到旧居并找到断剑', stateAfter: '决意下山', location: '旧居', emotion: '悲愤', learned: ['师父留下了断剑'], quote: '剑在，人在。', lifecycle: 'enter' },
+    { name: '顾七', role: '在门外窥视', stateAfter: '悄然离去', lifecycle: 'enter' },
+  ],
+  facts: [{ subject: '断剑', statement: '断剑藏在旧居梁上，剑身刻有"青冥"二字', kind: 'item' }],
+  newEntities: [{ name: '顾七', kind: 'character', description: '在门外窥视的黑衣人' }, { name: '青冥剑阁', kind: 'location', description: '山巅的废弃剑阁' }],
+  threads: [{ title: '断剑的来历', action: 'plant', note: '梁上发现断剑' }],
+  openQuestions: ['师父去了哪里？'],
+})
+
+describe('pipelines', () => {
+  let bed: TestBed
+  beforeEach(async () => { bed = await createTestBed() })
+  afterEach(async () => { await bed.cleanup() })
+
+  it('drafts a chapter with the writer model and saves it', async () => {
+    const { project } = bed.runtime
+    await project.saveCharacter({ name: '沈璃', role: 'protagonist', personality: '倔强寡言' })
+    await project.saveWorld({ name: '青冥山', category: 'location', importance: 1, summary: '北境雪山' })
+    const plan = await project.addChapter({ title: '雨夜', synopsis: '沈璃回到旧居，发现断剑。', characters: ['沈璃'] })
+    bed.llm.responder = () => '# 第一章 雨夜\n\n夜雨敲窗。沈璃推开旧居的门。\n\n梁上有一道暗影。'
+    const result = await writeChapter(bed.core, bed.runtime, { chapter: 'next', brief: '重点写她的克制' }, { origin: 'user' })
+    expect(result.chapterId).toBe(plan.id)
+    expect(result.cast).toEqual(['沈璃'])
+    expect(await project.chapterText(plan.id)).toBe('夜雨敲窗。沈璃推开旧居的门。\n\n梁上有一道暗影。')
+    const request = bed.llm.requests[0]!
+    expect(request.system).toContain('只输出小说正文')
+    expect(request.prompt).toContain('【沈璃】')
+    expect(request.prompt).toContain('〔青冥山〕')
+    expect(request.prompt).toContain('重点写她的克制')
+    // Stable material precedes volatile material.
+    expect(request.prompt.indexOf('世界观核心设定')).toBeLessThan(request.prompt.indexOf('本章章纲'))
+  })
+
+  it('finishes a chapter the model cut off at its output limit', async () => {
+    const { project } = bed.runtime
+    const plan = await project.addChapter({ title: '长章', synopsis: '很长的一章。', targetWords: 400 })
+    let calls = 0
+    bed.llm.responder = () => (++calls === 1 ? { text: '上半章。'.repeat(20), finish: 'max-tokens' } : { text: '下半章，到此结束。', finish: 'stop' })
+    const result = await writeChapter(bed.core, bed.runtime, { chapter: plan.id }, { origin: 'user' })
+    expect(result.continued).toBe(true)
+    const text = await project.chapterText(plan.id)
+    expect(text.startsWith('上半章。')).toBe(true)
+    expect(text.endsWith('下半章，到此结束。')).toBe(true)
+    expect(bed.llm.requests[1]!.prompt).toContain('本章已有正文')
+  })
+
+  it('digests a chapter into memory, lifecycle and suggestions', async () => {
+    const { project } = bed.runtime
+    await project.saveCharacter({ name: '沈璃', role: 'protagonist' })
+    const plan = await project.addChapter({ title: '雨夜' })
+    await project.saveChapterText(plan.id, '夜雨敲窗。沈璃推开旧居的门，在梁上找到了断剑。')
+    bed.llm.responder = () => `好的，以下是场记：\n\`\`\`json\n${DIGEST}\n\`\`\``
+    const memory = await digestChapter(bed.core, bed.runtime, plan.id, { origin: 'user' })
+    expect(memory?.characters[0]).toMatchObject({ character: '沈璃', quote: '剑在，人在。' })
+    const card = await project.findCharacter('沈璃')
+    expect(card).toMatchObject({ status: 'active', firstAppearance: plan.id, lastAppearance: plan.id })
+    const outline = await project.outline()
+    expect(outline.threads[0]).toMatchObject({ title: '断剑的来历', auto: true, planted: [plan.id] })
+    const suggestions = await project.suggestions()
+    expect(suggestions.map(item => item.kind).sort()).toEqual(['new-character', 'new-world'])
+    await acceptSuggestion(bed.runtime, suggestions.find(item => item.kind === 'new-character')!.id)
+    expect((await project.findCharacter('顾七'))?.status).toBe('active')
+    expect((await project.chapterInfos())[0]!.digested).toBe(true)
+    // Unchanged text is not digested twice.
+    const calls = bed.llm.requests.length
+    await digestPending(bed.core, bed.runtime, { origin: 'user' })
+    expect(bed.llm.requests.length).toBe(calls)
+    const presence = await project.presence()
+    expect(presence.find(entry => entry.character === '沈璃')).toMatchObject({ chapters: [plan.id], absentFor: 0 })
+  })
+
+  it('revises a quoted span as a proposal and applies it on accept', async () => {
+    const { project } = bed.runtime
+    const plan = await project.addChapter({ title: '雨夜' })
+    await project.saveChapterText(plan.id, '她推开门。屋里很黑。\n\n“有人吗？”她问。')
+    bed.llm.responder = () => '屋里黑得像一口井。'
+    const result = await reviseSpan(bed.core, bed.runtime, { chapter: plan.id, quote: '屋里很黑。', instruction: '更有画面感' }, { origin: 'user' })
+    expect(result.applied).toBe(false)
+    expect(await project.chapterText(plan.id)).toContain('屋里很黑。')
+    expect((await project.state()).stats.pendingProposals).toBe(1)
+    await acceptProposal(bed.core, bed.runtime, result.proposalId!, { origin: 'user' })
+    expect(await project.chapterText(plan.id)).toBe('她推开门。屋里黑得像一口井。\n\n“有人吗？”她问。')
+    expect(await project.versions(plan.id)).toHaveLength(1)
+    // The agent applies directly unless review is switched on.
+    bed.llm.responder = () => '“谁在那里？”她低声问。'
+    const direct = await reviseSpan(bed.core, bed.runtime, { chapter: plan.id, quote: '"有人吗？"她问。', instruction: '更警觉' }, { origin: 'agent' })
+    expect(direct.applied).toBe(true)
+    expect(await project.chapterText(plan.id)).toContain('“谁在那里？”她低声问。')
+  })
+
+  it('derives chapters into the outline and links cast and threads', async () => {
+    const { project } = bed.runtime
+    await project.saveCharacter({ name: '沈璃', role: 'protagonist' })
+    bed.llm.responder = () => JSON.stringify({
+      chapters: [
+        { title: '下山', synopsis: '沈璃带着断剑下山。', pov: '沈璃', characters: ['沈璃', '陌生人'], beats: [{ summary: '告别旧居' }, '在山门遇阻'], threads: [{ title: '断剑的来历', action: 'plant' }] },
+        { title: '渡口', synopsis: '渡口遇见顾七。', characters: ['沈璃'] },
+      ],
+      rationale: '先离开，再相遇。',
+    })
+    const result = await deriveChapters(bed.core, bed.runtime, { count: 2 }, { origin: 'agent' })
+    expect(result.added.map(item => item.title)).toEqual(['下山', '渡口'])
+    const outline = await project.outline()
+    const first = outline.volumes[0]!.chapters[0]!
+    expect(first).toMatchObject({ pov: '沈璃', status: 'outlined', characters: ['沈璃', '陌生人'] })
+    expect(first.beats).toHaveLength(2)
+    expect(first.threads).toEqual([outline.threads[0]!.id])
+  })
+
+  it('packs layered memory in retrieval mode and whole chapters in full mode', async () => {
+    const { project, index } = bed.runtime
+    await project.saveCharacter({ name: '沈璃', role: 'protagonist', personality: '倔强' })
+    const one = await project.addChapter({ title: '雨夜' })
+    const two = await project.addChapter({ title: '下山', synopsis: '沈璃带着断剑下山。', characters: ['沈璃'] })
+    await project.saveChapterText(one.id, '夜雨敲窗。沈璃在梁上找到了断剑，剑身刻着青冥二字。\n\n她把断剑裹进旧布。')
+    await project.saveMemory({ schema: 1, chapterId: one.id, textHash: 'x', updatedAt: '', brief: '发现断剑', summary: '沈璃在旧居梁上发现断剑。', facts: [], characters: [{ character: '沈璃', name: '沈璃', stateAfter: '决意下山' }], newEntities: [], threads: [] })
+    const chapter = (await project.findChapter(two.id))!
+    const retrieval = await packContext(project, index, { purpose: 'draft', chapter, budgetTokens: 6000, strategy: 'retrieval', tailChars: 200, brief: '断剑' })
+    expect(retrieval.strategy).toBe('retrieval')
+    expect(retrieval.text).toContain('前情提要')
+    expect(retrieval.text).toContain('沈璃在旧居梁上发现断剑。')
+    expect(retrieval.text).toContain('决意下山')
+    expect(retrieval.text).toContain('上一章《雨夜》结尾原文')
+    expect(retrieval.cast.map(card => card.name)).toEqual(['沈璃'])
+    const full = await packContext(project, index, { purpose: 'draft', chapter, budgetTokens: 6000, strategy: 'full', tailChars: 200 })
+    expect(full.strategy).toBe('full')
+    expect(full.included.fullChapters).toBe(1)
+    expect(full.text).toContain('前文全文')
+    expect(full.text).not.toContain('前情提要')
+    // A budget the manuscript cannot fit degrades to layered memory instead of truncating blindly.
+    const tight = await packContext(project, index, { purpose: 'draft', chapter, budgetTokens: 700, strategy: 'full', tailChars: 100 })
+    expect(tight.strategy).toBe('retrieval')
+  })
+
+  it('imports a manuscript: chapters, volumes, digests and a cast', async () => {
+    const { project } = bed.runtime
+    const text = '第一卷 风起\n\n第一章 雨夜\n\n夜雨敲窗。沈璃回到旧居。\n\n第二章 断剑\n\n梁上有一把断剑。她踩着供桌攀上去，指尖先碰到的是灰，然后才是铁。剑只有半截，断口参差，像被什么东西生生咬断。她把它抱下来，就着窗外的一点天光看——剑身靠近护手的地方，刻着两个已经磨得发亮的小字：青冥。\n\n第二卷 云涌\n\n第三章 下山\n\n她下山去了。'
+    bed.llm.responder = (request) => {
+      if (request.prompt.includes('请做场记')) return DIGEST
+      if (request.prompt.includes('人物出场记录')) return JSON.stringify({ characters: [{ name: '沈璃', aliases: ['阿璃'], role: 'protagonist', personality: '倔强', status: 'active' }] })
+      if (request.prompt.includes('地点、组织、物品')) return JSON.stringify({ entries: [{ name: '青冥剑阁', category: 'location', importance: 2, summary: '废弃剑阁' }] })
+      if (request.prompt.includes('一句话摘要')) return JSON.stringify({ logline: '少女携断剑下山。', premise: '……', genre: '武侠', volumes: [{ title: '全书', from: 1, to: 3 }] })
+      if (request.prompt.includes('文体学者')) return JSON.stringify({ name: 'x', pov: 'third-limited', tone: '冷峻', rules: ['短句'], avoid: ['抒情'] })
+      return 'ok'
+    }
+    const result = await importManuscript(bed.core, bed.runtime, { text }, { origin: 'user' })
+    expect(result).toMatchObject({ chapters: 3, volumes: 2, characters: 1, worldEntries: 1, digested: 3 })
+    expect(result.failed).toEqual([])
+    const outline = await project.outline()
+    expect(outline.volumes.map(volume => volume.title)).toEqual(['第一卷 风起', '第二卷 云涌'])
+    expect(outline.volumes[0]!.chapters.map(chapter => chapter.title)).toEqual(['第一章 雨夜', '第二章 断剑'])
+    expect(outline.volumes[0]!.chapters[0]!.synopsis).toContain('断剑')
+    const card = await project.findCharacter('阿璃')
+    expect(card).toMatchObject({ name: '沈璃', firstAppearance: 'ch001', lastAppearance: 'ch003' })
+    expect((await project.manifest()).logline).toBe('少女携断剑下山。')
+    expect((await project.activeStyle())?.name).toBe('原作文风')
+  })
+
+  it('exports Markdown and a structurally valid EPUB', async () => {
+    const { project } = bed.runtime
+    const plan = await project.addChapter({ title: '雨夜' })
+    await project.saveChapterText(plan.id, '夜雨敲窗。\n\n她在灯下磨剑。')
+    const markdown = await exportBook(bed.runtime, { format: 'markdown' })
+    expect(await readFile(project.path(markdown.path), 'utf8')).toContain('### 第1章 雨夜')
+    const epub = await exportBook(bed.runtime, { format: 'epub' })
+    const bytes = await readFile(project.path(epub.path))
+    expect(bytes.subarray(0, 4).toString('latin1')).toBe('PK\u0003\u0004')
+    // The first entry is the uncompressed mimetype, as the EPUB container format requires.
+    expect(bytes.subarray(30, 38).toString('latin1')).toBe('mimetype')
+    expect(bytes.subarray(38, 58).toString('latin1')).toBe('application/epub+zip')
+  })
+})
+
+describe('pure helpers', () => {
+  it('recovers JSON from fenced, wrapped and truncated replies', () => {
+    expect(extractJson('```json\n{"a": 1}\n```')).toEqual({ a: 1 })
+    expect(extractJson('Sure! {"a": [1, 2,], "b": "x"} hope it helps')).toEqual({ a: [1, 2], b: 'x' })
+    // A truncated reply keeps every complete member, including those of the object that was cut.
+    expect(extractJson('{"items": [{"n": 1}, {"n": 2}, {"n": 3, "t": "cut of')).toEqual({ items: [{ n: 1 }, { n: 2 }, { n: 3 }] })
+    expect(() => extractJson('no json here')).toThrow()
+  })
+
+  it('strips headings and fences models add around prose', () => {
+    expect(cleanProse('第三章 夜雨\n\n正文第一段。', '夜雨')).toBe('正文第一段。')
+    expect(cleanProse('```\n正文。\n```')).toBe('正文。')
+    expect(cleanProse('她说：“第三章才是开始。”')).toBe('她说：“第三章才是开始。”')
+  })
+
+  it('splits by chapter headings, markdown headings, or size', () => {
+    const cn = splitChapters('楔子\n\n很久以前。\n\n第一章 开端\n\n故事开始了。\n\n第二章\n\n故事继续。')
+    expect(cn.map(chapter => chapter.title)).toEqual(['楔子', '第一章 开端', '第二章'])
+    const en = splitChapters('Chapter 1: Dawn\n\nIt began.\n\nChapter 2\n\nIt went on.')
+    expect(en.map(chapter => chapter.title)).toEqual(['Chapter 1: Dawn', 'Chapter 2'])
+    const md = splitChapters('# Dawn\n\nIt began.\n\n# Dusk\n\nIt ended.')
+    expect(md.map(chapter => chapter.title)).toEqual(['Dawn', 'Dusk'])
+    const plain = splitChapters(Array.from({ length: 40 }, (_, i) => `这是第${i}段，没有任何章节标题，只是一段很普通的文字而已。`.repeat(8)).join('\n\n'))
+    expect(plain.length).toBeGreaterThan(1)
+    expect(plain[0]!.title).toBe('第1节')
+  })
+
+  it('decodes GB18030 and UTF-16 text files', () => {
+    expect(decodeText(Buffer.from('夜雨', 'utf8'))).toBe('夜雨')
+    expect(decodeText(Uint8Array.from([0xd2, 0xb9, 0xd3, 0xea]))).toBe('夜雨')
+    expect(decodeText(Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('夜雨', 'utf16le')]))).toBe('夜雨')
+  })
+
+  it('tokenizes CJK as bigrams and chunks on paragraphs', () => {
+    expect(tokenize('断剑 Sword')).toEqual(['断', '断剑', 'sword'])
+    const chunks = chunkProse(Array.from({ length: 30 }, (_, i) => `第${i}段。`.repeat(20)).join('\n'))
+    expect(chunks.length).toBeGreaterThan(2)
+    expect(chunks[0]!.offset).toBe(0)
+  })
+
+  it('cuts dialogue from narration when the director pass is unusable', () => {
+    const lines = fallbackLines('她抬起头。“你来晚了。”他没有回答，只是把剑放在桌上。\n“坐。”')
+    expect(lines).toEqual([
+      { kind: 'narration', text: '她抬起头。' },
+      { kind: 'dialogue', text: '你来晚了。' },
+      { kind: 'narration', text: '他没有回答，只是把剑放在桌上。' },
+      { kind: 'dialogue', text: '坐。' },
+    ])
+  })
+
+  it('writes stored zip entries with correct sizes', () => {
+    const zip = zipStore([{ name: 'a.txt', data: Buffer.from('hello') }])
+    expect(zip.length).toBe(30 + 5 + 5 + 46 + 5 + 22)
+  })
+})

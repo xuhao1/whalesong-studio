@@ -1,0 +1,109 @@
+# dsh-novel-writer bundle patch.
+#
+# Applied after the Harness base and Web layers. It inserts two rows:
+#
+#   novel-writer      the Host half: project store, model routing, pipelines,
+#                     jobs, and the routes Novel Studio talks to. Because this
+#                     package declares `dsh.client`, the same row also puts the
+#                     Studio (lib/client.js) on the browser roster.
+#
+#   preset-novelist   an agent preset. Sessions that select it get the
+#                     showrunner persona and the novel_* tools; other sessions
+#                     are untouched.
+#
+# A profile's own cordis.patch.yml can override either row by id. A patch
+# replaces a row's whole `config`, so restate every key you keep.
+
+- insert:
+    - id: novel-writer
+      name: dsh-novel-writer
+      config:
+        # Deployment defaults for the Studio's settings (models, context,
+        # image / tts / embedding endpoints). What a user saves in the Studio
+        # overlays them. See docs/configuration.md.
+        settings: {}
+
+    - id: preset-novelist
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: novelist
+        name: 小说家 Novelist
+        description: 长篇小说工坊的总编：统筹设定、大纲、写作、修订与演出，正文交给写手模型。Showrunner for long-form fiction.
+        order: 5
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: >-
+                You are the showrunner of a fiction studio — an editor-in-chief
+                who helps one author plan, write and stage a long novel. You are
+                powered by the {{model}} model.
+              suffix: Your working directory is {{cwd}}.
+
+          # Tools, showrunner instructions, project digest, /novel command.
+          - id: novel-agent
+            name: dsh-novel-writer/agent
+
+          # Project and user instructions (AGENTS.md) still apply to a writing session.
+          - id: agent-instructions
+            name: '@deepseek-ai/dsh-agent-instructions'
+            config:
+              maxBytes: 65536
+
+          # Reading reference material in the workspace; the manuscript itself is
+          # changed through the novel_* tools.
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+            config:
+              sampleOverCapGlobResults: false
+
+          # Research.
+          - id: tool-web
+            name: '@deepseek-ai/dsh-tool-web'
+            config:
+              fetch: true
+              searchTimeoutMs: 60000
+
+          # Asking the author, tracking work, long-running objectives.
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+            config:
+              allowParallelInProgress: false
+          - id: command-goal
+            name: '@deepseek-ai/dsh-command-goal'
+          - id: tool-goal
+            name: '@deepseek-ai/dsh-tool-goal'
+          - id: present
+            name: '@deepseek-ai/dsh-tool-present'
+
+          # Workflow guides shipped with this package, next to the author's own skills.
+          - id: skill-filesystem
+            name: '@deepseek-ai/dsh-skill-filesystem'
+            config:
+              customSkillDirs:
+                - !!js process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:path').dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('dsh-novel-writer/package.json')), 'skills')
+          - id: tool-skill
+            name: '@deepseek-ai/dsh-tool-skill'
+
+          # Long sessions: compact history, prune oversized tool results.
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+              - id: tool-result-pruner
+                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+                config:
+                  thresholdChars: 12000
+                  headChars: 6000
+                  tailChars: 2000

@@ -1,0 +1,208 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+/** Tools that produce and change prose: write, revise, digest, review, import. */
+import { readFile } from 'node:fs/promises'
+import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
+import { digestPending } from '../../core/pipelines/digest'
+import { importManuscript, readBookFile } from '../../core/pipelines/import'
+import { reviewChapter } from '../../core/pipelines/review'
+import { acceptProposal, rejectProposal, reviseBook, reviseChapter, reviseSpan } from '../../core/pipelines/revise'
+import { writeChapter } from '../../core/pipelines/write'
+import { ProjectError } from '../../core/project'
+import { containedPath } from '../../core/util/fs'
+import type { NovelService } from '../../host/service'
+import { clip } from '../../shared/text'
+import { brief, listOf, listParameter, novelTool, toJson } from './shared'
+
+export function manuscriptTools(service: NovelService): ToolDefinition[] {
+  return [
+    novelTool(service, {
+      name: 'novel_write',
+      description: [
+        'Have the writer model draft prose for one chapter and save it. You do not write the prose yourself: you decide what the chapter must do and say so in `brief`; the writer receives the bible, the relevant characters with their current state, the story so far, retrieved earlier passages, the open threads, this chapter\'s outline and the active style.',
+        '- `chapter`: id, number or title; omit (or "next") for the first outlined chapter without text.',
+        '- `mode`: draft (default) writes the chapter from the top, replacing existing text after a snapshot; continue appends to what is there.',
+        '- `brief`: what this pass must achieve that the outline does not already say — emphasis, tone, what to hold back, how to end. Keep it short; do not restate the outline.',
+        'The result gives length, the opening and closing lines and the cast used; read the chapter (novel_read) only when you need to check something specific. Make sure the chapter has beats first (novel_derive kind=beats).',
+      ].join('\n'),
+      mutating: true,
+      parameters: {
+        chapter: { type: 'string', description: 'Chapter id, number or title. Default: next unwritten chapter.' },
+        brief: { type: 'string', description: 'Direction for this pass.' },
+        mode: { type: 'string', enum: ['draft', 'continue'] },
+        words: { type: 'integer', description: 'Target length of this pass. Default: the chapter\'s or the project\'s chapter length.' },
+        style: { type: 'string', description: 'Style profile to use instead of the active one.' },
+        characters: listParameter('Characters to keep in view besides those the outline names.'),
+      },
+      async run(args, env) {
+        const runtime = await env.project()
+        const result = await env.job('write', 'write', args.chapter, async task => await writeChapter(env.core, runtime, {
+          ...(args.chapter !== undefined ? { chapter: args.chapter } : {}),
+          ...(args.brief !== undefined ? { brief: args.brief } : {}),
+          ...(args.mode !== undefined ? { mode: args.mode } : {}),
+          ...(args.words !== undefined ? { words: args.words } : {}),
+          ...(args.style !== undefined ? { style: args.style } : {}),
+          ...(listOf(args.characters) !== undefined ? { characters: listOf(args.characters)! } : {}),
+        }, task))
+        const lines = [
+          `${result.mode === 'continue' ? 'Continued' : 'Drafted'} chapter ${result.index} "${result.title}" (${result.chapterId}): ${result.wordsWritten} words written, ${result.wordsTotal} in the chapter now.`,
+          `Writer: ${result.model}; context: ${result.strategy}, ~${result.contextTokens} tokens; cast in view: ${result.cast.join(', ') || 'none'}.${result.continued ? ' The model hit its output limit and the chapter was completed by continuation.' : ''}`,
+          result.digested ? 'Memory digested: summary, facts and character states are up to date.' : 'Not digested yet — run novel_digest before writing later chapters.',
+          `Opens: ${result.preview.head}${result.preview.tail.length > 0 ? `\n…\nCloses: ${result.preview.tail}` : ''}`,
+        ]
+        const { preview: _preview, ...data } = result
+        return { text: lines.join('\n'), data: toJson(data) }
+      },
+    }),
+
+    novelTool(service, {
+      name: 'novel_revise',
+      description: [
+        'Have the writer model revise existing prose.',
+        '- scope=passage: rewrite one passage in place. Quote it exactly in `quote` (copy it from novel_read) and say what to change in `instruction`.',
+        '- scope=chapter: rewrite one whole chapter to `instruction`.',
+        '- scope=book: apply one instruction across the book ("rename the city to …", "make her colder until chapter 8"). Triage decides which chapters it touches (or pass `chapters`); each becomes a proposal for the author to review unless apply=true.',
+        '- scope=accept / scope=reject: settle a pending proposal by `proposal` id.',
+        'Every applied change snapshots the previous text first. Passage and chapter revisions apply directly unless the author turned on review of agent revisions; pass apply=false to always leave a proposal.',
+      ].join('\n'),
+      mutating: args => args.scope !== 'reject',
+      parameters: {
+        scope: { type: 'string', required: true, enum: ['passage', 'chapter', 'book', 'accept', 'reject'] },
+        chapter: { type: 'string', description: 'passage/chapter: which chapter.' },
+        quote: { type: 'string', description: 'passage: the exact text to rewrite.' },
+        instruction: { type: 'string', description: 'What to change and why.' },
+        chapters: listParameter('book: restrict to these chapters.'),
+        proposal: { type: 'string', description: 'accept/reject: the proposal id.' },
+        apply: { type: 'boolean', description: 'Apply immediately (true) or leave a proposal (false).' },
+      },
+      async run(args, env) {
+        const runtime = await env.project()
+        if (args.scope === 'accept' || args.scope === 'reject') {
+          if (args.proposal === undefined) throw new ProjectError('novel/invalid', 'pass the proposal id in `proposal`')
+          if (args.scope === 'accept') {
+            const proposal = await acceptProposal(env.core, runtime, args.proposal, env.task)
+            return { text: `Applied proposal ${proposal.id} to ${proposal.chapterId}.` }
+          }
+          const rejected = await rejectProposal(runtime, args.proposal)
+          return { text: rejected !== undefined ? `Rejected proposal ${args.proposal}.` : `No proposal "${args.proposal}".` }
+        }
+        if (args.instruction === undefined || args.instruction.trim().length === 0) throw new ProjectError('novel/invalid', '`instruction` is required')
+        const instruction = args.instruction
+        if (args.scope === 'book') {
+          const result = await env.job('revise', 'revise book', undefined, async task => await reviseBook(env.core, runtime, {
+            instruction,
+            ...((listOf(args.chapters)?.length ?? 0) > 0 ? { chapters: listOf(args.chapters)! } : {}),
+            ...(args.apply !== undefined ? { apply: args.apply } : {}),
+          }, task))
+          const lines = result.results.map(item => `- chapter ${item.index} "${item.title}": ${item.wordsBefore} → ${item.wordsAfter} words${item.applied ? ', applied' : `, proposal ${item.proposalId ?? ''}`} — ${brief(item.reason, 120)}`)
+          return {
+            text: `${result.results.length} chapters rewritten, ${result.untouched} judged untouched${result.failed.length > 0 ? `, ${result.failed.length} failed` : ''}.${result.note !== undefined ? `\n${result.note}` : ''}\n${lines.join('\n')}${result.failed.map(item => `\n✗ ${item.chapterId}: ${item.error}`).join('')}${result.results.some(item => !item.applied) ? '\nThe proposals wait for the author in Novel Studio → Review (or settle them with scope=accept/reject).' : ''}`,
+            data: toJson(result),
+          }
+        }
+        if (args.chapter === undefined) throw new ProjectError('novel/invalid', `scope=${args.scope} needs \`chapter\``)
+        const chapter = args.chapter
+        if (args.scope === 'passage') {
+          if (args.quote === undefined || args.quote.trim().length === 0) throw new ProjectError('novel/invalid', 'scope=passage needs the exact passage in `quote`')
+          const quote = args.quote
+          const result = await env.job('revise', 'revise passage', chapter, async task => await reviseSpan(env.core, runtime, { chapter, quote, instruction, ...(args.apply !== undefined ? { apply: args.apply } : {}) }, task))
+          return {
+            text: `${result.applied ? 'Revised' : `Proposed (${result.proposalId})`} a passage in chapter ${result.index} "${result.title}": ${result.wordsBefore} → ${result.wordsAfter} words.\n\nNow reads:\n${clip(result.after, 1200)}`,
+            data: toJson({ ...result, before: undefined }),
+          }
+        }
+        const result = await env.job('revise', 'revise chapter', chapter, async task => await reviseChapter(env.core, runtime, { chapter, instruction, ...(args.apply !== undefined ? { apply: args.apply } : {}) }, task))
+        return {
+          text: `${result.applied ? 'Rewrote' : `Proposed (${result.proposalId}) a rewrite of`} chapter ${result.index} "${result.title}": ${result.wordsBefore} → ${result.wordsAfter} words.\nOpens: ${result.after.slice(0, 200)}`,
+          data: toJson({ ...result, before: undefined, after: undefined }),
+        }
+      },
+    }),
+
+    novelTool(service, {
+      name: 'novel_digest',
+      description: 'Bring the project\'s memory up to date: for every chapter whose text changed since it was last digested, extract the summary, hard facts, each character\'s state at chapter end, new names worth a bible entry and thread movements. Keeps the cast lifecycle (first/last appearance) and the story-so-far current. Runs automatically after novel_write when auto-digest is on; call it after manual edits or imports, or with force=true to redo chapters.',
+      parameters: {
+        chapters: listParameter('Only these chapters. Default: all stale ones.'),
+        force: { type: 'boolean', description: 'Redo even when the text has not changed.' },
+      },
+      async run(args, env) {
+        const runtime = await env.project()
+        const chapters = listOf(args.chapters) ?? []
+        const result = await env.job('digest', 'digest', chapters[0], async task => await digestPending(env.core, runtime, task, {
+          ...(chapters.length > 0 ? { chapters } : {}),
+          ...(args.force !== undefined ? { force: args.force } : {}),
+        }))
+        const state = await runtime.project.state()
+        return {
+          text: `Digested ${result.digested.length} chapters${result.digested.length > 0 ? ` (${result.digested.join(', ')})` : ''}${result.failed.length > 0 ? `; ${result.failed.length} failed: ${result.failed.map(item => `${item.chapter} — ${item.error}`).join('; ')}` : ''}. ${state.stats.pendingSuggestions} bible suggestions are waiting${state.stats.pendingSuggestions > 0 ? ' (see novel_status)' : ''}.`,
+          data: toJson(result),
+        }
+      },
+    }),
+
+    novelTool(service, {
+      name: 'novel_review',
+      description: 'Have the analyst model read one chapter as a senior editor: continuity against earlier facts and the timeline, character consistency (personality, motive, voice, what they know), world rules, logic, style and pacing. Returns a verdict and a list of issues anchored to exact quotes, each with a suggested fix — which you can turn into novel_revise scope=passage calls.',
+      parameters: {
+        chapter: { type: 'string', required: true },
+        focus: { type: 'string', description: 'What to look at in particular.' },
+      },
+      async run(args, env) {
+        const runtime = await env.project()
+        const chapter = args.chapter
+        const review = await env.job('review', 'review', chapter, async task => await reviewChapter(env.core, runtime, { chapter, ...(args.focus !== undefined ? { focus: args.focus } : {}) }, task))
+        if (review.issues.length === 0) return { text: `Chapter ${review.index} "${review.title}": ${review.verdict}\nNo issues found.`, data: toJson(review) }
+        return {
+          text: `Chapter ${review.index} "${review.title}": ${review.verdict}\n\n${review.issues.map((issue, index) => `${index + 1}. [${issue.severity}/${issue.type}] ${issue.quote !== undefined ? `"${clip(issue.quote, 80)}" — ` : ''}${issue.explanation}${issue.suggestion !== undefined ? `\n   Fix: ${issue.suggestion}` : ''}`).join('\n')}`,
+          data: toJson(review),
+        }
+      },
+    }),
+
+    novelTool(service, {
+      name: 'novel_import',
+      description: 'Import an existing book into the project in one pass, so it can be continued, revised or staged: split it into volumes and chapters by its headings (or by size), digest every chapter, merge the cast into character cards, collect the world entries, write chapter synopses, a logline and a premise, and learn the style from the text. Give `path` (a .txt, .md, .epub or .docx file inside the workspace; UTF-8, UTF-16 and GB18030 are detected) or the text itself. Large books take several minutes.',
+      mutating: true,
+      parameters: {
+        path: { type: 'string', description: 'File inside the session workspace.' },
+        text: { type: 'string', description: 'The manuscript text, when it is not in a file.' },
+        analyze: { type: 'boolean', description: 'false only splits into chapters and skips the analysis passes (default true).' },
+      },
+      async run(args, env) {
+        const runtime = await env.project()
+        let text = args.text ?? ''
+        if (args.path !== undefined && args.path.trim().length > 0) {
+          let file: string
+          try {
+            file = containedPath(env.workspace, args.path)
+          } catch {
+            throw new ProjectError('novel/invalid', 'the file must be inside the session workspace — copy it there first')
+          }
+          try {
+            const book = readBookFile(file, await readFile(file))
+            text = book.text
+            // A book that names itself is a better title than whatever the project was created with.
+            if (book.title !== undefined || book.author !== undefined) {
+              const manifest = await runtime.project.manifest()
+              const stats = (await runtime.project.state()).stats
+              if (stats.chapters === 0) {
+                await runtime.project.updateManifest({
+                  ...(book.title !== undefined ? { title: book.title } : {}),
+                  ...(book.author !== undefined && manifest.author === undefined ? { author: book.author } : {}),
+                })
+              }
+            }
+          } catch (error) {
+            throw new ProjectError('novel/not-found', `could not read ${args.path}: ${error instanceof Error ? error.message : String(error)}`)
+          }
+        }
+        if (text.trim().length === 0) throw new ProjectError('novel/invalid', 'give `path` or `text`')
+        const result = await env.job('import', 'import', undefined, async task => await importManuscript(env.core, runtime, { text, ...(args.analyze !== undefined ? { analyze: args.analyze } : {}) }, task))
+        return {
+          text: `Imported ${result.chapters} chapters (${result.words} words) in ${result.volumes} volume(s): ${result.digested} digested, ${result.characters} character cards, ${result.worldEntries} world entries${result.style !== undefined ? `, style "${result.style}" learned` : ''}.${result.failed.length > 0 ? `\nSteps that failed and can be redone: ${result.failed.map(item => `${item.step} (${item.error})`).join('; ')}` : ''}\nReview the cast and outline with the author (novel_status detail=full).`,
+          data: toJson(result),
+        }
+      },
+    }),
+  ]
+}
