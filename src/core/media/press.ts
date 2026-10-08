@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 /**
- * Sound made smaller for the way out of the book.
+ * Sound and pictures made smaller for the way out of the book.
  *
  * In the book a voice is kept as it was made — uncompressed, so that it can
  * be cut, joined and mixed again without loss. Sent to a reader over the
@@ -13,6 +13,15 @@
  * being told from the original: the measure here is "sounds the same", not
  * "as small as it goes".
  *
+ * A picture is kept as the image model made it, a PNG that loses nothing —
+ * two to three megabytes for one painted scene, most of it the grain of the
+ * paint. The picture press turns it into a JPEG at the encoder's finest
+ * setting with colour at full resolution: a fifth to a tenth of the bytes,
+ * and — measured on the pictures of two books — 40 dB and more of the
+ * original, where an eye stops telling them apart. The same measure: "looks
+ * the same". A picture that is see-through anywhere stays as it is: a JPEG
+ * has no way to say so.
+ *
  * The work is ffmpeg's, on whichever system it is installed; there is no
  * press where it is not, and whoever asks is told so.
  */
@@ -21,6 +30,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { findProgram } from '../util/program'
+import { pngAlpha } from './png'
 import { wavFormat } from './wav'
 
 export interface SoundPress {
@@ -75,17 +85,63 @@ export async function findSoundPress(): Promise<SoundPress | undefined> {
   }
 }
 
-/** Run ffmpeg over bytes handed to it; an answer other than "done" is an error, with what it said. */
-function encode(program: string, args: string[], input: Uint8Array, options: { timeoutMs: number; signal?: AbortSignal }): Promise<void> {
+export interface PicturePress {
+  /** What a pressed file is: the end of its name. */
+  ext: string
+  /** The encoding, by name: a file pressed under another name is pressed again. */
+  key: string
+  /**
+   * One PNG picture as a smaller one that looks the same — or nothing, for a
+   * picture that cannot be one: see-through somewhere, which the smaller
+   * format has no way to say. That one goes as it is.
+   * @throws when the bytes are no picture the press can read, or the work does not finish.
+   */
+  press(png: Uint8Array, signal?: AbortSignal): Promise<Uint8Array | undefined>
+}
+
+/** The picture press of this computer: ffmpeg's JPEG encoder; nothing when ffmpeg is not installed. */
+export async function findPicturePress(): Promise<PicturePress | undefined> {
+  const ffmpeg = await findProgram('ffmpeg')
+  if (ffmpeg === undefined) return undefined
+  return {
+    ext: 'jpg',
+    key: 'jpeg/q2/4:4:4/1',
+    async press(png, signal) {
+      const alpha = await pngAlpha(png)
+      if (alpha === undefined) throw new Error('not a PNG file')
+      if (alpha === 'used' || alpha === 'unknown') return undefined
+      const jpeg = await encode(ffmpeg, [
+        '-hide_banner', '-loglevel', 'error', '-nostdin',
+        '-f', 'png_pipe', '-i', 'pipe:0',
+        '-frames:v', '1', '-map_metadata', '-1',
+        // The finest the encoder goes, and colour for every pixel (no halving of it, which smears a red line on a pale wall).
+        '-c:v', 'mjpeg', '-q:v', '2', '-pix_fmt', 'yuvj444p',
+        // The same picture gives the same bytes, whenever it is pressed.
+        '-fflags', '+bitexact', '-flags:v', '+bitexact',
+        '-f', 'mjpeg', 'pipe:1',
+      ], png, { timeoutMs: Math.max(30_000, Math.round(png.byteLength / 256)), capture: true, ...(signal !== undefined ? { signal } : {}) })
+      if (jpeg.byteLength < 4 || jpeg[0] !== 0xff || jpeg[1] !== 0xd8 || jpeg.at(-2) !== 0xff || jpeg.at(-1) !== 0xd9) throw new Error('ffmpeg wrote no picture')
+      return jpeg
+    },
+  }
+}
+
+/**
+ * Run ffmpeg over bytes handed to it; an answer other than "done" is an error, with what it said.
+ * @param options.capture - what it writes to its output is the result (it is told to write to `pipe:1`); otherwise nothing is.
+ */
+function encode(program: string, args: string[], input: Uint8Array, options: { timeoutMs: number; signal?: AbortSignal; capture?: boolean }): Promise<Uint8Array> {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(program, args, { stdio: ['pipe', 'ignore', 'pipe'], ...(options.signal !== undefined ? { signal: options.signal } : {}) })
+    const child = spawn(program, args, { stdio: ['pipe', options.capture === true ? 'pipe' : 'ignore', 'pipe'], ...(options.signal !== undefined ? { signal: options.signal } : {}) })
+    const written: Buffer[] = []
+    child.stdout?.on('data', (chunk: Buffer) => { written.push(chunk) })
     let said = ''
     let late = false
     const timer = setTimeout(() => {
       late = true
       child.kill('SIGKILL')
     }, options.timeoutMs)
-    child.stderr.on('data', (chunk: Buffer) => { if (said.length < 2000) said += chunk.toString('utf8') })
+    child.stderr?.on('data', (chunk: Buffer) => { if (said.length < 2000) said += chunk.toString('utf8') })
     child.on('error', (error) => {
       clearTimeout(timer)
       reject(error)
@@ -93,11 +149,11 @@ function encode(program: string, args: string[], input: Uint8Array, options: { t
     child.on('close', (code) => {
       clearTimeout(timer)
       if (late) reject(new Error('ffmpeg did not finish in time'))
-      else if (code === 0) resolvePromise()
+      else if (code === 0) resolvePromise(new Uint8Array(Buffer.concat(written)))
       else reject(new Error(`ffmpeg: ${said.trim().split('\n').at(-1) ?? `exit ${code}`}`))
     })
     // ffmpeg may stop reading before everything is written (a file it cannot read): that is its answer, not a failure of the pipe.
-    child.stdin.on('error', () => {})
-    child.stdin.end(input)
+    child.stdin?.on('error', () => {})
+    child.stdin?.end(input)
   })
 }

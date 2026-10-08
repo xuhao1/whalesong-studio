@@ -13,14 +13,18 @@
  * exactly as it does on the author's phone — and nothing but what a reader is
  * given leaves the book.
  *
- * One thing is made for the way out: sound. A voice lies in the book
- * uncompressed, four times what a listener needs; given a press
- * (`media/press.ts`) the site carries it as AAC instead, and what the reader
- * is told names the smaller file.
+ * Two things are made for the way out, both smaller copies of what stays in
+ * the book as it is. A voice lies there uncompressed, four times what a
+ * listener needs; given a press (`media/press.ts`) the site carries it as AAC
+ * instead. A picture lies there as the PNG the image model made, megabytes of
+ * it; given a picture press the site carries it as a JPEG that looks the same.
+ * What the reader is told — and what a chapter's prose says where it shows a
+ * picture — names the smaller file.
  *
- * Published again, only what changed is written (and only sound that changed
- * is pressed), and what the last publication wrote and this one does not is
- * taken away. Files in the folder that this did not write are never touched.
+ * Published again, only what changed is written (and only sound and pictures
+ * that changed are pressed), and what the last publication wrote and this one
+ * does not is taken away. Files in the folder that this did not write are
+ * never touched.
  */
 import { createHash } from 'node:crypto'
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
@@ -28,7 +32,7 @@ import { availableParallelism } from 'node:os'
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { blocksOf } from '../../shared/reader'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
-import type { SoundPress } from '../media/press'
+import type { PicturePress, SoundPress } from '../media/press'
 import { ProjectError } from '../project'
 import { albumCounts, albumEmpty, type AlbumCounts } from '../../shared/album'
 import { albumMedia, describeBook, listChapters, listLines, listSides, readAlbum, readChapter, readSide, sideMedia, type SharedChapter, type SharedChapterData } from '../reader'
@@ -59,6 +63,8 @@ export interface SiteParams {
   defaults?: SiteDefaults
   /** Uncompressed sound (WAV) goes out through this, smaller and sounding the same; as it lies in the book when left out. */
   press?: SoundPress
+  /** Pictures kept without loss (PNG) go out through this, smaller and looking the same; as they lie in the book when left out. */
+  pictures?: PicturePress
 }
 
 /** Reading settings a site opens with: of the page (`prefs`) and of the player (`options`); a visitor's own replace them. */
@@ -140,6 +146,12 @@ export interface SiteResult {
    * Absent when no press was given or the book has no such sound.
    */
   sound?: { files: number; from: number; to: number; failed: string[]; reason?: string }
+  /**
+   * Pictures that went out pressed, told the same way; `kept` counts those the press would not make smaller —
+   * see-through somewhere, which the smaller format cannot say — and that went out as they are.
+   * Absent when no picture press was given or the book has no such picture.
+   */
+  pictures?: { files: number; from: number; to: number; failed: string[]; reason?: string; kept?: number }
 }
 
 /** The record a publication leaves in its folder: what it wrote, by content. */
@@ -148,7 +160,7 @@ interface SiteRecord {
   book: string
   publishedAt: string
   files: Record<string, string>
-  /** Sound that was pressed: what it was pressed from and how, so that it is not pressed again while neither changes. */
+  /** Sound and pictures that were pressed: what each was pressed from and how, so that it is not pressed again while neither changes. */
   sources?: Record<string, string>
 }
 
@@ -191,9 +203,19 @@ function mediaOf(chapter: SharedChapterData): string[] {
   return paths
 }
 
-/** The same data, where every address of a file that went out under another name is that name. */
+/** A line of prose that shows a picture, as `blocksOf` reads it: the file it names is its second part. */
+const PICTURE_LINE = /^([ \t]*!\[[^\]\n]*\]\()([^)\s]+)(\)[ \t]*)$/gm
+
+/**
+ * The same data, where every address of a file that went out under another name is that name —
+ * a field that is the address, and a line of prose that shows a picture by naming its file.
+ */
 function renamedIn<T>(data: T, renamed: ReadonlyMap<string, string>): T {
-  if (typeof data === 'string') return (renamed.get(data) ?? data) as T
+  if (typeof data === 'string') {
+    const whole = renamed.get(data)
+    if (whole !== undefined) return whole as T
+    return (data.includes('](') ? data.replace(PICTURE_LINE, (line: string, open: string, path: string, close: string) => (renamed.has(path) ? `${open}${renamed.get(path)!}${close}` : line)) : data) as T
+  }
   if (Array.isArray(data)) return data.map(item => renamedIn(item, renamed) as unknown) as T
   if (typeof data === 'object' && data !== null) return Object.fromEntries(Object.entries(data).map(([key, value]) => [key, renamedIn(value as unknown, renamed)])) as T
   return data
@@ -310,9 +332,16 @@ export async function publishSite(core: NovelCore, runtime: ProjectRuntime, para
   answers.push({ path: `data/${id}/book.json`, data: { book: shown, chapters, ...(kept.length > 1 ? { lines: kept } : {}), ...(result.album !== undefined ? { album: result.album } : {}), ...(result.sides > 0 ? { sides: result.sides } : {}) } })
 
   // The book's own files, by the addresses the reader asks for them under — read through the book's key when it is sealed.
-  const { press } = params
+  const { press, pictures } = params
   const renamed = new Map<string, string>()
   const sound: NonNullable<SiteResult['sound']> = { files: 0, from: 0, to: 0, failed: [] }
+  const shrunk: NonNullable<SiteResult['pictures']> = { files: 0, from: 0, to: 0, failed: [] }
+  // What goes out smaller than it lies in the book: sound kept uncompressed, pictures kept without loss.
+  const pressFor = (path: string): { press: SoundPress | PicturePress; tally: NonNullable<SiteResult['pictures']> } | undefined => (
+    press !== undefined && /\.wav$/i.test(path) ? { press, tally: sound }
+      : pictures !== undefined && /\.png$/i.test(path) ? { press: pictures, tally: shrunk }
+        : undefined
+  )
   const carry = async (path: string): Promise<void> => {
     // Under its own name, as it is in the book: the reader asks for it percent-encoded, and a host decodes that before it looks for the file.
     const bytes = path.split('/').some(part => part === '..' || part.length === 0) ? undefined : await project.readFile(path).catch(() => undefined)
@@ -320,30 +349,33 @@ export async function publishSite(core: NovelCore, runtime: ProjectRuntime, para
       result.missing.push(path)
       return
     }
-    // Uncompressed sound goes out pressed, under the name of what it then is — unless the book keeps another file by that very name.
-    const smaller = press !== undefined && /\.wav$/i.test(path) ? `${path.slice(0, -4)}.${press.ext}` : undefined
-    if (press !== undefined && smaller !== undefined && !media.has(smaller)) {
+    // Pressed, it goes out under the name of what it then is — unless the book keeps another file by that very name.
+    const by = pressFor(path)
+    const smaller = by !== undefined ? `${path.slice(0, path.lastIndexOf('.'))}.${by.press.ext}` : undefined
+    if (by !== undefined && smaller !== undefined && !media.has(smaller)) {
       const place = `media/${id}/${smaller}`
-      const source = `${digest(bytes)} ${press.key}`
+      const source = `${digest(bytes)} ${by.press.key}`
       try {
-        // Pressed from this very sound the last time, and still there as it was written: not pressed again.
+        // Pressed from this very file the last time, and still there as it was written: not pressed again.
         const kept = previous?.sources?.[place] === source ? await readFile(join(out, ...place.split('/'))).catch(() => undefined) : undefined
-        const pressed = kept !== undefined && digest(kept) === previous?.files[place] ? kept : await press.press(bytes, task?.signal)
-        // A sound of a few samples is no smaller in a file that has to say what it is: it goes as it lies.
-        if (pressed.byteLength < bytes.byteLength) {
+        const pressed = kept !== undefined && digest(kept) === previous?.files[place] ? kept : await by.press.press(bytes, task?.signal)
+        // What the press will not make smaller — a picture that is see-through somewhere — goes as it lies, and is counted.
+        if (pressed === undefined) by.tally.kept = (by.tally.kept ?? 0) + 1
+        // A sound of a few samples is no smaller in a file that has to say what it is: it goes as it lies too.
+        else if (pressed.byteLength < bytes.byteLength) {
           await put(place, pressed)
           sources[place] = source
           renamed.set(path, smaller)
-          sound.files += 1
-          sound.from += bytes.byteLength
-          sound.to += pressed.byteLength
+          by.tally.files += 1
+          by.tally.from += bytes.byteLength
+          by.tally.to += pressed.byteLength
           return
         }
       } catch (error) {
         task?.signal?.throwIfAborted()
-        // One sound the press cannot do does not stop a book from going out: it is published as it is, and said.
-        sound.failed.push(path)
-        sound.reason ??= error instanceof Error ? error.message : String(error)
+        // One file the press cannot do does not stop a book from going out: it is published as it is, and said.
+        by.tally.failed.push(path)
+        by.tally.reason ??= error instanceof Error ? error.message : String(error)
       }
     }
     await put(`media/${id}/${path}`, bytes)
@@ -356,17 +388,19 @@ export async function publishSite(core: NovelCore, runtime: ProjectRuntime, para
       task?.signal?.throwIfAborted()
       await carry(paths[next++]!)
       carried += 1
-      if (carried % 8 === 0 || carried === paths.length) task?.job?.progress(count + Math.round((carried / paths.length) * count), total, `${press !== undefined ? '♪ ' : ''}${carried} / ${paths.length}`)
+      if (carried % 8 === 0 || carried === paths.length) task?.job?.progress(count + Math.round((carried / paths.length) * count), total, `${carried} / ${paths.length}`)
     }
   }
   // Pressing is the work of another program, several at once; plain copying goes one file after another.
-  const lanes = press !== undefined ? Math.max(1, Math.min(8, availableParallelism(), paths.length)) : 1
+  const lanes = press !== undefined || pictures !== undefined ? Math.max(1, Math.min(8, availableParallelism(), paths.length)) : 1
   const ends = await Promise.allSettled(Array.from({ length: lanes }, lane))
   const broken = ends.find((end): end is PromiseRejectedResult => end.status === 'rejected')
   if (broken !== undefined) throw broken.reason
   result.missing.sort()
   sound.failed.sort()
+  shrunk.failed.sort()
   if (sound.files > 0 || sound.failed.length > 0) result.sound = sound
+  if (shrunk.files > 0 || shrunk.failed.length > 0 || (shrunk.kept ?? 0) > 0) result.pictures = shrunk
 
   for (const answer of answers) await put(answer.path, JSON.stringify(renamed.size > 0 ? renamedIn(answer.data, renamed) : answer.data))
   await put('reader.js', params.reader)

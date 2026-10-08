@@ -166,6 +166,8 @@ function PublishSite() {
   const [mine, setMine] = useState(true)
   // Voices lie in the book uncompressed; on the way out they are made a quarter the size unless the author keeps them as they are.
   const [press, setPress] = useState(true)
+  // Pictures lie in the book as the image model made them, megabytes each; on the way out they are made JPEG unless the author keeps them as they are.
+  const [jpeg, setJpeg] = useState(true)
   const written = project.chapters.filter(chapter => chapter.hasText)
   const part = written.find(chapter => chapter.id === upto)
   const [sealedOk, setSealedOk] = useState(false)
@@ -176,7 +178,7 @@ function PublishSite() {
   const data = plan.data
   const publish = (): Promise<unknown> => run(async () => {
     setDone(undefined)
-    const finished = await controller.run('site.publish', { root, ...(out.trim().length > 0 ? { out: out.trim() } : {}), listen, watch, album, sides, ...(video ? {} : { video: false }), ...(lines ? {} : { lines: false }), ...(press ? {} : { press: false }), ...(part !== undefined ? { upto: part.id } : {}), ...(mine ? { defaults: readerSettings() } : {}), ...(sealedOk ? { sealedOk: true } : {}) })
+    const finished = await controller.run('site.publish', { root, ...(out.trim().length > 0 ? { out: out.trim() } : {}), listen, watch, album, sides, ...(video ? {} : { video: false }), ...(lines ? {} : { lines: false }), ...(press ? {} : { press: false }), ...(jpeg ? {} : { jpeg: false }), ...(part !== undefined ? { upto: part.id } : {}), ...(mine ? { defaults: readerSettings() } : {}), ...(sealedOk ? { sealedOk: true } : {}) })
     const output = finished.result?.output as SiteDone | undefined
     if (output !== undefined) setDone(output)
   })
@@ -254,6 +256,17 @@ function PublishSite() {
             <span>{t(`带上番外（${data.sides} 场留作番外的幕间：只带它们的文字记录，读者能读、不能玩）`, `With the side stories (${data.sides} interludes kept as side stories: their transcripts, to be read and not played)`)}</span>
           </label>
         ) : null}
+        {data.jpeg !== undefined ? (
+          <label className="nv-check nv-site-press">
+            <input type="checkbox" checked={jpeg && data.jpeg} disabled={!data.jpeg} onChange={(event) => { setJpeg(event.target.checked) }} />
+            <span>
+              {t('把图片压缩成 JPG（高质量：看起来一样，体积约为原来的五分之一到十分之一）', 'Compress pictures to JPG (high quality: they look the same, at a fifth to a tenth the size)')}
+              {data.jpeg
+                ? <em className="nv-muted nv-small">{t(' 封面、插图、分镜画面、立绘和设定图都算。书里的原件不动，压缩的只是带出去的那一份；不勾就按书里的原样（PNG，一张两三兆）带出去。带透明的图不压。再次发布时只压缩有变化的图。', ' The cover, illustrations, panels, portraits and design art alike. What is in the book stays as it is; only the copy that goes out is compressed. Unticked, pictures go out as they lie in the book (PNG, two or three megabytes each). A picture that is see-through somewhere is left alone. Published again, only pictures that changed are compressed.')}</em>
+                : <em className="nv-site-press-missing">{t(`——这台电脑上没有 ffmpeg，压缩不了：图片会按书里的原样（PNG）带上，网站会大得多。装上之后再发布一次就会换成压缩的——${FFMPEG_INSTALL[0]}。`, ` — this computer has no ffmpeg, so it cannot: pictures go out as they lie in the book (PNG), and the site is much larger. Install it and publish again to change them over — ${FFMPEG_INSTALL[1]}.`)}</em>}
+            </span>
+          </label>
+        ) : null}
       </div>
       <label className="nv-check nv-site-mine">
         <input type="checkbox" checked={mine} onChange={(event) => { setMine(event.target.checked) }} />
@@ -291,6 +304,14 @@ function PublishSite() {
               {done.sound.failed.length > 0 ? t(`有 ${done.sound.failed.length} 个没能压缩，按原样（WAV）带上了：${done.sound.failed.slice(0, 3).join('、')}${done.sound.failed.length > 3 ? ' 等' : ''}${done.sound.reason !== undefined ? `（${done.sound.reason}）` : ''}`, ` ${done.sound.failed.length} could not be compressed and went out as WAV: ${done.sound.failed.slice(0, 3).join(', ')}${done.sound.failed.length > 3 ? '…' : ''}${done.sound.reason !== undefined ? ` (${done.sound.reason})` : ''}`) : ''}
             </span>
           ) : null}
+          {done.pictures !== undefined ? (
+            <span>
+              {done.pictures.files > 0 ? t(`图片：${formatCount(done.pictures.files, locale)} 张压缩成了 JPG，${megabytes(done.pictures.from)} → ${megabytes(done.pictures.to)}。`, `Pictures: ${formatCount(done.pictures.files, locale)} went out as JPG, ${megabytes(done.pictures.from)} → ${megabytes(done.pictures.to)}.`) : null}
+              {(done.pictures.kept ?? 0) > 0 ? t(`有 ${done.pictures.kept} 张带透明的，JPG 存不了透明，按原样（PNG）带上了。`, ` ${done.pictures.kept} are see-through somewhere, which a JPG cannot be, and went out as PNG.`) : null}
+              {done.pictures.failed.length > 0 ? t(`有 ${done.pictures.failed.length} 张没能压缩，按原样（PNG）带上了：${done.pictures.failed.slice(0, 3).join('、')}${done.pictures.failed.length > 3 ? ' 等' : ''}${done.pictures.reason !== undefined ? `（${done.pictures.reason}）` : ''}`, ` ${done.pictures.failed.length} could not be compressed and went out as PNG: ${done.pictures.failed.slice(0, 3).join(', ')}${done.pictures.failed.length > 3 ? '…' : ''}${done.pictures.reason !== undefined ? ` (${done.pictures.reason})` : ''}`) : null}
+            </span>
+          ) : null}
+          {done.unshrunk === true ? <span>{t(`图片是按书里的原样（PNG）带上的：这台电脑上没有 ffmpeg。装上之后再发布一次就会换成压缩的——${FFMPEG_INSTALL[0]}。`, `Pictures went out as they lie in the book (PNG): this computer has no ffmpeg. Install it and publish again to change them over — ${FFMPEG_INSTALL[1]}.`)}</span> : null}
           {done.unpressed === true ? <span>{t(`配音和声音是按书里的原样（WAV）带上的：这台电脑上没有 ffmpeg。装上之后再发布一次就会换成压缩的——${FFMPEG_INSTALL[0]}。`, `Voices and sound went out as they lie in the book (WAV): this computer has no ffmpeg. Install it and publish again to have them compressed — ${FFMPEG_INSTALL[1]}.`)}</span> : null}
           <code className="nv-share-url">{done.dir}</code>
           <div className="nv-row-wrap">

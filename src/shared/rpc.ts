@@ -216,6 +216,8 @@ export interface SitePlan {
   occupied?: boolean
   /** Sound can go out compressed: ffmpeg is on this computer. Absent from a Host that publishes sound only as it lies in the book. */
   press?: boolean
+  /** Pictures can go out as JPEG: ffmpeg is on this computer. Absent from a Host that publishes pictures only as they lie in the book. */
+  jpeg?: boolean
 }
 
 /** What a publication wrote. */
@@ -238,6 +240,13 @@ export interface SiteDone {
   sound?: { files: number; from: number; to: number; failed: string[]; reason?: string }
   /** Compressed sound was wanted and this computer has no ffmpeg to make it: the sound went out as it lies in the book. */
   unpressed?: boolean
+  /**
+   * Pictures kept without loss (PNG) that went out as JPEG: how many, their size before and after; `failed` went out as they are,
+   * and so did the `kept` — see-through somewhere, which a JPEG cannot be.
+   */
+  pictures?: { files: number; from: number; to: number; failed: string[]; reason?: string; kept?: number }
+  /** JPEG pictures were wanted and this computer has no ffmpeg to make them: the pictures went out as they lie in the book. */
+  unshrunk?: boolean
 }
 
 /** How much of a model's window the story so far gets, role by role — what the context settings come to for the models in use. */
@@ -576,6 +585,8 @@ export interface NovelRpc {
     defaults?: { prefs?: object; options?: object }
     /** `false` publishes voices and sound as they lie in the book (WAV); otherwise they go out as AAC, a quarter the size, when this computer has ffmpeg. */
     press?: boolean
+    /** `false` publishes pictures as they lie in the book (PNG); otherwise PNG pictures go out as JPEG — looking the same, a fifth to a tenth the size — when this computer has ffmpeg. */
+    jpeg?: boolean
     sealedOk?: boolean
   }; result: JobStarted }
   /** Where the book was last read, on whichever device; with `chapter`, leave the Studio's own place there. Nothing when nobody left one. */

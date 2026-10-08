@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import type { SoundPress } from '../src/core/media/press'
+import type { PicturePress, SoundPress } from '../src/core/media/press'
 import { publishSite, siteChaptersUpTo, siteDefaults, siteFolder, sitePage } from '../src/core/pipelines/site'
 import { bookAnswer, ReaderRefused } from '../src/core/reader'
 import { hashText, proseOnly } from '../src/shared/text'
@@ -244,6 +244,78 @@ describe('a book as a site', () => {
     const stop = new AbortController()
     const halted: SoundPress = { ext: 'm4a', key: 'fake/4', press: async () => { stop.abort(); throw new Error('stopped') } }
     await expect(publishSite(bed.core, bed.runtime, { out, reader: READER, press: halted }, { origin: 'user', signal: stop.signal })).rejects.toThrow()
+  })
+
+  it('carries pictures kept without loss as smaller ones under the name of what they then are — in the data and in the prose — and presses one again only when it changes', async () => {
+    const { project } = bed.runtime
+    const id = (await project.manifest()).id
+    // The pictures of the fixture: the cover (1 byte), a panel (2), a picture the prose shows (4). One more that is see-through, and one already small.
+    const glass = await project.writeAsset('images/glass.png', new Uint8Array([0, 0, 0]))
+    const photo = await project.writeAsset('images/photo.jpg', new Uint8Array([4, 4, 4, 4, 4]))
+    await project.saveChapterText('ch002', `她把剑放回匣中。\n\n![玻璃](${glass})\n\n  ![旧照](${photo})  \n\n正文里提到 ![不是一行](assets/images/scene-1.png) 的不算图。`)
+    const pressed: number[] = []
+    // Stands in for the real one: half the bytes; nothing for a picture that is see-through (here: one that begins with 0).
+    const press = (key: string): PicturePress => ({ ext: 'jpg', key, press: async (png) => { pressed.push(png.byteLength); return png[0] === 0 ? undefined : new Uint8Array(Math.max(1, png.byteLength >> 1)).fill(0xd8) } })
+    const first = await publishSite(bed.core, bed.runtime, { out, reader: READER, pictures: press('fake/1') })
+    // The cover is one byte: pressed it would be no smaller, and goes as it lies. The see-through one is counted.
+    expect(first.pictures).toEqual({ files: 2, from: 6, to: 3, failed: [], kept: 1 })
+    expect([...pressed].sort()).toEqual([1, 2, 3, 4])
+    const media = (await tree(out)).filter(path => path.startsWith(`media/${id}/assets/images/`)).map(path => path.split('/').at(-1))
+    expect(media).toEqual(['cover-1.png', 'glass.png', 'panel-1.jpg', 'photo.jpg', 'scene-1.jpg'])
+    expect(await readFile(join(out, 'media', id, 'assets', 'images', 'scene-1.jpg'))).toEqual(Buffer.from([0xd8, 0xd8]))
+    // The reader is told the names the files went out under: where a field is the address, and where a line of prose shows a picture.
+    const one = JSON.parse(await readFile(join(out, 'data', id, 'chapters', 'ch001.json'), 'utf8'))
+    expect(one.text).toContain('![雨里的门](assets/images/scene-1.jpg)')
+    expect(one.board.panels[0].image).toBe('assets/images/panel-1.jpg')
+    const two = JSON.parse(await readFile(join(out, 'data', id, 'chapters', 'ch002.json'), 'utf8'))
+    expect(two.text).toContain('![玻璃](assets/images/glass.png)')
+    expect(two.text).toContain('![旧照](assets/images/photo.jpg)')
+    // A name in the middle of a sentence is words, not a picture shown: it is left as the author wrote it.
+    expect(two.text).toContain('正文里提到 ![不是一行](assets/images/scene-1.png) 的不算图。')
+    expect(JSON.parse(await readFile(join(out, 'data', id, 'book.json'), 'utf8')).book.cover).toBe('assets/images/cover-1.png')
+    // In the book nothing has changed.
+    expect(await project.chapterText('ch001')).toContain('assets/images/scene-1.png')
+    expect(await project.readFile('assets/images/scene-1.png')).toEqual(Buffer.from([1, 2, 3, 4]))
+
+    // Published again with nothing changed: nothing is written; only what was not made smaller is looked at again.
+    pressed.length = 0
+    expect(await publishSite(bed.core, bed.runtime, { out, reader: READER, pictures: press('fake/1') })).toMatchObject({ written: 0, pictures: { files: 2, kept: 1 } })
+    expect([...pressed].sort()).toEqual([1, 3])
+    // One picture drawn anew: that one is pressed.
+    await project.writeAsset('images/panel-1.png', new Uint8Array([6, 6, 6, 6, 6, 6]))
+    pressed.length = 0
+    expect(await publishSite(bed.core, bed.runtime, { out, reader: READER, pictures: press('fake/1') })).toMatchObject({ written: 1, pictures: { files: 2, from: 10, to: 5 } })
+    expect([...pressed].sort()).toEqual([1, 3, 6])
+
+    // Sound and pictures each go through their own press, and say so each for themselves.
+    const sound: SoundPress = { ext: 'm4a', key: 'fake/1', press: async () => Uint8Array.from([1]) }
+    const both = await publishSite(bed.core, bed.runtime, { out, reader: READER, pictures: press('fake/1'), press: sound })
+    expect(both.sound).toMatchObject({ files: 2 })
+    expect(both.pictures).toMatchObject({ files: 2 })
+
+    // Without the picture press they go out as they lie in the book, and the smaller files of last time are taken away.
+    const plain = await publishSite(bed.core, bed.runtime, { out, reader: READER })
+    expect(plain.pictures).toBeUndefined()
+    expect((await tree(out)).filter(path => path.startsWith(`media/${id}/assets/images/`)).map(path => path.split('/').at(-1))).toEqual(['cover-1.png', 'glass.png', 'panel-1.png', 'photo.jpg', 'scene-1.png'])
+    expect(JSON.parse(await readFile(join(out, 'data', id, 'chapters', 'ch001.json'), 'utf8')).text).toContain('assets/images/scene-1.png')
+    expect(JSON.parse(await readFile(join(out, 'site.json'), 'utf8')).sources).toBeUndefined()
+  })
+
+  it('publishes a picture the press cannot do as it is, and says so — and leaves alone one whose smaller name the book already uses', async () => {
+    const { project } = bed.runtime
+    const id = (await project.manifest()).id
+    // The book keeps a JPEG by the very name the panel would go out under.
+    await project.writeAsset('images/panel-1.jpg', new Uint8Array([3, 3, 3]))
+    await project.saveChapterText('ch002', '她把剑放回匣中。\n\n![同名](assets/images/panel-1.jpg)')
+    const stubborn: PicturePress = { ext: 'jpg', key: 'fake/1', press: async (png) => { if (png.byteLength === 4) throw new Error('no picture in it'); return Uint8Array.from([0xd8]) } }
+    const result = await publishSite(bed.core, bed.runtime, { out, reader: READER, pictures: stubborn })
+    expect(result.pictures).toEqual({ files: 0, from: 0, to: 0, failed: ['assets/images/scene-1.png'], reason: 'no picture in it' })
+    const media = (await tree(out)).filter(path => path.startsWith(`media/${id}/assets/images/`)).map(path => path.split('/').at(-1))
+    expect(media).toEqual(['cover-1.png', 'panel-1.jpg', 'panel-1.png', 'scene-1.png'])
+    // Each is what it is in the book: the panel its PNG, the picture of chapter 2 the JPEG.
+    expect(await readFile(join(out, 'media', id, 'assets', 'images', 'panel-1.png'))).toEqual(Buffer.from([5, 6]))
+    expect(await readFile(join(out, 'media', id, 'assets', 'images', 'panel-1.jpg'))).toEqual(Buffer.from([3, 3, 3]))
+    expect(JSON.parse(await readFile(join(out, 'data', id, 'chapters', 'ch001.json'), 'utf8')).board.panels[0].image).toBe('assets/images/panel-1.png')
   })
 
   it('carries a chapter\'s finished video and its words — unless told to leave the videos out', async () => {
