@@ -198,7 +198,7 @@ describe('the cast of a book', () => {
     const fresh = await analyzeBook(bed.core, bed.runtime, { fresh: true, style: false }, { origin: 'user' })
     expect(fresh.steps).toContain('art')
     // A new analysis works the ties out too, after the world and before the outline; a book with no places, houses or things has nothing to tie, and that is no pass left undone.
-    expect(fresh.steps).toEqual(['digest', 'cast', 'world', 'ties', 'outline', 'art'])
+    expect(fresh.steps).toEqual(['digest', 'cast', 'growth', 'world', 'ties', 'outline', 'art'])
     expect(fresh.failed.map(failure => failure.step)).not.toContain('ties')
     expect((await project.state()).analysis).toBeUndefined()
     expect(fresh.art).toBeUndefined()

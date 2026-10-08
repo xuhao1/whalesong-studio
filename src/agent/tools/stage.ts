@@ -45,6 +45,7 @@ export function stageTools(service: NovelService): ToolDefinition[] {
         sheet_first: { type: 'string', enum: ['ask', 'draw', 'skip'], description: 'What to do where somebody to be drawn has no design sheet. ask: draw nothing — say whose sheets this would draw first, so that you can put it to the author ("this will first draw N design sheets"). draw: draw them first, then the picture — the default; use it once the author has agreed, or where nobody lacks a sheet. skip: this once, draw from what there is.' },
         plain: { type: 'boolean', description: 'portrait: draw the plain one — facing the viewer on a plain ground — not their signature scene.' },
         scene: { type: 'string', description: 'portrait: which of their signature scenes to draw — an id from the card\'s visual.scenes (novel_read what=character shows them). Left out: the one the card marks, else the first.' },
+        stage: { type: 'string', description: 'portrait, sheet: which stretch of their life to draw — a stage id or title from the card (novel_bible action=derive_growth finds them). A stretch that looks different gets its own design sheet, drawn against the main one so that it stays the same person; a portrait of one of their signature scenes shows the stretch that scene falls in by itself.' },
         look: { type: 'string', description: 'sheet: name of the look (outfit) to draw, e.g. "丧服".' },
         looks: { type: 'object', additionalProperties: true, description: 'scene/cover/custom: what each character wears — {"character": "look name"}.' },
         characters: listParameter('custom: characters shown in the picture; their looks and design sheets go along.'),
@@ -72,6 +73,7 @@ export function stageTools(service: NovelService): ToolDefinition[] {
           ...(typeof args.event === 'string' && args.event.trim().length > 0 ? { event: args.event.trim() } : {}),
           ...(args.plain === true ? { plain: true } : {}),
           ...(args.scene !== undefined && args.scene.length > 0 ? { scene: args.scene } : {}),
+          ...(args.stage !== undefined && args.stage.length > 0 ? { stage: args.stage } : {}),
         }
         if (args.sheet_first === 'ask') {
           // Nothing is drawn: who would get a sheet first is worked out, for the author to be asked.

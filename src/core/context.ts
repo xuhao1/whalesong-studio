@@ -19,6 +19,7 @@
  * the prefix every time: it holds its first chapter until the chapters no
  * longer fit, then lets go of the oldest quarter at once.
  */
+import { stageAt } from '../shared/stages'
 import type { CharacterCard, ChapterMemory, ContextStrategy, PromptLanguage, WorldEntry } from '../shared/types'
 import { clip, clipTail, estimateTokens, sameName } from '../shared/text'
 import { livesFrom, type LocatedChapter, type Project } from './project'
@@ -396,12 +397,24 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
   }
   const colon = lang === 'zh' ? '：' : ': '
   const castBlocks: string[] = []
+  const lineIds = path.map(chapter => chapter.plan.id)
+  const stageNote = (card: CharacterCard): string | undefined => {
+    const stage = stageAt(card, current?.plan.id, lineIds)
+    if (stage === undefined) return undefined
+    return [
+      `${L(lang, '这一章时', 'At this chapter')}${colon}${stage.title}${stage.age !== undefined ? L(lang, `，${stage.age}`, `, ${stage.age}`) : ''}`,
+      stage.appearance !== undefined ? `${L(lang, '样子', 'look')}${colon}${stage.appearance}` : undefined,
+      stage.persona !== undefined ? `${L(lang, '为人', 'bearing')}${colon}${stage.persona}` : undefined,
+    ].filter((part): part is string => part !== undefined).join(lang === 'zh' ? '；' : '; ')
+  }
   for (const card of castList) {
     const moment = latestMoment(card)
     const quotes = quotesOf(card)
     const lines = [
       // Whoever only had a line above is given whole here, where the chapter needs them.
       inFull.has(card.id) ? `【${card.name}】` : renderCharacter(card, lang, { resolveName: nameOf }),
+      // The stretch of their life that holds at this chapter: how old they are here, and how they look and stand where that is not what the card says.
+      stageNote(card),
       moment !== undefined ? `${L(lang, '当前状态', 'Current state')}${colon}${moment}` : undefined,
       quotes.length > 0 ? `${L(lang, '原文台词参考', 'Lines from the text')}${colon}${quotes.map(quote => `"${quote}"`).join(' ')}` : undefined,
     ].filter((line): line is string => line !== undefined)

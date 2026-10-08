@@ -600,22 +600,23 @@ export interface ChapterMemory {
 
 /** A suggestion produced by analysis that waits for a human or the orchestrator to accept. */
 /** The passes that read an imported book and write down what it says; see `analyzeBook`. */
-export type AnalyzeStep = 'digest' | 'cast' | 'world' | 'ties' | 'outline' | 'style' | 'art'
+export type AnalyzeStep = 'digest' | 'cast' | 'growth' | 'world' | 'ties' | 'outline' | 'style' | 'art'
 /**
  * In the order they run. Two came later than the others, and an analysis
  * started before one of them existed is whole without it: `art` — the look of
  * the book's pictures — and `ties` — how its people, places, houses and
  * things stand to each other, and what happens to the places over the story.
  */
-export const ANALYZE_STEPS: readonly AnalyzeStep[] = ['digest', 'cast', 'world', 'ties', 'outline', 'style', 'art']
+export const ANALYZE_STEPS: readonly AnalyzeStep[] = ['digest', 'cast', 'growth', 'world', 'ties', 'outline', 'style', 'art']
 
 /**
  * The passes an analysis has to do, by the form of the note it left when it
- * was started: 1 — the first five; 2 — with `art`; 3 — with `ties`.
+ * was started: 1 — the first five; 2 — with `art`; 3 — with `ties`; 4 — with `growth` (how the people of the book
+ * change along it: their ages and the points where they turn).
  */
 export function analysisSteps(schema: number | undefined): AnalyzeStep[] {
   const form = schema ?? 1
-  return ANALYZE_STEPS.filter(step => (step !== 'art' || form >= 2) && (step !== 'ties' || form >= 3))
+  return ANALYZE_STEPS.filter(step => (step !== 'art' || form >= 2) && (step !== 'ties' || form >= 3) && (step !== 'growth' || form >= 4))
 }
 
 export interface Suggestion {

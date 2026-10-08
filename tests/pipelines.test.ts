@@ -469,6 +469,8 @@ describe('pipelines', () => {
     bed.llm.responder = (request) => {
       if (request.prompt.includes('请做场记')) return DIGEST
       if (request.prompt.includes('一批人物')) return JSON.stringify({ characters: [{ listed: '沈璃', name: '沈璃', aliases: ['阿璃'], role: 'protagonist', personality: '倔强', status: 'active' }] })
+      // How the people of the book change along it: their ages, the points where they turn.
+      if (request.prompt.includes('在书里的各个时期')) return JSON.stringify({ age: '十六岁（少年）', stages: [{ title: '下山时', chapter: 1, age: '十六岁（少年）', what: '携断剑下山' }] })
       if (request.prompt.includes('地点、组织、物品')) return JSON.stringify({ entries: [{ name: '青冥剑阁', category: 'location', importance: 2, summary: '废弃剑阁' }] })
       if (request.prompt.includes('一句话摘要')) return JSON.stringify({ logline: '少女携断剑下山。', premise: '……', genre: '武侠', volumes: [{ title: '全书', from: 1, to: 3 }] })
       if (request.prompt.includes('文体学者')) return JSON.stringify({ name: 'x', pov: 'third-limited', tone: '冷峻', rules: ['短句'], avoid: ['抒情'] })
@@ -480,6 +482,9 @@ describe('pipelines', () => {
     const result = await importManuscript(bed.core, bed.runtime, { text }, { origin: 'user' })
     expect(result).toMatchObject({ chapters: 3, volumes: 2, characters: 1, worldEntries: 1, digested: 3, ties: { added: 1, total: 1, events: 1 } })
     expect(result.failed).toEqual([])
+    // Whoever carries the story and is seen in more than one chapter is read for how they grow.
+    expect(result.growth).toEqual({ people: 1, stages: 1 })
+    expect((await bed.runtime.project.findCharacter('沈璃'))!.stages).toMatchObject([{ title: '下山时', age: '十六岁（少年）' }])
     // A book that arrives written can be walked: its people stand in its places from the first look.
     expect((await project.ties()).map(tie => `${tie.kind}:${tie.from.id}>${tie.to.id}:${tie.since ?? ''}`)).toEqual([`resides:${(await project.findCharacter('沈璃'))!.id}>${(await project.findWorld('青冥剑阁'))!.id}:ch001`])
     expect((await project.findWorld('青冥剑阁'))!.events).toEqual([{ chapter: 'ch001', kind: 'decline', what: '已是废阁' }])

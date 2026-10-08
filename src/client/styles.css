@@ -8086,6 +8086,40 @@ span.nv-scene-thumb {
   object-fit: cover;
 }
 
+.nv-stage-pictures {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 84px;
+}
+
+.nv-stage-sheet {
+  width: 84px;
+  height: 56px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--nv-border);
+  border-radius: var(--nv-radius-s);
+  background: var(--nv-surface-2);
+  cursor: pointer;
+}
+
+.nv-stage-sheet > img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.nv-scene-head > .nv-stage-age {
+  flex: 0 1 150px;
+}
+
+.nv-scene-head > .nv-select {
+  flex: none;
+  width: auto;
+}
+
 .nv-scene-fields {
   flex: 1;
   min-width: 0;

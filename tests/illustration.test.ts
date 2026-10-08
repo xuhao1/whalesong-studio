@@ -6,6 +6,10 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { pictureRecord } from '../src/agent/tools/studio'
 import { sheetsAhead } from '../src/core/pipelines/comic'
 import { artDirectionOf, deriveArtDirection, deriveLook, deriveScenes, deriveVisual, illustrate, looksOf } from '../src/core/pipelines/illustrate'
+import { castAt, deriveGrowth } from '../src/core/pipelines/growth'
+import { packContext } from '../src/core/context'
+import { inStage, stageAt } from '../src/shared/stages'
+import type { CharacterStage } from '../src/shared/types'
 import { reconcileLooks, upsertLooks } from '../src/core/project'
 import { DEFAULT_SETTINGS } from '../src/core/settings'
 import { DEFAULT_ART_STYLE, mergeAvoid, resolveArtStyle, sceneFor, scenesOf, splitAvoid } from '../src/shared/art'
@@ -886,6 +890,93 @@ describe('design sheets and looks', () => {
     const failed = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: walkOn.id, sheetFirst: false }, task)
     expect(failed.scene).toMatchObject({ none: expect.stringContaining('导演没能找出来') })
     expect(failed.prompt).toContain('面向镜头，纯净的浅色背景')
+  })
+
+  it('reads how a person grows along the book, and draws and tells them as the chapter has them', async () => {
+    const { bed, images } = await studio()
+    const { project, index } = bed.runtime
+    // Which stretch holds at a chapter: the last one begun by then; one that begins off the line is another line's.
+    const three: CharacterStage[] = [{ id: 'a', title: '幼年' }, { id: 'b', title: '少年', from: 'c3' }, { id: 'x', title: '别的线', from: 'zz' }]
+    expect([undefined, 'c1', 'c2', 'c3', 'c4'].map(at => stageAt({ stages: three }, at, ['c1', 'c2', 'c3', 'c4'])?.title)).toEqual(['少年', '幼年', '幼年', '少年', '少年'])
+    expect(stageAt({ stages: [{ id: 'b', title: '少年', from: 'c3' }] }, 'c1', ['c1', 'c2', 'c3'])).toBeUndefined()
+
+    const card = await project.saveCharacter({ name: '宝玉', role: 'protagonist', appearance: '面若中秋之月', visual: { prompt: 'boy of seven, round face, red jacket' } })
+    const ids: string[] = []
+    for (const title of ['入府', '读书', '入园', '出家']) ids.push((await project.addChapter({ title })).id)
+    for (const id of ids) await project.saveChapterText(id, '宝玉在这里。')
+    const memory = (chapterId: string, role: string) => ({ schema: 1 as const, chapterId, textHash: 'x', updatedAt: '', brief: '', summary: role, facts: [], newEntities: [], threads: [], characters: [{ character: card.id, name: '宝玉', role, state: '如常' }] })
+    await project.saveMemory(memory(ids[0]!, '随贾母住'))
+    await project.saveMemory(memory(ids[2]!, '搬进怡红院'))
+    await project.updateChapter(ids[2]!, { time: '六年之后' })
+
+    // The planner is handed the card, what the digests noted, and the book's own clock; it says how old they are as
+    // they enter and where they turn.
+    bed.llm.responder = () => JSON.stringify({ age: '约七岁（幼年）', stages: [
+      { title: '幼年', chapter: 1, age: '约七岁（幼年）', what: '随贾母住' },
+      { title: '少年', chapter: 3, age: '约十三岁（少年）', what: '搬进园子', appearance: '身量长开，束发戴冠', persona: '更任性' },
+      { title: '', chapter: 4 },
+    ] })
+    const grown = await deriveGrowth(bed.core, bed.runtime, { character: card.id }, task)
+    const asked = bed.llm.requests.at(-1)!.prompt
+    for (const part of ['「宝玉」', '第 1 章：随贾母住', '第 3 章：六年之后', '2 章有正文但没有收录', '约十三岁（少年）', '时期不是情节', '不要凑数', '登场时的年纪']) expect(asked, part).toContain(part)
+    // Kept on the card in the order they come: the one they enter in begins where they do; the card's own age is
+    // filled in where it said none; a stretch with no name is not one.
+    expect(grown.stages.map(stage => [stage.title, stage.from, stage.age])).toEqual([['幼年', undefined, '约七岁（幼年）'], ['少年', ids[2], '约十三岁（少年）']])
+    expect(grown.card.age).toBe('约七岁（幼年）')
+    const youth = grown.stages[1]!
+
+    // The writer is told the stretch that holds at the chapter in hand — and nothing of a later one.
+    const pack = async (id: string) => (await packContext(project, index, { purpose: 'draft', chapter: (await project.findChapter(id))!, textBudget: 50_000, sideBudget: 20_000, tailChars: 200 })).rest
+    for (const id of ids) await project.updateChapter(id, { characters: [card.id] })
+    expect(await pack(ids[1]!)).toContain('这一章时：幼年，约七岁（幼年）')
+    expect(await pack(ids[1]!)).not.toContain('束发戴冠')
+    expect(await pack(ids[3]!)).toContain('这一章时：少年，约十三岁（少年）；样子：身量长开，束发戴冠；为人：更任性')
+
+    // The sheet of a stretch that looks different: the director first writes that stretch's own anchor, starting from
+    // the card's — the same person in words — and the sheet is drawn from it.
+    bed.llm.responder = () => ANCHOR
+    const main = await illustrate(bed.core, bed.runtime, { kind: 'sheet', target: card.id }, task)
+    bed.llm.responder = () => JSON.stringify({ prompt: 'boy of thirteen, hair bound under a small crown, red robe', negative: 'toddler' })
+    const sheet = await illustrate(bed.core, bed.runtime, { kind: 'sheet', target: card.id, stage: youth.id }, task)
+    const brief = bed.llm.requests.at(-1)!.prompt
+    for (const part of ['「少年」这个时期', '约十三岁（少年）', '身量长开，束发戴冠', '认得出是同一个人的特征', 'boy of seven, round face, red jacket']) expect(brief, part).toContain(part)
+    expect(sheet.prompt).toContain('boy of thirteen, hair bound under a small crown')
+    expect(sheet.prompt).not.toContain('boy of seven')
+    // Like the card's own sheet, it is drawn from the words alone: against the card's sheet it would come back as that sheet.
+    expect(sheet.parts?.references ?? []).toEqual([])
+    expect(images.calls.at(-1)!.references ?? []).toHaveLength(0)
+    const after = (await project.findCharacter(card.id))!
+    // Kept with the stretch; the card's own anchor and sheet are as they were.
+    expect(after.stages![1]!.visual).toEqual({ prompt: 'boy of thirteen, hair bound under a small crown, red robe', negative: 'toddler', sheet: sheet.path })
+    expect(after.visual).toMatchObject({ prompt: 'boy of seven, round face, red jacket', sheet: main.path })
+
+    // A portrait of that stretch is drawn against that stretch's sheet and kept with it; the card's face stays the first.
+    await project.saveCharacter({ id: card.id, visual: { portrait: 'assets/images/first.png' } })
+    const calls = images.calls.length
+    const portrait = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id, stage: youth.id, plain: true }, task)
+    expect(images.calls.length).toBe(calls + 1)
+    expect(portrait.parts?.references).toEqual([{ path: sheet.path, label: '宝玉' }])
+    expect(portrait.prompt).toContain('boy of thirteen')
+    const kept = (await project.findCharacter(card.id))!
+    expect(kept.stages![1]!.visual?.portrait).toBe(portrait.path)
+    expect(kept.visual?.portrait).toBe('assets/images/first.png')
+    // Whoever is drawn in a chapter is drawn as that chapter has them.
+    const [early, late] = [await castAt(bed.runtime, ids[0], [kept]), await castAt(bed.runtime, ids[3], [kept])]
+    expect([early[0]!.visual?.sheet, looksOf(early[0]!)]).toEqual([main.path, 'boy of seven, round face, red jacket'])
+    expect([late[0]!.visual?.sheet, late[0]!.age, looksOf(late[0]!)]).toEqual([sheet.path, '约十三岁（少年）', 'boy of thirteen, hair bound under a small crown, red robe'])
+    // A stretch that looks different and has nothing drawn or written for pictures yet shows none of another time's.
+    const old = inStage(kept, { id: 'z', title: '老年', appearance: '须发皆白' })
+    expect([old.appearance, old.visual?.prompt, old.visual?.sheet, old.visual?.portrait]).toEqual(['须发皆白', undefined, undefined, undefined])
+
+    // Looked over again: a stretch that still holds keeps its id and what was written and drawn of it.
+    bed.llm.responder = () => JSON.stringify({ stages: [{ title: '幼年', chapter: 1, age: '七岁', was: 1 }, { title: '少年', chapter: 3, age: '十三岁', appearance: '身量长开，束发戴冠', was: 2 }, { title: '出家', chapter: 4, age: '十九岁', what: '离家' }] })
+    const again = await deriveGrowth(bed.core, bed.runtime, { character: card.id, direction: '他十九岁出家' }, task)
+    expect(bed.llm.requests.at(-1)!.prompt).toContain('## 现在记着的时期（作者让你重新看一遍）\n1. 幼年（故事开始时） · 约七岁（幼年）')
+    expect(bed.llm.requests.at(-1)!.prompt).toContain('## 作者的要求\n他十九岁出家')
+    expect(again.stages.map(stage => stage.title)).toEqual(['幼年', '少年', '出家'])
+    expect(again.stages[1]).toMatchObject({ id: youth.id, age: '十三岁', visual: { sheet: sheet.path, portrait: portrait.path } })
+    // The card said an age already: it is the author's to change.
+    expect(again.card.age).toBe('约七岁（幼年）')
   })
 
   it('draws a portrait after the sheet as the same person', async () => {

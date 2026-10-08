@@ -875,6 +875,7 @@ export function analyzeStepLabel(step: AnalyzeStep, undigested: number, t: Trans
     case 'digest': return undigested > 0 ? t(`收录 ${undigested} 章`, `digesting ${undigested} chapters`) : t('逐章收录', 'digesting the chapters')
     case 'cast': return t('归并人物表', 'the cast')
     case 'world': return t('整理世界观', 'the world')
+    case 'growth': return t('人物的成长', 'how its people grow')
     case 'ties': return t('理关系', 'how the world stands')
     case 'outline': return t('梗概与分卷', 'synopses and volumes')
     case 'style': return t('提炼文风', 'the style')

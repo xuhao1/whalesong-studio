@@ -10,7 +10,7 @@
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { VoiceOption } from '../../shared/rpc'
-import type { CharacterCard, CharacterLook, CharacterRole, LifeMark, SignatureScene, SortedNotes } from '../../shared/types'
+import type { CharacterCard, CharacterLook, CharacterRole, CharacterStage, LifeMark, SignatureScene, SortedNotes } from '../../shared/types'
 import { sceneFor, scenesOf } from '../../shared/art'
 import { lifeEnd, lifeLine, type Life, type LifeEvent, type LifeStanding } from '../../shared/life'
 import { lines, options, useAssist } from '../forms'
@@ -157,6 +157,26 @@ export function CharacterCards({ shown, grouped, searching, lives }: { shown: Ch
       })
     })
   }
+  // Whoever of the people listed has no stretches of their life read yet: the planner reads them one after another.
+  const ungrown = listed.filter(item => (item.stages?.length ?? 0) === 0 && project.presence.some(entry => entry.character === item.id && entry.chapters.length >= 2))
+  const [growing, setGrowing] = useState<{ done: number; total: number } | undefined>()
+  const growAll = (): void => {
+    const todo = ungrown.map(item => item.id)
+    confirm.ask(t(`让策划读这 ${todo.length} 个人物的成长轨迹（年龄、从哪一章起变了）？每人一次策划的调用。`, `Have the planner read how these ${todo.length} people grow (ages, where they turn)? One planner run each.`), () => {
+      void controller.guard(async () => {
+        setGrowing({ done: 0, total: todo.length })
+        try {
+          for (const [index, id] of todo.entries()) {
+            await controller.run('character.growth', { root, id })
+            setGrowing({ done: index + 1, total: todo.length })
+          }
+          controller.toast('success', t('成长轨迹都读完了', 'Everyone\'s growth is read'))
+        } finally {
+          setGrowing(undefined)
+        }
+      })
+    })
+  }
   const [folded, setFolded] = useState<Record<string, boolean>>({})
   const groups = grouped
     ? GROUPS.map(group => ({ ...group, cards: listed.filter(item => group.roles.includes(item.role)) })).filter(group => group.cards.length > 0)
@@ -202,6 +222,9 @@ export function CharacterCards({ shown, grouped, searching, lives }: { shown: Ch
         </div>
         {mode === 'photos' && faceless.length > 0 ? (
           <Button size="sm" variant="ghost" icon="sparkles" busy={batch !== undefined} disabled={drawingAny !== undefined && batch === undefined} pending={batch !== undefined ? t(`正在画定妆照 ${batch.done}/${batch.total}…`, `Drawing portraits ${batch.done}/${batch.total}…`) : undefined} onClick={drawAll} title={t('给列表里还没有定妆照的人物各画一张立绘', 'Draw a portrait for everyone listed who has none')}>{t(`补齐定妆照（${faceless.length}）`, `Draw missing portraits (${faceless.length})`)}</Button>
+        ) : null}
+        {ungrown.length > 0 && project.chapters.some(chapter => chapter.hasText) ? (
+          <Button size="sm" variant="ghost" icon="clock" busy={growing !== undefined} pending={growing !== undefined ? t(`正在读成长轨迹 ${growing.done}/${growing.total}…`, `Reading growth ${growing.done}/${growing.total}…`) : undefined} onClick={growAll}>{t(`读成长轨迹（${ungrown.length}）`, `Read their growth (${ungrown.length})`)}</Button>
         ) : null}
         {groups.map((group) => {
           // A long tail of walk-ons stays folded until someone looks for one of them.
@@ -448,12 +471,12 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
   // Which of their moments the next portrait shows: an id, 'plain' for none of them, '' for the one the card marks.
   const [moment, setMoment] = useState('')
   const sheets = useSheetsAsk()
-  const draw = (kind: 'sheet' | 'portrait', done: string, look?: string, scene?: string): Promise<unknown> | undefined => {
+  const draw = (kind: 'sheet' | 'portrait', done: string, look?: string, scene?: string, stage?: string): Promise<unknown> | undefined => {
     if (!controller.need('image')) return undefined
     // A look (outfit) is described on its own row; the ideas here are for the main sheet and the portrait.
-    const jotted = look === undefined ? notes.trim() : ''
+    const jotted = look === undefined && stage === undefined ? notes.trim() : ''
     const go = (choice: SheetsChoice): Promise<unknown> => controller.guard(async () => {
-      const job = await controller.run('image.create', { root, kind, target: card.id, ...(look !== undefined ? { look } : {}), ...(jotted.length > 0 ? { notes: jotted } : {}), ...(kind !== 'portrait' ? {} : (scene ?? moment) === 'plain' ? { plain: true } : (scene ?? moment).length > 0 ? { scene: scene ?? moment } : {}), ...choice })
+      const job = await controller.run('image.create', { root, kind, target: card.id, ...(look !== undefined ? { look } : {}), ...(jotted.length > 0 ? { notes: jotted } : {}), ...(stage !== undefined ? { stage } : {}), ...(kind !== 'portrait' || stage !== undefined ? {} : (scene ?? moment) === 'plain' ? { plain: true } : (scene ?? moment).length > 0 ? { scene: scene ?? moment } : {}), ...choice })
       const how = job.result?.sorted as SortedNotes | undefined
       if (how !== undefined) {
         setSorted({ kind, how })
@@ -645,6 +668,16 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
       <SectionTitle>{t('关系', 'Relationships')}</SectionTitle>
       <RelationshipEditor value={draft.relationships ?? []} onChange={(value) => { set('relationships', value) }} />
 
+      <StagesPanel
+        card={card}
+        value={draft.stages ?? []}
+        dirty={dirty}
+        busy={drawing !== undefined}
+        onChange={(stages) => { set('stages', stages) }}
+        onDraw={(kind, stage) => draw(kind, kind === 'sheet' ? t(`「${stage.title}」的人设图已生成`, `Sheet of "${stage.title}" ready`) : t(`「${stage.title}」的立绘已生成`, `Portrait of "${stage.title}" ready`), undefined, undefined, stage.id)}
+        onOpen={setViewing}
+      />
+
       <SectionTitle actions={<Button size="sm" icon="wand" disabled={dirty} busy={anchoring} pending={t('正在提炼…', 'Distilling…')} title={dirty ? t('先保存当前修改', 'Save your edits first') : t('让导演照人物卡和这本书的画风写视觉锚点', 'Have the director write the visual anchor from the card and the book\'s art direction')} onClick={() => controller.guard(async () => {
         await controller.run('character.visual', { root, id: card.id })
         controller.toast('success', t('视觉锚点已更新', 'Visual anchor updated'))
@@ -699,7 +732,7 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
       {viewing !== undefined ? (
         <PictureViewer
           path={viewing}
-          title={`${draft.name} · ${pictures.find(item => item.path === viewing)?.label ?? moments.find(scene => scene.portrait === viewing)?.title ?? t('立绘', 'Portrait')}`}
+          title={`${draft.name} · ${pictures.find(item => item.path === viewing)?.label ?? moments.find(scene => scene.portrait === viewing)?.title ?? (draft.stages ?? []).find(stage => stage.visual?.sheet === viewing || stage.visual?.portrait === viewing)?.title ?? t('立绘', 'Portrait')}`}
           onClose={() => { setViewing(undefined) }}
           onEditLook={(of) => {
             // Their own anchor is on this page, under "Looks": the form scrolls to it.
@@ -744,6 +777,75 @@ function RelationshipEditor({ value, onChange }: { value: NonNullable<CharacterC
 }
 
 
+
+/** The stretches of a person's life in the book: from which chapter on, how old, who and how they look — and the pictures drawn of each. */
+function StagesPanel({ card, value, dirty, busy, onChange, onDraw, onOpen }: {
+  card: CharacterCard
+  value: CharacterStage[]
+  dirty: boolean
+  busy: boolean
+  onChange: (stages: CharacterStage[]) => void
+  onDraw: (kind: 'sheet' | 'portrait', stage: CharacterStage) => unknown
+  onOpen: (path: string) => void
+}) {
+  const { controller } = useStudio()
+  const t = useT()
+  const { project, root } = useProject()
+  const [wish, setWish] = useState('')
+  const reading = useRunningJob(job => job.kind === 'bible' && job.title.startsWith('growth') && job.target === card.id) !== undefined
+  const chapters = useMemo(() => [...project.chapters, ...(project.lines ?? []).flatMap(line => line.chapters)], [project.chapters, project.lines])
+  const patch = (id: string, change: Partial<CharacterStage>): void => { onChange(value.map(stage => (stage.id === id ? { ...stage, ...change } : stage))) }
+  const text = (stage: CharacterStage, key: 'title' | 'age' | 'what' | 'appearance' | 'persona') => ({ value: stage[key] ?? '', onChange: (event: { target: { value: string } }) => { const { [key]: _was, ...rest } = stage; onChange(value.map(item => (item.id === stage.id ? (event.target.value.length > 0 || key === 'title' ? { ...rest, [key]: event.target.value } as CharacterStage : rest as CharacterStage) : item))) } })
+  return (
+    <div className="nv-scenes">
+      <SectionTitle actions={<Button size="sm" variant="ghost" icon="plus" onClick={() => { onChange([...value, { id: `stage-${Date.now().toString(36)}`, title: '' }]) }}>{t('添加', 'Add')}</Button>}>{t('成长', 'Growth')}{value.length > 0 ? ` · ${value.length}` : ''}</SectionTitle>
+      <div className="nv-assist">
+        <TextInput value={wish} placeholder={t('想补充的，如：她入园时十二岁', 'Anything to add, e.g. she is twelve when she moves in')} onChange={(event) => { setWish(event.target.value) }} />
+        <Button size="sm" icon="wand" disabled={dirty} busy={reading} pending={t('策划在读…', 'The planner is reading…')} title={dirty ? t('先保存当前修改', 'Save your edits first') : t('读出他登场时多大、后来在哪几章变了', 'Reads how old they are as they enter and where they turn')} onClick={() => controller.guard(async () => {
+          const job = await controller.run('character.growth', { root, id: card.id, ...(wish.trim().length > 0 ? { direction: wish.trim() } : {}) })
+          const found = ((job.result?.output as { stages?: unknown[] } | undefined)?.stages ?? []).length
+          if (found > 0) setWish('')
+          controller.toast(found > 0 ? 'success' : 'info', found > 0 ? t(`理出 ${found} 个时期`, `${found} stretch(es) found`) : t('策划没有读出变化', 'The planner found no change to speak of'))
+        })}>{value.length > 0 ? t('让策划再读一遍', 'Have the planner read again') : t('让策划找关键点', 'Have the planner find the turns')}</Button>
+      </div>
+      {value.map((stage) => {
+        const apart = (stage.appearance ?? '').trim().length > 0 || (stage.visual?.prompt ?? '').trim().length > 0
+        return (
+          <div key={stage.id} className="nv-scene-row">
+            <div className="nv-stage-pictures">
+              {stage.visual?.portrait !== undefined
+                ? <button type="button" className="nv-scene-thumb" onClick={() => { onOpen(stage.visual!.portrait!) }} title={t('点开看大图', 'Open it large')}><ProjectImage path={stage.visual.portrait} alt={stage.title} /></button>
+                : <span className="nv-scene-thumb nv-look-empty">{t('未画', 'none')}</span>}
+              {stage.visual?.sheet !== undefined ? <button type="button" className="nv-stage-sheet" onClick={() => { onOpen(stage.visual!.sheet!) }} title={t('点开看大图', 'Open it large')}><ProjectImage path={stage.visual.sheet} alt={stage.title} /></button> : null}
+            </div>
+            <div className="nv-scene-fields">
+              <div className="nv-scene-head">
+                <TextInput {...text(stage, 'title')} placeholder={t('这个时期叫什么', 'What this stretch is called')} />
+                <Select
+                  value={stage.from ?? ''}
+                  options={[{ value: '', label: t('故事开始时', 'As the story begins') }, ...chapters.map(chapter => ({ value: chapter.id, label: t(`从第 ${chapter.index} 章起`, `From ch. ${chapter.index}`) }))]}
+                  onChange={(from) => { const { from: _was, ...rest } = stage; onChange(value.map(item => (item.id === stage.id ? (from.length > 0 ? { ...rest, from } : rest) : item))) }}
+                />
+                <TextInput className="nv-stage-age" {...text(stage, 'age')} placeholder={t('年纪', 'Age')} />
+                <Button size="sm" variant="ghost" icon="trash" title={t('删除', 'Delete')} onClick={() => { onChange(value.filter(item => item.id !== stage.id)) }} />
+              </div>
+              <TextInput {...text(stage, 'what')} placeholder={t('这里变了什么', 'What turned here')} />
+              <TextArea {...text(stage, 'appearance')} minRows={1} maxRows={6} placeholder={t('这个时期的样子（和之前一样就不写）', 'How they look in it (left empty where nothing changed)')} />
+              <TextInput {...text(stage, 'persona')} placeholder={t('这个时期的身份、为人（和人物卡一样就不写）', 'Who they are in it (left empty where the card holds)')} />
+              {(stage.visual?.prompt ?? '').length > 0 ? <TextArea value={stage.visual?.prompt ?? ''} minRows={1} maxRows={6} onChange={(event) => { patch(stage.id, { visual: { ...stage.visual, prompt: event.target.value } }) }} /> : null}
+              {apart ? (
+                <div className="nv-row-wrap">
+                  <Button size="sm" variant="outline" icon="users" disabled={dirty || busy} title={dirty ? t('先保存当前修改', 'Save your edits first') : undefined} onClick={() => onDraw('sheet', stage)}>{stage.visual?.sheet !== undefined ? t('重画这时的人设图', 'Redraw its sheet') : t('画这时的人设图', 'Draw its sheet')}</Button>
+                  <Button size="sm" variant="outline" icon="image" disabled={dirty || busy} title={dirty ? t('先保存当前修改', 'Save your edits first') : undefined} onClick={() => onDraw('portrait', stage)}>{stage.visual?.portrait !== undefined ? t('重画这时的立绘', 'Redraw its portrait') : t('画这时的立绘', 'Draw its portrait')}</Button>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
 
 /** The moments a person is remembered by: the director finds them in the book, the author rewrites them, and a portrait is drawn of one. */
 function ScenesPanel({ id, card, value, marked, dirty, off, busy, onChange, onDraw, onOpen }: {

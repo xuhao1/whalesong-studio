@@ -142,6 +142,18 @@ visual:
       why: 她一生都在这本账里      # the director's sentence
       portrait: assets/images/portrait-….png   # the portrait drawn of it
   sceneAt: scene_k3x9     # which one a portrait shows by default; left out: the first (`scene`, one paragraph, is how releases before kept a single moment — read as a list of one)
+stages:                    # the stretches of their life in the book, in the order they come; the planner finds them, the author rewrites them
+  - id: stage_a1
+    title: 幼年
+    age: 约七八岁（幼年）    # no `from`: as they are when the story begins
+  - id: stage_b2
+    title: 入园之后
+    from: ch023              # the chapter it begins with
+    age: 约十三岁（少年）
+    what: 搬进大观园，自己住一处院子
+    appearance: 身量长开，束发戴冠      # only where it differs from the stretch before
+    persona: 痴性未改而心事渐深        # only where it differs from the card
+    visual: { prompt: …, negative: …, sheet: assets/images/sheet-….png, portrait: assets/images/portrait-….png }
   looks:                                   # further outfits, each with a sheet derived from the main one
     - id: 雨夜外出
       name: 雨夜外出

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 /** Tools for the story bible and the outline. */
+import { deriveGrowth } from '../../core/pipelines/growth'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { acceptSuggestion, deriveTies, dismissSuggestion, expandCharacter, expandWorld, extractStyle, tidyWorld } from '../../core/pipelines/bible'
 import { applyOutlineOps, type OutlineOp } from '../../core/pipelines/outline'
@@ -44,6 +45,7 @@ export function bibleTools(service: NovelService): ToolDefinition[] {
         '- action=expand lets the architect model flesh out a character or world entry in agreement with the written text (`direction` steers it).',
         '- action=derive_visual (kind=world) has the director write down how a place or a thing looks, from what the book says of it, and keeps it on the entry (visualPrompt): its design art is drawn from that, and it is done by itself the first time such art is drawn (`direction` steers it). It is written with the book\'s art direction in hand: where that fixes a period or a form (buildings and objects of which dynasty or fashion), the look is written in that form, also where the text has another.',
         '- action=derive_visual (kind=character) distills the prose appearance of a character into a visual anchor and a negative list for image generation, and stores both on the card (`direction` steers it). Do this — or write fields.visual yourself — before drawing someone: an image model handed the prose of a card invents what the prose leaves open. The anchor is written with the book\'s art direction in hand: where that fixes a period or a form of dress (hair and clothing of which dynasty or fashion), the anchor is written in that form, over what the card and the source text say — the art direction itself comes last in a prompt and cannot overrule an anchor that says otherwise. On a character who has an anchor it is a rewrite that keeps what nothing speaks against. An anchor already written does not follow a changed art direction by itself: after changing fields.artStyle, derive the anchors (and the looks of places and things) it touches again, then draw the sheets again.',
+        '- action=derive_growth (`ref` = character) has the planner read how that character changes along the book and keeps it on the card as stages (fields.stages: id, title, from = the chapter it begins with, age, what turned, appearance and persona where they differ, visual): how old they are as they enter, and each point where they turn — years older, another station, another look. `direction` guides it. A card\'s `age` and `appearance` say how they are in general; a stage says how they are from a chapter on — the writer is told the one that holds at its chapter, and pictures of a chapter show them so.',
         '- action=derive_scene (`ref` = character) has the director find, in the book, the moments that character is remembered by — their signature scenes (for Lin Daiyu, burying the flowers first) — and keeps them on the card (fields.visual.scenes: id, title, chapter, text, why), the most their own first, each written as a picture in the book\'s language. `direction` guides it (a moment the author wants in, a kind they want left out). A portrait shows one of them: the first, the one fields.visual.sceneAt names, or the one novel_illustrate is given. What a book\'s pictures may show is the author\'s to say (the book\'s avoid list, or what they ask): rule no kind of moment out on your own.',
         '- action=learn_style (kind=style) distills a style profile from a sample passage in fields.sample.',
         '- action=accept_suggestion / dismiss_suggestion settle a suggestion that digest left (ids are listed by novel_status).',
@@ -54,7 +56,7 @@ export function bibleTools(service: NovelService): ToolDefinition[] {
       ].join('\n'),
       mutating: true,
       parameters: {
-        action: { type: 'string', required: true, enum: ['save', 'delete', 'merge', 'ties', 'tie', 'untie', 'derive_ties', 'tidy', 'pin', 'mark_life', 'expand', 'derive_visual', 'derive_scene', 'learn_style', 'accept_suggestion', 'dismiss_suggestion'] },
+        action: { type: 'string', required: true, enum: ['save', 'delete', 'merge', 'ties', 'tie', 'untie', 'derive_ties', 'tidy', 'pin', 'mark_life', 'expand', 'derive_visual', 'derive_scene', 'derive_growth', 'learn_style', 'accept_suggestion', 'dismiss_suggestion'] },
         kind: { type: 'string', enum: ['character', 'world', 'style'], description: 'Required except for the suggestion actions and the actions on ties (ties, tie, untie, derive_ties).' },
         ref: { type: 'string', description: 'Entry id or name; the suggestion id for the suggestion actions.' },
         fields: { type: 'object', additionalProperties: true, description: 'Fields to set (save), or {sample, name} for learn_style.' },
@@ -268,6 +270,14 @@ export function bibleTools(service: NovelService): ToolDefinition[] {
           return { text: `Learned style "${style.name}" (${style.id})${args.activate === true ? ', now active' : ''}: ${[style.tone, style.rhythm].filter(Boolean).join('; ')}`, data: toJson(style) }
         }
 
+        if (args.action === 'derive_growth') {
+          if (args.ref === undefined) throw new ProjectError('novel/invalid', 'derive_growth finds the stretches of a character\'s life: `ref` names the character')
+          const character = args.ref
+          const result = await env.job('bible', `growth ${character}`, character, async task => await deriveGrowth(env.core, runtime, { character, ...(args.direction !== undefined ? { direction: args.direction } : {}) }, task))
+          return result.stages.length > 0
+            ? { text: `The stretches of ${result.card.name}'s life in the book, as the planner read them:\n${result.stages.map((stage, at) => `${at + 1}. [${stage.id}] ${stage.title}${stage.age !== undefined ? ` — ${stage.age}` : ''}${stage.from !== undefined ? ` — from ${stage.from}` : ' — as they enter'}${stage.what !== undefined ? `: ${stage.what}` : ''}${stage.appearance !== undefined ? `\n   look: ${stage.appearance}` : ''}${stage.persona !== undefined ? `\n   who: ${stage.persona}` : ''}`).join('\n')}\nThey are kept on the card (stages); the author can rewrite them there. The writer is told which one holds at the chapter being written, and pictures of a chapter show them as that stretch has them; a stretch that looks different wants its own design sheet (novel_illustrate kind=sheet stage=<id>). Tell the author what was found.`, data: toJson({ stages: result.stages }), record: { summary: [`策划理出了「${result.card.name}」的 ${result.stages.length} 个时期`, `The planner found ${result.stages.length} stretch(es) of ${result.card.name}'s life`] } }
+            : { text: `The planner found nothing to say of how ${result.card.name} changes through the book; the card is as it was.`, record: false }
+        }
         if (args.action === 'derive_scene') {
           if (args.ref === undefined) throw new ProjectError('novel/invalid', 'derive_scene finds the moments a character is remembered by: `ref` names the character')
           const character = args.ref

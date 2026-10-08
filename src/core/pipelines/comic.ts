@@ -12,6 +12,7 @@
  * whatever the director does. A panel may begin and end inside a long line,
  * so a half-minute of narration is not one frozen picture.
  */
+import { castAt } from './growth'
 import type { AudioLine, CameraMove, CharacterCard, ComicBoard, ComicPanel, StoryboardDensity, SheetsAsk } from '../../shared/types'
 import { PANEL_SECONDS, referencesOf, STORYBOARD_DENSITIES } from '../../shared/types'
 import { clip, hashText, newId, sameName } from '../../shared/text'
@@ -137,7 +138,8 @@ export async function buildStoryboard(core: NovelCore, runtime: ProjectRuntime, 
   if (existing !== undefined && existing.textHash === script.textHash && params.force !== true) return existing
   const manifest = await project.manifest()
   const lang = promptLanguage(manifest.language)
-  const characters = await project.characters()
+  // Each of them as this chapter has them: the stretch of their life that holds here.
+  const characters = await castAt(runtime, script.chapterId, await project.characters())
   const world = await project.world()
   const direction = await artDirectionOf(core, runtime)
   const art = direction.style
@@ -372,7 +374,8 @@ export async function renderPanels(core: NovelCore, runtime: ProjectRuntime, par
   const inPanels = [...new Set(todo.flatMap(panel => panel.characters ?? []))].map(id => cards.find(card => card.id === id)).filter((card): card is CharacterCard => card !== undefined)
   const first = params.sheetFirst === false ? { drawn: [] as string[] } : await sheetsFirst(core, runtime, inPanels, 'returning', task)
   if (first.drawn.length > 0) task.job?.result({ sheets: first.drawn })
-  const characters = first.drawn.length > 0 ? await project.characters() : cards
+  // Drawn as this chapter has them: the look — and the sheet — of the stretch of their life that holds here.
+  const characters = await castAt(runtime, board.chapterId, first.drawn.length > 0 ? await project.characters() : cards)
   const mostReferences = referencesOf((await core.settings.get()).image.references)
   let rendered = 0
   let failed = 0

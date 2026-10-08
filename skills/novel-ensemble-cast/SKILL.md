@@ -58,3 +58,7 @@ Before drafting a group scene, be able to say in one clause what each person pre
 ## Relationships
 
 Record relationships on the cards as they change (kind and a short note). After a turning point — betrayal, confession, reconciliation — update both sides; the writer reads these when two characters meet again.
+
+## People grow
+
+A card's `age` and `appearance` say how somebody is in general. How they are *at a chapter* is in their **stages** (`stages`: title, the chapter each begins with, age, what they became, look and bearing where they differ, and the stretch's own anchor, sheet and portrait). `novel_bible action=derive_growth ref=<character>` has the planner read the book for them — how old as they enter, and the points where the stage of life, the station or the look changes; a stage is not an episode of the plot, and most people have one to three. `direction` guides it ("she is twelve when she moves in"). The writer is told the stage that holds at the chapter being written, and pictures of a chapter show each person so; a stage that looks different wants its own design sheet — `novel_illustrate kind=sheet target=<character> stage=<id>`. When the author says somebody has grown, aged, married, taken orders or fallen, that is a stage: read the growth again, or write the stage into `fields.stages`.

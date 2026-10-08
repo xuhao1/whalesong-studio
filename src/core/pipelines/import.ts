@@ -15,6 +15,8 @@
  *   outline   chapters get synopses, the book gets volumes, a logline and a premise
  *   style     a style profile is learned from the text itself
  */
+import { mapLimit } from '../util/async'
+import { deriveGrowth } from './growth'
 import type { StyleProfile, WorldCategory, WorldEntry } from '../../shared/types'
 import { ANALYZE_STEPS, analysisSteps, type AnalyzeStep } from '../../shared/types'
 import { clip, countWords, sameName } from '../../shared/text'
@@ -54,6 +56,8 @@ export interface ImportResult {
   style?: string
   /** Ties written down between the people, places, houses and things of the book, and things noted that happen to them. */
   ties?: { added: number; total: number; events: number }
+  /** How many people were read for how they change along the book, and how many stretches were found. */
+  growth?: { people: number; stages: number }
   /** How the chapters were found: by the editor agent or by rule, and what there is to say about it. */
   structure: { by: 'agent' | 'rules'; bySize: boolean; note?: string; steps?: number }
 }
@@ -139,6 +143,7 @@ export async function importManuscript(core: NovelCore, runtime: ProjectRuntime,
   if (analysis.volumes !== undefined) result.volumes = analysis.volumes
   if (analysis.style !== undefined) result.style = analysis.style
   if (analysis.ties !== undefined) result.ties = analysis.ties
+  if (analysis.growth !== undefined) result.growth = analysis.growth
   failed.push(...analysis.failed)
   task.job?.progress(steps, steps)
   task.job?.result({ chapters: result.chapters })
@@ -149,8 +154,8 @@ export async function importManuscript(core: NovelCore, runtime: ProjectRuntime,
 
 /** What is kept of an analysis that was started, so that one cut short is taken up where it stopped. */
 interface AnalysisNote {
-  /** 2: the analysis includes settling the look of the book's pictures (`art`). 3: and working out how the things of its world stand to each other (`ties`). */
-  schema: 1 | 2 | 3
+  /** 2: the analysis includes settling the look of the book's pictures (`art`). 3: and working out how the things of its world stand to each other (`ties`). 4: and reading how its people change along it (`growth`). */
+  schema: 1 | 2 | 3 | 4
   startedAt: string
   /** The book came with no volumes of its own into an empty outline: the planner may divide it. */
   divide?: boolean
@@ -185,6 +190,8 @@ export interface AnalyzeResult {
   style?: string
   /** Ties written down between the people, places, houses and things of the book, and things noted that happen to them. */
   ties?: { added: number; total: number; events: number }
+  /** How many people were read for how they change along the book, and how many stretches were found. */
+  growth?: { people: number; stages: number }
   /** The look settled for the book's pictures. */
   art?: string
   failed: { step: string; error: string }[]
@@ -204,7 +211,7 @@ export async function analyzeBook(core: NovelCore, runtime: ProjectRuntime, para
   const failed: AnalyzeResult['failed'] = []
   const before = params.fresh === true ? undefined : await project.readState<AnalysisNote>(NOTE)
   // An analysis that was started before a pass existed is finished as it was begun; a new one has them all.
-  const note: AnalysisNote = { schema: before?.schema ?? 3, startedAt: before?.startedAt ?? new Date().toISOString(), done: before?.done ?? [], ...(params.divide ?? before?.divide ?? false ? { divide: true } : {}) }
+  const note: AnalysisNote = { schema: before?.schema ?? 4, startedAt: before?.startedAt ?? new Date().toISOString(), done: before?.done ?? [], ...(params.divide ?? before?.divide ?? false ? { divide: true } : {}) }
   const wanted = params.steps !== undefined && params.steps.length > 0
     ? ANALYZE_STEPS.filter(step => params.steps!.includes(step))
     : analysisSteps(note.schema).filter(step => !note.done.includes(step))
@@ -327,6 +334,32 @@ export async function analyzeBook(core: NovelCore, runtime: ProjectRuntime, para
     }
     await finished('world', ok)
   }
+
+  // ── how the people of the book change along it: their ages, and the points where they turn ──
+  if (steps.includes('growth')) {
+    let ok = true
+    // Those the story is carried by, once it has seen them in more than one chapter: a walk-on does not grow.
+    const { lives } = await project.lives()
+    const due = (await project.characters()).filter(card => ['protagonist', 'deuteragonist', 'antagonist', 'supporting'].includes(card.role) && (card.stages?.length ?? 0) === 0 && (lives[card.id]?.events ?? []).filter(event => event.index >= 1).length >= 2)
+    let read = 0
+    let stages = 0
+    within(0, L(lang, `读 ${due.length} 个人物的成长轨迹`, `reading how ${due.length} people grow`))
+    await mapLimit(due, core.parallel('text'), async (card) => {
+      try {
+        const inner: TaskContext = { origin: task.origin, ...(task.signal !== undefined ? { signal: task.signal } : {}), ...(task.agentRoute !== undefined ? { agentRoute: task.agentRoute } : {}) }
+        stages += (await deriveGrowth(core, runtime, { character: card.id }, inner)).stages.length
+      } catch (error) {
+        if (task.signal?.aborted === true) throw error
+        ok = false
+        failed.push({ step: 'growth', error: `${card.name}: ${error instanceof Error ? error.message : String(error)}` })
+      }
+      read += 1
+      within(read / Math.max(1, due.length), L(lang, `读人物的成长轨迹 ${read}/${due.length}`, `reading how people grow ${read}/${due.length}`))
+    }, task.signal)
+    result.growth = { people: due.length, stages }
+    await finished('growth', ok)
+  }
+  task.signal?.throwIfAborted()
 
   // ── how the things of the world stand to each other, and what happens to them ──
   if (steps.includes('ties')) {

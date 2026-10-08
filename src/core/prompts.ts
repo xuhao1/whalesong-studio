@@ -1254,22 +1254,24 @@ export function growthTask(base: Base & { name: string; card: string; record: st
     `${at + 1}. ${stage.title}${stage.chapter !== undefined ? ` (from chapter ${stage.chapter})` : ' (as the story begins)'}${stage.age !== undefined ? ` · ${stage.age}` : ''}${stage.what !== undefined ? ` · ${stage.what}` : ''}${stage.appearance !== undefined ? `\n   Look: ${stage.appearance}` : ''}${stage.persona !== undefined ? `\n   Who: ${stage.persona}` : ''}`)).join('\n')
   const zh = [
     '先定他登场时的年纪：原文写明的照原文；没写明的，从称呼、辈分、旁人的年纪、他做的事和书里的时间推出来，写成"约十三岁（少年）"这样——一个大约的岁数，加上所在的年龄段（幼年、少年、青年、中年、老年）。实在无从判断就只写年龄段。',
-    '再沿着章节往后找这个人"变了"的地方——关键点：长了几岁（书里时间跳过去、过了几年）、身份变了（成婚、出仕、出家、落难、掌权）、样子变了（长大成人、伤残、久病、换了一生的装束）。每个关键点之后是一个新的时期。只是换一身衣服、心情起落、在场不在场，不算。',
-    '有几个算几个，不要凑数：全书里没怎么变的人，只有登场时那一个时期。年纪是连续长的——书里过了几年，就在大致的地方分一段，不必等原文点破。',
+    '再沿着章节往后找这个人"变成了另一个样子"的地方——关键点：年龄段变了（幼年长成少年、少年长成青年；书里时间跳过去、过了几年）、身份变了（成婚、出仕、出家、落难、掌权）、样子变了（长大成人、伤残、久病、换了一生的装束）。每个关键点之后是一个新的时期。',
+    '时期不是情节。一件事——初见某人、一场梦、一次丧事、入学、题诗、吵架又和好——不是一个时期，哪怕它很有名；一个时期通常跨很多章。判断的办法：把前后两个时期的他各画一张像、各用一句话说"他是谁"，画出来、说出来要明显不一样；一样，就还是同一个时期。年纪只长了一两岁、样子和身份都没变的，算在同一个时期里，age 写成一个范围（"约七到十岁（幼年）"）。',
+    '所以数目很少：大多数人在一本书里只有一到三个时期，很多人自始至终只有登场时那一个。不要凑数，也不要按章节切。',
     '上面的记载是各章收录时记下的，只是线索，而且可能只收录了一部分章节；拿不准的地方到原文里去看。书里没有写到的将来不要编。',
     ...(asked ? ['作者的要求是给你的引导：他点到的转折要有；他说的年纪以他为准。'] : []),
-    ...(kept ? ['现在记着的那几个时期：仍然成立的留下（was 写它原来的序号；作者没要求改的，内容照原样），不成立的去掉，漏掉的补上。'] : []),
-    '每个时期：title 几个字（幼年、入园之后、出家之后）；chapter 它从第几章开始（数字；登场时那一个写他登场的那一章）；age 这个时期的年纪，写法同上；what 一句话说这里变了什么（登场时那一个写他登场时的处境）；appearance 这个时期他看上去什么样——只在和上一个时期明显不同时写（年纪长了的体貌、发式、装束），用这本书的语言，只写看得见的；persona 这个时期他是谁、处世如何——只在和人物卡上写的明显不同时写。',
+    ...(kept ? ['现在记着的那几个时期，也照上面的标准重新衡量一遍：算得上一个时期的留下（was 写它原来的序号；作者没要求改的，内容照原样）；其实只是一件事的，去掉，或者并进它所在的那个时期；漏掉的补上。'] : []),
+    '每个时期：title 几个字（幼年、入园之后、出家之后）；chapter 它从第几章开始（数字；登场时那一个写他登场的那一章）；age 这个时期的年纪，写法同上；what 一句话说他在这里变成了什么样（不是这一章发生了什么；登场时那一个写他登场时的处境）；appearance 这个时期他看上去什么样——只在和上一个时期明显不同时写（年纪长了的体貌、发式、装束），用这本书的语言，只写看得见的；persona 这个时期他是谁、处世如何——只在和人物卡上写的明显不同时写。',
     'age：他登场时的年纪（和第一个时期的一样）。',
   ]
   const en = [
     'First, how old they are as they enter: what the text states is taken as stated; where it states nothing, tell it from what they are called, their generation, the ages of those around them, what they do and the time of the book, and write it as "about thirteen (a youth)" — an approximate age and the stage of life (child, youth, young adult, middle-aged, old). Where nothing can be told, the stage of life alone.',
-    'Then follow the chapters for the points where this person turns: they are years older (the book skips time), their station changes (married, in office, in orders, ruined, in power), their look changes (grown up, maimed, long ill, a way of dress for good). After each such point a new stretch begins. A change of clothes, a mood, being present or absent is no turn.',
-    'As many as there are and none to make up a number: somebody who hardly changes has the one stretch they enter in. Age moves on steadily — where years pass in the book, a stretch begins about there, whether or not the text says so.',
+    'Then follow the chapters for the points where this person becomes somebody else to look at or to describe: their stage of life changes (a child grown into a youth, a youth into an adult; the book skips years), their station changes (married, in office, in orders, ruined, in power), their look changes (grown up, maimed, long ill, a way of dress for good). After each such point a new stretch begins.',
+    'A stretch is not an episode. One event — a first meeting, a dream, a funeral, starting school, a poem, a quarrel made up — is no stretch, however famous; a stretch usually runs over many chapters. The test: draw them in the stretch before and in this one, and say in one sentence who they are in each — the two pictures and the two sentences must clearly differ; where they do not, it is still the same stretch. A year or two older with look and station unchanged belongs to the same stretch, its age given as a range ("about seven to ten (a child)").',
+    'So there are few: most people have one to three stretches in a book, and many only the one they enter in. None to make up a number, and none cut by chapter.',
     'The notes above were taken as chapters were digested — leads, and possibly of some chapters only; where unsure, read the text. Nothing of a future the book has not written.',
     ...(asked ? ['What the author asks is your guide: a turn they name is there; an age they give holds.'] : []),
-    ...(kept ? ['The stretches kept so far: those that still hold stay (`was` gives the number each had; where the author asked for no change, as they were), those that do not are dropped, missing ones are added.'] : []),
-    'Each stretch: title in a few words (childhood, after moving into the garden, in orders); chapter the chapter it begins with (a number; for the one they enter in, the chapter they enter); age in this stretch, written as above; what turned here, in a sentence (for the first, where they stand as they enter); appearance how they look in it — only where it clearly differs from the stretch before (a body grown, hair, dress), in the language of the book, only what is seen; persona who they are in it and how they bear themselves — only where it clearly differs from the card.',
+    ...(kept ? ['The stretches kept so far are held to the same test: one that is a stretch stays (`was` gives the number it had; where the author asked for no change, as it was); one that is really a single event is dropped, or folded into the stretch it lies in; missing ones are added.'] : []),
+    'Each stretch: title in a few words (childhood, after moving into the garden, in orders); chapter the chapter it begins with (a number; for the one they enter in, the chapter they enter); age in this stretch, written as above; what they became here, in a sentence (not what happened in the chapter; for the first, where they stand as they enter); appearance how they look in it — only where it clearly differs from the stretch before (a body grown, hair, dress), in the language of the book, only what is seen; persona who they are in it and how they bear themselves — only where it clearly differs from the card.',
     'age: how old they are as they enter (the same as the first stretch).',
   ]
   return L(base.lang, `请读《${bare(base.title)}》，找出「${base.name}」在书里的各个时期：登场时多大，后来在哪些地方变了——年纪、样子、身份。

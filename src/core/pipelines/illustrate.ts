@@ -40,15 +40,17 @@
  * for word — so that a look nobody asked for can be traced to where it came from.
  */
 import { lookWords, mergeAvoid, pictureSize, resolveArtStyle, sceneFor, scenesOf, sceneWords, splitAvoid, tidyPart as tidy, type ArtSource } from '../../shared/art'
-import type { CharacterCard, CharacterLook, IllustrationInfo, IllustrationParts, IllustrationPiece, PromptLanguage, SignatureScene, SortedNotes, WorldEntry, WorldEvent } from '../../shared/types'
+import type { CharacterCard, CharacterLook, CharacterStage, IllustrationInfo, IllustrationParts, IllustrationPiece, PromptLanguage, SignatureScene, SortedNotes, WorldEntry, WorldEvent } from '../../shared/types'
 import { referencesOf } from '../../shared/types'
 import { clip, fuzzyFind, hashText, newId, sameName, slugify } from '../../shared/text'
+import { inStage, looksApart, stageAt } from '../../shared/stages'
 import { groupOf } from '../../shared/world'
 import { detectCharacters } from '../context'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { asArray, asList, asRecord, asText, extractJson } from '../llm'
 import { assign } from '../crew'
 import { extensionOf, type ImageProvider, type ImageReference } from '../media/image'
+import { castAt } from './growth'
 import { ProviderError } from '../media/http'
 import { ProjectError } from '../project'
 import { artDirectionTask, coverPromptTask, illustrationPromptTask, lookNotesTask, lookTask, portraitSceneTask, portraitScenesTask, turnLookTask, visualAnchorTask } from '../prompts'
@@ -95,6 +97,8 @@ export interface IllustrateParams {
   plain?: boolean
   /** Portrait: which of the person's signature scenes it shows (by id). Left out: the one their card marks, else the first. */
   scene?: string
+  /** Portrait, sheet: which stretch of the person's life it shows (a stage's id or title). Left out: the card as it is — or, for a portrait of one of their moments, the stretch that moment falls in. */
+  stage?: string
   /**
    * Location, item: draw it as it is from one turn of its course on — built, changed, in ruins — and keep the picture
    * with that turn, not as its design art. Named by the turn's chapter (id or number), or `<chapter>:<kind>` where a
@@ -265,10 +269,20 @@ function referenceOf(card: CharacterCard, look?: CharacterLook): { path: string;
  * draws the same way every time, and store it on the card.
  * @throws ProjectError `novel/invalid` when the card says nothing about how the character looks.
  */
-export async function deriveVisual(core: NovelCore, runtime: ProjectRuntime, params: { character: string; direction?: string }, task: TaskContext): Promise<{ card: CharacterCard; prompt: string; negative?: string }> {
+export async function deriveVisual(core: NovelCore, runtime: ProjectRuntime, params: { character: string; direction?: string; stage?: string }, task: TaskContext): Promise<{ card: CharacterCard; prompt: string; negative?: string }> {
   const { project } = runtime
-  const card = await project.findCharacter(params.character)
-  if (card === undefined) throw new ProjectError('novel/not-found', `no character matches "${params.character}"`)
+  const whole = await project.findCharacter(params.character)
+  if (whole === undefined) throw new ProjectError('novel/not-found', `no character matches "${params.character}"`)
+  // Of one stretch of their life: the anchor is written for them as that stretch has them — age, look — starting from
+  // the anchor the card keeps, so that it stays the same person, and it is kept with the stretch.
+  const stage = params.stage !== undefined ? stageOf(whole, params.stage) : undefined
+  const card = stage !== undefined ? { ...inStage(whole, stage), visual: { ...whole.visual, ...(stage.visual?.prompt !== undefined ? { prompt: stage.visual.prompt } : {}) } } : whole
+  if (stage !== undefined) {
+    const zh = promptLanguage((await project.manifest()).language) === 'zh'
+    params = { ...params, direction: [zh
+      ? `写的是这个人在「${stage.title}」这个时期的样子${stage.age !== undefined ? `（${stage.age}）` : ''}${stage.what !== undefined ? `——${stage.what}` : ''}。从现有的锚点出发：认得出是同一个人的特征（脸的轮廓、五官、标志性的东西）留着；年龄感、体型、发式、衣着改成这个时期的${stage.appearance !== undefined ? `：${stage.appearance}` : ''}。`
+      : `This is the person in the stretch of their life called "${stage.title}"${stage.age !== undefined ? ` (${stage.age})` : ''}${stage.what !== undefined ? ` — ${stage.what}` : ''}. Start from the anchor as it stands: what makes them the same person (the shape of the face, the features, what marks them out) stays; apparent age, build, hair and dress become this stretch's${stage.appearance !== undefined ? `: ${stage.appearance}` : ''}.`, params.direction].filter(Boolean).join('\n') }
+  }
   if (card.appearance === undefined && card.visual?.prompt === undefined && params.direction === undefined) {
     throw new ProjectError('novel/invalid', `${card.name} has no appearance yet — describe how they look first (or let the architect expand the card)`)
   }
@@ -304,6 +318,10 @@ export async function deriveVisual(core: NovelCore, runtime: ProjectRuntime, par
   })
   const prompt = asText(value.prompt)!
   const negative = asText(value.negative)
+  if (stage !== undefined) {
+    const kept = await keepStage(project, whole.id, stage.id, { prompt, ...(negative !== undefined ? { negative } : {}) })
+    return { card: kept, prompt, ...(negative !== undefined ? { negative } : {}) }
+  }
   const saved = await project.saveCharacter({ id: card.id, visual: { prompt, negative: negative ?? '' } })
   return { card: saved, prompt, ...(negative !== undefined ? { negative } : {}) }
 }
@@ -372,6 +390,19 @@ export async function sortNotes(core: NovelCore, runtime: ProjectRuntime, card: 
   } finally {
     restore?.()
   }
+}
+
+/** A stretch of somebody's life, by id or by what it is called. */
+function stageOf(card: CharacterCard, ref: string): CharacterStage {
+  const stage = (card.stages ?? []).find(item => item.id === ref || item.title === ref.trim())
+  if (stage === undefined) throw new ProjectError('novel/not-found', `${card.name} has no stage "${ref}" — their stages: ${(card.stages ?? []).map(item => `${item.title} (${item.id})`).join(', ') || 'none yet (novel_bible action=derive_growth finds them)'}`)
+  return stage
+}
+
+/** Keep something written or drawn of one stretch of a life with that stretch. */
+async function keepStage(project: ProjectRuntime['project'], character: string, stageId: string, visual: NonNullable<CharacterStage['visual']>): Promise<CharacterCard> {
+  const card = (await project.findCharacter(character))!
+  return await project.saveCharacter({ id: card.id, stages: (card.stages ?? []).map(stage => stage.id === stageId ? { ...stage, visual: { ...stage.visual, ...visual } } : stage) })
 }
 
 /** What the director is handed to look for a person's moments with: their card, their look, and where the digests saw them. */
@@ -1052,6 +1083,8 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
     let guided: string | undefined
     // The moment of the card's that is drawn as it stands: the portrait is kept beside it.
     let drawnOf: SignatureScene | undefined
+    // The chapter the moment is from: the portrait shows them as that chapter has them.
+    let momentAt: string | undefined
     if (params.kind === 'portrait' && params.plain !== true && core.currentSettings().image.portraitScene !== false) {
       // A book with nothing written yet has no moment to find: nobody is asked.
       const written = (await project.chapterInfos()).some(chapter => chapter.hasText)
@@ -1076,6 +1109,7 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
           if (settled.scene !== undefined) {
             scene = sceneWords(settled.scene)
             guided = direction
+            momentAt = settled.scene.chapter
             shown = { text: settled.scene.text, title: settled.scene.title, ...(settled.scene.chapter !== undefined ? { chapter: settled.scene.chapter } : {}), asked: direction, ...(settled.why !== undefined ? { why: settled.why } : {}) }
           } else shown = { none: settled.why ?? L(lang, '导演没有给出场面', 'the director gave no scene') }
         } catch (error) {
@@ -1086,14 +1120,42 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
       } else if (direction === undefined && chosen !== undefined) {
         scene = sceneWords(chosen)
         drawnOf = chosen
+        momentAt = chosen.chapter
         shown = { text: chosen.text, title: chosen.title, id: chosen.id, ...(chosen.chapter !== undefined ? { chapter: chosen.chapter } : {}), ...(found !== undefined ? { found } : {}), ...(found !== undefined && chosen.why !== undefined ? { why: chosen.why } : {}) }
       } else if (none !== undefined) shown = { none }
       // (Something asked of a book with nothing written yet is drawn as asked, below: there is no moment to pick.)
       // Said with the job while the picture is still being drawn: which moment it is to show.
       if (shown !== undefined) task.job?.result({ scene: shown })
     }
+    // The stretch of their life the picture is of: the one named — or, for a portrait of one of their moments, the one
+    // that moment falls in. In a stretch that looks different, they are drawn from that stretch's own words (which the
+    // director writes where they are not written yet) and against that stretch's own sheet.
+    let stage = params.stage !== undefined ? stageOf(anchored, params.stage) : undefined
+    if (stage === undefined && params.kind === 'portrait' && momentAt !== undefined && (anchored.stages?.length ?? 0) > 0) {
+      stage = stageAt(anchored, momentAt, (await project.pathOf(momentAt)).map(chapter => chapter.plan.id))
+    }
+    if (stage !== undefined && looksApart(stage) && (stage.visual?.prompt ?? '').trim().length === 0) {
+      const restore = task.job?.note(L(lang, `导演在写「${anchored.name}」${stage.title}时的样子…`, `The director is writing how ${anchored.name} looks in "${stage.title}"…`))
+      try {
+        anchored = (await deriveVisual(core, runtime, { character: anchored.id, stage: stage.id }, task)).card
+      } finally {
+        restore?.()
+      }
+      stage = stageOf(anchored, stage.id)
+    }
+    if (stage !== undefined && params.kind === 'portrait' && looksApart(stage) && stage.visual?.sheet === undefined && params.sheetFirst !== false && core.currentSettings().image.sheetFirst !== false) {
+      const restore = task.job?.note(L(lang, `先画「${anchored.name}」${stage.title}时的人设图…`, `First the design sheet of ${anchored.name} in "${stage.title}"…`))
+      try {
+        await illustrate(core, runtime, { kind: 'sheet', target: anchored.id, stage: stage.id }, { origin: task.origin, ...(task.signal !== undefined ? { signal: task.signal } : {}), ...(task.agentRoute !== undefined ? { agentRoute: task.agentRoute } : {}) })
+      } finally {
+        restore?.()
+      }
+      anchored = (await project.findCharacter(anchored.id))!
+      stage = stageOf(anchored, stage.id)
+    }
     // A portrait is drawn after the sheet, and against it: whoever has no sheet yet gets one first.
-    const card = params.kind === 'portrait' ? (await sheeted([anchored], 'everyone'))[0]! : anchored
+    const whole = params.kind === 'portrait' ? (await sheeted([anchored], 'everyone'))[0]! : anchored
+    const card = stage !== undefined ? inStage(whole, stageOf(whole, stage.id)) : whole
 
     if (params.kind === 'portrait') {
       const composed = scene !== undefined && scene.length > 0
@@ -1123,7 +1185,12 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
       const info = await renderImage(core, runtime, { ...composed, kind: 'portrait', target: card.id, name: `portrait-${card.id}`, size: params.size ?? pictureSize(core.currentSettings().image, 'portrait'), art, avoid: [...(params.avoid ?? []), ...negativesOf([card])], references: sheet }, task)
       // The portrait of one of their moments stays with that moment as well: the panel shows which have been drawn.
       const scenes = drawnOf !== undefined && drawnOf.id !== 'kept' ? scenesOf(card).map(item => item.id === drawnOf!.id ? { ...item, portrait: info.path } : item) : undefined
-      await project.saveCharacter({ id: card.id, visual: { portrait: info.path, ...(scenes !== undefined ? { scenes } : {}) } })
+      // …and a portrait of one stretch of their life with that stretch: the card's own portrait — their face in every
+      // list — is the first one drawn, or one drawn of no stretch in particular.
+      if (stage !== undefined) {
+        await keepStage(project, card.id, stage.id, { portrait: info.path })
+        await project.saveCharacter({ id: card.id, visual: { ...(whole.visual?.portrait === undefined ? { portrait: info.path } : {}), ...(scenes !== undefined ? { scenes } : {}) } })
+      } else await project.saveCharacter({ id: card.id, visual: { portrait: info.path, ...(scenes !== undefined ? { scenes } : {}) } })
       return done(info)
     }
 
@@ -1142,6 +1209,9 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
     // against an older picture of the person. It is what every other picture of them is held against; drawn again
     // against the one before, it comes back as the one before, whatever the anchor and the art direction say by then.
     const base = look !== undefined ? card.visual?.sheet ?? card.visual?.portrait : undefined
+    // The sheet of another stretch of their life is a design sheet like the card's own: drawn from the words alone —
+    // that stretch's anchor, which the director wrote starting from the card's, so that it is the same person in words.
+    // Held against the card's sheet it comes back as the card's sheet, whatever age the words give (tried: it did).
     const info = await renderImage(core, runtime, {
       ...compose([
         piece('frame', L(lang, '人物设定图（三视图）：同一个人的全身站姿画三次——正面、侧面、背面，从左到右等距并排，比例与衣着完全一致，表情平静，纯净的浅色背景，不要任何文字与标注', 'character design sheet (turnaround): the same person drawn three times, full body, standing — front view, side view, back view — evenly spaced left to right, identical proportions and clothing, neutral expression, plain light background, no text or labels')),
@@ -1151,7 +1221,7 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
       ], comma),
       kind: 'sheet',
       target: card.id,
-      name: `sheet-${card.id}${look !== undefined ? `-${look.id}` : ''}`,
+      name: `sheet-${card.id}${look !== undefined ? `-${look.id}` : stage !== undefined ? `-${stage.id}` : ''}`,
       size: params.size ?? pictureSize(core.currentSettings().image, 'sheet'),
       art,
       avoid: [...(params.avoid ?? []), ...negativesOf([card])],
@@ -1163,7 +1233,8 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
           'It is the same person: face, hair colour and build follow the reference; clothing, gear and how the hair is worn follow the outfit described above — wherever that differs from the reference, draw the description.'),
       } : {}),
     }, task)
-    if (look === undefined) await project.saveCharacter({ id: card.id, visual: { sheet: info.path } })
+    if (look === undefined && stage !== undefined) await keepStage(project, card.id, stage.id, { sheet: info.path })
+    else if (look === undefined) await project.saveCharacter({ id: card.id, visual: { sheet: info.path } })
     else {
       const looks = [...(card.visual?.looks ?? []).filter(other => other.id !== look.id), { ...look, sheet: info.path }]
       await project.saveCharacter({ id: card.id, visual: { looks } })
@@ -1273,7 +1344,8 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
   const { chapter, range, passage } = scene
   if (passage.trim().length === 0) throw new ProjectError('novel/empty', `chapter ${chapter.index} has nothing to illustrate yet`)
   // Whoever of them comes back in the book has a sheet before the scene is drawn: the scene is held against it.
-  const cast = await sheeted(scene.cast, 'returning')
+  // …and is shown as this chapter has them: the look, and the sheet, of the stretch of their life that holds here.
+  const cast = await castAt(runtime, chapter.plan.id, await sheeted(scene.cast, 'returning'))
   // Places and things the passage names, as the bible says they look.
   const places = (await project.world()).filter(entry => [entry.name, ...(entry.aliases ?? [])].some(name => name.length >= 2 && passage.includes(name))).slice(0, 6)
   const wardrobe = cast.map(wardrobeOf).filter((line): line is string => line !== undefined)

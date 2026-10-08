@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 /** Handlers of the Studio's RPC contract (see shared/rpc.ts). */
+import { deriveGrowth } from '../core/pipelines/growth'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { readdir, readFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
@@ -371,6 +372,10 @@ export function createHandlers(service: NovelService): Handlers {
     'character.scene': async ({ root, id, direction }) => {
       const runtime = await open(root)
       return job(runtime, 'bible', `signature scenes ${id}`, id, async task => await deriveScenes(core, runtime, { character: id, ...(direction !== undefined && direction.length > 0 ? { direction } : {}) }, task))
+    },
+    'character.growth': async ({ root, id, direction }) => {
+      const runtime = await open(root)
+      return job(runtime, 'bible', `growth ${id}`, id, async task => await deriveGrowth(core, runtime, { character: id, ...(direction !== undefined && direction.length > 0 ? { direction } : {}) }, task))
     },
     'world.save': async ({ root, entry }) => await (await open(root)).project.saveWorld(entry),
     'world.merge': async ({ root, keep, fold }) => {

@@ -290,7 +290,7 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
         path: { type: 'string', description: 'File inside the session workspace.' },
         text: { type: 'string', description: 'The manuscript text, when it is not in a file.' },
         analyze: { type: 'boolean', description: 'import: false only splits into chapters and skips the analysis passes (default true).' },
-        steps: listParameter('analyze: the passes to run, out of digest, cast, world, ties (how people, places, houses and things stand to each other, and the course of the places), outline, style, art. Leave out to finish what an analysis left undone.'),
+        steps: listParameter('analyze: the passes to run, out of digest, cast, growth (how the people of the book change along it: ages, the points where they turn), world, ties (how people, places, houses and things stand to each other, and the course of the places), outline, style, art. Leave out to finish what an analysis left undone.'),
       },
       async run(args, env) {
         const runtime = await env.project()
