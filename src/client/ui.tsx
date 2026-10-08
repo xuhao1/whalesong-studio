@@ -5,7 +5,8 @@ import {
   type ButtonHTMLAttributes, type CSSProperties, type InputHTMLAttributes, type MouseEvent as ReactMouseEvent, type ReactNode, type TextareaHTMLAttributes,
 } from 'react'
 import { createPortal } from 'react-dom'
-import type { JobInfo } from '../shared/types'
+import { linePath } from '../shared/lines'
+import { MAIN_LINE, type ChapterInfo, type JobInfo, type ProjectState } from '../shared/types'
 import { messageOf, type NovelApi } from './api'
 import { Icon, type IconName } from './icons'
 import type { StudioController, StudioSnapshot } from './store'
@@ -27,8 +28,14 @@ export interface StudioHost {
   toggleMaximize?: () => void
   /** Page only: open a new conversation (in the given workspace) to work with the showrunner. */
   startChat?: (workspace?: { id?: string | undefined; path: string }) => void
+  /** Page only: show a conversation that exists — a book's own — in the main area, the Studio beside it. */
+  openChat?: (sessionId: string) => void
+  /** Have the Harness read its list of conversations again: locking a sealed book takes its conversations out of that list, unlocking puts them back. */
+  refreshSessions?: () => void
   /** Let the author choose a folder with the Harness's own chooser; resolves null when they cancel. */
   pickDirectory?: () => Promise<string | null>
+  /** Open the conversation of a role's run: a child agent of the conversation it is listed under. */
+  openRun?: (run: { session: string; parent: string }) => void
 }
 
 interface StudioContextValue {
@@ -600,6 +607,24 @@ export function useMediaUrl(): (path: string, version?: string | number) => stri
   return useCallback((path: string, version?: string | number) => api.media(projectId, path, version !== undefined ? { version } : {}), [api, projectId])
 }
 
+/**
+ * State that outlives the screen it is typed on. Like `useState`, but the
+ * Studio keeps the value under `key` while it is open, so a form the author
+ * left half-filled is still filled when they come back to it.
+ */
+export function useKept<T>(key: string, initial: T): [T, (value: T | ((previous: T) => T)) => void] {
+  const { controller } = useStudio()
+  const [value, setValue] = useState<T>(() => (controller.kept.has(key) ? controller.kept.get(key) as T : initial))
+  const set = useCallback((next: T | ((previous: T) => T)) => {
+    setValue((previous) => {
+      const resolved = typeof next === 'function' ? (next as (previous: T) => T)(previous) : next
+      controller.kept.set(key, resolved)
+      return resolved
+    })
+  }, [controller, key])
+  return [value, set]
+}
+
 /** Debounce a changing value. */
 export function useDebounced<T>(value: T, delay: number): T {
   const [debounced, setDebounced] = useState(value)
@@ -695,6 +720,49 @@ export function JobThought({ job }: { job: JobInfo }) {
   return <ThoughtPanel thought={thought} thinking={job.status === 'running' && job.thinking !== undefined} wrote={false} className="is-plain" />
 }
 
+const CREW_NAMES: Record<string, [string, string]> = {
+  analyst: ['场记', 'Continuity'],
+  architect: ['策划', 'Planner'],
+  director: ['导演', 'Director'],
+  producer: ['后期', 'Post-production'],
+}
+
+export function crewLabel(role: string, t: Translate): string {
+  const name = CREW_NAMES[role]
+  return name !== undefined ? t(...name) : role
+}
+
+/**
+ * The roles that worked in a job: who, how — as an agent with so many tool
+ * calls, or in one plain call and why — and a way into the run itself.
+ */
+export function CrewRuns({ job }: { job: JobInfo }) {
+  const { host } = useStudio()
+  const t = useT()
+  const runs = job.crew ?? []
+  if (runs.length === 0) return null
+  // A job of many chapters lists a run for each: the ones at work, and the last few that ended, say enough here.
+  const atWork = runs.filter(run => run.running === true)
+  const shown = [...atWork, ...runs.filter(run => run.running !== true).slice(-Math.max(2, 6 - atWork.length))]
+  return (
+    <ul className="nv-crewruns">
+      {runs.length > shown.length ? <li className="nv-muted nv-small">{t(`…之前还有 ${runs.length - shown.length} 次`, `…${runs.length - shown.length} earlier`)}</li> : null}
+      {shown.map((run, index) => {
+        const open = run.session !== undefined && run.parent !== undefined && host.openRun !== undefined ? host.openRun : undefined
+        return (
+          <li key={`${run.session ?? run.label}-${index}`} className="nv-crewrun">
+            <Chip tone={run.by === 'agent' ? 'blue' : 'amber'}>{crewLabel(run.role, t)}</Chip>
+            <span className="nv-crewrun-label">{run.label}</span>
+            <span className="nv-muted nv-small">{run.running === true ? t('agent · 正在干活', 'agent · at work') : run.by === 'agent' ? t(`agent · ${run.steps ?? 0} 步`, `agent · ${run.steps ?? 0} steps`) : t('普通调用', 'plain call')}</span>
+            {open !== undefined ? <button type="button" className="nv-link nv-small" onClick={() => { open({ session: run.session!, parent: run.parent! }) }} title={t('打开这次运行的完整记录：它是对话的一个子 agent', 'Open the whole record of this run: it is a child agent of the conversation')}>{t('看过程', 'Open run')}</button> : null}
+            {run.note !== undefined ? <span className="nv-crewrun-note">{run.note}</span> : null}
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
 /** A way to read along with a job's thought from wherever the job is listed. */
 export function ThoughtButton({ job, label }: { job: JobInfo; label?: boolean }) {
   const t = useT()
@@ -709,6 +777,21 @@ export function ThoughtButton({ job, label }: { job: JobInfo; label?: boolean })
       {open ? <Modal title={t('模型的思考过程', 'What the model is thinking')} wide onClose={() => { setOpen(false) }}><JobThought job={job} /></Modal> : null}
     </>
   )
+}
+
+export { linePath, waysOn, type WayOn } from '../shared/lines'
+
+/**
+ * Which line of the plot a screen shows: the one the author picked, while the
+ * chapter in focus is read on it; otherwise that chapter's own.
+ */
+export function useLineView(project: ProjectState, chapterId: string | undefined): { lineId: string; path: ChapterInfo[]; pick: (line: string) => void } {
+  const [picked, setPicked] = useState<string>(MAIN_LINE)
+  const lines = project.outline.lines ?? []
+  const focused = chapterId !== undefined ? [...project.chapters, ...(project.lines ?? []).flatMap(line => line.chapters)].find(candidate => candidate.id === chapterId) : undefined
+  const known = lines.some(line => line.id === picked) ? picked : MAIN_LINE
+  const lineId = focused === undefined || linePath(project, known).some(candidate => candidate.id === focused.id) ? known : focused.line ?? MAIN_LINE
+  return { lineId, path: linePath(project, lineId), pick: setPicked }
 }
 
 export function SectionTitle({ children, actions }: { children: ReactNode; actions?: ReactNode }) {

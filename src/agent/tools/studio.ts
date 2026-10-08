@@ -5,27 +5,29 @@
  * these, nothing the Studio can do needs a click — the screens stay for
  * reading, checking and fine-tuning.
  */
-import { audition, isSkipped, updateAudioLine } from '../../core/pipelines/audio'
+import { audition, clearAudioScript, isSkipped, removeAudioLine, updateAudioLine } from '../../core/pipelines/audio'
 import { soundSetup } from '../../core/media/sound'
 import { addCue, updateCue } from '../../core/pipelines/sound'
 import { listWalkOns, settleWalkOn } from '../../core/walkons'
 import { artDirectionOf } from '../../core/pipelines/illustrate'
-import { updateComicPanel } from '../../core/pipelines/comic'
+import { clearComicBoard, removeComicPanel, updateComicPanel } from '../../core/pipelines/comic'
 import { rewindPlay, setPlayOutcome } from '../../core/pipelines/play'
-import { resolveIssue } from '../../core/pipelines/review'
+import { clearReview, resolveIssue } from '../../core/pipelines/review'
+import { publishSite, siteChaptersUpTo, siteFolder } from '../../core/pipelines/site'
 import { ProjectError } from '../../core/project'
+import { readStub } from '../../core/util/vault'
 import type { DeepPartial } from '../../core/settings'
 import { describeRow, rangeStart, summarize, type UsageRange } from '../../core/usage'
 import type { NovelService } from '../../host/service'
-import { hostOf, SERVICES, type ServiceId, type SetupPart } from '../../shared/services'
+import { hostOf, PROJECT_HOMEPAGE, SERVICES, type ServiceId, type SetupPart } from '../../shared/services'
 import type { AmbiencePreset, CameraMove, ModelRoute, NovelSettings, ProjectManifest, SoundKind, TextRole } from '../../shared/types'
 import { brief, listOf, listParameter, novelTool, toJson } from './shared'
 
-const ROLES: TextRole[] = ['writer', 'analyst', 'architect', 'director']
+const ROLES: TextRole[] = ['writer', 'analyst', 'architect', 'director', 'producer']
 const VIEWS = ['home', 'bible', 'outline', 'write', 'read', 'listen', 'cast', 'review', 'stage', 'settings', 'setup', 'usage'] as const
-const STAGE_TABS = ['comic', 'play', 'gallery', 'audio'] as const
-const BOOK_FIELDS = ['title', 'author', 'language', 'genre', 'logline', 'premise', 'themes', 'targetWords', 'chapterWords', 'artStyle', 'artAvoid', 'storyboard', 'cover', 'notes', 'activeStyle'] as const
-const SECTIONS = ['models', 'context', 'embedding', 'image', 'tts', 'sound', 'autoDigest', 'reviewAgentRevisions', 'prices'] as const
+const STAGE_TABS = ['production', 'comic', 'play', 'gallery', 'audio'] as const
+const BOOK_FIELDS = ['title', 'author', 'language', 'genre', 'logline', 'premise', 'themes', 'targetWords', 'chapterBudget', 'chapterWords', 'artStyle', 'artAvoid', 'storyboard', 'cover', 'notes', 'activeStyle', 'models', 'crew'] as const
+const SECTIONS = ['models', 'crew', 'context', 'embedding', 'image', 'tts', 'sound', 'textConcurrency', 'autoDigest', 'reviewAgentRevisions', 'prices'] as const
 /** A key must never travel through the conversation; these names are refused wherever they appear. */
 const SECRET_FIELD = /^(api[-_]?key|key|secret|token|password|authorization)$/i
 
@@ -51,10 +53,10 @@ export function studioTools(service: NovelService) {
       name: 'novel_settings',
       description: [
         'Read and change how Novel Studio is set up — everything its Settings screen does, except typing keys.',
-        '- action=show: which model plays each role (writer, analyst, architect, director), whether embeddings, images and speech are configured and have a key, what a ChatGPT subscription can do here, and — with a book open — the art direction and avoid list its pictures get and where each comes from.',
-        '- action=setup: one-click setup for `service` (bailian, openrouter, openai, or codex for images from a ChatGPT subscription). It fills `parts` (text, embedding, image, tts; default all the service offers) with recommended models, using the key already saved for that service or found in its usual environment variable. `origin` overrides the service address (a Bailian workspace domain, a proxy).',
-        '- action=studio: apply `patch` to the settings. Sections: models.{writer|analyst|architect|director} = {provider, model, baseURL?, reasoningEffort?, temperature?, maxTokens?, apiKeyRef?} (omit baseURL to use a model configured in the Harness; set a role to null to follow the chat model). The Studio sets no output limit of its own: a reply runs as long as the model allows, and maxTokens is only a cap the author may add — a model that reasons spends its reasoning out of it, so a low cap cuts chapters, scripts and storyboards off; set it to null to remove it. context {strategy: auto|retrieval|full, budgetTokens, tailChars}; embedding / image / tts {provider, baseURL, model, …; tts.retakes = how many more times a line is spoken when a take fails the listening check, 0-4; tts.speechTags = drop (a "he said" between two spoken lines is left unspoken, as in an audio drama) | read (every word is read, as in an audiobook)}; sound {provider: auto (follow the speech setup) | qwen-audiogen | none, model, effects, music (whether the director places them), beds: generate | browser}; autoDigest; reviewAgentRevisions; prices {"<model id>": {input, output, image, minute, chars10k, currency} | null}.',
-        '- action=book: change the book\'s own information with `fields` (title, author, language, genre, logline, premise, themes[], targetWords, chapterWords, artStyle, artAvoid[], storyboard, cover, notes, activeStyle). artStyle is the art direction added to every picture of the book; artAvoid lists what no picture of it may show (objects, motifs, lettering, architectural or religious styles the setting does not have). storyboard = {density: auto|sparse|balanced|dense, maxPanels} says how finely its motion comics are cut. cover is the project-relative path of the picture shown as its cover (any illustration; the latest drawn cover when unset).',
+        '- action=show: which model plays each role (the writer, and the crew: analyst = continuity, architect = planner, director, producer = post-production), how each role of the crew is set to work, whether embeddings, images and speech are configured and have a key, what a ChatGPT subscription can do here, and — with a book open — the art direction and avoid list its pictures get and where each comes from.',
+        '- action=setup: one-click setup for `service` (bailian, openrouter, openai, or codex for images from a ChatGPT subscription). It fills `parts` (embedding, image, tts; default all the service offers) with recommended models — text models are not set up here: every text role runs on a model of DSH\'s (its own Settings → Models) — using the key already saved for that service or found in its usual environment variable. `origin` overrides the service address (a Bailian workspace domain, a proxy).',
+        '- action=studio: apply `patch` to the settings. Sections: models.{writer|analyst|architect|director|producer} = {provider, model, reasoningEffort?, temperature?, maxTokens?} — `provider` and `model` name a model configured in DSH (its Settings → Models); set a role to null to follow the chat model. crew.{analyst|architect|director|producer} = {mode: agent|call, tools: own|all, steps} — how a role of the crew works: as an agent with tools (the default) or by plain calls; with its own tools or with everything the conversation has; and how many tool calls a run may make (null resets a role). The Studio sets no output limit of its own: a reply runs as long as the model allows, and maxTokens is only a cap the author may add — a model that reasons spends its reasoning out of it, so a low cap cuts chapters, scripts and storyboards off; set it to null to remove it. context {strategy: auto (the nearest chapters word for word, the ones before as an outline) | full (as many chapters word for word as the window can hold at all) | retrieval (no chapter whole: outline, looked-up passages and the end of the chapter before — cheapest), budgetTokens: how many tokens of the manuscript\'s own text travel word for word — null for the default, half of the model\'s context window, spent in whole chapters, tailChars}; how many requests go out at once, over everything the Studio is doing (default 8, at most 256; a gate slows down by itself when its service answers "too fast" and makes the request again): textConcurrency (pieces of text work — a role\'s run on a script passage, a digest, a review), tts.concurrency (lines spoken), image.concurrency (pictures drawn), sound.concurrency (sounds made, when sound has an endpoint of its own); embedding / image / tts {provider, baseURL, model, …; tts.retakes = how many more times a line is spoken when a take fails the listening check, 0-4; tts.speechTags = drop (a "he said" between two spoken lines is left unspoken, as in an audio drama) | read (every word is read, as in an audiobook)}; sound {provider: auto (follow the speech setup) | qwen-audiogen | none, model, effects, music (whether the director places them), beds: generate | browser}; autoDigest; reviewAgentRevisions; prices {"<model id>": {input, output, image, minute, chars10k, currency} | null}.',
+        '- action=book: change the book\'s own information with `fields` (title, author, language, genre, logline, premise, themes[], targetWords, chapterBudget, artStyle, artAvoid[], storyboard, cover, notes, activeStyle). chapterBudget is a length the book recommends for a chapter that names none of its own — set it only when the author names one; 0 takes it away, and then whoever writes a chapter judges its length. artStyle is the art direction added to every picture of the book; artAvoid lists what no picture of it may show (objects, motifs, lettering, architectural or religious styles the setting does not have). storyboard = {density: auto|sparse|balanced|dense, maxPanels} says how finely its motion comics are cut. cover is the project-relative path of the picture shown as its cover (any illustration; the latest drawn cover when unset). models and crew are this book\'s own settings, in the shape action=studio takes them (models.{role} = {provider, model, …} of DSH; crew.{role} = {mode, tools, steps}): a role named there is set so for this book only, whatever the Studio-wide settings say; send {} to go back to the Studio-wide ones.',
         '- action=usage: what the Studio\'s model calls have used — tokens per role and model, pictures, minutes of speech — for the book in play and for all books, over `range` (today, 7d, 30d, all), with the cost for every model the author has priced. To price a model, action=studio with patch {prices: {"<model id>": {input, output (per million tokens), image (per picture), minute (per minute of speech), chars10k (per 10,000 characters), currency}}}. Your own turns in this conversation are counted by the Harness, not here.',
         'Keys are never passed here. When a key is missing, call novel_show view=settings and ask the author to paste it in the open screen.',
       ].join('\n'),
@@ -63,7 +65,7 @@ export function studioTools(service: NovelService) {
         action: { type: 'string', required: true, enum: ['show', 'setup', 'studio', 'book', 'usage'] },
         range: { type: 'string', enum: ['today', '7d', '30d', 'all'], description: 'usage: the period. Default: 30d.' },
         service: { type: 'string', enum: ['bailian', 'openrouter', 'openai', 'codex'], description: 'setup: which service.' },
-        parts: listParameter('setup: which slots to fill. Default: all.', { enum: ['text', 'embedding', 'image', 'tts'] as const }),
+        parts: listParameter('setup: which slots to fill. Default: all.', { enum: ['embedding', 'image', 'tts'] as const }),
         origin: { type: 'string', description: 'setup: address of the service when it is not the public one.' },
         patch: { type: 'object', additionalProperties: true, description: 'studio: settings to change.' },
         fields: { type: 'object', additionalProperties: true, description: 'book: fields to set.' },
@@ -98,6 +100,13 @@ export function studioTools(service: NovelService) {
           const fields = (args.fields ?? {}) as Record<string, unknown>
           const patch: Record<string, unknown> = {}
           for (const key of BOOK_FIELDS) if (fields[key] !== undefined) patch[key] = fields[key]
+          // A book's own models are DSH's too.
+          for (const [role, route] of Object.entries((patch.models ?? {}) as Record<string, unknown>)) {
+            if (!ROLES.includes(role as TextRole)) throw new ProjectError('novel/invalid', `"${role}" is not a role; roles are ${ROLES.join(', ')}`)
+            const candidate = (route ?? {}) as Partial<ModelRoute>
+            if (candidate.baseURL !== undefined) throw new ProjectError('novel/invalid', `models.${role} cannot take a \`baseURL\`: text roles run on models configured in DSH`)
+            if (typeof candidate.provider !== 'string' || candidate.provider.length === 0 || typeof candidate.model !== 'string' || candidate.model.length === 0) throw new ProjectError('novel/invalid', `models.${role} needs a \`provider\` and a \`model\` configured in DSH`)
+          }
           const unknown = Object.keys(fields).filter(key => !(BOOK_FIELDS as readonly string[]).includes(key))
           if (Object.keys(patch).length === 0) throw new ProjectError('novel/invalid', `action=book needs \`fields\` with any of: ${BOOK_FIELDS.join(', ')}`)
           const manifest = await runtime.project.updateManifest(patch as Partial<ProjectManifest>)
@@ -116,11 +125,9 @@ export function studioTools(service: NovelService) {
               if (route === null) continue
               const candidate = route as Partial<ModelRoute>
               if (typeof candidate.model !== 'string' || candidate.model.length === 0) throw new ProjectError('novel/invalid', `models.${role} needs a \`model\``)
-              // A direct endpoint is labelled by its host when no label was given.
-              if (typeof candidate.provider !== 'string' || candidate.provider.length === 0) {
-                if (typeof candidate.baseURL !== 'string') throw new ProjectError('novel/invalid', `models.${role} needs a \`provider\` (a Harness provider id) or a \`baseURL\``)
-                candidate.provider = hostOf(candidate.baseURL) ?? 'custom'
-              }
+              // Text models are DSH's: a role names one of its providers, never an endpoint of its own.
+              if (candidate.baseURL !== undefined) throw new ProjectError('novel/invalid', `models.${role} cannot take a \`baseURL\`: text roles run on models configured in DSH (its Settings → Models). The author connects the vendor there; then name its \`provider\` and \`model\` here.`)
+              if (typeof candidate.provider !== 'string' || candidate.provider.length === 0) throw new ProjectError('novel/invalid', `models.${role} needs a \`provider\`: the id of a provider configured in DSH`)
             }
           }
           await core.settings.update(clean as DeepPartial<NovelSettings>)
@@ -129,8 +136,8 @@ export function studioTools(service: NovelService) {
         if (args.action === 'setup') {
           if (args.service === undefined) throw new ProjectError('novel/invalid', 'action=setup needs `service`')
           const target = args.service as ServiceId | 'codex'
-          const chosen = (listOf(args.parts) ?? []).filter((part): part is SetupPart => ['text', 'embedding', 'image', 'tts'].includes(part))
-          const parts: SetupPart[] = chosen.length > 0 ? chosen : target === 'codex' ? ['image'] : ['text', 'embedding', 'image', 'tts']
+          const chosen = (listOf(args.parts) ?? []).filter((part): part is SetupPart => ['embedding', 'image', 'tts'].includes(part))
+          const parts: SetupPart[] = chosen.length > 0 ? chosen : target === 'codex' ? ['image'] : ['embedding', 'image', 'tts']
           const { check } = await service.applySetup({ service: target, parts, ...(args.origin !== undefined ? { origin: args.origin } : {}) })
           if (!check.ok) {
             const name = target === 'codex' ? 'a ChatGPT subscription' : SERVICES[target].name[1]
@@ -156,12 +163,12 @@ export function studioTools(service: NovelService) {
 
     novelTool(service, {
       name: 'novel_show',
-      description: 'Show something in Novel Studio next to the conversation: a screen (`view`: home 总览, bible 设定 — characters, world and style, outline 大纲, write 写作, read 阅读 — the chapter as a reader meets it, listen 听 — the same reader in its listening mode, where the audio drama plays and is produced, cast 群像, review 审校, stage 演出, settings 设置 — models, keys and services, setup 配置向导, usage 用量与成本), optionally at a `chapter`, and for the stage a `tab` (comic 有声漫, play 幕间, gallery 插图). Use it when the author asks to see, open or check something, when a key has to be pasted (view=settings), and after work the author will want to look at. It changes nothing in the project. The Studio always shows the book in play, so naming another `book` moves the session onto it.',
+      description: 'Show something in Novel Studio next to the conversation: a screen (`view`: home 总览, cast 人物 — every character\'s card (looks, voice, relationships) with the lifecycle board, the presence grid, the relationship graph and the walk-ons, bible 设定 — the world, the prose style and the art direction, outline 大纲, write 写作, read 观看 — the chapter as a reader meets it (the same screen holds the album of the book\'s people and its world), listen 听 — the same reader in its listening mode, where the audio drama plays and is produced, review 审校, stage 演出, settings 设置 — models, keys and services, setup 配置向导, usage 用量与成本), optionally at a `chapter`, and for the stage a `tab` (comic 有声漫, play 幕间, gallery 插图). Use it when the author asks to see, open or check something, when a key has to be pasted (view=settings), and after work the author will want to look at. It changes nothing in the project. The Studio always shows the book in play, so naming another `book` moves the session onto it.',
       book: 'switch',
       parameters: {
         view: { type: 'string', required: true, enum: [...VIEWS] },
         chapter: { type: 'string', description: 'Chapter id, number or title to open the screen at.' },
-        tab: { type: 'string', enum: [...STAGE_TABS], description: 'stage: which tab.' },
+        tab: { type: 'string', enum: [...STAGE_TABS], description: 'stage: which tab — production is where every chapter\'s stage production stands, with one button for what is missing.' },
       },
       async run(args, env) {
         let chapterId: string | undefined
@@ -193,16 +200,44 @@ export function studioTools(service: NovelService) {
         '- action=on: share the book in play (or `book`) and start the reader; the author is asked to confirm. `mode`=read (default) lets a device read, listen and watch, and change nothing. `mode`=edit also lets it edit the chapters\' text (a version is kept before each save, and the change goes on the book\'s record) and play the book\'s interludes, which calls the models set up on this computer. Give the author the address — it carries a secret token, so whoever has it can do what the mode allows with the shared books, and nothing else: settings, keys and other books stay out of reach. A sealed book asks every device for its password once. Their computer may ask once whether to allow incoming connections.',
         '- action=off: stop sharing this book (`all`=true: switch the reader off altogether).',
         '- action=renew: replace the address, so links given out earlier stop working.',
+        '- action=publish: write the book out as a site of its own — a folder any static host serves (the same reader, the chapters, voices, motion comic, pictures, and the album of the people and the world as a reader is given it), needing neither DSH nor this computer. `out` names the folder (default: one beside the book, `<title>-site`; never inside the book\'s own); `upto` publishes the written chapters of the main line as far as that chapter (its id, number or title) and cuts the album there; listen=false, watch=false, album=false leave a part out. Published again into the same folder, only what changed is written. A sealed book is not published from the conversation: what is published lies in the open, and that is the author\'s to confirm in the Studio (the phone button of the viewer → Publish as a site).',
         '`port` moves the reader to another port (default 4319) when the usual one is taken.',
       ].join('\n'),
       mutating: args => args.action !== 'status',
       parameters: {
-        action: { type: 'string', required: true, enum: ['status', 'on', 'off', 'renew'] },
+        action: { type: 'string', required: true, enum: ['status', 'on', 'off', 'renew', 'publish'] },
         mode: { type: 'string', enum: ['read', 'edit'], description: 'on: what a device may do with the book. Default: read.' },
         all: { type: 'boolean', description: 'off: switch the reader off for every book.' },
         port: { type: 'integer', description: 'Port to listen on, 1024-65535.' },
+        out: { type: 'string', description: 'publish: the folder to write the site into.' },
+        upto: { type: 'string', description: 'publish: the last chapter to publish (id, number or title); everything written when left out.' },
+        listen: { type: 'boolean', description: 'publish: false leaves the audio drama out.' },
+        watch: { type: 'boolean', description: 'publish: false leaves the motion comic out.' },
+        album: { type: 'boolean', description: 'publish: false leaves the album of the people and the world out.' },
       },
       async run(args, env) {
+        if (args.action === 'publish') {
+          const runtime = await env.project()
+          const manifest = await runtime.project.manifest()
+          if (await readStub(runtime.project.root) !== undefined) throw new ProjectError('novel/invalid', 'this book is sealed, and a published site lies in the open: the author publishes it from the Studio (the phone button of the viewer → Publish as a site), where they confirm that')
+          const reader = await service.share.readerScript()
+          if (reader === undefined) throw new ProjectError('novel/unsupported', 'the reader\'s script (lib/reader.js) is missing from this installation')
+          const chapters = typeof args.upto === 'string' && args.upto.trim().length > 0 ? await siteChaptersUpTo(runtime, args.upto) : undefined
+          const done = await env.job('export', 'publish site', undefined, async task => await publishSite(env.core, runtime, {
+            out: siteFolder(runtime.project.root, manifest.title, args.out),
+            reader,
+            ...(chapters !== undefined ? { chapters } : {}),
+            ...(args.listen === false ? { listen: false } : {}),
+            ...(args.watch === false ? { watch: false } : {}),
+            ...(args.album === false ? { album: false } : {}),
+            credit: { name: manifest.language.toLowerCase().startsWith('zh') ? '小说工坊' : 'Novel Studio', url: PROJECT_HOMEPAGE },
+          }, task))
+          const megabytes = (done.bytes / 1024 / 1024).toFixed(1)
+          return {
+            text: `Published "${manifest.title}" as a site: ${done.chapters} chapters${done.sides > 0 ? `, ${done.sides} side stories` : ''}${done.album !== undefined ? `, an album of ${done.album.people} people and ${done.album.places + done.album.factions + done.album.items + done.album.ideas} entries` : ''}, ${done.files} files, ${megabytes} MB in all (${done.written} written this time${done.removed > 0 ? `, ${done.removed} left from last time removed` : ''}) in ${done.dir}.${done.missing.length > 0 ? ` ${done.missing.length} pictures or sounds the book names are not on disk and were left out.` : ''} The folder goes onto any static host as it is; to look at it first, serve it locally (\`npx serve\`, \`python3 -m http.server\`) — index.html opened from disk cannot read the data beside it.`,
+            data: toJson(done),
+          }
+        }
         const describe = async (status: Awaited<ReturnType<typeof service.share.status>>): Promise<string> => {
           if (!status.enabled || status.books.length === 0) return 'Reading on other devices is off.'
           const shared = status.books.map(book => `"${book.title}" (${book.mode === 'edit' ? 'read and change' : 'read only'}${book.sealed === true ? ', sealed: asks each device for its password once' : ''})`).join(', ')
@@ -237,12 +272,13 @@ export function studioTools(service: NovelService) {
         'The small hand edits Novel Studio offers on its screens, for when the author asks for one in the conversation.',
         '- action=find: exact text search across the manuscript (`query`); novel_search is for meaning.',
         '- action=restore_version: put back an earlier version of `chapter` (`version` id from novel_read what=versions).',
-        '- action=resolve_issue: mark review `issue` of `chapter` as dealt with (or reopen it with resolved=false).',
+        '- action=resolve_issue: mark review `issue` of `chapter` as dealt with (or reopen it with resolved=false). action=delete_review: throw the whole review of `chapter` away.',
         '- action=edit_line: change line `id` of the audio script of `chapter` — `fields` {text, kind: narration|dialogue|thought, speaker (character id, "" for the narrator), direction, voiced (false leaves the line unspoken, true has a speech tag spoken after all)}.',
         '- action=edit_cue / add_cue / delete_cue: the sound cues of the audio script of `chapter` — `id` is the cue (edit, delete), `fields` {kind: bed|effect|music, at (line id), caption (what the reader sees), prompt (what the sound model is asked for), ambience (the browser\'s stand-in bed), intensity 0-1}. A changed cue keeps its old clip until sound is made again (novel_audio action=sound cues=[id]).',
         '- action=walkons: the people the page names who have no character card — where each turns up, the voice the audio drama gave them, and whether they look like an existing character under another name.',
         '- action=settle_walkon: settle one of them by `name` — `fields` {as: "card" (give them a card; role: minor|cameo), "alias" (they are character `of` under another name), "ignore" (not worth tracking), "restore"}. A new card keeps the voice they already had, and their lines in the audio scripts go to it.',
-        '- action=edit_panel: change panel `id` of the storyboard of `chapter` — `fields` {prompt, description, camera}.',
+        '- action=delete_line: take line `id` out of the audio script of `chapter` (sound cues that began at it move to the next line; a storyboard panel that showed only it goes too). action=delete_script: throw the whole audio script of `chapter` away — the takes already spoken stay on disk and are reused if the same lines come back.',
+        '- action=edit_panel: change panel `id` of the storyboard of `chapter` — `fields` {prompt, description, camera}. action=delete_panel: take panel `id` out (its lines go to the panel before it). action=delete_storyboard: throw the whole storyboard of `chapter` away — its pictures stay in the gallery (delete_image removes one).',
         '- action=audition: speak `text` so the author can hear a voice — `voice` (a voice id or description), or `character` to hear that character as their lines will sound; neither = the narrator (`direction` optional).',
         '- action=list_images / delete_image (`id`).',
         '- action=rewind_interlude / keep_interlude (as a side story) / delete_interlude (`session`).',
@@ -251,7 +287,7 @@ export function studioTools(service: NovelService) {
       ].join('\n'),
       mutating: args => args.action !== 'find' && args.action !== 'list_images' && args.action !== 'walkons',
       parameters: {
-        action: { type: 'string', required: true, enum: ['find', 'restore_version', 'resolve_issue', 'edit_line', 'edit_cue', 'add_cue', 'delete_cue', 'edit_panel', 'walkons', 'settle_walkon', 'audition', 'list_images', 'delete_image', 'rewind_interlude', 'keep_interlude', 'delete_interlude', 'lock_book', 'delete_book'] },
+        action: { type: 'string', required: true, enum: ['find', 'restore_version', 'resolve_issue', 'delete_review', 'edit_line', 'delete_line', 'delete_script', 'edit_cue', 'add_cue', 'delete_cue', 'edit_panel', 'delete_panel', 'delete_storyboard', 'walkons', 'settle_walkon', 'audition', 'list_images', 'delete_image', 'rewind_interlude', 'keep_interlude', 'delete_interlude', 'lock_book', 'delete_book'] },
         chapter: { type: 'string' },
         id: { type: 'string', description: 'Line, cue, panel or image id.' },
         name: { type: 'string', description: 'settle_walkon: the name as the page writes it.' },
@@ -303,6 +339,26 @@ export function studioTools(service: NovelService) {
             const done = await resolveIssue(runtime, need(args.chapter, 'chapter'), need(args.issue, 'issue'), resolved)
             if (done === undefined) throw new ProjectError('novel/not-found', `no such review issue`)
             return { text: `Issue ${args.issue} ${resolved ? 'marked as dealt with' : 'reopened'}.` }
+          }
+          case 'delete_review': {
+            const done = await clearReview(runtime, need(args.chapter, 'chapter'))
+            return { text: done.removed ? `The review of ${done.chapterId} is gone; review it again with novel_review.` : `${done.chapterId} had no review.` }
+          }
+          case 'delete_line': {
+            const done = await removeAudioLine(runtime, need(args.chapter, 'chapter'), need(args.id, 'id'))
+            return { text: `Line ${args.id} is out of the script (${done.script.lines.length} lines left)${done.panels > 0 ? `; ${done.panels} storyboard panel(s) that showed only it went with it` : ''}.` }
+          }
+          case 'delete_script': {
+            const done = await clearAudioScript(runtime, need(args.chapter, 'chapter'))
+            return { text: done.removed ? `The audio script of ${done.chapterId} is gone. Takes already spoken are still on disk; direct the chapter again with novel_audio action=script.` : `${done.chapterId} had no audio script.` }
+          }
+          case 'delete_panel': {
+            const board = await removeComicPanel(runtime, need(args.chapter, 'chapter'), need(args.id, 'id'))
+            return { text: `Panel ${args.id} is out of the storyboard (${board.panels.length} panels left); its lines went to a neighbouring panel, and its picture is still in the gallery.` }
+          }
+          case 'delete_storyboard': {
+            const done = await clearComicBoard(runtime, need(args.chapter, 'chapter'))
+            return { text: done.removed ? `The storyboard of ${done.chapterId} is gone; the pictures drawn for it are still in the gallery. Cut it again with novel_comic action=storyboard.` : `${done.chapterId} had no storyboard.` }
           }
           case 'edit_line': {
             const kind = text('kind')
@@ -362,7 +418,7 @@ export function studioTools(service: NovelService) {
               const near = item.near !== undefined ? cards.find(card => card.id === item.near)?.name : undefined
               return `- ${item.name}: ${item.chapters.length} chapter(s)${item.lines > 0 ? `, ${item.lines} spoken lines` : ''}${item.voice !== undefined ? `, voice "${brief(item.voice, 40)}"` : ''}${near !== undefined ? ` — may be ${near} under another name` : ''}${item.suggestion !== undefined ? ' — a card was suggested by the digest' : ''}${item.note !== undefined ? ` — ${brief(item.note, 80)}` : ''}`
             })
-            return { text: `${shown.length} people on the page have no card:\n${lines.join('\n')}\nNot every passer-by needs one: give a card to those the story will come back to, fold other names of an existing character into their aliases (action=settle_walkon), and leave the rest.`, data: toJson(shown) }
+            return { text: `${shown.length} people on the page have no card${shown.length > lines.length ? ` (the ${lines.length} most present are listed)` : ''}:\n${lines.join('\n')}\nNot every passer-by needs one: give a card to those the story will come back to, fold other names of an existing character into their aliases (action=settle_walkon), and leave the rest.`, data: toJson(shown) }
           }
           case 'settle_walkon': {
             const how = text('as') ?? 'card'
@@ -455,7 +511,8 @@ async function summary(service: NovelService, full = false): Promise<string> {
   ]
   if (full) {
     lines.push(
-      `Context: strategy ${settings.context.strategy}, budget ${settings.context.budgetTokens} tokens, ${settings.context.tailChars} characters of preceding text.`,
+      `Context: strategy ${settings.context.strategy}; of the manuscript's own text, ${settings.context.budgetTokens !== undefined ? `${settings.context.budgetTokens} tokens` : 'half of the model\'s context window'} travel word for word, in whole chapters; the chapters before those travel as an outline.`,
+      `At once, over everything: ${service.core.parallel('text')} pieces of text work, ${service.core.parallel('speech')} lines spoken, ${service.core.parallel('image')} pictures drawn, ${service.core.parallel('sound')} sounds made${service.core.gate('sound') === service.core.gate('speech') ? ' (sound rides on the speech setup and shares its number)' : ''}.`,
       `Output: the Studio caps no reply itself — each runs as long as its model allows${ROLES.some(role => settings.models[role]?.maxTokens !== undefined) ? `, except where a role sets a cap (${ROLES.filter(role => settings.models[role]?.maxTokens !== undefined).map(role => `${role}: ${settings.models[role]!.maxTokens}`).join(', ')}); a reasoning model spends its reasoning out of that cap` : ''}.`,
       `Speech takes: a line that fails the listening check is spoken up to ${settings.tts.retakes ?? 2} more time(s). Speech tags between spoken lines are ${settings.tts.speechTags === 'read' ? 'read aloud' : 'left unspoken'}.`,
       `Raw file tools on a book's own files (manuscript, bible, outline, records): ${settings.agentFiles === 'allow' ? 'let through, and reconciled afterwards' : settings.agentFiles === 'ask' ? 'the author is asked each time' : 'refused, with the novel_* tool to use instead'} — the author's setting, not yours to change.`,

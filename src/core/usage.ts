@@ -115,7 +115,10 @@ export function costOf(event: UsageEvent, price: PriceEntry | undefined): number
     priced = true
     cost += amount * unit
   }
-  add((event.input ?? 0) / 1_000_000, price.input)
+  // What the provider had cached is billed at its own, lower price where the author gave one.
+  const cached = price.cached !== undefined ? Math.min(event.cached ?? 0, event.input ?? 0) : 0
+  add(((event.input ?? 0) - cached) / 1_000_000, price.input)
+  add(cached / 1_000_000, price.cached)
   add((event.output ?? 0) / 1_000_000, price.output)
   add(event.images, price.image)
   add((event.seconds ?? 0) / 60, price.minute)
@@ -125,13 +128,14 @@ export function costOf(event: UsageEvent, price: PriceEntry | undefined): number
 }
 
 function emptyRow(key: string, label: string, kind?: UsageKind): UsageRow {
-  return { key, label, ...(kind !== undefined ? { kind } : {}), calls: 0, input: 0, output: 0, images: 0, seconds: 0, chars: 0, estimated: false, cost: [], unpriced: false }
+  return { key, label, ...(kind !== undefined ? { kind } : {}), calls: 0, input: 0, output: 0, cached: 0, images: 0, seconds: 0, chars: 0, estimated: false, cost: [], unpriced: false }
 }
 
 function addTo(row: UsageRow, event: UsageEvent, cost: number | undefined, currency: string): void {
   row.calls += 1
   row.input += event.input ?? 0
   row.output += event.output ?? 0
+  row.cached = (row.cached ?? 0) + (event.cached ?? 0)
   row.images += event.images ?? 0
   row.seconds += event.seconds ?? 0
   row.chars += event.chars ?? 0
@@ -220,9 +224,9 @@ export function meterLlm(llm: LlmBackend, record: Record_): LlmBackend {
         via: route.baseURL !== undefined ? hostOf(route.baseURL) ?? route.baseURL : route.provider,
         ...(tag !== undefined ? { role: tag.role as TextRole, ...(tag.book !== undefined ? { book: tag.book } : {}), ...(tag.title !== undefined ? { bookTitle: tag.title } : {}) } : {}),
         ...(response.usage !== undefined
-          ? { input: response.usage.inputTokens, output: response.usage.outputTokens }
+          ? { input: response.usage.inputTokens, output: response.usage.outputTokens, ...(response.usage.cachedTokens !== undefined ? { cached: response.usage.cachedTokens } : {}) }
           // An endpoint that does not say what it counted is counted by the length of what was sent and said.
-          : { input: estimateTokens(`${request.system ?? ''}${request.prompt}`), output: estimateTokens(response.text), estimated: true }),
+          : { input: estimateTokens(`${request.system ?? ''}${request.stable ?? ''}${request.prompt}`), output: estimateTokens(response.text), estimated: true }),
       })
       return response
     },

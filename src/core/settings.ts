@@ -11,20 +11,31 @@ import type { NovelSettings } from '../shared/types'
 import { KeyedMutex } from './util/async'
 import { readJson, writeJson } from './util/fs'
 
+/**
+ * Which round of defaults a settings file has been brought up to. A file from
+ * before a round is migrated when it is read, and says so once it is saved —
+ * so a value the author sets afterwards is never taken for an old default.
+ */
+export const SETTINGS_REVISION = 2
+
 export const DEFAULT_SETTINGS: NovelSettings = {
   schema: 1,
   models: {},
   // Current models hold a million tokens; the budget is cut to what a smaller window leaves room for at call time.
-  context: { strategy: 'auto', budgetTokens: 500_000, tailChars: 3000 },
+  // No budget of the author's own: the manuscript gets half of whatever window the model has.
+  context: { strategy: 'auto', tailChars: 3000 },
   image: { provider: 'none', size: '1024x1024' },
-  tts: { provider: 'none', concurrency: 3 },
+  tts: { provider: 'none' },
   // Effects, music and generated ambience ride on the speech setup wherever its model can make them.
   sound: { provider: 'auto' },
   embedding: { provider: 'none' },
+  // Every role of the crew is an agent with its own tools until the author says otherwise.
+  crew: {},
   autoDigest: true,
   reviewAgentRevisions: false,
   // Reading on other devices is something the author switches on, book by book.
   share: { enabled: false },
+  revision: SETTINGS_REVISION,
 }
 
 /** Resolve the Harness home the same way the launcher does: `$DSH_HOME`, else `~/.dsh`. */
@@ -57,15 +68,30 @@ export function mergeSettings(base: NovelSettings, patch: DeepPartial<NovelSetti
   return { ...(next as unknown as NovelSettings), schema: 1 }
 }
 
-/** The context budget every settings file was saved with before the default grew; nobody chose it. */
-const LEGACY_BUDGET = 48_000
+/** The context budgets settings files were saved with while there was a fixed default; nobody chose them. */
+const LEGACY_BUDGETS = [48_000, 500_000]
+/** The numbers of parallel speech requests the old default and the one-click setups wrote; nobody chose them either. */
+const LEGACY_SPEECH = [2, 3]
 
-/** Bring a saved file forward: values that were only ever the old default follow the new one. */
+/**
+ * Bring a saved file forward: values that were only ever an old default follow
+ * the new one. Done once — a file that carries the current revision is taken
+ * at its word.
+ */
 function migrate(saved: DeepPartial<NovelSettings>): DeepPartial<NovelSettings> {
+  if (typeof saved.revision === 'number' && saved.revision >= SETTINGS_REVISION) return saved
+  let next: DeepPartial<NovelSettings> = { ...saved, revision: SETTINGS_REVISION }
   const context = saved.context
-  if (context === undefined || context === null || context.budgetTokens !== LEGACY_BUDGET) return saved
-  const { budgetTokens: _old, ...rest } = context
-  return { ...saved, context: rest }
+  if (context !== undefined && context !== null && typeof context.budgetTokens === 'number' && LEGACY_BUDGETS.includes(context.budgetTokens)) {
+    const { budgetTokens: _old, ...rest } = context
+    next = { ...next, context: rest }
+  }
+  const tts = saved.tts
+  if (tts !== undefined && tts !== null && typeof tts.concurrency === 'number' && LEGACY_SPEECH.includes(tts.concurrency)) {
+    const { concurrency: _old, ...rest } = tts
+    next = { ...next, tts: rest }
+  }
+  return next
 }
 
 /** Any part of the settings; an optional section may be patched field by field like the others. */

@@ -181,8 +181,11 @@ describe('importing through the editor', () => {
   it('has the editor agent find the chapters, and says how it went', async () => {
     bed.roles.enabled = true
     bed.roles.script = async (task, call) => {
-      expect(task.role).toBe('importer')
-      expect(task.persona).toContain('你是一位整理书稿的编辑')
+      // Taking a manuscript in is the continuity keeper's work: its persona, and this craft among its rules.
+      expect(task.role).toBe('analyst')
+      expect(task.label).toBe('场记 · 整理《红楼梦》的章节')
+      expect(task.persona).toContain('场记')
+      expect(task.rules).toContain('## 收录一份书稿')
       expect(task.prompt).toContain('能找到 1 处标题')
       expect(task.tools.map(tool => tool.name)).toEqual(['look', 'search', 'clean', 'split', 'amend', 'list', 'sections', 'finish'])
       await call('look', { chars: 400 })

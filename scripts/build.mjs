@@ -3,12 +3,24 @@
 /**
  * Build script: bundles the three entry points of the plugin with esbuild.
  *
- *   lib/index.js   Host half (Node, ESM)            -> row `dsh-novel-writer`
+ *   lib/index.js   Host half, the door (Node, ESM)  -> row `dsh-novel-writer`
+ *   lib/host.js    Host half proper                 -> put up by the door; replaced while DSH runs
  *   lib/agent.js   Agent-plane half (Node, ESM)     -> row `dsh-novel-writer/agent`
  *   lib/client.js  Browser half (lazy-CJS factory)  -> served by dsh-client-modules
  *   lib/reader.js  The reader for other devices     -> served by the plugin's own small server
- *   lib/chunks/    code shared by the Host and agent halves
- *   lib/novel-auth the owner check of sealed books  -> macOS only, built where Swift is at hand
+ *   lib/chunks/    code the Host half loads when it is first needed
+ *   lib/build.json which build this is              -> how a running Host knows it is no longer the installed one
+ *
+ * `lib/` is what an installed copy runs — also a copy that is running right
+ * now, when a profile links this checkout. So nothing is ever built in place:
+ * a build goes to a directory of its own and is then put into `lib/` file by
+ * file, each one whole or not at all, only the files that changed, the entry
+ * the Harness watches last. Day-to-day builds do not go to `lib/` at all:
+ *
+ *   node scripts/build.mjs            a release: into lib/
+ *   node scripts/build.mjs --stage    into .dev/stage/lib, a copy of the package the dev launcher runs
+ *   node scripts/build.mjs --out DIR  into DIR
+ *   node scripts/build.mjs --watch    rebuild on change, into the stage
  *
  * The browser half follows the DeepSeek Harness client-module contract: the
  * bundle registers one factory through `window.__ModuleLoader__.load` and reads
@@ -16,16 +28,23 @@
  * `require`. Everything else is inlined.
  */
 import { build, context } from 'esbuild'
-import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { chmod, copyFile, readFile, mkdir, rm, writeFile } from 'node:fs/promises'
+import { copyFile, lstat, readdir, readFile, mkdir, readlink, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
-import { dirname, resolve } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const pkg = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'))
 const watch = process.argv.includes('--watch')
 const dev = watch || process.argv.includes('--dev')
+/** The copy of the package the dev launcher runs: the same files, with a `lib/` of its own. */
+const stageDir = resolve(root, '.dev/stage')
+const outFlag = process.argv.indexOf('--out')
+const staged = process.argv.includes('--stage') || (watch && outFlag < 0)
+/** Where the build ends up. */
+const out = outFlag >= 0 && process.argv[outFlag + 1] !== undefined ? resolve(process.argv[outFlag + 1]) : staged ? resolve(stageDir, 'lib') : resolve(root, 'lib')
+/** Where esbuild writes: the place itself when watching, a directory beside it otherwise — put in place when all of it is there. */
+const work = watch ? out : `${out}.building-${process.pid}`
 
 /** Modules the Web shell seeds into the shared module table (dsh-client-web `PLATFORM_MODULES`). */
 const PLATFORM_MODULES = [
@@ -43,15 +62,17 @@ const PLATFORM_MODULES = [
 const define = {
   __NOVEL_VERSION__: JSON.stringify(pkg.version),
   __NOVEL_PACKAGE__: JSON.stringify(pkg.name),
+  __NOVEL_LICENSE__: JSON.stringify(pkg.license),
 }
 
 /** Host and agent halves run inside the Harness process: every `@deepseek-ai/*` import must stay shared. */
 const hostOptions = {
   absWorkingDir: root,
-  entryPoints: { index: 'src/index.ts', agent: 'src/agent/index.ts' },
-  outdir: 'lib',
+  // `index` is the door DSH loads; `host` is the Host half it puts up, and can put up anew (src/host/door.ts).
+  entryPoints: { index: 'src/index.ts', host: 'src/host/main.ts', agent: 'src/agent/index.ts' },
+  outdir: work,
   bundle: true,
-  // The two halves share the core (project model, pipelines) as chunks: one copy on disk and in memory.
+  // The agent entry only hands over to the Host half that is running (see src/agent/index.ts), so the core is in one file; what is loaded on demand is a chunk.
   splitting: true,
   chunkNames: 'chunks/[name]-[hash]',
   format: 'esm',
@@ -76,7 +97,7 @@ const hostOptions = {
 const clientOptions = {
   absWorkingDir: root,
   entryPoints: { client: 'src/client/index.tsx' },
-  outdir: 'lib',
+  outdir: work,
   bundle: true,
   splitting: false,
   format: 'cjs',
@@ -87,7 +108,7 @@ const clientOptions = {
   minify: !dev,
   legalComments: 'none',
   external: PLATFORM_MODULES,
-  loader: { '.css': 'text', '.svg': 'text' },
+  loader: { '.css': 'text', '.svg': 'text', '.png': 'dataurl', '.webp': 'dataurl' },
   define: {
     ...define,
     'process.env.NODE_ENV': JSON.stringify(dev ? 'development' : 'production'),
@@ -111,7 +132,7 @@ const clientOptions = {
 const readerOptions = {
   absWorkingDir: root,
   entryPoints: { reader: 'src/reader/main.tsx' },
-  outdir: 'lib',
+  outdir: work,
   bundle: true,
   splitting: false,
   format: 'iife',
@@ -121,7 +142,7 @@ const readerOptions = {
   sourcemap: dev ? 'inline' : false,
   minify: !dev,
   legalComments: 'none',
-  loader: { '.css': 'text', '.svg': 'text' },
+  loader: { '.css': 'text', '.svg': 'text', '.png': 'dataurl', '.webp': 'dataurl' },
   define: {
     ...define,
     'process.env.NODE_ENV': JSON.stringify(dev ? 'development' : 'production'),
@@ -130,52 +151,89 @@ const readerOptions = {
   banner: { js: '/* dsh-novel-writer reader — LGPL-3.0-or-later. Generated by scripts/build.mjs; edit src/ instead. Bundles React (MIT). */' },
 }
 
-/**
- * The helper that asks a Mac's owner to prove presence (Touch ID, or the Mac's
- * password) before a sealed book's key is taken from the keychain. It is a
- * few lines of Swift; compiled once per change of its source and kept beside
- * it, so an ordinary build only copies it. Where there is no Swift compiler —
- * another system, a Mac without the command line tools — the plugin is built
- * without it, and sealed books open with their password only.
- */
-async function authHelper() {
-  if (process.platform !== 'darwin') return
-  const source = resolve(root, 'native/novel-auth.swift')
-  const cache = resolve(root, 'native/.build')
-  const stamp = createHash('sha256').update(await readFile(source)).digest('hex').slice(0, 16)
-  const built = resolve(cache, 'novel-auth')
-  const known = await readFile(resolve(cache, 'stamp'), 'utf8').catch(() => '')
-  if (known !== stamp) {
-    await mkdir(cache, { recursive: true })
-    const slices = []
-    for (const target of ['arm64-apple-macos12', 'x86_64-apple-macos13']) {
-      const out = resolve(cache, `novel-auth-${target.split('-')[0]}`)
-      const compiled = spawnSync('swiftc', ['-O', '-target', target, source, '-o', out], { encoding: 'utf8' })
-      if (compiled.status === 0) slices.push(out)
-      else if (compiled.error?.code === 'ENOENT') {
-        console.log('[build] no Swift compiler here: built without the owner check (sealed books open with their password)')
-        return
-      } else console.log(`[build] the owner check could not be built for ${target}: ${String(compiled.stderr).trim().split('\n').at(-1) ?? compiled.status}`)
-    }
-    if (slices.length === 0) return
-    const joined = slices.length > 1 ? spawnSync('lipo', ['-create', '-output', built, ...slices], { encoding: 'utf8' }) : undefined
-    if (joined === undefined || joined.status !== 0) await copyFile(slices[0], built)
-    await writeFile(resolve(cache, 'stamp'), stamp)
+/** Every file below a directory, as paths relative to it. */
+async function filesOf(dir, base = dir) {
+  const found = []
+  for (const entry of await readdir(dir, { withFileTypes: true }).catch(() => [])) {
+    const path = join(dir, entry.name)
+    if (entry.isDirectory()) found.push(...await filesOf(path, base))
+    else if (entry.isFile()) found.push(relative(base, path))
   }
-  await copyFile(built, resolve(root, 'lib/novel-auth'))
-  await chmod(resolve(root, 'lib/novel-auth'), 0o755)
-  console.log('[build] lib/novel-auth (owner check for sealed books)')
+  return found.sort()
 }
 
-await mkdir(resolve(root, 'lib'), { recursive: true })
+/**
+ * Put a finished build where it is run from. A copy of the plugin may be
+ * running off that very directory, so: a file is renamed into place whole,
+ * never written there; a file that did not change is not touched (a Harness
+ * swaps the Studio in an open window when `client.js` changes); what is loaded
+ * on demand arrives before what refers to it; and the files of the build
+ * before this one stay until the next, for a Host that still runs it.
+ */
+async function promote() {
+  const files = (await filesOf(work)).filter(file => file !== 'build.json')
+  const hash = createHash('sha256')
+  for (const file of files) hash.update(file).update('\0').update(await readFile(join(work, file))).update('\0')
+  const before = JSON.parse(await readFile(join(out, 'build.json'), 'utf8').catch(() => '{}'))
+  const id = hash.digest('hex').slice(0, 12)
+  const rank = file => (file === 'client.js' ? 3 : file === 'index.js' || file === 'host.js' || file === 'agent.js' ? 2 : file.startsWith('chunks/') ? 0 : 1)
+  let changed = 0
+  for (const file of [...files].sort((left, right) => rank(left) - rank(right) || left.localeCompare(right))) {
+    const next = await readFile(join(work, file))
+    const now = await readFile(join(out, file)).catch(() => undefined)
+    if (now !== undefined && now.equals(next)) continue
+    await mkdir(dirname(join(out, file)), { recursive: true })
+    const arriving = join(out, `${file}.arriving-${process.pid}`)
+    await copyFile(join(work, file), arriving)
+    await rename(arriving, join(out, file))
+    changed += 1
+  }
+  const manifest = { id, version: pkg.version, builtAt: before.id === id && typeof before.builtAt === 'string' ? before.builtAt : new Date().toISOString(), files, previous: before.id === id ? before.previous ?? [] : before.files ?? [] }
+  await writeFile(join(out, `build.json.arriving-${process.pid}`), `${JSON.stringify(manifest, null, 2)}\n`)
+  await rename(join(out, `build.json.arriving-${process.pid}`), join(out, 'build.json'))
+  // Older than the build before this one: nothing that runs can still want it. Where the build before left no word of
+  // what it was made of (it was made before builds were named), nothing is known to be old, and nothing is removed.
+  if (typeof before.id === 'string') {
+    const kept = new Set([...manifest.files, ...manifest.previous, 'build.json'])
+    for (const file of await filesOf(out)) if (!kept.has(file)) await rm(join(out, file), { force: true })
+  }
+  await rm(work, { recursive: true, force: true })
+  console.log(`[build] ${relative(root, out) || out}: build ${id}, ${changed === 0 ? 'nothing changed' : `${changed} of ${files.length} files changed`}`)
+}
+
+/**
+ * The stage is the package as a Harness sees it — its manifest, its patch, its
+ * locales, skills and crew — with `lib/` built apart from the released one.
+ */
+async function stagePackage() {
+  await mkdir(stageDir, { recursive: true })
+  await writeFile(join(stageDir, 'package.json'), await readFile(resolve(root, 'package.json')))
+  for (const name of ['cordis.patch.yml', 'locale', 'skills', 'crew', 'icon.png', 'recommended.json']) {
+    const link = join(stageDir, name)
+    const target = resolve(root, name)
+    const current = await readlink(link).catch(() => undefined)
+    if (current === target) continue
+    if (await lstat(link).then(() => true, () => false)) await rm(link, { recursive: true, force: true })
+    await symlink(target, link)
+  }
+}
+
+if (staged) await stagePackage()
+await mkdir(work, { recursive: true })
 
 if (watch) {
   const contexts = await Promise.all([context(hostOptions), context(clientOptions), context(readerOptions)])
   await Promise.all(contexts.map(ctx => ctx.watch()))
-  console.log('[build] watching for changes…')
+  console.log(`[build] watching for changes, into ${relative(root, out)}…`)
 } else {
-  await rm(resolve(root, 'lib'), { recursive: true, force: true })
-  await mkdir(resolve(root, 'lib'), { recursive: true })
-  await Promise.all([build(hostOptions), build(clientOptions), build(readerOptions)])
+  try {
+    await rm(work, { recursive: true, force: true })
+    await mkdir(work, { recursive: true })
+    await Promise.all([build(hostOptions), build(clientOptions), build(readerOptions)])
+    await mkdir(out, { recursive: true })
+    await promote()
+  } finally {
+    // A build that failed leaves what was there as it was.
+    await rm(work, { recursive: true, force: true })
+  }
 }
-await authHelper().catch((error) => { console.log(`[build] the owner check was not built: ${error instanceof Error ? error.message : String(error)}`) })

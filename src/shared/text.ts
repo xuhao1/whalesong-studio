@@ -160,3 +160,9 @@ export function formatCount(count: number, locale: string): string {
   if (count >= 1000) return `${(count / 1000).toFixed(count >= 10000 ? 0 : 1)}k`
   return String(count)
 }
+
+/** How ffmpeg gets onto a computer, whichever system it runs — [中文, English]. */
+export const FFMPEG_INSTALL: readonly [string, string] = [
+  'macOS：brew install ffmpeg；Windows：winget install ffmpeg；Linux：用发行版的包管理器（如 sudo apt install ffmpeg）',
+  'macOS: brew install ffmpeg; Windows: winget install ffmpeg; Linux: your distribution\'s package manager (e.g. sudo apt install ffmpeg)',
+]

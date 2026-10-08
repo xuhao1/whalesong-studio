@@ -25,7 +25,13 @@ const outputRule = (base: Base): string => L(
 
 // ───────────────────────────── writing ─────────────────────────────
 
-export function writerSystem(base: Base & { style: string; words: number; continuing: boolean }): string {
+/**
+ * The writer's standing instructions. Nothing in them changes from one chapter
+ * to the next — how long this chapter is to be and whether it is being
+ * continued are said with the task — so the head of every request for a book
+ * is the same and a provider can keep it.
+ */
+export function writerSystem(base: Base & { style: string }): string {
   return L(base.lang, `你是一位功力深厚的小说家，正在为长篇小说《${bare(base.title)}》执笔。编辑会给你设定、前情与本章章纲，你写出可以直接付印的正文。
 
 【写作纪律】
@@ -34,9 +40,7 @@ export function writerSystem(base: Base & { style: string; words: number; contin
 3. 章纲里的节拍必须全部发生，但要像故事一样自然生长：补上过渡、细节、潜台词与人物之间的张力，不要把章纲逐条翻译成句子。不得擅自改变剧情走向，不得引入章纲之外的重大事件或新的重要角色。
 4. 多人同场时，每个出场人物都要有符合身份的动作、立场和不可替代的作用，不要让谁沦为背景板。
 5. 写到本章应当结束的地方就停，不要预支后面章节的情节，不要在结尾总结或升华。
-6. ${base.continuing ? '你是在续写：从已有正文的最后一个字之后接着写，不要重复已有内容，衔接处不能看出缝。' : '从本章第一句开始写。'}
-7. 篇幅：约 ${base.words} 字（上下浮动 15% 以内）。
-8. ${outputRule(base)}
+6. ${outputRule(base)}
 
 【文风】
 ${base.style}`, `You are an accomplished novelist writing the novel "${bare(base.title)}". Your editor gives you the story bible, the story so far and this chapter's outline; you deliver prose that could go to print as is.
@@ -47,23 +51,34 @@ RULES
 3. Every beat in the outline must happen, but let it grow like a story: add transitions, texture, subtext and friction between people. Do not translate the outline line by line. Do not change where the plot goes or introduce major events or major characters the outline does not have.
 4. When several characters share a scene, each needs a stance, an action and a reason to be there. Nobody is furniture.
 5. Stop where this chapter should end. Do not write ahead into later chapters, and do not summarize or moralize at the end.
-6. ${base.continuing ? 'You are continuing: pick up right after the last word of the existing text, repeat nothing, and leave no seam.' : 'Start from the first sentence of the chapter.'}
-7. Length: about ${base.words} words (within 15%).
-8. ${outputRule(base)}
+6. ${outputRule(base)}
 
 STYLE
 ${base.style}`)
 }
 
-export function writerTask(base: Base & { context: string; brief?: string; continuing: boolean }): string {
+/**
+ * What the writer is asked for this time, after everything it has read.
+ * @param base.words - the length recommended for what this call writes; absent, the writer judges.
+ * @param base.usual - how long the book's written chapters run, for a writer left to judge.
+ */
+export function writerTask(base: Base & { context: string; brief?: string; continuing: boolean; words?: number; usual?: number }): string {
   const brief = base.brief !== undefined && base.brief.trim().length > 0
     ? L(base.lang, `\n\n## 编辑对本次写作的要求\n\n${base.brief.trim()}`, `\n\n## The editor's brief for this pass\n\n${base.brief.trim()}`)
     : ''
-  return `${base.context}${brief}\n\n---\n${L(
+  const length = base.words !== undefined
+    ? L(base.lang, `篇幅：约 ${base.words} 字（上下浮动 15% 以内）。`, `Length: about ${base.words} words (within 15%).`)
+    : L(
+        base.lang,
+        `篇幅：没有规定字数，由你判断。章纲里的每个节拍都要写足、写透，不注水，也不赶进度；这一章该有多长就写多长。${base.usual !== undefined ? `本书已写的章节平均约 ${base.usual} 字，供你把握节奏，不是规定。` : ''}`,
+        `Length: none is set — judge it yourself. Give every beat of the outline the room it needs, neither padded nor rushed; the chapter is as long as it has to be.${base.usual !== undefined ? ` The chapters written so far run to about ${base.usual} words on average: a sense of the book's pace, not a rule.` : ''}`,
+      )
+  const how = L(
     base.lang,
-    base.continuing ? '现在接着"本章已有正文"往下写，直接输出续写的正文。' : '现在写这一章，直接输出正文。',
-    base.continuing ? 'Continue from "This chapter so far". Output the continuation only.' : 'Write this chapter now. Output the prose only.',
-  )}`
+    base.continuing ? '你是在续写：从"本章已有正文"的最后一个字之后接着写，不要重复已有内容，衔接处不能看出缝。直接输出续写的正文。' : '从本章第一句开始写，直接输出正文。',
+    base.continuing ? 'You are continuing: pick up right after the last word of "This chapter so far", repeat nothing, and leave no seam. Output the continuation only.' : 'Start from the first sentence of the chapter. Output the prose only.',
+  )
+  return `${base.context}${brief}\n\n---\n${length}\n${how}`
 }
 
 export function reviseSpanSystem(base: Base & { style: string }): string {
@@ -119,7 +134,23 @@ export function reviseChapterTask(base: Base & { context: string; instruction: s
 }
 
 /** Decide which chapters a book-wide instruction touches. */
-export function triageTask(base: Base & { instruction: string; chapters: string }): string {
+/**
+ * Where a change the author asks for reaches: which chapters, and — when asked — what in the bible.
+ * @param base.bible - also name what the bible itself should say otherwise.
+ */
+export function triageTask(base: Base & { instruction: string; chapters: string; bible?: boolean }): string {
+  const zhShape = base.bible === true
+    ? '{"chapters": [{"index": 章节序号, "reason": "这一章需要怎么改（一句话，具体到位）"}], "bible": [{"kind": "character|world", "name": "人物卡或设定条目的名字", "field": "要改的字段", "value": "改成什么", "reason": "为什么"}], "note": "给作者的总体说明：问题出在哪、牵涉多大范围、你是怎么判断的"}'
+    : '{"chapters": [{"index": 章节序号, "reason": "这一章需要怎么改（一句话，具体到位）"}], "note": "给作者的总体说明，可为空"}'
+  const enShape = base.bible === true
+    ? '{"chapters": [{"index": 1, "reason": "how this chapter must change, in one specific sentence"}], "bible": [{"kind": "character|world", "name": "the card or entry", "field": "the field to change", "value": "what it should say", "reason": "why"}], "note": "for the author: where the problem lies, how far it reaches, how you judged it"}'
+    : '{"chapters": [{"index": 1, "reason": "how this chapter must change, in one specific sentence"}], "note": "overall note for the author, may be empty"}'
+  const zhBible = base.bible === true
+    ? '\n如果问题的根子在设定集——人物卡或设定条目写的和正文对不上，或者设定本身需要调整——把要改的地方列在 bible 里：人物的 field 用 tagline、appearance、personality、background、motivation、flaw、arc、voice、age、gender 之一，设定条目用 summary 或 body。正文没问题、只是设定写错了的，就只改设定，不要动正文。没有就给空数组。'
+    : ''
+  const enBible = base.bible === true
+    ? '\nWhere the root of the problem is in the bible — a character card or a world entry that says something else than the text, or canon that itself has to change — list it under `bible`: for a character `field` is one of tagline, appearance, personality, background, motivation, flaw, arc, voice, age, gender; for a world entry, summary or body. Where the text is right and the bible is wrong, change the bible and leave the text. An empty array when there is nothing.'
+    : ''
   return L(base.lang, `你是长篇小说《${bare(base.title)}》的责任编辑。作者提出了一条针对全书的修改要求，请判断哪些章节需要因此改动。
 
 ## 修改要求
@@ -131,8 +162,8 @@ ${base.instruction}
 ${base.chapters}
 
 只输出 JSON：
-{"chapters": [{"index": 章节序号, "reason": "这一章需要怎么改（一句话，具体到位）"}], "note": "给作者的总体说明，可为空"}
-只列出确实需要改动的章节；如果要求是全局性的文风调整，可以列出全部有正文的章节。`, `You are the editor of the novel "${bare(base.title)}". The author asks for a book-wide change. Decide which chapters must change because of it.
+${zhShape}
+只列出确实需要改动的章节；如果要求是全局性的文风调整，可以列出全部有正文的章节。${zhBible}`, `You are the editor of the novel "${bare(base.title)}". The author asks for a book-wide change. Decide which chapters must change because of it.
 
 ## The requested change
 
@@ -143,8 +174,8 @@ ${base.instruction}
 ${base.chapters}
 
 Output JSON only:
-{"chapters": [{"index": chapter number, "reason": "what must change in this chapter, one concrete sentence"}], "note": "overall note for the author, may be empty"}
-List only chapters that really need to change; a global style change may list every written chapter.`)
+${enShape}
+List only the chapters that really have to change; for a book-wide change of style, every chapter that has text may be listed.${enBible}`)
 }
 
 // ───────────────────────────── memory ─────────────────────────────
@@ -243,9 +274,15 @@ export function architectSystem(lang: PromptLanguage): string {
   return L(lang, '你是经验丰富的小说策划与故事架构师，擅长长篇结构、人物驱动的情节和伏笔布局。你的方案具体、有因果、有取舍，从不写空话。严格按要求输出 JSON。', 'You are a seasoned story architect: long-form structure, character-driven plotting, setup and payoff. Your plans are concrete and causal, never vague. Output JSON exactly as requested.')
 }
 
-export function deriveChaptersTask(base: Base & { context: string; count: number; direction?: string; volume: string }): string {
+/**
+ * @param base.situation - what is particular about where these chapters go: a new line and what it parts from, a rewrite and what it gives up, a line that has to arrive somewhere.
+ * @param base.after - the chapter the new ones follow, when that is not the end of the line.
+ */
+export function deriveChaptersTask(base: Base & { context: string; count: number; direction?: string; volume: string; situation?: string; after?: string }): string {
   const direction = base.direction !== undefined && base.direction.trim().length > 0 ? L(base.lang, `\n\n## 作者给的方向\n\n${base.direction.trim()}`, `\n\n## Direction from the author\n\n${base.direction.trim()}`) : ''
-  return `${base.context}${direction}\n\n---\n${L(base.lang, `请为《${bare(base.title)}》的「${base.volume}」推演接下来的 ${base.count} 章章纲。要求：
+  const situation = base.situation !== undefined && base.situation.trim().length > 0 ? L(base.lang, `\n\n## 这次推演的处境\n\n${base.situation.trim()}`, `\n\n## Where these chapters go\n\n${base.situation.trim()}`) : ''
+  const after = base.after !== undefined ? L(base.lang, `这些章节接在「${base.after}」之后、大纲里它后面那一章之前：要接得上前面，也要引得出后面。\n`, `These chapters go after "${base.after}" and before the chapter the outline has after it: they have to follow from the one and lead into the other.\n`) : ''
+  return `${base.context}${situation}${direction}\n\n---\n${after}${L(base.lang, `请为《${bare(base.title)}》的「${base.volume}」推演接下来的 ${base.count} 章章纲。要求：
 - 从已写内容和人物此刻的处境、欲望出发推演，情节由人物的选择推动，每章都有不可逆的变化；
 - 兼顾群像：让久未出场但仍有未了之事的人物合理回归，不要让所有戏都压在主角身上；
 - 主动推进或回收"尚未回收的线索"，新埋的伏笔要有后续打算；
@@ -358,6 +395,167 @@ Output JSON only (include only fields you add or improve):
 {"tagline": "", "gender": "", "age": "", "appearance": "", "personality": "", "background": "", "motivation": "", "flaw": "", "arc": "", "voice": "", "abilities": "", "secrets": "", "persona": {"traits": [{"name": "trait", "level": 1-5}], "values": ["what they hold dearest, in order"], "speech": ["catchphrases, sentence shapes, register"], "taboos": ["what they would never do or say"], "underPressure": "typical reaction under pressure"}, "relationships": [{"target": "other character's name", "kind": "relationship", "note": "note"}], "visualPrompt": "objective, concrete looks for a portrait (hair, face, build, clothing, signature item)", "voiceDesign": "description for designing their speaking voice (age, timbre, pace, temperament)"}`)}`
 }
 
+/** How the things of the book's world stand to each other: the planner reads the bible and the digests and writes the ties down. */
+/** Finding entries of the bible that are one thing under several names, and ones filed under the wrong kind. */
+export function worldTidyTask(base: Base & { entries: string; count: number }): string {
+  return L(base.lang, `《${base.title}》的设定里有下面 ${base.count} 个条目。请找出两类问题，只说有把握的：
+
+1. 同一样东西记成了几条——同一个地点、同一个家族 / 组织、同一件物品、同一个概念，用了不同的名字或称呼（例如"宁府""东府""宁国府"是同一处宅子）。上下级不算同一样东西：怡红院在大观园里面，它们是两处；一个家族和它住的宅子是两样；一个人和以他命名的地方也是两样。
+2. 类别放错了的——比如一处宅子被记成了"家族与组织"，一件东西被记成了"地点"，一个称号被记成了"物品"。
+
+每一条的格式：名字（别名）｜现在的类别｜正文里写到它的章数｜一句话概括
+
+## 条目
+
+${base.entries}
+
+类别只有这些：location 地点、faction 家族与组织、item 物品、setting 世界概况、system 体系、history 历史、culture 文化、rule 规则、term 名词、other 其他。
+
+名字必须照上面的原样写。"keep" 是留下来的那一条——选写得最全、或书里最常用的名字；"others" 是并进它的那几条。一个条目只出现在一组里。没有问题就给空列表。
+
+只输出 JSON：
+{"same": [{"keep": "", "others": [""], "why": "一句话依据"}], "kinds": [{"name": "", "category": "", "why": "一句话依据"}]}`, `The bible of "${base.title}" has the ${base.count} entries below. Find two kinds of fault in it, and name only what you are sure of:
+
+1. One thing written down as several entries — the same place, house or organization, thing or idea under different names or ways of calling it (a mansion called by its formal name, by the side of the city it stands on, and by a short form). What is inside something is not the same thing as it: a courtyard in a garden is two places; a house and the mansion it lives in are two things; so are somebody and a place named after them.
+2. An entry filed under the wrong kind — a mansion among the houses and organizations, a thing among the places, a title among the things.
+
+Each line reads: name (other names) | the kind it is filed under | chapters of the text that name it | a line of what it is
+
+## Entries
+
+${base.entries}
+
+The kinds are: location, faction (a house or an organization), item (a thing), setting, system, history, culture, rule, term, other.
+
+Write names exactly as above. "keep" is the entry that stays — the fullest one, or the name the book uses most; "others" are the ones folded into it. An entry belongs to one group only. Where there is no fault, give an empty list.
+
+Output JSON only:
+{"same": [{"keep": "", "others": [""], "why": "one line of grounds"}], "kinds": [{"name": "", "category": "", "why": "one line of grounds"}]}`)
+}
+
+export function tiesTask(base: Base & { places: string; houses: string; things: string; people: string; record: string; known: string; chapters: number; direction?: string }): string {
+  return L(base.lang, `请理清《${base.title}》的世界里这些东西彼此的关系，写成一张关系表。只写书里有依据的；拿不准的不要写。
+
+关系只有五种（方向固定）：
+- within：一个地点在另一个地点里面（怡红院 → 大观园 → 贾府 → 金陵），或一个分支在一个家族 / 组织里面。小的在前，大的在后。
+- seat：一个家族 / 组织坐落在某个地点。家族在前，地点在后。
+- member：一个人属于某个家族 / 组织。人在前。
+- resides：一个人住在、或长期待在某个地点。人在前。要写到最具体的那一层（住怡红院就写怡红院，不要写大观园）。
+- holds：一个人持有某件物品。人在前，物品在后。
+
+规则：
+- 名字必须用下面列表里的原名。关系里要用到、而列表里没有的地点 / 家族 / 物品（比如一座城、一个家族本身），在 "missing" 里补上：名字、类别（location 地点 / faction 家族与组织 / item 物品）、一句话说明——它们会被建成条目，然后你写的关系就能用它们的名字。只补书里确实有、而且关系里确实用到的；人物不在这里补。
+- 同一个东西在列表里有几个名字时（宁府 / 东府 / 宁国府），只用其中一个来写关系。
+- 关系有时间：从哪一章开始（since）、到哪一章为止（until），写章号（全书这条线共 ${base.chapters} 章）；一直如此就不写。搬家、易主、被逐、物品换了主人，都用 since / until 表示——同一个人先后住两处，就是两条。
+- 每个地点最多一个上一级。不要写成环。
+- note 一句话说依据（哪一章、什么事），可不写。
+- 地点、家族、物品自己的大事记在 "events" 里：哪一章（章号）它建成、成立、被造出来（begin——书里写明它是这时才有的；只是第一次提到它不算），易主、改名、改建、换了用途（change），荒废、衰落（decline），被毁、失去、解散（end），再用十来个字说发生了什么。只记书里写明的；没有就给空列表。
+${base.direction !== undefined ? `\n作者的要求：${base.direction}\n` : ''}
+## 地点
+
+${base.places}
+
+## 家族与组织
+
+${base.houses}
+
+## 物品
+
+${base.things}
+
+## 人物
+
+${base.people}
+
+## 各章收录里记下的：地点、谁在哪、和物品有关的事
+
+${base.record}
+
+## 已经记下的关系（对的不必重复，错的在 "wrong" 里按原样列出）
+
+${base.known}
+
+只输出 JSON：
+{"ties": [{"kind": "within", "from": "怡红院", "to": "大观园", "since": 17, "note": ""}], "wrong": [{"kind": "", "from": "", "to": ""}], "missing": [{"name": "金陵", "category": "location", "summary": ""}], "events": [{"name": "大观园", "chapter": 17, "kind": "begin", "what": ""}]}`, `Work out how the things of the world of "${base.title}" stand to each other, and write it down as a table of ties. Only what the book supports; leave out what you are not sure of.
+
+There are five kinds of tie, each with a fixed direction:
+- within: a place inside another place (a courtyard → a garden → a mansion → a city), or a branch inside a house or organization. The smaller first.
+- seat: a house or organization has its seat at a place. The house first.
+- member: somebody belongs to a house or organization. The person first.
+- resides: somebody lives at, or keeps to, a place. The person first. Name the most particular place (the courtyard, not the garden it is in).
+- holds: somebody holds a thing. The person first, the thing second.
+
+Rules:
+- Use the names exactly as listed below. A place, a house or a thing that a tie needs and the lists lack (a city, a house itself) goes under "missing": its name, its category (location / faction / item) and a line saying what it is — these are made into entries, and the ties you write can then name them. Only what the book has and a tie needs; people are not added here.
+- Where one thing is listed under several names, use one of them for the ties.
+- A tie has its time: the chapter it begins in (since) and the last chapter it holds in (until), as chapter numbers (this line of the book has ${base.chapters} chapters); leave both out when it always holds. A move, a change of owner, an expulsion, a thing changing hands are said with since / until — somebody who lives in two places one after the other is two ties.
+- A place has one place above it at most. No rings.
+- note: one sentence on what it rests on (which chapter, what happens); optional.
+- What happens to a place, a house or a thing itself goes under "events": the chapter (its number) in which it is built, founded or made (begin — the book says it comes to be then; being mentioned for the first time is not that), changes owner, name, shape or use (change), falls into ruin or decline (decline), is destroyed, lost or dissolved (end), with a few words of what happened. Only what the book says outright; an empty list where there is nothing.
+${base.direction !== undefined ? `\nThe author asks: ${base.direction}\n` : ''}
+## Places
+
+${base.places}
+
+## Houses and organizations
+
+${base.houses}
+
+## Things
+
+${base.things}
+
+## People
+
+${base.people}
+
+## What the chapter digests noted: places, who was where, what happened to things
+
+${base.record}
+
+## Ties already written down (do not repeat the right ones; list the wrong ones as they are under "wrong")
+
+${base.known}
+
+Output JSON only:
+{"ties": [{"kind": "within", "from": "the courtyard", "to": "the garden", "since": 17, "note": ""}], "wrong": [{"kind": "", "from": "", "to": ""}], "missing": [{"name": "the city", "category": "location", "summary": ""}], "events": [{"name": "the garden", "chapter": 17, "kind": "begin", "what": ""}]}`)
+}
+
+/** A character's life on the page, told in a paragraph from what the chapter digests noted of them. */
+export function characterLifeTask(base: Base & { name: string; card: string; record: string; chapters: number }): string {
+  return L(base.lang, `下面是《${base.title}》里「${base.name}」在正文中的记录：每一章的收录里对这个人的记载，按阅读顺序排列（全书这条线上共 ${base.chapters} 章）。请据此写出这个人物在书里的履历：一段话。
+
+要求：
+- 只写记录里有的事。从哪一章登场、哪几段时间在场、经历了什么转折、和谁有了什么、在哪里离开或死去（如果有）；记录没有说的不要补。
+- 带上章号（"第 5 章""第 51–52 章"），让人能回去找。
+- 一段连贯的叙述，不要分条，不要小标题；150–300 字。写事实，不评价，不抒情。
+
+## 人物卡（供参照，不要复述）
+
+${base.card}
+
+## 各章的记载
+
+${base.record}
+
+只输出 JSON：{"life": "这一段话"}`, `Below is what the text of "${base.title}" records of ${base.name}: what each chapter's digest noted of them, in reading order (this line of the book has ${base.chapters} chapters). Write, from this, their life in the book: one paragraph.
+
+Requirements:
+- Only what the record says. Where they come on, the stretches they are present, the turns they go through, what comes to be between them and others, where they leave or die (if they do); add nothing the record does not say.
+- Name the chapters ("chapter 5", "chapters 51–52"), so that a reader can go back to them.
+- One connected paragraph; no list, no headings; 120–220 words. Facts, without judgement or flourish.
+
+## The card (for reference; do not repeat it)
+
+${base.card}
+
+## What the chapters noted
+
+${base.record}
+
+Output JSON only: {"life": "the paragraph"}`)
+}
+
 export function expandWorldTask(base: Base & { context: string; entry: string; direction?: string }): string {
   return `${base.context}\n\n---\n${L(base.lang, `请完善下面这条世界观设定。保留已有内容，补足规则、代价、限制、与其他设定和人物的关联，以及它能在情节中制造的冲突。必须自洽，并与已写正文一致。${base.direction !== undefined && base.direction.trim().length > 0 ? `\n作者的要求：${base.direction.trim()}` : ''}
 
@@ -405,36 +603,86 @@ ${base.style}`)
 }
 
 /** Merge per-chapter character sightings into bible cards during import. */
-export function castMergeTask(base: Base & { sightings: string }): string {
-  return L(base.lang, `下面是从小说《${bare(base.title)}》各章提取到的人物出场记录。请合并同一人物的不同称呼，为每个重要人物整理出人物卡。
+/**
+ * One round of making the cast: a batch of people the chapters name, and the cards to write for them.
+ * @param base.known - who has a card already, for recognizing another name of theirs.
+ * @param base.full - whole cards; otherwise a line each, for those with a small part.
+ */
+export function castRoundTask(base: Base & { sightings: string; known: string; full: boolean }): string {
+  const zhShape = base.full
+    ? '{"characters": [{"listed": "名单上的写法，原样照抄", "name": "最常用的正式姓名", "same_as": "", "aliases": ["其他称呼"], "role": "protagonist|deuteragonist|antagonist|supporting|minor|cameo", "gender": "", "age": "", "tagline": "一句话人设", "appearance": "", "personality": "", "background": "", "motivation": "", "flaw": "", "arc": "已发生的转变", "voice": "说话方式", "relationships": [{"target": "对方姓名", "kind": "关系", "note": ""}], "status": "active|offstage|retired|dead"}]}'
+    : '{"characters": [{"listed": "名单上的写法，原样照抄", "name": "最常用的正式姓名", "same_as": "", "aliases": ["其他称呼"], "role": "supporting|minor|cameo", "gender": "", "tagline": "一句话：是谁、和谁有关"}]}'
+  const enShape = base.full
+    ? '{"characters": [{"listed": "the name as listed, copied exactly", "name": "most used proper name", "same_as": "", "aliases": ["other names"], "role": "protagonist|deuteragonist|antagonist|supporting|minor|cameo", "gender": "", "age": "", "tagline": "one-line identity", "appearance": "", "personality": "", "background": "", "motivation": "", "flaw": "", "arc": "change so far", "voice": "how they talk", "relationships": [{"target": "other name", "kind": "relationship", "note": ""}], "status": "active|offstage|retired|dead"}]}'
+    : '{"characters": [{"listed": "the name as listed, copied exactly", "name": "most used proper name", "same_as": "", "aliases": ["other names"], "role": "supporting|minor|cameo", "gender": "", "tagline": "one line: who they are, and to whom"}]}'
+  const known = base.known.trim().length > 0 ? base.known : L(base.lang, '（还没有）', '(nobody yet)')
+  return L(base.lang, `下面是从小说《${bare(base.title)}》各章的收录里统计出来的一批人物，以及每个人在哪些章节做了什么。请为名单上的每一个人整理${base.full ? '一张人物卡' : '一行简介'}。
 
+【这一批】
 ${base.sightings}
+
+【已经有人物卡的人】只用来辨认别名，不要为他们写卡
+${known}
 
 只输出 JSON：
-{"characters": [{"name": "最常用的正式姓名", "aliases": ["其他称呼"], "role": "protagonist|deuteragonist|antagonist|supporting|minor", "gender": "", "age": "", "tagline": "一句话人设", "appearance": "", "personality": "", "background": "", "motivation": "", "flaw": "", "arc": "已发生的转变", "voice": "说话方式", "relationships": [{"target": "对方姓名", "kind": "关系", "note": ""}], "status": "active|offstage|retired|dead"}]}
-只收有名有姓、出场两次以上或对情节重要的人物；按重要性排序，最多 40 个。没有依据的字段留空，不要编造。`, `Below are character sightings extracted chapter by chapter from the novel "${bare(base.title)}". Merge different names of the same person and write a card for every important character.
+${zhShape}
 
+- 名单上的每个人都要有一项，一个也不要漏；不要添加名单之外的人。
+- 名单上的某个名字如果其实是"已经有人物卡的人"里某人的别的称呼，或者是名单上另一个人的别的称呼，这一项只填 listed 和 same_as（写那个人的名字），其余留空。
+- role 按这个人在书里的分量定：protagonist 主角，deuteragonist 第二主角，antagonist 对立面，supporting 重要配角，minor 次要人物，cameo 只是露面。
+- 没有依据的字段留空，不要编造。`, `Below is a batch of characters counted from the chapter digests of the novel "${bare(base.title)}", with what each did in which chapters. Write ${base.full ? 'a character card' : 'one line'} for every one of them.
+
+THIS BATCH
 ${base.sightings}
 
+WHO HAS A CARD ALREADY — for recognizing other names only; write no card for them
+${known}
+
 Output JSON only:
-{"characters": [{"name": "most used proper name", "aliases": ["other names"], "role": "protagonist|deuteragonist|antagonist|supporting|minor", "gender": "", "age": "", "tagline": "one-line identity", "appearance": "", "personality": "", "background": "", "motivation": "", "flaw": "", "arc": "change so far", "voice": "how they talk", "relationships": [{"target": "other name", "kind": "relationship", "note": ""}], "status": "active|offstage|retired|dead"}]}
-Keep named characters who appear at least twice or matter to the plot; order by importance, 40 at most. Leave a field empty rather than invent.`)
+${enShape}
+
+- One entry for every name in the batch, none left out; nobody who is not in the batch.
+- When a name in the batch is in fact another name of someone who has a card already, or of another person in the batch, fill in only \`listed\` and \`same_as\` (that person's name) and leave the rest empty.
+- \`role\` by the weight of the part in the book: protagonist, deuteragonist (second lead), antagonist, supporting (an important secondary part), minor, cameo (seen in passing).
+- Leave a field empty rather than invent.`)
 }
 
-export function worldMergeTask(base: Base & { sightings: string }): string {
-  return L(base.lang, `下面是从小说《${bare(base.title)}》各章提取到的地点、组织、物品与专有名词。请合并重复项，整理成世界观设定条目，并补一条总览式的"世界概况"。
+/** The names on a cast list that stand for one person: asked once the cards are made, when every name can be seen beside every other. */
+export function castAliasTask(base: Base & { cast: string }): string {
+  return L(base.lang, `下面是小说《${bare(base.title)}》人物表里所有人的名字——括号里是已经知道的别名，破折号后是一句话简介。其中有些其实是同一个人的不同称呼（比如"凤姐"和"王熙凤"、"史大姑娘"和"史湘云"）。请把它们找出来。
+
+${base.cast}
+
+只输出 JSON：
+{"same": [{"keep": "这个人最正式、最常用的名字", "others": ["人物表里指同一个人的其他名字"]}]}
+只列有把握的。亲属、夫妻、主仆、同名不同人都不是同一个人。一个也没有就输出 {"same": []}。`, `Below is everybody on the cast list of the novel "${bare(base.title)}" — known aliases in brackets, a line about them after the dash. Some of these are different names of one and the same person. Find them.
+
+${base.cast}
+
+Output JSON only:
+{"same": [{"keep": "the person's most proper, most used name", "others": ["the other names on the list that mean this person"]}]}
+Only where you are sure. Relatives, spouses, master and servant, and namesakes are not the same person. If there are none, output {"same": []}.`)
+}
+
+/**
+ * One round of collecting the world: a batch of places, groups, objects and terms the chapters name.
+ * @param base.first - the batch the text comes back to most: it may name core canon, and gives the overview of the world.
+ */
+export function worldMergeTask(base: Base & { sightings: string; first?: boolean }): string {
+  const first = base.first !== false
+  return L(base.lang, `下面是从小说《${bare(base.title)}》各章提取到的一批地点、组织、物品与专有名词。请合并重复项，整理成世界观设定条目${first ? '，并补一条总览式的"世界概况"' : ''}。
 
 ${base.sightings}
 
 只输出 JSON：
-{"entries": [{"name": "名称", "aliases": ["别名"], "category": "setting|location|faction|system|item|history|culture|rule|term|other", "importance": 1或2或3, "summary": "一句话", "body": "根据原文整理的说明"}]}
-importance：1=理解全书必须知道的核心设定（不超过 6 条），2=常规，3=细节。最多 40 条，没有依据的内容不要编造。`, `Below are places, groups, objects and terms extracted chapter by chapter from the novel "${bare(base.title)}". Merge duplicates into world entries, and add one overview entry describing the world at large.
+{"entries": [{"name": "名称", "aliases": ["别名"], "category": "setting|location|faction|system|item|history|culture|rule|term|other", "importance": ${first ? '1或2或3' : '2或3'}, "summary": "一句话", "body": "根据原文整理的说明"}]}
+importance：${first ? '1=理解全书必须知道的核心设定（不超过 6 条），' : ''}2=常规，3=细节。名单上的每一项都要有着落：单独成条，或并进别的条目当别名。没有依据的内容不要编造。`, `Below is a batch of places, groups, objects and terms extracted chapter by chapter from the novel "${bare(base.title)}". Merge duplicates into world entries${first ? ', and add one overview entry describing the world at large' : ''}.
 
 ${base.sightings}
 
 Output JSON only:
-{"entries": [{"name": "name", "aliases": ["aliases"], "category": "setting|location|faction|system|item|history|culture|rule|term|other", "importance": 1, "summary": "one sentence", "body": "what the text establishes"}]}
-importance: 1 = core canon needed to follow the book (6 at most), 2 = normal, 3 = detail. 40 entries at most. Do not invent beyond the text.`)
+{"entries": [{"name": "name", "aliases": ["aliases"], "category": "setting|location|faction|system|item|history|culture|rule|term|other", "importance": ${first ? '1' : '2'}, "summary": "one sentence", "body": "what the text establishes"}]}
+importance: ${first ? '1 = core canon needed to follow the book (6 at most), ' : ''}2 = normal, 3 = detail. Everything in the batch ends up somewhere: an entry of its own, or an alias of another. Do not invent beyond the text.`)
 }
 
 export function volumesTask(base: Base & { summaries: string }): string {
@@ -600,6 +848,120 @@ Rules:
 
 Output JSON only:
 {"panels": [{"from": 0, "to": 3, "description": "", "prompt": "", "camera": "zoom-in", "characters": ["names of characters in frame"], "location": "place"}]}`)
+}
+
+/**
+ * The picture on a book's cover, composed from what the book is: its story, its tone, its leads.
+ * @param base.story - the premise, or — for a book that has none written down — what its chapters tell.
+ */
+/** The director settles how a book's pictures look: one art direction for all of them, and what none of them may show. */
+export function artDirectionTask(base: Base & { genre?: string; themes?: string; logline?: string; story: string; tone?: string; leads: string; places?: string; current?: string; ask?: string }): string {
+  return L(base.lang, `请为小说《${bare(base.title)}》定下它所有画面共用的画风：封面、人物立绘、人设图、地点设定图、章节插图、有声漫的分镜，都要看得出是同一本书。
+
+## 这本书
+${[base.genre !== undefined ? `类型：${base.genre}` : undefined, base.themes !== undefined ? `主题：${base.themes}` : undefined, base.logline !== undefined ? `一句话：${base.logline}` : undefined].filter(Boolean).join('\n') || '（没有填写类型与主题）'}
+
+## 故事
+${base.story || '（还没有写下故事梗概）'}
+
+## 文字的基调与笔触
+${base.tone !== undefined && base.tone.length > 0 ? base.tone : '（没有专门的文风设定，从故事里体会）'}
+
+## 主要人物
+${base.leads || '（还没有人物设定）'}
+
+## 标志性的地方与器物
+${base.places !== undefined && base.places.length > 0 ? base.places : '（没有专门的设定）'}
+${base.current !== undefined && base.current.length > 0 ? `\n## 现在的画风\n${base.current}\n` : ''}${base.ask !== undefined ? `\n## 作者的要求（以它为准）\n${base.ask}\n` : ''}
+要求：
+1. 画风是这本书自己的：从它的时代、地域、题材和文字的气质里来。一本民国悬疑和一本太空歌剧不该是同一种画法。
+2. style：一段给绘图模型的风格描述，会原样附在每一张图的提示词后面——画种与媒介（水墨、工笔、厚涂、赛璐璐、版画……）、线条与笔触、用色与调子、光线、质感、整体气氛；需要时写明时代与地域的视觉特征（服饰、建筑、器物的年代感）。只写"怎么画"，不写"画什么"，不出现人名和情节。40-90 字。
+3. avoid：这本书的任何一张图里都不该出现的东西——和时代不符的物件、和气质相冲的画法、常见的瑕疵。每项几个字，3-8 项。
+4. why：一两句话告诉作者为什么这样定。
+用 JSON 回答：{"style": "...", "avoid": ["..."], "why": "..."}`, `Settle the look that every picture of the novel "${bare(base.title)}" shares: cover, portraits, design sheets, places, chapter scenes, the panels of its motion comic — all recognisably of one book.
+
+## The book
+${[base.genre !== undefined ? `Genre: ${base.genre}` : undefined, base.themes !== undefined ? `Themes: ${base.themes}` : undefined, base.logline !== undefined ? `In a line: ${base.logline}` : undefined].filter(Boolean).join('\n') || '(no genre or themes given)'}
+
+## The story
+${base.story || '(no synopsis written yet)'}
+
+## The tone of its prose
+${base.tone !== undefined && base.tone.length > 0 ? base.tone : '(no style profile; take it from the story)'}
+
+## Its leads
+${base.leads || '(no characters defined yet)'}
+
+## Its places and things
+${base.places !== undefined && base.places.length > 0 ? base.places : '(none defined)'}
+${base.current !== undefined && base.current.length > 0 ? `\n## The look it has now\n${base.current}\n` : ''}${base.ask !== undefined ? `\n## The author asks (this decides)\n${base.ask}\n` : ''}
+Requirements:
+1. The look is this book's own: it comes from its period, its place, its genre and the temper of its prose. A noir of the 1920s and a space opera are not painted alike.
+2. style: one description of style for an image model, appended as it is to the prompt of every picture — the medium (ink wash, gouache, thick paint, cel, woodcut…), line and brushwork, palette and key, light, texture, the air of the whole; where it matters, what the period and the place look like (clothes, buildings, objects of their time). Say how to paint, not what: no names, no plot. 30-70 words.
+3. avoid: what no picture of this book may show — things out of its period, manners of painting at odds with its temper, the usual flaws. A few words each, 3-8 of them.
+4. why: a sentence or two telling the author why.
+Answer in JSON: {"style": "...", "avoid": ["..."], "why": "..."}`)
+}
+
+export function coverPromptTask(base: Base & { genre?: string; themes?: string; logline?: string; story: string; tone?: string; leads: string; places?: string; artStyle: string; avoid?: string[]; ask?: string }): string {
+  const avoid = (base.avoid ?? []).join(base.lang === 'zh' ? '、' : ', ')
+  return L(base.lang, `请为小说《${bare(base.title)}》构思封面，写一条给绘图模型的画面描述。
+
+## 这本书
+${[base.genre !== undefined ? `类型：${base.genre}` : undefined, base.themes !== undefined ? `主题：${base.themes}` : undefined, base.logline !== undefined ? `一句话：${base.logline}` : undefined].filter(Boolean).join('\n') || '（没有填写类型和主题）'}
+
+## 故事
+${base.story || '（还没有写下故事梗概）'}
+
+## 基调与笔触
+${base.tone !== undefined && base.tone.length > 0 ? base.tone : '（没有专门的文风设定，从故事里体会）'}
+
+## 主要人物的样子
+${base.leads || '（还没有人物设定：封面可以不出现人物的脸，用场景、器物和氛围来说这本书）'}
+
+## 标志性的地方与器物
+${base.places !== undefined && base.places.length > 0 ? base.places : '（没有专门的设定）'}
+${base.ask !== undefined ? `\n## 作者的要求\n${base.ask}\n` : ''}
+## 美术风格（会另行附加，不必复述）
+${base.artStyle}
+
+## 画面里不能出现
+${avoid.length > 0 ? avoid : '（无特别限制）'}
+
+要求：
+1. 封面要让没读过的人一眼看出这是一本什么样的书：选一个最能代表这个故事的画面——人物的关系与处境、标志性的地方、一件有分量的东西，而不是把情节画成连环画。
+2. 竖幅构图；画面上方留出一块干净的空间放标题；主体在中下部。写清谁在画面里（用他们的样子，不用姓名）、姿态与神情、所处的环境、光线、色调与气氛。
+3. 只写眼睛看得见的东西。机构名、头衔、专有名词换成它在这个故事里实际的样子：材质、形状、新旧、颜色。
+4. "画面里不能出现"的东西不要画，也不要把这些词写进描述。不要出现任何文字、水印、边框。
+5. 120-220 字，只输出这条描述，不要任何其他内容。`, `Design the cover of the novel "${bare(base.title)}": write one picture description for an image model.
+
+## The book
+${[base.genre !== undefined ? `Genre: ${base.genre}` : undefined, base.themes !== undefined ? `Themes: ${base.themes}` : undefined, base.logline !== undefined ? `In a line: ${base.logline}` : undefined].filter(Boolean).join('\n') || '(no genre or themes given)'}
+
+## The story
+${base.story || '(no premise written down yet)'}
+
+## Tone and touch
+${base.tone !== undefined && base.tone.length > 0 ? base.tone : '(no style set: take it from the story)'}
+
+## How the leads look
+${base.leads || '(no characters defined yet: the cover may show no face at all, and tell the book by place, object and mood)'}
+
+## Places and things that stand for the book
+${base.places !== undefined && base.places.length > 0 ? base.places : '(nothing defined)'}
+${base.ask !== undefined ? `\n## The author asks\n${base.ask}\n` : ''}
+## Art direction (appended separately; do not restate it)
+${base.artStyle}
+
+## Must not appear in the picture
+${avoid.length > 0 ? avoid : '(nothing in particular)'}
+
+Requirements:
+1. A cover tells somebody who has not read the book what kind of book it is: choose the one picture that stands for this story — who these people are to each other and where they stand, a place that is the book's own, one thing that carries weight — not the plot drawn as a strip.
+2. Portrait format; a clean area at the top for the title; the subject in the middle and lower part. Say who is in the picture (by how they look, not by name), their pose and expression, where they are, the light, the palette and the mood.
+3. Only what the eye can see. Names of institutions, ranks and proper nouns become what they actually look like in this story: material, shape, age, colour.
+4. Nothing from "must not appear" is drawn, and none of those words go into the description. No lettering, no watermark, no frame.
+5. 80-150 words. Output the description only.`)
 }
 
 export function illustrationPromptTask(base: Base & { subject: string; cast: string; places?: string; artStyle: string; avoid?: string[]; wardrobe?: string }): string {

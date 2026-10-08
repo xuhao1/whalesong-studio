@@ -5,6 +5,7 @@ import { join, relative } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ProjectError } from '../src/core/project'
 import { newKey, openWithPassword, passwordSlot, readStub, SEALED_SUFFIX, SealedFiles, secretSlot, openWithSecret, VaultError, writeStub } from '../src/core/util/vault'
+import { createDeviceAuth } from '../src/host/device-auth'
 import { createTestBed, PIXEL, type TestBed } from './support/harness'
 
 async function everyFile(dir: string): Promise<string[]> {
@@ -179,4 +180,22 @@ describe('a sealed book', () => {
     // What lies in the trash is as sealed as it was on the shelf.
     expect(await leaks(removed.path, ['白页', '拍卖厅'])).toEqual([])
   })
+})
+
+describe('the computer\'s own unlock', () => {
+  // Only what needs no person: whether the owner can be asked at all. The prompt itself is never shown by a test.
+  it('is asked of the system through the script host it comes with — nothing of the plugin\'s is compiled for it', async () => {
+    const device = createDeviceAuth()
+    if (process.platform !== 'darwin' && process.platform !== 'win32') {
+      // No way to ask is known here: a sealed book opens with its password.
+      expect(device).toBeUndefined()
+      return
+    }
+    if (process.platform !== 'darwin') return
+    const info = await device!.info()
+    expect(typeof info.host).toBe('string')
+    expect(['touch-id', 'password', 'none']).toContain(info.method)
+    expect(info.available).toBe(info.method !== 'none')
+    expect(info.biometrics).toBe(info.method === 'touch-id')
+  }, 20_000)
 })

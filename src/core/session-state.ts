@@ -30,6 +30,72 @@ const TRAIL = 8
 const DEFAULT_MODE: WorkMode = 'draft'
 const KEEP = 400
 
+/**
+ * Which conversations hold something of which book — beyond the one a
+ * conversation is on: a book a tool was pointed at for one call, a role's run
+ * that worked on a book as some conversation's child. Kept so that a book
+ * that is sealed can take every conversation about it under its seal.
+ */
+export class SessionBooks {
+  private held: Record<string, string[]> | undefined
+  private readonly mutex = new KeyedMutex()
+
+  constructor(private readonly file = join(resolveDshHome(), 'novel-writer', 'session-books.json')) {}
+
+  private async load(): Promise<Record<string, string[]>> {
+    if (this.held === undefined) {
+      try {
+        this.held = (await readJson<Record<string, string[]>>(this.file)) ?? {}
+      } catch {
+        this.held = {}
+      }
+    }
+    return this.held
+  }
+
+  /** Note that a conversation holds something of a book. Written only when that is news. */
+  async touch(sessionId: string, root: string): Promise<void> {
+    if ((await this.load())[sessionId]?.includes(root) === true) return
+    await this.mutex.run('books', async () => {
+      const held = await this.load()
+      if (held[sessionId]?.includes(root) === true) return
+      held[sessionId] = [...(held[sessionId] ?? []), root]
+      // Runs come by the hundred: the oldest notes go once there are a great many.
+      const ids = Object.keys(held)
+      if (ids.length > TOUCH_KEEP) for (const id of ids.slice(0, ids.length - TOUCH_KEEP)) delete held[id]
+      await writeJson(this.file, held)
+    })
+  }
+
+  /** The books a conversation holds something of: one, for a role's run — the book it worked on. */
+  async booksOf(sessionId: string): Promise<string[]> {
+    return [...((await this.load())[sessionId] ?? [])]
+  }
+
+  /** Ids of the conversations that hold something of a book. */
+  async sessionsOf(root: string): Promise<string[]> {
+    return Object.entries(await this.load()).filter(([, roots]) => roots.includes(root)).map(([id]) => id)
+  }
+
+  /** A book is gone: nothing is kept about who held it. */
+  async forget(root: string): Promise<void> {
+    await this.mutex.run('books', async () => {
+      const held = await this.load()
+      let changed = false
+      for (const [id, roots] of Object.entries(held)) {
+        if (!roots.includes(root)) continue
+        changed = true
+        const rest = roots.filter(candidate => candidate !== root)
+        if (rest.length > 0) held[id] = rest
+        else delete held[id]
+      }
+      if (changed) await writeJson(this.file, held)
+    })
+  }
+}
+
+const TOUCH_KEEP = 20_000
+
 export class SessionStateStore {
   private states: Record<string, SessionState> | undefined
   private readonly mutex = new KeyedMutex()
@@ -107,6 +173,17 @@ export class SessionStateStore {
       await writeJson(this.file, states)
       for (const id of touched) for (const listener of [...this.listeners]) listener(id)
     })
+  }
+
+  /** Ids of the sessions that are on a book, or have been. */
+  async sessionsOn(root: string): Promise<string[]> {
+    const states = await this.load()
+    return Object.entries(states).filter(([, state]) => state.project === root || state.books?.includes(root) === true).map(([id]) => id)
+  }
+
+  /** The book a session was put on by name, when it was. */
+  async boundTo(sessionId: string): Promise<string | undefined> {
+    return (await this.load())[sessionId]?.project
   }
 
   onChange(listener: (sessionId: string) => void): () => void {

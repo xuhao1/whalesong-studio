@@ -6,6 +6,7 @@ import type { IllustrationInfo } from '../../shared/types'
 import {
   Button, Chip, Empty, Field, Modal, ProjectImage, Select, Spinner, TextArea, TextInput, useAction, useConfirm, useLoad, useProject, useSnapshot, useStudio, useT,
 } from '../ui'
+import { ArtBatchDialog, batchOf } from '../Batch'
 import { NeedsSetup } from '../views/Settings'
 
 const KIND: Record<IllustrationInfo['kind'], [string, string]> = {
@@ -13,6 +14,7 @@ const KIND: Record<IllustrationInfo['kind'], [string, string]> = {
   sheet: ['人设图', 'Design sheet'],
   scene: ['场景插图', 'Scene'],
   location: ['场景设定图', 'Place art'],
+  item: ['物品设定图', 'Object art'],
   cover: ['封面', 'Cover'],
   panel: ['分镜', 'Panel'],
   background: ['幕间背景', 'Background'],
@@ -36,6 +38,7 @@ export function Gallery() {
   const [filter, setFilter] = useState<IllustrationInfo['kind'] | 'all'>('all')
   const [open, setOpen] = useState<IllustrationInfo | undefined>()
   const [creating, setCreating] = useState(false)
+  const [batching, setBatching] = useState(false)
   const [kind, setKind] = useState<CreateKind>('cover')
   const [target, setTarget] = useState('')
   const [prompt, setPrompt] = useState('')
@@ -45,6 +48,7 @@ export function Gallery() {
   const { busy, run } = useAction()
   const confirm = useConfirm()
   const drawing = jobs.filter(job => job.status === 'running' && job.kind === 'illustrate').length
+    + jobs.filter(job => job.status === 'running').reduce((sum, job) => sum + (batchOf(job)?.what === 'art' ? batchOf(job)!.rows.reduce((count, row) => count + Object.values(row.steps).filter(step => step.state === 'running').length, 0) : 0), 0)
   const list = (images.data?.images ?? []).filter(image => filter === 'all' || image.kind === filter)
   const kinds = [...new Set((images.data?.images ?? []).map(image => image.kind))]
   const nameOf = (image: IllustrationInfo): string | undefined => {
@@ -83,6 +87,7 @@ export function Gallery() {
         </div>
         <span className="nv-spacer" />
         {drawing > 0 ? <span className="nv-muted nv-small"><Spinner size={12} /> {t(`${drawing} 张绘制中`, `${drawing} in progress`)}</span> : null}
+        <Button size="sm" icon="layers" onClick={() => { setBatching(true) }} title={t('一次补齐：人设图、立绘、场景设定图、章节插图、封面、专属声线——只做还没有的', 'Everything that is missing, in one go: design sheets, portraits, place art, chapter illustrations, a cover, voices')}>{t('批量绘制…', 'Draw in a batch…')}</Button>
         <Button variant="primary" size="sm" icon="plus" onClick={() => { if (controller.need('image')) setCreating(true) }}>{t('画一张', 'New picture')}</Button>
       </div>
       <NeedsSetup what="image" />
@@ -186,6 +191,7 @@ export function Gallery() {
           </Field>
         </Modal>
       ) : null}
+      {batching ? <ArtBatchDialog onClose={() => { setBatching(false); images.reload() }} /> : null}
       {confirm.element}
     </div>
   )
@@ -234,7 +240,7 @@ function ArtDirection() {
             hint={resolved.source === 'book'
               ? t('写在本书的 novel.json 里，原样接在每张图的画面内容后面。', 'Stored in this book\'s novel.json and appended as is to the subject of every picture.')
               : resolved.source === 'studio'
-                ? t('现在用的是工坊设置里的"统一画风"。画第一张图时会把它写进本书的 novel.json，之后这本书就以自己这份为准；也可以现在就改好保存。', 'This is the Studio-wide art direction from Settings. The first picture writes it into this book\'s novel.json, and from then on the book keeps its own; or edit and save it now.')
+                ? t('现在用的是以前填在工坊设置里的全局画风（画风现在属于每一本书，见“设定 → 画风”）。画第一张图时会把它写进本书的 novel.json，之后这本书就以自己这份为准；也可以现在就改好保存。', 'This is the Studio-wide art direction from Settings. The first picture writes it into this book\'s novel.json, and from then on the book keeps its own; or edit and save it now.')
                 : t('你还没有给这本书定画风，现在显示的是内置的起点。画第一张图时会把它写进本书的 novel.json；最好现在就改成你要的样子再保存。', 'This book has no art direction of its own yet; what you see is the built-in starting point. The first picture writes it into novel.json — better to make it yours now and save.')}
           >
             <TextArea value={style} minRows={2} onChange={(event) => { setStyle(event.target.value) }} />

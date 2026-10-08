@@ -2,37 +2,34 @@
 /**
  * Getting the Studio ready in one step: paste one key, pick what it should
  * power, done. The same cards open the first-run guide and sit at the top of
- * the settings, where every slot can then be tuned by hand.
+ * the settings, where every slot can then be tuned by hand. What a key sets up
+ * here is what is the Studio's own to configure — pictures, speech, search.
+ * Text models are DSH's: every role runs on one of them.
  */
 import { useState, type ReactNode } from 'react'
 import type { EndpointCheck, SettingsView as SettingsData } from '../../shared/rpc'
+import { recommended } from '../../shared/recommended'
 import { hostOf, originOf, PROJECT_AUTHOR, PROJECT_HOMEPAGE, recommendedSetup, SERVICES, type ServiceId, type SetupPart } from '../../shared/services'
 import { Icon, type IconName } from '../icons'
 import { Button, Chip, cx, Field, Spinner, TextInput, useAction, useSnapshot, useStudio, useT, type Translate } from '../ui'
 
 const PARTS: { part: SetupPart; label: [string, string] }[] = [
-  { part: 'text', label: ['写作模型', 'Writing models'] },
   { part: 'embedding', label: ['语义检索', 'Semantic retrieval'] },
   { part: 'image', label: ['插图', 'Images'] },
   { part: 'tts', label: ['配音', 'Speech'] },
 ]
 
-const PITCH: Record<'bailian' | 'openrouter' | 'openai', { blurb: [string, string]; image: [string, string]; tts: [string, string] }> = {
-  bailian: {
-    blurb: ['国内直连，一个 key 配齐全部能力。', 'Reachable from mainland China; one key covers everything.'],
-    image: ['Qwen-Image 3.0', 'Qwen-Image 3.0'],
-    tts: ['qwen-audio-3.1-tts-next', 'qwen-audio-3.1-tts-next'],
-  },
-  openrouter: {
-    blurb: ['一个 key 用遍各家模型，插图用最新的 GPT Image。', 'One key for every vendor; images by the latest GPT Image.'],
-    image: ['GPT Image 2.5', 'GPT Image 2.5'],
-    tts: ['Gemini 3.8 Flash TTS', 'Gemini 3.8 Flash TTS'],
-  },
-  openai: {
-    blurb: ['直接使用 OpenAI 官方接口。', 'OpenAI\'s own API.'],
-    image: ['GPT Image 2', 'GPT Image 2'],
-    tts: ['gpt-4o-mini-tts', 'gpt-4o-mini-tts'],
-  },
+/** What a service is, in a line. Which models it is used with is not said here: that is the recommendations' (`recommended.json`). */
+const PITCH: Record<'bailian' | 'openrouter' | 'openai', { blurb: [string, string] }> = {
+  bailian: { blurb: ['国内直连，一个 key 配齐插图、配音和检索。', 'Reachable from mainland China; one key covers pictures, speech and search.'] },
+  openrouter: { blurb: ['一个 key 配齐插图、配音和检索，各家的模型都在。', 'One key for pictures, speech and search, with every maker\'s models behind it.'] },
+  openai: { blurb: ['直接使用 OpenAI 官方接口。', 'OpenAI\'s own API.'] },
+}
+
+/** A recommended model as people say it: its name where the recommendations give one, else its id. */
+const modelName = (service: 'bailian' | 'openrouter' | 'openai', part: 'image' | 'tts'): string => {
+  const slot = recommended().services[service]?.[part]
+  return slot?.label ?? slot?.model ?? ''
 }
 
 /** What a failed check means, in the reader's language. */
@@ -53,8 +50,7 @@ function ServiceCard({ service, view, t, onDone }: { service: 'bailian' | 'openr
   const [key, setKey] = useState('')
   const [origin, setOrigin] = useState('')
   const [advanced, setAdvanced] = useState(false)
-  // Someone who already picked a chat model in the Harness keeps it unless they say otherwise.
-  const [parts, setParts] = useState<SetupPart[]>(hasChatModel ? ['embedding', 'image', 'tts'] : ['text', 'embedding', 'image', 'tts'])
+  const [parts, setParts] = useState<SetupPart[]>(['embedding', 'image', 'tts'])
   const [check, setCheck] = useState<EndpointCheck | undefined>()
   const { busy, run } = useAction()
   const address = originOf(origin) ?? info.origin
@@ -82,14 +78,13 @@ function ServiceCard({ service, view, t, onDone }: { service: 'bailian' | 'openr
       <ul className="nv-setup-what">
         {setup !== undefined ? (
           <>
-            <li><Icon name="feather" size={13} />{t('写作', 'Writing')}：{setup.text.writer.model}</li>
-            <li><Icon name="image" size={13} />{t('插图', 'Images')}：{t(...pitch.image)}</li>
-            <li><Icon name="mic" size={13} />{t('配音', 'Speech')}：{t(...pitch.tts)}</li>
+            <li><Icon name="image" size={13} />{t('插图', 'Images')}：{modelName(service, 'image')}</li>
+            <li><Icon name="mic" size={13} />{t('配音', 'Speech')}：{modelName(service, 'tts')}</li>
             <li><Icon name="search" size={13} />{t('检索', 'Retrieval')}：{setup.embedding.model}</li>
           </>
         ) : null}
       </ul>
-      <Field label="API key" hint={state?.configured === true ? t('留空就沿用现有的密钥；填写则更换。', 'Leave empty to keep the key in use; type one to replace it.') : t('只保存在本机的 Harness 凭据库里，不会写进设置文件，也不会回传到页面。', 'Stored only in the Harness credential store on this machine — never in the settings file, never sent back to the page.')}>
+      <Field label="API key" hint={state?.configured === true ? t('留空就沿用现有的密钥；填写则更换。', 'Leave empty to keep the key in use; type one to replace it.') : t('只保存在本机的 DSH 凭据库里，不会写进设置文件，也不会回传到页面。', 'Stored only in the Harness credential store on this machine — never in the settings file, never sent back to the page.')}>
         <TextInput type="password" autoComplete="off" spellCheck={false} value={key} placeholder={state?.configured === true ? '••••••••••••' : t('粘贴 API key', 'Paste the API key')} onChange={(event) => { setKey(event.target.value) }} onKeyDown={(event) => { if (event.key === 'Enter' && canApply) apply() }} />
       </Field>
       <div className="nv-setup-parts">
@@ -100,7 +95,7 @@ function ServiceCard({ service, view, t, onDone }: { service: 'bailian' | 'openr
           </label>
         ))}
       </div>
-      {hasChatModel && !parts.includes('text') ? <p className="nv-muted nv-small">{t('写作模型保持现状（跟随对话模型）。勾选"写作模型"可改用这个服务。', 'Writing models stay as they are (following the chat model). Tick "Writing models" to use this service instead.')}</p> : null}
+      {!hasChatModel ? <p className="nv-muted nv-small">{t('写作用的文字模型不在这里配：先在 DSH 的“设置 → 模型”里接入一个模型，总编和班底都用它。', 'The text models that write are not set up here: connect a model under DSH\'s Settings → Models first — the showrunner and the crew all run on it.')}</p> : null}
       {advanced ? (
         <Field label={t('接口地址', 'Service address')} hint={service === 'bailian' ? t('默认公共域名即可；有专属域名（如 https://ws-xxxx.cn-beijing.maas.aliyuncs.com）也可以填，粘贴任何一个接口地址都行。', 'The public domain works; a workspace domain (https://ws-xxxx.cn-beijing.maas.aliyuncs.com) may be given instead — any endpoint URL of it will do.') : t('经代理或镜像访问时填写。', 'Only when going through a proxy or a mirror.')}>
           <TextInput value={origin} placeholder={info.origin} spellCheck={false} onChange={(event) => { setOrigin(event.target.value) }} />
@@ -142,10 +137,10 @@ function CodexCard({ view, t, onDone }: { view: SettingsData; t: Translate; onDo
       </header>
       <p className="nv-muted">{t('用订阅自带的 GPT Image 画插图，不需要 API key，也不用另外登录——沿用 Codex Connect 插件或本机 Codex CLI 已有的登录。', 'Draw with the GPT Image that comes with the subscription: no API key and no extra sign-in — it rides on the Codex Connect plugin or the Codex CLI already signed in on this machine.')}</p>
       <ul className="nv-setup-what">
-        {line(codex.connect, codex.connectSignedIn, 'Codex Connect', t('在 Harness 设置 → 模型 → Openai-Codex 里授权', 'authorize under Harness Settings → Models → Openai-Codex'))}
+        {line(codex.connect, codex.connectSignedIn, 'Codex Connect', t('在 DSH 设置 → 模型 → Openai-Codex 里授权', 'authorize under Harness Settings → Models → Openai-Codex'))}
         {line(codex.cli, codex.cliSignedIn, 'Codex CLI', <code>codex login</code>)}
       </ul>
-      <p className="nv-muted nv-small">{t('订阅只提供插图：没有向量接口，也没有语音合成接口，这两项请用上面的服务。授权后，Openai-Codex 的文本模型也会出现在"模型分工"的 Harness 模型里。', 'A subscription draws images only: it has no embedding and no speech endpoint — use a service above for those. Once authorized, the Openai-Codex text models also appear among the Harness models under "Model roles".')}</p>
+      <p className="nv-muted nv-small">{t('订阅只提供插图：没有向量接口，也没有语音合成接口，这两项请用上面的服务。授权后，Openai-Codex 的文本模型也会出现在"模型分工"的 DSH 模型里。', 'A subscription draws images only: it has no embedding and no speech endpoint — use a service above for those. Once authorized, the Openai-Codex text models also appear among the Harness models under "Model roles".')}</p>
       {check !== undefined && !check.ok ? <p className="nv-note is-warn">{t('已选用，但现在还画不了：', 'Selected, but it cannot draw yet: ')}{checkMessage(check, t)}</p> : null}
       <div className="nv-form-actions">
         <span className="nv-spacer" />
@@ -178,7 +173,7 @@ export function QuickSetup({ view, onDone, services = ['bailian', 'openrouter'] 
 /** What is ready and what is not, at a glance. */
 export function Readiness({ view, t }: { view: SettingsData; t: Translate }) {
   const rows: { ok: boolean; icon: IconName; label: string; optional: boolean }[] = [
-    { ok: view.ready.text, icon: 'feather', label: t('写作模型', 'Writing models'), optional: false },
+    { ok: view.ready.text, icon: 'feather', label: t('文字模型（来自 DSH）', 'Text models (from DSH)'), optional: false },
     { ok: view.ready.image, icon: 'image', label: t('插图', 'Images'), optional: true },
     { ok: view.ready.tts, icon: 'mic', label: t('配音', 'Speech'), optional: true },
     { ok: view.ready.embedding, icon: 'search', label: t('语义检索', 'Semantic retrieval'), optional: true },
@@ -222,13 +217,13 @@ export function SetupView() {
       <header className="nv-setup-hero">
         <Icon name="feather" size={28} />
         <h1>{t('先把模型接上', 'Connect the models first')}</h1>
-        <p>{t('小说工坊把活分给不同的模型：写手执笔，架构推演情节，分析负责记忆和审校，再加上画插图的、配音的。贴一个 key 就能全部配好，之后每一项都可以单独换成你自己的接口和模型。', 'Novel Studio hands the work to different models: a writer for prose, an architect for plot, an analyst for memory and review, plus one that draws and one that speaks. One key sets all of them up; afterwards every slot can be pointed at an endpoint and model of your own.')}</p>
+        <p>{t('小说工坊是一个剧组：总编和你对话，写手执笔，场记、策划、导演、后期各管一摊——他们用的文字模型都来自 DSH（设置 → 模型），可以给每个角色单独选。工坊自己要配的是画插图的、配音的和做检索的模型：贴一个 key 就能全部配好，之后每一项都可以单独换。', 'Novel Studio is a crew: the showrunner talks with you, the writer writes, and continuity, the planner, the director and post-production each have their part. The text models they run on are all DSH\'s (Settings → Models), and each role can be given its own. What the Studio sets up itself are the models that draw, speak and search: one key sets all of them up, and every slot can be changed afterwards.')}</p>
       </header>
       <Readiness view={view} t={t} />
       {view.ready.text && chat !== undefined ? (
-        <p className="nv-note is-ok">{t(`对话里的总编和未单独设置的角色，现在都用 Harness 的对话模型「${chat}」，可以直接开始。下面是可选的增强。`, `The showrunner in the chat and every role without a model of its own currently use the Harness chat model "${chat}", so you can start right away. What follows is optional.`)}</p>
+        <p className="nv-note is-ok">{t(`对话里的总编和未单独设置的角色，现在都用 DSH 的对话模型「${chat}」，可以直接开始。下面是可选的增强：插图、配音、检索。`, `The showrunner in the chat and every role without a model of its own currently use DSH's chat model "${chat}", so you can start right away. What follows is optional: pictures, speech, search.`)}</p>
       ) : !view.ready.text ? (
-        <p className="nv-note is-warn">{t('还没有可用的写作模型。在下面选一个服务贴上 key；对话里的总编用的是 Harness 自己的对话模型，需要在 Harness 的"设置 → 模型"里另行配置。', 'No writing model yet. Pick a service below and paste its key. The showrunner in the chat uses the Harness chat model, which is configured under Harness "Settings → Models".')}</p>
+        <p className="nv-note is-warn">{t('还没有可用的文字模型。总编、写手和班底都用 DSH 的模型：请先在 DSH 的“设置 → 模型”里接入一个。下面配的是插图、配音和检索。', 'No text model yet. The showrunner, the writer and the crew all run on DSH\'s models: connect one under DSH\'s Settings → Models first. What is set up below is pictures, speech and search.')}</p>
       ) : null}
       <QuickSetup view={view} />
       <div className="nv-form-actions nv-setup-foot">

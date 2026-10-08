@@ -5,6 +5,7 @@
  */
 import { compatibleBase, hostOf, originOf, serviceOf } from '../../shared/services'
 import { getJson, trimBase, type KeySource } from './http'
+import { knownOutput, knownWindow } from '../../shared/recommended'
 
 export type ModelKind = 'text' | 'embedding' | 'image' | 'speech'
 
@@ -109,40 +110,25 @@ export async function contextWindowOf(baseURL: string, model: string, keys: KeyS
 }
 
 /**
- * Context windows of the model families the one-click setups use, for
- * endpoints that do not publish one. A convenience that ages: the author's own
- * figure on a role, and whatever an endpoint reports, both come first.
+ * The context window of a model family, for an endpoint that does not publish
+ * one. A convenience that ages — so it is not written here: it comes from the
+ * recommendations that ship with the plugin (`recommended.json`). The author's
+ * own figure on a role, and whatever an endpoint reports, both come first.
  */
-const KNOWN_WINDOWS: [RegExp, number][] = [
-  [/(^|\/)qwen3\.[5-9][^/]*-(max|plus|flash)/i, 1_000_000],
-  [/(^|\/)deepseek-v4/i, 1_000_000],
-  [/(^|\/)kimi-k3/i, 1_000_000],
-  [/(^|\/)gpt-6/i, 1_000_000],
-  [/(^|\/)claude-(opus|sonnet|fable)-5/i, 1_000_000],
-  [/(^|\/)gemini-3/i, 1_000_000],
-]
-
 export function knownContextWindow(model: string): number | undefined {
-  return KNOWN_WINDOWS.find(([pattern]) => pattern.test(model))?.[1]
+  return knownWindow(model)
 }
 
 /**
- * The most a model writes in one reply, where its maker documents it. The
- * Studio sets no ceiling of its own — a model that reasons spends its
- * reasoning out of the same allowance, and a ceiling sized for the answer
- * alone cuts the answer off. This table only serves endpoints whose default
- * is small when the request names none.
- *
- * DeepSeek (api-docs.deepseek.com, read 2026-10): `deepseek-flash`
- * (V4.1 Flash) and `deepseek-v4-pro` take 1M tokens in and write up to 384K;
- * a request without `max_tokens` gets 8K with thinking off, 64K with it on.
+ * The most a model writes in one reply, where its maker documents it — from
+ * the recommendations too. The Studio sets no ceiling of its own: a model that
+ * reasons spends its reasoning out of the same allowance, and a ceiling sized
+ * for the answer alone cuts the answer off. The figure only serves endpoints
+ * whose default is small when the request names none (DeepSeek's own API: 8K
+ * with thinking off, where the models write up to 384K).
  */
-const KNOWN_OUTPUT: [RegExp, number][] = [
-  [/(^|\/)deepseek-(flash|v4)/i, 384_000],
-]
-
 export function knownMaxOutput(model: string): number | undefined {
-  return KNOWN_OUTPUT.find(([pattern]) => pattern.test(model))?.[1]
+  return knownOutput(model)
 }
 
 /**

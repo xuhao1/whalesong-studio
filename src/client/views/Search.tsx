@@ -34,6 +34,8 @@ export function SearchPanel({ onClose }: { onClose: () => void }) {
     if (source === 'manuscript' && chapters.has(ref)) controller.jumpTo(ref, offset ?? 0, length ?? 0, target)
     else if (source === 'memory' && chapters.has(ref)) controller.setView('write', ref)
     else if (source === 'outline') controller.setView('outline', chapters.has(ref) ? ref : undefined)
+    else if (source === 'character') controller.openCharacter(ref)
+    else if (source === 'world') controller.openWorld(ref)
     else controller.setView('bible')
     onClose()
   }

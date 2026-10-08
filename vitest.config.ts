@@ -10,5 +10,6 @@ export default defineConfig({
   define: {
     __NOVEL_VERSION__: JSON.stringify('test'),
     __NOVEL_PACKAGE__: JSON.stringify('dsh-novel-writer'),
+    __NOVEL_LICENSE__: JSON.stringify('LGPL-3.0-or-later'),
   },
 })

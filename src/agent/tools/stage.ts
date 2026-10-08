@@ -30,13 +30,13 @@ export function stageTools(service: NovelService): ToolDefinition[] {
         '- kind=sheet: a character\'s design sheet — the same person from the front, the side and the back (`target` = character). It is the reference image every later picture of them is drawn against, so make it first. With `look` it draws one of their looks (outfits) instead, derived from the main sheet so it stays the same person; a look that does not exist yet is created from `prompt` (what the outfit is).',
         '- kind=portrait: a bust portrait (`target` = character), used for avatars and the interlude stage.',
         '- kind=scene: an illustration for a chapter (`target` = chapter). Quote the passage to illustrate in `quote`; insert=true embeds the picture in the chapter after that passage. The characters present are found in the passage; their sheets and the place\'s reference art go along as reference images. `looks` says what someone wears ({"name": "look"}) when the passage does not make it obvious.',
-        '- kind=location: reference art for a world entry (`target` = entry); scenes set there are drawn against it.   - kind=cover: a cover for the book.   - kind=custom: `prompt` is the whole picture; `characters` lists who is in it so their sheets go along; raw=true sends the prompt exactly as written.',
+        '- kind=location: reference art for a world entry (`target` = entry); scenes set there are drawn against it.   - kind=item: design art of a key object (`target` = a world entry that is a thing): the object alone, whole, on a plain ground; pictures that show it are drawn against it.   - kind=cover: a cover for the book.   - kind=custom: `prompt` is the whole picture; `characters` lists who is in it so their sheets go along; raw=true sends the prompt exactly as written.',
         '`prompt` adds direction for the other kinds. Every picture gets the book\'s art direction and its avoid list (see novel_settings action=show; change them with action=book fields.artStyle / fields.artAvoid), each character\'s visual anchor (novel_bible fields.visual, or action=derive_visual) and what their card says must not be drawn; `avoid` adds more for this one picture. The result says what the prompt was assembled from.',
         'An image model draws the commonest real-world version of a loaded word: write what a thing looks like in this story (material, shape, wear), not what it is called.',
       ].join('\n'),
       mutating: true,
       parameters: {
-        kind: { type: 'string', required: true, enum: ['sheet', 'portrait', 'scene', 'location', 'cover', 'custom'] },
+        kind: { type: 'string', required: true, enum: ['sheet', 'portrait', 'scene', 'location', 'item', 'cover', 'custom'] },
         target: { type: 'string', description: 'Character, chapter or world entry.' },
         quote: { type: 'string', description: 'scene: the passage to illustrate.' },
         prompt: { type: 'string', description: 'Extra direction; the full prompt for kind=custom; what the outfit is for a new look.' },
@@ -239,7 +239,7 @@ export function stageTools(service: NovelService): ToolDefinition[] {
         '- action=start: set up a scene — `situation` (required), `cast` (characters present), `player` (the character the author plays; omit to let them direct), `anchor` (chapter it branches from; default the latest written), `location`, `tone`. The author then plays it in Novel Studio → Stage, with portraits, voices and ambience.',
         '- action=turn: play one turn here in the chat on the author\'s behalf (`session`, `text` = what they say or do).',
         '- action=list / action=read (`session`): see interludes and their logs.',
-        '- action=novelize (`session`, optional `title`): rewrite the scene as a chapter and add it after its anchor.   - action=discard (`session`).',
+        '- action=novelize (`session`, optional `title`): rewrite the scene as a chapter and add it after its anchor — or, with as=line, as the first chapter of a line of the plot of its own that leaves after the anchor (`choice`: what is decided to go that way; the player\'s first move when left out): what was played is then another way the story goes, beside what is written, and can be gone on with (novel_derive line=…), joined to another line or made the main one (novel_outline).   - action=discard (`session`).',
       ].join('\n'),
       mutating: args => args.action === 'start' || args.action === 'novelize' || args.action === 'turn',
       parameters: {
@@ -252,6 +252,8 @@ export function stageTools(service: NovelService): ToolDefinition[] {
         location: { type: 'string' },
         tone: { type: 'string' },
         title: { type: 'string' },
+        as: { type: 'string', enum: ['chapter', 'line'], description: 'novelize: a chapter after the anchor (default), or a line of the plot of its own.' },
+        choice: { type: 'string', description: 'novelize as=line: what is decided to go this way.' },
         text: { type: 'string', description: 'turn: the player\'s words or action.' },
       },
       async run(args, env) {
@@ -291,8 +293,8 @@ export function stageTools(service: NovelService): ToolDefinition[] {
           await setPlayOutcome(runtime, id, 'discarded')
           return { text: `Interlude ${id} marked as discarded; the canon is untouched.` }
         }
-        const result = await env.job('play', 'novelize', id, async task => await novelizePlay(env.core, runtime, { session: id, ...(args.title !== undefined ? { title: args.title } : {}) }, task))
-        return { text: `Novelized the interlude as chapter "${result.title}" (${result.chapterId}), ${result.words} words. Check where it sits in the outline (novel_status).`, data: toJson(result) }
+        const result = await env.job('play', 'novelize', id, async task => await novelizePlay(env.core, runtime, { session: id, ...(args.title !== undefined ? { title: args.title } : {}), ...(args.as === 'line' ? { as: 'line' as const } : {}), ...(args.choice !== undefined ? { choice: args.choice } : {}) }, task))
+        return { text: `Novelized the interlude as chapter "${result.title}" (${result.chapterId}), ${result.words} words${result.line !== undefined ? `, the first chapter of the new line of the plot "${result.line.title}" (${result.line.id})` : ''}. Check where it sits in the outline (novel_status).`, data: toJson(result) }
       },
     }),
   ]

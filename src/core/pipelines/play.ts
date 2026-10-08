@@ -10,6 +10,7 @@
  * kept as a side story, or novelized into a chapter.
  */
 import type { AmbiencePreset, CharacterCard, PlayLine, PlaySession, PlayTurn } from '../../shared/types'
+import { PLAY_CONTEXT_DEFAULT } from '../../shared/types'
 import { clip, hashText, newId, sameName } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { asArray, asList, asRecord, asText, completeJson } from '../llm'
@@ -22,6 +23,7 @@ import { AMBIENCE, openCast, requireSpeech, retakesOf, speakChecked, speechReque
 import { scheduleDigest } from './digest'
 import { artDirectionOf, illustrate, renderImage } from './illustrate'
 import { cleanProse } from './write'
+import { pictureSize } from '../../shared/art'
 
 const AMBIENCE_KEYS = Object.keys(AMBIENCE) as AmbiencePreset[]
 
@@ -83,7 +85,8 @@ async function runTurn(core: NovelCore, runtime: ProjectRuntime, session: PlaySe
     ...(anchor !== undefined ? { canonThrough: anchor.index } : {}),
     brief: `${session.situation}\n${session.location ?? ''}\n${input?.text ?? ''}`,
     characters: [...session.cast, ...(session.player !== undefined ? [session.player] : [])],
-    budgetTokens: Math.min(core.currentSettings().context.budgetTokens, 24_000),
+    // A turn has to come back while the player waits: it carries what the author set for a turn, not what the model could read.
+    limit: (await core.settings.get()).context.playTokens ?? PLAY_CONTEXT_DEFAULT,
     ...(task.signal !== undefined ? { signal: task.signal } : {}),
   })
   const player = characters.find(card => card.id === session.player)
@@ -293,7 +296,8 @@ export async function paintPlayScene(core: NovelCore, runtime: ProjectRuntime, p
     subject,
     kind: 'background',
     target: session.id,
-    size: '1280x720',
+    // The backdrop of an interlude is a stage like a panel is.
+    size: pictureSize(core.currentSettings().image, 'panel'),
     name: `bg-${session.id}`,
     record: false,
     art,
@@ -319,8 +323,14 @@ export async function ensurePortrait(core: NovelCore, runtime: ProjectRuntime, r
   return { path: info.path }
 }
 
-/** Rewrite an interlude as a chapter of prose and add it to the book. */
-export async function novelizePlay(core: NovelCore, runtime: ProjectRuntime, params: { session: string; title?: string; after?: string }, task: TaskContext): Promise<{ chapterId: string; title: string; words: number }> {
+/**
+ * Rewrite an interlude as a chapter of prose and add it to the book — after the
+ * chapter it branched off (`as: 'chapter'`, the default), or as the first
+ * chapter of a line of the plot of its own that leaves there (`as: 'line'`):
+ * what was played is then another way the story goes, beside the one written.
+ * @param params.choice - `line`: what is decided to go this way; the player's first move when left out.
+ */
+export async function novelizePlay(core: NovelCore, runtime: ProjectRuntime, params: { session: string; title?: string; after?: string; as?: 'chapter' | 'line'; choice?: string }, task: TaskContext): Promise<{ chapterId: string; title: string; words: number; line?: { id: string; title: string } }> {
   const { project } = runtime
   const session = await requireSession(project, params.session)
   if (session.turns.length === 0) throw new ProjectError('novel/empty', 'the interlude has no turns')
@@ -332,6 +342,7 @@ export async function novelizePlay(core: NovelCore, runtime: ProjectRuntime, par
   const pack = await core.pack(runtime, route, {
     purpose: 'draft',
     ...(anchor !== undefined ? { canonThrough: anchor.index } : {}),
+    ...(anchor?.line !== undefined ? { line: anchor.line } : {}),
     brief: session.situation,
     characters: [...session.cast, ...(session.player !== undefined ? [session.player] : [])],
     ...(task.signal !== undefined ? { signal: task.signal } : {}),
@@ -341,7 +352,8 @@ export async function novelizePlay(core: NovelCore, runtime: ProjectRuntime, par
   const response = await core.llm.complete({
     route,
     system: novelizeSystem({ ...base, style: renderStyle(await project.activeStyle(), lang) }),
-    prompt: `${pack.text}\n\n---\n## ${L(lang, '幕间情境', 'The interlude\'s situation')}\n\n${session.situation}\n\n## ${L(lang, '演出记录', 'The log')}\n\n${transcript}\n\n---\n${L(lang, '把这段演出改写成一章小说正文。', 'Rewrite this scene as one chapter of prose.')}`,
+    ...(pack.stable.length > 0 ? { stable: pack.stable } : {}),
+    prompt: `${pack.rest}\n\n---\n## ${L(lang, '幕间情境', 'The interlude\'s situation')}\n\n${session.situation}\n\n## ${L(lang, '演出记录', 'The log')}\n\n${transcript}\n\n---\n${L(lang, '把这段演出改写成一章小说正文。', 'Rewrite this scene as one chapter of prose.')}`,
     ...(task.signal !== undefined ? { signal: task.signal } : {}),
     onText: (_delta, total) => { task.job?.rewrite(total) },
   })
@@ -349,6 +361,12 @@ export async function novelizePlay(core: NovelCore, runtime: ProjectRuntime, par
   if (text.length === 0) throw new ProjectError('novel/empty', L(lang, '写手模型的回复里没有正文（只有标题或空白）。请再试一次。', 'the writer model\'s reply held no prose (only a heading or blank lines) — try again'))
   const after = params.after !== undefined ? await project.findChapter(params.after) : anchor
   const title = params.title?.trim() || session.title
+  // Played out as another way the story goes: a line of its own, leaving where the scene branched off.
+  const firstMove = session.turns.find(turn => turn.input !== undefined)?.input?.text
+  const choice = params.choice?.trim() || (firstMove !== undefined ? clip(firstMove.replace(/\s+/g, ' ').trim(), 80) : undefined)
+  const line = params.as === 'line'
+    ? await project.addLine({ title, ...(after !== undefined ? { from: after.plan.id } : {}), ...(choice !== undefined && choice.length > 0 ? { choice } : {}), premise: clip(session.situation, 200), origin: 'interlude', play: session.id })
+    : undefined
   const plan = await project.addChapter({
     title,
     status: 'drafted',
@@ -356,10 +374,10 @@ export async function novelizePlay(core: NovelCore, runtime: ProjectRuntime, par
     characters: [...new Set([...(session.player !== undefined ? [session.player] : []), ...session.cast])],
     ...(session.location !== undefined ? { location: session.location } : {}),
     notes: L(lang, `由幕间「${session.title}」改写`, `Novelized from the interlude "${session.title}"`),
-  }, after !== undefined ? { after: after.plan.id } : {})
+  }, line !== undefined ? { line: line.id } : after !== undefined ? { after: after.plan.id } : {})
   const saved = await project.saveChapterText(plan.id, text, { snapshot: false, status: 'drafted' })
-  await project.savePlaySession({ ...(await requireSession(project, session.id)), outcome: 'novelized', novelizedChapter: plan.id })
+  await project.savePlaySession({ ...(await requireSession(project, session.id)), outcome: 'novelized', novelizedChapter: plan.id, ...(line !== undefined ? { novelizedLine: line.id } : {}) })
   scheduleDigest(core, runtime, plan.id, task)
   task.job?.result({ chapterId: plan.id })
-  return { chapterId: plan.id, title, words: saved.words }
+  return { chapterId: plan.id, title, words: saved.words, ...(line !== undefined ? { line: { id: line.id, title: line.title } } : {}) }
 }

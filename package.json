@@ -1,7 +1,7 @@
 {
   "name": "dsh-novel-writer",
   "version": "0.1.0",
-  "description": "Long-form fiction studio for DeepSeek Harness: an orchestrator agent, a dedicated prose model, a story bible, ensemble cast tracking, illustrations, audio drama, motion comics and playable interludes",
+  "description": "Long-form fiction studio for DeepSeek Harness: a showrunner agent and a crew of role agents (continuity, planning, directing, post-production) on the Harness's own agent loop, a dedicated prose model, a story bible, ensemble cast tracking, illustrations, audio drama, motion comics, videos and playable interludes",
   "keywords": [
     "dsh-plugin",
     "deepseek-harness",
@@ -28,9 +28,10 @@
     "lib",
     "cordis.patch.yml",
     "icon.png",
-    "native/novel-auth.swift",
+    "recommended.json",
     "locale/*.json",
     "skills",
+    "crew",
     "docs",
     "LICENSE",
     "COPYING",
@@ -63,7 +64,8 @@
     "typecheck": "tsc -p tsconfig.host.json --noEmit && tsc -p tsconfig.client.json --noEmit",
     "test": "vitest run",
     "dev": "node scripts/dev.mjs",
-    "check": "npm run typecheck && npm run test && npm run build"
+    "check": "npm run typecheck && npm run test && node scripts/build.mjs --stage",
+    "release": "npm run typecheck && npm run test && node scripts/build.mjs"
   },
   "engines": {
     "node": ">=22"
@@ -74,7 +76,8 @@
   "peerDependencies": {
     "@deepseek-ai/cordis": "~4.0.4",
     "@deepseek-ai/dsh": ">=0.2.0-rc.2 <0.3.0",
-    "@deepseek-ai/dsh-tools": ">=0.2.0-rc.2 <0.3.0"
+    "@deepseek-ai/dsh-tools": ">=0.2.0-rc.2 <0.3.0",
+    "@deepseek-ai/dsh-subagent": ">=0.2.0-rc.2 <0.3.0"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "~4.0.4",
@@ -90,7 +93,8 @@
     "typescript": "^5.7.0",
     "vitest": "^3.0.0",
     "ws": "^8.18.0",
-    "yaml": "^2.6.0"
+    "yaml": "^2.6.0",
+    "@deepseek-ai/dsh-subagent": "0.2.0-rc.2"
   },
   "repository": {
     "type": "git",

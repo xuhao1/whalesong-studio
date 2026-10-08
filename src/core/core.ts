@@ -6,8 +6,8 @@
  */
 import { mkdir, rename, rmdir, stat } from 'node:fs/promises'
 import { basename, dirname, join, relative, resolve } from 'node:path'
-import type { BookLock, ModelRoute, NovelSettings, ProjectManifest, ProjectRef, TextRole } from '../shared/types'
-import { chooseStrategy, packContext, type ContextPack, type PackOptions } from './context'
+import { parallelOf, type BookLock, type ModelRoute, type NovelSettings, type ProjectManifest, type ProjectRef, type TextRole } from '../shared/types'
+import { contextBudgets, packContext, type ContextPack, type PackOptions } from './context'
 import { currentJob, JobManager, type JobContext } from './jobs'
 import { resolveRoute, retrying, type LlmBackend } from './llm'
 import type { RoleRunner } from './roles'
@@ -18,16 +18,23 @@ import { createImageProvider, type ImageBridges, type ImageProvider } from './me
 import { meterEmbedder, meterImages, meterLlm, meterSpeech, UsageStore } from './usage'
 import { hostOf } from '../shared/services'
 import { createTtsProvider, type TtsProvider } from './media/tts'
-import { createSoundProvider, type SoundProvider } from './media/sound'
+import { createSoundProvider, soundSetup, type SoundProvider } from './media/sound'
 import { BOOK_ENTRIES, MANIFEST_FILE, Project, ProjectError, type CreateProjectInput } from './project'
 import { RetrievalIndex, type Embedder } from './retrieval'
 import { DEFAULT_SETTINGS, resolveDshHome, SettingsStore } from './settings'
 import { exists, listDir, readJson, writeJson } from './util/fs'
+import { Gate, type GateKind, type GateOptions, type GateState } from './util/gate'
 import { moveToTrash, type Trashed } from './util/trash'
 import {
-  newKey, openWithPassword, openWithSecret, passwordSlot, readStub, SEALED_SUFFIX, SealedFiles, sealTree, secretSlot, unsealTree, VaultError, writeStub,
+  dropOpen, newDrop, newKey, openWithPassword, openWithSecret, passwordSlot, readStub, SEALED_SUFFIX, SealedFiles, sealTree, secretSlot, unsealTree, VaultError, writeStub,
   type SealedStub, type SealSlot,
 } from './util/vault'
+
+/** A stub's seal as it stands once nothing is being sealed or unsealed any more. */
+function unpending(sealed: SealedStub['sealed']): SealedStub['sealed'] {
+  const { pending: _pending, ...rest } = sealed
+  return rest
+}
 
 export interface CoreOptions {
   /** Models configured in the Harness; routes that name their own endpoint are called by the core itself. */
@@ -96,6 +103,17 @@ export class NovelCore {
    */
   private readonly deviceOnly = new Set<string>()
   private snapshot: NovelSettings = DEFAULT_SETTINGS
+  /**
+   * How many requests of each kind are out at once — over every job, whoever
+   * started it. The numbers are the author's; a gate slows down by itself when
+   * its service pushes back, and says so.
+   */
+  private readonly gates: Record<GateKind, Gate> = {
+    text: new Gate('text', parallelOf(undefined)),
+    speech: new Gate('speech', parallelOf(undefined)),
+    image: new Gate('image', parallelOf(undefined)),
+    sound: new Gate('sound', parallelOf(undefined)),
+  }
   private embedderCache: { key: string; value: Embedder | undefined } | undefined
   private readonly unsubscribe: () => void
   private disposed = false
@@ -108,6 +126,8 @@ export class NovelCore {
     this.roles = options.roles
     this.settings = options.settings ?? new SettingsStore()
     this.unsubscribe = this.settings.onChange(() => { void this.refreshSettings() })
+    // A gate that slows down or picks up again is something whoever watches the jobs should see.
+    for (const gate of Object.values(this.gates)) gate.onChange(() => { this.jobs.touch() })
   }
 
   /** Load settings once before first use. */
@@ -119,6 +139,10 @@ export class NovelCore {
     try {
       this.snapshot = await this.settings.get()
       this.embedderCache = undefined
+      this.gates.text.setCeiling(parallelOf(this.snapshot.textConcurrency))
+      this.gates.speech.setCeiling(parallelOf(this.snapshot.tts.concurrency))
+      this.gates.image.setCeiling(parallelOf(this.snapshot.image.concurrency))
+      this.gates.sound.setCeiling(parallelOf(this.snapshot.sound?.concurrency))
     } catch (error) {
       this.log('failed to load settings', error)
     }
@@ -273,6 +297,28 @@ export class NovelCore {
     return () => { this.lockWatchers.delete(listener) }
   }
 
+  private readonly lockPreparers = new Set<(root: string) => Promise<void>>()
+
+  /**
+   * Be given a moment before a book is locked, while its key is still at hand:
+   * whatever has to go under the seal with it can be put there and checked.
+   * A preparer that fails does not keep the book open.
+   */
+  onBeforeLock(listener: (root: string) => Promise<void>): () => void {
+    this.lockPreparers.add(listener)
+    return () => { this.lockPreparers.delete(listener) }
+  }
+
+  private async prepareLock(root: string): Promise<void> {
+    for (const listener of [...this.lockPreparers]) {
+      try {
+        await listener(root)
+      } catch (error) {
+        this.log('preparing a book for locking failed', error)
+      }
+    }
+  }
+
   private lockChanged(root: string): void {
     for (const listener of [...this.lockWatchers]) {
       try {
@@ -353,10 +399,12 @@ export class NovelCore {
       // `novel.json` says the book is sealed and how it opens. Cut off after this point, the work is finished at the next unlock.
       const store = new SealedFiles(key, bookKey)
       await store.writeJson(join(key, MANIFEST_FILE), manifest)
-      const stub: SealedStub = { schema: 1, id: manifest.id, title: input.label?.trim() || manifest.title, sealed: { v: 1, slots: [slot], pending: true } }
+      // With the drop, what is not the Studio's own to encrypt — the conversations about the book — can be put under the seal while it is locked.
+      const drop = newDrop(bookKey)
+      const stub: SealedStub = { schema: 1, id: manifest.id, title: input.label?.trim() || manifest.title, sealed: { v: 1, slots: [slot], pending: true, drop } }
       await writeStub(key, stub)
       const files = await sealTree(key, BOOK_ENTRIES, bookKey, onProgress)
-      await writeStub(key, { ...stub, sealed: { v: 1, slots: [slot] } })
+      await writeStub(key, { ...stub, sealed: { v: 1, slots: [slot], drop } })
       this.bookKeys.set(key, bookKey)
       return { files: files + 1 }
     })
@@ -381,7 +429,7 @@ export class NovelCore {
       if (result.left > 0) {
         // Something would not open: nothing is lost, but the book cannot be called plain. What was opened goes back under the seal.
         await sealTree(key, BOOK_ENTRIES, bookKey)
-        await writeStub(key, { ...stub, sealed: { v: 1, slots: stub.sealed.slots } })
+        await writeStub(key, { ...stub, sealed: unpending(stub.sealed) })
         return { files: 0, left: result.left }
       }
       await writeJson(join(key, MANIFEST_FILE), manifest)
@@ -416,7 +464,12 @@ export class NovelCore {
     if (stub.sealed.pending === true) {
       // Sealing or unsealing was cut off last time: some files lie plain. They go under the seal before anything reads the book.
       await sealTree(key, BOOK_ENTRIES, bookKey)
-      await writeStub(key, { ...stub, sealed: { v: 1, slots: stub.sealed.slots } })
+      await writeStub(key, { ...stub, sealed: unpending(stub.sealed) })
+    }
+    // A book sealed before there was a drop gets one the first time it is opened.
+    if (stub.sealed.drop === undefined) {
+      const current = await readStub(key)
+      if (current !== undefined && current.sealed.drop === undefined) await writeStub(key, { ...current, sealed: { ...current.sealed, drop: newDrop(bookKey) } })
     }
     this.bookKeys.set(key, bookKey)
     if (scope === 'device') this.deviceOnly.add(key)
@@ -437,11 +490,29 @@ export class NovelCore {
     const key = resolve(root)
     if (!this.bookKeys.has(key)) return false
     await this.release(key)
+    await this.prepareLock(key)
     this.bookKeys.get(key)?.fill(0)
     this.bookKeys.delete(key)
     this.deviceOnly.delete(key)
     this.lockChanged(key)
     return true
+  }
+
+  /** The public half of a sealed book's drop: anything may be encrypted to it while the book is locked. */
+  async dropOf(root: string): Promise<string | undefined> {
+    return (await readStub(resolve(root)))?.sealed.drop?.publicKey
+  }
+
+  /**
+   * Read what was put under a book's seal through its drop. The book has to be unlocked.
+   * @throws ProjectError `novel/locked` when it is not; VaultError when the piece does not open.
+   */
+  async openDropped(root: string, blob: Uint8Array): Promise<Buffer> {
+    const key = resolve(root)
+    const bookKey = this.bookKeys.get(key)
+    const drop = (await readStub(key))?.sealed.drop
+    if (bookKey === undefined || drop === undefined) throw new ProjectError('novel/locked', 'unlock the book first')
+    return dropOpen(drop, bookKey, blob)
   }
 
   /** Whether a sealed book is open for other devices only — locked as far as this computer goes. */
@@ -476,7 +547,7 @@ export class NovelCore {
       slots = slots.filter(slot => !(slot.kind === change.remove.kind && (change.remove.id === undefined || slot.id === change.remove.id)))
       if (!slots.some(slot => slot.kind === 'password')) throw new ProjectError('novel/invalid', 'a sealed book always keeps a password: it is what opens it when everything else is gone')
     } else if (change.label.trim().length > 0) title = change.label.trim()
-    await writeStub(key, { ...stub, title, sealed: { v: 1, slots } })
+    await writeStub(key, { ...stub, title, sealed: { ...unpending(stub.sealed), slots } })
     return await this.lockOf(key)
   }
 
@@ -509,7 +580,9 @@ export class NovelCore {
         if (runtime === undefined) return
         const manifest = await runtime.project.manifest()
         const cover = await runtime.project.cover()
-        refs.push({ root, title: manifest.title, relative: relative(base, root) || '.', id: manifest.id, ...(cover !== undefined ? { cover } : {}), ...(stub !== undefined ? { sealed: true } : {}) })
+        // What there is to read, hear and watch: the shelf leads straight to each. A book that cannot be counted is on the shelf all the same.
+        const shows = await runtime.project.shows().catch(() => undefined)
+        refs.push({ root, title: manifest.title, relative: relative(base, root) || '.', id: manifest.id, ...(cover !== undefined ? { cover } : {}), ...(shows !== undefined ? { shows } : {}), ...(stub !== undefined ? { sealed: true } : {}) })
       } catch (error) {
         this.log(`skipping unreadable project at ${root}`, error)
       }
@@ -584,17 +657,71 @@ export class NovelCore {
     return this.embedderCache.value
   }
 
+  // ───────────── how much at once ─────────────
+
+  /**
+   * The gate a kind of request goes through. Sound that rides on the speech
+   * setup goes through the speech gate: both ask the same model, and it counts
+   * them together.
+   */
+  gate(kind: GateKind): Gate {
+    return kind === 'sound' && soundSetup(this.snapshot)?.shared === true ? this.gates.speech : this.gates[kind]
+  }
+
+  /** How many requests of a kind the author lets out at once. */
+  parallel(kind: GateKind): number {
+    return this.gate(kind).ceiling
+  }
+
+  /** Make a request through its gate; the work of a batch waits behind whatever the author asked for by hand. */
+  through<T>(kind: GateKind, task: (attempt: number) => Promise<T>, options: GateOptions = {}): Promise<T> {
+    return this.gate(kind).run(task, { background: currentJob()?.kind === 'batch', ...options })
+  }
+
+  /** The gates that have something to say: work waiting at them, or a service pushing back. */
+  gateStates(): Partial<Record<GateKind, GateState>> {
+    const states: Partial<Record<GateKind, GateState>> = {}
+    for (const kind of Object.keys(this.gates) as GateKind[]) {
+      // Shared with speech: said once, there.
+      if (this.gate(kind) !== this.gates[kind]) continue
+      const state = this.gates[kind].state()
+      if (state.active > 0 || state.waiting > 0 || state.limit < state.ceiling || state.pausedMs > 0) states[kind] = state
+    }
+    return states
+  }
+
   /** @param runtime - the book the pictures are for, so the ledger files them under it. */
   async imageProvider(runtime?: ProjectRuntime): Promise<ImageProvider | undefined> {
     const provider = createImageProvider((await this.settings.get()).image, this.credentials, this.options.bridges)
-    return provider !== undefined ? meterImages(provider, (event) => { this.usage.record(event) }, await this.bookTag(runtime)) : undefined
+    if (provider === undefined) return undefined
+    const metered = meterImages(provider, (event) => { this.usage.record(event) }, await this.bookTag(runtime))
+    return {
+      kind: metered.kind,
+      model: metered.model,
+      generate: request => this.through('image', () => metered.generate(request), request.signal !== undefined ? { signal: request.signal } : {}),
+    }
   }
 
   /** @param runtime - the book the voices are for, so the ledger files them under it. */
   async ttsProvider(runtime?: ProjectRuntime): Promise<TtsProvider | undefined> {
     const settings = (await this.settings.get()).tts
     const provider = createTtsProvider(settings, this.credentials)
-    return provider !== undefined ? meterSpeech(provider, settings.model ?? settings.provider, (event) => { this.usage.record(event) }, await this.bookTag(runtime)) : undefined
+    if (provider === undefined) return undefined
+    const metered = meterSpeech(provider, settings.model ?? settings.provider, (event) => { this.usage.record(event) }, await this.bookTag(runtime))
+    const gated: TtsProvider = Object.create(metered) as TtsProvider
+    gated.synthesize = request => this.through('speech', () => metered.synthesize(request), {
+      ...(request.signal !== undefined ? { signal: request.signal } : {}),
+      ...(request.onStart !== undefined ? { onStart: request.onStart } : {}),
+    })
+    if (metered.anchor !== undefined) {
+      const anchor = metered.anchor.bind(metered)
+      gated.anchor = (voice, options) => this.through('speech', () => anchor(voice, options), options.signal !== undefined ? { signal: options.signal } : {})
+    }
+    if (metered.designVoice !== undefined) {
+      const design = metered.designVoice.bind(metered)
+      gated.designVoice = request => this.through('speech', () => design(request), request.signal !== undefined ? { signal: request.signal } : {})
+    }
+    return gated
   }
 
   /** The model that makes effects, music and generated beds — by default the speech setup, when it can. */
@@ -603,12 +730,12 @@ export class NovelCore {
     if (provider === undefined) return undefined
     const tag = await this.bookTag(runtime)
     const metered: SoundProvider = Object.create(provider) as SoundProvider
-    metered.generate = async (request) => {
+    metered.generate = request => this.through('sound', async () => {
       const audio = await provider.generate(request)
       // Billed like speech — by the second — and filed with it.
       this.usage.record({ kind: 'speech', model: provider.model, via: provider.kind, chars: 0, seconds: Number((audio.pcm.length / audio.sampleRate).toFixed(2)), ...(tag !== undefined ? { book: tag.root, bookTitle: tag.title } : {}) })
       return audio
-    }
+    }, request.signal !== undefined ? { signal: request.signal } : {})
     return metered
   }
 
@@ -621,23 +748,29 @@ export class NovelCore {
 
   // ───────────── context ─────────────
 
-  /** Pack context for a task with the configured strategy and the model's window in mind. */
-  async pack(runtime: ProjectRuntime, route: ModelRoute, options: Omit<PackOptions, 'budgetTokens' | 'strategy' | 'tailChars'> & { budgetTokens?: number }): Promise<ContextPack> {
+  /**
+   * Pack context for a task: the manuscript's own text gets half of the
+   * model's window (or the author's figure), spent in whole chapters.
+   * @param options.limit - hold the whole pack to about this many tokens, for work that has to answer at once.
+   */
+  async pack(runtime: ProjectRuntime, route: ModelRoute, options: Omit<PackOptions, 'textBudget' | 'sideBudget' | 'tailChars'> & { limit?: number }): Promise<ContextPack> {
     const settings = (await this.settings.get()).context
-    let window: number | undefined
-    try {
-      window = await this.llm.contextWindow(route)
-    } catch {
-      window = undefined
-    }
-    const base = options.budgetTokens ?? settings.budgetTokens
-    // The budget is already held to what the window leaves room for.
-    const chosen = await chooseStrategy(runtime.project, settings.strategy, base, window, options.chapter?.index)
+    const budgets = contextBudgets(settings.strategy, settings.budgetTokens, await this.windowOf(route), settings.sideTokens)
+    const { limit, ...rest } = options
     return await packContext(runtime.project, runtime.index, {
-      ...options,
-      strategy: chosen.strategy,
-      budgetTokens: chosen.budgetTokens,
+      ...rest,
+      textBudget: limit !== undefined ? Math.min(budgets.textBudget, Math.floor(limit * 0.6)) : budgets.textBudget,
+      sideBudget: limit !== undefined ? Math.min(budgets.sideBudget, Math.floor(limit * 0.4)) : budgets.sideBudget,
       tailChars: settings.tailChars,
     })
+  }
+
+  /** The context window of the model behind a route, when it is known. */
+  async windowOf(route: ModelRoute): Promise<number | undefined> {
+    try {
+      return await this.llm.contextWindow(route)
+    } catch {
+      return undefined
+    }
   }
 }

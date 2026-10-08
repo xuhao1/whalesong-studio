@@ -24,6 +24,8 @@ export interface PlayerOptions {
   voiceVolume: number
   ambienceVolume: number
   ambienceOn: boolean
+  /** A chapter that ran out goes on to the next. Left out: it does. A wish of the listener's, kept with the rest; the player itself ends where the chapter does. */
+  autoNext?: boolean
 }
 
 type MediaUrl = (path: string, version?: string | number) => string

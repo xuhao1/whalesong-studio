@@ -30,9 +30,10 @@ const KIND: Record<UsageKind, [string, string]> = {
 
 const ROLE: Record<string, [string, string]> = {
   writer: ['写手', 'Writer'],
-  architect: ['架构', 'Architect'],
-  analyst: ['分析', 'Analyst'],
+  architect: ['策划', 'Planner'],
+  analyst: ['场记', 'Continuity'],
   director: ['导演', 'Director'],
+  producer: ['后期', 'Post-production'],
   other: ['其他文本调用', 'Other text calls'],
   image: ['绘图', 'Pictures'],
   speech: ['配音', 'Speech'],
@@ -70,7 +71,7 @@ export function UsageView() {
       <header className="nv-settings-head">
         <div>
           <h2>{t('用量与成本', 'Usage and cost')}</h2>
-          <p className="nv-muted nv-small">{t('工坊每调用一次模型就记一笔：写手、架构、分析、导演用了多少 token，画了几张图，合成了多少分钟语音。填上你实际付的单价，就能看到钱花在了哪里。', 'Every call the Studio makes to a model is written down: the tokens each role used, the pictures drawn, the minutes of speech. Enter what you actually pay per model and see where the money goes.')}</p>
+          <p className="nv-muted nv-small">{t('工坊每调用一次模型就记一笔：写手、场记、策划、导演、后期用了多少 token，画了几张图，合成了多少分钟语音。填上你实际付的单价，就能看到钱花在了哪里。', 'Every call the Studio makes to a model is written down: the tokens each role used, the pictures drawn, the minutes of speech. Enter what you actually pay per model and see where the money goes.')}</p>
         </div>
         <Button variant="ghost" icon="refresh" busy={loaded.loading} onClick={() => { loaded.reload() }}>{t('刷新', 'Refresh')}</Button>
       </header>
@@ -92,7 +93,7 @@ export function UsageView() {
         <>
           <div className="nv-usage-cards">
             <Figure label={t('预估花费', 'Estimated cost')} value={cost.length > 0 ? cost : '—'} sub={summary.unpriced.length > 0 ? t(`${summary.unpriced.length} 个模型还没填单价，未计入`, `${summary.unpriced.length} models have no price and are left out`) : t('按你填的单价计算', 'At the prices you entered')} tone={summary.unpriced.length > 0 ? 'amber' : undefined} />
-            <Figure label={t('文本 tokens', 'Text tokens')} value={`${total.estimated ? '≈' : ''}${count(total.input + total.output)}`} sub={t(`输入 ${count(total.input)} · 输出 ${count(total.output)}`, `${count(total.input)} in · ${count(total.output)} out`)} />
+            <Figure label={t('文本 tokens', 'Text tokens')} value={`${total.estimated ? '≈' : ''}${count(total.input + total.output)}`} sub={t(`输入 ${count(total.input)}${(total.cached ?? 0) > 0 ? `（其中缓存命中 ${count(total.cached ?? 0)}，${Math.round(((total.cached ?? 0) / Math.max(1, total.input)) * 100)}%）` : ''} · 输出 ${count(total.output)}`, `${count(total.input)} in${(total.cached ?? 0) > 0 ? ` (${count(total.cached ?? 0)} of it from the provider's cache, ${Math.round(((total.cached ?? 0) / Math.max(1, total.input)) * 100)}%)` : ''} · ${count(total.output)} out`)} />
             <Figure label={t('图片', 'Pictures')} value={count(total.images)} sub={t('张', 'drawn')} />
             <Figure label={t('语音', 'Speech')} value={`${minutes(total.seconds)} ${t('分钟', 'min')}`} sub={t(`${count(total.chars)} 字`, `${count(total.chars)} characters`)} />
             <Figure label={t('调用次数', 'Calls')} value={count(total.calls)} sub={t(`${summary.byDay.length} 天有活动`, `over ${summary.byDay.length} active days`)} />
@@ -165,7 +166,7 @@ export function UsageView() {
 
       <p className="nv-muted nv-small">
         {begun !== undefined ? t(`用量从 ${new Date(begun).toLocaleDateString()} 开始记录，在那之前的调用没有记账（不代表没有花费）。`, `Counting began on ${new Date(begun).toLocaleDateString()}; calls before that were never recorded, which does not mean they were free. `) : ''}
-        {t('这里只有小说工坊自己发出的调用。左边对话里总编（Agent）自己的 token 由 Harness 统计，不在其中。带 ≈ 的数字是接口没有回报用量时按字数估算的。记录存在 Harness 目录下的 novel-writer/usage/，每月一个文件。', 'Only calls the Studio itself makes are here. The tokens of the showrunner in the conversation are counted by the Harness, not included. Figures marked ≈ were estimated from the text because the endpoint reported no usage. The ledger lives under the Harness home in novel-writer/usage/, one file a month.')}
+        {t('这里只有小说工坊自己发出的调用。左边对话里总编（Agent）自己的 token 由 DSH 统计，不在其中。带 ≈ 的数字是接口没有回报用量时按字数估算的。记录存在 DSH 目录下的 novel-writer/usage/，每月一个文件。', 'Only calls the Studio itself makes are here. The tokens of the showrunner in the conversation are counted by the Harness, not included. Figures marked ≈ were estimated from the text because the endpoint reported no usage. The ledger lives under the Harness home in novel-writer/usage/, one file a month.')}
       </p>
 
       {pricing !== undefined ? <PriceEditor row={pricing} price={prices[pricing.label]} onClose={() => { setPricing(undefined) }} onSaved={() => { setPricing(undefined); loaded.reload() }} /> : null}

@@ -9,7 +9,16 @@
 #
 #   preset-novelist   an agent preset. Sessions that select it get the
 #                     showrunner persona and the novel_* tools; other sessions
-#                     are untouched.
+#                     are untouched. The crew's roles run as children of such a
+#                     session and join this same composition: what is mounted
+#                     here is what a role can be given (Novel Studio → Settings →
+#                     Crew decides how much of it each role sees).
+#
+# What it depends on, beyond what every DSH has: the subagent service
+# (`@deepseek-ai/dsh-subagent`, row `subagent` of the base bundle, on by
+# default). Every role of the crew is a subagent of the conversation it works
+# for; with that row switched off the roles fall back to one request, one
+# answer — and the Studio says so at its top rather than doing it quietly.
 #
 # A profile's own cordis.patch.yml can override either row by id. A patch
 # replaces a row's whole `config`, so restate every key you keep.
@@ -50,8 +59,8 @@
             config:
               maxBytes: 65536
 
-          # Reading reference material in the workspace; the manuscript itself is
-          # changed through the novel_* tools.
+          # Files of the workspace: reference material, scripts, what the crew
+          # produces. The manuscript itself is changed through the novel_* tools.
           - id: tool-fs
             name: '@deepseek-ai/dsh-tool-fs'
           - id: tool-fs-search
@@ -65,6 +74,39 @@
             config:
               fetch: true
               searchTimeoutMs: 60000
+
+          # A shell and its background jobs, for work around the book. The crew's
+          # post-production cuts video with it (ffmpeg); a book's own files stay
+          # behind the novel_* tools whoever holds the shell.
+          - id: tool-bash
+            name: '@deepseek-ai/dsh-tool-bash'
+            disabled: !!js process.platform === 'win32'
+          - id: tool-pwsh
+            name: '@deepseek-ai/dsh-tool-pwsh'
+            disabled: !!js process.platform !== 'win32'
+          - id: tool-jobs
+            name: '@deepseek-ai/dsh-tool-jobs'
+
+          # Outside help: DSH's own delegation tool, pointed at the Claude Code and
+          # Codex subagent providers. Each tool appears only once its provider is
+          # installed in the profile (@deepseek-ai/dsh-subagent-claude-code,
+          # @deepseek-ai/dsh-subagent-codex); without them these rows do nothing.
+          - id: tool-subagent-claude-code
+            name: '@deepseek-ai/dsh-tool-subagent'
+            config:
+              provider: claude-code
+              toolName: subagent_claude_code
+              backgroundMode: one-shot
+              enableRunInBackground: false
+              maxDepth: provider-managed
+          - id: tool-subagent-codex
+            name: '@deepseek-ai/dsh-tool-subagent'
+            config:
+              provider: codex
+              toolName: subagent_codex
+              backgroundMode: one-shot
+              enableRunInBackground: false
+              maxDepth: provider-managed
 
           # Asking the author, tracking work, long-running objectives.
           - id: tool-ask-user

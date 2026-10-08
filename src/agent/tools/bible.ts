@@ -23,6 +23,7 @@ export function bibleTools(service: NovelService): ToolDefinition[] {
         'Maintain the story bible: characters, world entries and style profiles.',
         '- action=save creates or updates one entry: pass only the fields that change; an empty string clears a field. `ref` names the entry to update (id, name or alias); omit it to create.',
         '- action=delete removes an entry.',
+        '- action=merge (kind=world) makes several entries one — the same place, house or thing written down under different names: `ref` is the entry that stays, `fields.fold` lists the others (ids or names). Their names become its other names, their text is kept under their name in its own, and every tie, scene mark and picture that was theirs is its.',
         '- action=expand lets the architect model flesh out a character or world entry in agreement with the written text (`direction` steers it).',
         '- action=derive_visual (kind=character) distills the prose appearance of a character into a visual anchor and a negative list for image generation, and stores both on the card (`direction` steers it). Do this — or write fields.visual yourself — before drawing someone: an image model handed the prose of a card invents what the prose leaves open.',
         '- action=learn_style (kind=style) distills a style profile from a sample passage in fields.sample.',
@@ -34,7 +35,7 @@ export function bibleTools(service: NovelService): ToolDefinition[] {
       ].join('\n'),
       mutating: true,
       parameters: {
-        action: { type: 'string', required: true, enum: ['save', 'delete', 'expand', 'derive_visual', 'learn_style', 'accept_suggestion', 'dismiss_suggestion'] },
+        action: { type: 'string', required: true, enum: ['save', 'delete', 'merge', 'expand', 'derive_visual', 'learn_style', 'accept_suggestion', 'dismiss_suggestion'] },
         kind: { type: 'string', enum: ['character', 'world', 'style'], description: 'Required except for the suggestion actions.' },
         ref: { type: 'string', description: 'Entry id or name; the suggestion id for the suggestion actions.' },
         fields: { type: 'object', additionalProperties: true, description: 'Fields to set (save), or {sample, name} for learn_style.' },
@@ -88,6 +89,14 @@ export function bibleTools(service: NovelService): ToolDefinition[] {
           return { text: `${existing !== undefined ? 'Updated' : 'Created'} style "${style.name}" (${style.id})${args.activate === true ? ' and made it the active style' : ''}.`, data: toJson(style) }
         }
 
+        if (args.action === 'merge') {
+          if (args.kind !== 'world') throw new ProjectError('novel/invalid', 'merge is for world entries (kind=world); the cast is merged from the overview page')
+          if (args.ref === undefined) throw new ProjectError('novel/invalid', '`ref` names the entry that stays')
+          const fold = Array.isArray(fields.fold) ? fields.fold.filter((item): item is string => typeof item === 'string') : typeof fields.fold === 'string' ? [fields.fold] : []
+          const merged = await project.mergeWorld(args.ref, fold)
+          return { text: `Folded ${merged.folded.map(name => `"${name}"`).join(', ')} into "${merged.entry.name}" (${merged.entry.id}); ${merged.ties} ties now name it.`, data: toJson(merged.entry) }
+        }
+
         if (args.action === 'delete') {
           if (args.ref === undefined) throw new ProjectError('novel/invalid', '`ref` names the entry to delete')
           const removed = args.kind === 'character' ? await project.deleteCharacter(args.ref) : args.kind === 'world' ? await project.deleteWorld(args.ref) : await project.deleteStyle(args.ref)
@@ -130,9 +139,10 @@ export function bibleTools(service: NovelService): ToolDefinition[] {
       name: 'novel_outline',
       description: [
         'Edit the outline with a list of operations applied in order (each reports its own success):',
-        '- {op:"add-chapter", title, volume?, before?, after?, synopsis?, purpose?, pov?, location?, time?, characters?[], threads?[], beats?[], targetWords?, notes?}',
+        '- {op:"add-chapter", title, volume?, before?, after?, line?, synopsis?, purpose?, pov?, location?, time?, characters?[], threads?[], beats?[], targetWords?, notes?} — targetWords is a length recommended for the chapter: set it only when the author names one (0 takes it away); without one the writer judges',
         '- {op:"update-chapter", chapter, title?, …same fields…, status? (idea|outlined|drafted|revised|final)} — an empty string or empty array clears a field',
-        '- {op:"move-chapter", chapter, volume?, before?, after?}   - {op:"remove-chapter", chapter}',
+        '- {op:"move-chapter", chapter, volume?, before?, after?, line?}   - {op:"remove-chapter", chapter}   - {op:"restore-chapter", chapter} (a removed chapter is kept, with its text and what was made from it, and comes back where it stood)',
+        '- Lines of the plot — other ways the story goes, beside the main line (the volumes): {op:"add-line", title, from? (the chapter it leaves after), choice? (what is decided there to go this way), premise?}   - {op:"update-line", line, title?, premise?, choice?, shelved? (put aside / taken up again), from?, into? (the chapter of another line it arrives at — from there the two are one story; null: nowhere)}   - {op:"promote-line", line} makes it the main line: what the main line had in its place is kept as a line   - {op:"remove-line", line} removes it with its chapters. A chapter is added to a line with add-chapter line=…; a line is named by its id or its title.',
         '- {op:"add-volume", title, synopsis?, goal?, before?}   - {op:"update-volume", volume, title?, synopsis?, goal?}   - {op:"move-volume", volume, before?}   - {op:"remove-volume", volume}',
         '- {op:"save-thread", thread?, title?, kind? (foreshadow|mystery|subplot|promise|motif), status? (open|paid|dropped), description?}   - {op:"remove-thread", thread}',
         'Chapters are referenced by id, number or title; characters and threads by id or name. `beats` are strings or {summary, characters?, location?, conflict?, outcome?, emotion?}.',
@@ -166,7 +176,7 @@ export function bibleTools(service: NovelService): ToolDefinition[] {
       name: 'novel_derive',
       description: [
         'Ask the architect model to develop plot from where the story stands. It reads the bible, the story so far and the open threads.',
-        '- kind=chapters: outline the next `count` chapters (default 5) of a volume, following `direction` if given. They are added to the outline unless apply=false.',
+        '- kind=chapters: outline the next `count` chapters (default 5; any number the author asks for — they are derived ten at a time, each round from where the last left off) following `direction` if given. They are added to the outline unless apply=false. Where they go: at the end of the main line by default; `line` names another line of the plot; `after` the chapter they follow. `mode` says what becomes of what is there after that chapter already — append (default) adds; replace puts the new chapters in its place (chapters that are written are never thrown away: they are kept as a line put aside); branch leaves it as it is and opens a new line for the new chapters (`title` names it, `choice` says what is decided to go that way). When the author wants the story to go differently from some chapter on, ask which they mean — replace, or a line of its own — unless they said.',
         '- kind=beats: break one chapter\'s outline into scene beats (`chapter` required). Do this before novel_write when a chapter only has a synopsis.',
         '- kind=what_if: explore alternative directions for a question in `direction` ("what if she refuses the deal?"). Nothing is changed; bring the branches to the author.',
         '- kind=foundation: develop a raw idea in `direction` into premise, cast, world, volumes and opening chapters (for a project that is still empty).',
@@ -175,7 +185,12 @@ export function bibleTools(service: NovelService): ToolDefinition[] {
       parameters: {
         kind: { type: 'string', required: true, enum: ['chapters', 'beats', 'what_if', 'foundation'] },
         direction: { type: 'string', description: 'Steering from the author, the what-if question, or the idea.' },
-        count: { type: 'integer', description: 'chapters: how many (1-12, default 5); what_if: how many branches (2-5, default 3).' },
+        count: { type: 'integer', description: 'chapters: how many (default 5); what_if: how many branches (2-5, default 3).' },
+        line: { type: 'string', description: 'chapters: the line of the plot to go on with (id or name). Default: the main line.' },
+        after: { type: 'string', description: 'chapters: the chapter the new ones follow. Default: the end of the line — for replace and branch, the last chapter that is written.' },
+        mode: { type: 'string', enum: ['append', 'replace', 'branch'], description: 'chapters: what becomes of what follows `after` already.' },
+        title: { type: 'string', description: 'chapters, mode=branch: the new line\'s name.' },
+        choice: { type: 'string', description: 'chapters, mode=branch: what is decided, where the lines part, to go this way.' },
         chapter: { type: 'string', description: 'beats: which chapter.' },
         volume: { type: 'string', description: 'chapters: which volume to extend (default: the last).' },
         apply: { type: 'boolean', description: 'chapters/beats: write the result into the outline (default true).' },
@@ -188,13 +203,20 @@ export function bibleTools(service: NovelService): ToolDefinition[] {
             ...(args.direction !== undefined ? { direction: args.direction } : {}),
             ...(args.volume !== undefined ? { volume: args.volume } : {}),
             ...(args.apply !== undefined ? { apply: args.apply } : {}),
+            ...(args.line !== undefined && args.line.trim().length > 0 ? { line: args.line.trim() } : {}),
+            ...(args.after !== undefined && args.after.trim().length > 0 ? { after: args.after.trim() } : {}),
+            ...(args.mode !== undefined ? { mode: args.mode } : {}),
+            ...(args.title !== undefined && args.title.trim().length > 0 ? { title: args.title.trim() } : {}),
+            ...(args.choice !== undefined && args.choice.trim().length > 0 ? { choice: args.choice.trim() } : {}),
           }, task))
+          const where = result.line !== undefined ? ` ${result.line.created ? 'on a new line of the plot' : 'on the line'} "${result.line.title}" (${result.line.id})` : ''
+          const replaced = result.replaced !== undefined && result.replaced.chapters > 0 ? `\nThey take the place of ${result.replaced.chapters} chapter(s)${result.replaced.kept !== undefined ? `, which had text and are kept as the line "${result.replaced.kept.title}" (${result.replaced.kept.id}), put aside — tell the author where they went` : ' that were not written and are gone'}.` : ''
           const lines = result.chapters.map((chapter, index) => {
             const added = result.added[index]
             return `${added !== undefined ? `${added.index}. ` : '- '}${chapter.title}${added !== undefined ? ` (${added.id})` : ''}\n   ${brief(chapter.synopsis, 260)}${chapter.beats.length > 0 ? `\n   beats: ${chapter.beats.map(beat => brief(beat.summary, 60)).join(' → ')}` : ''}`
           })
           return {
-            text: `${result.added.length > 0 ? `Added ${result.added.length} chapters to the outline` : `Derived ${result.chapters.length} chapters (not applied)`}:\n${lines.join('\n')}${result.rationale !== undefined ? `\n\nRationale: ${result.rationale}` : ''}`,
+            text: `${result.added.length > 0 ? `Added ${result.added.length} chapters to the outline${where}` : `Derived ${result.chapters.length} chapters (not applied)`}:${replaced}\n${lines.join('\n')}${result.rationale !== undefined ? `\n\nRationale: ${result.rationale}` : ''}`,
             data: toJson(result),
           }
         }

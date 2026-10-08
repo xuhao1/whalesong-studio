@@ -14,8 +14,8 @@ import { finished, type SoundProvider } from '../media/sound'
 import { durationOf, encodeWav, trimSilence } from '../media/wav'
 import { ProjectError } from '../project'
 import { L, promptLanguage } from '../render'
-import { errorMessage, mapLimit, serializer } from '../util/async'
-import { AMBIENCE, soundPlan } from './audio'
+import { errorMessage, mapLimit } from '../util/async'
+import { AMBIENCE, changeScript, soundPlan } from './audio'
 
 /** How long a clip of each kind is asked to be, in seconds. Beds and music loop. */
 export const SOUND_SECONDS: Record<SoundKind, number> = { bed: 18, effect: 3, music: 24 }
@@ -106,10 +106,9 @@ export async function renderSound(core: NovelCore, runtime: ProjectRuntime, para
   const failed: SoundResult['failed'] = []
   let done = 0
   let total = 0
-  const save = serializer()
   const label = (): string => L(lang, `生成声音 ${done}/${todo.length}`, `making sounds ${done}/${todo.length}`)
   task.job?.progress(0, todo.length, label())
-  await mapLimit(todo, 2, async (item) => {
+  await mapLimit(todo, core.parallel('sound'), async (item) => {
     let patch: Partial<AudioCue>
     try {
       const raw = await provider.generate({ kind: item.kind, prompt: item.prompt, seconds: item.seconds, language: manifest.language, ...(task.signal !== undefined ? { signal: task.signal } : {}) })
@@ -125,10 +124,10 @@ export async function renderSound(core: NovelCore, runtime: ProjectRuntime, para
       patch = { error: errorMessage(error) }
       failed.push({ cue: item.id, error: errorMessage(error) })
     }
-    await save(async () => {
-      // Read again under the lock: lines may have been rendered, or another cue saved, meanwhile.
-      const current = withIds((await project.audioScript(script.chapterId)) ?? script)
-      script = {
+    // Onto the script as it stands now: lines may have been voiced, or another cue saved, meanwhile.
+    const saved = await changeScript(project, script.chapterId, (stored) => {
+      const current = withIds(stored)
+      return {
         ...current,
         cues: current.cues.map((cue) => {
           if (cue.id !== item.id) return cue
@@ -136,8 +135,8 @@ export async function renderSound(core: NovelCore, runtime: ProjectRuntime, para
           return { ...rest, ...patch }
         }),
       }
-      await project.saveAudioScript(script)
     })
+    if (saved !== undefined) script = saved
     done += 1
     task.job?.progress(done, todo.length, label())
   }, task.signal)

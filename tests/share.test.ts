@@ -117,7 +117,8 @@ describe('the reader for other devices', () => {
     const origin = `http://127.0.0.1:${port}`
     const token = base.slice(origin.length + 1)
     // No token, a wrong token, a token that only starts right: there is nothing here.
-    for (const path of ['/', '/api/books', `/${token.slice(0, -1)}x/api/books`, `/${token.slice(0, 10)}/api/books`, `/${token}x/api/books`]) {
+    // (The last letter is changed to another one: a token that happens to end in the letter put there would be the right token.)
+    for (const path of ['/', '/api/books', `/${token.slice(0, -1)}${token.endsWith('x') ? 'y' : 'x'}/api/books`, `/${token.slice(0, 10)}/api/books`, `/${token}x/api/books`]) {
       expect((await fetch(`${origin}${path}`)).status, path).toBe(404)
     }
     // The manuscript, the bible, the project file and the settings are not media.

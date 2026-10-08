@@ -53,7 +53,7 @@ const RECORD_LABELS: Record<string, [string, string]> = {
   novel_init: ['创建了这本书', 'Created the book'],
   novel_bible: ['改了设定', 'Changed the bible'],
   novel_outline: ['调整了大纲', 'Changed the outline'],
-  novel_derive: ['让架构模型推演', 'Had the architect derive'],
+  novel_derive: ['让策划推演', 'Had the planner derive'],
   novel_write: ['让写手写作', 'Had the writer draft'],
   novel_revise: ['让写手修订', 'Had the writer revise'],
   novel_edit: ['亲手改了正文', 'Edited the text by hand'],
@@ -64,6 +64,8 @@ const RECORD_LABELS: Record<string, [string, string]> = {
   novel_illustrate: ['画了图', 'Drew a picture'],
   novel_audio: ['做了有声版的工作', 'Worked on the audio version'],
   novel_comic: ['做了有声漫的工作', 'Worked on the motion comic'],
+  novel_video: ['让后期剪了视频', 'Had post-production cut a video'],
+  novel_batch: ['做了一次批量任务', 'Ran a batch'],
   novel_play: ['进行了幕间', 'Ran an interlude'],
   novel_settings: ['改了作品信息', 'Changed the book\'s details'],
   novel_manage: ['做了一处手动调整', 'Made a hand edit'],
@@ -141,7 +143,12 @@ export function novelTool<const S extends ParameterSchemaSpec>(service: NovelSer
       // The book the call ended up acting on, so its result can say so.
       let used: ProjectRuntime | undefined
       const book = spec.book === 'switch' ? undefined : named
-      const project = async (): Promise<ProjectRuntime> => (used = await service.requireProject(agent, book))
+      const project = async (): Promise<ProjectRuntime> => {
+        used = await service.requireProject(agent, book)
+        // What the tool reads or writes of the book ends up in this conversation's log: noted, so a book that is sealed takes the conversation under its seal.
+        void service.sessionBooks.touch(agent.id, used.project.root).catch(() => {})
+        return used
+      }
       const env: ToolEnv = {
         service,
         core,

@@ -1,16 +1,20 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 /**
- * dsh-novel-writer — Host half.
+ * dsh-novel-writer — Host half, as DSH loads it.
  *
- * Mounts the `novel` service (project store, model routing, pipelines, jobs)
- * and, when the Web transport is present, the routes the Studio talks to.
+ * This file is only the door (see `host/door.ts`): it puts up the Host half
+ * proper, `host.js` beside it — the `novel` service (project store, model
+ * routing, pipelines, jobs) and, when the Web transport is present, the routes
+ * the Studio talks to — and can put up a newer one in its place while DSH
+ * runs. Keep it small: what is in this file changes only when DSH restarts.
+ *
  * The agent-facing tools live in the `dsh-novel-writer/agent` entry, which a
  * preset mounts per session; the browser half is `dsh-novel-writer/client`.
  */
 import type { Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
-import { mountRoutes } from './host/routes'
-import { NovelService, type NovelServiceConfig } from './host/service'
+import { openDoor } from './host/door'
+import type { NovelServiceConfig } from './host/service'
 
 export const name = 'novel-writer'
 
@@ -29,17 +33,18 @@ export const Config = Schema.object({
 }) as unknown as Schema<Config>
 
 export function apply(ctx: Context, config: Config): void {
-  const service = new NovelService(ctx, config)
-  // Headless and ACP compositions have no browser transport; the service still serves the agent tools there.
-  ctx.inject(['connection'], (inner) => {
-    try {
-      mountRoutes(inner, service)
-    } catch (error) {
-      service.log('could not mount the Studio routes', error)
-      throw error
-    }
+  openDoor(ctx, config, {
+    file: new URL('./host.js', import.meta.url),
+    inject: [...inject],
+    log: (message, error) => {
+      const text = `[novel] ${message}${error !== undefined ? `: ${error instanceof Error ? error.stack ?? error.message : String(error)}` : ''}`
+      try {
+        ctx.logger.warn(text)
+      } catch {
+        console.warn(text)
+      }
+    },
   })
 }
 
-export { NovelService }
 export type { NovelServiceConfig }

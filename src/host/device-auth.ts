@@ -16,16 +16,23 @@
  * The secret is useless without the book's `novel.json`, and the book is
  * useless without the secret or its password.
  *
- * macOS is exercised by tests of what can be tested without a finger (the
- * check, the keychain round trip). Windows is written from the platform's
- * documentation and has not been run; where it does not work the book still
- * opens with its password.
+ * Nothing of this is compiled and nothing is shipped for it: each system is
+ * asked through the script host it comes with — `osascript` on a Mac,
+ * PowerShell on Windows — so the plugin stays the same files wherever DSH
+ * runs. (DSH itself offers no owner check a plugin could call: its desktop
+ * shell exposes none, and a web page of the shell cannot use WebAuthn, which
+ * browsers keep to https and localhost.) Where there is neither — Linux, for
+ * now — a sealed book opens with its password.
+ *
+ * On a Mac the parts that need no finger have been run: the check, and that
+ * the reply of a confirmation arrives (asked with prompts forbidden). Windows
+ * is written from the platform's documentation and has not been run; where it
+ * does not work the book still opens with its password.
  */
 import { spawn } from 'node:child_process'
-import { access, constants, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { hostname } from 'node:os'
 import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { resolveDshHome } from '../core/settings'
 
 export interface DeviceInfo {
@@ -95,26 +102,44 @@ const safeId = (id: string): string => id.replace(/[^A-Za-z0-9_.-]/g, '_').slice
 
 // ───────────────────────────── macOS ─────────────────────────────
 
-/** The owner-check helper built with the plugin; it answers yes or no and holds no secret. */
-async function macHelper(): Promise<string | undefined> {
-  const here = dirname(fileURLToPath(import.meta.url))
-  for (const candidate of [join(here, 'novel-auth'), join(here, '..', 'novel-auth'), join(here, '..', '..', 'lib', 'novel-auth')]) {
-    try {
-      await access(candidate, constants.X_OK)
-      return candidate
-    } catch {
-      // Not here; try the next place.
-    }
-  }
-  return undefined
+/**
+ * The Mac's own owner check (LocalAuthentication), asked through the script
+ * host every Mac has. Policy 2 is "the owner, by Touch ID or else the Mac's
+ * password"; policy 1 is "by biometrics" and only tells whether a reader is
+ * set up. The scripts hold no secret and read none: all they answer is yes or no.
+ */
+const MAC_CHECK = `
+ObjC.import('LocalAuthentication')
+function run() {
+  const context = $.LAContext.alloc.init
+  return JSON.stringify({ ok: !!context.canEvaluatePolicyError(2, null), biometrics: !!context.canEvaluatePolicyError(1, null) })
 }
+`
+
+/** @param reason - what the prompt says the asker is trying to do; it travels as base64 so nothing in it can be taken for script. */
+const macConfirm = (reason: string, seconds: number): string => `
+ObjC.import('LocalAuthentication')
+ObjC.import('Foundation')
+function run() {
+  const reason = $.NSString.alloc.initWithDataEncoding($.NSData.alloc.initWithBase64EncodedStringOptions('${Buffer.from(reason, 'utf8').toString('base64')}', 0), $.NSUTF8StringEncoding)
+  const context = $.LAContext.alloc.init
+  let answer = ''
+  context.evaluatePolicyLocalizedReasonReply(2, reason, (ok) => { answer = ok ? 'yes' : 'no' })
+  const until = Date.now() + ${Math.round(seconds * 1000)}
+  while (answer === '' && Date.now() < until) $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(0.1))
+  return answer === 'yes' ? 'confirmed' : 'declined'
+}
+`
 
 class MacAuth implements DeviceAuth {
+  /** The program is read from stdin, so nothing of ours is on a command line. */
+  private script(source: string, options: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<Ran> {
+    return run('/usr/bin/osascript', ['-l', 'JavaScript'], { ...options, input: source })
+  }
+
   async info(): Promise<DeviceInfo> {
-    const helper = await macHelper()
     const host = hostname()
-    if (helper === undefined) return { available: false, biometrics: false, method: 'none', host }
-    const checked = await run(helper, ['check'], { timeoutMs: 8000 })
+    const checked = await this.script(MAC_CHECK, { timeoutMs: 8000 })
     try {
       const answer = JSON.parse(checked.stdout.trim()) as { ok?: boolean; biometrics?: boolean }
       const available = checked.code === 0 && answer.ok === true
@@ -125,11 +150,10 @@ class MacAuth implements DeviceAuth {
   }
 
   async confirm(reason: string, signal?: AbortSignal): Promise<boolean> {
-    const helper = await macHelper()
-    if (helper === undefined) return false
     // The prompt waits for a person; two minutes is long enough to find the sensor, short enough not to hang forever.
-    const answer = await run(helper, ['confirm', reason], { timeoutMs: 120_000, ...(signal !== undefined ? { signal } : {}) })
-    return answer.code === 0
+    // The script gives up a little before it would be stopped, and stopping it takes the prompt off the screen.
+    const answer = await this.script(macConfirm(reason, 115), { timeoutMs: 120_000, ...(signal !== undefined ? { signal } : {}) })
+    return answer.code === 0 && answer.stdout.trim() === 'confirmed'
   }
 
   async store(id: string, secret: Buffer): Promise<void> {

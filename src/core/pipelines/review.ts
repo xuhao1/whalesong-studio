@@ -7,7 +7,8 @@
 import type { ChapterReview, IssueSeverity, IssueType, ReviewIssue } from '../../shared/types'
 import { fuzzyFind, hashText, newId } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
-import { asArray, asRecord, asText, completeJson } from '../llm'
+import { asArray, asRecord, asText } from '../llm'
+import { assign } from '../crew'
 import { ProjectError } from '../project'
 import { reviewTask } from '../prompts'
 import { L, promptLanguage } from '../render'
@@ -35,12 +36,13 @@ export async function reviewChapter(core: NovelCore, runtime: ProjectRuntime, pa
   const styleNote = style !== undefined
     ? `\n\n## ${L(lang, '设定的文风', 'Style profile')}\n\n${[style.tone, style.diction, style.rhythm, ...(style.rules ?? []), ...(style.avoid ?? []).map(item => `${L(lang, '避免', 'avoid')}: ${item}`)].filter(Boolean).join('\n')}`
     : ''
-  const { value } = await completeJson(core.llm, {
-    route,
+  const { value } = await assign(core, runtime, task, {
+    role: 'analyst',
+    label: L(lang, `第${chapter.index}章 · 审校`, `Ch. ${chapter.index} · review`),
+    tool: 'file_review',
+    what: L(lang, '这一章的审校意见：总评和逐条问题', 'the review of this chapter: a verdict and the issues, one by one'),
     prompt: reviewTask({ lang, language: manifest.language, title: manifest.title, context: `${pack.text}${styleNote}`, ...(params.focus !== undefined ? { focus: params.focus } : {}) }),
     temperature: 0.2,
-    ...(task.signal !== undefined ? { signal: task.signal } : {}),
-    onText: (_delta, total) => { task.job?.rewrite(total) },
     validate: raw => asRecord(raw),
   })
   const issues: ReviewIssue[] = []
@@ -83,4 +85,11 @@ export async function resolveIssue(runtime: ProjectRuntime, chapterId: string, i
   const next: ChapterReview = { ...review, issues: review.issues.map(issue => issue.id === issueId ? { ...issue, resolved } : issue) }
   await runtime.project.saveReview(next)
   return next
+}
+
+/** Throw a chapter's review away: its verdict and every issue, resolved or not. */
+export async function clearReview(runtime: ProjectRuntime, chapterRef: string): Promise<{ chapterId: string; removed: boolean }> {
+  const chapter = await runtime.project.findChapter(chapterRef)
+  if (chapter === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${chapterRef}"`)
+  return { chapterId: chapter.plan.id, removed: await runtime.project.removeReview(chapter.plan.id) }
 }

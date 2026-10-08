@@ -6,7 +6,7 @@
  * is written to the project by the pipeline that runs inside them.
  */
 import { AsyncLocalStorage } from 'node:async_hooks'
-import type { JobInfo, JobKind, JobProgress } from '../shared/types'
+import type { CrewRun, JobInfo, JobKind, JobProgress } from '../shared/types'
 import { newId } from '../shared/text'
 import { anySignal, errorMessage, isAbort } from './util/async'
 
@@ -40,6 +40,8 @@ export interface JobContext {
    * it where it does not. Kept beside the text for whoever watches the job.
    */
   think(delta: string): void
+  /** A role of the crew worked in this job: put its run on the job, for whoever wants to open it. */
+  crew(run: CrewRun): void
   /**
    * Say what is happening right now where the progress label is shown, without
    * moving the progress itself — a call being repeated, a wait.
@@ -70,6 +72,8 @@ interface JobRecord {
 
 /** Thought is kept for reading along, not for the record: the tail is enough. */
 const THOUGHT_LIMIT = 400_000
+/** How many of a job's agent runs stay listed with it: a batch over a whole book has hundreds, and the list travels to every open Studio. */
+const CREW_RUNS_KEPT = 400
 
 export class JobManager {
   private readonly jobs = new Map<string, JobRecord>()
@@ -84,6 +88,11 @@ export class JobManager {
   onChange(listener: () => void): () => void {
     this.listeners.add(listener)
     return () => { this.listeners.delete(listener) }
+  }
+
+  /** Something beside the jobs changed that whoever watches them should see (a gate slowed down). */
+  touch(): void {
+    this.notify()
   }
 
   private notify(): void {
@@ -173,6 +182,14 @@ export class JobManager {
       },
       result: (value) => {
         record.info = { ...record.info, result: { ...record.info.result, ...value } }
+        throttled()
+      },
+      crew: (run) => {
+        // A run is listed when it starts and again when it ends: the second word on a session replaces the first.
+        const before = record.info.crew ?? []
+        const at = run.session !== undefined ? before.findIndex(known => known.session === run.session) : -1
+        const next = at >= 0 ? before.map((known, index) => (index === at ? run : known)) : [...before, run]
+        record.info = { ...record.info, crew: next.slice(-CREW_RUNS_KEPT) }
         throttled()
       },
       note: (label) => {

@@ -4,7 +4,7 @@
  * context. The orchestrator never writes prose itself — it decides what gets
  * written and passes a brief; this pipeline turns that into text on disk.
  */
-import type { ChapterInfo } from '../../shared/types'
+import { chapterBudgetOf, MAIN_LINE, type ChapterInfo } from '../../shared/types'
 import { clipTail, countWords, normalizeProse } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { LlmCallError, type LlmResponse } from '../llm'
@@ -21,8 +21,10 @@ export interface WriteParams {
   brief?: string
   /** `draft` writes the chapter from the top (replacing any text), `continue` appends. */
   mode?: 'draft' | 'continue'
-  /** Target length of the text produced by this call. */
+  /** A length recommended for the text this call produces. Left out: the chapter's own, else the book's, else the writer judges. */
   words?: number
+  /** With `chapter` left out or `next`: the line of the plot to go on with, when it is not the main one. */
+  line?: string
   /** Style profile to use instead of the project's active one. */
   style?: string
   /** Characters to keep in view besides the ones the outline names. */
@@ -40,9 +42,20 @@ export interface WriteResult {
   wordsWritten: number
   /** Words of the chapter after saving. */
   wordsTotal: number
+  /** The length the writer was asked for; absent when it was left to judge. */
+  budget?: number
   model: string
+  /** How the story so far travelled: `full`, `window` (the nearest chapters word for word, the rest in outline) or `retrieval`. */
   strategy: string
   contextTokens: number
+  /** The chapters before this one that were sent word for word, by their place on the line. */
+  window?: { from: number; to: number }
+  /** Chapters after this one that were sent word for word (a chapter being rewritten). */
+  following?: number
+  /** Input tokens the provider read from its cache, when it said. */
+  cachedTokens?: number
+  /** The line of the plot the chapter is on, when it is not the main one. */
+  line?: string
   cast: string[]
   digested: boolean
   /** True when the model hit its output limit and the text was completed by continuation. */
@@ -73,22 +86,24 @@ export function cleanProse(reply: string, title?: string): string {
   return normalizeProse(lines.join('\n'))
 }
 
-async function pickChapter(runtime: ProjectRuntime, ref: string | undefined): Promise<LocatedChapter> {
+async function pickChapter(runtime: ProjectRuntime, ref: string | undefined, line: string | undefined): Promise<LocatedChapter> {
   const { project } = runtime
+  const on = line !== undefined && line !== MAIN_LINE ? (await project.findLine(line))?.id : undefined
+  if (line !== undefined && line !== MAIN_LINE && on === undefined) throw new ProjectError('novel/not-found', `no plot line matches "${line}"`)
   if (ref === undefined || /^(next|下一章|下一个)$/i.test(ref.trim())) {
-    const infos = await project.chapterInfos()
+    const infos = await project.chapterInfos(on)
     const next: ChapterInfo | undefined = infos.find(info => !info.hasText)
-    if (next === undefined) throw new ProjectError('novel/not-found', 'every outlined chapter already has text — add a chapter to the outline first (novel_outline or novel_derive)')
+    if (next === undefined) throw new ProjectError('novel/not-found', `every outlined chapter${on !== undefined ? ' of this line' : ''} already has text — add a chapter to the outline first (novel_outline or novel_derive)`)
     return (await project.findChapter(next.id))!
   }
-  const chapter = await project.findChapter(ref)
+  const chapter = await project.findChapter(ref, on)
   if (chapter === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${ref}"`)
   return chapter
 }
 
 export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, params: WriteParams, task: TaskContext): Promise<WriteResult> {
   const { project } = runtime
-  const chapter = await pickChapter(runtime, params.chapter)
+  const chapter = await pickChapter(runtime, params.chapter, params.line)
   // Named at once, so a Studio showing this chapter can tail the stream while it is written.
   task.job?.result({ chapterId: chapter.plan.id })
   const manifest = await project.manifest()
@@ -96,10 +111,18 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
   const existing = await project.chapterText(chapter.plan.id)
   const mode = params.mode ?? 'draft'
   if (mode === 'continue' && existing.length === 0) return await writeChapter(core, runtime, { ...params, mode: 'draft', chapter: chapter.plan.id }, task)
+  // A chapter of another line is found by its id from here on.
+  const { line: _line, ...rest } = params
+  params = { ...rest, chapter: chapter.plan.id }
 
   const style = params.style !== undefined ? await project.findStyle(params.style) : await project.activeStyle()
   if (params.style !== undefined && style === undefined) throw new ProjectError('novel/not-found', `no style matches "${params.style}"`)
-  const target = Math.max(200, Math.round(params.words ?? chapter.plan.targetWords ?? manifest.chapterWords ?? (lang === 'zh' ? 3000 : 2500)))
+  // A recommended length, when somebody set one: for this call, for the chapter, or for the book. Otherwise the writer judges.
+  const wished = [params.words, chapter.plan.targetWords, chapterBudgetOf(manifest)].find(value => value !== undefined && value > 0)
+  const target = wished !== undefined ? Math.max(200, Math.round(wished)) : undefined
+  // Left to judge, the writer is told how long the book's chapters have been running.
+  const lengths = target === undefined ? (await project.chapterInfos(chapter.line)).filter(info => info.hasText && info.id !== chapter.plan.id).map(info => info.words) : []
+  const usual = lengths.length >= 2 ? Math.round(lengths.reduce((sum, words) => sum + words, 0) / lengths.length / 100) * 100 : undefined
   const route = await core.route('writer', runtime, task)
 
   task.job?.progress(0, 3, lang === 'zh' ? '整理上下文' : 'packing context')
@@ -113,28 +136,33 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
   })
 
   const base = { lang, language: manifest.language, title: manifest.title }
-  const system = writerSystem({ ...base, style: renderStyle(style, lang), words: target, continuing: mode === 'continue' })
+  // The same for every chapter of the book: with the story so far behind it, the head of the request a provider can keep.
+  const system = writerSystem({ ...base, style: renderStyle(style, lang) })
+  const length = (written: number): { words?: number; usual?: number } => target !== undefined ? { words: Math.max(300, target - written) } : usual !== undefined ? { usual } : {}
 
   task.job?.progress(1, 3, lang === 'zh' ? '写作中' : 'writing')
   let written = ''
   let continued = false
+  let cached = 0
   let response: LlmResponse | undefined
   for (let round = 0; round < 4; round++) {
     const soFar = written
     const prompt = round === 0
-      ? writerTask({ ...base, context: pack.text, ...(params.brief !== undefined ? { brief: params.brief } : {}), continuing: mode === 'continue' })
+      ? writerTask({ ...base, context: pack.rest, ...(params.brief !== undefined ? { brief: params.brief } : {}), continuing: mode === 'continue', ...(target !== undefined ? { words: target } : usual !== undefined ? { usual } : {}) })
       // The model ran out of output room mid-chapter: show it what it wrote and let it finish.
       : writerTask({
           ...base,
-          context: `${pack.text}\n\n## ${lang === 'zh' ? '本章已有正文' : 'This chapter so far'}\n\n${mode === 'continue' ? clipTail(existing, 2000) + '\n\n' : ''}${soFar}`,
+          context: `${pack.rest}\n\n## ${lang === 'zh' ? '本章已有正文' : 'This chapter so far'}\n\n${mode === 'continue' ? clipTail(existing, (await core.settings.get()).context.tailChars) + '\n\n' : ''}${soFar}`,
           ...(params.brief !== undefined ? { brief: params.brief } : {}),
           continuing: true,
+          ...length(countWords(soFar)),
         })
     let partial = ''
     try {
       response = await core.llm.complete({
         route,
-        system: round === 0 ? system : writerSystem({ ...base, style: renderStyle(style, lang), words: Math.max(300, target - countWords(soFar)), continuing: true }),
+        system,
+        ...(pack.stable.length > 0 ? { stable: pack.stable } : {}),
         prompt,
         ...(task.signal !== undefined ? { signal: task.signal } : {}),
         onText: (_delta, total) => {
@@ -155,9 +183,10 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
       }
       throw error
     }
+    cached += response.usage?.cachedTokens ?? 0
     const piece = cleanProse(response.text, chapter.plan.title)
     written = soFar.length > 0 ? `${soFar}\n\n${piece}` : piece
-    if (response.finish !== 'max-tokens' || countWords(written) >= target * 1.4) break
+    if (response.finish !== 'max-tokens' || (target !== undefined && countWords(written) >= target * 1.4)) break
     continued = true
   }
   // The model wrote something, and all of it was a heading or a fence.
@@ -191,9 +220,14 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
     mode,
     wordsWritten: countWords(written),
     wordsTotal: saved.words,
+    ...(target !== undefined ? { budget: target } : {}),
     model: `${route.provider}/${route.model}`,
     strategy: pack.strategy,
     contextTokens: pack.tokens,
+    ...(pack.window !== undefined ? { window: pack.window } : {}),
+    ...(pack.included.following > 0 ? { following: pack.included.following } : {}),
+    ...(cached > 0 ? { cachedTokens: cached } : {}),
+    ...(chapter.line !== undefined ? { line: chapter.line } : {}),
     cast: pack.cast.map(card => card.name),
     digested,
     continued,

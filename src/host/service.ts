@@ -15,30 +15,39 @@ import type {} from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-sandbox-policy'
 import type {} from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-persistence'
+import type {} from '@deepseek-ai/dsh-api-session-controller'
+import type {} from '@deepseek-ai/dsh-plugin-manager'
+import type {} from '@deepseek-ai/dsh-subagent'
 import type {} from '@deepseek-ai/dsh-workspace'
 import { randomBytes } from 'node:crypto'
 import { mkdir, stat } from 'node:fs/promises'
 import { homedir, hostname } from 'node:os'
-import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path'
+import { mountAgent as mountAgentHalf } from '../agent/mount'
 import { NovelCore, type ProjectRuntime, type RemovedBook, type TaskContext } from '../core/core'
 import { listEndpointModels, modelsBase } from '../core/media/discovery'
 import { ProviderError } from '../core/media/http'
 import { soundSetup } from '../core/media/sound'
 import { attachReconciler } from '../core/reconcile'
 import { readStub, VaultError } from '../core/util/vault'
+import { BuildWatch, type BuildState } from './build'
 import { createDeviceAuth, type DeviceAuth } from './device-auth'
+import { DOOR_VERSION, type HostControl } from './door'
 import { ProjectError } from '../core/project'
-import { SessionStateStore, type SwitchedBy } from '../core/session-state'
+import { SessionBooks, SessionStateStore, type SwitchedBy } from '../core/session-state'
 import { DEFAULT_SETTINGS, mergeSettings, SettingsStore, type DeepPartial } from '../core/settings'
 import { errorMessage } from '../core/util/async'
 import { displayPath, exists } from '../core/util/fs'
-import type { CodexStatus, EndpointCheck, EndpointModel, KeyState, LockView, ModelKind, ShareStatus, WorkspaceInfo } from '../shared/rpc'
-import { compatibleBase, hostOf, originOf, recommendedSetup, SERVICES, serviceOf, setupPatch, speechProtocol, UNLISTED_SPEECH, type ServiceId, type SetupPart } from '../shared/services'
+import type { CodexStatus, EndpointCheck, EndpointModel, HelpPackage, HelpView, KeyState, LockView, ModelKind, ShareStatus, WorkspaceInfo } from '../shared/rpc'
+import { unlistedModels } from '../shared/recommended'
+import { compatibleBase, hostOf, originOf, recommendedSetup, SERVICES, serviceOf, setupPatch, speechProtocol, type ServiceId, type SetupPart } from '../shared/services'
 import type { ModelRoute, NovelSettings, ProjectRef, WorkMode } from '../shared/types'
 import { codexStatus, createCodexBridge } from './codex'
 import { KeyStore } from './keys'
+import { followRecommended, loadRecommended, noteAdopted } from './recommended'
 import { createHarnessLlm } from './llm-backend'
-import { createRoleRunner } from './roles'
+import { createRoleRunner, CREW_PRESET, type CrewRunner } from './roles'
+import { SessionSeal } from './session-seal'
 import { ShareServer } from './share'
 
 declare module '@deepseek-ai/cordis' {
@@ -55,35 +64,71 @@ export interface NovelServiceConfig {
 
 type SessionId = Agent['id']
 
+/** The outside coding agents the crew can call on, and the official DSH plugin each comes in. */
+const HELP_PACKAGES: readonly Pick<HelpPackage, 'id' | 'package'>[] = [
+  { id: 'claude-code', package: '@deepseek-ai/dsh-subagent-claude-code' },
+  { id: 'codex', package: '@deepseek-ai/dsh-subagent-codex' },
+]
+
 export class NovelService extends Service {
   readonly core: NovelCore
   readonly sessions = new SessionStateStore()
+  /** Which conversations hold something of which book: what a sealed book takes under its seal with it. */
+  readonly sessionBooks = new SessionBooks()
   readonly keys: KeyStore
   /** The reader served to other devices on the local network; closed unless the author switched it on. */
   readonly share: ShareServer
+  /** Runs the crew's roles as agents of the Harness. */
+  readonly crew: CrewRunner
+  /** Keeps the conversations about a sealed book under its seal while it is locked. */
+  readonly sessionSeal: SessionSeal
 
-  constructor(ctx: Context, config: NovelServiceConfig = {}) {
+  /** Which build this Host half is, against the one installed now. */
+  private readonly build = new BuildWatch()
+
+  /**
+   * @param control - the door this Host half came in by, when it came in by one: what lets it be replaced while DSH runs.
+   */
+  /** Settled once the settings have been brought up against the recommendations in force: what is shown of them before that could be about to change. */
+  readonly recommendations: Promise<void>
+
+  constructor(ctx: Context, config: NovelServiceConfig = {}, private readonly control?: HostControl) {
     super(ctx, 'novel')
     this.keys = new KeyStore(ctx, (message, error) => { this.log(message, error) })
     const defaults = config.settings !== undefined ? mergeSettings(structuredClone(DEFAULT_SETTINGS), config.settings) : DEFAULT_SETTINGS
+    // The crew works as agents on the Harness's own loop, each run a child of the conversation that asked for it.
+    this.crew = createRoleRunner(ctx, {
+      log: (message, error) => { this.log(message, error) },
+      // A role's run holds the book it worked on, and so does the conversation it was a child of — the run is listed there by what it did.
+      onRun: ({ session, book, parent }) => {
+        if (book === undefined) return
+        for (const id of [session, parent]) if (id !== undefined) void this.sessionBooks.touch(id, resolve(book)).catch((error: unknown) => { this.log('could not note which book a conversation holds', error) })
+      },
+      // The Harness meters these calls itself; the Studio's ledger, which the author reads by book and by role, counts them too.
+      onUsage: ({ route, inputTokens, outputTokens, cachedTokens }) => {
+        const tag = route.for
+        this.core.usage.record({
+          kind: 'text',
+          model: route.model,
+          via: route.provider,
+          input: inputTokens,
+          output: outputTokens,
+          ...(cachedTokens !== undefined ? { cached: cachedTokens } : {}),
+          ...(tag !== undefined ? { role: tag.role as never, ...(tag.book !== undefined ? { book: tag.book } : {}), ...(tag.title !== undefined ? { bookTitle: tag.title } : {}) } : {}),
+        })
+      },
+    })
+    // Registered wherever the Harness delegates at all: the provider is how a role's run becomes a child the Harness knows.
+    ctx.inject(['subagents'], (inner) => {
+      try {
+        inner.subagents.registerProvider(this.crew.provider)
+      } catch (error) {
+        this.log('could not register the crew with the Harness\'s subagents; roles will run without a place in the conversation', error)
+      }
+    })
     this.core = new NovelCore({
       llm: createHarnessLlm(ctx),
-      // Roles that need to look before they decide run as agents on the Harness's own loop.
-      roles: createRoleRunner(ctx, {
-        log: (message, error) => { this.log(message, error) },
-        // The Harness meters these calls itself; the Studio's ledger, which the author reads by book and by role, counts them too.
-        onUsage: ({ route, inputTokens, outputTokens }) => {
-          const tag = route.for
-          this.core.usage.record({
-            kind: 'text',
-            model: route.model,
-            via: route.provider,
-            input: inputTokens,
-            output: outputTokens,
-            ...(tag !== undefined ? { role: tag.role as never, ...(tag.book !== undefined ? { book: tag.book } : {}), ...(tag.title !== undefined ? { bookTitle: tag.title } : {}) } : {}),
-          })
-        },
-      }),
+      roles: this.crew,
       credentials: this.keys,
       bridges: { codex: createCodexBridge(ctx) },
       settings: new SettingsStore(defaults),
@@ -94,11 +139,32 @@ export class NovelService extends Service {
     ctx.effect(() => () => { this.core.dispose() }, 'novel: studio engine')
     this.share = new ShareServer(this.core, (message, error) => { this.log(message, error) })
     ctx.effect(() => () => { void this.share.close().catch(() => {}) }, 'novel: reader for other devices')
-    void this.core.ready()
+    this.sessionSeal = new SessionSeal(ctx, this)
+    // The recommendations that came with this build are put in force, and the settings brought up against them: an update of the plugin is when they change.
+    this.recommendations = loadRecommended((message, error) => { this.log(message, error) })
+      .then(() => followRecommended(this.core.settings))
+      .catch((error: unknown) => { this.log('could not bring the settings up against the recommendations', error) })
+      // From here on, a setting that becomes what is recommended is one a later issue may move.
+      .then(() => { ctx.effect(() => this.core.settings.onChange(() => { void noteAdopted(this.core.settings).catch((error: unknown) => { this.log('could not note which settings are a recommendation', error) }) }), 'novel: recommendations') })
+      .catch(() => {})
+    void this.recommendations
+      .then(() => this.core.ready())
       .catch((error: unknown) => { this.log('settings could not be loaded', error) })
       // Sharing that was on when the Harness last quit is on again when it starts.
       .then(() => this.share.apply())
       .catch(() => {})
+      // A sealed book that is locked — every one is, when DSH starts — has its conversations under the seal: what was in use when it was last locked goes there now.
+      .then(() => { this.sessionSeal.start(() => this.sealedBooks()) })
+      .catch((error: unknown) => { this.log('could not look after the conversations of sealed books', error) })
+  }
+
+  /** Roots of the sealed books in the workspaces DSH knows. */
+  private async sealedBooks(): Promise<string[]> {
+    const roots: string[] = []
+    for (const workspace of this.ctx.get('workspaceRegistry')?.list() ?? []) {
+      for (const book of await this.safeDiscover(workspace.path)) if (await readStub(book.root) !== undefined) roots.push(book.root)
+    }
+    return [...new Set(roots)]
   }
 
   /**
@@ -119,7 +185,9 @@ export class NovelService extends Service {
   async lockView(root: string): Promise<LockView> {
     const lock = await this.core.lockOf(root)
     const device = await this.device?.info().catch(() => undefined) ?? { available: false, biometrics: false, method: 'none' as const, host: hostname() }
-    return { ...lock, device, deviceOn: lock.ways.some(way => way.kind === 'device' && way.id === this.deviceSlot()) }
+    // Only a sealed book has conversations to put under a seal.
+    const conversations = lock.sealed ? await this.sessionSeal.status(root).catch(() => undefined) : undefined
+    return { ...lock, device, deviceOn: lock.ways.some(way => way.kind === 'device' && way.id === this.deviceSlot()), ...(conversations !== undefined ? { conversations } : {}) }
   }
 
   /** Let this computer's own unlock open a book that is unlocked now, or stop letting it. */
@@ -187,6 +255,7 @@ export class NovelService extends Service {
     const isWorkspace = (await this.workspaces()).some(workspace => resolve(workspace.path) === book)
     const removed = await this.core.removeBook(book, isWorkspace)
     await this.sessions.forget(book).catch((error: unknown) => { this.log('could not release the sessions of a removed book', error) })
+    await this.sessionBooks.forget(book).catch(() => {})
     for (const [session, shown] of this.shown) if (shown === book) this.shown.delete(session)
     const shared = (await this.core.settings.get()).share?.books
     if (shared?.includes(book) === true) await this.core.settings.update({ share: { books: shared.filter(item => item !== book) } } as DeepPartial<NovelSettings>)
@@ -232,6 +301,37 @@ export class NovelService extends Service {
     } catch {
       console.warn(`[novel] ${message}`, error ?? '')
     }
+  }
+
+  // ───────────── this Host half, and the one installed ─────────────
+
+  /** This Host half can be replaced by the installed one without DSH restarting. */
+  get reloadable(): boolean {
+    return this.control !== undefined && this.control.version >= DOOR_VERSION
+  }
+
+  /** Which build runs and which is installed; `reloadable` says whether the Studio can make them one itself. */
+  async buildState(): Promise<BuildState & { reloadable: boolean }> {
+    return { ...await this.build.state(), reloadable: this.reloadable }
+  }
+
+  /**
+   * Take this Host half down and put up the one that is installed now: jobs
+   * that run are stopped, books that were unlocked are locked again, and every
+   * tool and route comes back from the new code. Answered before it happens —
+   * the answer travels on a route that is about to go down.
+   * @returns what the change interrupts, as counted when it was asked for.
+   * @throws ProjectError `novel/unsupported` on a Host half that DSH loaded itself, with no door to change through.
+   */
+  reload(): { jobs: number } {
+    const control = this.control
+    if (control === undefined || !this.reloadable) throw new ProjectError('novel/unsupported', 'This Host half was loaded by DSH itself and cannot be replaced while DSH runs: restart DSH.')
+    const jobs = this.core.jobs.list().filter(job => job.status === 'running').length
+    const timer = setTimeout(() => {
+      control.reload().catch((error: unknown) => { this.log('the installed Host half could not be put up; the running one stays', error) })
+    }, 200)
+    timer.unref?.()
+    return { jobs }
   }
 
   // ───────────── workspaces ─────────────
@@ -333,6 +433,26 @@ export class NovelService extends Service {
     }
   }
 
+  /** Whether DSH's subagent service is there: what makes a role's run a child of the conversation, listed under it. */
+  subagentsMounted(): boolean {
+    try {
+      return this.ctx.get('subagents') !== undefined
+    } catch {
+      return false
+    }
+  }
+
+  // ───────────── the agent half ─────────────
+
+  /**
+   * Give a session what a novelist's session has: tools, instructions, digest.
+   * Called by the entry a preset names (`dsh-novel-writer/agent`), which holds
+   * no code of its own — so what is mounted is always of this Host's build.
+   */
+  mountAgent(ctx: Context): void {
+    mountAgentHalf(ctx)
+  }
+
   // ───────────── projects per session ─────────────
 
   /**
@@ -346,7 +466,31 @@ export class NovelService extends Service {
       if (bound !== undefined) return bound
     }
     const cwd = workspace ?? await this.workspaceOfSession(sessionId)
-    return cwd !== undefined ? await this.core.defaultProject(cwd) : undefined
+    const here = cwd !== undefined ? await this.core.defaultProject(cwd) : undefined
+    if (here !== undefined) return here
+    // A role's run is about the one book it worked on, whatever folder its conversation was given: the Studio beside it shows that book.
+    const held = await this.sessionBooks.booksOf(sessionId)
+    return held.length === 1 ? await this.core.tryRuntime(held[0]!) : undefined
+  }
+
+  /**
+   * Root of the book in play for a session, found without opening it: a sealed
+   * book that is locked is still the book the session is on, and the Studio
+   * beside the conversation has its lock to show.
+   */
+  async bookOfSession(sessionId: string, workspace?: string): Promise<string | undefined> {
+    try {
+      return (await this.projectOfSession(sessionId, workspace))?.project.root
+    } catch (error) {
+      if (!(error instanceof ProjectError) || error.code !== 'novel/locked') throw error
+      const cwd = workspace ?? await this.workspaceOfSession(sessionId)
+      // In the order the book in play is looked for: the one the session was put on, the folder itself, the folder's only book.
+      for (const candidate of [(await this.sessions.get(sessionId)).project, cwd]) {
+        if (candidate !== undefined && await readStub(resolve(candidate)) !== undefined) return resolve(candidate)
+      }
+      const refs = cwd !== undefined ? await this.safeDiscover(cwd) : []
+      return refs.length === 1 ? refs[0]!.root : undefined
+    }
   }
 
   async projectOfAgent(agent: Agent): Promise<ProjectRuntime | undefined> {
@@ -364,13 +508,22 @@ export class NovelService extends Service {
   async requireProject(agent: Agent, book?: string): Promise<ProjectRuntime> {
     const workspace = this.workspaceOfAgent(agent)
     if (book !== undefined && book.trim().length > 0) return await this.resolveBook(book, workspace)
-    const shown = this.shown.get(agent.id)
-    if (shown !== undefined) {
-      const known = await this.core.tryRuntime(shown)
-      if (known !== undefined) return known
+    try {
+      const shown = this.shown.get(agent.id)
+      if (shown !== undefined) {
+        const known = await this.core.tryRuntime(shown)
+        if (known !== undefined) return known
+      }
+      const runtime = await this.projectOfAgent(agent)
+      if (runtime !== undefined) return runtime
+    } catch (error) {
+      if (!(error instanceof ProjectError) || error.code !== 'novel/locked') throw error
+      // The call named no book and the one in play is locked: say which books it could have named instead.
+      const locked = await this.bookOfSession(agent.id, workspace).catch(() => undefined)
+      const others = (await this.booksNear(agent.id, workspace).catch(() => [])).filter(ref => ref.root !== locked)
+      if (others.length === 0) throw error
+      throw new ProjectError('novel/locked', `${error.message}. That is the book this conversation is on. Other books in reach: ${others.slice(0, 8).map(ref => `"${ref.title}" (${ref.relative})`).join(', ')} — to work on one of those, name it with \`book\``)
     }
-    const runtime = await this.projectOfAgent(agent)
-    if (runtime !== undefined) return runtime
     const refs = await this.safeDiscover(workspace)
     if (refs.length > 1) {
       throw new ProjectError('novel/no-project', `this workspace holds several novel projects (${refs.map(ref => `"${ref.title}" at ${ref.relative}`).join(', ')}) — call novel_status with \`project\` set to one of them to choose`)
@@ -471,13 +624,156 @@ export class NovelService extends Service {
    * author in the Studio, or the session's own model — which then already knows.
    */
   async bind(sessionId: string, patch: { project?: string; mode?: WorkMode }, by: SwitchedBy = 'author'): Promise<{ mode: WorkMode; project?: string }> {
-    const from = patch.project !== undefined && patch.project !== '' ? (await this.projectOfSession(sessionId))?.project.root : undefined
+    // Where it comes from is found without opening it: a session whose book is locked can still be moved onto another.
+    const from = patch.project !== undefined && patch.project !== '' ? await this.bookOfSession(sessionId).catch(() => undefined) : undefined
     const state = await this.sessions.update(sessionId, patch, { by, ...(from !== undefined ? { from } : {}) })
     if (by === 'agent' && state.project !== undefined && patch.project !== undefined) this.markShown(sessionId, state.project)
     return { mode: state.mode, ...(state.project !== undefined ? { project: state.project } : {}) }
   }
 
+  // ───────────── a conversation for a book ─────────────
+
+  /**
+   * The conversation to talk to the showrunner in.
+   *
+   * For a book: the one that is on it already — the latest, when there are
+   * several — else, when asked to, a new one: a novelist's conversation in the
+   * book's workspace, named after the book and put on it, so that the Studio
+   * beside it shows this book and the showrunner works on it from its first
+   * word. For a folder alone: a new novelist's conversation there.
+   * @returns nothing where there is none and none was to be made, or where this Harness has no way to make one.
+   */
+  async conversationFor(target: { root?: string; workspace?: string }, create: boolean): Promise<{ sessionId: string; created: boolean; title?: string } | undefined> {
+    const root = target.root !== undefined ? resolve(target.root) : undefined
+    const persistence = this.ctx.get('sessionPersistence')
+    if (root !== undefined) {
+      // The ones that are on this book now, the one last moved first.
+      const on: { id: string; at: string }[] = []
+      for (const id of await this.sessions.sessionsOn(root)) {
+        const state = await this.sessions.get(id)
+        if (state.project !== undefined && resolve(state.project) === root) on.push({ id, at: state.updatedAt })
+      }
+      on.sort((left, right) => right.at.localeCompare(left.at))
+      // Only conversations DSH still has, and no role's run: those are records, not places to talk.
+      for (const { id } of on) {
+        const header = this.ctx.get('sessions')?.get(id as SessionId)?.header ?? await persistence?.stat(id as SessionId).then(stored => stored?.header, () => undefined)
+        if (header !== undefined && header.origin !== 'subagent' && header.parentSession === undefined) return { sessionId: id, created: false }
+      }
+    }
+    if (!create) return undefined
+    const controller = this.ctx.get('sessionController')
+    if (controller === undefined) return undefined
+    const stub = root !== undefined ? await readStub(root) : undefined
+    const title = root === undefined ? undefined : stub?.title ?? (await this.core.tryRuntime(root).then(runtime => runtime?.project.manifest(), () => undefined))?.title
+    // The registered workspace the book lies in: the conversation is listed there, beside the others about its books.
+    const home = root ?? (target.workspace !== undefined ? resolve(target.workspace) : undefined)
+    if (home === undefined) return undefined
+    const workspaces = this.ctx.get('workspaceRegistry')?.list() ?? []
+    const inside = (path: string): boolean => home === path || home.startsWith(path.endsWith(sep) ? path : path + sep)
+    const workspace = workspaces.filter(candidate => inside(candidate.path)).sort((left, right) => right.path.length - left.path.length)[0]
+    const made = await controller.create({ ...(workspace !== undefined ? { workspaceId: workspace.id } : { cwd: root !== undefined ? dirname(root) : home }), agentPreset: CREW_PRESET })
+    const sessionId = made.sessionId as string
+    if (root !== undefined) await this.bind(sessionId, { project: root }, 'author')
+    let named: string | undefined
+    if (title !== undefined && title.trim().length > 0) {
+      named = /[\u3400-\u9fff]/.test(title) ? `《${title.trim()}》` : title.trim()
+      // A name is a convenience: a conversation that could not be named is still the book's.
+      await controller.rename({ sessionId: made.sessionId, title: named }).catch((error: unknown) => { this.log(`could not name the conversation of ${root ?? home}`, error) })
+    }
+    return { sessionId, created: true, ...(named !== undefined ? { title: named } : {}) }
+  }
+
   // ───────────── tasks ─────────────
+
+  /**
+   * The live agent of a conversation, woken if it sleeps: what work started in
+   * the Studio beside that conversation hangs its role agents from.
+   * @returns undefined when the session is not a conversation of its own (or is gone).
+   */
+  async agentOfSession(sessionId: string): Promise<Agent | undefined> {
+    const id = sessionId as SessionId
+    const live = this.ctx.get('agents')?.get(id)
+    if (live !== undefined) return live
+    try {
+      const found = await this.ctx.get('sessionController')?.resolveAgent(id)
+      return found !== undefined && 'agent' in found ? found.agent : undefined
+    } catch (error) {
+      this.log(`could not wake session ${sessionId}`, error)
+      return undefined
+    }
+  }
+
+  /** Outside coding agents the author installed in DSH: the subagent providers DSH's own delegation tool reaches. */
+  outsideHelp(): { claudeCode: boolean; codex: boolean } {
+    const subagents = this.ctx.get('subagents')
+    return { claudeCode: subagents?.getProvider('claude-code') !== undefined, codex: subagents?.getProvider('codex') !== undefined }
+  }
+
+  /**
+   * The same help as the DSH plugins it comes in. Installing and removing go
+   * through DSH's own plugin manager — the one behind DSH's Settings → Plugins
+   * — so a plugin the Studio installs is in every way one the author installed there.
+   */
+  async helpView(): Promise<HelpView> {
+    const connected = this.outsideHelp()
+    const manager = this.ctx.get('pluginManager')
+    let bundles: { name: string; version?: string; installed: boolean; removable: boolean }[] = []
+    try {
+      bundles = manager !== undefined ? await manager.listBundles() : []
+    } catch (error) {
+      this.log('could not read the plugins of this DSH profile', error)
+    }
+    return {
+      manage: manager !== undefined,
+      packages: HELP_PACKAGES.map((entry) => {
+        const bundle = bundles.find(candidate => candidate.name === entry.package)
+        return {
+          ...entry,
+          installed: bundle !== undefined,
+          ...(bundle?.version !== undefined ? { version: bundle.version } : {}),
+          connected: entry.id === 'claude-code' ? connected.claudeCode : connected.codex,
+          removable: bundle?.removable === true,
+        }
+      }),
+    }
+  }
+
+  /**
+   * Install an outside-help plugin. It downloads a package: only ever started by the author pressing the button.
+   * @returns what the author is told: that it is in, that DSH has to be restarted for it, or why it did not go in.
+   * @throws ProjectError when DSH has no plugin manager here, or the installation failed (with the manager's own account of why).
+   */
+  async installHelp(id: HelpPackage['id'], signal?: AbortSignal): Promise<{ application: string; restart: boolean; message: string }> {
+    const entry = HELP_PACKAGES.find(candidate => candidate.id === id)
+    const manager = this.ctx.get('pluginManager')
+    if (entry === undefined) throw new ProjectError('novel/invalid', `no outside help is called "${id}"`)
+    if (manager === undefined) throw new ProjectError('novel/unsupported', 'This DSH has no plugin manager: install the plugin with `dsh plugin add` and restart DSH.')
+    const requestId = `novel-help-${id}-${Date.now()}` as never
+    const stop = (): void => { void manager.cancelInstall(requestId).catch(() => {}) }
+    signal?.addEventListener('abort', stop, { once: true })
+    try {
+      const result = await manager.installBundle(entry.package, { enabled: true, requestId })
+      if (result.application === 'failed' || result.application === 'cancelled') {
+        const detail = result.error !== undefined ? ((result.error as { message?: string }).message ?? JSON.stringify(result.error)) : ''
+        throw new ProjectError(result.application === 'cancelled' ? 'novel/cancelled' : 'novel/provider', `${entry.package} ${result.application === 'cancelled' ? 'was not installed: stopped' : 'could not be installed'}${detail.length > 0 ? `: ${detail}` : ''}${result.pendingBuilds !== undefined && result.pendingBuilds.length > 0 ? ` (packages waiting for their install scripts to be allowed: ${result.pendingBuilds.join(', ')} — allow them under DSH's Settings → Plugins)` : ''}`)
+      }
+      const restart = result.application === 'restart-required'
+      return { application: result.application, restart, message: restart ? `${entry.package} is installed; DSH has to be restarted for it to answer.` : result.application === 'overridden' ? `${entry.package} is installed, and a setting of this profile keeps it switched off: switch it on under DSH's Settings → Plugins.` : `${entry.package} is installed.` }
+    } finally {
+      signal?.removeEventListener('abort', stop)
+    }
+  }
+
+  /** Remove an outside-help plugin the author installed. */
+  async removeHelp(id: HelpPackage['id']): Promise<string | undefined> {
+    const entry = HELP_PACKAGES.find(candidate => candidate.id === id)
+    const manager = this.ctx.get('pluginManager')
+    if (entry === undefined) throw new ProjectError('novel/invalid', `no outside help is called "${id}"`)
+    if (manager === undefined) throw new ProjectError('novel/unsupported', 'This DSH has no plugin manager: remove the plugin with `dsh plugin remove`.')
+    const result = await manager.removeBundle(entry.package)
+    if (result.application === 'failed') throw new ProjectError('novel/provider', `${entry.package} could not be removed${result.error !== undefined ? `: ${(result.error as { message?: string }).message ?? JSON.stringify(result.error)}` : ''}`)
+    return result.application === 'restart-required' ? `${entry.package} is removed; DSH has to be restarted for it to be gone.` : undefined
+  }
 
   /** Task context for work started by an agent's tool call. */
   agentTask(agent: Agent | undefined, signal: AbortSignal): TaskContext {
@@ -560,7 +856,7 @@ export class NovelService extends Service {
     if (kind !== 'speech') return listed
     // Everything that can speak is listed; each model says which protocol drives it, and those nothing drives yet say so.
     const service = serviceOf(url)
-    for (const id of UNLISTED_SPEECH[service] ?? []) if (!listed.some(model => model.id === id)) listed.unshift({ id })
+    for (const id of unlistedModels(service, 'tts')) if (!listed.some(model => model.id === id)) listed.unshift({ id })
     const tagged = listed.map((model) => {
       const via = speechProtocol(service, model.id)
       return via !== undefined ? { ...model, via } : { ...model, unsupported: true }
@@ -591,9 +887,10 @@ export class NovelService extends Service {
   }
 
   /**
-   * One-click setup: save the key, check it, and fill the chosen slots with
-   * the service's recommended models. A key that is refused is not saved and
-   * nothing is changed.
+   * One-click setup: save the key, check it, and fill the chosen slots —
+   * pictures, speech, search — with the service's recommended models. Text
+   * models are not set here: they are DSH's. A key that is refused is not saved
+   * and nothing is changed.
    */
   async applySetup(input: { service: ServiceId | 'codex'; key?: string; origin?: string; parts: SetupPart[] }): Promise<{ settings: NovelSettings; check: EndpointCheck }> {
     const done = { setup: { done: true, at: new Date().toISOString() } }
@@ -613,7 +910,6 @@ export class NovelService extends Service {
     const patch = setupPatch(setup, input.parts)
     // A slot that used to read its key from a name now uses the one saved for the service.
     const settings = await this.core.settings.update({
-      ...(patch.models !== undefined ? { models: patch.models } : {}),
       ...(patch.embedding !== undefined ? { embedding: { ...patch.embedding, apiKeyRef: null } } : {}),
       ...(patch.image !== undefined ? { image: { ...patch.image, apiKeyRef: null, bridge: null, quality: null } } : {}),
       ...(patch.tts !== undefined ? { tts: { ...patch.tts, apiKeyRef: null, designedVoiceModel: null, sampleRate: null, defaultVoices: null, ...(patch.tts.narratorVoice === undefined ? { narratorVoice: null } : {}) } } : {}),

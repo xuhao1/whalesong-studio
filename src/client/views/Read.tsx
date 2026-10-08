@@ -1,24 +1,151 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 /**
- * The reader: a chapter as a reader meets it, in two modes on one page — to be
- * read, and to be listened to as an audio drama with the line being spoken
- * lit in the prose. The author additionally gets the production desk of the
- * audio version above the page, and the tools for a selected passage.
+ * The reader: a chapter as a reader meets it. It has three faces — the prose,
+ * the script (who says what, how, over which sound, a line each) and the
+ * motion comic — and one play button under the first two: the chapter is
+ * listened to whichever of them is open, the line being spoken marked where
+ * it stands, the page following it. Whichever face, it is the same chapter at
+ * the same place.
+ *
+ * The author additionally gets the tools for a selected passage, the notes of
+ * a review on the page, and — one press away, not in the way — the production
+ * desk of the audio version.
  *
  * The same page (without the author's tools) is what other devices are served.
+ *
+ * Beside the text the viewer has the book's people and its world — the album
+ * (`reader/album.tsx`), the same one other devices and a published site show.
+ * From any page of it one press leads to where that thing is edited, and from
+ * there one press leads back.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { albumEmpty, type AlbumAt, type AlbumCounts } from '../../shared/album'
 import { fuzzyFind } from '../../shared/text'
+import { MAIN_LINE } from '../../shared/types'
 import { blocksOf } from '../../shared/reader'
-import { ListenBar, ModeSwitch, PrefsControls, ReaderPage, usePlayerOptions, useReaderPrefs } from '../reader/parts'
+import { groupOf } from '../../shared/world'
+import { AlbumView, ViewerTabs } from '../reader/album'
+import { PlayTranscript, SideList, type SideRef } from '../reader/sides'
+import { ListenBar, ModeSwitch, ReaderPage, ReaderSettings, usePlayerOptions, useReaderPrefs } from '../reader/parts'
+import { chapterFigures, ScriptPage } from '../reader/script'
+import { place, secondsOf, Theater, useCurrentPanel } from '../reader/theater'
+import { chapterJob } from '../Batch'
+import { Icon } from '../icons'
+import { IssueCard, issueMarks } from '../Issues'
 import { AudioDesk, ScriptTable, type ScriptView } from '../stage/Audio'
 import { useLinePlayer } from '../stage/player'
 import {
-  Button, cx, Empty, Select, Spinner, useLoad, useMediaUrl, useProject, useQuote, useSnapshot, useStudio, useT,
+  Button, cx, Empty, Select, Spinner, useLoad, useMediaUrl, useProject, useQuote, useSnapshot, useStudio, useT, useLineView, waysOn,
 } from '../ui'
 import { ShareDialog } from './Share'
+import { DERIVE_TIES_HINT, TiesReport, useDeriveTies } from '../Ties'
 
+/** The viewer: the text of the book, or the album of its people and its world. */
 export function ReadView() {
+  const { project } = useProject()
+  const at = useSnapshot(snapshot => snapshot.album)
+  // How much there is to look at besides the text: what the viewer offers to change to.
+  const counts = useMemo<AlbumCounts>(() => {
+    const of = (group: ReturnType<typeof groupOf>): number => project.world.filter(entry => groupOf(entry.category) === group).length
+    return { people: project.characters.length, places: of('places'), factions: of('factions'), items: of('items'), ideas: of('ideas') }
+  }, [project.characters, project.world])
+  const world = counts.places + counts.factions + counts.items + counts.ideas
+  // The interludes kept as side stories: how many there are decides whether the viewer offers them. An older Host says nothing of them.
+  const { controller } = useStudio()
+  const { root } = useProject()
+  const kept = useLoad(async signal => await controller.api.call('reader.sides', { root }, signal).catch(() => undefined), [root, project.revision])
+  const sides = kept.data?.sides.length ?? 0
+  // A half with nothing in it is not somewhere to be: the text, then.
+  const section = at.end?.type === 'character' ? 'people' : at.end?.type === 'world' ? 'world' : at.section
+  if (section === 'sides' && sides > 0) return <SidesPage counts={counts} sides={kept.data!.sides} side={at.side} />
+  if (section === 'text' || section === 'sides' || (section === 'people' && counts.people === 0) || (section === 'world' && world === 0)) return <ChapterReader counts={counts} sides={sides} />
+  return <AlbumPage at={{ section, ...(at.end !== undefined ? { end: at.end } : {}) }} counts={counts} sides={sides} />
+}
+
+/** The side stories in the Studio's viewer: as a reader has them, with the way to where they are played and kept. */
+function SidesPage({ counts, sides, side }: { counts: AlbumCounts; sides: SideRef[]; side: string | undefined }) {
+  const { controller } = useStudio()
+  const t = useT()
+  const { root } = useProject()
+  const mediaUrl = useMediaUrl()
+  const one = useLoad(async signal => (side !== undefined ? await controller.api.call('reader.sides', { root, id: side }, signal) : undefined), [root, side])
+  const [sharing, setSharing] = useState(false)
+  return (
+    <div className="nv-reader nv-viewer-album">
+      <header className="nv-reader-bar">
+        <ViewerTabs t={t} value="sides" counts={counts} sides={sides.length} onChange={(next) => { controller.setAlbum({ section: next }) }} />
+        <span className="nv-spacer" />
+        <Button size="sm" variant="ghost" icon="phone" onClick={() => { setSharing(true) }} title={t('给别人看：在手机上读，或发布成网站——番外也在里面', 'Show it to others: on a phone, or as a site of its own — the side stories go with it')} />
+        <Button size="sm" icon="pen" onClick={() => { controller.navigate({ view: 'stage', tab: 'play' }) }} title={t('去"演出 → 幕间"：在那里玩幕间、把一场留作番外或收回', 'Open Stage → Interludes: where interludes are played, kept as side stories, or taken back')}>{t('编辑', 'Edit')}</Button>
+      </header>
+      <div className="nv-album-page">
+        {side !== undefined ? (
+          <>
+            <nav className="nv-explore-trail nv-sides-trail">
+              <button type="button" className="nv-link" onClick={() => { controller.setAlbum({ section: 'sides' }) }}>{t('番外', 'Side stories')}</button>
+              <span><Icon name="chevronRight" size={11} /><strong>{one.data?.play?.title ?? sides.find(item => item.id === side)?.title ?? ''}</strong></span>
+            </nav>
+            {one.data?.play !== undefined ? <PlayTranscript t={t} play={one.data.play} media={path => mediaUrl(path)} />
+              : <div className="nv-desk-loading">{one.error !== undefined ? <span className="nv-muted">{one.error}</span> : one.loading ? <Spinner size={13} /> : <span className="nv-muted">{t('这场戏已经不是番外了。', 'This scene is no longer kept as a side story.')}</span>}</div>}
+          </>
+        ) : <SideList t={t} sides={sides} onOpen={(id) => { controller.setAlbum({ section: 'sides', side: id }) }} />}
+      </div>
+      {sharing ? <ShareDialog onClose={() => { setSharing(false) }} /> : null}
+    </div>
+  )
+}
+
+/** The album in the Studio: what a reader is given, and beside it the author's ways to the pages where it is made. */
+function AlbumPage({ at, counts, sides }: { at: AlbumAt; counts: AlbumCounts; sides: number }) {
+  const { controller } = useStudio()
+  const t = useT()
+  const { project, root } = useProject()
+  const mediaUrl = useMediaUrl()
+  const album = useLoad(async signal => await controller.api.call('reader.album', { root }, signal), [root, project.revision])
+  const ties = useDeriveTies()
+  const [sharing, setSharing] = useState(false)
+  // The other side of the page that is open: where this person, this place, is edited.
+  const edit = (): void => {
+    if (at.end?.type === 'character') controller.openCharacter(at.end.id)
+    else if (at.end?.type === 'world') controller.openWorld(at.end.id)
+    else if (at.section === 'people') controller.openCast('cards')
+    else controller.setView('bible')
+  }
+  const worked = (project.ties?.length ?? 0) > 0
+  return (
+    <div className="nv-reader nv-viewer-album">
+      <header className="nv-reader-bar">
+        <ViewerTabs t={t} value={at.section} counts={counts} sides={sides} onChange={(next) => { controller.setAlbum({ section: next }) }} />
+        <span className="nv-spacer" />
+        <Button size="sm" variant="ghost" icon="phone" onClick={() => { setSharing(true) }} title={t('给别人看：在手机上读，或发布成网站——人物和世界也在里面', 'Show it to others: on a phone, or as a site of its own — the people and the world go with it')} />
+        <Button size="sm" icon="pen" onClick={edit} title={at.end !== undefined ? t('去编辑这一页写的是谁、是什么', 'Edit who or what this page is about') : at.section === 'people' ? t('去"人物"页编辑', 'Edit under People') : t('去"设定"页编辑', 'Edit under Bible')}>{t('编辑', 'Edit')}</Button>
+      </header>
+      <div className="nv-album-page">
+        <TiesReport report={ties.report} onDismiss={ties.dismiss} />
+        {album.data === undefined ? (
+          <div className="nv-desk-loading">{album.error !== undefined ? <span className="nv-muted">{/unknown method/.test(album.error) ? t('这个版本的工坊后台还没有人物和世界的画册——在顶上点"重启"换成新版本就有了。', 'This Studio backend does not have the album of people and world yet — press Restart at the top to change to the new version.') : album.error}</span> : <><Spinner size={13} /><span className="nv-muted nv-small">{t('正在读取人物和世界…', 'Loading the people and the world…')}</span></>}</div>
+        ) : (
+          <AlbumView
+            t={t}
+            album={album.data}
+            media={path => mediaUrl(path)}
+            at={at}
+            go={(next) => { controller.setAlbum(next) }}
+            onRead={(chapter) => { controller.openReader('read', chapter) }}
+            // Arranging a scene is the author's: a mark dropped on a place's picture is pinned there for every reader.
+            onPin={(entry, key, spot) => { void controller.guard(async () => { await controller.api.call('world.pin', { root, id: entry, ...(key !== undefined ? { key } : {}), ...(spot !== undefined ? { at: spot } : {}) }); await controller.refreshProject() }) }}
+            worldTools={(
+              <Button size="sm" variant={worked ? 'ghost' : 'primary'} icon="sparkles" busy={ties.busy} pending={t('策划正在理关系…', 'The planner is working out the ties…')} onClick={ties.derive} title={t(...DERIVE_TIES_HINT)}>{worked ? t('再理一遍关系', 'Work the ties out again') : t('让策划理一遍关系', 'Have the planner work out the ties')}</Button>
+            )}
+          />
+        )}
+      </div>
+      {sharing ? <ShareDialog onClose={() => { setSharing(false) }} /> : null}
+    </div>
+  )
+}
+
+function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }) {
   const { controller } = useStudio()
   const t = useT()
   const quote = useQuote()
@@ -32,74 +159,137 @@ export function ReadView() {
   const [options, updateOptions] = usePlayerOptions()
   const [picked, setPicked] = useState<{ text: string; offset: number; top: number; left: number } | undefined>()
   const [flash, setFlash] = useState<number | undefined>()
-  // Listening opens on the script: who says what, how, over which sound. The prose is one press away, and the choice is remembered.
-  const [body, setBodyState] = useState<'text' | 'script'>(() => {
+  // What a review found, shown on the page where it was found — when the author asks to see it. Reading stays clean otherwise.
+  const [annotate, setAnnotateState] = useState(() => {
     try {
-      return localStorage.getItem('novel-studio:listen-body') === 'text' ? 'text' : 'script'
+      return localStorage.getItem('novel-studio:annotate') === '1'
     } catch {
-      return 'script'
+      return false
     }
   })
-  const setBody = (next: 'text' | 'script'): void => {
-    setBodyState(next)
+  const setAnnotate = (next: boolean): void => {
+    setAnnotateState(next)
     try {
-      localStorage.setItem('novel-studio:listen-body', next)
+      localStorage.setItem('novel-studio:annotate', next ? '1' : '0')
     } catch {
       // Kept for this visit only.
     }
   }
+  const [noted, setNoted] = useState<{ id: string; top: number; left: number } | undefined>()
+  const [looseOpen, setLooseOpen] = useState(false)
   const [sharing, setSharing] = useState(false)
-  const [autoNext, setAutoNext] = useState(() => {
+  // Listening is for listening: the production desk of the audio version comes when it is asked for, and is remembered.
+  const [desk, setDeskState] = useState(() => {
     try {
+      return localStorage.getItem('novel-studio:listen-desk') === '1'
+    } catch {
+      return false
+    }
+  })
+  const setDesk = (next: boolean): void => {
+    setDeskState(next)
+    try {
+      localStorage.setItem('novel-studio:listen-desk', next ? '1' : '0')
+    } catch {
+      // Kept for this visit only.
+    }
+  }
+  // A chapter that ran out goes on to the next, unless the listener would rather not: a wish kept with the player's.
+  const autoNext = options.autoNext ?? (() => {
+    try {
+      // Where the wish was kept before it moved in with the rest.
       return localStorage.getItem('novel-studio:autonext') !== '0'
     } catch {
       return true
     }
-  })
+  })()
+  const [settings, setSettings] = useState(false)
   const scroller = useRef<HTMLDivElement>(null)
   // The next chapter starts playing by itself when the one before it ran out.
   const carryOn = useRef(false)
-  const written = project.chapters.filter(chapter => chapter.hasText)
+  // One line of the plot is read at a time: the main one, or the one a choice at a fork led onto.
+  const { lineId, path, pick: pickLine } = useLineView(project, chapterId)
+  const written = path.filter(chapter => chapter.hasText)
   const chapter = written.find(candidate => candidate.id === chapterId) ?? written[0]
+  const plotLines = project.outline.lines ?? []
+  // Where the story parts after this chapter: the lines that leave here and have a first chapter to read.
+  const parting: ReturnType<typeof waysOn> = chapter === undefined ? { ways: [] } : waysOn(project, chapter, lineId)
+  // A way is offered when its next chapter can be read: the reader is not sent past a gap.
+  const forks = parting.ways.map(way => ({ way, first: way.chapters[0] })).filter((fork): fork is { way: typeof fork.way; first: NonNullable<typeof fork.first> } => fork.first?.hasText === true)
+  const follow = (line: string, first: string): void => {
+    pickLine(line)
+    controller.focusChapter(first)
+  }
   const position = chapter !== undefined ? written.findIndex(candidate => candidate.id === chapter.id) : -1
-  const listening = mode === 'listen'
-  const job = jobs.find(item => item.status === 'running' && item.kind === 'audio' && item.title !== 'audition' && (item.target === chapter?.id || item.result?.chapterId === chapter?.id))
+  // The faces of the chapter: the prose, the script, the motion comic.
+  const scripted = mode === 'listen'
+  const watching = mode === 'watch'
+  // Work started here for this chapter, or the step of a running batch that is on it right now.
+  const job = jobs.find(item => item.status === 'running' && item.kind === 'audio' && item.title !== 'audition' && (item.target === chapter?.id || item.result?.chapterId === chapter?.id)) ?? chapterJob(jobs, chapter?.id, ['synthesize', 'sound', 'audio script'])
   const doc = useLoad(async signal => chapter !== undefined ? await controller.api.call('chapter.read', { root, id: chapter.id }, signal) : undefined, [root, chapter?.id, chapter?.updatedAt])
-  // The script is fetched once the author listens; a running job keeps it fresh as lines come in.
-  // The script is what is listened to — and what the sound notes beside the text come from, so a reader gets it too.
-  const wanted = listening || prefs.notes
-  const audio = useLoad<ScriptView | undefined>(async signal => chapter !== undefined && wanted ? await controller.api.call('audio.script', { root, chapter: chapter.id }, signal) : undefined, [root, chapter?.id, wanted, project.revision, job === undefined])
+  // The script is what is listened to under any face, and what the sound notes beside the text come from; a running job keeps it fresh as lines come in.
+  const audio = useLoad<ScriptView | undefined>(async signal => chapter !== undefined ? await controller.api.call('audio.script', { root, chapter: chapter.id }, signal) : undefined, [root, chapter?.id, project.revision, job === undefined])
   const text = doc.data?.text
+  const review = doc.data?.review
+  const notes = useMemo(() => (annotate && text !== undefined ? issueMarks(text, review) : { marks: [], loose: [] }), [annotate, text, review])
+  const openIssues = (review?.issues ?? []).filter(issue => issue.resolved !== true).length
+  const notedIssue = noted !== undefined ? review?.issues.find(issue => issue.id === noted.id) : undefined
+  const reviewing = jobs.some(job => job.status === 'running' && job.kind === 'review' && job.target === chapter?.id)
+  // A review of this chapter that has just ended has notes to show: the chapter is read again.
+  const reviewsEnded = jobs.filter(job => job.kind === 'review' && job.target === chapter?.id && job.status !== 'running').length
+  const reviewsSeen = useRef(reviewsEnded)
+  useEffect(() => {
+    if (reviewsEnded === reviewsSeen.current) return
+    reviewsSeen.current = reviewsEnded
+    doc.reload()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reviewsEnded])
   const script = audio.data?.script
   const lines = useMemo(() => script?.lines ?? [], [script])
   const cues = useMemo(() => script?.cues ?? [], [script])
+  // The storyboard: what there is to watch. Read for every chapter, so that the way to watch shows where there is something to.
+  const comic = useLoad(async signal => chapter !== undefined ? await controller.api.call('comic.board', { root, chapter: chapter.id }, signal) : undefined, [root, chapter?.id, project.revision])
+  const panels = useMemo(() => comic.data?.board?.panels ?? [], [comic.data])
+  const drawn = panels.filter(panel => panel.image !== undefined).length
+  const placed = useMemo(() => place(panels, lines), [panels, lines])
   const { player, state } = useLinePlayer(lines, cues, mediaUrl, options, () => {
     const next = written[position + 1]
     if (!autoNext || next === undefined) return
     carryOn.current = true
     controller.focusChapter(next.id)
   })
+  const current = useCurrentPanel(placed, player, state)
+  // How long the line being spoken takes at the speed it is played: what the mark that runs through it goes by.
+  const pace = useMemo(() => ({ seconds: secondsOf(lines[state.index]) / Math.max(0.25, options.rate), paused: state.status === 'paused' }), [lines, state.index, state.status, options.rate])
+  // The player has been started on this chapter: from then on the prose shows which line is spoken, and a line can be pressed to hear from there.
+  const engaged = state.index >= 0
+  // Pressing play over the prose turns the page to the script — unless the reader would rather stay.
+  const wasIdle = useRef(true)
+  useEffect(() => {
+    const starting = wasIdle.current && state.status === 'playing'
+    wasIdle.current = state.status === 'idle'
+    if (starting && mode === 'read' && prefs.follow !== false && script !== undefined) controller.setReadMode('listen')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.status])
+  // The pictures of the chapter, each before the script line that follows it in the text — so that the script has them where the prose does.
+  const pictures = useMemo(() => chapterFigures(text, lines), [text, lines])
 
   // A new chapter starts at the top.
   useEffect(() => {
     scroller.current?.scrollTo({ top: 0 })
     setPicked(undefined)
+    setNoted(undefined)
+    setLooseOpen(false)
   }, [chapter?.id])
 
-  // Leaving the listening mode stops the voice; a script that arrives after a chapter ran out starts the next one.
+  // A script that arrives after a chapter ran out starts the next one.
   useEffect(() => {
-    if (!listening) {
-      carryOn.current = false
-      player.stop()
-    }
-  }, [listening, player])
-  useEffect(() => {
-    if (!carryOn.current || !listening || script === undefined || script.chapterId !== chapter?.id) return
+    if (!carryOn.current || script === undefined || script.chapterId !== chapter?.id) return
     carryOn.current = false
     if (script.lines.some(line => line.audio !== undefined)) player.play(0)
-  }, [script, listening, chapter?.id, player])
+  }, [script, chapter?.id, player])
 
-  // Arrow keys turn chapters when nothing is being typed; the space bar plays and pauses while listening.
+  // Arrow keys turn chapters when nothing is being typed; the space bar plays and pauses.
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       const target = event.target as HTMLElement | null
@@ -107,7 +297,7 @@ export function ReadView() {
       if (scroller.current === null || scroller.current.offsetParent === null) return
       if (event.key === 'ArrowLeft' && position > 0) controller.focusChapter(written[position - 1]!.id)
       if (event.key === 'ArrowRight' && position >= 0 && position < written.length - 1) controller.focusChapter(written[position + 1]!.id)
-      if (event.key === ' ' && listening && lines.length > 0) {
+      if (event.key === ' ' && lines.length > 0) {
         event.preventDefault()
         player.toggle()
       }
@@ -135,16 +325,20 @@ export function ReadView() {
 
   // In the script view the line being spoken stays in sight.
   useEffect(() => {
-    if (body !== 'script' || state.index < 0) return
+    if (!scripted || state.index < 0) return
     scroller.current?.querySelector(`[data-script-line="${lines[state.index]?.id}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-  }, [state.index, body, lines])
+  }, [state.index, scripted, lines])
 
   if (chapter === undefined) {
     return (
-      <div className="nv-page">
-        <Empty icon="eye" title={t('还没有可读的正文', 'Nothing to read yet')}>
-          <Button variant="primary" icon="pen" onClick={() => { controller.setView('write') }}>{t('去写作', 'Open Write')}</Button>
-        </Empty>
+      <div className="nv-reader">
+        {/* Nothing written yet does not mean nothing to look at: the people and the world may be there already. */}
+        {albumEmpty(counts) && sides === 0 ? null : <header className="nv-reader-bar"><ViewerTabs t={t} value="text" counts={counts} sides={sides} onChange={(next) => { if (next !== 'text') controller.setAlbum({ section: next }) }} /></header>}
+        <div className="nv-page">
+          <Empty icon="eye" title={t('还没有可读的正文', 'Nothing to read yet')}>
+            <Button variant="primary" icon="pen" onClick={() => { controller.setView('write') }}>{t('去写作', 'Open Write')}</Button>
+          </Empty>
+        </div>
       </div>
     )
   }
@@ -173,40 +367,132 @@ export function ReadView() {
     const next = written[position + delta]
     if (next !== undefined) controller.focusChapter(next.id)
   }
-  const keepAutoNext = (value: boolean): void => {
-    setAutoNext(value)
-    try {
-      localStorage.setItem('novel-studio:autonext', value ? '1' : '0')
-    } catch {
-      // Kept for this visit only.
-    }
-  }
-  const showScript = listening && body === 'script' && script !== undefined
+  const showScript = scripted && script !== undefined
+  const setBody = (next: 'text' | 'script'): void => { controller.setReadMode(next === 'script' ? 'listen' : 'read') }
 
   return (
-    <div className={cx('nv-reader', `is-${prefs.theme}`, listening && 'is-listen')}>
+    <div className={cx('nv-reader', `is-${prefs.theme}`, (scripted || engaged) && !watching && 'is-listen')}>
       <header className="nv-reader-bar">
+        <ViewerTabs t={t} value="text" counts={counts} sides={sides} onChange={(next) => { if (next !== 'text') controller.setAlbum({ section: next }) }} />
         <Button size="sm" variant="ghost" icon="chevronLeft" disabled={position <= 0} onClick={() => { turn(-1) }} title={t('上一章', 'Previous chapter')} />
         <Select className="nv-chapter-select" value={chapter.id} options={written.map(item => ({ value: item.id, label: `${item.index}. ${item.title}` }))} onChange={(value) => { controller.focusChapter(value) }} />
         <Button size="sm" variant="ghost" icon="chevronRight" disabled={position >= written.length - 1} onClick={() => { turn(1) }} title={t('下一章', 'Next chapter')} />
-        <ModeSwitch mode={mode} onChange={(next) => { controller.setReadMode(next) }} t={t} />
+        {plotLines.length > 0 ? (
+          <Select className="nv-line-select" value={lineId} options={[{ value: MAIN_LINE, label: `★ ${t('主线', 'Main line')}` }, ...plotLines.map(line => ({ value: line.id, label: `${line.shelved === true ? '⏸ ' : ''}${line.title}` }))]} onChange={(value) => {
+            pickLine(value)
+            const own = value === MAIN_LINE ? project.chapters : project.lines?.find(line => line.id === value)?.chapters ?? []
+            const target = own.find(candidate => candidate.hasText)
+            if (target !== undefined) controller.focusChapter(target.id)
+            else controller.toast('info', t('这条线上还没有写好的章节', 'This line has no written chapter yet'))
+          }} />
+        ) : null}
+        <ModeSwitch
+          mode={watching ? undefined : mode}
+          onChange={(next) => { controller.setReadMode(next) }}
+          t={t}
+          pages
+          // The way to watch shows where the chapter has pictures — and stays while it is the way in use, so that it can be left.
+          extra={drawn > 0 || watching ? (
+            <button type="button" role="tab" aria-selected={watching} className={cx('nv-mode', watching && 'is-active')} onClick={() => { controller.setReadMode('watch') }} title={t('看：有声漫——画面跟着配音走', 'Watch: the motion comic — the pictures follow the voices')}>
+              <Icon name="film" size={14} />
+              <span>{t('看', 'Watch')}</span>
+            </button>
+          ) : undefined}
+        />
         <span className="nv-spacer" />
-        <PrefsControls prefs={prefs} update={updatePrefs} t={t} />
+        <Button
+          size="sm"
+          variant="ghost"
+          icon="checkCircle"
+          className={cx(annotate && 'is-active')}
+          onClick={() => { setAnnotate(!annotate); setNoted(undefined) }}
+          title={annotate ? t('收起批注：正文恢复干净', 'Hide the notes: the page is clean again') : t('批注：把审校出的问题标在正文里，点开可以就地修', 'Notes: mark what the review found in the text; press one to mend it there')}
+        >
+          {t('批注', 'Notes')}{openIssues > 0 ? ` ${openIssues}` : ''}
+        </Button>
+        <Button size="sm" variant="ghost" icon="type" className={cx(settings && 'is-active')} onClick={() => { setSettings(!settings) }} title={t('阅读设置：字号、纸张、字体、语速、播放与声音', 'Reading settings: type, paper, typeface, speed, playback and sound')}>{t('阅读设置', 'Reading')}</Button>
         <Button size="sm" variant="ghost" icon="phone" onClick={() => { setSharing(true) }} title={t('在手机上读这本书', 'Read this book on another device')} />
-        <Button size="sm" variant="ghost" icon="film" onClick={() => { controller.navigate({ view: 'stage', tab: 'comic', chapter: chapter.id }) }} title={t('有声漫', 'Motion comic')} />
+        {!watching ? <Button size="sm" variant="ghost" icon="mic" className={cx(desk && 'is-active')} onClick={() => { setDesk(!desk) }} title={desk ? t('收起有声版的制作台，只听', 'Fold the production desk away and just listen') : t('有声版的制作台：脚本、选角、配音、声音', 'The production desk of the audio version: script, casting, voices, sound')}>{t('制作', 'Produce')}</Button> : null}
+        {watching ? <Button size="sm" variant="ghost" icon="film" onClick={() => { controller.navigate({ view: 'stage', tab: 'comic', chapter: chapter.id }) }} title={t('有声漫的制作：分镜、画面、成片', 'Making the motion comic: storyboard, pictures, video')}>{t('制作', 'Produce')}</Button> : null}
         <Button size="sm" icon="pen" onClick={() => { controller.setView('write', chapter.id) }}>{t('编辑', 'Edit')}</Button>
       </header>
-      {listening ? (
+      {annotate && mode === 'read' ? (
+        <div className="nv-reader-notes" role="status">
+          {review === undefined ? (
+            <>
+              <span>{t('这一章还没有审校过，所以没有批注。', 'This chapter has not been reviewed, so there are no notes.')}</span>
+              <Button size="sm" icon="checkCircle" busy={reviewing} pending={t('审校中…', 'Reviewing…')} onClick={() => controller.guard(async () => { await controller.api.call('ai.review', { root, chapter: chapter.id }); await controller.refreshJobs() })}>{t('审校这一章', 'Review this chapter')}</Button>
+            </>
+          ) : openIssues === 0 ? (
+            <span>{t('这一章的审校意见都处理完了。', 'Every note of this chapter\'s review is settled.')} <span className="nv-muted">{review.verdict}</span></span>
+          ) : (
+            <>
+              <span>
+                {t(`这一章有 ${openIssues} 条审校意见没处理：${notes.marks.length} 条标在正文里（点带底色的句子）`, `${openIssues} review notes are open in this chapter: ${notes.marks.length} are marked in the text (press a tinted sentence)`)}
+                {notes.loose.length > 0 ? t(`，${notes.loose.length} 条没有对应的句子。`, `, ${notes.loose.length} have no sentence of their own.`) : t('。', '.')}
+              </span>
+              {notes.loose.length > 0 ? <Button size="sm" variant="ghost" icon={looseOpen ? 'chevronUp' : 'chevronDown'} onClick={() => { setLooseOpen(!looseOpen) }}>{looseOpen ? t('收起', 'Fold') : t('看这几条', 'Show them')}</Button> : null}
+              <Button size="sm" variant="ghost" icon="checkCircle" busy={reviewing} pending={t('审校中…', 'Reviewing…')} onClick={() => controller.guard(async () => { await controller.api.call('ai.review', { root, chapter: chapter.id }); await controller.refreshJobs() })} title={t('正文改过之后重新审校一遍', 'Review again after the text has changed')}>{t('重新审校', 'Review again')}</Button>
+            </>
+          )}
+          {looseOpen && notes.loose.length > 0 ? (
+            <div className="nv-reader-notes-list">
+              {notes.loose.map(issue => <IssueCard key={issue.id} chapterId={chapter.id} issue={issue} onChanged={() => { doc.reload() }} />)}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      {!watching && (desk || (scripted && audio.data?.script === undefined)) ? (
         audio.data === undefined
           ? <div className="nv-desk-loading">{audio.error !== undefined ? <span className="nv-muted">{audio.error}</span> : <><Spinner size={13} /><span className="nv-muted nv-small">{t('正在读取有声脚本…', 'Loading the audio script…')}</span></>}</div>
-          : <AudioDesk chapter={chapter} view={audio.data} job={job} player={player} body={script === undefined ? 'text' : body} onBody={setBody} onChanged={() => { audio.reload() }} />
+          : <AudioDesk chapter={chapter} view={audio.data} job={job} player={player} onBody={setBody} onChanged={() => { audio.reload() }} />
       ) : null}
-      {showScript ? (
-        <div className="nv-reader-scroll" ref={scroller}>
-          <div className="nv-script-wrap">
-            <ScriptTable chapter={chapter} lines={lines} cues={cues} state={state} player={player} job={job} sound={audio.data?.sound} onChanged={() => { audio.reload() }} />
+      {watching ? (
+        <div className="nv-reader-scroll nv-reader-watch" ref={scroller}>
+          {placed.length > 0 ? (
+            <>
+              <Theater t={t} player={player} state={state} lines={lines} cues={cues} current={current} media={path => mediaUrl(path)} options={options} speakerOf={line => project.characters.find(card => card.id === line.speaker)?.name ?? line.speakerName} />
+              <h1 className="nv-reader-watch-title">{chapter.title}</h1>
+              {lines.every(line => line.audio === undefined) ? <p className="nv-muted nv-small">{t('这一章还没有配音：画面会按阅读速度配着字幕走。', 'This chapter has no voice yet: the panels pass at reading pace, with subtitles.')}</p> : null}
+              {drawn < panels.length ? <p className="nv-muted nv-small">{t(`${panels.length} 格分镜里还有 ${panels.length - drawn} 格没有画面。`, `${panels.length - drawn} of ${panels.length} panels have no picture yet.`)}</p> : null}
+            </>
+          ) : comic.data === undefined || (script === undefined && audio.data === undefined) ? (
+            <div className="nv-desk-loading"><Spinner size={13} /><span className="nv-muted nv-small">{t('正在读取分镜…', 'Loading the storyboard…')}</span></div>
+          ) : (
+            <Empty icon="film" title={t('这一章还没有有声漫', 'This chapter has no motion comic yet')}>
+              <p className="nv-muted">{t('有声漫是把这一章的有声脚本切成分镜、每格配上画面。在"演出 → 有声漫"里做；做好了这里就能看。', 'A motion comic cuts the chapter\'s audio script into panels and gives each a picture. It is made under Stage → Motion comic, and watched here once it is.')}</p>
+              <Button variant="primary" icon="film" onClick={() => { controller.navigate({ view: 'stage', tab: 'comic', chapter: chapter.id }) }}>{t('去制作', 'Make it')}</Button>
+            </Empty>
+          )}
+          <div className="nv-reader-watch-turn">
+            {position > 0 ? <Button icon="chevronLeft" onClick={() => { turn(-1) }}>{t('上一章', 'Previous')}</Button> : null}
+            {position < written.length - 1 ? <Button variant="primary" icon="arrowRight" onClick={() => { turn(1) }}>{t('下一章：', 'Next: ')}{written[position + 1]!.title}</Button> : null}
           </div>
         </div>
+      ) : showScript && desk ? (
+        // Producing: the table of takes, with the tools on every line.
+        <div className="nv-reader-scroll" ref={scroller}>
+          <div className="nv-script-wrap">
+            <ScriptTable chapter={chapter} lines={lines} cues={cues} state={state} player={player} job={job} sound={audio.data?.sound} onChanged={() => { audio.reload() }} pictures={pictures} pace={pace} />
+          </div>
+        </div>
+      ) : showScript ? (
+        // Listening: the script as a reader has it — the same page a phone is given.
+        <ScriptPage
+          t={t}
+          lines={lines}
+          cues={cues}
+          state={state}
+          player={player}
+          pace={pace}
+          figures={pictures}
+          media={path => mediaUrl(path)}
+          speakerOf={line => project.characters.find(card => card.id === line.speaker)?.name}
+          scroller={scroller}
+          prefs={prefs}
+          header={<header className="nv-reader-head"><span className="nv-reader-kicker">{project.manifest.title} · {t(`第 ${chapter.index} 章`, `Chapter ${chapter.index}`)}</span><h1>{chapter.title}</h1></header>}
+          footer={position < written.length - 1 ? <Button icon="arrowRight" onClick={() => { turn(1) }}>{t('下一章：', 'Next: ')}{written[position + 1]!.title}</Button> : <span className="nv-muted">{t('—— 已读到最新一章 ——', '— you have reached the latest chapter —')}</span>}
+        />
       ) : (
         <ReaderPage
           t={t}
@@ -215,18 +501,39 @@ export function ReadView() {
           text={text}
           prefs={prefs}
           media={path => mediaUrl(path)}
-          lines={listening && script !== undefined ? lines : undefined}
-          active={listening ? state.index : undefined}
-          onLine={listening && script !== undefined ? (index) => { player.play(index) } : undefined}
+          lines={engaged && script !== undefined ? lines : undefined}
+          active={engaged ? state.index : undefined}
+          onLine={engaged && script !== undefined ? (index) => { player.play(index) } : undefined}
           sound={script !== undefined ? { lines, cues } : undefined}
-          sounding={listening ? state.sounding : undefined}
+          sounding={engaged ? state.sounding : undefined}
+          pace={engaged ? pace : undefined}
           flash={flash}
           scroller={scroller}
           onSelect={onSelect}
-          footer={position < written.length - 1
+          marks={annotate && !engaged ? notes.marks : undefined}
+          openMark={noted?.id}
+          onMark={(id, at) => {
+            const width = scroller.current?.clientWidth ?? 600
+            setPicked(undefined)
+            setNoted(previous => (previous?.id === id ? undefined : { id, top: at.bottom + 8, left: Math.max(8, Math.min(width - 388, at.left)) }))
+          }}
+          footer={forks.length > 0 ? (
+            // The story goes more than one way from here: the reader chooses, as a player would.
+            <div className="nv-reader-forks">
+              <span className="nv-muted nv-small">{t('故事在这里分了岔：', 'The story parts here:')}</span>
+              {position < written.length - 1 ? <Button icon="arrowRight" onClick={() => { turn(1) }}>{parting.along?.choice ?? t('接着往下读', 'Read on')} · {written[position + 1]!.title}</Button> : null}
+              {forks.map(({ way, first }) => <Button key={way.line} icon={way.info !== undefined ? 'branch' : 'star'} onClick={() => { follow(way.line, first.id) }} title={way.left === true ? t('这条线分出去之前的走向', 'The way things went before this line left') : way.info?.premise}>{way.left === true ? way.info?.title ?? t('主线', 'Main line') : way.info?.choice ?? way.info?.title} · {first.title}</Button>)}
+            </div>
+          ) : position < written.length - 1
             ? <Button icon="arrowRight" onClick={() => { turn(1) }}>{t('下一章：', 'Next: ')}{written[position + 1]!.title}</Button>
-            : <span className="nv-muted">{t('—— 已读到最新一章 ——', '— you have reached the latest chapter —')}</span>}
+            : <span className="nv-muted">{lineId !== MAIN_LINE ? t('—— 这条线读到这里 ——', '— this line has been read to here —') : t('—— 已读到最新一章 ——', '— you have reached the latest chapter —')}</span>}
         >
+          {noted !== undefined && notedIssue !== undefined ? (
+            <div className="nv-reader-note" style={{ top: noted.top, left: noted.left }} onMouseUp={(event) => { event.stopPropagation() }}>
+              <button type="button" className="nv-reader-note-close" onClick={() => { setNoted(undefined) }} title={t('关上', 'Close')} aria-label={t('关上', 'Close')}><Icon name="x" size={12} /></button>
+              <IssueCard chapterId={chapter.id} issue={notedIssue} onChanged={() => { setNoted(undefined); doc.reload() }} after={() => { setNoted(undefined) }} />
+            </div>
+          ) : null}
           {picked !== undefined ? (
             <div className="nv-reader-pick" style={{ top: Math.max(4, picked.top), left: picked.left }} onMouseUp={(event) => { event.stopPropagation() }}>
               <Button size="sm" icon="pen" onClick={() => { controller.jumpTo(chapter.id, picked.offset, picked.text.length, 'write') }}>{t('去修改', 'Edit here')}</Button>
@@ -250,7 +557,34 @@ export function ReadView() {
           ) : null}
         </ReaderPage>
       )}
-      {listening && script !== undefined ? <ListenBar t={t} player={player} state={state} lines={lines} cues={cues} options={options} update={updateOptions} autoNext={autoNext} onAutoNext={keepAutoNext} /> : null}
+      {!watching && script !== undefined ? (
+        <ListenBar
+          t={t}
+          player={player}
+          state={state}
+          lines={lines}
+          cues={cues}
+          options={options}
+          update={updateOptions}
+          onSettings={() => { setSettings(!settings) }}
+        />
+      ) : null}
+      {settings ? (
+        <ReaderSettings
+          prefs={prefs}
+          update={updatePrefs}
+          options={options}
+          updateOptions={updateOptions}
+          t={t}
+          onClose={() => { setSettings(false) }}
+          extra={(
+            <label className="nv-check" title={t('把审校出的问题标在正文里，点开可以就地修（只有作者这边有）', 'Mark what the review found in the text; press one to mend it there (the author\'s side only)')}>
+              <input type="checkbox" checked={annotate} onChange={(event) => { setAnnotate(event.target.checked); setNoted(undefined) }} />
+              <span>{t('在正文里显示审校批注', 'Show review notes in the text')}</span>
+            </label>
+          )}
+        />
+      ) : null}
       {sharing ? <ShareDialog onClose={() => { setSharing(false) }} /> : null}
     </div>
   )

@@ -3,19 +3,28 @@
  * The manuscript editor: a chapter list, the text, and a side panel with the
  * chapter's plan, memory, review issues, versions and pending proposals.
  * Select text to revise, illustrate or discuss exactly that passage.
+ *
+ * The list shows one line of the plot at a time — the main one, or another the
+ * author switches to — as it is read. Where the story parts after a chapter,
+ * going on to the next asks which way; and a run of chapters can be written,
+ * given beats or reviewed in one go.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ChapterDocument } from '../../shared/rpc'
 import { countWords, formatCount, fuzzyFind, normalizeProse, proseOnly } from '../../shared/text'
-import type { ChapterInfo, JobInfo, ReviewIssue, VersionInfo } from '../../shared/types'
+import { MAIN_LINE, type ChapterInfo, type JobInfo, type ReviewIssue, type TextStep, type VersionInfo } from '../../shared/types'
+import { BatchMatrix, chapterJob, TextBatchDialog, useBatchJob } from '../Batch'
 import { DiffView, ProposalCard } from '../components/ProposalCard'
 import { Icon } from '../icons'
 import { jobKindLabel, jobPulse } from '../Studio'
 import { CHAPTER_STATUS, CHAPTER_STATUS_TONE, ISSUE_TYPE, SEVERITY, SEVERITY_TONE } from '../labels'
+import { Derive } from './Outline'
 import {
   Button, Chip, cx, Empty, Menu, Modal, Progress, Select, Spinner, Tabs, TextInput, ThoughtButton, ThoughtPanel, useAction, useConfirm, useJobStream, useJobTail, useLoad, useProject,
-  useQuote, useSnapshot, useStudio, useT, useWidth, type Translate,
+  useLineView, useQuote, useSnapshot, useStudio, useT, useWidth, waysOn, type Translate,
 } from '../ui'
+import { IssueCard } from '../Issues'
+import { JobBar } from '../JobBar'
 
 type PanelTab = 'plan' | 'memory' | 'issues' | 'versions' | 'proposals'
 
@@ -65,7 +74,10 @@ function scrollToOffset(element: HTMLTextAreaElement, offset: number): void {
 }
 
 function jobsOf(jobs: JobInfo[], chapterId: string): JobInfo[] {
-  return jobs.filter(job => job.status === 'running' && (job.target === chapterId || job.result?.chapterId === chapterId))
+  // A batch that is writing this chapter right now counts as its write job: its stream is the chapter's.
+  const own = jobs.filter(job => job.status === 'running' && job.kind !== 'batch' && (job.target === chapterId || job.result?.chapterId === chapterId))
+  const step = chapterJob(jobs, chapterId, ['write', 'derive beats', 'digest', 'review'])
+  return step !== undefined && step.batch === true ? [...own, step] : own
 }
 
 export function WriteView() {
@@ -79,33 +91,87 @@ export function WriteView() {
   const medium = width >= 720
   const [panelOpen, setPanelOpen] = useState(false)
   const [panel, setPanel] = useState<PanelTab>('plan')
-  const chapter = project.chapters.find(candidate => candidate.id === chapterId) ?? project.chapters[0]
+  const others = project.outline.lines ?? []
+  // The line whose chapters are listed: the one picked while the chapter in focus is read on it, else that chapter's own.
+  const { lineId, path, pick: setPickedLine } = useLineView(project, chapterId)
+  const chapter = path.find(candidate => candidate.id === chapterId) ?? path.find(candidate => !candidate.hasText) ?? path[0]
+  const line = others.find(candidate => candidate.id === lineId)
   const { run } = useAction()
+  const confirm = useConfirm()
+  const [deriving, setDeriving] = useState<{ line?: string; after?: string; mode: 'append' | 'replace' | 'branch' } | boolean>(false)
+  const [batching, setBatching] = useState<TextStep[] | undefined>()
+  const batch = useBatchJob('text')
+  const deriveDialog = deriving !== false ? (
+    <Modal wide title={typeof deriving === 'object' && deriving.mode === 'branch' ? t('另开一条线', 'Open another line') : t('推演后续章节', 'Derive the next chapters')} onClose={() => { setDeriving(false) }}>
+      {/* On the main line the planner starts at once and shows its plan first; on another line, and for a new one, the author looks the form over. */}
+      <Derive only="chapters" autoStart={deriving === true && lineId === MAIN_LINE} preset={typeof deriving === 'object' ? deriving : lineId !== MAIN_LINE ? { line: lineId, mode: 'append' } : undefined} onApplied={() => { setDeriving(false) }} />
+    </Modal>
+  ) : null
+  const batchDialog = batching !== undefined ? <TextBatchDialog chapters={path} preset={batching} line={lineId !== MAIN_LINE ? lineId : undefined} onClose={() => { setBatching(undefined) }} /> : null
+  const switchLine = (next: string, to?: string): void => {
+    setPickedLine(next)
+    const own = next === MAIN_LINE ? project.chapters : project.lines?.find(candidate => candidate.id === next)?.chapters ?? []
+    // Onto the chapter that was named; else the line's first chapter still to write, else its first.
+    const target = to ?? (own.find(candidate => !candidate.hasText) ?? own[0])?.id
+    if (target !== undefined) controller.focusChapter(target)
+  }
 
   if (chapter === undefined) {
     return (
       <div className="nv-page">
         <Empty icon="pen" title={t('还没有章节', 'No chapters yet')}>
-          <p>{t('先在大纲里排出章节，或者让总编帮你推演开篇。', 'Outline some chapters first, or ask the showrunner to derive the opening.')}</p>
-          <Button variant="primary" icon="tree" onClick={() => { controller.setView('outline') }}>{t('去大纲', 'Open Outline')}</Button>
+          <p>{t('让策划根据设定推演出开篇的章纲，或者去大纲里自己排。', 'Have the planner derive the opening chapters from the bible, or lay them out yourself in the Outline.')}</p>
+          <div className="nv-row-wrap">
+            <Button variant="primary" icon="sparkles" onClick={() => { setDeriving(true) }}>{t('推演开篇章节', 'Derive the opening chapters')}</Button>
+            <Button icon="tree" onClick={() => { controller.setView('outline') }}>{t('去大纲', 'Open Outline')}</Button>
+          </div>
         </Empty>
+        {deriveDialog}
       </div>
     )
   }
 
   const addChapter = (): Promise<unknown> => run(async () => {
-    const { results } = await controller.api.call('outline.apply', { root, ops: [{ op: 'add-chapter', title: t('新章节', 'New chapter') }] })
+    const { results } = await controller.api.call('outline.apply', { root, ops: [{ op: 'add-chapter', title: t('新章节', 'New chapter'), ...(lineId !== MAIN_LINE ? { line: lineId } : {}) }] })
     const id = results[0]?.id
     if (id !== undefined) controller.focusChapter(id)
   })
 
+  const removeChapter = (item: ChapterInfo): void => {
+    confirm.ask(
+      item.hasText
+        ? t(`删除第 ${item.index} 章「${item.title}」（${formatCount(item.words, locale)} 字正文）？它会收进大纲页最下面的“最近删除的章节”，章纲、正文和由它做出来的东西都留着，随时可以恢复。`, `Delete chapter ${item.index}, "${item.title}" (${formatCount(item.words, locale)} words)? It goes to "Recently removed" at the bottom of the outline page — its plan, its text and what was made from it are kept, and it can be put back at any time.`)
+        : t(`删除第 ${item.index} 章「${item.title}」？它会收进大纲页最下面的“最近删除的章节”，随时可以恢复。`, `Delete chapter ${item.index}, "${item.title}"? It goes to "Recently removed" at the bottom of the outline page and can be put back at any time.`),
+      () => {
+        void run(async () => {
+          // Stay near where the author was: the chapter after the one that goes, else the one before.
+          const at = path.findIndex(candidate => candidate.id === item.id)
+          const next = path[at + 1] ?? path[at - 1]
+          await controller.api.call('outline.apply', { root, ops: [{ op: 'remove-chapter', chapter: item.id }] })
+          if (item.id === chapter.id && next !== undefined) controller.focusChapter(next.id)
+          controller.toast('success', t(`已删除「${item.title}」。要恢复：大纲页最下面的“最近删除的章节”。`, `"${item.title}" removed. To put it back: "Recently removed" at the bottom of the outline page.`))
+        })
+      },
+    )
+  }
+  // Every outlined chapter has its text: what comes next is the planner's to propose.
+  const allWritten = path.every(item => item.hasText)
+  const unwritten = path.filter(item => !item.hasText).length
+
   const list = (
     <aside className="nv-write-list">
+      {others.length > 0 ? (
+        <div className="nv-line-switch">
+          <Select value={lineId} options={[{ value: MAIN_LINE, label: `★ ${t('主线', 'Main line')}` }, ...others.map(item => ({ value: item.id, label: `${item.shelved === true ? '⏸ ' : ''}${item.title}` }))]} onChange={switchLine} />
+          <Button size="sm" variant="ghost" icon="branch" onClick={() => { controller.setView('outline') }} title={t('在大纲的“剧情图”里看所有的线', 'See every line on the plot graph, under Outline')} />
+        </div>
+      ) : null}
+      {line !== undefined ? <p className="nv-muted nv-small nv-line-about">{line.choice !== undefined ? t(`抉择：${line.choice}`, `The choice: ${line.choice}`) : line.premise ?? t('这条线上的章节；灰色的是它和别的线共有的。', 'The chapters of this line; the dimmed ones it shares with another.')}</p> : null}
       <ul className="nv-list">
-        {project.chapters.map((item) => {
+        {path.map((item) => {
           const busy = jobsOf(jobs, item.id).length > 0
           return (
-            <li key={item.id}>
+            <li key={item.id} className={cx('nv-list-item', line !== undefined && item.line !== line.id && 'is-shared')}>
               <button type="button" className={cx('nv-list-row', item.id === chapter.id && 'is-active')} onClick={() => { controller.focusChapter(item.id) }} title={item.title}>
                 <span className="nv-list-index">{item.index}</span>
                 <span className="nv-person-text">
@@ -114,11 +180,15 @@ export function WriteView() {
                 </span>
                 {busy ? <Spinner size={12} /> : <span className={cx('nv-dot', `is-${item.status}`)} />}
               </button>
+              <button type="button" className="nv-list-remove" disabled={busy} onClick={() => { removeChapter(item) }} title={t('删除这一章', 'Delete this chapter')} aria-label={t(`删除第 ${item.index} 章`, `Delete chapter ${item.index}`)}><Icon name="trash" size={12} /></button>
             </li>
           )
         })}
       </ul>
       <button type="button" className="nv-add-row" onClick={addChapter}>+ {t('添加章节', 'Add chapter')}</button>
+      <button type="button" className={cx('nv-add-row', allWritten && 'is-suggested')} onClick={() => { setDeriving(true) }} title={t('让策划接着已写的内容，排出接下来的章纲；看过方案再加入大纲', 'Have the planner outline what comes next from what is written; you see the plan before it joins the outline')}><Icon name="sparkles" size={12} /> {t('推演后续章节', 'Derive the next chapters')}</button>
+      <button type="button" className={cx('nv-add-row', unwritten > 1 && 'is-suggested')} onClick={() => { setBatching(['beats', 'write', 'digest']) }} title={t('一章接一章地写下去：没有节拍的先推演节拍，写完一章收录一章，再写下一章', 'Write on, chapter after chapter: beats first where there are none, each chapter taken into memory before the next is written')}><Icon name="layers" size={12} /> {unwritten > 0 ? t(`批量写作（还有 ${unwritten} 章没写）`, `Write a run (${unwritten} unwritten)`) : t('批量：节拍、收录、审校', 'Batch: beats, memory, review')}</button>
+      {batch?.status === 'running' ? <div className="nv-write-batch"><BatchMatrix job={batch} compact /></div> : null}
     </aside>
   )
 
@@ -134,7 +204,18 @@ export function WriteView() {
         panelInline={medium}
         panelOpen={panelOpen}
         setPanelOpen={setPanelOpen}
+        onAdd={addChapter}
+        onRemove={() => { removeChapter(chapter) }}
+        onDerive={() => { setDeriving(true) }}
+        path={path}
+        lineId={lineId}
+        onBranch={() => { setDeriving({ ...(chapter.line !== undefined ? { line: chapter.line } : {}), after: chapter.id, mode: 'branch' }) }}
+        onBatch={setBatching}
+        onLine={switchLine}
       />
+      {deriveDialog}
+      {batchDialog}
+      {confirm.element}
     </div>
   )
 }
@@ -149,9 +230,22 @@ interface EditorProps {
   panelInline: boolean
   panelOpen: boolean
   setPanelOpen: (open: boolean) => void
+  /** What the chapter list offers, for when there is no room for the list. */
+  onAdd: () => void
+  onRemove: () => void
+  onDerive: () => void
+  /** The chapters of the line being shown, as they are read on it. */
+  path: ChapterInfo[]
+  lineId: string
+  /** Open another line of the plot after this chapter. */
+  onBranch: () => void
+  /** Open the batch dialog with these steps ticked. */
+  onBatch: (steps: TextStep[]) => void
+  /** Show another line of the plot. */
+  onLine: (line: string, to?: string) => void
 }
 
-function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOpen, setPanelOpen }: EditorProps) {
+function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOpen, setPanelOpen, onAdd, onRemove, onDerive, path, lineId, onBranch, onBatch, onLine }: EditorProps) {
   const { controller, locale } = useStudio()
   const t = useT()
   const quote = useQuote()
@@ -328,24 +422,6 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
     }
     controller.jumpTo(chapter.id, range.start, range.end - range.start)
   }
-  const fixIssue = (issue: ReviewIssue): Promise<unknown> | undefined => {
-    if (text === undefined || issue.quote === undefined) return undefined
-    const range = fuzzyFind(text, issue.quote.trim())
-    if (range === undefined) {
-      controller.toast('info', t('这段引文已不在正文里。', 'That quote is no longer in the text.'))
-      return undefined
-    }
-    return controller.guard(async () => {
-      if (!(await settle())) return undefined
-      showPanel('proposals')
-      await controller.api.call('ai.reviseSpan', {
-        root, chapter: chapter.id, start: range.start, end: range.end, quote: text.slice(range.start, range.end),
-        instruction: t(`修正这个问题：${issue.explanation}${issue.suggestion !== undefined ? `\n建议：${issue.suggestion}` : ''}`, `Fix this problem: ${issue.explanation}${issue.suggestion !== undefined ? `\nSuggestion: ${issue.suggestion}` : ''}`),
-      })
-      await controller.refreshJobs()
-    })
-  }
-
   if (doc.data === undefined || text === undefined) {
     return <div className="nv-write-main"><div className="nv-center">{doc.error !== undefined ? <Empty icon="alert" title={doc.error} /> : <Spinner size={18} />}</div></div>
   }
@@ -379,7 +455,10 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
               {(plan.threads ?? []).map(ref => <Chip key={ref} tone="amber">{project.outline.threads.find(thread => thread.id === ref)?.title ?? ref}</Chip>)}
             </div>
             {plan.notes !== undefined ? <p className="nv-note">{plan.notes}</p> : null}
-            <Button size="sm" icon="tree" onClick={() => { controller.setView('outline', chapter.id) }}>{t('编辑章纲', 'Edit the plan')}</Button>
+            <div className="nv-row-wrap">
+              <Button size="sm" variant={(plan.beats ?? []).length === 0 ? 'primary' : 'outline'} icon="sparkles" busy={running.some(job => job.kind === 'derive')} pending={t('策划在推演…', 'The planner is deriving…')} onClick={() => controller.guard(async () => { await controller.api.call('ai.deriveBeats', { root, chapter: chapter.id, ...(brief.trim().length > 0 ? { direction: brief.trim() } : {}) }); await controller.refreshJobs() })} title={t('让策划排出这一章的节拍，直接写进章纲；下面输入框里的要求会一并带上', 'Have the planner lay out this chapter\'s beats and put them in the plan; what is typed in the brief below goes along')}>{(plan.beats ?? []).length === 0 ? t('推演本章节拍', 'Derive this chapter\'s beats') : t('重新推演节拍', 'Derive the beats again')}</Button>
+              <Button size="sm" icon="tree" onClick={() => { controller.setView('outline', chapter.id) }}>{t('编辑章纲', 'Edit the plan')}</Button>
+            </div>
           </div>
         ) : null}
 
@@ -417,22 +496,19 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
           <div className="nv-panel-section">
             <div className="nv-row">
               <Button size="sm" icon="checkCircle" busy={running.some(job => job.kind === 'review')} disabled={empty} onClick={() => controller.guard(async () => { if (await settle()) { await controller.api.call('ai.review', { root, chapter: chapter.id }); await controller.refreshJobs() } })}>{doc.data.review !== undefined ? t('重新审校', 'Review again') : t('审校这一章', 'Review this chapter')}</Button>
+              {doc.data.review !== undefined ? <Button size="sm" variant="ghost" icon="trash" onClick={() => { confirm.ask(t('清除这一章的审校意见？总评和每一条问题（包括已处理的）都会删掉。', 'Clear this chapter\'s review? Its verdict and every issue, resolved or not, are deleted.'), () => { void controller.guard(async () => { await controller.api.call('review.clear', { root, chapter: chapter.id }); doc.reload() }) }) }} title={t('清除这一章的审校意见', 'Clear this chapter\'s review')} /> : null}
             </div>
             {doc.data.review !== undefined ? <p className="nv-note">{doc.data.review.verdict}</p> : <p className="nv-muted">{t('审校会对照设定、记忆与文风检查这一章：连贯、人物、时间线、逻辑、节奏与语言。', 'A review checks this chapter against the bible, memory and style: continuity, character, timeline, logic, pacing and language.')}</p>}
             {(doc.data.review?.issues ?? []).map(issue => (
-              <article key={issue.id} className={cx('nv-issue', issue.resolved === true && 'is-resolved')}>
-                <header>
-                  <Chip tone={SEVERITY_TONE[issue.severity]}>{t(...SEVERITY[issue.severity])}</Chip>
-                  <Chip>{t(...ISSUE_TYPE[issue.type])}</Chip>
-                </header>
-                {issue.quote !== undefined ? <button type="button" className="nv-issue-quote" onClick={() => { locate(issue.quote!) }} title={t('在正文中定位', 'Locate in the text')}>{issue.quote}</button> : null}
-                <p>{issue.explanation}</p>
-                {issue.suggestion !== undefined ? <p className="nv-muted nv-small">{t('建议：', 'Suggestion: ')}{issue.suggestion}</p> : null}
-                <footer>
-                  {issue.quote !== undefined && issue.resolved !== true ? <Button size="sm" icon="wand" onClick={() => { fixIssue(issue) }}>{t('让 AI 修', 'Fix with AI')}</Button> : null}
-                  <Button size="sm" variant="ghost" icon={issue.resolved === true ? 'undo' : 'check'} onClick={() => controller.guard(async () => { await controller.api.call('review.resolve', { root, chapter: chapter.id, issue: issue.id, resolved: issue.resolved !== true }); doc.reload() })}>{issue.resolved === true ? t('重新打开', 'Reopen') : t('已解决', 'Resolved')}</Button>
-                </footer>
-              </article>
+              <IssueCard
+                key={issue.id}
+                chapterId={chapter.id}
+                issue={issue}
+                onLocate={locate}
+                onChanged={() => { doc.reload() }}
+                before={settle}
+                after={() => { showPanel('proposals') }}
+              />
             ))}
           </div>
         ) : null}
@@ -478,13 +554,25 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
       <section className="nv-write-main">
         <header className="nv-write-toolbar">
           {compact ? (
-            <Select className="nv-chapter-select" value={chapter.id} options={project.chapters.map(item => ({ value: item.id, label: `${item.index}. ${item.title}` }))} onChange={(value) => { controller.focusChapter(value) }} />
+            <Select className="nv-chapter-select" value={chapter.id} options={path.map(item => ({ value: item.id, label: `${item.index}. ${item.title}` }))} onChange={(value) => { controller.focusChapter(value) }} />
           ) : <h2 className="nv-write-title"><span className="nv-muted">{chapter.index}</span> {chapter.title}</h2>}
           <Chip tone={CHAPTER_STATUS_TONE[chapter.status]}>{t(...CHAPTER_STATUS[chapter.status])}</Chip>
-          <span className="nv-muted nv-small">{formatCount(words, locale)}{t(' 字', ' words')}</span>
+          <span className="nv-muted nv-small" title={chapter.budget !== undefined ? t(`这一章的建议字数是 ${chapter.budget}（在章纲里改；清空后由写手判断）`, `${chapter.budget} words are recommended for this chapter (change it in the plan; cleared, the writer judges)`) : t('这一章没有设建议字数：写手按章纲要做的事自己判断篇幅。可以在章纲里填一个。', 'No length is recommended for this chapter: the writer judges it from what the plan has to do. One can be set in the plan.')}>{formatCount(words, locale)}{chapter.budget !== undefined ? ` / ${formatCount(chapter.budget, locale)}` : ''}{t(' 字', ' words')}</span>
           <span className={cx('nv-save-state', `is-${saveState}`)}>{saveState === 'saving' ? t('保存中…', 'Saving…') : saveState === 'dirty' ? t('未保存', 'Unsaved') : t('已保存', 'Saved')}</span>
           <span className="nv-spacer" />
-          <Button size="sm" variant="ghost" icon="eye" title={t('阅读模式', 'Read')} onClick={() => { void save(); controller.setView('read', chapter.id) }} />
+          <Button size="sm" variant="ghost" icon="eye" title={t('观看：这一章在读者那里的样子', 'View: this chapter as a reader has it')} onClick={() => { void save(); controller.setView('read', chapter.id) }} />
+          <Menu icon="more" variant="ghost" size="sm" align="end" label={t('章节', 'Chapter')} items={[
+            { label: t('推演后续章节', 'Derive the next chapters'), icon: 'sparkles', onSelect: onDerive },
+            { label: t('从这一章另开一条线…', 'Open another line from here…'), icon: 'branch', onSelect: onBranch },
+            { label: t('添加章节', 'Add chapter'), icon: 'plus', onSelect: onAdd },
+            { label: t('编辑章纲', 'Edit the plan'), icon: 'tree', onSelect: () => { controller.setView('outline', chapter.id) } },
+            'separator',
+            { label: t('批量写作…', 'Write a run of chapters…'), icon: 'layers', onSelect: () => { onBatch(['beats', 'write', 'digest']) } },
+            { label: t('批量推演节拍…', 'Beats for many chapters…'), icon: 'layers', onSelect: () => { onBatch(['beats']) } },
+            { label: t('批量收录 / 审校…', 'Memory and reviews for many chapters…'), icon: 'layers', onSelect: () => { onBatch(['digest', 'review']) } },
+            'separator',
+            { label: t('删除这一章', 'Delete this chapter'), icon: 'trash', danger: true, onSelect: onRemove },
+          ]} />
           {!panelInline ? <Button size="sm" variant="ghost" icon="list" title={t('章纲 / 记忆 / 问题', 'Plan / memory / issues')} onClick={() => { setPanelOpen(true) }}>{proposals.length + openIssues.length > 0 ? String(proposals.length + openIssues.length) : undefined}</Button> : null}
         </header>
 
@@ -527,16 +615,9 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
           </div>
         )}
 
-        {running.filter(job => job.kind !== 'write').map(job => (
-          <div key={job.id} className="nv-activity">
-            <Spinner size={12} />
-            <span>{jobKindLabel(job.kind, t)}{t('中…', '…')}</span>
-            {job.progress !== undefined && job.progress.total > 1 ? <Progress done={job.progress.done} total={job.progress.total} label={jobPulse(job, t)} /> : job.thinking !== undefined ? <span className="nv-muted">{jobPulse(job, t)}</span> : null}
-            <ThoughtButton job={job} label />
-            <span className="nv-spacer" />
-            <Button size="sm" variant="ghost" icon="stop" onClick={() => { void controller.cancelJob(job.id) }} />
-          </div>
-        ))}
+        {!empty && writing === undefined ? <NextChapter chapter={chapter} path={path} lineId={lineId} onBranch={onBranch} onLine={onLine} onDerive={onDerive} /> : null}
+
+        {running.filter(job => job.kind !== 'write').map(job => <JobBar key={job.id} job={job} />)}
 
         {external !== undefined ? (
           <div className="nv-banner is-warn">
@@ -583,6 +664,56 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
       {viewing !== undefined ? <VersionModal chapterId={chapter.id} version={viewing} current={text} onClose={() => { setViewing(undefined) }} /> : null}
       {confirm.element}
     </>
+  )
+}
+
+/**
+ * Where the story goes after a chapter that is written: the next chapter of
+ * the line being read — and, where other lines leave after this chapter, each
+ * of those. More than one way on is a choice the author makes here.
+ */
+function NextChapter({ chapter, path, lineId, onBranch, onLine, onDerive }: { chapter: ChapterInfo; path: ChapterInfo[]; lineId: string; onBranch: () => void; onLine: (line: string, to?: string) => void; onDerive: () => void }) {
+  const { controller } = useStudio()
+  const t = useT()
+  const { project } = useProject()
+  const at = path.findIndex(candidate => candidate.id === chapter.id)
+  const next = at >= 0 ? path[at + 1] : undefined
+  const lines = project.outline.lines ?? []
+  // The other ways on from here: lines that leave after this chapter, and the line the one being read left.
+  const { ways } = waysOn(project, chapter, lineId)
+  const here = lines.find(line => line.id === lineId)
+  if (next === undefined && ways.length === 0) {
+    return (
+      <div className="nv-next-bar">
+        <span className="nv-muted nv-small">{t('这是这条线上大纲里的最后一章。', 'This is the last outlined chapter of this line.')}</span>
+        <span className="nv-spacer" />
+        <Button size="sm" icon="sparkles" onClick={onDerive}>{t('推演后续章节', 'Derive the next chapters')}</Button>
+        <Button size="sm" variant="ghost" icon="branch" onClick={onBranch}>{t('从这里另开一条线', 'Open another line from here')}</Button>
+      </div>
+    )
+  }
+  const forked = ways.length > 0
+  return (
+    <div className={cx('nv-next-bar', forked && 'is-fork')}>
+      <span className="nv-muted nv-small">{forked ? t('故事在这一章之后分了岔——接下来写哪条线？', 'The story parts after this chapter — which way next?') : t('下一章：', 'Next: ')}</span>
+      {next !== undefined ? (
+        <Button size="sm" variant={forked ? 'outline' : 'ghost'} icon="arrowRight" onClick={() => { controller.focusChapter(next.id) }} title={forked ? t('沿着现在这条线往下', 'Go on along this line') : undefined}>
+          {forked ? `${here?.title ?? t('主线', 'Main line')} · ` : ''}{next.index}. {next.title}{next.hasText ? '' : t('（未写）', ' (unwritten)')}
+        </Button>
+      ) : null}
+      {ways.map((way) => {
+        // Onto its first chapter still to write, else the first one after the fork.
+        const first = way.chapters.find(candidate => !candidate.hasText) ?? way.chapters[0]
+        const name = way.info?.title ?? t('主线', 'Main line')
+        const about = way.left === true ? t('这条线分出去之前的走向', 'The way things went before this line left') : way.info?.choice !== undefined ? t(`抉择：${way.info.choice}`, `The choice: ${way.info.choice}`) : way.info?.premise
+        return (
+          <Button key={way.line} size="sm" icon={way.info !== undefined ? 'branch' : 'star'} onClick={() => { onLine(way.line, first?.id) }} title={about}>
+            {name}{first !== undefined ? ` · ${first.index}. ${first.title}${first.hasText ? '' : t('（未写）', ' (unwritten)')}` : t('（还没有章节）', ' (no chapters yet)')}
+          </Button>
+        )
+      })}
+      {forked ? <Button size="sm" variant="ghost" icon="plus" onClick={onBranch}>{t('再开一条线', 'Yet another line')}</Button> : null}
+    </div>
   )
 }
 

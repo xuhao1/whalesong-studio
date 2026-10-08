@@ -46,11 +46,11 @@ interface Described {
 export const NOVEL_TOOLS = [
   'novel_status', 'novel_init', 'novel_read', 'novel_search', 'novel_mode', 'novel_export', 'novel_bible', 'novel_outline', 'novel_derive',
   'novel_write', 'novel_revise', 'novel_digest', 'novel_review', 'novel_import', 'novel_illustrate', 'novel_audio', 'novel_comic', 'novel_play',
-  'novel_settings', 'novel_show', 'novel_manage', 'novel_share', 'novel_edit', 'novel_memory',
+  'novel_settings', 'novel_show', 'novel_manage', 'novel_share', 'novel_edit', 'novel_memory', 'novel_crew', 'novel_video',
 ] as const
 
 const VIEWS: readonly string[] = ['home', 'bible', 'outline', 'write', 'read', 'cast', 'review', 'stage', 'settings', 'setup', 'usage']
-const STAGE_TABS: readonly string[] = ['comic', 'play', 'gallery']
+const STAGE_TABS: readonly string[] = ['production', 'comic', 'play', 'gallery']
 
 const text = (value: unknown): string | undefined => (typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined)
 const chapterId = (value: unknown): string | undefined => (typeof value === 'string' && /^ch\d+$/.test(value) ? value : undefined)
@@ -67,32 +67,47 @@ function describe(tool: string, args: Record<string, unknown>): Described {
     case 'novel_init': return { icon: 'book', title: ['创建小说项目', 'Create project'], summary: join(text(args.title)), target: { view: 'home' } }
     case 'novel_read': {
       const what = text(args.what) ?? ''
-      const view: StudioView = what === 'chapter' ? 'read' : what === 'outline' || what === 'threads' ? 'outline' : what === 'character' || what === 'world' || what === 'style' ? 'bible' : 'write'
+      const view: StudioView = what === 'chapter' ? 'read' : what === 'outline' || what === 'threads' ? 'outline' : what === 'character' ? 'cast' : what === 'world' || what === 'style' ? 'bible' : 'write'
       return { icon: 'eye', title: ['查阅', 'Read'], summary: join(what, text(args.ref) ?? where), target: withChapter(view) }
     }
     case 'novel_search': return { icon: 'search', title: ['检索', 'Search'], summary: join(short(text(args.query))), target: { view: 'home' } }
     case 'novel_mode': return { icon: 'zap', title: ['切换工作模式', 'Switch mode'], summary: join(text(args.mode)), target: { view: 'home' } }
     case 'novel_export': return { icon: 'download', title: ['导出', 'Export'], summary: join(text(args.format)), target: { view: 'home' } }
-    case 'novel_bible': return { icon: 'users', title: ['设定', 'Bible'], summary: join(text(args.action), text(args.kind), text(args.ref) ?? text((args.fields as { name?: unknown } | undefined)?.name)), target: { view: 'bible' } }
+    case 'novel_bible': return { icon: 'users', title: ['设定', 'Bible'], summary: join(text(args.action), text(args.kind), text(args.ref) ?? text((args.fields as { name?: unknown } | undefined)?.name)), target: { view: text(args.kind) === 'character' ? 'cast' : 'bible' } }
     case 'novel_outline': return { icon: 'tree', title: ['调整大纲', 'Outline'], summary: Array.isArray(args.ops) ? args.ops.map(op => text((op as { op?: unknown }).op)).filter(Boolean).slice(0, 4).join(', ') : '', target: { view: 'outline' } }
-    case 'novel_derive': return { icon: 'sparkles', title: ['架构模型 · 推演', 'Architect · derive'], summary: join(text(args.kind), where, short(text(args.direction))), target: withChapter('outline') }
+    case 'novel_derive': return { icon: 'sparkles', title: ['策划 · 推演', 'Planner · derive'], summary: join(text(args.kind), where, short(text(args.direction))), target: withChapter('outline') }
     case 'novel_write': return { icon: 'feather', title: ['写手 · 写作', 'Writer · draft'], summary: join(where ?? 'next', text(args.mode), short(text(args.brief))), target: withChapter('write') }
     case 'novel_revise': return { icon: 'pen', title: ['写手 · 修订', 'Writer · revise'], summary: join(text(args.scope), where, short(text(args.instruction))), target: text(args.scope) === 'book' ? { view: 'review' } : withChapter('write') }
     case 'novel_edit': return { icon: 'pen', title: ['总编 · 亲手改稿', 'Showrunner · exact edit'], summary: join(text(args.action), where, short(text(args.reason) ?? text(args.find), 40)), target: withChapter('write') }
     case 'novel_memory': return { icon: 'layers', title: ['总编 · 修正记忆', 'Showrunner · correct memory'], summary: join(where, Object.keys((args.fields as Record<string, unknown> | undefined) ?? {}).slice(0, 4).join(', ')), target: withChapter('write') }
-    case 'novel_digest': return { icon: 'layers', title: ['分析 · 收录记忆', 'Analyst · digest'], summary: join(Array.isArray(args.chapters) ? args.chapters.join(', ') : where), target: { view: 'home' } }
-    case 'novel_review': return { icon: 'checkCircle', title: ['分析 · 审校', 'Analyst · review'], summary: join(where, short(text(args.focus))), target: withChapter('write') }
-    case 'novel_import': return { icon: 'upload', title: ['导入稿件', 'Import manuscript'], summary: join(text(args.path)), target: { view: 'home' } }
+    case 'novel_digest': return { icon: 'layers', title: ['场记 · 收录记忆', 'Continuity · digest'], summary: join(Array.isArray(args.chapters) ? args.chapters.join(', ') : where), target: { view: 'home' } }
+    case 'novel_review': return { icon: 'checkCircle', title: ['场记 · 审校', 'Continuity · review'], summary: join(where, short(text(args.focus))), target: withChapter('write') }
+    case 'novel_import': return { icon: 'upload', title: ['场记 · 导入稿件', 'Continuity · import'], summary: join(text(args.path)), target: { view: 'home' } }
     case 'novel_illustrate': return { icon: 'image', title: ['配图', 'Illustrate'], summary: join(text(args.kind), where), target: { view: 'stage', tab: 'gallery' } }
     case 'novel_audio': {
       const action = text(args.action)
       // Voices are set on the character's card; everything else about the audio drama lives in the reader, listening.
-      const target: StudioTarget = action === 'design_voice' || action === 'set_voice' || action === 'voices' ? { view: 'bible' } : { ...withChapter('read'), mode: 'listen' }
+      const target: StudioTarget = action === 'design_voice' || action === 'set_voice' || action === 'voices' ? { view: 'cast' } : { ...withChapter('read'), mode: 'listen' }
       return { icon: 'headphones', title: ['有声剧', 'Audio drama'], summary: join(action, where ?? text(args.character)), target }
     }
     case 'novel_share': return { icon: 'phone', title: ['手机阅读', 'Read on another device'], summary: join(text(args.action)), target: { view: 'read' } }
-    case 'novel_comic': return { icon: 'film', title: ['有声漫', 'Motion comic'], summary: join(text(args.action), where), target: { ...withChapter('stage'), tab: 'comic' } }
-    case 'novel_play': return { icon: 'gamepad', title: ['幕间', 'Interlude'], summary: join(text(args.action), short(text(args.situation) ?? text(args.text))), target: { view: 'stage', tab: 'play' } }
+    case 'novel_comic': return { icon: 'film', title: ['导演 · 有声漫', 'Director · motion comic'], summary: join(text(args.action), where), target: { ...withChapter('stage'), tab: 'comic' } }
+    case 'novel_video': return { icon: 'film', title: ['后期 · 成片', 'Post-production · video'], summary: join(text(args.action), where, short(text(args.direction))), target: { ...withChapter('stage'), tab: 'comic' } }
+    case 'novel_batch': {
+      const what = text(args.what)
+      const steps = Array.isArray(args.steps) ? args.steps.join('、') : text(args.steps)
+      const title: [string, string] = what === 'stage' ? ['批量 · 制作', 'Batch · stage'] : what === 'text' ? ['批量 · 写作与整理', 'Batch · text'] : ['批量 · 绘制', 'Batch · pictures']
+      // Where the batch can be followed step by step.
+      const target: StudioTarget = what === 'stage' ? { view: 'stage', tab: 'production' } : what === 'text' ? { view: 'write' } : { view: 'stage', tab: 'gallery' }
+      return { icon: 'layers', title, summary: join(text(args.action) === 'status' ? 'status' : undefined, steps, Array.isArray(args.chapters) ? args.chapters.join(', ') : text(args.chapters), typeof args.count === 'number' ? String(args.count) : undefined), target }
+    }
+    case 'novel_crew': {
+      const role = text(args.role)
+      const names: Record<string, [string, string]> = { analyst: ['场记', 'Continuity'], architect: ['策划', 'Planner'], director: ['导演', 'Director'], producer: ['后期', 'Post-production'] }
+      const name = role !== undefined ? names[role] : undefined
+      return { icon: 'users', title: name !== undefined ? [`班底 · 交给${name[0]}`, `Crew · ${name[1]}`] : ['班底', 'Crew'], summary: join(text(args.action) === 'list' ? 'list' : undefined, short(text(args.task), 80)), target: { view: 'home' } }
+    }
+    case 'novel_play': return { icon: 'gamepad', title: ['导演 · 幕间', 'Director · interlude'], summary: join(text(args.action), short(text(args.situation) ?? text(args.text))), target: { view: 'stage', tab: 'play' } }
     case 'novel_settings': {
       const action = text(args.action)
       return { icon: action === 'usage' ? 'clock' : 'settings', title: action === 'book' ? ['作品信息', 'Book info'] : action === 'usage' ? ['用量与成本', 'Usage and cost'] : ['工坊设置', 'Studio settings'], summary: join(action === 'usage' ? text(args.range) : action, text(args.service), Array.isArray(args.parts) ? args.parts.join(', ') : undefined), target: { view: action === 'book' ? 'home' : action === 'usage' ? 'usage' : 'settings' } }
@@ -114,7 +129,7 @@ function describe(tool: string, args: Record<string, unknown>): Described {
     case 'novel_manage': {
       const action = text(args.action) ?? ''
       const target: StudioTarget = action === 'edit_line' ? { ...withChapter('read'), mode: 'listen' }
-        : action === 'audition' ? { view: 'bible' }
+        : action === 'audition' ? { view: 'cast' }
         : action === 'edit_panel' ? { ...withChapter('stage'), tab: 'comic' }
           : action.endsWith('_image') || action === 'list_images' ? { view: 'stage', tab: 'gallery' }
             : action.endsWith('_interlude') ? { view: 'stage', tab: 'play' }

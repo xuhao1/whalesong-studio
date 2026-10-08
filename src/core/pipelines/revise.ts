@@ -12,7 +12,8 @@
 import type { Proposal } from '../../shared/types'
 import { clip, clipTail, countWords, fuzzyFind, newId } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
-import { asArray, asRecord, asText, completeJson } from '../llm'
+import { asArray, asRecord, asText } from '../llm'
+import { assign } from '../crew'
 import type { LocatedChapter } from '../project'
 import { ProjectError } from '../project'
 import { architectSystem, reviseChapterSystem, reviseChapterTask, reviseSpanSystem, reviseSpanTask, triageTask } from '../prompts'
@@ -215,6 +216,8 @@ export interface ReviseBookParams {
   /** Apply every rewrite immediately. Default: proposals for review. */
   apply?: boolean
   concurrency?: number
+  /** The planner may also say what the bible should read otherwise; each such change waits as a suggestion. */
+  bible?: boolean
 }
 
 export interface ReviseBookResult {
@@ -222,6 +225,8 @@ export interface ReviseBookResult {
   note?: string
   /** Chapters triage judged untouched by the instruction. */
   untouched: number
+  /** Changes to the bible the planner proposed; they wait among the suggestions. */
+  bible?: { name: string; field: string }[]
   results: (Pick<ReviseResult, 'chapterId' | 'title' | 'index' | 'applied' | 'proposalId' | 'wordsBefore' | 'wordsAfter'> & { reason: string })[]
   failed: { chapterId: string; error: string }[]
 }
@@ -235,6 +240,7 @@ export async function reviseBook(core: NovelCore, runtime: ProjectRuntime, param
 
   let targets: { id: string; reason: string }[]
   let note: string | undefined
+  let bible: { name: string; field: string }[] = []
   if (params.chapters !== undefined && params.chapters.length > 0) {
     targets = []
     for (const ref of params.chapters) {
@@ -249,16 +255,18 @@ export async function reviseBook(core: NovelCore, runtime: ProjectRuntime, param
       const text = memory?.summary ?? clip(await project.chapterText(info.id), 300)
       lines.push(`${info.index}. ${info.title}\n${text}`)
     }
-    const route = await core.route('architect', runtime, task)
-    const { value } = await completeJson(core.llm, {
-      route,
+    const { value } = await assign(core, runtime, task, {
+      role: 'architect',
+      label: L(lang, '全书修订 · 划定范围', 'Book-wide revision · scope'),
+      tool: 'submit_scope',
+      what: L(lang, '哪些章节要改、各自怎么改', 'which chapters change, and how each of them does'),
       system: architectSystem(lang),
-      prompt: triageTask({ lang, language: manifest.language, title: manifest.title, instruction: params.instruction, chapters: lines.join('\n\n') }),
+      prompt: triageTask({ lang, language: manifest.language, title: manifest.title, instruction: params.instruction, chapters: lines.join('\n\n'), ...(params.bible === true ? { bible: true } : {}) }),
       temperature: 0.2,
-      ...(task.signal !== undefined ? { signal: task.signal } : {}),
       validate: raw => asRecord(raw),
     })
     note = asText(value.note)
+    if (params.bible === true) bible = await proposeBibleEdits(runtime, asArray(value.bible), lang)
     targets = []
     for (const raw of asArray(value.chapters)) {
       const item = asRecord(raw)
@@ -274,7 +282,7 @@ export async function reviseBook(core: NovelCore, runtime: ProjectRuntime, param
   const failed: ReviseBookResult['failed'] = []
   let done = 0
   task.job?.progress(0, targets.length)
-  await mapLimit(targets, params.concurrency ?? 2, async (target) => {
+  await mapLimit(targets, params.concurrency ?? core.parallel('text'), async (target) => {
     try {
       const instruction = target.reason === params.instruction ? params.instruction : `${params.instruction}\n\n${L(lang, '具体到本章', 'For this chapter specifically')}${lang === 'zh' ? '：' : ': '}${target.reason}`
       // Per-chapter streams would interleave in one job buffer, so the batch reports progress only.
@@ -299,7 +307,111 @@ export async function reviseBook(core: NovelCore, runtime: ProjectRuntime, param
   }, task.signal)
   results.sort((left, right) => left.index - right.index)
   task.job?.result({ batchId })
-  return { batchId, ...(note !== undefined ? { note } : {}), untouched: infos.length - targets.length, results, failed }
+  return { batchId, ...(note !== undefined ? { note } : {}), untouched: infos.length - targets.length, ...(bible.length > 0 ? { bible } : {}), results, failed }
+}
+
+const CHARACTER_FIELDS = ['tagline', 'appearance', 'personality', 'background', 'motivation', 'flaw', 'arc', 'voice', 'age', 'gender']
+const WORLD_FIELDS = ['summary', 'body']
+
+/**
+ * File what the planner says the bible should read otherwise as suggestions:
+ * the bible is the author's, and a change to it is theirs to accept.
+ */
+async function proposeBibleEdits(runtime: ProjectRuntime, raw: unknown[], lang: 'zh' | 'en'): Promise<{ name: string; field: string }[]> {
+  const { project } = runtime
+  const filed: { name: string; field: string }[] = []
+  const suggestions: Parameters<typeof project.addSuggestions>[0] = []
+  for (const entry of raw) {
+    const item = asRecord(entry)
+    const kind = asText(item.kind)
+    const name = asText(item.name)
+    const field = asText(item.field)
+    const value = asText(item.value)
+    if (name === undefined || field === undefined || value === undefined) continue
+    const reason = asText(item.reason)
+    if (kind === 'world') {
+      const found = await project.findWorld(name)
+      if (found === undefined || !WORLD_FIELDS.includes(field)) continue
+      suggestions.push({ kind: 'bible-edit', title: L(lang, `修改设定：${found.name} · ${field}`, `Change the bible: ${found.name} · ${field}`), detail: `${reason !== undefined ? `${reason}\n` : ''}→ ${value}`, payload: { target: 'world', id: found.id, name: found.name, field, value } })
+      filed.push({ name: found.name, field })
+    } else {
+      const card = await project.findCharacter(name)
+      if (card === undefined || !CHARACTER_FIELDS.includes(field)) continue
+      suggestions.push({ kind: 'bible-edit', title: L(lang, `修改人物卡：${card.name} · ${field}`, `Change the card: ${card.name} · ${field}`), detail: `${reason !== undefined ? `${reason}\n` : ''}→ ${value}`, payload: { target: 'character', id: card.id, name: card.name, field, value } })
+      filed.push({ name: card.name, field })
+    }
+  }
+  await project.addSuggestions(suggestions)
+  return filed
+}
+
+// ───────────────────────────── fixing what a review found ─────────────────────────────
+
+export interface FixIssueParams {
+  chapter: string
+  /** Id of the issue in the chapter's review. */
+  issue: string
+  /** What the author wants done about it, in their words. */
+  note?: string
+  /**
+   * `passage`: the place the issue quotes (the whole chapter where it quotes none).
+   * `book`: wherever the problem reaches — the planner traces it through the chapters and the bible.
+   */
+  scope: 'passage' | 'book'
+}
+
+export interface FixIssueResult {
+  scope: 'passage' | 'chapter' | 'book'
+  passage?: ReviseResult
+  book?: ReviseBookResult
+}
+
+const ISSUE_TYPE_ZH: Record<string, string> = { continuity: '连贯', character: '人物', world: '世界观', timeline: '时间线', style: '文风', pacing: '节奏', logic: '逻辑', language: '语言' }
+const SEVERITY_ZH: Record<string, string> = { high: '严重', medium: '中等', low: '轻微', critical: '严重', major: '重要', minor: '轻微' }
+
+/** What a review found, as an instruction to whoever mends it. */
+export function issueInstruction(lang: 'zh' | 'en', chapter: { index: number; title: string }, issue: { type: string; severity: string; quote?: string; explanation: string; suggestion?: string }, note: string | undefined, wide: boolean): string {
+  const said = note !== undefined && note.trim().length > 0 ? note.trim() : undefined
+  return lang === 'zh'
+    ? [
+        `审校在第 ${chapter.index} 章《${chapter.title}》发现一个问题（${ISSUE_TYPE_ZH[issue.type] ?? issue.type}，${SEVERITY_ZH[issue.severity] ?? issue.severity}）：${issue.explanation}`,
+        issue.quote !== undefined ? `原文："${issue.quote}"` : undefined,
+        issue.suggestion !== undefined ? `审校的建议：${issue.suggestion}` : undefined,
+        said !== undefined ? `作者对怎么改的要求（以此为准）：${said}` : undefined,
+        wide ? `请把这个问题在全书里的影响查清楚：除了第 ${chapter.index} 章本身，还有哪些章节写到了与它相关的事实、因果或人物表现，需要一起改才能前后一致；与此无关的内容保持原样。` : '修正这个问题，别的不要动。',
+      ].filter(Boolean).join('\n')
+    : [
+        `A review found a problem in chapter ${chapter.index}, "${chapter.title}" (${issue.type}, ${issue.severity}): ${issue.explanation}`,
+        issue.quote !== undefined ? `The text: "${issue.quote}"` : undefined,
+        issue.suggestion !== undefined ? `The review suggests: ${issue.suggestion}` : undefined,
+        said !== undefined ? `What the author wants done about it (this decides): ${said}` : undefined,
+        wide ? `Trace this problem through the whole book: besides chapter ${chapter.index} itself, which chapters state facts, causes or behaviour that depend on it and have to change with it for the book to agree with itself; leave everything else as it is.` : 'Mend this problem and change nothing else.',
+      ].filter(Boolean).join('\n')
+}
+
+/**
+ * Mend what a review found: where it was found, or wherever it reaches.
+ * Every change comes back as a proposal (and, for the bible, a suggestion).
+ */
+export async function fixIssue(core: NovelCore, runtime: ProjectRuntime, params: FixIssueParams, task: TaskContext): Promise<FixIssueResult> {
+  const { project } = runtime
+  const chapter = await project.findChapter(params.chapter)
+  if (chapter === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${params.chapter}"`)
+  const review = await project.review(chapter.plan.id)
+  const issue = review?.issues.find(candidate => candidate.id === params.issue)
+  if (issue === undefined) throw new ProjectError('novel/not-found', `chapter ${chapter.index} has no review issue "${params.issue}" — run the review again, or pass the instruction itself to a revision`)
+  const lang = promptLanguage((await project.manifest()).language)
+  const where = { index: chapter.index, title: chapter.plan.title }
+  if (params.scope === 'book') {
+    const book = await reviseBook(core, runtime, { instruction: issueInstruction(lang, where, issue, params.note, true), bible: true }, task)
+    return { scope: 'book', book }
+  }
+  const instruction = issueInstruction(lang, where, issue, params.note, false)
+  const text = await project.chapterText(chapter.plan.id)
+  const range = issue.quote !== undefined ? fuzzyFind(text, issue.quote.trim()) : undefined
+  // A problem that quotes nothing — pacing, a missing beat — or whose quote has since been rewritten is the chapter's.
+  if (range === undefined) return { scope: 'chapter', passage: await reviseChapter(core, runtime, { chapter: chapter.plan.id, instruction }, task) }
+  return { scope: 'passage', passage: await reviseSpan(core, runtime, { chapter: chapter.plan.id, start: range.start, end: range.end, quote: text.slice(range.start, range.end), instruction }, task) }
 }
 
 /** Apply a pending proposal to the manuscript. */

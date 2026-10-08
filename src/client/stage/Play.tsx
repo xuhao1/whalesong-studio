@@ -320,11 +320,13 @@ function PlayRoom({ id, fresh, onExit }: { id: string; fresh: boolean; onExit: (
 
   const nameOf = (ref: string): string => project.characters.find(card => card.id === ref)?.name ?? ref
   const playerName = session.player !== undefined ? nameOf(session.player) : undefined
-  const novelize = (): Promise<unknown> => run(async () => {
-    controller.toast('info', t('写手正在把这段幕间写成正文…', 'The writer is turning this interlude into prose…'))
-    const info = await controller.run('play.novelize', { root, id: session.id })
+  /** @param as - `line`: what was played becomes another way the story goes — a line of the plot of its own, leaving where the scene branched off. */
+  const novelize = (as: 'chapter' | 'line' = 'chapter'): Promise<unknown> => run(async () => {
+    controller.toast('info', as === 'line' ? t('写手正在把这段幕间写成一条新剧情线的第一章…', 'The writer is turning this interlude into the first chapter of a new line of the plot…') : t('写手正在把这段幕间写成正文…', 'The writer is turning this interlude into prose…'))
+    const info = await controller.run('play.novelize', { root, id: session.id, ...(as === 'line' ? { as: 'line' as const } : {}) })
     const chapterId = (info.result?.output as { chapterId?: string } | undefined)?.chapterId
     setSession(await controller.api.call('play.get', { root, id: session.id }))
+    await controller.refreshProject()
     if (chapterId !== undefined) controller.setView('write', chapterId)
   })
   const settle = (outcome: 'open' | 'discarded' | 'side-story'): void => {
@@ -348,7 +350,8 @@ function PlayRoom({ id, fresh, onExit }: { id: string; fresh: boolean; onExit: (
           { label: t('画出当前场景', 'Paint this scene'), icon: 'image', onSelect: () => { paintScene(true) } },
           { label: t('回退一步', 'Take back the last move'), icon: 'undo', disabled: session.turns.length <= 1 || thinking, onSelect: () => { void run(async () => { const next = await controller.api.call('play.rewind', { root, id: session.id }); setSession(next); const last = Math.max(0, next.turns.length - 1); setTurnAt(last); setStepAt(Math.max(0, stepsOf(next.turns[last]).length - 1)); setTyped(Number.MAX_SAFE_INTEGER) }) } },
           'separator',
-          { label: t('写成正文的一章', 'Turn into a chapter'), icon: 'feather', disabled: session.outcome === 'novelized', onSelect: novelize },
+          { label: t('写成正文的一章', 'Turn into a chapter'), icon: 'feather', disabled: session.outcome === 'novelized', onSelect: () => { void novelize() } },
+          { label: t('开成一条剧情线', 'Open it as a line of the plot'), icon: 'branch', disabled: session.outcome === 'novelized', onSelect: () => { void novelize('line') } },
           { label: t('留作番外', 'Keep as a side story'), icon: 'heart', onSelect: () => { settle('side-story') } },
           { label: t('作废（不算数）', 'Discard (never happened)'), icon: 'x', onSelect: () => { settle('discarded') } },
         ]} />
@@ -373,7 +376,8 @@ function PlayRoom({ id, fresh, onExit }: { id: string; fresh: boolean; onExit: (
           <div className="nv-play-end nv-card">
             <strong>{session.outcome === 'novelized' ? t('这段幕间已经写成正文。', 'This interlude has been turned into a chapter.') : t('这一场落幕了。', 'The scene has come to its end.')}</strong>
             <div className="nv-row-wrap">
-              {session.outcome !== 'novelized' ? <Button variant="primary" icon="feather" busy={busy} onClick={novelize}>{t('让写手写成一章', 'Turn it into a chapter')}</Button> : session.novelizedChapter !== undefined ? <Button icon="pen" onClick={() => { controller.setView('write', session.novelizedChapter) }}>{t('打开那一章', 'Open the chapter')}</Button> : null}
+              {session.outcome !== 'novelized' ? <Button variant="primary" icon="feather" busy={busy} onClick={() => novelize()} title={t('写成一章，接在它分出的那一章后面，成为主线的一部分', 'Written as a chapter after the one it branched off, as part of the main line')}>{t('让写手写成一章', 'Turn it into a chapter')}</Button> : session.novelizedChapter !== undefined ? <Button icon="pen" onClick={() => { controller.setView('write', session.novelizedChapter) }}>{t('打开那一章', 'Open the chapter')}</Button> : null}
+              {session.outcome !== 'novelized' ? <Button icon="branch" busy={busy} onClick={() => novelize('line')} title={t('不动主线：把演出来的走向开成一条新的剧情线，这一场是它的第一章。之后可以接着推演、并回主线，或者设为主线。', 'The main line stays as it is: what was played becomes a new line of the plot, with this scene as its first chapter. It can be gone on with, joined to the main line, or made the main line.')}>{t('开成一条剧情线', 'Open it as a line of the plot')}</Button> : null}
               {session.outcome !== 'novelized' ? <Button icon="heart" busy={busy} onClick={() => { settle('side-story') }}>{t('留作番外', 'Keep as a side story')}</Button> : null}
               {session.outcome !== 'novelized' ? <Button variant="ghost" busy={busy} onClick={() => { settle('discarded') }}>{t('作废', 'Discard')}</Button> : null}
               {turn?.ended !== true && session.outcome !== 'novelized' && session.outcome !== 'open' ? <Button variant="ghost" busy={busy} onClick={() => { settle('open') }}>{t('接着演', 'Keep playing')}</Button> : null}

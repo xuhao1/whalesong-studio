@@ -2,22 +2,35 @@
 /**
  * Structural edits of the outline as a small operation vocabulary, shared by
  * the `novel_outline` tool and the Studio's outline view so both go through
- * the same validation.
+ * the same validation. The lines of the plot are edited with the same
+ * vocabulary: opened, renamed, joined to another, made the main one, removed.
  */
-import type { Beat, ChapterPlan, ChapterStatus, PlotThread, ThreadKind, ThreadStatus } from '../../shared/types'
+import { MAIN_LINE, type Beat, type ChapterPlan, type ChapterStatus, type PlotThread, type ThreadKind, type ThreadStatus } from '../../shared/types'
 import { newId, sameName } from '../../shared/text'
 import type { ProjectRuntime } from '../core'
-import { ProjectError } from '../project'
+import { ProjectError, type ChapterPlace } from '../project'
+import { L, promptLanguage } from '../render'
+import { foldIn } from './digest'
 
 export type OutlineOp =
   | { op: 'add-volume'; title: string; synopsis?: string; goal?: string; before?: string }
   | { op: 'update-volume'; volume: string; title?: string; synopsis?: string; goal?: string }
   | { op: 'move-volume'; volume: string; before?: string }
   | { op: 'remove-volume'; volume: string }
-  | ({ op: 'add-chapter'; title: string; volume?: string; before?: string; after?: string } & ChapterFields)
+  | ({ op: 'add-chapter'; title: string; volume?: string; before?: string; after?: string; /** The line it is added to, when that is not the main one. */ line?: string } & ChapterFields)
   | ({ op: 'update-chapter'; chapter: string; title?: string } & ChapterFields)
-  | { op: 'move-chapter'; chapter: string; volume?: string; before?: string; after?: string }
+  | { op: 'move-chapter'; chapter: string; volume?: string; before?: string; after?: string; line?: string }
   | { op: 'remove-chapter'; chapter: string }
+  /** Put back a chapter that was removed: where it stood, with its text. */
+  | { op: 'restore-chapter'; chapter: string }
+  /** Open a line of the plot: another way the story goes after `from` (from the first page, when left out). */
+  | { op: 'add-line'; title: string; from?: string; choice?: string; premise?: string }
+  /** Rename a line, say what sets it apart, put it aside (`shelved`), move where it leaves (`from`), or say where it arrives (`into`; null: nowhere). */
+  | { op: 'update-line'; line: string; title?: string; premise?: string; choice?: string; shelved?: boolean; from?: string | null; into?: string | null }
+  /** Make a line the main one; what the main line had in its place becomes a line. */
+  | { op: 'promote-line'; line: string }
+  /** Remove a line with its chapters (their text is snapshotted first). */
+  | { op: 'remove-line'; line: string }
   | { op: 'save-thread'; thread?: string; title?: string; kind?: ThreadKind; status?: ThreadStatus; description?: string }
   | { op: 'remove-thread'; thread: string }
 
@@ -35,6 +48,7 @@ export interface ChapterFields {
   /** Beat summaries, or full beat objects. */
   beats?: (string | Partial<Beat>)[]
   status?: ChapterStatus
+  /** A length recommended for the chapter; 0 takes the recommendation away, and whoever writes it judges. */
   targetWords?: number
   notes?: string
 }
@@ -75,8 +89,14 @@ export async function applyOutlineOps(runtime: ProjectRuntime, ops: OutlineOp[])
       if (!STATUSES.includes(fields.status)) throw new ProjectError('novel/invalid', `unknown chapter status "${fields.status}"`)
       patch.status = fields.status
     }
-    if (fields.targetWords !== undefined) patch.targetWords = Math.max(0, Math.round(fields.targetWords))
+    // Zero, or anything that is not a length, takes the recommendation away.
+    if (fields.targetWords !== undefined) (patch as Record<string, unknown>).targetWords = Number.isFinite(fields.targetWords) && fields.targetWords > 0 ? Math.round(fields.targetWords) : null
     return patch
+  }
+  const findLine = async (ref: string): Promise<string> => {
+    const line = await project.findLine(ref)
+    if (line === undefined) throw new ProjectError('novel/not-found', ref === MAIN_LINE ? 'the main line cannot be changed this way' : `no plot line matches "${ref}"`)
+    return line.id
   }
   const findVolume = async (ref: string): Promise<string> => {
     const outline = await project.outline()
@@ -138,12 +158,13 @@ export async function applyOutlineOps(runtime: ProjectRuntime, ops: OutlineOp[])
         }
         case 'add-chapter': {
           if (op.title.trim().length === 0) throw new ProjectError('novel/invalid', 'a chapter needs a title')
-          const where: { volume?: string; before?: string; after?: string } = {}
+          const where: ChapterPlace = {}
           if (op.volume !== undefined) where.volume = await findVolume(op.volume)
+          if (op.line !== undefined && op.line !== MAIN_LINE) where.line = await findLine(op.line)
           for (const side of ['before', 'after'] as const) {
             const ref = op[side]
             if (ref === undefined) continue
-            const anchor = await project.findChapter(ref)
+            const anchor = await project.findChapter(ref, where.line)
             if (anchor === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${ref}"`)
             where[side] = anchor.plan.id
           }
@@ -160,12 +181,13 @@ export async function applyOutlineOps(runtime: ProjectRuntime, ops: OutlineOp[])
           break
         }
         case 'move-chapter': {
-          const where: { volume?: string; before?: string; after?: string } = {}
+          const where: ChapterPlace = {}
           if (op.volume !== undefined) where.volume = await findVolume(op.volume)
+          if (op.line !== undefined && op.line !== MAIN_LINE) where.line = await findLine(op.line)
           for (const side of ['before', 'after'] as const) {
             const ref = op[side]
             if (ref === undefined) continue
-            const anchor = await project.findChapter(ref)
+            const anchor = await project.findChapter(ref, where.line)
             if (anchor === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${ref}"`)
             where[side] = anchor.plan.id
           }
@@ -180,7 +202,50 @@ export async function applyOutlineOps(runtime: ProjectRuntime, ops: OutlineOp[])
           const chapter = await project.findChapter(op.chapter)
           if (chapter === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${op.chapter}"`)
           await project.removeChapter(chapter.plan.id)
-          results.push({ op: op.op, ok: true, id: chapter.plan.id, message: `removed chapter "${chapter.plan.title}" (its text was snapshotted)` })
+          results.push({ op: op.op, ok: true, id: chapter.plan.id, message: `removed chapter "${chapter.plan.title}" (${chapter.plan.id}) — it is kept among the removed chapters and comes back with restore-chapter chapter="${chapter.plan.id}"` })
+          break
+        }
+        case 'restore-chapter': {
+          const removed = await project.removedChapters()
+          const wanted = op.chapter.trim()
+          const record = removed.find(candidate => candidate.plan.id === wanted) ?? removed.find(candidate => sameName(candidate.plan.title, wanted))
+          if (record === undefined) throw new ProjectError('novel/not-found', `no removed chapter matches "${op.chapter}"${removed.length > 0 ? ` — removed chapters: ${removed.map(candidate => `${candidate.plan.id} "${candidate.plan.title}"`).join(', ')}` : ' — nothing has been removed'}`)
+          const back = await project.restoreChapter(record.plan.id)
+          results.push({ op: op.op, ok: true, id: back.plan.id, message: `put chapter "${back.plan.title}" back at position ${back.index}${record.version !== undefined ? ', with its text' : ''}` })
+          break
+        }
+        case 'add-line': {
+          if (op.title.trim().length === 0) throw new ProjectError('novel/invalid', 'a line needs a name')
+          const line = await project.addLine({ title: op.title, ...(op.from !== undefined ? { from: op.from } : {}), ...(op.choice !== undefined ? { choice: op.choice } : {}), ...(op.premise !== undefined ? { premise: op.premise } : {}), origin: 'author' })
+          results.push({ op: op.op, ok: true, id: line.id, message: `opened the line "${line.title}" (${line.id})${line.from !== undefined ? ` after ${line.from}` : ''} — add chapters to it with add-chapter line="${line.id}", or have them derived` })
+          break
+        }
+        case 'update-line': {
+          const id = await findLine(op.line)
+          const line = await project.updateLine(id, {
+            ...(op.title !== undefined ? { title: op.title } : {}),
+            ...(op.premise !== undefined ? { premise: op.premise } : {}),
+            ...(op.choice !== undefined ? { choice: op.choice } : {}),
+            ...(op.shelved !== undefined ? { shelved: op.shelved } : {}),
+            ...(op.from !== undefined ? { from: op.from } : {}),
+            ...(op.into !== undefined ? { into: op.into } : {}),
+          })
+          results.push({ op: op.op, ok: true, id: line.id, message: `updated the line "${line.title}"${line.into !== undefined ? `; it arrives at ${line.into}` : ''}${line.shelved === true ? '; it is put aside' : ''}` })
+          break
+        }
+        case 'promote-line': {
+          const id = await findLine(op.line)
+          const lang = promptLanguage((await project.manifest()).language)
+          const done = await project.promoteLine(id, L(lang, '原主线', 'Former main line'))
+          // What happened on the line is now what happened in the book: its chapters' memories count for the bible.
+          await foldIn(runtime, done.promoted.chapters.map(chapter => chapter.id))
+          results.push({ op: op.op, ok: true, id, message: `"${done.promoted.title}" is the main line now${done.former.length > 0 ? `; what the main line had in its place is kept as ${done.former.map(line => `"${line.title}" (${line.chapters.length} chapters)`).join(', ')}` : ''}` })
+          break
+        }
+        case 'remove-line': {
+          const id = await findLine(op.line)
+          const done = await project.removeLine(id)
+          results.push({ op: op.op, ok: true, id, message: `removed the line "${done?.line.title ?? id}" with its ${done?.chapters ?? 0} chapters${done !== undefined && done.written > 0 ? ` (${done.written} had text, which was snapshotted)` : ''}` })
           break
         }
         case 'save-thread': {

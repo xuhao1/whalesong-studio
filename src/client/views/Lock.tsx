@@ -45,7 +45,7 @@ export function LockScreen() {
       <div className="nv-lock-card">
         <span className="nv-lock-icon"><Icon name="lock" size={28} /></span>
         <h2>{view?.title ?? t('一本加密的书', 'A sealed book')}</h2>
-        <p className="nv-muted">{t('这本书加了密：它的正文、设定、图片和音频在磁盘上都是密文。解锁之后才能读、写、听，也才对总编可见；锁上或退出 Harness 后回到这里。', 'This book is sealed: its text, bible, pictures and audio are ciphertext on disk. Only once unlocked can it be read, written and heard — or seen by the showrunner; locking it or quitting the Harness brings it back here.')}</p>
+        <p className="nv-muted">{t('这本书加了密：它的正文、设定、图片和音频在磁盘上都是密文。解锁之后才能读、写、听，也才对总编可见；锁上或退出 DSH 后回到这里。', 'This book is sealed: its text, bible, pictures and audio are ciphertext on disk. Only once unlocked can it be read, written and heard — or seen by the showrunner; locking it or quitting the Harness brings it back here.')}</p>
         {view?.deviceOn === true && view.device.available ? (
           <Button variant="primary" icon="fingerprint" busy={busy === 'device'} disabled={busy !== undefined} pending={t(`请在系统弹出的窗口里用${methodName(view, t)}确认…`, `Confirm with ${methodName(view, t)} in the system prompt…`)} onClick={() => { open({ device: true }) }}>{t(`用${methodName(view, t)}解锁`, `Unlock with ${methodName(view, t)}`)}</Button>
         ) : null}
@@ -54,6 +54,7 @@ export function LockScreen() {
           <Button variant={view?.deviceOn === true && view.device.available ? 'outline' : 'primary'} icon="unlock" busy={busy === 'password'} disabled={password.length === 0 || busy !== undefined} pending={t('正在解锁…', 'Unlocking…')} onClick={() => { open({ password }) }}>{t('解锁', 'Unlock')}</Button>
         </form>
         {wrong !== undefined ? <p className="nv-note is-warn">{wrong}</p> : null}
+        {view?.conversations !== undefined && view.conversations.sealed + view.conversations.waiting > 0 ? <p className="nv-muted nv-small">{t(`关于这本书的 ${view.conversations.sealed} 段对话也加密收着，解锁后会放回 DSH 的会话列表（没出现的话，重新打开一下 DSH）。`, `${view.conversations.sealed} conversations about this book are sealed with it; unlocking puts them back in DSH's list of sessions (reopen DSH should they not appear).`)}{view.conversations.waiting > 0 ? t(` 还有 ${view.conversations.waiting} 段正开着，关闭后才会加密。`, ` ${view.conversations.waiting} more are in use and are sealed once they are let go.`) : ''}</p> : null}
         {view === undefined ? <Spinner size={12} /> : view.deviceOn && !view.device.available ? <p className="nv-muted nv-small">{t('这本书在这台电脑上设过系统解锁，但现在系统那边不可用——用密码打开。', 'This book was set to open with this computer\'s unlock, which is not available right now — use the password.')}</p> : null}
         <div className="nv-row-wrap">
           <Button variant="ghost" size="sm" icon="book" onClick={() => { controller.closeProject() }}>{t('回书架', 'Back to the shelf')}</Button>
@@ -95,7 +96,7 @@ export function SealDialog({ onClose }: { onClose: () => void }) {
   })
   return (
     <Modal title={t('加密与上锁', 'Seal and lock')} onClose={onClose} wide>
-      {view === undefined ? <div className="nv-center">{loaded.error !== undefined ? <p className="nv-muted">{t('这个版本的工坊服务还不支持加密——重启一次 Harness 就有了。', 'This Studio service cannot seal books yet — restart the Harness once.')}</p> : <Spinner />}</div> : job !== undefined ? (
+      {view === undefined ? <div className="nv-center">{loaded.error !== undefined ? <p className="nv-muted">{t('这个版本的工坊服务还不支持加密——重启一次 DSH 就有了。', 'This Studio service cannot seal books yet — restart the Harness once.')}</p> : <Spinner />}</div> : job !== undefined ? (
         <div className="nv-seal-working">
           <Spinner size={14} />
           <strong>{job.title === 'unseal' ? t('正在解除加密…', 'Unsealing…') : t('正在加密每一个文件…', 'Sealing every file…')}</strong>
@@ -106,9 +107,9 @@ export function SealDialog({ onClose }: { onClose: () => void }) {
         <div className="nv-seal">
           <p>{t(`给《${project.manifest.title}》加密后，这本书的每一个文件——正文、设定、大纲、记忆、图片、音频、导出——在磁盘上都只以密文存在，连文件名也加密。别人打开这个文件夹、云盘同步、备份里看到的都是密文。`, `Once "${project.manifest.title}" is sealed, every file of it — text, bible, outline, memory, pictures, audio, exports — exists on disk as ciphertext only, file names included. Whoever opens the folder, a sync service, a backup: all they see is ciphertext.`)}</p>
           <ul className="nv-share-facts">
-            <li>{t('每次启动 Harness 后要先解锁才能读写；锁着的时候，总编也看不到它。', 'After each start of the Harness the book has to be unlocked before it can be read or written; while it is locked the showrunner cannot see it either.')}</li>
+            <li>{t('每次启动 DSH 后要先解锁才能读写；锁着的时候，总编也看不到它。', 'After each start of the Harness the book has to be unlocked before it can be read or written; while it is locked the showrunner cannot see it either.')}</li>
             <li>{t('密码是最后的钥匙：忘了它，而这台电脑的系统解锁也不在了，这本书就再也打不开。请记在别处。', 'The password is the last key: lose it, and this computer\'s unlock with it, and the book cannot be opened again. Keep it somewhere else too.')}</li>
-            <li>{t('加密管的是这本书的文件。不在范围内的：加密前已经留在磁盘空闲区、备份或云盘历史版本里的明文；发给模型服务的内容（照常会离开这台电脑）；以及你和总编的对话记录——它读过、引用过的正文片段留在 Harness 的会话记录里，那是明文。', 'The seal covers the book\'s files. Outside it: plain copies already lying in free disk space, in backups or in a sync service\'s history; what is sent to model services (which leaves this computer as before); and your conversations with the showrunner — passages it read or quoted stay in the Harness\'s session records, in the clear.')}</li>
+            <li>{t('加密管的是这本书的文件。不在范围内的：加密前已经留在磁盘空闲区、备份或云盘历史版本里的明文；发给模型服务的内容（照常会离开这台电脑）；以及你和总编的对话记录——它读过、引用过的正文片段留在 DSH 的会话记录里，那是明文。', 'The seal covers the book\'s files. Outside it: plain copies already lying in free disk space, in backups or in a sync service\'s history; what is sent to model services (which leaves this computer as before); and your conversations with the showrunner — passages it read or quoted stay in the Harness\'s session records, in the clear.')}</li>
           </ul>
           <div className="nv-form-grid">
             <Field label={t('密码', 'Password')} hint={t('至少 4 个字符；越长越好，可以是一句话', 'At least 4 characters; longer is better — a phrase works')}>
@@ -139,7 +140,13 @@ export function SealDialog({ onClose }: { onClose: () => void }) {
             <span className="nv-spacer" />
             <Button variant="primary" icon="lock" pending={t('正在上锁…', 'Locking…')} onClick={() => controller.guard(async () => { onClose(); await controller.lockBook() })}>{t('现在锁上', 'Lock now')}</Button>
           </div>
-          <p className="nv-muted nv-small">{t('锁上之后，这台电脑上要重新解锁才能读写，总编也看不到它；退出 Harness 也会自动锁上。已经放行的手机等设备凭各自的授权仍然能读（读的时候电脑这边依旧是锁着的）——要让它们也读不到，在下面收回授权，或者停止分享这本书。', 'Once locked, it has to be unlocked again on this computer to be read or written, and the showrunner cannot see it; quitting the Harness locks it too. Devices that were let in can still read it by their own grant (it stays locked on this computer while they do) — to shut them out as well, withdraw their grant below or stop sharing the book.')}</p>
+          {view.conversations !== undefined ? (
+            <p className="nv-note">
+              {t(`和这本书有关的对话也跟着上锁：锁上时，DSH 里关于它的对话记录（总编的对话、各个角色的运行记录——里面有正文和设定）会用这本书的钥匙加密收起来，从 DSH 的会话列表里消失；解锁后原样放回，可以接着聊。现在有 ${view.conversations.open} 段对话。`, `The conversations about this book are locked with it: when it is locked, what DSH keeps of them (the showrunner's conversations and the roles' runs, which hold its text and its bible) is encrypted with the book's key and taken out of DSH's list of sessions; unlocked, they are put back as they were and can be gone on with. There are ${view.conversations.open} right now.`)}
+              {view.conversations.waiting > 0 ? <span className="nv-muted"> {t(`其中 ${view.conversations.waiting} 段正开着，要等它关闭（最晚下次启动 DSH）才能加密。`, `${view.conversations.waiting} of them are in use and are sealed once they are let go — at the latest the next time DSH starts.`)}</span> : null}
+            </p>
+          ) : null}
+          <p className="nv-muted nv-small">{t('锁上之后，这台电脑上要重新解锁才能读写，总编也看不到它；退出 DSH 也会自动锁上。已经放行的手机等设备凭各自的授权仍然能读（读的时候电脑这边依旧是锁着的）——要让它们也读不到，在下面收回授权，或者停止分享这本书。', 'Once locked, it has to be unlocked again on this computer to be read or written, and the showrunner cannot see it; quitting the Harness locks it too. Devices that were let in can still read it by their own grant (it stays locked on this computer while they do) — to shut them out as well, withdraw their grant below or stop sharing the book.')}</p>
           <h4>{t('这本书可以这样打开', 'This book opens with')}</h4>
           <ul className="nv-lock-ways">
             {view.ways.map((way, index) => (

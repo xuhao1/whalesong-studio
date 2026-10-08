@@ -7,6 +7,8 @@
  * Markdown for everything a human writes, JSON for structure and machine memory.
  */
 
+import type { Tie } from './ties'
+
 /** ISO-8601 timestamp string. */
 export type Timestamp = string
 
@@ -31,7 +33,16 @@ export interface ProjectManifest {
   themes?: string[]
   /** Planned total length, in words/characters of the manuscript language. */
   targetWords?: number
-  /** Typical chapter length the writer aims for. */
+  /**
+   * A length the book recommends for a chapter that names none of its own.
+   * Absent: whoever writes the chapter judges its length from what it has to do.
+   */
+  chapterBudget?: number
+  /**
+   * Where `chapterBudget` used to live. Every book was stamped with 3000
+   * (2500 outside Chinese) here whether its author wanted that or not, so those
+   * two figures are no longer read as a wish; see {@link chapterBudgetOf}.
+   */
   chapterWords?: number
   /** Id of the style profile used when a task names none. */
   activeStyle?: string
@@ -48,8 +59,10 @@ export interface ProjectManifest {
   cover?: string
   /** How finely this book's motion comics are cut into panels. */
   storyboard?: StoryboardSettings
-  /** Per-project overrides of the global model routing. */
+  /** This book's own models: a role named here runs on it for this book, whatever the Studio-wide settings say. */
   models?: Partial<TextModelRouting>
+  /** This book's own way of working its crew: a role named here is set so for this book, whatever the Studio-wide settings say. */
+  crew?: CrewSettings
   /** Free-form notes that always travel with the project digest. */
   notes?: string
   createdAt: Timestamp
@@ -179,12 +192,31 @@ export interface CharacterCard {
   /** Chapter id of the first and latest on-page appearance (maintained by digest). */
   firstAppearance?: string
   lastAppearance?: string
+  /** Their life on the page in a paragraph: where they come on, what they go through, how they leave — written from the chapter digests, and the author's to edit. */
+  life?: string
   visual?: CharacterVisual
   voiceProfile?: CharacterVoiceProfile
   /** Free-form Markdown body below the front matter. */
   notes?: string
   updatedAt?: Timestamp
 }
+
+/**
+ * Something that happens to a place, a house or a thing at a chapter of the
+ * story: it comes to be, it changes — hands, name, shape —, it falls into
+ * decline, it is no more. What a place's page tells as its course, and what
+ * decides whether it stands at a chapter the story is looked at.
+ */
+export interface WorldEvent {
+  /** The chapter it happens in. */
+  chapter: string
+  /** `begin`: built, founded, made, first there. `change`: another owner, name or shape. `decline`: left to ruin, fallen from what it was. `end`: destroyed, lost, dissolved. */
+  kind: 'begin' | 'change' | 'decline' | 'end'
+  /** What happened, in a few words. */
+  what: string
+}
+
+export const WORLD_EVENT_KINDS: readonly WorldEvent['kind'][] = ['begin', 'change', 'decline', 'end']
 
 export type WorldCategory =
   | 'setting' | 'location' | 'faction' | 'system' | 'item' | 'history' | 'culture' | 'rule' | 'term' | 'other'
@@ -196,17 +228,44 @@ export interface WorldEntry {
   category: WorldCategory
   /** 1 = core canon that always travels in context, 2 = normal, 3 = detail fetched on demand. */
   importance: 1 | 2 | 3
+  /**
+   * How much of the story the entry carries, when the author says: `core`,
+   * `major`, `minor`, or passed `once`. Left out, it is read off where the
+   * chapters name it (`shared/world.ts`). Not `importance`, which is about
+   * how the entry travels to a model.
+   */
+  weight?: 'core' | 'major' | 'minor' | 'once'
   summary?: string
   /** Ids of related entries. */
   related?: string[]
   tags?: string[]
-  /** Visual prompt for locations (backgrounds in comics and interludes). */
+  /** What a picture of it shows: a place (the background of comics and interludes), a thing (its shape, material, marks). */
   visualPrompt?: string
-  /** Project-relative path of the place's reference art; sent along when a scene is set there. */
+  /** Project-relative path of its design picture — a place's, a thing's; sent along when a scene is set there or shows it. */
   visualImage?: string
+  /**
+   * Where on that picture the marks of what stands in the place were put by
+   * the author: by `world:<id>` or `character:<id>`, as fractions of the
+   * picture's width and height. What is not here is laid out by itself (`shared/scene.ts`).
+   */
+  spots?: Record<string, { x: number; y: number }>
+  /** What happens to it over the story, chapter by chapter: built, changed, in decline, gone (`WorldEvent`). */
+  events?: WorldEvent[]
   /** Free-form Markdown body. */
   body?: string
   updatedAt?: Timestamp
+}
+
+/**
+ * What a look over the bible's entries found: the same thing written down more
+ * than once, and entries filed under the wrong kind. A proposal — nothing is
+ * changed until the author says which of it to go by.
+ */
+export interface WorldTidy {
+  same: { keep: { id: string; name: string }; others: { id: string; name: string }[]; why?: string }[]
+  kinds: { id: string; name: string; from: WorldCategory; to: WorldCategory; why?: string }[]
+  /** How many entries were looked over. */
+  entries: number
 }
 
 export type NarrativePov = 'first' | 'third-limited' | 'third-omniscient' | 'second' | 'multi'
@@ -276,6 +335,7 @@ export interface ChapterPlan {
   threads?: string[]
   beats?: Beat[]
   status: ChapterStatus
+  /** A length recommended for this chapter. Absent: the book's own recommendation, else whoever writes it judges. */
   targetWords?: number
   notes?: string
 }
@@ -307,10 +367,60 @@ export interface PlotThread {
   auto?: boolean
 }
 
+/** The chapter lengths every book used to be stamped with at creation, by language; nobody chose them. */
+const STAMPED_CHAPTER_WORDS = [3000, 2500]
+
+/**
+ * The length a book recommends for a chapter, when its author set one.
+ * A figure in the old place counts only when it is not one of the stamps.
+ */
+export function chapterBudgetOf(manifest: Pick<ProjectManifest, 'chapterBudget' | 'chapterWords'>): number | undefined {
+  const own = manifest.chapterBudget
+  if (typeof own === 'number' && own > 0) return Math.round(own)
+  const old = manifest.chapterWords
+  return typeof old === 'number' && old > 0 && !STAMPED_CHAPTER_WORDS.includes(old) ? Math.round(old) : undefined
+}
+
+/** How a line of the plot came about. */
+export type PlotLineOrigin = 'author' | 'planner' | 'interlude' | 'replaced' | 'main'
+
+/** The name the main line goes by wherever a line is named. */
+export const MAIN_LINE = 'main'
+
+/**
+ * A line of the plot beside the main one: another way the story goes from
+ * some chapter on — or the way it went before it was rewritten. The main line
+ * is the outline's volumes; other lines leave it (or each other) after a
+ * chapter and may arrive at one again, which makes the plot a graph.
+ */
+export interface PlotLine {
+  id: string
+  title: string
+  /** What sets this line apart, in a sentence or two. */
+  premise?: string
+  /** The chapter this line leaves after. Absent: it tells the story another way from the first page. */
+  from?: string
+  /** What is decided at the end of `from` to go this way — the words a reader who plays the story would choose. */
+  choice?: string
+  /** The chapters of this line, in order. */
+  chapters: ChapterPlan[]
+  /** The chapter, on another line, this one arrives at; from there the two are one story again. */
+  into?: string
+  origin: PlotLineOrigin
+  /** The interlude this line grew out of. */
+  play?: string
+  /** Put aside: kept and shown, not offered when the next chapter is chosen. */
+  shelved?: boolean
+  createdAt: Timestamp
+}
+
 export interface Outline {
   schema: 1
+  /** The main line, volume by volume. */
   volumes: Volume[]
   threads: PlotThread[]
+  /** The lines beside the main one; absent in a book that has only ever gone one way. */
+  lines?: PlotLine[]
 }
 
 // ───────────────────────────── manuscript & memory ─────────────────────────────
@@ -330,6 +440,19 @@ export interface ChapterInfo {
   digested: boolean
   /** Unresolved issues of the latest review; absent when the chapter was never reviewed. */
   openIssues?: number
+  /** The line the chapter belongs to, when it is not the main one. */
+  line?: string
+  /** The recommended length in force for the chapter — its own, else the book's — when there is one. */
+  budget?: number
+}
+
+/** A line of the plot as a screen needs it: its own chapters with their facts, and the whole way it is read. */
+export interface PlotLineInfo {
+  id: string
+  /** The line's own chapters; `index` is each one's place on the line's path. */
+  chapters: ChapterInfo[]
+  /** Ids of every chapter read on this line, in order: what comes before it, its own, and what it arrives at. */
+  path: string[]
 }
 
 export type FactKind = 'state' | 'relationship' | 'knowledge' | 'item' | 'world' | 'event'
@@ -393,9 +516,15 @@ export interface ChapterMemory {
 }
 
 /** A suggestion produced by analysis that waits for a human or the orchestrator to accept. */
+/** The passes that read an imported book and write down what it says; see `analyzeBook`. */
+export type AnalyzeStep = 'digest' | 'cast' | 'world' | 'outline' | 'style' | 'art'
+/** In the order they run. `art` — the look of the book's pictures — came later than the others: an analysis started before it existed is whole without it. */
+export const ANALYZE_STEPS: readonly AnalyzeStep[] = ['digest', 'cast', 'world', 'outline', 'style', 'art']
+
 export interface Suggestion {
   id: string
-  kind: 'new-character' | 'new-world' | 'character-status' | 'new-thread' | 'thread-status'
+  /** `bible-edit`: a field of a character card or a world entry should read otherwise — found while a problem was being traced through the book. */
+  kind: 'new-character' | 'new-world' | 'character-status' | 'new-thread' | 'thread-status' | 'bible-edit'
   title: string
   detail: string
   /** Chapter that triggered it. */
@@ -503,11 +632,46 @@ export interface TextModelRouting {
   analyst?: ModelRoute
   /** Plot derivation and brainstorming. */
   architect?: ModelRoute
-  /** Real-time interlude (role-play) turns. */
+  /** Stages finished chapters: audio scripts, storyboards, real-time interlude turns. */
   director?: ModelRoute
+  /** Post-production: cuts prepared voice, sound and pictures into a video, with a shell at hand. */
+  producer?: ModelRoute
 }
 
 export type TextRole = keyof TextModelRouting
+
+/**
+ * The roles that work as agents: each a persona, tools, skills and permissions
+ * of its own on the Harness's agent loop. The writer is not one of them — it
+ * writes, and has nothing to look up or to call.
+ */
+export type CrewRole = Exclude<TextRole, 'writer'>
+
+export const CREW_ROLES: readonly CrewRole[] = ['analyst', 'architect', 'director', 'producer']
+
+export interface CrewRoleSettings {
+  /**
+   * `agent` (default): the role works as an agent, with tools, and its run is
+   * listed under the conversation that asked for it. `call`: one request, one
+   * answer, as it was before there were agents — cheaper, and blind.
+   */
+  mode?: 'agent' | 'call'
+  /**
+   * `own` (default): the tools the Studio gives the role, and the few of the
+   * Harness's that its work calls for (the planner searches the web,
+   * post-production has a shell). `all`: every tool the conversation itself has.
+   */
+  tools?: 'own' | 'all'
+  /** Tool calls a run may make before it is told to wrap up. */
+  steps?: number
+}
+
+export interface CrewSettings {
+  analyst?: CrewRoleSettings
+  architect?: CrewRoleSettings
+  director?: CrewRoleSettings
+  producer?: CrewRoleSettings
+}
 
 export type ContextStrategy = 'auto' | 'retrieval' | 'full'
 
@@ -517,10 +681,39 @@ export interface ContextSettings {
    * relevance, `auto` picks per call from the model's context window.
    */
   strategy: ContextStrategy
-  /** Upper bound of tokens the packed context may use. */
-  budgetTokens: number
+  /**
+   * Tokens of the manuscript's own text that travel word for word — the
+   * chapters before the one in hand, and after it when it is being rewritten.
+   * Unset: half of the window of the model that does the work.
+   */
+  budgetTokens?: number
   /** How many characters of the preceding text are always included verbatim. */
   tailChars: number
+  /**
+   * Tokens for everything beside the story's text: the bible, the cast, open
+   * threads, lore and retrieved passages. Unset: 22 % of the model's window,
+   * 120,000 at most.
+   */
+  sideTokens?: number
+  /**
+   * Tokens of context an interlude's turn carries: a turn has to answer while
+   * the player waits. Unset: {@link PLAY_CONTEXT_DEFAULT}.
+   */
+  playTokens?: number
+}
+
+/** What a turn of an interlude carries when the author has set no figure of their own. */
+export const PLAY_CONTEXT_DEFAULT = 24_000
+
+/** How many requests of one kind run at once when the author has set no number of their own. */
+export const PARALLEL_DEFAULT = 8
+/** The most a number of parallel requests may be set to. */
+export const PARALLEL_MAX = 256
+
+/** A number of parallel requests as the settings hold it, brought into range; the default when none is set. */
+export function parallelOf(value: unknown): number {
+  const wanted = typeof value === 'number' ? value : typeof value === 'string' && value.trim().length > 0 ? Number(value) : Number.NaN
+  return Number.isFinite(wanted) && wanted >= 1 ? Math.min(PARALLEL_MAX, Math.round(wanted)) : PARALLEL_DEFAULT
 }
 
 /**
@@ -541,11 +734,34 @@ export interface ImageSettings {
   quality?: string
   /** `codex` only: which bridge to the ChatGPT subscription to use. */
   bridge?: CodexBridgeKind
-  /** `1024x1024`, `1280x720`… */
+  /** `1024x1024`, `1280x720`… What a picture of no particular kind is drawn at; each kind the Studio draws has its own shape (see `aspects`). */
   size?: string
+  /** How fine pictures are drawn: `720p` (the default), `1080p`, `2k`, `4k` — as many pixels as a screen of that name, in whatever shape. */
+  resolution?: string
+  /** The shape of each kind of picture — `cover`, `portrait`, `sheet`, `location`, `scene`, `panel` — as an aspect (`16:9`) or exact pixels (`1600x900`). Unset: a cover stands, a stage lies. */
+  aspects?: Partial<Record<string, string>>
   /** Style phrase appended to every prompt so a book keeps one look. */
   stylePrompt?: string
   negativePrompt?: string
+  /** Pictures drawn at once, over everything the Studio is doing ({@link PARALLEL_DEFAULT} when unset). */
+  concurrency?: number
+  /**
+   * How many reference images go along with one picture — design sheets of the
+   * people in it, the art of the place. Unset: {@link REFERENCES_DEFAULT},
+   * which every image model that takes references at all accepts; models that
+   * take more hold more faces steady.
+   */
+  references?: number
+}
+
+/** Reference images per picture when the author has set no number of their own, and the most that can be set. */
+export const REFERENCES_DEFAULT = 3
+export const REFERENCES_MAX = 10
+
+/** The number of reference images per picture as the settings hold it, brought into range. */
+export function referencesOf(value: unknown): number {
+  const number = typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : REFERENCES_DEFAULT
+  return Math.max(0, Math.min(REFERENCES_MAX, number))
 }
 
 /**
@@ -570,7 +786,7 @@ export interface TtsSettings {
   narratorInstructions?: string
   /** Fallback voices by rough casting type. */
   defaultVoices?: { female?: string; male?: string; neutral?: string }
-  /** Parallel synthesis requests. */
+  /** Lines spoken at once, over everything the Studio is doing ({@link PARALLEL_DEFAULT} when unset). */
   concurrency?: number
   /**
    * How many more times a line is spoken when the take does not pass the
@@ -610,6 +826,11 @@ export interface SoundSettings {
    * been generated, the synthesized one plays in either case.
    */
   beds?: 'generate' | 'browser'
+  /**
+   * Sounds made at once, when sound has an endpoint of its own. While it rides
+   * on the speech setup it shares that setup's number: both ask the same model.
+   */
+  concurrency?: number
 }
 
 export type EmbeddingProviderKind = 'openai' | 'none'
@@ -631,6 +852,14 @@ export interface NovelSettings {
   /** Effects, music and generated ambience; absent in settings saved before there were any. */
   sound?: SoundSettings
   embedding: EmbeddingSettings
+  /** How the crew works: which roles are agents, and what tools each may reach. Absent in settings saved before there was a crew. */
+  crew?: CrewSettings
+  /**
+   * Pieces of text work running at once — a role's run on a script passage, a
+   * storyboard, a digest, a review, a chapter's beats — over everything the
+   * Studio is doing ({@link PARALLEL_DEFAULT} when unset).
+   */
+  textConcurrency?: number
   /** Run digest automatically after a chapter is written or revised. */
   autoDigest: boolean
   /** Manuscript revisions requested by the agent wait for review instead of applying directly. */
@@ -649,6 +878,29 @@ export interface NovelSettings {
   setup?: { done?: boolean; at?: string }
   /** What the author pays per model, by model id: turns the usage ledger into money. */
   prices?: Record<string, PriceEntry>
+  /** Which round of defaults this file has been brought up to; see the settings store's migration. */
+  revision?: number
+  /** Where these settings stand against the recommendations that ship with the plugin (`recommended.json`). */
+  recommended?: RecommendedState
+}
+
+/** One setting the recommendations moved, or would move: which, from what, to what. */
+export interface RecommendedChange {
+  /** `image.model`, `tts.model`, `tts.narratorVoice`, `embedding.model`. */
+  key: string
+  from: string
+  to: string
+}
+
+export interface RecommendedState {
+  /** false: the author keeps what they have when the recommendations change. Unset: they follow. */
+  follow?: boolean
+  /** The issue these settings were last brought up against. */
+  version?: number
+  /** What of the settings was a recommendation when it was set: only these move with a later issue — a value the author chose is theirs. */
+  adopted?: Record<string, string>
+  /** What the latest issue changed here (`pending`: would change, were the author following) — shown until the author has read it. */
+  notice?: { version: number; date: string; changes: RecommendedChange[]; pending?: boolean }
 }
 
 /**
@@ -680,6 +932,8 @@ export type UsageKind = 'text' | 'image' | 'speech' | 'embedding'
 export interface PriceEntry {
   /** Per million input tokens. */
   input?: number
+  /** Per million input tokens the provider read from its cache; the input price when unset. */
+  cached?: number
   /** Per million output tokens. */
   output?: number
   /** Per picture. */
@@ -710,6 +964,8 @@ export interface UsageEvent {
   /** Text and embeddings: tokens in and out. */
   input?: number
   output?: number
+  /** Text: how much of `input` the provider read from its cache, when it said. */
+  cached?: number
   /** The endpoint did not report tokens; they were estimated from the text. */
   estimated?: boolean
   images?: number
@@ -730,6 +986,8 @@ export interface UsageRow {
   calls: number
   input: number
   output: number
+  /** Input tokens read from a provider's cache; absent on a Host from before they were counted. */
+  cached?: number
   images: number
   seconds: number
   chars: number
@@ -758,6 +1016,27 @@ export interface UsageSummary {
 export type JobKind =
   | 'write' | 'revise' | 'digest' | 'derive' | 'review' | 'import' | 'bible'
   | 'illustrate' | 'audio' | 'comic' | 'play' | 'export' | 'index' | 'seal'
+  | 'video' | 'crew' | 'batch'
+  /** Adding or removing a DSH plugin the Studio's crew can call on. */
+  | 'install'
+
+/** One piece of work a role of the crew did inside a job. */
+export interface CrewRun {
+  role: CrewRole
+  /** What it was asked to do, in a few words. */
+  label: string
+  /** `agent`: on the agent loop, with tools. `call`: one request — the role is set that way, or cannot run as an agent, or its agent run fell through. */
+  by: 'agent' | 'call'
+  /** Tool calls the agent made. */
+  steps?: number
+  /** The session the run is recorded in, and the conversation it is listed under: together they open it. */
+  session?: string
+  parent?: string
+  /** Why it was done the lesser way, when it was. */
+  note?: string
+  /** Still at work: listed from the moment it starts, so that it can be opened and watched. */
+  running?: boolean
+}
 
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled'
 
@@ -788,7 +1067,120 @@ export interface JobInfo {
   thoughtLength?: number
   /** Small JSON result for the UI (ids of what was produced). */
   result?: Record<string, unknown>
+  /** The roles that worked in this job, in order. */
+  crew?: CrewRun[]
   origin: 'agent' | 'user'
+}
+
+// ───────────────────────────── gates ─────────────────────────────
+
+/** The kinds of request the Studio keeps a gate for: so many of each go out at once, whichever job asks. */
+export type GateKind = 'text' | 'speech' | 'image' | 'sound'
+
+/** How a gate stands. */
+export interface GateState {
+  /** What the author allows at once. */
+  ceiling: number
+  /** What the gate lets through right now: the ceiling, or less while the service pushes back. */
+  limit: number
+  active: number
+  waiting: number
+  /** Milliseconds until the next request is let through, while the gate pauses. */
+  pausedMs: number
+  /** Times the service pushed back since the gate last ran at its ceiling. */
+  throttled: number
+}
+
+// ───────────────────────────── batches ─────────────────────────────
+
+/** What a batch is of: the stage production of chapters, work on their text, or pictures and voices for the book. */
+export type BatchKind = 'stage' | 'text' | 'art'
+
+/** The steps of putting a chapter on stage, in the order they depend on each other. */
+export type StageStep = 'script' | 'voice' | 'sound' | 'storyboard' | 'panels' | 'video'
+export const STAGE_STEPS: readonly StageStep[] = ['script', 'voice', 'sound', 'storyboard', 'panels', 'video']
+
+/** The steps of work on a chapter's text. */
+export type TextStep = 'beats' | 'write' | 'digest' | 'review'
+export const TEXT_STEPS: readonly TextStep[] = ['beats', 'write', 'digest', 'review']
+
+/** Pictures and voices made for the book's people, places and chapters. */
+export type ArtStep = 'sheet' | 'portrait' | 'voice' | 'place' | 'item' | 'scene' | 'cover'
+export const ART_STEPS: readonly ArtStep[] = ['sheet', 'portrait', 'voice', 'place', 'item', 'scene', 'cover']
+
+export type BatchStepState = 'waiting' | 'running' | 'done' | 'skipped' | 'failed' | 'blocked'
+
+/** One step of a batch — one thing done to one chapter, character or place — as whoever watches the batch sees it. */
+export interface BatchStepView {
+  state: BatchStepState
+  /** What came of it, or why it did not happen, in a few words. */
+  note?: string
+  /** While it runs: how far it is. */
+  progress?: { done: number; total: number; label?: string }
+  /** While it runs: what the step itself reports (which lines are in the booth, …). */
+  detail?: Record<string, unknown>
+}
+
+export interface BatchRowView {
+  /** The chapter, character or world entry the row is about; `book` for the book itself. */
+  id: string
+  label: string
+  kind: 'chapter' | 'character' | 'place' | 'book'
+  /** By step name. A step the batch does not do to this row is absent. */
+  steps: Record<string, BatchStepView>
+}
+
+/** A batch as it stands: every row and step, and how many are settled. Travels as `result.batch` of the job. */
+export interface BatchView {
+  what: BatchKind
+  /** The steps of this batch, in order. */
+  columns: string[]
+  rows: BatchRowView[]
+  total: number
+  /** Steps that are done, skipped, failed or blocked. */
+  settled: number
+  failed: number
+}
+
+/** Where a chapter's stage production stands. */
+export interface StageStatus {
+  id: string
+  index: number
+  title: string
+  words: number
+  /** Lines of the script, and how many of those that are spoken have a voice. Absent: no script yet. */
+  script?: { lines: number; spoken: number; voiced: number; stale: boolean; seconds: number }
+  /** Sounds the script asks a model for, and how many are made. */
+  sound?: { wanted: number; made: number }
+  /** Panels of the storyboard, and how many are drawn. Absent: no storyboard yet. */
+  board?: { panels: number; drawn: number; stale: boolean }
+  video?: { duration: number; createdAt: Timestamp }
+}
+
+/** The video of a chapter, cut by post-production from the chapter's voice, sound and pictures. */
+export interface ChapterVideo {
+  schema: 1
+  chapterId: string
+  /** Project-relative path of the file. */
+  path: string
+  /** Seconds. */
+  duration: number
+  width: number
+  height: number
+  /** Bytes. */
+  size: number
+  createdAt: Timestamp
+  /** What post-production says about its cut. */
+  note?: string
+  /** What it was cut from: lines with and without a voice, panels drawn and not, sound clips. */
+  material?: { spoken: number; silent: number; drawn: number; undrawn: number; clips: number }
+  /**
+   * The subtitles of the cut. `path`: a WebVTT copy of the file's subtitle
+   * track, which a web player can show (it shows nothing of a track inside an
+   * MP4). `burned`: the words are in the picture already, and the player
+   * leaves the track off.
+   */
+  subtitles?: { path?: string; burned: boolean }
 }
 
 // ───────────────────────────── stage: audio, comic, interlude ─────────────────────────────
@@ -1009,6 +1401,8 @@ export interface PlaySession {
   outcome?: 'open' | 'discarded' | 'side-story' | 'novelized'
   /** Chapter created when it was novelized. */
   novelizedChapter?: string
+  /** The line of the plot the scene became the first chapter of, when it was novelized as another way the story goes. */
+  novelizedLine?: string
 }
 
 /** What an image prompt was assembled from, so the history shows where every part came from. */
@@ -1031,7 +1425,7 @@ export interface IllustrationInfo {
   /** The prompt exactly as it was sent. */
   prompt: string
   parts?: IllustrationParts
-  kind: 'portrait' | 'sheet' | 'scene' | 'location' | 'cover' | 'panel' | 'background' | 'sprite'
+  kind: 'portrait' | 'sheet' | 'scene' | 'location' | 'item' | 'cover' | 'panel' | 'background' | 'sprite'
   /** Chapter / character / world entry it belongs to. */
   target?: string
   createdAt: Timestamp
@@ -1049,6 +1443,30 @@ export type WorkMode = 'ideate' | 'bible' | 'outline' | 'draft' | 'revise' | 're
 export const WORK_MODES: readonly WorkMode[] = ['ideate', 'bible', 'outline', 'draft', 'revise', 'review', 'stage', 'play']
 
 // ───────────────────────────── aggregate views ─────────────────────────────
+
+/** Parts by weight, heaviest first: the order characters are listed in everywhere. */
+export const ROLE_ORDER: readonly CharacterRole[] = ['protagonist', 'deuteragonist', 'antagonist', 'supporting', 'minor', 'cameo']
+
+/**
+ * The cast in the order it is listed by default: by the weight of the part;
+ * within one weight, whoever is in more chapters first; then by who came on
+ * the page first. A list ordered by the alphabet puts a walk-on above the lead.
+ * @param presence - which chapters each is in; left out, parts of one weight keep the order they came in.
+ */
+export function castOrder<T extends Pick<CharacterCard, 'id' | 'role'>>(cards: readonly T[], presence: readonly CastPresence[] = [], chapterOrder: readonly string[] = []): T[] {
+  const seen = new Map(presence.map(entry => [entry.character, entry.chapters]))
+  const place = new Map(chapterOrder.map((id, index) => [id, index]))
+  const first = (id: string): number => {
+    const chapters = seen.get(id)
+    return chapters !== undefined && chapters.length > 0 ? place.get(chapters[0]!) ?? Number.MAX_SAFE_INTEGER : Number.MAX_SAFE_INTEGER
+  }
+  return cards.map((card, index) => ({ card, index })).sort((left, right) =>
+    ROLE_ORDER.indexOf(left.card.role) - ROLE_ORDER.indexOf(right.card.role)
+    || (seen.get(right.card.id)?.length ?? 0) - (seen.get(left.card.id)?.length ?? 0)
+    || first(left.card.id) - first(right.card.id)
+    || left.index - right.index,
+  ).map(item => item.card)
+}
 
 export interface CastPresence {
   character: string
@@ -1089,8 +1507,10 @@ export interface WalkOn {
 export interface ActivityEntry {
   id: string
   at: Timestamp
-  /** agent: a tool call of the showrunner. outside: files changed by something that is not the Studio. device: a change made from a phone or tablet through the shared reader. editor: the agent that finds a manuscript's chapters on import. */
-  by: 'agent' | 'outside' | 'device' | 'editor'
+  /** agent: a tool call of the showrunner. outside: files changed by something that is not the Studio. device: a change made from a phone or tablet through the shared reader. crew: a role of the crew working as an agent (`role` says which). editor: what `crew` was called when the only such agent was the one that finds a manuscript's chapters. */
+  by: 'agent' | 'outside' | 'device' | 'crew' | 'editor'
+  /** The role that made the change, for `crew`. */
+  role?: CrewRole
   /** The tool (`novel_edit`), or `files` for a change from outside. */
   tool: string
   action?: string
@@ -1134,6 +1554,38 @@ export interface ProjectState {
   cover?: string
   /** What changed the book lately, newest first. Absent on a Host from before this was kept. */
   activity?: ActivityEntry[]
+  /** The lines of the plot beside the main one, with their chapters' facts. Absent on a Host from before there were lines, and in a book that has none. */
+  lines?: PlotLineInfo[]
+  /** An analysis of the book (an import's) that was started and not finished: the passes still to run. */
+  analysis?: { pending: AnalyzeStep[] }
+  /** People the chapters come back to who have no character card: how many, and the most present of them. */
+  uncarded?: { count: number; names: string[] }
+  /** Chapters taken out of the book that can be put back, newest first. Absent when there are none, and on a Host from before they were kept. */
+  removed?: RemovedChapter[]
+  /** Where each entry of the bible is named, chapter by chapter: what its weight in the story is read off. Absent on a Host from before entries were weighed. */
+  worldPresence?: { entry: string; chapters: string[] }[]
+  /** How the things of the book's world stand to each other: what is in what, who belongs where, lives where, holds what. Absent on a Host from before there were ties. */
+  ties?: Tie[]
+}
+
+/**
+ * A chapter that was taken out of the book, kept so that it can be put back:
+ * its plan, where it stood, and the version that holds its text. What was
+ * made from it — its digest, review, voices, pictures — stays where it was
+ * and is the chapter's again when it returns.
+ */
+export interface RemovedChapter {
+  plan: ChapterPlan
+  removedAt: Timestamp
+  /** Where it stood: its volume (main line) or its line, and the chapter it came after. */
+  volume?: string
+  line?: string
+  after?: string
+  /** The reading order it had, for telling the author which chapter it was. */
+  index: number
+  words: number
+  /** The version that holds its text as it was; absent for a chapter that had none. */
+  version?: string
 }
 
 export interface ProjectRef {
@@ -1149,6 +1601,23 @@ export interface ProjectRef {
   sealed?: boolean
   /** Sealed, and not unlocked: only the name on the shelf can be shown. */
   locked?: boolean
+  /** What of the book there is to read, hear and watch right now. Absent on a locked book, and from a Host that did not count yet. */
+  shows?: BookShows
+}
+
+/** A way of taking a book in, how many chapters offer it, and the first of them in reading order. */
+export interface ShowCount {
+  chapters: number
+  first: string
+}
+
+/** What a book offers a reader right now: text to read, voices to hear, pictures to watch. A way with nothing to it is left out. */
+export interface BookShows {
+  read?: ShowCount
+  /** Chapters whose script has at least one line spoken. */
+  listen?: ShowCount
+  /** Chapters with a storyboard that has at least one panel drawn, or with a video. */
+  watch?: ShowCount
 }
 
 /**

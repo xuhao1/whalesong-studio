@@ -1,0 +1,123 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { packContext, windowStart } from '../src/core/context'
+import { estimateTokens } from '../src/shared/text'
+import { createTestBed, type TestBed } from './support/harness'
+
+describe('the story so far', () => {
+  let bed: TestBed
+  beforeEach(async () => { bed = await createTestBed() })
+  afterEach(async () => { await bed.cleanup() })
+
+  it('holds the window of text where it is until the chapters no longer fit, then lets go of a stretch at once', () => {
+    const each = 100
+    const starts: number[] = []
+    for (let written = 0; written <= 40; written++) starts.push(windowStart(Array.from({ length: written }, () => each), 1000))
+    // Ten chapters fit: all of them travel.
+    expect(starts.slice(0, 11).every(start => start === 0)).toBe(true)
+    // It never moves back, and it does not move with every chapter: a provider's cache holds between the moves.
+    for (let written = 1; written <= 40; written++) expect(starts[written]!).toBeGreaterThanOrEqual(starts[written - 1]!)
+    const moves = starts.filter((start, written) => written > 0 && start !== starts[written - 1]).length
+    expect(moves).toBeGreaterThan(0)
+    expect(moves).toBeLessThanOrEqual(12)
+    // What travels is always within the budget, and — once the book outgrew it — most of the budget.
+    for (let written = 11; written <= 40; written++) {
+      const held = (written - starts[written]!) * each
+      expect(held).toBeLessThanOrEqual(1000)
+      expect(held).toBeGreaterThanOrEqual(700)
+    }
+    // A chapter that fits is never dropped for being the newest; one that does not fit at all is not cut to size.
+    expect(windowStart([900, 900], 1000)).toBe(1)
+    expect(windowStart([400, 5000], 1000)).toBe(2)
+    expect(windowStart([], 1000)).toBe(0)
+  })
+
+  it('lays the story out so that the next chapter\'s request begins with this one\'s', async () => {
+    const { project, index } = bed.runtime
+    await project.saveCharacter({ name: '沈璃', role: 'protagonist', personality: '倔强寡言' })
+    await project.saveWorld({ name: '青冥山', category: 'location', importance: 1, summary: '北境雪山' })
+    const ids: string[] = []
+    for (let n = 1; n <= 6; n++) ids.push((await project.addChapter({ title: `第${n}回`, synopsis: `第 ${n} 回的梗概。`, characters: ['沈璃'] })).id)
+    const stables: string[] = []
+    for (let n = 1; n <= 5; n++) {
+      // What is being written now is packed before it is written; then it joins the text.
+      const chapter = (await project.findChapter(ids[n - 1]!))!
+      const pack = await packContext(project, index, { purpose: 'draft', chapter, textBudget: 100_000, sideBudget: 20_000, tailChars: 200, brief: `第 ${n} 回要写出她的犹豫` })
+      stables.push(pack.stable)
+      expect(pack.strategy).toBe('full')
+      expect(pack.included.fullChapters).toBe(n - 1)
+      // The chapter's own outline and the brief are not part of what repeats.
+      expect(pack.stable).not.toContain('本章章纲')
+      expect(pack.stable).not.toContain('她的犹豫')
+      expect(pack.rest).toContain(`第 ${n} 回的梗概`)
+      await project.saveChapterText(ids[n - 1]!, `这是第${n}回的正文，沈璃在青冥山下走了很远的路。`.repeat(4))
+    }
+    // Chapter after chapter the head of the request only grows at its end.
+    for (let n = 1; n < stables.length; n++) {
+      expect(stables[n]!.startsWith(stables[n - 1]!)).toBe(true)
+      expect(stables[n]!.length).toBeGreaterThan(stables[n - 1]!.length)
+    }
+  })
+
+  it('sends the nearest chapters whole and the ones before them as an outline', async () => {
+    const { project, index } = bed.runtime
+    const ids: string[] = []
+    for (let n = 1; n <= 8; n++) {
+      const plan = await project.addChapter({ title: `第${n}回`, synopsis: `第 ${n} 回里发生的事。` })
+      ids.push(plan.id)
+      if (n <= 7) await project.saveChapterText(plan.id, `第${n}回正文。`.repeat(40))
+    }
+    // Memory for some of the early chapters; the others are told by what their outline says.
+    await project.saveMemory({ schema: 1, chapterId: ids[0]!, textHash: 'x', updatedAt: '', brief: '开端', summary: '第一回：她离开了家。', facts: [], characters: [], newEntities: [], threads: [] })
+    const chapter = (await project.findChapter(ids[7]!))!
+    const one = estimateTokens(`第7回 第7回\n\n${'第7回正文。'.repeat(40)}`) + 12
+    const pack = await packContext(project, index, { purpose: 'draft', chapter, textBudget: Math.floor(one * 3.5), sideBudget: 20_000, tailChars: 200 })
+    expect(pack.strategy).toBe('window')
+    expect(pack.included.fullChapters).toBeGreaterThanOrEqual(2)
+    expect(pack.included.fullChapters).toBeLessThanOrEqual(3)
+    expect(pack.window!.to).toBe(7)
+    // Whole chapters only: none is cut.
+    expect(pack.stable).toContain('第7回正文。'.repeat(40))
+    expect(pack.stable).toContain(`前文正文（从第 ${pack.window!.from} 章起，按顺序）`)
+    // Before the text: every earlier chapter in a line, digested or not.
+    expect(pack.stable).toContain(`前情梗概（第 ${pack.window!.from} 章之前）`)
+    expect(pack.stable).toContain('第一回：她离开了家。')
+    expect(pack.stable).toContain('第 2 回里发生的事。')
+    expect(pack.stable).not.toContain('第1回正文。')
+    expect(pack.included.summaries).toBe(pack.window!.from - 1)
+  })
+
+  it('gives a chapter that is written again the chapters after it too', async () => {
+    const { project, index } = bed.runtime
+    const ids: string[] = []
+    for (let n = 1; n <= 5; n++) {
+      const plan = await project.addChapter({ title: `第${n}回`, synopsis: `第 ${n} 回的梗概。` })
+      ids.push(plan.id)
+      await project.saveChapterText(plan.id, `第${n}回的原文在这里。`.repeat(6))
+    }
+    const chapter = (await project.findChapter(ids[1]!))!
+    const pack = await packContext(project, index, { purpose: 'draft', chapter, textBudget: 100_000, sideBudget: 20_000, tailChars: 200 })
+    expect(pack.included).toMatchObject({ fullChapters: 1, following: 3 })
+    // What precedes is part of what repeats; what follows belongs to this rewrite alone.
+    expect(pack.stable).toContain('第1回的原文在这里。')
+    expect(pack.stable).not.toContain('第3回的原文在这里。')
+    expect(pack.rest).toContain('下文正文（本章之后，按顺序）')
+    expect(pack.rest).toContain('本章必须接得上它们')
+    expect(pack.rest.indexOf('第3回的原文在这里。')).toBeLessThan(pack.rest.indexOf('第5回的原文在这里。'))
+    // Its own text is not handed back as something to lead into.
+    expect(pack.text).not.toContain('第2回的原文在这里。')
+    // With little room, what follows travels nearest first and whole, the rest in outline — and what precedes is not crowded out.
+    const one = estimateTokens(`第3回 第3回\n\n${'第3回的原文在这里。'.repeat(6)}`) + 12
+    const tight = await packContext(project, index, { purpose: 'revise', chapter, textBudget: Math.floor(one * 2.4), sideBudget: 20_000, tailChars: 200, includeChapterText: true })
+    expect(tight.included.fullChapters).toBe(1)
+    expect(tight.included.following).toBe(1)
+    expect(tight.rest).toContain('第3回的原文在这里。')
+    expect(tight.rest).toContain('再往后的章节（梗概）')
+    expect(tight.rest).toContain('第 5 回的梗概。')
+    expect(tight.rest).not.toContain('第5回的原文在这里。')
+    // A review reads what follows in outline only: it has nothing to lead into.
+    const review = await packContext(project, index, { purpose: 'review', chapter, textBudget: 100_000, sideBudget: 20_000, tailChars: 200, includeChapterText: true })
+    expect(review.included.following).toBe(0)
+    expect(review.rest).toContain('下文梗概')
+  })
+})

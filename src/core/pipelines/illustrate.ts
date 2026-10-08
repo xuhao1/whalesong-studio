@@ -20,24 +20,26 @@
  *
  * Every picture records what its prompt was assembled from.
  */
-import { mergeAvoid, resolveArtStyle, splitAvoid, type ArtSource } from '../../shared/art'
-import type { CharacterCard, CharacterLook, IllustrationInfo, IllustrationParts, WorldEntry } from '../../shared/types'
+import { mergeAvoid, pictureSize, resolveArtStyle, splitAvoid, type ArtSource } from '../../shared/art'
+import type { CharacterCard, CharacterLook, IllustrationInfo, IllustrationParts, PromptLanguage, WorldEntry } from '../../shared/types'
+import { referencesOf } from '../../shared/types'
 import { clip, fuzzyFind, hashText, newId, sameName, slugify } from '../../shared/text'
 import { detectCharacters } from '../context'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
-import { asRecord, asText, completeJson, extractJson } from '../llm'
-import { extensionOf, MAX_REFERENCES, type ImageProvider, type ImageReference } from '../media/image'
+import { asList, asRecord, asText, extractJson } from '../llm'
+import { assign } from '../crew'
+import { extensionOf, type ImageProvider, type ImageReference } from '../media/image'
 import { ProviderError } from '../media/http'
 import { ProjectError } from '../project'
-import { illustrationPromptTask, visualAnchorTask } from '../prompts'
+import { artDirectionTask, coverPromptTask, illustrationPromptTask, visualAnchorTask } from '../prompts'
 import { L, promptLanguage, renderCharacter } from '../render'
 import { isAbort } from '../util/async'
 
 export { DEFAULT_ART_STYLE } from '../../shared/art'
 
 export interface IllustrateParams {
-  kind: 'portrait' | 'sheet' | 'scene' | 'location' | 'cover' | 'custom'
-  /** Character (portrait, sheet), chapter (scene) or world entry (location). */
+  kind: 'portrait' | 'sheet' | 'scene' | 'location' | 'item' | 'cover' | 'custom'
+  /** Character (portrait, sheet), chapter (scene) or world entry (location, item). */
   target?: string
   /** For scenes: the passage to illustrate, quoted from the chapter. */
   quote?: string
@@ -92,6 +94,96 @@ export async function artDirectionOf(core: NovelCore, runtime: ProjectRuntime, o
   return { style: resolved.text, source: resolved.source, avoid }
 }
 
+/** What a book is, said briefly for whoever is to picture it: its story, the temper of its prose, its leads and its places. */
+async function bookSketch(runtime: ProjectRuntime, lang: PromptLanguage): Promise<{ story: string; tone: string; leads: CharacterCard[]; places: WorldEntry[] }> {
+  const { project } = runtime
+  const manifest = await project.manifest()
+  const characters = await project.characters()
+  // Who the book is about: its leads by the weight of their part — and, in a book whose cast has no roles yet, whoever is on the page most.
+  const weight: CharacterCard['role'][] = ['protagonist', 'deuteragonist', 'antagonist']
+  const presence = new Map((await project.presence()).map(entry => [entry.character, entry.chapters.length]))
+  const byRole = characters.filter(card => weight.includes(card.role)).sort((left, right) => weight.indexOf(left.role) - weight.indexOf(right.role) || (presence.get(right.id) ?? 0) - (presence.get(left.id) ?? 0))
+  const leads = (byRole.length > 0 ? byRole : [...characters].sort((left, right) => (presence.get(right.id) ?? 0) - (presence.get(left.id) ?? 0)).filter(card => (presence.get(card.id) ?? 0) > 0)).slice(0, 4)
+  // What the story is: its premise — and where nobody has written one down, what its chapters tell.
+  const told: string[] = []
+  if (manifest.premise === undefined) {
+    const arcs = (await project.readState<{ fromIndex: number; toIndex: number; summary: string }[]>('memory', 'arcs.json')) ?? []
+    if (arcs.length > 0) told.push(...arcs.map(arc => `${L(lang, `第${arc.fromIndex}–${arc.toIndex}章`, `Chapters ${arc.fromIndex}–${arc.toIndex}`)}  ${arc.summary}`))
+    else for (const { chapter, memory } of await project.memories()) told.push(`${chapter.index}. ${memory.brief}`)
+  }
+  const story = [manifest.premise, told.length > 0 ? clip(told.join('\n'), 4000) : undefined].filter((part): part is string => part !== undefined && part.length > 0).join('\n\n')
+  const style = await project.activeStyle()
+  const tone = [style?.tone, style?.imagery].filter((part): part is string => part !== undefined && part.length > 0).join(lang === 'zh' ? '；' : '; ')
+  const places = (await project.world()).filter(entry => entry.importance === 1 || entry.visualPrompt !== undefined).slice(0, 8)
+  return { story, tone, leads, places }
+}
+
+export interface ArtProposal {
+  style: string
+  avoid: string[]
+  /** Why the director settled on it, for the author. */
+  why?: string
+  /** It was written into the book. */
+  applied: boolean
+}
+
+/**
+ * Have the director settle the look of a book's pictures from the book
+ * itself: what it is about, when and where it is set, how its prose sounds,
+ * what its people and places look like. Every book has a look of its own; a
+ * book that arrives written gets one as it is read, a new one as its bible is
+ * drafted, and the author can ask for another at any time.
+ * @param params.direction - what the author wants of the look; it decides.
+ * @param params.apply - false: only propose. Otherwise the look is written into the book — unless `keep` holds and the book has one already.
+ * @param params.keep - leave a book that already has a look of its own as it is (an import run again must not repaint a book the author has styled).
+ * @returns the look, or undefined when `keep` held.
+ */
+export async function deriveArtDirection(core: NovelCore, runtime: ProjectRuntime, params: { direction?: string; apply?: boolean; keep?: boolean }, task: TaskContext): Promise<ArtProposal | undefined> {
+  const { project } = runtime
+  const manifest = await project.manifest()
+  const own = manifest.artStyle?.trim()
+  if (params.keep === true && own !== undefined && own.length > 0) return undefined
+  const lang = promptLanguage(manifest.language)
+  const sketch = await bookSketch(runtime, lang)
+  const { value } = await assign(core, runtime, task, {
+    role: 'director',
+    label: L(lang, '定画风', 'Art direction'),
+    tool: 'set_art_direction',
+    // The material is in the task; a few looks at the book at most, then the result.
+    maxSteps: 12,
+    what: L(lang, '这本书所有画面共用的画风，以及任何一张图里都不该出现的东西', 'the look every picture of this book shares, and what none of them may show'),
+    prompt: artDirectionTask({
+      lang,
+      language: manifest.language,
+      title: manifest.title,
+      ...(manifest.genre !== undefined ? { genre: manifest.genre } : {}),
+      ...(manifest.themes !== undefined && manifest.themes.length > 0 ? { themes: manifest.themes.join(lang === 'zh' ? '、' : ', ') } : {}),
+      ...(manifest.logline !== undefined ? { logline: manifest.logline } : {}),
+      story: sketch.story,
+      ...(sketch.tone.length > 0 ? { tone: sketch.tone } : {}),
+      leads: sketch.leads.map(card => `${card.name}${card.tagline !== undefined ? `（${clip(card.tagline, 60)}）` : ''}: ${looksOf(card) || L(lang, '（未设定外貌）', '(no look defined)')}`).join('\n'),
+      places: sketch.places.map(entry => `${entry.name}: ${entry.visualPrompt ?? entry.summary ?? clip(entry.body ?? '', 160, '')}`).join('\n'),
+      ...(own !== undefined && own.length > 0 ? { current: own } : {}),
+      ...(params.direction !== undefined && params.direction.trim().length > 0 ? { ask: params.direction.trim() } : {}),
+    }),
+    temperature: 0.6,
+    validate: (raw) => {
+      const record = asRecord(raw)
+      if (asText(record.style) === undefined) throw new Error('"style" is empty')
+      return record
+    },
+  })
+  const style = asText(value.style)!
+  const avoid = mergeAvoid(asList(value.avoid))
+  const why = asText(value.why)
+  const applied = params.apply !== false
+  if (applied) {
+    await project.updateManifest({ artStyle: style, ...(avoid.length > 0 ? { artAvoid: mergeAvoid(manifest.artAvoid, avoid) } : {}) })
+    await project.addActivity({ by: 'crew', role: 'director', tool: 'art', summary: L(lang, `定下了这本书的画风：${clip(style, 80)}`, `Settled the look of this book: ${clip(style, 100)}`) })
+  }
+  return { style, avoid, ...(why !== undefined ? { why } : {}), applied }
+}
+
 /** The art direction text alone, for prompts that only need to know the look. */
 export async function artStyleOf(core: NovelCore, runtime: ProjectRuntime): Promise<string> {
   return (await artDirectionOf(core, runtime)).style
@@ -142,9 +234,13 @@ export async function deriveVisual(core: NovelCore, runtime: ProjectRuntime, par
   const manifest = await project.manifest()
   const lang = promptLanguage(manifest.language)
   const art = await artDirectionOf(core, runtime)
-  const route = await core.route('analyst', runtime, task)
-  const { value } = await completeJson(core.llm, {
-    route,
+  const { value } = await assign(core, runtime, task, {
+    role: 'director',
+    label: L(lang, `定妆 · ${card.name}`, `Look · ${card.name}`),
+    tool: 'set_visual_anchor',
+    // The material is all in the task: a few looks at the book at most, then the result.
+    maxSteps: 10,
+    what: L(lang, '这个人物的视觉锚点：画面描述和要避免的东西', 'the visual anchor of this character: what a picture shows, and what it must not'),
     prompt: visualAnchorTask({
       lang,
       language: manifest.language,
@@ -154,7 +250,6 @@ export async function deriveVisual(core: NovelCore, runtime: ProjectRuntime, par
       ...(params.direction !== undefined ? { direction: params.direction } : {}),
     }),
     temperature: 0.3,
-    ...(task.signal !== undefined ? { signal: task.signal } : {}),
     validate: (raw) => {
       const record = asRecord(raw)
       if (asText(record.prompt) === undefined) throw new Error('"prompt" is empty')
@@ -211,8 +306,9 @@ export async function renderImage(core: NovelCore, runtime: ProjectRuntime, inpu
   const provider = await requireImages(core, runtime)
   const zh = promptLanguage((await project.manifest()).language) === 'zh'
   const references: { path: string; label: string; image: ImageReference }[] = []
+  const most = referencesOf((await core.settings.get()).image.references)
   for (const reference of input.references ?? []) {
-    if (references.length >= MAX_REFERENCES || references.some(known => known.path === reference.path)) continue
+    if (references.length >= most || references.some(known => known.path === reference.path)) continue
     try {
       const data = await project.readFile(reference.path)
       references.push({ ...reference, image: { data, mime: /\.jpe?g$/i.test(reference.path) ? 'image/jpeg' : /\.webp$/i.test(reference.path) ? 'image/webp' : 'image/png', label: reference.label } })
@@ -317,7 +413,7 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
       ], comma)
       // A portrait drawn after the sheet shows the same person as the sheet.
       const sheet = card.visual?.sheet !== undefined ? [{ path: card.visual.sheet, label: card.name }] : []
-      const info = await renderImage(core, runtime, { subject, kind: 'portrait', target: card.id, name: `portrait-${card.id}`, size: params.size ?? '1024x1024', art, avoid: [...(params.avoid ?? []), ...negativesOf([card])], references: sheet }, task)
+      const info = await renderImage(core, runtime, { subject, kind: 'portrait', target: card.id, name: `portrait-${card.id}`, size: params.size ?? pictureSize(core.currentSettings().image, 'portrait'), art, avoid: [...(params.avoid ?? []), ...negativesOf([card])], references: sheet }, task)
       await project.saveCharacter({ id: card.id, visual: { portrait: info.path } })
       return done(info)
     }
@@ -344,7 +440,7 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
       kind: 'sheet',
       target: card.id,
       name: `sheet-${card.id}${look !== undefined ? `-${look.id}` : ''}`,
-      size: params.size ?? '1536x1024',
+      size: params.size ?? pictureSize(core.currentSettings().image, 'sheet'),
       art,
       avoid: [...(params.avoid ?? []), ...negativesOf([card])],
       references: base !== undefined ? [{ path: base, label: card.name }] : [],
@@ -365,27 +461,64 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
       entry.visualPrompt ?? `${entry.name}${comma}${entry.summary ?? clip(entry.body ?? '', 200, '')}`,
       params.prompt,
     ], comma)
-    const info = await renderImage(core, runtime, { subject, kind: 'location', target: entry.id, name: `location-${entry.id}`, size: params.size ?? '1280x720', art, ...(params.avoid !== undefined ? { avoid: params.avoid } : {}) }, task)
+    const info = await renderImage(core, runtime, { subject, kind: 'location', target: entry.id, name: `location-${entry.id}`, size: params.size ?? pictureSize(core.currentSettings().image, 'location'), art, ...(params.avoid !== undefined ? { avoid: params.avoid } : {}) }, task)
     // The place's reference art: scenes set here send it along.
     await project.saveWorld({ id: entry.id, visualImage: info.path })
     return done(info)
   }
 
+  if (params.kind === 'item') {
+    const entry = params.target !== undefined ? await project.findWorld(params.target) : undefined
+    if (entry === undefined) throw new ProjectError('novel/not-found', `no world entry matches "${params.target ?? ''}"`)
+    // A thing is drawn as a thing: alone, whole, close enough to read what it is made of and what is written or carved on it.
+    const subject = joinParts([
+      L(lang, '关键物品设定图：只画这一件物品，完整入画，居中，干净的浅色素底；看得清形状、材质、纹饰与大小的感觉；没有人物，没有手，画面里不出现任何文字说明', 'design art of one key object: the object alone, whole and centred on a clean pale ground; its shape, material, ornament and sense of size readable; no people, no hands, no lettering'),
+      entry.visualPrompt ?? `${entry.name}${comma}${entry.summary ?? clip(entry.body ?? '', 200, '')}`,
+      params.prompt,
+    ], comma)
+    const info = await renderImage(core, runtime, { subject, kind: 'item', target: entry.id, name: `item-${entry.id}`, size: params.size ?? pictureSize(core.currentSettings().image, 'item'), art, ...(params.avoid !== undefined ? { avoid: params.avoid } : {}) }, task)
+    // The thing's reference art: pictures that show it send this along, so that it is the same thing every time.
+    await project.saveWorld({ id: entry.id, visualImage: info.path })
+    return done(info)
+  }
+
   if (params.kind === 'cover') {
-    const leads = characters.filter(card => card.role === 'protagonist').slice(0, 2)
+    const { story, tone, leads, places } = await bookSketch(runtime, lang)
+    const extraAvoid = [...(params.avoid ?? []), ...negativesOf(leads)]
+    const route = await core.route('director', runtime, task)
+    const response = await core.llm.complete({
+      route,
+      prompt: coverPromptTask({
+        lang,
+        language: manifest.language,
+        title: manifest.title,
+        ...(manifest.genre !== undefined ? { genre: manifest.genre } : {}),
+        ...(manifest.themes !== undefined && manifest.themes.length > 0 ? { themes: manifest.themes.join(lang === 'zh' ? '、' : ', ') } : {}),
+        ...(manifest.logline !== undefined ? { logline: manifest.logline } : {}),
+        story,
+        ...(tone.length > 0 ? { tone } : {}),
+        leads: leads.map(card => `${card.name}${card.tagline !== undefined ? `（${clip(card.tagline, 60)}）` : ''}: ${looksOf(card, worn(card)) || L(lang, '（未设定外貌）', '(no look defined)')}`).join('\n'),
+        places: places.map(entry => `${entry.name}: ${entry.visualPrompt ?? entry.summary ?? clip(entry.body ?? '', 160, '')}`).join('\n'),
+        artStyle: art === false ? '' : art.style,
+        avoid: mergeAvoid(art === false ? [] : art.avoid, extraAvoid),
+        ...(params.prompt !== undefined && params.prompt.trim().length > 0 ? { ask: params.prompt.trim() } : {}),
+      }),
+      temperature: 0.7,
+      ...(task.signal !== undefined ? { signal: task.signal } : {}),
+    })
+    const description = response.text.trim().replace(/^["“]|["”]$/g, '')
+    if (description.length === 0) throw new ProjectError('novel/empty', 'the director returned no description for the cover')
     const subject = joinParts([
       L(lang, '小说封面插画，竖幅构图，画面上方留出标题空间，不要出现任何文字', 'novel cover illustration, portrait orientation, space left at the top for a title, no text at all'),
-      manifest.logline ?? manifest.premise ?? manifest.title,
-      ...leads.map(card => looksOf(card, worn(card))).filter(text => text.length > 0),
-      params.prompt,
+      description,
     ], comma)
     const info = await renderImage(core, runtime, {
       subject,
       kind: 'cover',
       name: 'cover',
-      size: params.size ?? '768x1152',
+      size: params.size ?? pictureSize(core.currentSettings().image, 'cover'),
       art,
-      avoid: [...(params.avoid ?? []), ...negativesOf(leads)],
+      avoid: extraAvoid,
       references: leads.map(card => referenceOf(card, worn(card))).filter((reference): reference is { path: string; label: string } => reference !== undefined),
     }, task)
     return done(info)
@@ -407,7 +540,7 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
   const places = (await project.world()).filter(entry => [entry.name, ...(entry.aliases ?? [])].some(name => name.length >= 2 && passage.includes(name))).slice(0, 6)
   const wardrobe = cast.map(wardrobeOf).filter((line): line is string => line !== undefined)
   const extraAvoid = [...(params.avoid ?? []), ...negativesOf(cast)]
-  const route = await core.route('analyst', runtime, task)
+  const route = await core.route('director', runtime, task)
   const response = await core.llm.complete({
     route,
     prompt: illustrationPromptTask({
@@ -442,13 +575,15 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
   }
   description = description.replace(/^["“]|["”]$/g, '')
   const wearing = (card: CharacterCard): CharacterLook | undefined => worn(card) ?? picked.get(card.id)
-  const place = places.find(entry => entry.visualImage !== undefined)
-  // Faces first: with room for three references, two people and the place they stand in.
+  // Where the scene is — and, with no place drawn, a thing it shows: either keeps the picture true to what was settled.
+  const place = places.find(entry => entry.visualImage !== undefined && entry.category !== 'item') ?? places.find(entry => entry.visualImage !== undefined)
+  // Faces first, and the place they stand in keeps its seat: with room for three references, that is two people and the place.
   const people = cast.map(card => referenceOf(card, wearing(card))).filter((reference): reference is { path: string; label: string } => reference !== undefined)
+  const most = referencesOf((await core.settings.get()).image.references)
   const references = place?.visualImage !== undefined
-    ? [...people.slice(0, MAX_REFERENCES - 1), { path: place.visualImage, label: L(lang, `场所「${place.name}」`, `the place "${place.name}"`) }]
+    ? [...people.slice(0, Math.max(0, most - 1)), { path: place.visualImage, label: place.category === 'item' ? L(lang, `物品「${place.name}」`, `the object "${place.name}"`) : L(lang, `场所「${place.name}」`, `the place "${place.name}"`) }]
     : people
-  const info = await renderImage(core, runtime, { subject: description, kind: 'scene', target: chapter.plan.id, name: `scene-${chapter.plan.id}`, size: params.size ?? '1280x720', art, avoid: extraAvoid, references }, task)
+  const info = await renderImage(core, runtime, { subject: description, kind: 'scene', target: chapter.plan.id, name: `scene-${chapter.plan.id}`, size: params.size ?? pictureSize(core.currentSettings().image, 'scene'), art, avoid: extraAvoid, references }, task)
   let inserted = false
   if (params.insert === true) {
     const current = await project.chapterText(chapter.plan.id)

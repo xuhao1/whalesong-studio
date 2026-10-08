@@ -6,10 +6,10 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { focusLines, movedContext, noProjectContext } from '../src/agent/prompt'
 import { listOf, listParameter } from '../src/agent/tools/shared'
-import { ASSUMED_CONTEXT_WINDOW, chooseStrategy } from '../src/core/context'
+import { ASSUMED_CONTEXT_WINDOW, contextBudgets } from '../src/core/context'
 import { knownContextWindow } from '../src/core/media/discovery'
 import { SessionStateStore } from '../src/core/session-state'
-import { DEFAULT_SETTINGS, SettingsStore } from '../src/core/settings'
+import { DEFAULT_SETTINGS, SETTINGS_REVISION, SettingsStore } from '../src/core/settings'
 import { displayPath } from '../src/core/util/fs'
 import { createTestBed, type TestBed } from './support/harness'
 
@@ -113,32 +113,38 @@ describe('list parameters', () => {
 })
 
 describe('context budget', () => {
-  it('defaults to half a million tokens and lets go of the old default', async () => {
-    expect(DEFAULT_SETTINGS.context.budgetTokens).toBe(500_000)
+  it('has no figure of its own by default, and lets go of the old defaults once', async () => {
+    expect(DEFAULT_SETTINGS.context.budgetTokens).toBeUndefined()
     const file = join(await scratch(), 'settings.json')
-    await writeFile(file, JSON.stringify({ context: { budgetTokens: 48_000, tailChars: 1234 } }))
+    // Figures that were only ever a default — the context budget, the speech requests at once — follow the new defaults.
+    await writeFile(file, JSON.stringify({ context: { budgetTokens: 500_000, tailChars: 1234 }, tts: { provider: 'qwen-audiogen', concurrency: 2 } }))
     const migrated = await new SettingsStore(DEFAULT_SETTINGS, file).get()
-    expect(migrated.context).toMatchObject({ budgetTokens: 500_000, tailChars: 1234 })
-    // A budget the author chose stays.
-    await writeFile(file, JSON.stringify({ context: { budgetTokens: 120_000 } }))
-    expect((await new SettingsStore(DEFAULT_SETTINGS, file).get()).context.budgetTokens).toBe(120_000)
+    expect(migrated.context).toEqual({ strategy: 'auto', tailChars: 1234 })
+    expect(migrated.tts.concurrency).toBeUndefined()
+    expect(migrated.revision).toBe(SETTINGS_REVISION)
+    // What the author chose stays.
+    await writeFile(file, JSON.stringify({ context: { budgetTokens: 120_000 }, tts: { provider: 'qwen-audiogen', concurrency: 8 } }))
+    const kept = await new SettingsStore(DEFAULT_SETTINGS, file).get()
+    expect(kept.context.budgetTokens).toBe(120_000)
+    expect(kept.tts.concurrency).toBe(8)
+    // Once a file is saved it carries the revision, and a figure set afterwards is never taken for an old default again.
+    const store = new SettingsStore(DEFAULT_SETTINGS, file)
+    await store.update({ tts: { concurrency: 3 } })
+    expect((await new SettingsStore(DEFAULT_SETTINGS, file).get()).tts.concurrency).toBe(3)
   })
 
-  it('is held to what the model\'s window leaves room for', async () => {
-    bed = await createTestBed()
-    const { project } = bed.runtime
-    const chapter = await project.addChapter({ title: '一' })
-    await project.saveChapterText(chapter.id, '风从北面来。'.repeat(2000))
-
-    // A million-token model: the whole budget, and the whole manuscript.
-    expect(await chooseStrategy(project, 'auto', 500_000, 1_000_000, undefined)).toEqual({ strategy: 'full', budgetTokens: 500_000 })
-    // An unknown window is taken for a safe 200k, of which 70% goes to background.
-    expect(await chooseStrategy(project, 'auto', 500_000, undefined, undefined)).toEqual({ strategy: 'full', budgetTokens: Math.floor(ASSUMED_CONTEXT_WINDOW * 0.7) })
-    // A small model gets less than was asked for, never more than it can read.
-    expect((await chooseStrategy(project, 'auto', 500_000, 32_000, undefined)).budgetTokens).toBe(22_400)
-    expect((await chooseStrategy(project, 'retrieval', 500_000, 1_000_000, undefined)).strategy).toBe('retrieval')
-    // A budget below the manuscript packs by relevance instead.
-    expect(await chooseStrategy(project, 'auto', 6000, 1_000_000, undefined)).toEqual({ strategy: 'retrieval', budgetTokens: 6000 })
+  it('gives the text half of the model\'s window, and never more than the window holds', () => {
+    // A million-token model: half of it for the manuscript's own text.
+    expect(contextBudgets('auto', undefined, 1_000_000).textBudget).toBe(500_000)
+    // An unknown window is taken for a safe 200k.
+    expect(contextBudgets('auto', undefined, undefined)).toMatchObject({ textBudget: ASSUMED_CONTEXT_WINDOW / 2, window: ASSUMED_CONTEXT_WINDOW })
+    // The author's figure is used as given…
+    expect(contextBudgets('auto', 300_000, 1_000_000).textBudget).toBe(300_000)
+    // …but never past what the window leaves room for beside the bible and the reply.
+    const small = contextBudgets('auto', 300_000, 32_000)
+    expect(small.textBudget).toBeLessThan(32_000 - small.sideBudget)
+    expect(contextBudgets('retrieval', undefined, 1_000_000).textBudget).toBe(0)
+    expect(contextBudgets('full', undefined, 1_000_000).textBudget).toBeGreaterThan(800_000)
   })
 
   it('knows the windows of the current long-context models', () => {

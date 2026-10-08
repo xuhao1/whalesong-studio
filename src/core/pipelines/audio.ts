@@ -26,7 +26,8 @@
 import type { AmbiencePreset, AudioCue, AudioLine, AudioScript, CharacterCard, NovelSettings, SoundKind, TakeIssue, TtsSettings, VoiceCast, VoicePrint } from '../../shared/types'
 import { clip as clipText, hashText, proseOnly, sameName } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
-import { asArray, asRecord, asText, completeJson } from '../llm'
+import { asArray, asRecord, asText } from '../llm'
+import { assign } from '../crew'
 import { ProviderError } from '../media/http'
 import { similarity, type TtsProvider, type TtsRequest } from '../media/tts'
 import { badness, judge, leveled, measure, speechUnits, TARGET_LEVEL, type TakeVerdict, type VoiceMeasure } from '../media/voiceprint'
@@ -36,7 +37,7 @@ import type { LocatedChapter, Project } from '../project'
 import { ProjectError } from '../project'
 import { audioScriptTask } from '../prompts'
 import { L, promptLanguage } from '../render'
-import { errorMessage, mapLimit, serializer } from '../util/async'
+import { errorMessage, KeyedMutex, mapLimit, serializer } from '../util/async'
 
 export const AMBIENCE: Record<AmbiencePreset, [string, string]> = {
   none: ['无环境声（安静的室内）', 'silence (a quiet room)'],
@@ -62,6 +63,35 @@ export const AMBIENCE: Record<AmbiencePreset, [string, string]> = {
 
 const AMBIENCE_KEYS = Object.keys(AMBIENCE) as AmbiencePreset[]
 const BLOCK_CHARS = 1600
+
+/**
+ * A chapter's script is changed by several hands at once — the booth saving
+ * takes, the sound desk saving clips, the author editing a line: each change
+ * is read, made and written under this lock, so none overwrites another.
+ */
+const scriptLocks = new KeyedMutex()
+
+/**
+ * Change a chapter's script as it stands on disk right now.
+ * @param change - returns the script to save, or undefined to leave it.
+ * @returns the saved script, or undefined when the chapter has none (or nothing was changed).
+ */
+export async function changeScript(project: Project, chapterId: string, change: (script: AudioScript) => AudioScript | undefined | Promise<AudioScript | undefined>): Promise<AudioScript | undefined> {
+  return await scriptLocks.run(`${project.root}|${chapterId}`, async () => {
+    const current = await project.audioScript(chapterId)
+    if (current === undefined) return undefined
+    const next = await change(current)
+    if (next === undefined) return undefined
+    await project.saveAudioScript(next)
+    return next
+  })
+}
+
+/** Casting reads the book's voice sheet, picks, and writes it back: one chapter at a time, or two would give one voice to two people. */
+const castLocks = new KeyedMutex()
+
+/** Reference clips being made right now, by book and file: a second chapter asking for the same voice waits for the first one's clip. */
+const anchoring = new Map<string, Promise<PcmAudio | undefined>>()
 
 export async function requireSpeech(core: NovelCore, runtime?: ProjectRuntime): Promise<TtsProvider> {
   const provider = await core.ttsProvider(runtime)
@@ -308,21 +338,24 @@ export async function buildAudioScript(core: NovelCore, runtime: ProjectRuntime,
   const castText = castFor(chapter, characters, text).map(card => `${card.name}${card.aliases !== undefined && card.aliases.length > 0 ? `(${card.aliases.join('/')})` : ''} | ${[card.gender, card.age, card.voice ?? card.personality].filter(Boolean).join('，')}`).join('\n')
   const ambienceText = AMBIENCE_KEYS.map(key => `${key}: ${AMBIENCE[key][lang === 'zh' ? 0 : 1]}`).join('\n')
   const sounds = soundPlan(await core.settings.get())
-  const route = await core.route('analyst', runtime, task)
   const blocks = blocksOf(text)
   let done = 0
   task.job?.progress(0, blocks.length, L(lang, `编排有声脚本（共 ${blocks.length} 段）`, `directing the script (${blocks.length} passages)`))
 
-  const results = await mapLimit(blocks, 3, async (block) => {
+  const results = await mapLimit(blocks, core.parallel('text'), async (block) => {
     let lines: DraftLine[] | undefined
     let cues: DraftCue[] = []
     let reason: string | undefined
     try {
-      const { value } = await completeJson(core.llm, {
-        route,
+      const { value } = await assign(core, runtime, task, {
+        role: 'director',
+        label: L(lang, `第${chapter.index}章 · 有声脚本`, `Ch. ${chapter.index} · audio script`),
+        tool: 'submit_script',
+        // The material is all in the task: a few looks at the book at most, then the result.
+        maxSteps: 10,
+        what: L(lang, '这一段的有声脚本：逐句的台词、旁白和声音提示', 'the audio script of this passage: its lines, narration and sound cues'),
         prompt: audioScriptTask({ lang, language: manifest.language, title: manifest.title, text: block, cast: castText, ambience: ambienceText, effects: sounds.effects, music: sounds.music }),
         temperature: 0.2,
-        ...(task.signal !== undefined ? { signal: task.signal } : {}),
         validate: (raw) => {
           const record = asRecord(raw)
           const parsed: DraftLine[] = []
@@ -713,20 +746,36 @@ export function voiceBank(core: NovelCore, runtime: ProjectRuntime, provider: Tt
       pending = (async () => {
         const held = await kept(choice)
         if (held !== undefined || choice.voice === undefined) return held
+        const voice = choice.voice
+        // Another chapter may be making this very clip: one voice, one clip, whoever asked first.
+        const shared = `${project.root}|${anchorPath(voice)}`
+        const underway = anchoring.get(shared)
         // The first line of a voice waits for this clip, which can take as long as a line: say so rather than sit silent.
-        onAnchor?.(choice.voice, 'start')
+        onAnchor?.(voice, 'start')
         try {
-          const clip = leveled(trimSilence(await provider.anchor!(choice.voice, { language, ...(signal !== undefined ? { signal } : {}) })))
-          await project.writeAsset(anchorPath(choice.voice), encodeWav(clip))
+          if (underway !== undefined) {
+            const clip = await underway
+            if (clip !== undefined) cast?.anchor(choice, clip)
+            return clip
+          }
+          const making = (async () => {
+            const clip = leveled(trimSilence(await provider.anchor!(voice, { language, ...(signal !== undefined ? { signal } : {}) })))
+            await project.writeAsset(anchorPath(voice), encodeWav(clip))
+            return clip
+          })()
+          const tracked = making.catch(() => undefined)
+          anchoring.set(shared, tracked)
+          void tracked.then(() => { if (anchoring.get(shared) === tracked) anchoring.delete(shared) })
+          const clip = await making
           cast?.anchor(choice, clip)
           return clip
         } catch (error) {
           if (signal?.aborted === true) throw error
           // Without a clip the line is still spoken from the description; it is only less steady.
-          core.log(`could not make a reference clip for "${choice.voice.slice(0, 40)}"`, error)
+          core.log(`could not make a reference clip for "${voice.slice(0, 40)}"`, error)
           return undefined
         } finally {
-          onAnchor?.(choice.voice, 'end')
+          onAnchor?.(voice, 'end')
         }
       })()
       clips.set(key, pending)
@@ -827,7 +876,6 @@ export async function synthesizeChapter(core: NovelCore, runtime: ProjectRuntime
   const manifest = await project.manifest()
   const lang = promptLanguage(manifest.language)
   const characters = await project.characters()
-  const cast = await openCast(project, settings)
   const retakes = retakesOf(settings)
   let rendered = 0
   let failed = 0
@@ -850,19 +898,24 @@ export async function synthesizeChapter(core: NovelCore, runtime: ProjectRuntime
     task.job?.progress(done, total, label)
     task.job?.result({ chapterId: script.chapterId, active: [...speaking.keys()], waiting: [...waiting], rendered, failed, retaken, flagged })
   }
+  // Resolve voices in script order first so casting does not depend on which request finishes first.
+  // Lines left unspoken — speech tags, or whatever the author silenced — never reach the booth.
+  // The sheet is read, cast from and written back in one go: chapters voiced side by side cast one after the other.
+  const { cast, plan } = await castLocks.run(project.root, async () => {
+    const cast = await openCast(project, settings)
+    const plan = script.lines.filter(line => !isSkipped(line, settings)).map((line) => {
+      const choice = voiceFor(line, characters, settings, cast.taken, cast.extras)
+      const renderKey = hashText([settings.provider, settings.model ?? '', choice.voice ?? '', choice.direction ?? '', line.text].join('|'))
+      return { line, choice, renderKey }
+    })
+    // What was just cast is kept before the first word is spoken: a render that is stopped has still decided who sounds like whom.
+    await cast.save()
+    return { cast, plan }
+  })
   const reference = voiceBank(core, runtime, provider, settings, manifest.language, task.signal, (_voice, phase) => {
     tuning += phase === 'start' ? 1 : -1
     report()
   }, cast)
-  // Resolve voices in script order first so casting does not depend on which request finishes first.
-  // Lines left unspoken — speech tags, or whatever the author silenced — never reach the booth.
-  const plan = script.lines.filter(line => !isSkipped(line, settings)).map((line) => {
-    const choice = voiceFor(line, characters, settings, cast.taken, cast.extras)
-    const renderKey = hashText([settings.provider, settings.model ?? '', choice.voice ?? '', choice.direction ?? '', line.text].join('|'))
-    return { line, choice, renderKey }
-  })
-  // What was just cast is kept before the first word is spoken: a render that is stopped has still decided who sounds like whom.
-  await cast.save()
   const wanted = params.lines !== undefined ? new Set(params.lines) : undefined
   const stale = (item: typeof plan[number]): boolean => params.force === true || item.line.audio === undefined || item.line.renderKey !== item.renderKey
   const todo = plan.filter(item => (wanted === undefined || wanted.has(item.line.id)) && stale(item))
@@ -913,17 +966,27 @@ export async function synthesizeChapter(core: NovelCore, runtime: ProjectRuntime
   const flush = (): Promise<void> => inOrder(async () => {
     if (updates.size === 0) return
     lastSave = Date.now()
-    script = { ...script, lines: script.lines.map(line => updates.has(line.id) ? stripUnset({ ...line, ...updates.get(line.id) }) : line), updatedAt: new Date().toISOString() }
+    const pending = new Map(updates)
     updates.clear()
-    await project.saveAudioScript(script)
+    // Onto the script as it stands now: sounds made and lines edited meanwhile are not this run's to overwrite.
+    const saved = await changeScript(project, script.chapterId, current => ({
+      ...current,
+      lines: current.lines.map(line => pending.has(line.id) ? stripUnset({ ...line, ...pending.get(line.id) }) : line),
+      updatedAt: new Date().toISOString(),
+    }))
+    if (saved !== undefined) script = saved
   })
-  await mapLimit(todo, Math.max(1, Math.min(8, settings.concurrency ?? 3)), async ({ line, choice, renderKey }) => {
-    waiting.delete(line.id)
+  // As many lines wait at the booth door as may be inside at once; the gate behind it counts over every chapter being voiced.
+  await mapLimit(todo, core.parallel('speech'), async ({ line, choice, renderKey }) => {
     const label = `${who(line)}「${clipText(line.text, 16, '…')}」`
-    speaking.set(line.id, label)
-    report()
+    // In the booth from the moment the line is actually sent, not from when it joined the queue.
+    const enter = (): void => {
+      waiting.delete(line.id)
+      if (!speaking.has(line.id)) speaking.set(line.id, label)
+      report()
+    }
     try {
-      const request = await speechRequest(choice, line.text, manifest.language, reference, task.signal)
+      const request = { ...await speechRequest(choice, line.text, manifest.language, reference, task.signal), onStart: enter }
       const take = await speakChecked(provider, request, {
         print: cast.print(choice),
         retakes,
@@ -951,6 +1014,7 @@ export async function synthesizeChapter(core: NovelCore, runtime: ProjectRuntime
       updates.set(line.id, { error: error instanceof Error ? error.message : String(error) })
       failed += 1
     } finally {
+      waiting.delete(line.id)
       speaking.delete(line.id)
     }
     done += 1
@@ -1113,4 +1177,44 @@ export async function updateAudioLine(runtime: ProjectRuntime, chapterRef: strin
   }
   await project.saveAudioScript(next)
   return next
+}
+
+/**
+ * Take one line out of a chapter's audio script. Sound cues that began at it
+ * move to the line after it (the one before, at the end of the script), and a
+ * storyboard panel that showed it lets it go — a panel left with no line goes
+ * with it.
+ */
+export async function removeAudioLine(runtime: ProjectRuntime, chapterRef: string, lineId: string): Promise<{ script: AudioScript; panels: number }> {
+  const { project } = runtime
+  const chapter = await project.findChapter(chapterRef)
+  if (chapter === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${chapterRef}"`)
+  const script = await project.audioScript(chapter.plan.id)
+  if (script === undefined) throw new ProjectError('novel/empty', 'this chapter has no audio script yet')
+  const at = script.lines.findIndex(line => line.id === lineId)
+  if (at < 0) throw new ProjectError('novel/not-found', `the script has no line "${lineId}"`)
+  const heir = script.lines[at + 1]?.id ?? script.lines[at - 1]?.id
+  const next: AudioScript = {
+    ...script,
+    updatedAt: new Date().toISOString(),
+    lines: script.lines.filter(line => line.id !== lineId),
+    // A cue is where a sound begins: without its line it begins at the next thing said.
+    cues: script.cues.flatMap(cue => cue.at !== lineId ? [cue] : heir !== undefined ? [{ ...cue, at: heir }] : []),
+  }
+  await project.saveAudioScript(next)
+  let panels = 0
+  const board = await project.comicBoard(chapter.plan.id)
+  if (board !== undefined && board.panels.some(panel => panel.lines.includes(lineId))) {
+    const kept = board.panels.map(panel => ({ ...panel, lines: panel.lines.filter(id => id !== lineId) })).filter(panel => panel.lines.length > 0)
+    panels = board.panels.length - kept.length
+    await project.saveComicBoard({ ...board, updatedAt: new Date().toISOString(), panels: kept })
+  }
+  return { script: next, panels }
+}
+
+/** Throw a chapter's audio script away. The takes already spoken stay on disk; a script directed again reuses the ones whose lines come back unchanged. */
+export async function clearAudioScript(runtime: ProjectRuntime, chapterRef: string): Promise<{ chapterId: string; removed: boolean }> {
+  const chapter = await runtime.project.findChapter(chapterRef)
+  if (chapter === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${chapterRef}"`)
+  return { chapterId: chapter.plan.id, removed: await runtime.project.removeAudioScript(chapter.plan.id) }
 }

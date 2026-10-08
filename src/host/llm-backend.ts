@@ -49,7 +49,8 @@ export function createHarnessLlm(ctx: Context): LlmBackend {
       const options: GenerateOptions = {
         provider: route.provider,
         model: route.model,
-        messages: [{ role: 'user', content: [{ type: 'text', text: request.prompt }] }],
+        // The part that stays the same from call to call goes ahead as a block of its own: a cache keeps a prefix, and this is where it ends.
+        messages: [{ role: 'user', content: request.stable !== undefined && request.stable.length > 0 ? [{ type: 'text', text: request.stable }, { type: 'text', text: request.prompt }] : [{ type: 'text', text: request.prompt }] }],
         ...(request.system !== undefined && request.system.length > 0 ? { system: request.system } : {}),
         ...(temperature !== undefined ? { temperature } : {}),
         ...(maxTokens !== undefined ? { maxTokens } : {}),
@@ -69,7 +70,7 @@ export function createHarnessLlm(ctx: Context): LlmBackend {
           thought += chunk.text.length
           currentJob()?.think(chunk.text)
         } else if (chunk.type === 'usage') {
-          usage = { inputTokens: chunk.usage.inputTokens + (chunk.usage.cacheReadTokens ?? 0) + (chunk.usage.cacheWriteTokens ?? 0), outputTokens: chunk.usage.outputTokens }
+          usage = { inputTokens: chunk.usage.inputTokens + (chunk.usage.cacheReadTokens ?? 0) + (chunk.usage.cacheWriteTokens ?? 0), outputTokens: chunk.usage.outputTokens, ...(chunk.usage.cacheReadTokens !== undefined && chunk.usage.cacheReadTokens > 0 ? { cachedTokens: chunk.usage.cacheReadTokens } : {}) }
         } else if (chunk.type === 'finish') {
           const reason = chunk.reason
           if (reason.kind === 'aborted') {

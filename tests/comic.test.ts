@@ -2,10 +2,10 @@
 /** Motion comic: how finely a chapter is cut into panels, and that the cut always covers the whole chapter. */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { LlmRequest } from '../src/core/llm'
-import { beatsOf, buildStoryboard, PANEL_SECONDS, planPanels } from '../src/core/pipelines/comic'
+import { beatsOf, buildStoryboard, PANEL_SECONDS, planPanels, renderPanels } from '../src/core/pipelines/comic'
 import type { AudioLine, AudioScript, ComicBoard } from '../src/shared/types'
 import { hashText, proseOnly } from '../src/shared/text'
-import { createTestBed, type TestBed } from './support/harness'
+import { createTestBed, FakeImages, type TestBed } from './support/harness'
 
 const line = (id: string, text: string, extra: Partial<AudioLine> = {}): AudioLine => ({ id, kind: 'narration', text, ...extra })
 
@@ -200,3 +200,56 @@ describe('storyboard', () => {
     expect(inside.at(-1)!.end).toBeUndefined()
   })
 })
+
+describe('drawing the panels', () => {
+  const images = new FakeImages()
+  let bed: TestBed
+  beforeEach(async () => {
+    images.calls.length = 0
+    bed = await createTestBed({ settings: { image: { provider: 'codex' } }, bridges: images.bridges })
+  })
+  afterEach(async () => { await bed.cleanup() })
+
+  it('sends along the art of who is in a panel, of where it is — and of a thing it shows', async () => {
+    const { project } = bed.runtime
+    const sheet = await project.writeAsset('images/sheet-a.png', new Uint8Array([1]))
+    const sheetTwo = await project.writeAsset('images/sheet-b.png', new Uint8Array([2]))
+    const sheetThree = await project.writeAsset('images/sheet-c.png', new Uint8Array([3]))
+    const placeArt = await project.writeAsset('images/place.png', new Uint8Array([4]))
+    const thingArt = await project.writeAsset('images/thing.png', new Uint8Array([5]))
+    const one = await project.saveCharacter({ name: '沈璃', visual: { prompt: '青衣', sheet } })
+    const two = await project.saveCharacter({ name: '顾七', visual: { prompt: '黑衣', sheet: sheetTwo } })
+    const three = await project.saveCharacter({ name: '摆渡人', visual: { prompt: '蓑衣', sheet: sheetThree } })
+    await project.saveWorld({ name: '渡口', category: 'location', visualImage: placeArt })
+    await project.saveWorld({ name: '断水剑', category: 'item', aliases: ['旧剑'], visualImage: thingArt })
+    await project.saveWorld({ name: '没画过的信', category: 'item' })
+    const chapter = await project.addChapter({ title: '渡口' })
+    await project.saveChapterText(chapter.id, '她把剑放回匣中。')
+    // A script and a storyboard of the text as it is: nothing is asked of a model again.
+    const textHash = hashText(proseOnly(await project.chapterText(chapter.id)))
+    await project.saveAudioScript({ schema: 1, chapterId: chapter.id, textHash, updatedAt: new Date().toISOString(), lines: [line('l1', '她把剑放回匣中。')], cues: [] } as never)
+    const panel = (id: string, extra: Record<string, unknown>) => ({ id, lines: ['l1'], description: '', prompt: '', camera: 'still', ...extra })
+    await project.saveComicBoard({ schema: 1, chapterId: chapter.id, textHash, updatedAt: new Date().toISOString(), style: '', panels: [
+      panel('p1', { description: '她握着断水剑站在渡口', prompt: 'a woman holding a sword', characters: [one.id], location: '渡口' }),
+      panel('p2', { description: '三个人在渡口对峙，旧剑横在中间', prompt: 'three people', characters: [one.id, two.id, three.id], location: '渡口' }),
+      panel('p3', { description: '匣中的旧剑', prompt: 'a sword in a box' }),
+      panel('p4', { description: '桌上一封没画过的信', prompt: 'a letter', characters: [one.id] }),
+    ] } as never)
+    const done = await renderPanels(bed.core, bed.runtime, { chapter: chapter.id, concurrency: 1 }, { origin: 'user' })
+    expect(done).toMatchObject({ rendered: 4, failed: 0 })
+    const labels = images.calls.map(call => call.references.map(reference => reference.label ?? ''))
+    // One person, the place, and the thing she holds: there is a seat for each.
+    expect(labels[0]).toHaveLength(3)
+    expect(labels[0]!.join('|')).toMatch(/场所「渡口」.*物品「断水剑」/)
+    // Three people and a place: faces first, the place keeps its seat, and the thing — named by its other name — finds none left.
+    expect(labels[1]).toHaveLength(3)
+    expect(labels[1]!.at(-1)).toBe('场所「渡口」')
+    expect(labels[1]!.join('|')).not.toContain('物品')
+    // Nobody and nowhere: the thing alone.
+    expect(labels[2]).toEqual(['物品「断水剑」'])
+    // A thing that was never drawn has nothing to send.
+    expect(labels[3]).toHaveLength(1)
+    expect(labels[3]!.join('|')).not.toContain('物品')
+  })
+})
+

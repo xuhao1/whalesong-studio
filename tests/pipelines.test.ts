@@ -9,7 +9,7 @@ import { digestChapter, digestPending } from '../src/core/pipelines/digest'
 import { exportBook, zipStore } from '../src/core/pipelines/export'
 import { decodeText, importManuscript, splitChapters } from '../src/core/pipelines/import'
 import { deriveChapters } from '../src/core/pipelines/plot'
-import { acceptProposal, reviseSpan } from '../src/core/pipelines/revise'
+import { fixIssue, acceptProposal, reviseSpan } from '../src/core/pipelines/revise'
 import { cleanProse, writeChapter } from '../src/core/pipelines/write'
 import { chunkProse, tokenize } from '../src/core/retrieval'
 import { createTestBed, type TestBed } from './support/harness'
@@ -46,11 +46,38 @@ describe('pipelines', () => {
     expect(await project.chapterText(plan.id)).toBe('夜雨敲窗。沈璃推开旧居的门。\n\n梁上有一道暗影。')
     const request = bed.llm.requests[0]!
     expect(request.system).toContain('只输出小说正文')
-    expect(request.prompt).toContain('【沈璃】')
-    expect(request.prompt).toContain('〔青冥山〕')
+    // What stays the same from chapter to chapter travels ahead of the rest, as a block of its own a provider can keep.
+    expect(request.stable).toContain('【沈璃】')
+    expect(request.stable).toContain('〔青冥山〕')
+    expect(request.stable).toContain('世界观核心设定')
+    expect(request.prompt).toContain('本章章纲')
     expect(request.prompt).toContain('重点写她的克制')
-    // Stable material precedes volatile material.
-    expect(request.prompt.indexOf('世界观核心设定')).toBeLessThan(request.prompt.indexOf('本章章纲'))
+    // Nobody recommended a length: the writer is left to judge, and the standing instructions name no figure.
+    expect(request.prompt).toContain('没有规定字数，由你判断')
+    expect(request.system).not.toMatch(/篇幅/)
+    expect(result.budget).toBeUndefined()
+  })
+
+  it('writes to the length that was recommended, for the chapter or for the book', async () => {
+    const { project } = bed.runtime
+    const one = await project.addChapter({ title: '一', synopsis: '开头。', targetWords: 1800 })
+    const two = await project.addChapter({ title: '二', synopsis: '接着。' })
+    bed.llm.responder = () => '正文。'
+    expect((await writeChapter(bed.core, bed.runtime, { chapter: one.id }, { origin: 'user' })).budget).toBe(1800)
+    expect(bed.llm.requests.at(-1)!.prompt).toContain('约 1800 字')
+    // The book recommends a length for the chapters that name none.
+    await project.updateManifest({ chapterBudget: 2400 })
+    expect((await writeChapter(bed.core, bed.runtime, { chapter: two.id }, { origin: 'user' })).budget).toBe(2400)
+    // The figure every book used to be stamped with is nobody's wish.
+    await project.updateManifest({ chapterBudget: 0 })
+    expect((await project.manifest()).chapterBudget).toBeUndefined()
+    await bed.runtime.project.files.writeJson(project.path('novel.json'), { ...(await project.manifest()), chapterWords: 3000 })
+    project.touch()
+    const three = await project.addChapter({ title: '三', synopsis: '再接着。' })
+    const result = await writeChapter(bed.core, bed.runtime, { chapter: three.id }, { origin: 'user' })
+    expect(result.budget).toBeUndefined()
+    // Left to judge, the writer is told how long the book's chapters have been running.
+    expect(bed.llm.requests.at(-1)!.prompt).toContain('由你判断')
   })
 
   it('finishes a chapter the model cut off at its output limit', async () => {
@@ -204,6 +231,71 @@ describe('pipelines', () => {
     expect(await project.chapterText(plan.id)).toContain('“谁在那里？”她低声问。')
   })
 
+  it('mends what a review found where it was found, with the author\'s say', async () => {
+    const { project } = bed.runtime
+    const plan = await project.addChapter({ title: '雨夜' })
+    await project.saveChapterText(plan.id, '她推开门。屋里很黑。\n\n“有人吗？”她问。右手握着剑。')
+    await project.saveReview({
+      chapterId: plan.id, textHash: 'x', createdAt: '', verdict: '有两处要改',
+      issues: [
+        { id: 'i1', severity: 'high', type: 'continuity', quote: '右手握着剑。', explanation: '第一章写她是左撇子。', suggestion: '改成左手。' },
+        { id: 'i2', severity: 'low', type: 'pacing', explanation: '这一章收得太快。' },
+      ],
+    })
+    bed.llm.responder = () => '左手握着剑。'
+    const here = await fixIssue(bed.core, bed.runtime, { chapter: plan.id, issue: 'i1', note: '顺便让她握得更紧', scope: 'passage' }, { origin: 'user' })
+    expect(here.scope).toBe('passage')
+    // The writer was told what is wrong, what the review suggests — and what the author wants, which decides.
+    const asked = bed.llm.requests.at(-1)!.prompt
+    for (const part of ['第一章写她是左撇子', '改成左手', '顺便让她握得更紧', '右手握着剑。']) expect(asked, part).toContain(part)
+    await acceptProposal(bed.core, bed.runtime, here.passage!.proposalId!, { origin: 'user' })
+    expect(await project.chapterText(plan.id)).toContain('左手握着剑。')
+    // A problem that quotes no sentence is the chapter's to mend.
+    bed.llm.responder = () => '她推开门。屋里很黑。\n\n“有人吗？”她问。左手握着剑，站了很久。'
+    const whole = await fixIssue(bed.core, bed.runtime, { chapter: plan.id, issue: 'i2', scope: 'passage' }, { origin: 'user' })
+    expect(whole.scope).toBe('chapter')
+    expect(whole.passage!.proposalId).toBeDefined()
+    await expect(fixIssue(bed.core, bed.runtime, { chapter: plan.id, issue: 'nope', scope: 'passage' }, { origin: 'user' })).rejects.toThrow('no review issue')
+  })
+
+  it('mends a problem wherever it reaches: the chapters it touches, and the bible', async () => {
+    const { project } = bed.runtime
+    const card = await project.saveCharacter({ name: '沈璃', role: 'protagonist', personality: '倔强', appearance: '惯用右手' })
+    const one = await project.addChapter({ title: '雨夜' })
+    const two = await project.addChapter({ title: '下山' })
+    const three = await project.addChapter({ title: '渡口' })
+    await project.saveChapterText(one.id, '她是左撇子，从小如此。')
+    await project.saveChapterText(two.id, '她右手握着剑下了山。')
+    await project.saveChapterText(three.id, '渡口没有人。')
+    await project.saveReview({ chapterId: two.id, textHash: 'x', createdAt: '', verdict: '', issues: [{ id: 'i1', severity: 'high', type: 'continuity', quote: '右手握着剑', explanation: '第一章写她是左撇子。' }] })
+    bed.llm.responder = (request) => {
+      if (request.prompt.includes('责任编辑')) {
+        return JSON.stringify({
+          chapters: [{ index: 2, reason: '把右手改成左手' }],
+          bible: [{ kind: 'character', name: '沈璃', field: 'appearance', value: '左撇子，惯用左手', reason: '人物卡和第一章对不上' }, { kind: 'character', name: '不存在的人', field: 'appearance', value: 'x' }, { kind: 'character', name: '沈璃', field: 'role', value: 'minor' }],
+          note: '问题在人物卡：正文第一章是对的。',
+        })
+      }
+      return '她左手握着剑下了山。'
+    }
+    const result = await fixIssue(bed.core, bed.runtime, { chapter: two.id, issue: 'i1', scope: 'book' }, { origin: 'user' })
+    expect(result.scope).toBe('book')
+    // The planner was asked how far the problem reaches, and for the bible as well.
+    const scope = bed.llm.requests.find(request => request.prompt.includes('责任编辑'))!.prompt
+    expect(scope).toContain('第一章写她是左撇子')
+    expect(scope).toContain('"bible"')
+    // One chapter changes — as a proposal; the others were judged untouched.
+    expect(result.book).toMatchObject({ untouched: 2, note: '问题在人物卡：正文第一章是对的。', bible: [{ name: '沈璃', field: 'appearance' }] })
+    expect(result.book!.results.map(item => item.index)).toEqual([2])
+    expect(await project.chapterText(two.id)).toContain('右手')
+    // The card is the author's: its change waits as a suggestion — only for a field a card has, on a card there is.
+    const waiting = (await project.suggestions()).filter(item => item.kind === 'bible-edit')
+    expect(waiting).toHaveLength(1)
+    expect(waiting[0]).toMatchObject({ title: '修改人物卡：沈璃 · appearance', payload: { target: 'character', id: card.id, field: 'appearance', value: '左撇子，惯用左手' } })
+    await acceptSuggestion(bed.runtime, waiting[0]!.id)
+    expect(await project.findCharacter('沈璃')).toMatchObject({ appearance: '左撇子，惯用左手', personality: '倔强' })
+  })
+
   it('derives chapters into the outline and links cast and threads', async () => {
     const { project } = bed.runtime
     await project.saveCharacter({ name: '沈璃', role: 'protagonist' })
@@ -231,21 +323,28 @@ describe('pipelines', () => {
     await project.saveChapterText(one.id, '夜雨敲窗。沈璃在梁上找到了断剑，剑身刻着青冥二字。\n\n她把断剑裹进旧布。')
     await project.saveMemory({ schema: 1, chapterId: one.id, textHash: 'x', updatedAt: '', brief: '发现断剑', summary: '沈璃在旧居梁上发现断剑。', facts: [], characters: [{ character: '沈璃', name: '沈璃', stateAfter: '决意下山' }], newEntities: [], threads: [] })
     const chapter = (await project.findChapter(two.id))!
-    const retrieval = await packContext(project, index, { purpose: 'draft', chapter, budgetTokens: 6000, strategy: 'retrieval', tailChars: 200, brief: '断剑' })
+    // No budget for the text itself: an outline of what came before, and the end of the chapter before.
+    const retrieval = await packContext(project, index, { purpose: 'draft', chapter, textBudget: 0, sideBudget: 6000, tailChars: 200, brief: '断剑' })
     expect(retrieval.strategy).toBe('retrieval')
     expect(retrieval.text).toContain('前情提要')
     expect(retrieval.text).toContain('沈璃在旧居梁上发现断剑。')
     expect(retrieval.text).toContain('决意下山')
     expect(retrieval.text).toContain('上一章《雨夜》结尾原文')
     expect(retrieval.cast.map(card => card.name)).toEqual(['沈璃'])
-    const full = await packContext(project, index, { purpose: 'draft', chapter, budgetTokens: 6000, strategy: 'full', tailChars: 200 })
+    const full = await packContext(project, index, { purpose: 'draft', chapter, textBudget: 6000, sideBudget: 6000, tailChars: 200 })
     expect(full.strategy).toBe('full')
     expect(full.included.fullChapters).toBe(1)
-    expect(full.text).toContain('前文全文')
+    expect(full.window).toEqual({ from: 1, to: 1 })
+    expect(full.text).toContain('前文正文（从第一章起，按顺序）')
     expect(full.text).not.toContain('前情提要')
-    // A budget the manuscript cannot fit degrades to layered memory instead of truncating blindly.
-    const tight = await packContext(project, index, { purpose: 'draft', chapter, budgetTokens: 700, strategy: 'full', tailChars: 100 })
+    // The text is part of what a provider can keep; this chapter's own outline is not.
+    expect(full.stable).toContain('夜雨敲窗')
+    expect(full.stable).not.toContain('本章章纲')
+    expect(full.rest).toContain('本章章纲')
+    // A chapter is never cut to fit: a budget it does not fit in sends the outline instead.
+    const tight = await packContext(project, index, { purpose: 'draft', chapter, textBudget: 20, sideBudget: 6000, tailChars: 100 })
     expect(tight.strategy).toBe('retrieval')
+    expect(tight.included.fullChapters).toBe(0)
   })
 
   it('imports a manuscript: chapters, volumes, digests and a cast', async () => {
@@ -253,15 +352,18 @@ describe('pipelines', () => {
     const text = '第一卷 风起\n\n第一章 雨夜\n\n夜雨敲窗。沈璃回到旧居。\n\n第二章 断剑\n\n梁上有一把断剑。她踩着供桌攀上去，指尖先碰到的是灰，然后才是铁。剑只有半截，断口参差，像被什么东西生生咬断。她把它抱下来，就着窗外的一点天光看——剑身靠近护手的地方，刻着两个已经磨得发亮的小字：青冥。\n\n第二卷 云涌\n\n第三章 下山\n\n她下山去了。'
     bed.llm.responder = (request) => {
       if (request.prompt.includes('请做场记')) return DIGEST
-      if (request.prompt.includes('人物出场记录')) return JSON.stringify({ characters: [{ name: '沈璃', aliases: ['阿璃'], role: 'protagonist', personality: '倔强', status: 'active' }] })
+      if (request.prompt.includes('一批人物')) return JSON.stringify({ characters: [{ listed: '沈璃', name: '沈璃', aliases: ['阿璃'], role: 'protagonist', personality: '倔强', status: 'active' }] })
       if (request.prompt.includes('地点、组织、物品')) return JSON.stringify({ entries: [{ name: '青冥剑阁', category: 'location', importance: 2, summary: '废弃剑阁' }] })
       if (request.prompt.includes('一句话摘要')) return JSON.stringify({ logline: '少女携断剑下山。', premise: '……', genre: '武侠', volumes: [{ title: '全书', from: 1, to: 3 }] })
       if (request.prompt.includes('文体学者')) return JSON.stringify({ name: 'x', pov: 'third-limited', tone: '冷峻', rules: ['短句'], avoid: ['抒情'] })
+      if (request.prompt.includes('所有画面共用的画风')) return JSON.stringify({ style: '冷色水墨，枯笔，雨雾', avoid: ['现代建筑'], why: '武侠，夜雨。' })
       return 'ok'
     }
     const result = await importManuscript(bed.core, bed.runtime, { text }, { origin: 'user' })
     expect(result).toMatchObject({ chapters: 3, volumes: 2, characters: 1, worldEntries: 1, digested: 3 })
     expect(result.failed).toEqual([])
+    // A book that arrives written has a look of its own once it has been read.
+    expect(await project.manifest()).toMatchObject({ artStyle: '冷色水墨，枯笔，雨雾', artAvoid: ['现代建筑'] })
     const outline = await project.outline()
     expect(outline.volumes.map(volume => volume.title)).toEqual(['第一卷 风起', '第二卷 云涌'])
     expect(outline.volumes[0]!.chapters.map(chapter => chapter.title)).toEqual(['第一章 雨夜', '第二章 断剑'])

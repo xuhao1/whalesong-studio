@@ -45,16 +45,34 @@ The author can read, listen and watch the motion comic on a phone: `novel_share 
 
 How finely to cut is the author's decision, and every panel is a picture they pay for — ask, or use what the book is set to. `density=sparse|balanced|dense` names how long a picture stays (about 26, 13 or 6–7 seconds), `density=auto` leaves it to the storyboard director, and `max_panels` is a ceiling that always holds. Say how many panels came out before rendering them; to change the cut of a board that exists, pass `force=true`.
 
+## Video
+
+`novel_video action=produce chapter=<n>` turns a chapter's voice, sound and storyboard pictures into an MP4. You do not assemble it: the crew's post-production agent gets the material on one timeline and a shell, writes its own cut, checks it and hands it in — its run is a subagent of this conversation the author can open. It needs every line voiced and the panels drawn (`action=status` says what there is, and whether this computer has ffmpeg); it takes minutes and many steps of its model. Pass what the author wants of the cut in `direction` (pace, subtitles, a title card). Relay post-production's note — it says what was missing and what it chose, such as subtitles carried as a track because this ffmpeg cannot draw text.
+
 ## Interludes
 
 An interlude is a scene the author steps into: they play one character (or direct from outside) while the director model plays everyone else from their cards, their memory up to a chosen chapter, and the situation. It never changes the canon by itself.
 
 - Set one up with `novel_play action=start`: the `situation` in two sentences, the `cast`, the `player` (omit to let the author direct), the `anchor` chapter it branches from. Good interludes test something: a confrontation the outline skipped, a what-if, a relationship the author wants to feel before writing it.
 - The author plays in the Studio with backgrounds, portraits, voices and ambience. You can also run turns in the chat (`action=turn`) when they prefer text.
-- Afterwards ask what it was: `discard` (it never happened), keep as a side story, or `action=novelize` — the writer turns the transcript into a chapter in the book's style and adds it after the anchor. A novelized interlude is canon: digest it and adjust the outline that follows.
+- Afterwards ask what it was: `discard` (it never happened), keep as a side story, or `action=novelize` — the writer turns the transcript into a chapter in the book's style. As a chapter (the default) it goes after the anchor on the main line and is canon: digest it and adjust the outline that follows. With `as=line` it opens a **plot line** that leaves after the anchor, the session as its first chapter and the player's first move as the choice at the fork: the book keeps going the way it went, and this way stands beside it — to be continued (`novel_derive line=…`, `novel_write line=…`), or made the main line later. Offer the line when what was played contradicts what is already written after the anchor.
 
 ## Order of work for a chapter
 
-art direction and avoid list → anchors, design sheets and voices on cards → audio script → author corrects → synthesize → storyboard → render → watch. Skipping the sheets makes every panel a different person; skipping the correction step multiplies every mistake by the cost of rendering it.
+art direction and avoid list → anchors, design sheets and voices on cards → audio script → author corrects → synthesize → storyboard → render → watch → (when asked) video. Skipping the sheets makes every panel a different person; skipping the correction step multiplies every mistake by the cost of rendering it.
+
+## Many chapters, or everything for one chapter, in one go
+
+When the author wants a stretch of the book staged — "voice the first ten chapters", "make chapter 3 a motion comic, the whole thing" — do not walk the steps above chapter by chapter. `novel_batch` runs them as one job with a table the author can watch (Stage → Produce in the Studio):
+
+- `novel_batch what=stage chapters=[…] steps=[script, voice, sound]` is the audiobook of those chapters; add `storyboard, panels` for the motion comic and `video` for the cut. Left out, `steps` is everything that can be made with what is set up, without the video; left out, `chapters` is every chapter that has text. Once a chapter's script stands, its voices, its sounds and its storyboard are made side by side, and several chapters are on the line at once.
+- `novel_batch what=stage action=status` says where every chapter's production stands and which steps cannot run for lack of a model. Look before a large run.
+- `novel_batch what=art sheets=[all] places=[all] portraits=[all] voices=[all]` is the set-up of *Consistency is built before the first picture* for the whole cast at once: sheets and places are drawn first, portraits (and `scenes`, `cover=true`) against them. The anchors must exist before it — a sheet drawn from prose appearance is the mistake this skill starts with.
+
+A batch only makes what is missing, so running the same call again after a stop or after failures does the rest; `redo=true` makes again what is there and pays for it again. A step that fails holds back only the steps of that chapter that needed it; the result lists what did not come about and why — pass that on rather than "done".
+
+The step the single-chapter order protects is still the author's: a batch voices whatever the script says. For a book whose speakers the analyst has not met yet, run `steps=[script]` over the chapters first, have the author look at one or two scripts, then run the rest.
+
+How many requests go out at once is the author's setting (8 by default; `tts.concurrency`, `image.concurrency`, `sound.concurrency`, `textConcurrency` in `novel_settings`), counted over everything that runs, not per job. When a service limits its rate the Studio slows down, resends and recovers by itself and says so in the job dock — that is not a failure to report, and not a reason to lower the figure.
 
 Media is where the money goes. `novel_settings action=usage` says what the book has used so far — tell the author before a bulk run when they have asked about cost.

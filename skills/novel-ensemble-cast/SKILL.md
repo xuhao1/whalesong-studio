@@ -23,7 +23,7 @@ Digest proposes status changes when the text shows an entrance, an exit or a dea
 
 ## Reading the board
 
-`novel_status` lists the cast with chapters since each was last seen. The Studio's Cast view shows the same as a board, a presence grid (written, planned, planned-but-missing) and the relationship graph. Look for:
+`novel_status` lists the cast with chapters since each was last seen. The Studio's People page (人物) shows the same beside everyone's card: a lifecycle board, a presence grid (written, planned, planned-but-missing) and the relationship graph. Look for:
 
 - **Active and absent for five chapters or more, with no planned return.** Either schedule the return or mark them `offstage`. Do not leave it undecided.
 - **Planned in the outline but missing from the written chapter.** The chapter was drafted without them: decide whether the outline or the text is right.

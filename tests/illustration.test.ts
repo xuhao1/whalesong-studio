@@ -3,7 +3,7 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { artDirectionOf, deriveVisual, illustrate, looksOf } from '../src/core/pipelines/illustrate'
+import { artDirectionOf, deriveArtDirection, deriveVisual, illustrate, looksOf } from '../src/core/pipelines/illustrate'
 import { reconcileLooks, upsertLooks } from '../src/core/project'
 import { DEFAULT_SETTINGS } from '../src/core/settings'
 import { DEFAULT_ART_STYLE, mergeAvoid, resolveArtStyle, splitAvoid } from '../src/shared/art'
@@ -58,6 +58,36 @@ describe('art direction', () => {
     const second = await illustrate(bed.core, bed.runtime, { kind: 'custom', prompt: '清晨的码头' }, task)
     expect(second.pinnedStyle).toBeUndefined()
     expect(second.parts?.styleSource).toBe('book')
+  })
+
+  it('has the director settle a look that is the book\'s own, from the book', async () => {
+    const { bed } = await studio()
+    const { project } = bed.runtime
+    await project.updateManifest({ genre: '民国悬疑', logline: '一个替人写遗书的女人。', premise: '上海，一九二七年。', artAvoid: ['十字架'] })
+    await project.saveCharacter({ name: '沈蘅', role: 'protagonist', appearance: '旧旗袍，瘦', tagline: '代笔人' })
+    bed.llm.responder = () => JSON.stringify({ style: '民国月份牌的淡彩，胶片颗粒，煤气灯的暖黄', avoid: ['现代服饰', '十字架', '霓虹'], why: '一九二七年的上海弄堂。' })
+
+    // Proposed only: nothing is written.
+    const proposed = await deriveArtDirection(bed.core, bed.runtime, { apply: false, direction: '不要日系' }, task)
+    expect(proposed).toMatchObject({ style: '民国月份牌的淡彩，胶片颗粒，煤气灯的暖黄', applied: false, why: '一九二七年的上海弄堂。' })
+    expect((await project.manifest()).artStyle).toBeUndefined()
+    // The director is given what the book is — and what the author asks, which decides.
+    const prompt = bed.llm.requests.at(-1)!.prompt
+    for (const word of ['民国悬疑', '一个替人写遗书的女人。', '上海，一九二七年。', '沈蘅', '旧旗袍，瘦', '不要日系']) expect(prompt).toContain(word)
+
+    // Settled: written into the book, its avoid list joined to what the book had, on the record of changes.
+    const settled = await deriveArtDirection(bed.core, bed.runtime, {}, task)
+    expect(settled?.applied).toBe(true)
+    expect(await project.manifest()).toMatchObject({ artStyle: '民国月份牌的淡彩，胶片颗粒，煤气灯的暖黄', artAvoid: ['十字架', '现代服饰', '霓虹'] })
+    expect(await artDirectionOf(bed.core, bed.runtime)).toMatchObject({ source: 'book', style: '民国月份牌的淡彩，胶片颗粒，煤气灯的暖黄' })
+    expect((await project.activity()).some(entry => entry.tool === 'art' && entry.role === 'director')).toBe(true)
+
+    // A book that has a look keeps it when that is asked; the look it has is shown to the director when it is settled anew.
+    bed.llm.responder = () => JSON.stringify({ style: '厚涂' })
+    expect(await deriveArtDirection(bed.core, bed.runtime, { keep: true }, task)).toBeUndefined()
+    await deriveArtDirection(bed.core, bed.runtime, {}, task)
+    expect(bed.llm.requests.at(-1)!.prompt).toContain('民国月份牌的淡彩')
+    expect((await project.manifest()).artStyle).toBe('厚涂')
   })
 
   it('keeps the Studio, book, character and per-call avoid lists out of every picture', async () => {
@@ -200,6 +230,35 @@ describe('design sheets and looks', () => {
     expect(scene.prompt).toContain('参考图：第1张是沈砚（丧服）；第2张是场所「咏礼庭」')
   })
 
+  it('composes a cover from what the book is — its story, its tone, its leads — not from its title', async () => {
+    const { bed, images } = await studio()
+    const { project } = bed.runtime
+    await project.updateManifest({ genre: '世情', themes: ['盛衰', '情'], logline: '一个大家族的盛极而衰。' })
+    const lead = await project.saveCharacter({ name: '贾宝玉', role: 'protagonist', tagline: '衔玉而生的公子', visual: { prompt: '少年，束发嵌宝紫金冠，大红箭袖', negative: '胡须' } })
+    await project.saveCharacter({ name: '林黛玉', role: 'deuteragonist', appearance: '两弯似蹙非蹙罥烟眉' })
+    await project.saveCharacter({ name: '周瑞家的', role: 'minor', appearance: '中年仆妇' })
+    await project.saveWorld({ name: '大观园', category: 'location', importance: 1, visualPrompt: '曲水环绕的江南园林，粉墙黛瓦' })
+    const sheet = await illustrate(bed.core, bed.runtime, { kind: 'sheet', target: lead.id }, task)
+    // No premise was ever written down: what the chapters tell stands in for it.
+    const chapter = await project.addChapter({ title: '第一回' })
+    await project.saveChapterText(chapter.id, '此开卷第一回也。')
+    await project.saveMemory({ schema: 1, chapterId: chapter.id, textHash: 'x', updatedAt: '', brief: '甄士隐梦见一僧一道携顽石下凡', summary: '……', facts: [], characters: [], newEntities: [], threads: [] })
+    bed.llm.responder = () => '园中曲水边，红衣少年回头望向倚竹而立的素衣少女，落花满地，天色将暮'
+    const cover = await illustrate(bed.core, bed.runtime, { kind: 'cover', prompt: '要有落花' }, task)
+    const brief = bed.llm.requests.at(-1)!.prompt
+    // The director was told what the book is about, how it feels, who leads it and how they look, and where it is set.
+    for (const part of ['一个大家族的盛极而衰', '世情', '甄士隐梦见一僧一道携顽石下凡', '束发嵌宝紫金冠', '两弯似蹙非蹙罥烟眉', '曲水环绕的江南园林', '要有落花']) expect(brief, part).toContain(part)
+    // Somebody with a small part is not who a cover is about; what must never be drawn on a lead stays out.
+    expect(brief).not.toContain('中年仆妇')
+    expect(brief).toContain('胡须')
+    // What is drawn is the picture the director composed — on a cover's terms, against the lead's sheet.
+    expect(cover.parts?.subject).toContain('红衣少年回头望向倚竹而立的素衣少女')
+    expect(cover.parts?.subject).toContain('竖幅构图')
+    expect(cover.parts?.subject).not.toContain('一个大家族的盛极而衰')
+    expect(cover.parts?.references).toEqual([{ path: sheet.path, label: '贾宝玉' }])
+    expect(images.calls.at(-1)!.references).toHaveLength(1)
+  })
+
   it('draws a portrait after the sheet as the same person', async () => {
     const { bed, images } = await studio()
     const card = await bed.runtime.project.saveCharacter({ name: '沈砚', appearance: '高瘦', visual: { prompt: 'lean woman, black hair' } })
@@ -207,5 +266,40 @@ describe('design sheets and looks', () => {
     const portrait = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id }, task)
     expect(images.calls.at(-1)!.references).toHaveLength(1)
     expect((await bed.runtime.project.findCharacter(card.id))!.visual).toMatchObject({ sheet: sheet.path, portrait: portrait.path })
+  })
+})
+
+describe('how large a picture is, and in what shape', () => {
+  it('gives each shape as many pixels as the screen the fineness is named after', async () => {
+    const { pixelSize, pictureSize } = await import('../src/shared/art')
+    // The level frame of each name, exactly.
+    expect(pixelSize('16:9', '720p')).toBe('1280x720')
+    expect(pixelSize('16:9', '1080p')).toBe('1920x1080')
+    expect(pixelSize('16:9', '2k')).toBe('2560x1440')
+    expect(pixelSize('16:9', '4k')).toBe('3840x2160')
+    expect(pixelSize('9:16', '1080p')).toBe('1080x1920')
+    // Other shapes: the same count of pixels, in whole eights.
+    expect(pixelSize('1:1', '720p')).toBe('960x960')
+    expect(pixelSize('3:4', '1080p')).toBe('1248x1664')
+    for (const aspect of ['1:1', '3:4', '4:3', '3:2', '2:3'] as const) {
+      const [width, height] = pixelSize(aspect, '1080p').split('x').map(Number) as [number, number]
+      expect(width % 8).toBe(0)
+      expect(height % 8).toBe(0)
+      expect(width * height).toBeGreaterThan(1920 * 1080 * 0.97)
+      expect(width * height).toBeLessThan(1920 * 1080 * 1.03)
+    }
+    // Nothing chosen: every kind at the size it has always had.
+    expect(pictureSize(undefined, 'panel')).toBe('1280x720')
+    expect(pictureSize({}, 'cover')).toBe('768x1152')
+    expect(pictureSize({}, 'sheet')).toBe('1536x1024')
+    expect(pictureSize({}, 'portrait')).toBe('1024x1024')
+    // A fineness chosen: the kind's own shape at that fineness. A shape chosen and no fineness: that shape at 720p.
+    expect(pictureSize({ resolution: '1080p' }, 'cover')).toBe('1176x1768')
+    expect(pictureSize({ aspects: { portrait: '3:4' } }, 'portrait')).toBe('832x1112')
+    // A shape and a fineness chosen; exact pixels typed win over both; nonsense falls back to the kind's own shape.
+    expect(pictureSize({ resolution: '1080p', aspects: { cover: '3:4', scene: '1600×900', panel: 'wide' } }, 'cover')).toBe('1248x1664')
+    expect(pictureSize({ resolution: '1080p', aspects: { scene: '1600×900' } }, 'scene')).toBe('1600x900')
+    expect(pictureSize({ resolution: '1080p', aspects: { panel: 'wide' } }, 'panel')).toBe('1920x1080')
+    expect(pictureSize({ resolution: 'huge' }, 'location')).toBe('1280x720')
   })
 })

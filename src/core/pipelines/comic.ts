@@ -13,18 +13,20 @@
  * so a half-minute of narration is not one frozen picture.
  */
 import type { AudioLine, CameraMove, CharacterCard, ComicBoard, ComicPanel, StoryboardDensity } from '../../shared/types'
-import { PANEL_SECONDS, STORYBOARD_DENSITIES } from '../../shared/types'
+import { PANEL_SECONDS, referencesOf, STORYBOARD_DENSITIES } from '../../shared/types'
 import { clip, hashText, newId, sameName } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
-import { asArray, asList, asRecord, asText, completeJson } from '../llm'
+import { asArray, asList, asRecord, asText } from '../llm'
+import { assign } from '../crew'
 import { speechUnits } from '../media/voiceprint'
 import { ProjectError } from '../project'
 import { storyboardTask } from '../prompts'
 import { L, promptLanguage } from '../render'
 import { mapLimit, serializer } from '../util/async'
 import { buildAudioScript } from './audio'
-import { MAX_REFERENCES } from '../media/image'
 import { artDirectionOf, consistencyFor, looksOf, placeNamed, renderImage, requireImages } from './illustrate'
+import { pictureSize } from '../../shared/art'
+import { groupOf } from '../../shared/world'
 
 const CAMERAS: CameraMove[] = ['still', 'zoom-in', 'zoom-out', 'pan-left', 'pan-right', 'pan-up', 'pan-down']
 
@@ -149,7 +151,7 @@ export async function buildStoryboard(core: NovelCore, runtime: ProjectRuntime, 
   const beats = beatsOf(script.lines)
   const plan = planPanels(beats, density, params.maxPanels ?? manifest.storyboard?.maxPanels)
   const total = beats.reduce((sum, beat) => sum + beat.seconds, 0)
-  const route = await core.route('analyst', runtime, task)
+  const located = await project.findChapter(script.chapterId)
   const castText = cast.map(card => `${card.name}: ${looksOf(card) || L(lang, '（未设定外貌）', '(no look defined)')}`).join('\n')
   const placeText = locations.map(entry => `${entry.name}: ${entry.visualPrompt ?? entry.summary ?? ''}`).join('\n')
   const speakerOf = (line: AudioLine): string => line.kind === 'narration' ? L(lang, '旁白', 'narrator') : (line.speakerName ?? '?')
@@ -161,7 +163,7 @@ export async function buildStoryboard(core: NovelCore, runtime: ProjectRuntime, 
   let early = 0
   task.job?.progress(0, windows.length, L(lang, `编排分镜（目标约 ${plan.target} 格）`, `storyboarding (about ${plan.target} panels)`))
 
-  const boarded = await mapLimit(windows, 2, async (window) => {
+  const boarded = await mapLimit(windows, core.parallel('text'), async (window) => {
     const drafts: DraftPanel[] = []
     let cursor = 0
     // A director that stops before the end of the passage is asked for the rest, not papered over.
@@ -181,8 +183,13 @@ export async function buildStoryboard(core: NovelCore, runtime: ProjectRuntime, 
             `About ${target} panels for this passage (between ${low} and ${high}); a panel stays about ${Math.round(PANEL_SECONDS[density])} seconds on average.`)
       const last = drafts.at(-1)
       let asked = 0
-      const { value } = await completeJson(core.llm, {
-        route,
+      const { value } = await assign(core, runtime, task, {
+        role: 'director',
+        label: L(lang, `${located !== undefined ? `第${located.index}章 · ` : ''}分镜`, `${located !== undefined ? `Ch. ${located.index} · ` : ''}storyboard`),
+        tool: 'submit_storyboard',
+        // The material is all in the task: a few looks at the book at most, then the result.
+        maxSteps: 12,
+        what: L(lang, '这一段的分镜：每一格画什么、配哪几句', 'the storyboard of this passage: what each panel shows and which lines it carries'),
         prompt: storyboardTask({
           lang,
           language: manifest.language,
@@ -196,7 +203,6 @@ export async function buildStoryboard(core: NovelCore, runtime: ProjectRuntime, 
           ...(last !== undefined ? { previous: last.description } : {}),
         }),
         temperature: 0.5,
-        ...(task.signal !== undefined ? { signal: task.signal } : {}),
         validate: (raw) => {
           asked += 1
           const found: DraftPanel[] = []
@@ -326,6 +332,7 @@ export async function renderPanels(core: NovelCore, runtime: ProjectRuntime, par
   const world = await project.world()
   const wanted = params.panels !== undefined ? new Set(params.panels) : undefined
   const todo = board.panels.filter(panel => (wanted === undefined || wanted.has(panel.id)) && (params.force === true || panel.image === undefined))
+  const mostReferences = referencesOf((await core.settings.get()).image.references)
   let rendered = 0
   let failed = 0
   let done = 0
@@ -348,24 +355,31 @@ export async function renderPanels(core: NovelCore, runtime: ProjectRuntime, par
     updates.clear()
     await project.saveComicBoard(board)
   })
-  await mapLimit(todo, Math.max(1, Math.min(4, params.concurrency ?? 2)), async (panel) => {
+  await mapLimit(todo, Math.max(1, params.concurrency ?? core.parallel('image')), async (panel) => {
     try {
       // Whoever is in the panel brings their design sheet, and the place its reference art.
       const shown = (panel.characters ?? []).map(id => characters.find(card => card.id === id)).filter((card): card is CharacterCard => card !== undefined)
       const consistency = consistencyFor(shown)
       const place = placeNamed(world, panel.location)
+      // A thing the panel shows that has design art of its own: the same thing every time, where there is a seat left for it.
+      const shownText = `${panel.description}\n${panel.prompt}`
+      const thing = world.find(entry => groupOf(entry.category) === 'items' && entry.visualImage !== undefined && [entry.name, ...(entry.aliases ?? [])].some(name => name.trim().length > 1 && shownText.includes(name)))
+      // Faces first, and the place keeps its seat; the thing takes one when the people leave room, or there is no place.
+      const references = [
+        ...consistency.references.slice(0, Math.max(0, mostReferences - (place?.visualImage !== undefined || thing !== undefined ? 1 : 0))),
+        ...(place?.visualImage !== undefined ? [{ path: place.visualImage, label: L(lang, `场所「${place.name}」`, `the place "${place.name}"`) }] : []),
+      ]
+      if (thing !== undefined && references.length < mostReferences) references.push({ path: thing.visualImage!, label: L(lang, `物品「${thing.name}」`, `the object "${thing.name}"`) })
       const info = await renderImage(core, runtime, {
         subject: panel.prompt,
         kind: 'panel',
         target: board.chapterId,
-        size: '1280x720',
+        size: pictureSize(core.currentSettings().image, 'panel'),
         name: `panel-${board.chapterId}-${hashText(panel.id).slice(0, 4)}`,
         record: false,
         art,
         avoid: consistency.avoid,
-        references: place?.visualImage !== undefined
-          ? [...consistency.references.slice(0, MAX_REFERENCES - 1), { path: place.visualImage, label: L(lang, `场所「${place.name}」`, `the place "${place.name}"`) }]
-          : consistency.references,
+        references,
       }, task)
       updates.set(panel.id, { image: info.path })
       rendered += 1
@@ -402,4 +416,42 @@ export async function updateComicPanel(runtime: ProjectRuntime, chapterRef: stri
   }
   await project.saveComicBoard(next)
   return next
+}
+
+/**
+ * Take one panel out of a storyboard. The lines it stayed on screen for go to
+ * the panel before it (the one after, when it was the first), so no line is
+ * left without a picture. Its picture stays in the gallery.
+ */
+export async function removeComicPanel(runtime: ProjectRuntime, chapterRef: string, panelId: string): Promise<ComicBoard> {
+  const { project } = runtime
+  const chapter = await project.findChapter(chapterRef)
+  if (chapter === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${chapterRef}"`)
+  const board = await project.comicBoard(chapter.plan.id)
+  if (board === undefined) throw new ProjectError('novel/empty', 'this chapter has no storyboard yet')
+  const at = board.panels.findIndex(panel => panel.id === panelId)
+  if (at < 0) throw new ProjectError('novel/not-found', `the storyboard has no panel "${panelId}"`)
+  const gone = board.panels[at]!
+  const panels = board.panels.filter(panel => panel.id !== panelId)
+  const heir = panels[at - 1] ?? panels[at]
+  if (heir !== undefined) {
+    const before = at > 0
+    const { begin: _begin, end: _end, ...rest } = heir
+    // The heir now runs over whole lines at the side it grew on.
+    panels[panels.indexOf(heir)] = {
+      ...rest,
+      lines: before ? [...heir.lines, ...gone.lines.filter(id => !heir.lines.includes(id))] : [...gone.lines.filter(id => !heir.lines.includes(id)), ...heir.lines],
+      ...(before ? (heir.begin !== undefined ? { begin: heir.begin } : {}) : (heir.end !== undefined ? { end: heir.end } : {})),
+    }
+  }
+  const next: ComicBoard = { ...board, updatedAt: new Date().toISOString(), panels }
+  await project.saveComicBoard(next)
+  return next
+}
+
+/** Throw a chapter's storyboard away. The pictures drawn for its panels stay in the gallery, where each can be deleted. */
+export async function clearComicBoard(runtime: ProjectRuntime, chapterRef: string): Promise<{ chapterId: string; removed: boolean }> {
+  const chapter = await runtime.project.findChapter(chapterRef)
+  if (chapter === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${chapterRef}"`)
+  return { chapterId: chapter.plan.id, removed: await runtime.project.removeComicBoard(chapter.plan.id) }
 }

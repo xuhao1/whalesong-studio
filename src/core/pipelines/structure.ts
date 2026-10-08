@@ -25,6 +25,7 @@
 import { runInNewContext } from 'node:vm'
 import { clip, countWords, fuzzyFind, normalizeProse } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
+import { CREW, crewName, crewPlan, crewRules } from '../crew'
 import { LlmCallError } from '../llm'
 import { argInt, argList, argText, type RoleTool } from '../roles'
 import { L, promptLanguage } from '../render'
@@ -747,8 +748,10 @@ export class Manuscript {
 
 // ───────────────────────────── the editor ─────────────────────────────
 
-const editorPersona = (zh: boolean): string => (zh
-  ? `你是一位整理书稿的编辑。作者交来一份要导入的书稿——它可能是从网页、电子书或旧文档转出来的：章节标题的写法千差万别，还可能夹着网站导航、广告、页码之类不属于这本书的东西。你的任务是找出这本书真实的章节结构，把它切成一章一章。
+/** How a manuscript is taken in: the continuity keeper's craft for this one kind of work. */
+const editorCraft = (zh: boolean): string => (zh
+  ? `## 收录一份书稿
+作者交来一份要导入的书稿——它可能是从网页、电子书或旧文档转出来的：章节标题的写法千差万别，还可能夹着网站导航、广告、页码之类不属于这本书的东西。这一次你的任务是找出这本书真实的章节结构，把它切成一章一章。这本书此刻还是空的，book_read / book_search 查不到东西；书稿只能通过下面这些工具看。
 
 你看不到全文，只能通过工具查看和操作它：look 看原文，search 用正则查找，clean 删杂质，split 按标题切分，amend 做个别修正，list 查看结果，finish 提交。（sections 只在全书确实没有任何章节标记时才用。）
 
@@ -762,7 +765,8 @@ const editorPersona = (zh: boolean): string => (zh
 7. 目录不是正文：开头如果有一段目录，不要让它变成一堆空章（通常 front:"drop" 即可；目录里的标题如果被切成了章，用 drop 去掉）。
 8. 你只决定从哪里切、每一章叫什么。不要改写、删节或总结正文。
 9. 报告里没有异常了，就调用 finish，用一两句话告诉作者你是怎么处理的；不要反复核对已经没有问题的地方。提交之后不要再做任何事。`
-  : `You are an editor preparing a manuscript. The author hands you a book to import — possibly turned into text from a web page, an e-book or an old document: chapter headings written in any of a hundred ways, and among them things that are not part of the book at all, such as site navigation, advertisements, page numbers. Your task is to find the book's real chapter structure and cut it into its chapters.
+  : `## Taking in a manuscript
+The author hands you a book to import — possibly turned into text from a web page, an e-book or an old document: chapter headings written in any of a hundred ways, and among them things that are not part of the book at all, such as site navigation, advertisements, page numbers. This time your task is to find the book's real chapter structure and cut it into its chapters. The book itself is still empty — book_read and book_search find nothing; the manuscript is seen only through the tools below.
 
 You cannot see the whole text; you look at it and work on it through tools: look reads the text, search finds by regular expression, clean removes junk, split cuts by headings, amend corrects in places, list shows the result, finish commits. (sections is only for a book that truly has no chapter marks at all.)
 
@@ -815,8 +819,13 @@ export async function findStructure(core: NovelCore, runtime: ProjectRuntime, so
   }
   const route = await core.route('analyst', runtime, task)
   const roles = core.roles
+  const plan = crewPlan(core, 'analyst', manifest)
+  const name = crewName('analyst', lang)
+  if (plan.mode === 'call') {
+    return byRule(L(lang, `${name}被设成了“普通调用”，而找章节要一边看一边试，只有作为 agent 才做得了；所以这次按规则切分。在“设置 → 班底”里把${name}改回 agent 再导入，章节会由它来找。`, `${name} is set to plain calls, and finding chapters takes looking and trying, which only an agent can do; so this import was cut by rule. Set ${name} back to agent in Settings → Crew and import again to have it find the chapters.`))
+  }
   if (roles === undefined || !roles.can(route)) {
-    return byRule(L(lang, `整理章节的编辑要作为 agent 运行，需要一个“设置 → 模型”里的模型；当前的 ${route.model} 是工坊直连的接口，所以这次按规则切分。`, `The editor who finds the chapters runs as an agent and needs a model from Settings → Models; ${route.model} is an endpoint the Studio calls directly, so this import was cut by rule.`))
+    return byRule(L(lang, `${name}要作为 agent 来找章节，需要一个 DSH「设置 → 模型」里的模型；当前的 ${route.model} 是旧的直连接口，所以这次按规则切分。`, `${name} finds the chapters as an agent and needs a model from DSH's Settings → Models; ${route.model} is a directly called endpoint of the old kind, so this import was cut by rule.`))
   }
   const draft = new Manuscript(source, zh)
   const lines = draft.text.split('\n')
@@ -826,20 +835,25 @@ export async function findStructure(core: NovelCore, runtime: ProjectRuntime, so
     `要导入的书稿：作者把这本书叫作《${manifest.title.replace(/^[《「『“"]+|[》」』”"]+$/gu, '')}》。全文 ${draft.text.length} 字符，${lines.length} 行。\n按最常见的写法（独占一行的“第X章/回/节”或 Chapter N）能找到 ${standard} 处标题${standard < 2 ? '——几乎没有，说明这份书稿的标题不是这种写法，或者不在行首' : ''}。\n\n请找出它的章节结构并提交。`,
     `The manuscript to import: the author calls the book "${manifest.title}". It is ${draft.text.length} characters in ${lines.length} lines.\nThe most common form of heading (a line of its own reading "Chapter N" or the like) occurs ${standard} time(s)${standard < 2 ? ' — hardly at all, so this manuscript writes its headings another way, or not at the start of a line' : ''}.\n\nFind its chapter structure and commit it.`,
   )
+  const label = L(lang, `整理《${manifest.title.replace(/^[《「『“"]+|[》」』”"]+$/gu, '')}》的章节`, `Finding the chapters of "${manifest.title}"`)
   try {
     const outcome = await roles.run({
-      role: 'importer',
-      label: L(lang, `整理《${manifest.title}》的章节`, `Finding the chapters of "${manifest.title}"`),
-      persona: editorPersona(zh),
+      role: 'analyst',
+      label: `${name} · ${label}`,
+      persona: CREW.analyst.persona[zh ? 0 : 1],
+      rules: `${crewRules('analyst', lang, manifest)}\n\n${editorCraft(zh)}`,
       prompt,
       tools: draft.tools(),
+      inherit: plan.inherit,
       route,
-      maxSteps: 60,
+      maxSteps: Math.max(60, plan.steps),
       ...(task.signal !== undefined ? { signal: task.signal } : {}),
       ...(task.caller !== undefined ? { parent: task.caller } : {}),
       cwd: runtime.project.root,
       onStep: (step) => { task.job?.write(stepLine(step.tool, step.args, step.ok, step.result)) },
+      unfinished: () => draft.finished ? undefined : L(lang, '章节结构还没有提交：报告里没有异常就调用 finish；还有要改的，改完再 finish。', 'The chapter structure has not been committed: call finish if the report shows nothing wrong; correct what is left first if it does.'),
     })
+    task.job?.crew({ role: 'analyst', label, by: 'agent', steps: outcome.steps, ...(outcome.session !== undefined ? { session: outcome.session } : {}), ...(outcome.parent !== undefined ? { parent: outcome.parent } : {}) })
     task.signal?.throwIfAborted()
     if (draft.finished) {
       return {
@@ -859,15 +873,15 @@ export async function findStructure(core: NovelCore, runtime: ProjectRuntime, so
         chapters: draft.chapters(),
         by: 'agent',
         bySize: draft.bySize,
-        note: L(lang, `整理章节的编辑没有在限定的步数内提交（${outcome.steps} 步）。这里用的是它切出的最稳妥的一版：${settled.chapters} 章${settled.dropped > 0 ? `，自动去掉了 ${settled.dropped} 处读起来像正文的“标题”` : ''}${settled.retitled > 0 ? `，修正了 ${settled.retitled} 处粘着正文的标题` : ''}。请在大纲里核对一下。`, `The editor did not commit within its steps (${outcome.steps}). This is the soundest split it made: ${settled.chapters} chapters${settled.dropped > 0 ? `, with ${settled.dropped} "titles" that read like prose dropped automatically` : ''}${settled.retitled > 0 ? ` and ${settled.retitled} headings freed of the prose stuck to them` : ''}. Please check it in the outline.`),
+        note: L(lang, `${name}没有在限定的步数内提交（${outcome.steps} 步）。这里用的是它切出的最稳妥的一版：${settled.chapters} 章${settled.dropped > 0 ? `，自动去掉了 ${settled.dropped} 处读起来像正文的“标题”` : ''}${settled.retitled > 0 ? `，修正了 ${settled.retitled} 处粘着正文的标题` : ''}。请在大纲里核对一下。`, `${name} did not commit within its steps (${outcome.steps}). This is the soundest split it made: ${settled.chapters} chapters${settled.dropped > 0 ? `, with ${settled.dropped} "titles" that read like prose dropped automatically` : ''}${settled.retitled > 0 ? ` and ${settled.retitled} headings freed of the prose stuck to them` : ''}. Please check it in the outline.`),
         steps: outcome.steps,
       }
     }
-    return byRule(L(lang, `整理章节的编辑没有提交结果（${outcome.stop}，${outcome.steps} 步）${outcome.text.length > 0 ? `，它最后说：“${clip(outcome.text, 160)}”` : ''}。这次按规则切分。`, `The editor did not commit a structure (${outcome.stop}, ${outcome.steps} steps)${outcome.text.length > 0 ? `; its last words: "${clip(outcome.text, 160)}"` : ''}. This import was cut by rule.`))
+    return byRule(L(lang, `${name}没有提交结果（${outcome.stop}，${outcome.steps} 步）${outcome.text.length > 0 ? `，它最后说：“${clip(outcome.text, 160)}”` : ''}。这次按规则切分。`, `${name} did not commit a structure (${outcome.stop}, ${outcome.steps} steps)${outcome.text.length > 0 ? `; its last words: "${clip(outcome.text, 160)}"` : ''}. This import was cut by rule.`))
   } catch (error) {
     if (isAbort(error) || task.signal?.aborted === true) throw error
     core.log('the importer agent failed', error)
     const why = error instanceof LlmCallError || error instanceof Error ? error.message : String(error)
-    return byRule(L(lang, `整理章节的编辑没能运行（${clip(why, 200)}）。这次按规则切分。`, `The editor could not run (${clip(why, 200)}). This import was cut by rule.`))
+    return byRule(L(lang, `${name}没能运行（${clip(why, 200)}）。这次按规则切分。`, `${name} could not run (${clip(why, 200)}). This import was cut by rule.`))
   }
 }

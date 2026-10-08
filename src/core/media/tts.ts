@@ -15,6 +15,7 @@
  *   openai         Any OpenAI-compatible `/audio/speech` endpoint.
  */
 import WebSocket from 'ws'
+import { providerDefault } from '../../shared/recommended'
 import { bailianRealtime, compatibleBase, originOf } from '../../shared/services'
 import { hashText } from '../../shared/text'
 import type { TtsProviderKind, TtsSettings } from '../../shared/types'
@@ -39,6 +40,8 @@ export interface TtsRequest {
    */
   take?: number
   signal?: AbortSignal
+  /** Called when the request is actually sent — it may have waited its turn first, and is called again when it is sent again. */
+  onStart?: () => void
 }
 
 export interface TtsResult extends PcmAudio {
@@ -72,6 +75,12 @@ export interface TtsProvider {
 
 const DASHSCOPE_BASE = 'https://dashscope.aliyuncs.com'
 const DESIGNED_VOICE = /^qwen-tts-vd-/
+
+/** The model that speaks in a designed voice: the one named in the settings, else the one recommended for Qwen TTS. */
+const designedModel = (settings: TtsSettings): string => {
+  const recommended = providerDefault('tts', 'dashscope')
+  return settings.designedVoiceModel ?? recommended.designedVoiceModel ?? recommended.model
+}
 
 /** @returns the provider for the current settings, or undefined when speech is switched off. */
 export function createTtsProvider(settings: TtsSettings, keys: KeySource): TtsProvider | undefined {
@@ -120,7 +129,7 @@ class DashScopeTts implements TtsProvider {
   async synthesize(request: TtsRequest): Promise<TtsResult> {
     const apiKey = await requireKey(this.keys, { ref: this.settings.apiKeyRef, endpoint: this.base() }, 'Speech')
     const designed = request.voice !== undefined && DESIGNED_VOICE.test(request.voice)
-    const model = designed ? (this.settings.designedVoiceModel ?? 'qwen3-tts-vd-2026-01-26') : (this.settings.model ?? 'qwen3-tts-instruct-flash')
+    const model = designed ? (designedModel(this.settings)) : (this.settings.model ?? providerDefault('tts', 'dashscope').model)
     const followsInstructions = /instruct/.test(model)
     const reply = await postJson<DashScopeSpeech>(`${this.base()}/api/v1/services/aigc/multimodal-generation/generation`, {
       model,
@@ -148,7 +157,7 @@ class DashScopeTts implements TtsProvider {
         model: 'qwen-voice-design',
         input: {
           action: 'create',
-          target_model: this.settings.designedVoiceModel ?? 'qwen3-tts-vd-2026-01-26',
+          target_model: designedModel(this.settings),
           voice_prompt: request.prompt.slice(0, 2000),
           preview_text: request.previewText.slice(0, 1000),
           preferred_name: name,
@@ -179,7 +188,7 @@ class OpenAiTts implements TtsProvider {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
-        model: this.settings.model ?? 'gpt-4o-mini-tts',
+        model: this.settings.model ?? providerDefault('tts', 'openai').model,
         input: request.text,
         voice: request.voice ?? this.settings.narratorVoice ?? 'alloy',
         response_format: 'wav',
@@ -204,7 +213,7 @@ class OpenRouterTts implements TtsProvider {
   async synthesize(request: TtsRequest): Promise<TtsResult> {
     const base = trimBase(this.settings.baseURL?.trim() || compatibleBase('openrouter'))
     const apiKey = await requireKey(this.keys, { ref: this.settings.apiKeyRef, endpoint: base }, 'Speech')
-    const model = this.settings.model ?? 'google/gemini-3.8-flash-tts'
+    const model = this.settings.model ?? providerDefault('tts', 'openrouter').model
     const direction = request.direction?.trim()
     const steerable = direction !== undefined && direction.length > 0
     // Vendors take delivery direction differently: OpenAI in a field, Gemini in the prompt itself, most others not at all.
@@ -306,7 +315,7 @@ class QwenAudioGenTts implements TtsProvider {
 
   private async generate(apiKey: string, prompt: string, reference: PcmAudio | undefined, seed: number, signal: AbortSignal | undefined): Promise<PcmAudio> {
     const reply = await postJson<AudioGenReply>(`${this.base()}/api/v1/services/audio/tts/SpeechSynthesizer`, {
-      model: this.settings.model ?? 'qwen-audio-3.1-tts-next',
+      model: this.settings.model ?? providerDefault('tts', 'qwen-audiogen').model,
       input: {
         text_prompt: prompt.slice(0, 3000),
         format: 'wav',
@@ -391,7 +400,7 @@ class QwenRealtimeTts implements TtsProvider {
       ? bailianRealtime()
       : /^[a-z]+:\/\/[^/]+\/?$/i.test(configured) ? bailianRealtime(configured) : configured
     const url = new URL(base.replace(/^http/, 'ws'))
-    if (!url.searchParams.has('model')) url.searchParams.set('model', this.settings.model ?? 'qwen3.8-omni-flash-realtime')
+    if (!url.searchParams.has('model')) url.searchParams.set('model', this.settings.model ?? providerDefault('tts', 'qwen-realtime').model)
     return url.toString()
   }
 

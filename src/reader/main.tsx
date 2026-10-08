@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 /**
- * The reader served to other devices: the shelf of shared books, a book's
- * chapters, and a chapter to read, to listen to, or to watch as a motion
- * comic. It is the same page the author has in the Studio, assembled from the
- * same parts.
+ * The reader served to other devices — and written out with a published site:
+ * the shelf of shared books, a book's chapters, and a chapter with its three
+ * faces (the prose, the script, the motion comic) and one player under the
+ * first two. It is the same page the author has in the Studio, assembled from
+ * the same parts.
  *
  * What it can change is what the author allowed for the book: nothing, unless
  * the book was made changeable from other devices — then its text can be
@@ -16,10 +17,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Icon } from '../client/icons'
-import { ListenBar, ModeSwitch, PrefsControls, ReaderPage, usePlayerOptions, useReaderPrefs, type ReadMode, type Translate } from '../client/reader/parts'
-import { place, Theater, useCurrentPanel, type TheaterPanel } from '../client/reader/theater'
+import { AlbumView, ViewerTabs, type ViewerHalf } from '../client/reader/album'
+import { PlayTranscript, SideList, type SidePlay, type SideRef } from '../client/reader/sides'
+import { ListenBar, ModeSwitch, ReaderPage, ReaderSettings, setReaderDefaults, usePlayerOptions, useReaderPrefs, type ReadMode, type Translate } from '../client/reader/parts'
+import { chapterFigures, ScriptPage } from '../client/reader/script'
+import { place, secondsOf, Theater, useCurrentPanel, type TheaterPanel } from '../client/reader/theater'
 import { useLinePlayer } from '../client/stage/player'
 import studioStyles from '../client/styles.css'
+import { albumEmpty, type Album, type AlbumAt, type AlbumCounts } from '../shared/album'
 import type { AudioCue, AudioLine, PlayTurn } from '../shared/types'
 import ownStyles from './reader.css'
 
@@ -86,11 +91,14 @@ interface CastMember {
   portrait?: string
 }
 
-/** Where the page is: the shelf, a book, a chapter of it, its interludes or one of them. */
+/** Where the page is: the shelf, a book, a chapter of it, its people or its world, its interludes or one of them. */
 interface Place {
   book?: string
   chapter?: string
   play?: string | true
+  album?: AlbumAt
+  /** The side stories — interludes the author kept — or one of them. */
+  side?: string | true
 }
 
 type ViewMode = ReadMode | 'watch'
@@ -109,8 +117,33 @@ async function answer<T>(response: Response): Promise<T> {
   throw new ApiError(response.status, body.error ?? (response.status === 404 ? 'gone' : `http-${response.status}`), body.message ?? (response.status === 404 ? 'gone' : `HTTP ${response.status}`))
 }
 
+/**
+ * The page was published as a site of its own (`core/pipelines/site.ts`): there
+ * is no server to ask, and what it would answer lies beside the page as files.
+ */
+const SITE = document.querySelector('meta[name="novel-site"]')?.getAttribute('content') === 'static'
+/** A site of one book: the book is the site, and there is no shelf to go back to. */
+const SOLE = SITE && document.querySelector('meta[name="novel-books"]')?.getAttribute('content') === '1'
+
+/** Where on a site the answer to a request is kept. */
+function siteFile(path: string): string {
+  const parts = path.split('/')
+  if (parts[0] !== 'api' || parts[1] !== 'books') return path
+  if (parts.length === 2) return 'data/books.json'
+  if (parts.length === 3) return `data/${parts[2]}/book.json`
+  return `data/${parts.slice(2).join('/')}.json`
+}
+
 async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
+  // A site's files change only when it is published again: the host's own caching serves them.
+  if (SITE) return await answer<T>(await fetch(siteFile(path), signal !== undefined ? { signal } : {}))
   return await answer<T>(await fetch(path, { ...(signal !== undefined ? { signal } : {}), cache: 'no-store', credentials: 'same-origin' }))
+}
+
+/** With what, and by whom, a published site says it was made. */
+function siteCredit(): { name: string; url: string } | undefined {
+  const [name, url] = (document.querySelector('meta[name="novel-credit"]')?.getAttribute('content') ?? '').split('|')
+  return name !== undefined && name.length > 0 && url !== undefined && /^https?:\/\//.test(url) ? { name, url } : undefined
 }
 
 /** Change something on a book the author made changeable. */
@@ -125,6 +158,11 @@ function readPlace(): Place {
   const parts = location.hash.replace(/^#\/?/, '').split('/').map(part => decodeURIComponent(part))
   if (parts[0] !== 'book' || parts[1] === undefined || parts[1].length === 0) return {}
   if (parts[2] === 'play') return { book: parts[1], play: parts[3] !== undefined && parts[3].length > 0 ? parts[3] : true }
+  if (parts[2] === 'sides') return { book: parts[1], side: parts[3] !== undefined && parts[3].length > 0 ? parts[3] : true }
+  if (parts[2] === 'people' || parts[2] === 'world') {
+    const id = parts[3] !== undefined && parts[3].length > 0 ? parts[3] : undefined
+    return { book: parts[1], album: { section: parts[2], ...(id !== undefined ? { end: { type: parts[2] === 'people' ? 'character' : 'world', id } } : {}) } }
+  }
   return { book: parts[1], ...(parts[2] !== undefined && parts[2].length > 0 ? { chapter: parts[2] } : {}) }
 }
 
@@ -132,7 +170,9 @@ function go(place: Place): void {
   const book = place.book !== undefined ? `#/book/${encodeURIComponent(place.book)}` : '#/'
   location.hash = place.book === undefined ? book
     : place.play !== undefined ? `${book}/play${typeof place.play === 'string' ? `/${encodeURIComponent(place.play)}` : ''}`
-      : `${book}${place.chapter !== undefined ? `/${encodeURIComponent(place.chapter)}` : ''}`
+    : place.side !== undefined ? `${book}/sides${typeof place.side === 'string' ? `/${encodeURIComponent(place.side)}` : ''}`
+      : place.album !== undefined ? `${book}/${place.album.end?.type === 'character' ? 'people' : place.album.end?.type === 'world' ? 'world' : place.album.section}${place.album.end !== undefined ? `/${encodeURIComponent(place.album.end.id)}` : ''}`
+        : `${book}${place.chapter !== undefined ? `/${encodeURIComponent(place.chapter)}` : ''}`
 }
 
 /** Where the reader left each book, kept on this device. */
@@ -223,6 +263,9 @@ const shelfTitles = new Map<string, string>()
 function Shelf({ t }: { t: Translate }) {
   const books = useLoad(signal => get<{ books: Book[] }>('api/books', signal), [])
   for (const book of books.data?.books ?? []) shelfTitles.set(book.id, book.title)
+  // A site of one book is that book: its contents are the front page.
+  const only = SOLE && books.data?.books.length === 1 ? books.data.books[0]!.id : undefined
+  useEffect(() => { if (only !== undefined) go({ book: only }) }, [only])
   if (books.error !== undefined) return <Problem error={books.error} t={t} onRetry={books.reload} />
   if (books.data === undefined) return <div className="nv-center"><span className="nv-spinner" style={{ width: 20, height: 20 }} aria-hidden="true" /></div>
   return (
@@ -252,7 +295,7 @@ function Shelf({ t }: { t: Translate }) {
 }
 
 function BookScreen({ id, place, t }: { id: string; place: Place; t: Translate }) {
-  const detail = useLoad(signal => get<{ book: Book; chapters: ChapterRef[] }>(`api/books/${encodeURIComponent(id)}`, signal), [id])
+  const detail = useLoad(signal => get<{ book: Book; chapters: ChapterRef[]; album?: AlbumCounts; sides?: number }>(`api/books/${encodeURIComponent(id)}`, signal), [id])
   const chapters = useMemo(() => detail.data?.chapters ?? [], [detail.data])
   // Sealed, and this device has not been let in: the password first.
   if (detail.error === 'locked') return <Unlock id={id} title={shelfTitles.get(id)} t={t} onOpen={detail.reload} />
@@ -264,19 +307,96 @@ function BookScreen({ id, place, t }: { id: string; place: Place; t: Translate }
       ? <PlayScreen key={place.play} book={book} playId={place.play} t={t} />
       : <PlayList book={book} chapters={chapters} t={t} />
   }
+  const sides = detail.data.sides ?? 0
+  // The people and the world: where the book has any, and whoever serves it gives them.
+  if (place.album !== undefined && !albumEmpty(detail.data.album)) return <AlbumScreen book={book} chapters={chapters} counts={detail.data.album} sides={sides} at={place.album} t={t} />
+  // The side stories the author kept: to be read, by whoever reads the book.
+  if (place.side !== undefined && sides > 0) return <SidesScreen key={String(place.side)} book={book} counts={detail.data.album} sides={sides} side={typeof place.side === 'string' ? place.side : undefined} t={t} />
   const chapter = chapters.find(candidate => candidate.id === place.chapter)
-  if (chapter === undefined) return <Contents book={book} chapters={chapters} t={t} />
+  if (chapter === undefined) return <Contents book={book} chapters={chapters} counts={detail.data.album} sides={sides} t={t} />
   return <Chapter book={book} chapters={chapters} chapter={chapter} t={t} />
 }
 
-function Contents({ book, chapters, t }: { book: Book; chapters: ChapterRef[]; t: Translate }) {
-  const last = remembered(book.id).chapter
-  const resume = chapters.find(chapter => chapter.id === last)
+/** The halves of a book to change between, as this page goes to them. */
+function BookTabs({ book, value, counts, sides, t }: { book: Book; value: ViewerHalf; counts: AlbumCounts | undefined; sides: number; t: Translate }) {
+  return <ViewerTabs t={t} value={value} counts={counts} sides={sides} onChange={(next) => { go(next === 'text' ? { book: book.id } : next === 'sides' ? { book: book.id, side: true } : { book: book.id, album: { section: next } }) }} />
+}
+
+/** The side stories of a book, and one of them as it is read. */
+function SidesScreen({ book, counts, sides, side, t }: { book: Book; counts: AlbumCounts | undefined; sides: number; side: string | undefined; t: Translate }) {
+  const base = `api/books/${encodeURIComponent(book.id)}/sides`
+  const list = useLoad(signal => (side === undefined ? get<{ sides: SideRef[] }>(base, signal) : Promise.resolve(undefined)), [book.id, side])
+  const one = useLoad(signal => (side !== undefined ? get<{ play: SidePlay }>(`${base}/${encodeURIComponent(side)}`, signal) : Promise.resolve(undefined)), [book.id, side])
+  const url = useCallback((path: string) => media(book.id, path), [book.id])
+  const title = one.data?.play.title
+  useEffect(() => {
+    document.title = `${title ?? t('番外', 'Side stories')} · ${book.title}`
+  }, [title, book.title, t])
+  const failed = list.error ?? one.error
   return (
     <div className="nr-contents">
-      <header className="nr-topbar">
-        <button type="button" className="nv-btn nv-btn-ghost nv-btn-sm" onClick={() => { go({}) }}><Icon name="chevronLeft" size={15} /><span>{t('书架', 'Shelf')}</span></button>
+      <header className="nr-topbar nr-album-bar">
+        <button type="button" className="nv-btn nv-btn-ghost nv-btn-sm" onClick={() => { go(side !== undefined ? { book: book.id, side: true } : { book: book.id }) }}><Icon name="chevronLeft" size={15} /><span className="nr-album-back">{side !== undefined ? t('番外', 'Side stories') : book.title}</span></button>
+        <span className="nv-spacer" />
+        <BookTabs book={book} value="sides" counts={counts} sides={sides} t={t} />
       </header>
+      {failed !== undefined ? <Problem error={failed} t={t} onRetry={side !== undefined ? one.reload : list.reload} />
+        : side !== undefined
+          ? one.data === undefined ? <div className="nv-center"><span className="nv-spinner" style={{ width: 20, height: 20 }} aria-hidden="true" /></div> : (
+            <>
+              <h1 className="nr-side-title">{one.data.play.title}</h1>
+              <PlayTranscript t={t} play={one.data.play} media={url} />
+            </>
+          )
+          : <div className="nr-book">{list.data === undefined ? <div className="nv-center"><span className="nv-spinner" style={{ width: 20, height: 20 }} aria-hidden="true" /></div> : <SideList t={t} sides={list.data.sides} onOpen={(id) => { go({ book: book.id, side: id }) }} />}</div>}
+    </div>
+  )
+}
+
+/** The book's people and its world: the album, with the way back to the text. */
+function AlbumScreen({ book, chapters, counts, sides, at, t }: { book: Book; chapters: ChapterRef[]; counts: AlbumCounts | undefined; sides: number; at: AlbumAt; t: Translate }) {
+  const album = useLoad(signal => get<Album>(`api/books/${encodeURIComponent(book.id)}/album`, signal), [book.id])
+  const url = useCallback((path: string) => media(book.id, path), [book.id])
+  const section = at.end?.type === 'character' ? 'people' : at.end?.type === 'world' ? 'world' : at.section
+  useEffect(() => {
+    document.title = `${section === 'people' ? t('人物', 'People') : t('世界', 'World')} · ${book.title}`
+  }, [section, book.title, t])
+  return (
+    <div className="nr-contents">
+      <header className="nr-topbar nr-album-bar">
+        <button type="button" className="nv-btn nv-btn-ghost nv-btn-sm" onClick={() => { go({ book: book.id }) }}><Icon name="chevronLeft" size={15} /><span className="nr-album-back">{book.title}</span></button>
+        <span className="nv-spacer" />
+        <BookTabs book={book} value={section} counts={counts} sides={sides} t={t} />
+      </header>
+      <div className="nr-book nr-album">
+        {album.error !== undefined ? <Problem error={album.error} t={t} onRetry={album.reload} />
+          : album.data === undefined ? <div className="nv-center"><span className="nv-spinner" style={{ width: 20, height: 20 }} aria-hidden="true" /></div>
+            : (
+              <AlbumView
+                t={t}
+                album={album.data}
+                media={url}
+                at={at}
+                go={(next) => { go({ book: book.id, album: next }) }}
+                onRead={(chapter) => { if (chapters.some(candidate => candidate.id === chapter)) go({ book: book.id, chapter }) }}
+              />
+            )}
+      </div>
+    </div>
+  )
+}
+
+function Contents({ book, chapters, counts, sides, t }: { book: Book; chapters: ChapterRef[]; counts: AlbumCounts | undefined; sides: number; t: Translate }) {
+  const last = remembered(book.id).chapter
+  const resume = chapters.find(chapter => chapter.id === last)
+  const credit = useMemo(siteCredit, [])
+  return (
+    <div className="nr-contents">
+      {SOLE ? null : (
+        <header className="nr-topbar">
+          <button type="button" className="nv-btn nv-btn-ghost nv-btn-sm" onClick={() => { go({}) }}><Icon name="chevronLeft" size={15} /><span>{t('书架', 'Shelf')}</span></button>
+        </header>
+      )}
       <div className="nr-book">
         <div className="nr-book-head">
           {book.cover !== undefined ? <img className="nr-book-cover" alt="" src={media(book.id, book.cover)} /> : null}
@@ -302,6 +422,7 @@ function Contents({ book, chapters, t }: { book: Book; chapters: ChapterRef[]; t
             {book.mode === 'edit' ? <p className="nv-muted nv-small">{t('作者允许在这台设备上改这本书：可以编辑正文，也可以玩幕间。', 'The author lets this device change the book: the text can be edited and interludes played.')}</p> : null}
           </div>
         </div>
+        {albumEmpty(counts) && sides === 0 ? null : <div className="nr-book-tabs"><BookTabs book={book} value="text" counts={counts} sides={sides} t={t} /></div>}
         <ol className="nr-chapters">
           {chapters.map(chapter => (
             <li key={chapter.id}>
@@ -316,6 +437,7 @@ function Contents({ book, chapters, t }: { book: Book; chapters: ChapterRef[]; t
           ))}
         </ol>
         {chapters.length === 0 ? <p className="nv-muted">{t('这本书还没有写好的章节。', 'This book has no finished chapter yet.')}</p> : null}
+        {credit !== undefined ? <p className="nr-credit">{t('用 ', 'Made with ')}<a href={credit.url} target="_blank" rel="noreferrer">{credit.name}</a>{t(' 制作', '')}</p> : null}
       </div>
     </div>
   )
@@ -333,7 +455,7 @@ function Chapter({ book, chapters, chapter, t }: { book: Book; chapters: Chapter
       return 'read'
     }
   })
-  const [autoNext, setAutoNext] = useState(true)
+  const autoNext = options.autoNext !== false
   const [typing, setTyping] = useState(false)
   const [draft, setDraft] = useState<string | undefined>()
   const [saving, setSaving] = useState(false)
@@ -349,15 +471,33 @@ function Chapter({ book, chapters, chapter, t }: { book: Book; chapters: Chapter
   const panels = useMemo(() => data.data?.board?.panels ?? [], [data.data])
   const placed = useMemo(() => place(panels, lines), [panels, lines])
   const url = useCallback((path: string, version?: string | number) => media(book.id, path, version), [book.id])
-  // A chapter without a comic is read instead of watched; the wish is kept for the next one.
-  const mode: ViewMode = wanted === 'watch' && placed.length === 0 && data.data !== undefined ? 'read' : wanted
-  const playing = mode !== 'read'
+  // A chapter without a comic is read instead of watched, one without a script has only its prose; the wish is kept for the next one.
+  const mode: ViewMode = data.data === undefined ? wanted
+    : wanted === 'watch' && placed.length === 0 ? 'read'
+      : wanted === 'listen' && script === undefined ? 'read' : wanted
   const { player, state } = useLinePlayer(lines, cues, url, options, () => {
     if (!autoNext || next === undefined) return
     carryOn.current = true
     go({ book: book.id, chapter: next.id })
   })
   const current = useCurrentPanel(placed, player, state)
+  // The player has been started on this chapter: from then on the prose shows which line is spoken, and a line can be pressed to hear from there.
+  const engaged = state.index >= 0
+  const pace = useMemo(() => ({ seconds: secondsOf(lines[state.index]) / Math.max(0.25, options.rate), paused: state.status === 'paused' }), [lines, state.index, state.status, options.rate])
+  const figures = useMemo(() => chapterFigures(data.data?.text, lines), [data.data, lines])
+  // Pressing play over the prose turns the page to the script — unless the reader would rather stay.
+  const wasIdle = useRef(true)
+  useEffect(() => {
+    const starting = wasIdle.current && state.status === 'playing'
+    wasIdle.current = state.status === 'idle'
+    if (starting && mode === 'read' && prefs.follow !== false && script !== undefined) chooseMode('listen')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.status])
+  // In the script the line being spoken stays in sight.
+  useEffect(() => {
+    if (mode !== 'listen' || state.index < 0) return
+    scroller.current?.querySelector(`[data-script-line="${lines[state.index]?.id}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }, [state.index, mode, lines])
 
   useEffect(() => { remember(book.id, chapter.id) }, [book.id, chapter.id])
   useEffect(() => {
@@ -368,22 +508,16 @@ function Chapter({ book, chapters, chapter, t }: { book: Book; chapters: Chapter
   useEffect(() => {
     document.title = `${chapter.title} · ${book.title}`
   }, [chapter.title, book.title])
-  useEffect(() => {
-    if (!playing) {
-      carryOn.current = false
-      player.stop()
-    }
-  }, [playing, player])
   // The chapter that follows one that ran out starts by itself, once it has arrived.
   useEffect(() => {
-    if (!carryOn.current || !playing || data.data === undefined || data.data.id !== chapter.id) return
+    if (!carryOn.current || data.data === undefined || data.data.id !== chapter.id) return
     carryOn.current = false
     if (lines.some(line => line.audio !== undefined)) player.play(0)
-  }, [data.data, playing, chapter.id, lines, player])
+  }, [data.data, chapter.id, lines, player])
   // The lock screen and the headphones' buttons drive the same player.
   useEffect(() => {
     const session = navigator.mediaSession as MediaSession | undefined
-    if (session === undefined || !playing || typeof MediaMetadata === 'undefined') return
+    if (session === undefined || !engaged || typeof MediaMetadata === 'undefined') return
     session.metadata = new MediaMetadata({ title: chapter.title, artist: book.author ?? book.title, album: book.title, ...(book.cover !== undefined ? { artwork: [{ src: new URL(media(book.id, book.cover), document.baseURI).href }] } : {}) })
     const set = (action: MediaSessionAction, handler: (() => void) | null): void => {
       try {
@@ -399,7 +533,7 @@ function Chapter({ book, chapters, chapter, t }: { book: Book; chapters: Chapter
     return () => {
       for (const action of ['play', 'pause', 'nexttrack', 'previoustrack'] as const) set(action, null)
     }
-  }, [playing, player, chapter.title, book])
+  }, [engaged, player, chapter.title, book])
   useEffect(() => {
     if (navigator.mediaSession !== undefined) navigator.mediaSession.playbackState = state.status === 'playing' ? 'playing' : state.status === 'paused' ? 'paused' : 'none'
   }, [state.status])
@@ -436,7 +570,7 @@ function Chapter({ book, chapters, chapter, t }: { book: Book; chapters: Chapter
   )
 
   return (
-    <div className={cx('nv-reader', `is-${prefs.theme}`, mode === 'listen' && 'is-listen')}>
+    <div className={cx('nv-reader', `is-${prefs.theme}`, (mode === 'listen' || engaged) && mode !== 'watch' && 'is-listen')}>
       <header className="nv-reader-bar nr-bar">
         <button type="button" className="nv-btn nv-btn-ghost nv-btn-sm nv-btn-icon" onClick={() => { go({ book: book.id }) }} title={t('目录', 'Contents')} aria-label={t('目录', 'Contents')}><Icon name="list" size={16} /></button>
         <span className="nr-bar-title">{book.title}</span>
@@ -445,18 +579,19 @@ function Chapter({ book, chapters, chapter, t }: { book: Book; chapters: Chapter
             mode={mode === 'watch' ? undefined : mode}
             onChange={chooseMode}
             t={t}
+            pages
             extra={placed.length > 0 ? (
               <button type="button" role="tab" aria-selected={mode === 'watch'} className={cx('nv-mode', mode === 'watch' && 'is-active')} onClick={() => { chooseMode('watch') }}>
                 <Icon name="film" size={14} />
-                <span>{t('漫', 'Comic')}</span>
+                <span>{t('看', 'Watch')}</span>
               </button>
             ) : undefined}
           />
         )}
         {book.mode === 'edit' && !editing && data.data !== undefined ? <button type="button" className="nv-btn nv-btn-ghost nv-btn-sm nv-btn-icon" onClick={() => { player.stop(); chooseMode('read'); setDraft(data.data!.text) }} title={t('编辑这一章', 'Edit this chapter')} aria-label={t('编辑这一章', 'Edit this chapter')}><Icon name="pen" size={15} /></button> : null}
-        {editing ? null : <button type="button" className={cx('nv-btn nv-btn-ghost nv-btn-sm nv-btn-icon', typing && 'is-active')} onClick={() => { setTyping(value => !value) }} title={t('字号、纸张、声音注释', 'Type, paper, sound notes')} aria-expanded={typing}><Icon name="type" size={15} /></button>}
+        {editing ? null : <button type="button" className={cx('nv-btn nv-btn-ghost nv-btn-sm nv-btn-icon', typing && 'is-active')} onClick={() => { setTyping(value => !value) }} title={t('阅读设置：字号、纸张、字体、语速、播放与声音', 'Reading settings: type, paper, typeface, speed, playback and sound')} aria-expanded={typing}><Icon name="type" size={15} /></button>}
       </header>
-      {typing && !editing ? <div className="nv-reader-bar nr-typing"><PrefsControls prefs={prefs} update={updatePrefs} t={t} /></div> : null}
+      {typing && !editing ? <ReaderSettings prefs={prefs} update={updatePrefs} options={options} updateOptions={updateOptions} t={t} onClose={() => { setTyping(false) }} /> : null}
       {notice !== undefined ? <p className="nr-notice" onClick={() => { setNotice(undefined) }}>{notice}</p> : null}
       {data.error !== undefined ? <Problem error={data.error} t={t} onRetry={data.reload} /> : editing ? (
         <div className="nr-edit">
@@ -475,6 +610,21 @@ function Chapter({ book, chapters, chapter, t }: { book: Book; chapters: Chapter
           {voiced === 0 ? <p className="nv-muted nv-small">{t('这一章还没有配音：画面会按阅读速度配着字幕走。', 'This chapter has no voice yet: the panels pass at reading pace, with subtitles.')}</p> : null}
           {turn}
         </div>
+      ) : mode === 'listen' && script !== undefined ? (
+        <ScriptPage
+          t={t}
+          lines={lines}
+          cues={cues}
+          state={state}
+          player={player}
+          pace={pace}
+          figures={figures}
+          media={path => url(path)}
+          scroller={scroller}
+          prefs={prefs}
+          header={<header className="nv-reader-head"><span className="nv-reader-kicker">{book.title} · {t(`第 ${chapter.index} 章`, `Chapter ${chapter.index}`)}</span><h1>{chapter.title}</h1></header>}
+          footer={turn}
+        />
       ) : (
         <ReaderPage
           t={t}
@@ -483,19 +633,27 @@ function Chapter({ book, chapters, chapter, t }: { book: Book; chapters: Chapter
           text={data.data?.text}
           prefs={prefs}
           media={path => url(path)}
-          lines={mode === 'listen' && script !== undefined ? lines : undefined}
-          active={mode === 'listen' ? state.index : undefined}
-          onLine={mode === 'listen' && script !== undefined ? (index) => { player.play(index) } : undefined}
+          lines={engaged && script !== undefined ? lines : undefined}
+          active={engaged ? state.index : undefined}
+          onLine={engaged && script !== undefined ? (index) => { player.play(index) } : undefined}
           sound={script !== undefined ? { lines, cues } : undefined}
-          sounding={mode === 'listen' ? state.sounding : undefined}
+          sounding={engaged ? state.sounding : undefined}
+          pace={engaged ? pace : undefined}
           scroller={scroller}
           footer={turn}
         />
       )}
-      {mode === 'listen' && !editing && data.data !== undefined ? (
-        script !== undefined && voiced > 0
-          ? <ListenBar t={t} player={player} state={state} lines={lines} cues={cues} options={options} update={updateOptions} autoNext={autoNext} onAutoNext={setAutoNext} />
-          : <div className="nr-novoice"><Icon name="headphones" size={15} /><span>{t('这一章还没有做成有声版，先看着读吧。', 'This chapter has no audio version yet; it can be read meanwhile.')}</span></div>
+      {mode !== 'watch' && !editing && script !== undefined ? (
+        <ListenBar
+          t={t}
+          player={player}
+          state={state}
+          lines={lines}
+          cues={cues}
+          options={options}
+          update={updateOptions}
+          onSettings={() => { setTyping(value => !value) }}
+        />
       ) : null}
     </div>
   )
@@ -626,7 +784,6 @@ function PlayScreen({ book, playId, t }: { book: Book; playId: string; t: Transl
     setError(undefined)
     send<{ play: Play }>('POST', `${base}/rewind`, {}).then((next) => { loaded.set(next) }, (failed: unknown) => { setError(failure(failed, t)) })
   }
-  const background = [...play.turns].reverse().find(turn => turn.scene?.background !== undefined)?.scene?.background
   return (
     <div className="nr-play">
       <header className="nv-reader-bar nr-bar">
@@ -634,22 +791,8 @@ function PlayScreen({ book, playId, t }: { book: Book; playId: string; t: Transl
         <span className="nr-bar-title">{play.title}</span>
         {play.turns.length > 1 ? <button type="button" className="nv-btn nv-btn-ghost nv-btn-sm" disabled={waiting !== undefined} onClick={rewind} title={t('撤回上一回合', 'Take the last turn back')}><Icon name="undo" size={14} /><span>{t('撤回', 'Undo')}</span></button> : null}
       </header>
-      <div className="nr-play-scroll" style={background !== undefined ? { backgroundImage: `linear-gradient(color-mix(in srgb, var(--nv-bg) 86%, transparent), color-mix(in srgb, var(--nv-bg) 94%, transparent)), url("${media(book.id, background)}")` } : undefined}>
-        <p className="nr-play-situation">{play.situation}</p>
-        {play.turns.map(turn => (
-          <div key={turn.id} className="nr-play-turn">
-            {turn.input !== undefined ? <p className={cx('nr-play-input', `is-${turn.input.kind}`)}>{turn.input.kind === 'do' ? t('（你）', '(you) ') : turn.input.kind === 'direct' ? t('（指挥）', '(direction) ') : ''}{turn.input.text}</p> : null}
-            {turn.scene?.location !== undefined || turn.scene?.time !== undefined ? <p className="nr-play-scene">{[turn.scene.location, turn.scene.time, turn.scene.mood].filter(Boolean).join(' · ')}</p> : null}
-            {turn.narration !== undefined && turn.narration.length > 0 ? turn.narration.split('\n').filter(paragraph => paragraph.trim().length > 0).map((paragraph, index) => <p key={index} className="nr-play-narration">{paragraph}</p>) : null}
-            {turn.lines.map((line, index) => (
-              <p key={index} className="nr-play-line">
-                <span className="nr-play-speaker">{line.speaker}</span>
-                {line.action !== undefined && line.action.length > 0 ? <span className="nr-play-action">（{line.action}）</span> : null}
-                <span>{line.text}</span>
-              </p>
-            ))}
-          </div>
-        ))}
+      {/* As it went so far — the same transcript a side story is read as — and after it what is still being answered. */}
+      <PlayTranscript t={t} play={play} media={path => media(book.id, path)}>
         {waiting !== undefined ? (
           <div className="nr-play-turn">
             <p className="nr-play-input">{waiting}</p>
@@ -657,9 +800,8 @@ function PlayScreen({ book, playId, t }: { book: Book; playId: string; t: Transl
           </div>
         ) : null}
         {error !== undefined ? <p className="nv-note is-warn">{error}</p> : null}
-        {over ? <p className="nr-play-over">{t('—— 这场戏落幕了 ——', '— the scene has ended —')}</p> : null}
         <div ref={end} />
-      </div>
+      </PlayTranscript>
       {over ? null : (
         <div className="nr-play-controls">
           {waiting === undefined && last !== undefined && last.choices.length > 0 ? (
@@ -697,6 +839,14 @@ function App() {
       {place.book === undefined ? <Shelf t={t} /> : <BookScreen key={place.book} id={place.book} place={place} t={t} />}
     </div>
   )
+}
+
+// A published site opens the way its author reads, until whoever visits sets something of their own.
+try {
+  const written = document.querySelector('meta[name="novel-defaults"]')?.getAttribute('content')
+  if (written !== null && written !== undefined && written.length > 0) setReaderDefaults(JSON.parse(written) as Parameters<typeof setReaderDefaults>[0])
+} catch {
+  // Not readable: the reader's own defaults, as everywhere else.
 }
 
 const style = document.createElement('style')

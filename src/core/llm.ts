@@ -11,6 +11,13 @@ import { errorMessage, isAbort } from './util/async'
 export interface LlmRequest {
   route: ModelRoute
   system?: string
+  /**
+   * Text that opens the prompt and is the same over a run of calls — the book
+   * and the story so far, while chapter after chapter is written. It is sent
+   * ahead of `prompt` as a block of its own, so a provider that keeps the head
+   * of a request can keep exactly this.
+   */
+  stable?: string
   prompt: string
   temperature?: number
   maxTokens?: number
@@ -20,8 +27,11 @@ export interface LlmRequest {
 }
 
 export interface LlmUsage {
+  /** Everything that was sent, whether the provider had it cached or not. */
   inputTokens: number
   outputTokens: number
+  /** How much of the input the provider read from its cache, when it says. */
+  cachedTokens?: number
 }
 
 export interface LlmResponse {
@@ -253,6 +263,7 @@ const ROLE_TEMPERATURE: Record<TextRole, number> = {
   analyst: 0.2,
   architect: 0.8,
   director: 0.9,
+  producer: 0.2,
 }
 
 /** Which other role's model stands in when a role has none configured. */
@@ -261,6 +272,8 @@ const ROLE_FALLBACK: Record<TextRole, TextRole[]> = {
   analyst: [],
   architect: ['writer'],
   director: ['writer', 'analyst'],
+  // Cutting a video is work for whatever model the conversation itself runs on, unless the author names one.
+  producer: [],
 }
 
 export interface RouteContext {

@@ -29,10 +29,27 @@ export interface ReaderPrefs {
   serif: boolean
   /** Show what is heard beside the text — the room, a door, the music — for the eye as well as the ear. */
   notes: boolean
+  /** Pressing play over the prose turns the page to the script, where who says what is laid out line by line. Left out: it does. */
+  follow?: boolean
 }
 
 const PREFS_KEY = 'novel-studio:reader'
+const PLAYER_KEY = 'novel-studio:player'
 const DEFAULT_PREFS: ReaderPrefs = { size: 18, theme: 'auto', serif: true, notes: true }
+const DEFAULT_OPTIONS: PlayerOptions = { rate: 1, voiceVolume: 1, ambienceVolume: 0.45, ambienceOn: true }
+
+/** What this page opens with before whoever reads has set anything: a published site's are its author's own settings. */
+let opening: { prefs: Partial<ReaderPrefs>; options: Partial<PlayerOptions> } = { prefs: {}, options: {} }
+
+/** Have the reader open the way a site's author reads; what a visitor then sets is theirs and stays. */
+export function setReaderDefaults(defaults: { prefs?: Partial<ReaderPrefs>; options?: Partial<PlayerOptions> } | undefined): void {
+  opening = { prefs: defaults?.prefs ?? {}, options: defaults?.options ?? {} }
+}
+
+/** How this device reads right now: what a site published from here opens with for others. */
+export function readerSettings(): { prefs: ReaderPrefs; options: PlayerOptions } {
+  return { prefs: stored(PREFS_KEY, DEFAULT_PREFS), options: stored(PLAYER_KEY, DEFAULT_OPTIONS) }
+}
 
 /** What a sound cue says to a reader: its caption, or for a plain bed the name of its preset. */
 export function cueCaption(cue: AudioCue, t: Translate): string | undefined {
@@ -61,7 +78,7 @@ function store(key: string, value: unknown): void {
 
 /** Type size, paper and typeface, remembered on this device. */
 export function useReaderPrefs(): [ReaderPrefs, (patch: Partial<ReaderPrefs>) => void] {
-  const [prefs, setPrefs] = useState<ReaderPrefs>(() => stored(PREFS_KEY, DEFAULT_PREFS))
+  const [prefs, setPrefs] = useState<ReaderPrefs>(() => stored(PREFS_KEY, { ...DEFAULT_PREFS, ...opening.prefs }))
   const update = (patch: Partial<ReaderPrefs>): void => {
     setPrefs((previous) => {
       const next = { ...previous, ...patch }
@@ -74,11 +91,11 @@ export function useReaderPrefs(): [ReaderPrefs, (patch: Partial<ReaderPrefs>) =>
 
 /** Player preferences survive between chapters and visits. */
 export function usePlayerOptions(): [PlayerOptions, (patch: Partial<PlayerOptions>) => void] {
-  const [options, setOptions] = useState<PlayerOptions>(() => stored('novel-studio:player', { rate: 1, voiceVolume: 1, ambienceVolume: 0.45, ambienceOn: true }))
+  const [options, setOptions] = useState<PlayerOptions>(() => stored(PLAYER_KEY, { ...DEFAULT_OPTIONS, ...opening.options }))
   const update = (patch: Partial<PlayerOptions>): void => {
     setOptions((previous) => {
       const next = { ...previous, ...patch }
-      store('novel-studio:player', next)
+      store(PLAYER_KEY, next)
       return next
     })
   }
@@ -101,17 +118,113 @@ export function PrefsControls({ prefs, update, t }: { prefs: ReaderPrefs; update
   )
 }
 
-/** The switch between reading the chapter and listening to it — and, where a host adds one, a further way of taking it in. */
-export function ModeSwitch({ mode, onChange, t, extra }: { mode: ReadMode | undefined; onChange: (mode: ReadMode) => void; t: Translate; extra?: ReactNode }) {
+/**
+ * How a chapter is read and heard, in one panel — the same wherever the
+ * reader is: in the Studio, on a phone, on a published site, and on the
+ * Studio's settings page. What is set here belongs to whoever is reading and
+ * to the device they read on, and is kept there.
+ *
+ * What is reached for often is in sight: the size of the type, the paper, the
+ * typeface, the speed of the voice. The rest is one press further.
+ * @param extra - options of the host's own (the Studio's notes of a review), shown with the rest.
+ */
+export function ReaderSettings({ prefs, update, options, updateOptions, t, extra, onClose }: {
+  prefs: ReaderPrefs
+  update: (patch: Partial<ReaderPrefs>) => void
+  options: PlayerOptions
+  updateOptions: (patch: Partial<PlayerOptions>) => void
+  t: Translate
+  extra?: ReactNode
+  /** Given, the panel is laid over the page and can be put away; left out, it stands where it is put. */
+  onClose?: (() => void) | undefined
+}) {
+  const [more, setMore] = useState(false)
+  const panel = (
+    <div className={cx('nv-reader-settings', onClose !== undefined && 'is-floating')} role="dialog" aria-label={t('阅读设置', 'Reading settings')}>
+      <div className="nv-reader-settings-row">
+        <span className="nv-reader-settings-label">{t('字号', 'Type size')}</span>
+        <div className="nv-reader-settings-size">
+          <button type="button" className="nv-btn nv-btn-outline nv-btn-sm" onClick={() => { update({ size: Math.max(14, prefs.size - 1) }) }} aria-label={t('缩小字号', 'Smaller text')}><span>A−</span></button>
+          <span className="nv-reader-settings-value">{prefs.size}</span>
+          <button type="button" className="nv-btn nv-btn-outline nv-btn-sm" onClick={() => { update({ size: Math.min(30, prefs.size + 1) }) }} aria-label={t('放大字号', 'Larger text')}><span>A+</span></button>
+        </div>
+      </div>
+      <div className="nv-reader-settings-row">
+        <span className="nv-reader-settings-label">{t('纸张', 'Paper')}</span>
+        <div className="nv-seg" role="group">
+          {([['auto', '跟随主题', 'App theme'], ['paper', '纸张', 'Paper'], ['night', '夜间', 'Night']] as const).map(([value, zh, en]) => (
+            <button key={value} type="button" className={cx(prefs.theme === value && 'is-active')} onClick={() => { update({ theme: value }) }}>{t(zh, en)}</button>
+          ))}
+        </div>
+      </div>
+      <div className="nv-reader-settings-row">
+        <span className="nv-reader-settings-label">{t('字体', 'Typeface')}</span>
+        <div className="nv-seg" role="group">
+          <button type="button" className={cx(prefs.serif && 'is-active')} onClick={() => { update({ serif: true }) }}>{t('宋体 / 衬线', 'Serif')}</button>
+          <button type="button" className={cx(!prefs.serif && 'is-active')} onClick={() => { update({ serif: false }) }}>{t('黑体 / 无衬线', 'Sans')}</button>
+        </div>
+      </div>
+      <div className="nv-reader-settings-row">
+        <span className="nv-reader-settings-label">{t('语速', 'Speed')}</span>
+        <div className="nv-seg" role="group">
+          {[0.8, 1, 1.15, 1.3, 1.5, 1.8].map(rate => (
+            <button key={rate} type="button" className={cx(options.rate === rate && 'is-active')} onClick={() => { updateOptions({ rate }) }}>{rate}×</button>
+          ))}
+        </div>
+      </div>
+      <button type="button" className="nv-link nv-reader-settings-more" aria-expanded={more} onClick={() => { setMore(value => !value) }}>
+        <Icon name={more ? 'chevronUp' : 'chevronDown'} size={12} />
+        <span>{more ? t('收起', 'Less') : t('更多：播放、声音、注记', 'More: playback, sound, notes')}</span>
+      </button>
+      {more ? (
+        <div className="nv-reader-settings-list">
+          <label className="nv-check" title={t('在"文字"版面按播放时，自动翻到"脚本"版面；关掉就留在正文里听，正在念的那一句会标出来', 'Pressing play over the prose turns to the script; switched off, the prose stays and the line being spoken is marked in it')}>
+            <input type="checkbox" checked={prefs.follow !== false} onChange={(event) => { update({ follow: event.target.checked }) }} />
+            <span>{t('按播放时翻到脚本版面', 'Turn to the script on play')}</span>
+          </label>
+          <label className="nv-check">
+            <input type="checkbox" checked={options.autoNext !== false} onChange={(event) => { updateOptions({ autoNext: event.target.checked }) }} />
+            <span>{t('一章听完接着听下一章', 'Go on to the next chapter')}</span>
+          </label>
+          <label className="nv-check" title={t('在正文旁边标出这里听得到什么：环境、音效、配乐', 'Beside the text, what is heard there: the room, an effect, the music')}>
+            <input type="checkbox" checked={prefs.notes} onChange={(event) => { update({ notes: event.target.checked }) }} />
+            <span>{t('正文旁显示声音注记', 'Sound notes beside the text')}</span>
+          </label>
+          <label className="nv-check" title={t('人声之下的一切：环境声、音效、配乐', 'Everything under the voice: ambience, effects, music')}>
+            <input type="checkbox" checked={options.ambienceOn} onChange={(event) => { updateOptions({ ambienceOn: event.target.checked }) }} />
+            <span>{t('环境声、音效与配乐', 'Ambience, effects and music')}</span>
+            <input className="nv-range" type="range" min={0} max={1} step={0.05} value={options.ambienceVolume} disabled={!options.ambienceOn} onChange={(event) => { updateOptions({ ambienceVolume: Number(event.target.value) }) }} aria-label={t('环境与音效音量', 'Sound volume')} />
+          </label>
+          {extra}
+        </div>
+      ) : null}
+      <p className="nv-muted nv-small nv-reader-settings-foot">{t('这些只记在这台设备上：换一台设备、换一个人读，各是各的。', 'Kept on this device only: another device, another reader, has its own.')}</p>
+    </div>
+  )
+  if (onClose === undefined) return panel
+  return (
+    <div className="nv-reader-settings-mask" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
+      {panel}
+    </div>
+  )
+}
+
+/**
+ * The switch between the two faces of a chapter — and, where a host adds one,
+ * a further way of taking it in. On a phone they are reading and listening;
+ * where the script has a page of its own (`pages`), they are the prose and the
+ * script, and listening is the play button under either.
+ */
+export function ModeSwitch({ mode, onChange, t, extra, pages }: { mode: ReadMode | undefined; onChange: (mode: ReadMode) => void; t: Translate; extra?: ReactNode; pages?: boolean }) {
   return (
     <div className="nv-modes" role="tablist" aria-label={t('阅读方式', 'How to take in the chapter')}>
-      <button type="button" role="tab" aria-selected={mode === 'read'} className={cx('nv-mode', mode === 'read' && 'is-active')} onClick={() => { onChange('read') }}>
-        <Icon name="eye" size={14} />
-        <span>{t('看', 'Read')}</span>
+      <button type="button" role="tab" aria-selected={mode === 'read'} className={cx('nv-mode', mode === 'read' && 'is-active')} onClick={() => { onChange('read') }} title={pages === true ? t('文字：这一章的正文', 'Prose: the text of the chapter') : undefined}>
+        <Icon name="book" size={14} />
+        <span>{pages === true ? t('文字', 'Prose') : t('读', 'Read')}</span>
       </button>
-      <button type="button" role="tab" aria-selected={mode === 'listen'} className={cx('nv-mode', mode === 'listen' && 'is-active')} onClick={() => { onChange('listen') }}>
-        <Icon name="headphones" size={14} />
-        <span>{t('听', 'Listen')}</span>
+      <button type="button" role="tab" aria-selected={mode === 'listen'} className={cx('nv-mode', mode === 'listen' && 'is-active')} onClick={() => { onChange('listen') }} title={pages === true ? t('脚本：谁说了什么、怎么说、底下是什么声音，一句一行', 'Script: who says what, how, and over which sound, a line each') : undefined}>
+        <Icon name={pages === true ? 'list' : 'headphones'} size={14} />
+        <span>{pages === true ? t('脚本', 'Script') : t('听', 'Listen')}</span>
       </button>
       {extra}
     </div>
@@ -143,6 +256,8 @@ export interface ReaderPageProps {
   sound?: { lines: readonly AudioLine[]; cues: readonly AudioCue[] } | undefined
   /** Ids of the cues being heard right now. */
   sounding?: readonly string[] | undefined
+  /** Listening: how long the line being spoken takes at the speed it is played, and whether the voice is held — what the mark that runs through the line goes by. */
+  pace?: { seconds: number; paused: boolean } | undefined
   /** Offset of a paragraph to flash (a search hit). */
   flash?: number | undefined
   scroller: RefObject<HTMLDivElement | null>
@@ -151,10 +266,20 @@ export interface ReaderPageProps {
   /** Laid over the page: the tools for a selection. */
   children?: ReactNode
   onSelect?: (() => void) | undefined
+  /**
+   * Places in the text that carry a note — what a review found — in reading
+   * order, none overlapping. Marked while the chapter is read (a chapter that
+   * is being listened to marks its spoken lines instead), each to be pressed.
+   */
+  marks?: readonly { id: string; start: number; end: number; tone: 'red' | 'amber' | 'blue' }[] | undefined
+  /** The mark whose note is open. */
+  openMark?: string | undefined
+  /** A mark was pressed; `at` is where it sits on the scrolled page. */
+  onMark?: ((id: string, at: { top: number; bottom: number; left: number }) => void) | undefined
 }
 
 /** One chapter on the page. In listening mode every sentence of the prose can be pressed, and the one being spoken is lit. */
-export function ReaderPage({ t, bookTitle, chapter, text, prefs, media, lines, active, onLine, sound, sounding, flash, scroller, footer, children, onSelect }: ReaderPageProps) {
+export function ReaderPage({ t, bookTitle, chapter, text, prefs, media, lines, active, onLine, sound, sounding, pace, flash, scroller, footer, children, onSelect, marks, openMark, onMark }: ReaderPageProps) {
   const blocks = useMemo<Block[]>(() => (text !== undefined ? blocksOf(text) : []), [text])
   const ranges = useMemo(() => {
     if (text === undefined || lines === undefined || lines.length === 0) return []
@@ -234,7 +359,33 @@ export function ReaderPage({ t, bookTitle, chapter, text, prefs, media, lines, a
           }
           if (block.kind === 'break') return <div key={block.offset} data-offset={block.offset} className="nv-scene-break" aria-hidden="true">＊　＊　＊</div>
           if (block.kind === 'heading') return <h3 key={block.offset} data-offset={block.offset}>{block.text}</h3>
-          if (!listening || ranges.length === 0) return [noteRow(block.offset), <p key={block.offset} data-offset={block.offset} className={cx(flash === block.offset && 'is-flash')}>{block.text}</p>]
+          if (!listening || ranges.length === 0) {
+            const noted = !listening && marks !== undefined && marks.length > 0 ? segmentsOf(block, marks) : undefined
+            if (noted === undefined || !noted.some(segment => segment.line !== undefined)) return [noteRow(block.offset), <p key={block.offset} data-offset={block.offset} className={cx(flash === block.offset && 'is-flash')}>{block.text}</p>]
+            return [noteRow(block.offset), (
+              <p key={block.offset} data-offset={block.offset} className={cx(flash === block.offset && 'is-flash')}>
+                {noted.map((segment, at) => segment.line === undefined
+                  ? <span key={at}>{segment.text}</span>
+                  : (
+                      <mark
+                        key={at}
+                        data-mark={segment.line}
+                        className={cx('nv-mark', `is-${marks!.find(mark => mark.id === segment.line)?.tone ?? 'blue'}`, segment.line === openMark && 'is-open')}
+                        title={t('这里有一条审校意见，点开看', 'A review note sits here — press to read it')}
+                        onClick={(event) => {
+                          // A selection is being made, not a note opened.
+                          if ((window.getSelection()?.toString().length ?? 0) > 0) return
+                          const host = scroller.current
+                          if (host === null) return
+                          const box = event.currentTarget.getBoundingClientRect()
+                          const frame = host.getBoundingClientRect()
+                          onMark?.(segment.line!, { top: box.top - frame.top + host.scrollTop, bottom: box.bottom - frame.top + host.scrollTop, left: box.left - frame.left })
+                        }}
+                      >{segment.text}</mark>
+                    ))}
+              </p>
+            )]
+          }
           return [noteRow(block.offset), (
             <p key={block.offset} data-offset={block.offset} className={cx(flash === block.offset && 'is-flash')}>
               {segmentsOf(block, ranges).map((segment, at) => segment.line === undefined
@@ -243,7 +394,8 @@ export function ReaderPage({ t, bookTitle, chapter, text, prefs, media, lines, a
                     <span
                       key={at}
                       data-line={segment.line}
-                      className={cx('nv-said', segment.line === activeId && 'is-speaking', skipped.has(segment.line) ? 'is-skipped' : partly && !voiced.has(segment.line) && 'is-unvoiced')}
+                      className={cx('nv-said', segment.line === activeId && 'is-speaking', segment.line === activeId && pace?.paused === true && 'is-held', skipped.has(segment.line) ? 'is-skipped' : partly && !voiced.has(segment.line) && 'is-unvoiced')}
+                      style={segment.line === activeId && pace !== undefined ? { ['--nv-say' as string]: `${pace.seconds.toFixed(2)}s` } : undefined}
                       title={skipped.has(segment.line) ? t('有声版里这几个字不念', 'Left unspoken in the audio version') : undefined}
                       onClick={() => {
                         // A selection is being made, not a line chosen.
@@ -301,6 +453,10 @@ export interface ListenBarProps {
   cues?: readonly AudioCue[] | undefined
   /** Extra controls at the end of the bar. */
   children?: ReactNode
+  /** Options of the host's own, shown with the bar's. */
+  more?: ReactNode
+  /** The reader's settings have a panel of their own: the bar's button opens that instead of options of its own. */
+  onSettings?: (() => void) | undefined
 }
 
 /**
@@ -308,7 +464,7 @@ export interface ListenBarProps {
  * is, how fast it is read and how loud the ambience is. It sits under the
  * page, where a thumb reaches it.
  */
-export function ListenBar({ t, player, state, lines, options, update, autoNext, onAutoNext, cues, children }: ListenBarProps) {
+export function ListenBar({ t, player, state, lines, options, update, autoNext, onAutoNext, cues, children, more: extra, onSettings }: ListenBarProps) {
   const clock = useMemo(() => timeline(lines), [lines])
   const spoken = lines.filter(line => line.skip !== true)
   const voiced = spoken.filter(line => line.audio !== undefined).length
@@ -348,9 +504,9 @@ export function ListenBar({ t, player, state, lines, options, update, autoNext, 
         {voiced < spoken.length ? <span className="nv-muted nv-small nv-listen-note">{voiced === 0 ? t('还没有配音：按阅读速度逐句显示', 'Not voiced yet: lines are shown at reading pace') : t(`${spoken.length - voiced} 句还没有配音，到那里会静默显示`, `${spoken.length - voiced} lines are not voiced yet and pass in silence`)}</span> : null}
         <span className="nv-spacer" />
         {children}
-        <button type="button" className={cx('nv-btn nv-btn-ghost nv-btn-sm nv-btn-icon', more && 'is-active')} onClick={() => { setMore(value => !value) }} title={t('语速、环境与音效、连播', 'Speed, sound, continuous play')} aria-expanded={more}><Icon name="settings" size={15} /></button>
+        <button type="button" className={cx('nv-btn nv-btn-ghost nv-btn-sm nv-btn-icon', more && 'is-active')} onClick={() => { if (onSettings !== undefined) onSettings(); else setMore(value => !value) }} title={t('语速、环境与音效、连播', 'Speed, sound, continuous play')} aria-expanded={more}><Icon name="settings" size={15} /></button>
       </div>
-      {more ? (
+      {more && onSettings === undefined ? (
         <div className="nv-listen-more">
           <label className="nv-listen-option">
             <span>{t('语速', 'Speed')}</span>
@@ -369,6 +525,7 @@ export function ListenBar({ t, player, state, lines, options, update, autoNext, 
               <span>{t('一章听完接着听下一章', 'Go on to the next chapter')}</span>
             </label>
           ) : null}
+          {extra}
         </div>
       ) : null}
     </div>

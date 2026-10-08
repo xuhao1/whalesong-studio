@@ -6,17 +6,26 @@
  * Views read a snapshot and call actions; they never talk to the wire.
  */
 import type { EndpointCheck, JobStarted, LockView, RpcMethod, RpcParams, SettingsView, WorkspaceInfo } from '../shared/rpc'
+import { parseRecommended, setRecommended } from '../shared/recommended'
 import type { ServiceId, SetupPart } from '../shared/services'
-import type { JobInfo, ProjectState, WorkMode } from '../shared/types'
+import type { GateKind, GateState, JobInfo, ProjectState, WorkMode } from '../shared/types'
 import { isCancelled, messageOf, RpcError, type NovelApi } from './api'
 
 export type StudioView = 'home' | 'bible' | 'outline' | 'write' | 'read' | 'cast' | 'review' | 'stage' | 'settings' | 'setup' | 'usage'
 /** `audio` is kept for links made before the audio drama moved into the reader: it opens the reader's listening mode. */
-export type StageTab = 'audio' | 'comic' | 'play' | 'gallery'
+export type StageTab = 'audio' | 'comic' | 'play' | 'gallery' | 'production'
 /** The reader shows the same chapter two ways: to be read, or to be listened to. */
-export type ReadMode = 'read' | 'listen'
+/** How a chapter is taken in: read, heard as an audio drama, or watched as a motion comic. */
+export type ReadMode = 'read' | 'listen' | 'watch'
+/** Where the viewer stands: in the text, among the book's people, in its world, among its side stories — or on the page of one of them. */
+export interface ViewerAt {
+  section: 'text' | 'people' | 'world' | 'sides'
+  end?: { type: 'character' | 'world'; id: string }
+  /** The side story that is open. */
+  side?: string
+}
 
-export type CastTab = 'board' | 'presence' | 'relations' | 'walkons'
+export type CastTab = 'cards' | 'board' | 'presence' | 'relations' | 'walkons'
 
 /** A request to the Host that changes or makes something and has not answered yet. */
 export interface Activity {
@@ -31,12 +40,18 @@ export interface Activity {
  * and is shown as work in progress until it answers.
  */
 const QUIET: ReadonlySet<RpcMethod> = new Set<RpcMethod>([
-  'events.wait', 'jobs.read', 'jobs.list', 'jobs.cancel', 'project.state', 'workspace.info', 'settings.get', 'key.state', 'model.info',
+  'events.wait', 'jobs.read', 'jobs.list', 'jobs.cancel', 'project.state', 'workspace.info', 'settings.get', 'key.state', 'model.info', 'conversation.open',
   'audio.script', 'comic.board', 'image.list', 'chapter.read', 'chapter.version', 'chapter.save', 'usage.summary', 'find', 'search',
-  'play.list', 'play.get', 'share.status',
+  'play.list', 'play.get', 'share.status', 'reader.album', 'reader.sides', 'world.pin', 'line.world', 'cast.lives',
 ])
 /** How long a request may take before it is worth saying that it is running. */
 const ACTIVITY_AFTER_MS = 350
+
+/** A settings view brings the recommendations its Host works by: the Studio offers the same models the Host would set. */
+function taking(view: SettingsView): SettingsView {
+  setRecommended(parseRecommended(view.recommended?.table))
+  return view
+}
 
 export interface Toast {
   id: number
@@ -64,11 +79,13 @@ export interface StudioSnapshot {
   /** Something was asked for that needs a capability nobody has set up yet: the Studio says so and shows the way. */
   needs?: { what: Capability; detail?: string; nonce: number }
   /** The part of the settings a link asked for. */
-  settingsFocus?: Capability
+  settingsFocus?: Capability | 'crew' | 'recommended'
   /** A long job nobody was waiting on just finished, for one notice on screen. */
   jobEnded?: { job: JobInfo; nonce: number }
   project?: ProjectState
   jobs: JobInfo[]
+  /** The kinds of request that have work waiting, or a service pushing back, right now. */
+  gates?: Partial<Record<GateKind, GateState>>
   mode?: WorkMode
   view: StudioView
   /** Chapter in focus across views (editor, reader, stage). */
@@ -80,6 +97,8 @@ export interface StudioSnapshot {
   stageTab?: StageTab
   /** How the reader shows the chapter. */
   readMode: ReadMode
+  /** Which half of the viewer is open: the text, or the album of the people and the world. */
+  album: ViewerAt
   /** Clicks still being worked on by the Host, oldest first. */
   activity: Activity[]
   toasts: Toast[]
@@ -94,6 +113,84 @@ export interface StudioSnapshot {
   castTab?: CastTab
   /** A place in the manuscript a view was asked to show (a search hit, a review quote). */
   jump?: { chapterId: string; offset: number; length: number; nonce: number }
+  /**
+   * The conversation a book was just given, for the Studio to say so once:
+   * where the author goes to talk the book over with the showrunner.
+   */
+  conversation?: { root: string; sessionId: string; created: boolean; title?: string; nonce: number }
+  /**
+   * The Host half is older than this Studio: the Harness swapped the Studio in
+   * when the plugin was updated on disk, and the Host runs on as it was loaded
+   * until the Harness restarts. What is new in the Studio may not work till then.
+   */
+  hostStale?: boolean
+  /** …and that Host half can put the installed one up in its own place: one press, no restart of DSH. */
+  hostReloadable?: boolean
+}
+
+/**
+ * One call the Host does not know says it for every Studio in the window: the
+ * Host is older than the Studio. Forgotten when the Host comes back.
+ */
+const olderHost = { known: false, listeners: new Set<() => void>() }
+
+export function noteOlderHost(known = true): void {
+  if (olderHost.known === known) return
+  olderHost.known = known
+  for (const listener of [...olderHost.listeners]) listener()
+}
+
+/** Under this name and a book's id: the chapter this device read last. */
+const LAST_READ = 'novel-studio:last-read:'
+
+/** Where the author was in a Studio: found again when the Harness swaps the Studio in anew, or the page is loaded again. */
+interface Place {
+  root?: string
+  /** On the bookshelf on purpose. */
+  shelf?: boolean
+  view?: StudioView
+  chapterId?: string
+  stageTab?: StageTab
+  readMode?: ReadMode
+  castTab?: CastTab
+  album?: ViewerAt
+}
+
+const VIEWS: readonly StudioView[] = ['home', 'bible', 'outline', 'write', 'read', 'cast', 'review', 'stage', 'settings', 'usage']
+const STAGE_TABS: readonly StageTab[] = ['audio', 'comic', 'play', 'gallery', 'production']
+const CAST_TABS: readonly CastTab[] = ['cards', 'board', 'presence', 'relations', 'walkons']
+
+/** A kept place in the viewer, when what was kept is one. */
+function viewerAt(value: unknown): ViewerAt | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  const { section, end, side } = value as { section?: unknown; end?: { type?: unknown; id?: unknown }; side?: unknown }
+  if (section !== 'text' && section !== 'people' && section !== 'world' && section !== 'sides') return undefined
+  const named = end !== undefined && end !== null && (end.type === 'character' || end.type === 'world') && typeof end.id === 'string' && end.id.length > 0
+  return { section, ...(named ? { end: { type: end.type as 'character' | 'world', id: end.id as string } } : {}), ...(section === 'sides' && typeof side === 'string' && side.length > 0 ? { side } : {}) }
+}
+
+function readPlace(key: string): Place | undefined {
+  try {
+    const raw = globalThis.sessionStorage?.getItem(key)
+    if (raw === null || raw === undefined) return undefined
+    const data = JSON.parse(raw) as Record<string, unknown>
+    const text = (value: unknown): string | undefined => (typeof value === 'string' && value.length > 0 ? value : undefined)
+    const root = text(data.root)
+    const chapterId = text(data.chapterId)
+    return {
+      ...(root !== undefined ? { root } : {}),
+      ...(data.shelf === true ? { shelf: true } : {}),
+      ...(VIEWS.includes(data.view as StudioView) ? { view: data.view as StudioView } : {}),
+      ...(chapterId !== undefined ? { chapterId } : {}),
+      ...(STAGE_TABS.includes(data.stageTab as StageTab) ? { stageTab: data.stageTab as StageTab } : {}),
+      ...(data.readMode === 'read' || data.readMode === 'listen' || data.readMode === 'watch' ? { readMode: data.readMode } : {}),
+      ...(CAST_TABS.includes(data.castTab as CastTab) ? { castTab: data.castTab as CastTab } : {}),
+      ...(viewerAt(data.album) !== undefined ? { album: viewerAt(data.album)! } : {}),
+    }
+  } catch {
+    // No storage here, or something else's data under the name: the Studio opens where it always did.
+    return undefined
+  }
 }
 
 /** What a piece of work can need that is set up in the settings. */
@@ -125,7 +222,7 @@ type JobMethod = { [M in RpcMethod]: NovelRpcResult<M> extends JobStarted ? M : 
 type NovelRpcResult<M extends RpcMethod> = import('../shared/rpc').RpcResult<M>
 
 export class StudioController {
-  private snapshot: StudioSnapshot = { status: 'loading', workspaces: [], jobs: [], view: 'home', readMode: 'read', activity: [], toasts: [] }
+  private snapshot: StudioSnapshot = { status: 'loading', workspaces: [], jobs: [], view: 'home', readMode: 'read', album: { section: 'text' }, activity: [], toasts: [] }
   private readonly listeners = new Set<() => void>()
   private abort = new AbortController()
   private revision = -1
@@ -148,12 +245,65 @@ export class StudioController {
   private activitySeq = 0
   /** The Host, with every click-driven request counted while it is out. */
   readonly api: NovelApi
+  /**
+   * What the author typed on a screen and has not sent yet, kept for as long as
+   * this Studio is open: leaving the screen — to change a setting, to look
+   * something up — and coming back finds it as it was. Memory only, never saved.
+   */
+  readonly kept = new Map<string, unknown>()
+  /** Under which name this Studio's place is kept; one per conversation, one for the page. */
+  private readonly placeKey: string
+  private placeSaved = ''
+  /** The book this Studio was on when it was last seen. */
+  private resume: string | undefined
+  /** The connection to the Host broke: when it is back, the Host may be another build. */
+  private reconnecting = false
+  /** Has the Harness read its list of conversations again; set by whoever shows this Studio. */
+  refreshSessions: (() => void) | undefined
+  /**
+   * The conversation of the book that is open, for a Studio that sits beside
+   * none: work started on the Studio's own page is that conversation's, so the
+   * agents doing it are its children — listed under it, and open to be watched.
+   */
+  private bookSession: { root: string; sessionId: string } | undefined
 
-  constructor(api: NovelApi, readonly sessionId?: string) {
+  /**
+   * The Studio's own page, opened by the author just now (not put back after a
+   * swap or a reload): which book it shows is decided by where they come from.
+   */
+  private arrival: { sessionId?: string; place?: Place } | undefined
+
+  /**
+   * @param arrival - for the Studio's page, when the author opened it themselves: the conversation they came from, if any.
+   *   The page then shows that conversation's book, and the shelf when it is about none — not whatever book the page was last on.
+   */
+  constructor(api: NovelApi, readonly sessionId?: string, arrival?: { sessionId?: string }) {
+    this.placeKey = `novel-studio:place:${sessionId ?? 'page'}`
+    const remembered = readPlace(this.placeKey)
+    if (sessionId === undefined && arrival !== undefined) this.arrival = { ...arrival, ...(remembered !== undefined ? { place: remembered } : {}) }
+    const place = this.arrival === undefined ? remembered : undefined
+    if (place !== undefined) {
+      this.resume = place.root
+      this.onShelf = place.shelf === true
+      // Where the author was is where they chose to be: the first-run guide does not take over.
+      if (place.view !== undefined && place.view !== 'home') this.navigated = true
+      this.snapshot = {
+        ...this.snapshot,
+        ...(place.view !== undefined ? { view: place.view } : {}),
+        ...(place.chapterId !== undefined ? { chapterId: place.chapterId } : {}),
+        ...(place.stageTab !== undefined ? { stageTab: place.stageTab } : {}),
+        ...(place.readMode !== undefined ? { readMode: place.readMode } : {}),
+        ...(place.castTab !== undefined ? { castTab: place.castTab } : {}),
+        ...(place.album !== undefined ? { album: place.album } : {}),
+      }
+    }
+    if (olderHost.known) this.snapshot = { ...this.snapshot, hostStale: true }
+    olderHost.listeners.add(this.onOlderHost)
     this.api = {
       media: api.media.bind(api),
       call: (method, params, signal) => {
-        if (QUIET.has(method)) return api.call(method, params, signal)
+        const session = this.sessionId ?? (this.bookSession !== undefined && this.bookSession.root === this.snapshot.root ? this.bookSession.sessionId : undefined)
+        if (QUIET.has(method)) return api.call(method, params, signal, session)
         const entry: Activity = { id: ++this.activitySeq, method, since: Date.now() }
         this.inFlight.set(entry.id, entry)
         // A request that answers at once never shows; one that takes a moment says what it is doing.
@@ -163,7 +313,7 @@ export class StudioController {
           this.inFlight.delete(entry.id)
           if (!this.disposed && this.snapshot.activity.some(item => item.id === entry.id)) this.set({ activity: [...this.inFlight.values()] })
         }
-        const pending = api.call(method, params, signal)
+        const pending = api.call(method, params, signal, session)
         pending.then(settle, settle)
         return pending
       },
@@ -179,13 +329,57 @@ export class StudioController {
 
   private set(patch: Partial<StudioSnapshot>): void {
     this.snapshot = { ...this.snapshot, ...patch }
+    this.emit()
+  }
+
+  /** Tell whoever watches, and keep the place for a Studio that is put here anew. */
+  private emit(): void {
+    this.remember()
     for (const listener of [...this.listeners]) listener()
+  }
+
+  private remember(): void {
+    const { root, view, chapterId, stageTab, readMode, castTab, album } = this.snapshot
+    const place: Place = {
+      ...(root !== undefined && !this.onShelf ? { root } : {}),
+      ...(this.onShelf ? { shelf: true } : {}),
+      // The guide is where a Studio with nothing set up opens by itself; nobody is put back onto it.
+      ...(view !== 'setup' ? { view } : {}),
+      ...(chapterId !== undefined ? { chapterId } : {}),
+      ...(stageTab !== undefined ? { stageTab } : {}),
+      readMode,
+      ...(castTab !== undefined ? { castTab } : {}),
+      ...(album.section !== 'text' ? { album } : {}),
+    }
+    // The chapter a book was read at last, kept by this device: where its cover leads back to.
+    const book = this.snapshot.project?.manifest.id
+    if (view === 'read' && chapterId !== undefined && book !== undefined && this.snapshot.project?.root === root) {
+      try {
+        globalThis.localStorage?.setItem(`${LAST_READ}${book}`, chapterId)
+      } catch {
+        // Without storage a book opens at its first chapter.
+      }
+    }
+    const text = JSON.stringify(place)
+    if (text === this.placeSaved) return
+    this.placeSaved = text
+    try {
+      globalThis.sessionStorage?.setItem(this.placeKey, text)
+    } catch {
+      // Without storage the Studio opens at its start next time, as it did before.
+    }
+  }
+
+  private readonly onOlderHost = (): void => {
+    if (this.disposed) return
+    if (olderHost.known !== (this.snapshot.hostStale === true)) this.set({ hostStale: olderHost.known })
   }
 
   // ───────────── lifecycle ─────────────
 
   async start(): Promise<void> {
     this.disposed = false
+    olderHost.listeners.add(this.onOlderHost)
     this.abort = new AbortController()
     try {
       // Both answers decide the first screen: a Studio with nothing set up opens on the guide.
@@ -199,6 +393,7 @@ export class StudioController {
 
   dispose(): void {
     this.disposed = true
+    olderHost.listeners.delete(this.onOlderHost)
     this.abort.abort()
     this.pollAbort?.abort()
   }
@@ -232,10 +427,37 @@ export class StudioController {
       ...(workspace !== undefined ? { workspace } : {}),
       ...(info.mode !== undefined ? { mode: info.mode } : {}),
       ...(info.home !== undefined ? { workspaceHome: info.home } : {}),
+      ...(info.stale === true ? { hostStale: true, hostReloadable: info.reloadable === true } : {}),
     })
+    if (this.arrival !== undefined) {
+      const arrival = this.arrival
+      this.arrival = undefined
+      // The book of the conversation the author came from; a conversation about no book, or none at all, leads to the shelf.
+      const from = arrival.sessionId !== undefined ? (await this.api.call('workspace.info', { sessionId: arrival.sessionId }, this.abort.signal).catch(() => undefined))?.active : undefined
+      if (from === undefined) {
+        this.onShelf = true
+        this.set({ view: 'home' })
+        return
+      }
+      // Back on the book the page was last on: back on the page of it, too.
+      const place = arrival.place?.root === from ? arrival.place : undefined
+      if (place?.view !== undefined && place.view !== 'home') this.navigated = true
+      this.set({
+        view: place?.view ?? 'home',
+        ...(place?.chapterId !== undefined ? { chapterId: place.chapterId } : {}),
+        ...(place?.stageTab !== undefined ? { stageTab: place.stageTab } : {}),
+        ...(place?.readMode !== undefined ? { readMode: place.readMode } : {}),
+        ...(place?.castTab !== undefined ? { castTab: place.castTab } : {}),
+        ...(place?.album !== undefined ? { album: place.album } : {}),
+      })
+      await this.openProject(from, false)
+      return
+    }
     if (this.snapshot.root === undefined && !this.onShelf) {
       const projects = info.workspaces.find(candidate => candidate.path === workspace)?.projects ?? []
-      const root = info.active ?? (projects.length === 1 ? projects[0]!.root : undefined)
+      // The conversation's book first; else the book this Studio was on when it was last here, if it is still on a shelf.
+      const resumed = this.resume !== undefined && info.workspaces.some(candidate => candidate.projects.some(project => project.root === this.resume)) ? this.resume : undefined
+      const root = info.active ?? resumed ?? (projects.length === 1 ? projects[0]!.root : undefined)
       if (root !== undefined) await this.openProject(root, false)
     }
   }
@@ -262,13 +484,19 @@ export class StudioController {
     }
     this.onShelf = false
     this.revision = project.revision
-    const chapterId = this.snapshot.chapterId !== undefined && project.chapters.some(chapter => chapter.id === this.snapshot.chapterId)
+    const chapterId = this.snapshot.chapterId !== undefined && [...project.chapters, ...(project.lines ?? []).flatMap(line => line.chapters)].some(chapter => chapter.id === this.snapshot.chapterId)
       ? this.snapshot.chapterId
       : (project.chapters.find(chapter => !chapter.hasText) ?? project.chapters.at(-1))?.id
     const before = this.snapshot.sessionBook
     const moves = bind && this.sessionId !== undefined && before !== root
     // Claimed before the Host confirms, so the wake-up our own move causes is not mistaken for the showrunner's.
     this.set({ root, project, status: 'ready', ...(chapterId !== undefined ? { chapterId } : {}), ...(moves ? { sessionBook: root } : {}) })
+    // On the Studio's own page: whose conversation the work started here belongs to. Looked up, never made, and not waited for.
+    if (this.sessionId === undefined && this.bookSession?.root !== root) {
+      void this.api.call('conversation.open', { root, create: false }, this.abort.signal)
+        .then((found) => { if (found.sessionId !== undefined && this.snapshot.root === root) this.bookSession = { root, sessionId: found.sessionId } })
+        .catch(() => {})
+    }
     await this.refreshJobs()
     if (!moves || this.sessionId === undefined) return
     try {
@@ -278,7 +506,7 @@ export class StudioController {
       // The Studio works on the book regardless; only the conversation stays where it was.
       const { sessionBook: _claimed, ...rest } = this.snapshot
       this.snapshot = { ...rest, ...(before !== undefined ? { sessionBook: before } : {}) }
-      for (const listener of [...this.listeners]) listener()
+      this.emit()
     }
   }
 
@@ -306,7 +534,7 @@ export class StudioController {
     this.onShelf = false
     const { project: _project, chapterId: _chapter, ...rest } = this.snapshot
     this.snapshot = { ...rest, root, jobs: [], status: 'ready', lock: { root, bind } }
-    for (const listener of [...this.listeners]) listener()
+    this.emit()
     try {
       const view = await this.api.call('lock.get', { root }, this.abort.signal)
       if (this.snapshot.lock?.root === root) this.set({ lock: { root, view, bind } })
@@ -324,6 +552,8 @@ export class StudioController {
     const lock = this.snapshot.lock
     if (lock === undefined) return
     await this.api.call('lock.open', { root: lock.root, ...how })
+    // The conversations about the book are back where the Harness keeps them.
+    this.conversationsMoved()
     await this.loadWorkspaces().catch(() => {})
     // Opened the way it was asked for before the lock stood in the way: with the conversation, or without.
     await this.openProject(lock.root, lock.bind === true)
@@ -334,15 +564,60 @@ export class StudioController {
     const root = this.snapshot.root
     if (root === undefined) return
     await this.api.call('lock.close', { root })
+    // The conversations about the book went under its seal with it.
+    this.conversationsMoved()
     await this.showLock(root)
     await this.loadWorkspaces().catch(() => {})
+  }
+
+  private conversationsMoved(): void {
+    try {
+      this.refreshSessions?.()
+    } catch {
+      // The Harness shows them the next time it reads its list by itself.
+    }
+  }
+
+  /**
+   * The conversation to talk a book over in: the one that is on it, or — asked
+   * to make one — a new one named after the book. Remembered for one notice.
+   * @returns nothing on a Harness that cannot say (an older Host, no session service).
+   */
+  async conversationFor(root: string, create: boolean): Promise<{ sessionId: string; created: boolean; title?: string } | undefined> {
+    try {
+      const found = await this.api.call('conversation.open', { root, create })
+      if (found.sessionId === undefined) return undefined
+      const conversation = { sessionId: found.sessionId, created: found.created === true, ...(found.title !== undefined ? { title: found.title } : {}) }
+      if (this.sessionId === undefined) this.bookSession = { root, sessionId: found.sessionId }
+      if (conversation.created) {
+        this.conversationsMoved()
+        if (!this.disposed) this.set({ conversation: { root, ...conversation, nonce: Date.now() } })
+      }
+      return conversation
+    } catch (error) {
+      // An older Host does not know the call: the book is none the worse, the author starts a conversation by hand.
+      if (error instanceof RpcError && error.code === 'novel/unknown-method') return undefined
+      throw error
+    }
+  }
+
+  /** The conversation beside this Studio is the one a book made here is on: said once, like a conversation that was made for a book. */
+  noteOwnConversation(root: string): void {
+    if (this.sessionId !== undefined && !this.disposed) this.set({ conversation: { root, sessionId: this.sessionId, created: false, nonce: Date.now() } })
+  }
+
+  dismissConversation(): void {
+    if (this.snapshot.conversation === undefined) return
+    const { conversation: _conversation, ...rest } = this.snapshot
+    this.snapshot = rest
+    this.emit()
   }
 
   closeProject(): void {
     this.onShelf = true
     const { root: _root, project: _project, chapterId: _chapter, lock: _lock, ...rest } = this.snapshot
     this.snapshot = { ...rest, jobs: [], view: 'home' }
-    for (const listener of [...this.listeners]) listener()
+    this.emit()
     // The shelf shows the books as they are now: sealed, locked, renamed since it was last read.
     void this.loadWorkspaces().catch(() => {})
   }
@@ -353,7 +628,8 @@ export class StudioController {
 
   setView(view: StudioView, chapterId?: string): void {
     this.navigated = true
-    this.set({ view, ...(chapterId !== undefined ? { chapterId } : {}) })
+    // A chapter asked for by name is its text; without one the viewer opens where it was left.
+    this.set({ view, ...(chapterId !== undefined ? { chapterId, ...(view === 'read' ? { album: { section: 'text' as const } } : {}) } : {}) })
   }
 
   /**
@@ -378,6 +654,8 @@ export class StudioController {
       ...(chapter !== undefined ? { chapterId: chapter.id } : {}),
       ...(target.tab !== undefined && !listening ? { stageTab: target.tab } : {}),
       ...(mode !== undefined ? { readMode: mode } : {}),
+      // A link to the reader is a link to the text.
+      ...(view === 'read' ? { album: { section: 'text' as const } } : {}),
     })
   }
 
@@ -400,7 +678,47 @@ export class StudioController {
   /** Open the reader on a chapter, to read it or to listen to it. */
   openReader(mode: ReadMode, chapterId?: string): void {
     this.navigated = true
-    this.set({ view: 'read', readMode: mode, ...(chapterId !== undefined ? { chapterId } : {}) })
+    this.set({ view: 'read', readMode: mode, album: { section: 'text' }, ...(chapterId !== undefined ? { chapterId } : {}) })
+  }
+
+  /**
+   * Open the viewer on the book's people or its world — on the page of one of
+   * them when one is named. It is the other side of every page where they are
+   * edited: the same person, the same place, to be looked at.
+   */
+  openAlbum(at: ViewerAt): void {
+    this.navigated = true
+    this.set({ view: 'read', album: at })
+  }
+
+  /** Change the half of the viewer that is open, staying in it. */
+  setAlbum(at: ViewerAt): void {
+    this.set({ album: at })
+  }
+
+  /**
+   * Open a book to be read: at the chapter this device read last, else its
+   * first chapter with text. A book with nothing written yet — or one that is
+   * locked — opens as any book does, on its overview or its lock.
+   */
+  async readBook(root: string, how: 'read' | 'listen' | 'watch' = 'read', at?: string): Promise<void> {
+    await this.openProject(root)
+    const project = this.snapshot.project
+    if (project === undefined || this.snapshot.root !== root || this.snapshot.lock !== undefined) return
+    const written = [...project.chapters, ...(project.lines ?? []).flatMap(line => line.chapters)].filter(chapter => chapter.hasText)
+    if (written.length === 0) return
+    // Heard or watched: at the chapter that has something to hear or watch — the shelf names the first that does.
+    if (how !== 'read') {
+      this.openReader(how, written.some(chapter => chapter.id === at) ? at! : written[0]!.id)
+      return
+    }
+    let last: string | null | undefined
+    try {
+      last = globalThis.localStorage?.getItem(`${LAST_READ}${project.manifest.id}`)
+    } catch {
+      last = undefined
+    }
+    this.openReader('read', (written.find(chapter => chapter.id === last) ?? written[0]!).id)
   }
 
   setReadMode(mode: ReadMode): void {
@@ -415,10 +733,10 @@ export class StudioController {
     return created
   }
 
-  /** Open a character's card in the bible. */
+  /** Open a character's card: on the people page, among the cards. */
   openCharacter(id: string): void {
     this.navigated = true
-    this.set({ view: 'bible', entity: { kind: 'character', id, nonce: Date.now() } })
+    this.set({ view: 'cast', castTab: 'cards', entity: { kind: 'character', id, nonce: Date.now() } })
   }
 
   /** Open a world entry in the bible. */
@@ -427,7 +745,12 @@ export class StudioController {
     this.set({ view: 'bible', entity: { kind: 'world', id, nonce: Date.now() } })
   }
 
-  /** Open the ensemble view, on one of its tabs. */
+  /** Look at one thing in the viewer: somebody's page, or the page of a place, a house, a thing — from where the world is walked on. */
+  openExplore(end: { type: 'character' | 'world'; id: string }): void {
+    this.openAlbum({ section: end.type === 'character' ? 'people' : 'world', end })
+  }
+
+  /** Open the people page, on one of its tabs. */
   openCast(tab?: CastTab): void {
     this.navigated = true
     this.set({ view: 'cast', ...(tab !== undefined ? { castTab: tab } : {}) })
@@ -443,7 +766,7 @@ export class StudioController {
 
   /** Open a chapter at a character offset in the editor or the reader. */
   jumpTo(chapterId: string, offset: number, length: number, view: 'write' | 'read' = 'write'): void {
-    this.set({ view, chapterId, jump: { chapterId, offset, length, nonce: Date.now() } })
+    this.set({ view, chapterId, jump: { chapterId, offset, length, nonce: Date.now() }, ...(view === 'read' ? { album: { section: 'text' as const } } : {}) })
   }
 
   /** Forget a jump once a view has shown it, so coming back to the chapter does not replay it. */
@@ -451,7 +774,7 @@ export class StudioController {
     if (this.snapshot.jump?.nonce !== nonce) return
     const { jump: _jump, ...rest } = this.snapshot
     this.snapshot = rest
-    for (const listener of [...this.listeners]) listener()
+    this.emit()
   }
 
   async setMode(mode: WorkMode): Promise<void> {
@@ -480,6 +803,12 @@ export class StudioController {
           ...(this.sessionId !== undefined ? { sessionId: this.sessionId, ...(this.snapshot.sessionBook !== undefined ? { active: this.snapshot.sessionBook } : {}) } : {}),
         }, signal)
         if (this.disposed) break
+        if (this.reconnecting) {
+          // The Host is back, perhaps restarted: what was said of the old one no longer holds.
+          this.reconnecting = false
+          noteOlderHost(false)
+        }
+        if ((next.stale === true) !== (this.snapshot.hostStale === true) && !olderHost.known) this.set({ hostStale: next.stale === true, hostReloadable: next.stale === true && next.reloadable === true })
         if (this.sessionId !== undefined) await this.followSession(next.active, next.mode)
         const projectChanged = next.revision !== this.revision && root !== undefined && root === this.snapshot.root
         const jobsChanged = next.tick !== this.tick
@@ -491,6 +820,7 @@ export class StudioController {
         if (this.disposed || signal.aborted || isCancelled(error)) break
         if (error instanceof RpcError && error.code === 'novel/locked' && this.snapshot.root !== undefined && this.snapshot.lock === undefined) await this.showLock(this.snapshot.root)
         // The Host restarted or the network blinked; back off and try again.
+        if (error instanceof RpcError && error.code === 'novel/transport') this.reconnecting = true
         await new Promise(resolve => setTimeout(resolve, 2500))
       }
     }
@@ -518,9 +848,9 @@ export class StudioController {
   async refreshJobs(): Promise<void> {
     const root = this.snapshot.root
     try {
-      const { jobs } = await this.api.call('jobs.list', root !== undefined ? { root } : {}, this.abort.signal)
+      const { jobs, gates } = await this.api.call('jobs.list', root !== undefined ? { root } : {}, this.abort.signal)
       if (this.snapshot.root !== root) return
-      this.set({ jobs })
+      this.set({ jobs, gates: gates ?? {} })
       this.noteEndings(jobs)
     } catch {
       // The next tick retries.
@@ -541,7 +871,7 @@ export class StudioController {
       const watched = before === 'running' || (before === undefined && Date.parse(job.startedAt) >= this.since - 2000)
       if (!watched || job.origin !== 'user' || this.followed.has(job.id)) continue
       if (job.status === 'failed') this.report(new Error(job.error ?? 'failed'))
-      else if (job.status === 'done' && (job.kind === 'audio' || job.kind === 'comic')) this.set({ jobEnded: { job, nonce: Date.now() } })
+      else if (job.status === 'done' && (job.kind === 'audio' || job.kind === 'comic' || job.kind === 'batch')) this.set({ jobEnded: { job, nonce: Date.now() } })
     }
   }
 
@@ -610,28 +940,63 @@ export class StudioController {
   // ───────────── settings & feedback ─────────────
 
   async loadSettings(): Promise<SettingsView> {
-    const settings = await this.api.call('settings.get', {})
-    this.set({ settings })
+    const settings = taking(await this.api.call('settings.get', {}))
+    this.set({ settings, ...(settings.build?.stale === true ? { hostStale: true, hostReloadable: settings.build.reloadable === true } : {}) })
     return settings
+  }
+
+  /**
+   * Have the Host half replaced by the installed one, DSH staying up. The old
+   * half answers and goes; its routes are away until the new one is up.
+   * @returns how many running jobs the change stopped.
+   * @throws when the new half does not answer within half a minute — the banner stays, and says to restart DSH.
+   */
+  async reloadHost(): Promise<number> {
+    const { jobs } = await this.api.call('host.reload', {})
+    const until = Date.now() + 30_000
+    for (;;) {
+      await new Promise(resolve => setTimeout(resolve, 700))
+      try {
+        const settings = taking(await this.api.call('settings.get', {}))
+        if (settings.build?.stale !== true) {
+          noteOlderHost(false)
+          this.set({ settings, hostStale: false, hostReloadable: false })
+          break
+        }
+      } catch {
+        // Between the two halves there is nobody to answer.
+      }
+      if (Date.now() > until) throw new Error('the new Host half did not come up')
+    }
+    // Everything on screen was read from the half that is gone.
+    this.revision = -1
+    this.tick = -1
+    await Promise.all([this.loadWorkspaces().catch(() => {}), this.refreshJobs().catch(() => {}), this.snapshot.root !== undefined && this.snapshot.lock === undefined ? this.refreshProject().catch(() => {}) : Promise.resolve()])
+    return jobs
   }
 
   /** Save settings; `keys` maps endpoint addresses to keys typed for them. */
   async saveSettings(patch: Record<string, unknown>, keys?: Record<string, string>): Promise<SettingsView> {
-    const settings = await this.api.call('settings.update', { patch, ...(keys !== undefined && Object.keys(keys).length > 0 ? { keys } : {}) })
+    const settings = taking(await this.api.call('settings.update', { patch, ...(keys !== undefined && Object.keys(keys).length > 0 ? { keys } : {}) }))
     this.set({ settings })
     return settings
+  }
+
+  /** Settle what an issue of the recommendations left to be said: take it up, keep what is there, take it back, or just have read it. */
+  async settleRecommended(action: 'adopt' | 'keep' | 'revert' | 'dismiss'): Promise<void> {
+    this.set({ settings: taking(await this.api.call('recommended.settle', { action })) })
   }
 
   /** One-click setup of a service. The settings only change when the key works. */
   async applySetup(input: { service: ServiceId | 'codex'; key?: string; origin?: string; parts: SetupPart[] }): Promise<EndpointCheck> {
     const { view, check } = await this.api.call('setup.apply', input)
-    this.set({ settings: view })
+    this.set({ settings: taking(view) })
     return check
   }
 
   /** Put the first-run guide aside for good. */
   async dismissSetup(): Promise<void> {
-    this.set({ settings: await this.api.call('setup.dismiss', {}) })
+    this.set({ settings: taking(await this.api.call('setup.dismiss', {})) })
   }
 
   toast(kind: Toast['kind'], text: string): void {
@@ -681,15 +1046,15 @@ export class StudioController {
     if (this.snapshot.needs === undefined) return
     const { needs: _needs, ...rest } = this.snapshot
     this.snapshot = rest
-    for (const listener of [...this.listeners]) listener()
+    this.emit()
   }
 
   /** Go to the settings, at the part that sets a capability up. */
-  openSettings(focus?: Capability): void {
+  openSettings(focus?: Capability | 'crew' | 'recommended'): void {
     this.navigated = true
     const { needs: _needs, settingsFocus: _focus, ...rest } = this.snapshot
     this.snapshot = { ...rest, view: 'settings', ...(focus !== undefined ? { settingsFocus: focus } : {}) }
-    for (const listener of [...this.listeners]) listener()
+    this.emit()
   }
 
   /** The settings showed what a link asked for. */
@@ -697,6 +1062,6 @@ export class StudioController {
     if (this.snapshot.settingsFocus === undefined) return
     const { settingsFocus: _focus, ...rest } = this.snapshot
     this.snapshot = rest
-    for (const listener of [...this.listeners]) listener()
+    this.emit()
   }
 }

@@ -5,14 +5,12 @@ import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { exportBook, type ExportFormat } from '../../core/pipelines/export'
 import { buildFoundation } from '../../core/pipelines/plot'
 import { ProjectError } from '../../core/project'
-import { L, promptLanguage, renderCharacter, renderPlan, renderStyle, renderThread, renderWorld } from '../../core/render'
+import { READ_KINDS, readBook, searchBook, SEARCH_SOURCES } from '../../core/reading'
+import { L, promptLanguage } from '../../core/render'
 import type { NovelService } from '../../host/service'
-import { clip } from '../../shared/text'
-import { WORK_MODES, type SearchSource, type WorkMode } from '../../shared/types'
+import { WORK_MODES, type WorkMode } from '../../shared/types'
 import { modeLabel, renderStatus } from '../status'
 import { brief, listOf, listParameter, novelTool, toJson } from './shared'
-
-const SOURCES: SearchSource[] = ['manuscript', 'character', 'world', 'memory', 'outline']
 
 export function projectTools(service: NovelService): ToolDefinition[] {
   return [
@@ -85,117 +83,14 @@ export function projectTools(service: NovelService): ToolDefinition[] {
       name: 'novel_read',
       description: 'Read one thing from the project in full: a chapter\'s text (paged), a chapter\'s outline, a character card, a world entry, a style profile, a chapter\'s memory (summary, facts, character states), the open threads, a chapter\'s review, or a chapter\'s version list. `ref` accepts ids, names, and chapter numbers ("3", "第3章", "latest").',
       parameters: {
-        what: { type: 'string', required: true, enum: ['chapter', 'outline', 'character', 'world', 'style', 'memory', 'threads', 'review', 'versions'] },
-        ref: { type: 'string', description: 'Which one. Not needed for threads; optional for style (default: the active style) and outline (default: the whole outline).' },
+        what: { type: 'string', required: true, enum: READ_KINDS },
+        ref: { type: 'string', description: 'Which one. Not needed for threads; optional for style (default: the active style), outline (default: the whole outline), and character and world (default: the list of them).' },
         offset: { type: 'integer', description: 'For chapter text: character offset to start from (default 0).' },
         limit: { type: 'integer', description: 'For chapter text: maximum characters to return (default 6000).' },
       },
       async run(args, env) {
-        const runtime = await env.project()
-        const { project } = runtime
-        const manifest = await project.manifest()
-        const lang = promptLanguage(manifest.language)
-        const characters = await project.characters()
-        const nameOf = (ref: string): string => characters.find(card => card.id === ref)?.name ?? ref
-        const needRef = (): string => {
-          if (args.ref === undefined || args.ref.trim().length === 0) throw new ProjectError('novel/invalid', `novel_read what=${args.what} needs \`ref\``)
-          return args.ref
-        }
-        const chapterOf = async () => {
-          const chapter = await project.findChapter(needRef())
-          if (chapter === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${args.ref}"`)
-          return chapter
-        }
-        switch (args.what) {
-          case 'chapter': {
-            const chapter = await chapterOf()
-            const text = await project.chapterText(chapter.plan.id)
-            if (text.length === 0) return { text: `Chapter ${chapter.index} "${chapter.plan.title}" (${chapter.plan.id}) has no text yet.` }
-            const offset = Math.max(0, args.offset ?? 0)
-            const limit = Math.max(200, Math.min(40_000, args.limit ?? 6000))
-            const slice = text.slice(offset, offset + limit)
-            const more = offset + limit < text.length
-            return {
-              text: `Chapter ${chapter.index} "${chapter.plan.title}" (${chapter.plan.id}), characters ${offset}–${offset + slice.length} of ${text.length}${more ? ` (continue with offset=${offset + slice.length})` : ''}:\n\n${slice}`,
-              data: toJson({ chapterId: chapter.plan.id, length: text.length, offset, more }),
-            }
-          }
-          case 'outline': {
-            if (args.ref !== undefined && args.ref.trim().length > 0) {
-              const chapter = await chapterOf()
-              return { text: `${renderPlan(chapter.plan, chapter.index, lang, nameOf)}\n\n[${chapter.plan.id}; status ${chapter.plan.status}; volume ${chapter.volume.title}]`, data: toJson(chapter.plan) }
-            }
-            const outline = await project.outline()
-            const parts: string[] = []
-            let index = 0
-            for (const volume of outline.volumes) {
-              parts.push(`## ${volume.title} (${volume.id})${volume.synopsis !== undefined ? `\n${volume.synopsis}` : ''}${volume.goal !== undefined ? `\n${L(lang, '目标', 'Goal')}: ${volume.goal}` : ''}`)
-              for (const plan of volume.chapters) parts.push(`${++index}. ${plan.title} [${plan.id}; ${plan.status}]${plan.synopsis !== undefined ? `\n   ${brief(plan.synopsis, 300)}` : ''}`)
-            }
-            return { text: parts.join('\n'), data: toJson(outline) }
-          }
-          case 'character': {
-            const card = await project.findCharacter(needRef())
-            if (card === undefined) throw new ProjectError('novel/not-found', `no character matches "${args.ref}" — novel_status lists the cast`)
-            const presence = (await project.presence()).find(entry => entry.character === card.id)
-            return {
-              text: `${renderCharacter(card, lang, { resolveName: nameOf })}\n\n[id ${card.id}${presence !== undefined ? `; appears in ${presence.chapters.length} chapters${presence.chapters.length > 0 ? `, last ${presence.absentFor} chapters ago` : ''}` : ''}${card.voiceProfile?.voice !== undefined ? `; voice ${card.voiceProfile.voice}` : ''}${card.visual?.portrait !== undefined ? '; has portrait' : ''}]`,
-              data: toJson(card),
-            }
-          }
-          case 'world': {
-            const entry = await project.findWorld(needRef())
-            if (entry === undefined) throw new ProjectError('novel/not-found', `no world entry matches "${args.ref}"`)
-            return { text: `${renderWorld(entry, lang)}\n\n[id ${entry.id}; ${entry.category}; importance ${entry.importance}]`, data: toJson(entry) }
-          }
-          case 'style': {
-            const style = args.ref !== undefined && args.ref.trim().length > 0 ? await project.findStyle(args.ref) : await project.activeStyle()
-            if (style === undefined) throw new ProjectError('novel/not-found', `no style matches "${args.ref ?? ''}"`)
-            const all = await project.styles()
-            return { text: `${renderStyle(style, lang)}\n\n[id ${style.id}${style.id === manifest.activeStyle ? '; active' : ''}; all styles: ${all.map(item => item.id).join(', ')}]`, data: toJson(style) }
-          }
-          case 'memory': {
-            const chapter = await chapterOf()
-            const memory = await project.memory(chapter.plan.id)
-            if (memory === undefined) return { text: `Chapter ${chapter.index} has no memory yet — run novel_digest.` }
-            const lines = [
-              `Chapter ${chapter.index} "${chapter.plan.title}" — ${memory.summary}`,
-              memory.storyTime !== undefined ? `Story time: ${memory.storyTime}` : '',
-              memory.characters.length > 0 ? `Characters:\n${memory.characters.map(moment => `- ${moment.name}: ${[moment.role, moment.stateAfter].filter(Boolean).join(' → ')}`).join('\n')}` : '',
-              memory.facts.length > 0 ? `Facts:\n${memory.facts.map(fact => `- [${fact.kind}] ${fact.subject}: ${fact.statement}`).join('\n')}` : '',
-              memory.threads.length > 0 ? `Threads:\n${memory.threads.map(touch => `- ${touch.action}: ${touch.title}${touch.note !== undefined ? ` — ${touch.note}` : ''}`).join('\n')}` : '',
-              memory.openQuestions !== undefined && memory.openQuestions.length > 0 ? `Open questions: ${memory.openQuestions.join(' / ')}` : '',
-            ]
-            return { text: lines.filter(line => line.length > 0).join('\n\n'), data: toJson(memory) }
-          }
-          case 'threads': {
-            const outline = await project.outline()
-            const located = await project.chapters()
-            const label = (id: string): string => {
-              const chapter = located.find(candidate => candidate.plan.id === id)
-              return chapter === undefined ? id : `#${chapter.index}`
-            }
-            if (outline.threads.length === 0) return { text: 'No plot threads recorded yet.' }
-            return { text: outline.threads.map(thread => `${renderThread(thread, lang, label)} [${thread.id}; ${thread.status}${thread.auto === true ? '; unconfirmed' : ''}]`).join('\n'), data: toJson(outline.threads) }
-          }
-          case 'review': {
-            const chapter = await chapterOf()
-            const review = await project.review(chapter.plan.id)
-            if (review === undefined) return { text: `Chapter ${chapter.index} has not been reviewed — run novel_review.` }
-            return {
-              text: `${review.verdict}\n\n${review.issues.map(issue => `- [${issue.severity}/${issue.type}${issue.resolved === true ? '/resolved' : ''}] ${issue.quote !== undefined ? `"${clip(issue.quote, 60)}" — ` : ''}${issue.explanation}${issue.suggestion !== undefined ? ` → ${issue.suggestion}` : ''}`).join('\n')}`,
-              data: toJson(review),
-            }
-          }
-          case 'versions': {
-            const chapter = await chapterOf()
-            const versions = await project.versions(chapter.plan.id)
-            if (versions.length === 0) return { text: `Chapter ${chapter.index} has no earlier versions.` }
-            return { text: versions.map(version => `- ${version.id} — ${version.reason}, ${version.words} words`).join('\n'), data: toJson(versions) }
-          }
-          default:
-            throw new ProjectError('novel/invalid', `unknown \`what\`: ${String(args.what)}`)
-        }
+        const reading = await readBook(await env.project(), { what: args.what, ref: args.ref, offset: args.offset, limit: args.limit })
+        return { text: reading.text, ...(reading.data !== undefined ? { data: toJson(reading.data) } : {}) }
       },
     }),
 
@@ -204,21 +99,12 @@ export function projectTools(service: NovelService): ToolDefinition[] {
       description: 'Search everything the project knows — manuscript passages, character cards, world entries, chapter memories and outlines — by keywords or by meaning. Use it to check canon before deciding plot or giving the writer a brief ("where did she get the scar", "every scene in the tavern").',
       parameters: {
         query: { type: 'string', required: true },
-        sources: listParameter('Restrict to some sources. Default: all.', { enum: SOURCES }),
+        sources: listParameter('Restrict to some sources. Default: all.', { enum: SEARCH_SOURCES }),
         limit: { type: 'integer', description: 'Maximum hits (default 8).' },
       },
       async run(args, env) {
-        const runtime = await env.project()
-        const hits = await runtime.index.search(args.query, {
-          limit: Math.max(1, Math.min(30, args.limit ?? 8)),
-          ...((listOf(args.sources)?.length ?? 0) > 0 ? { sources: listOf(args.sources)!.filter((source): source is SearchSource => (SOURCES as string[]).includes(source)) } : {}),
-          signal: env.signal,
-        })
-        if (hits.length === 0) return { text: `Nothing in the project matches "${args.query}".`, data: [] }
-        return {
-          text: hits.map(hit => `〔${hit.source} · ${hit.title} · ${hit.ref}${hit.offset !== undefined ? ` @${hit.offset}` : ''} · ${hit.score}〕\n${clip(hit.text, 500)}`).join('\n\n'),
-          data: toJson(hits),
-        }
+        const found = await searchBook(await env.project(), { query: args.query, sources: listOf(args.sources), limit: args.limit }, env.signal)
+        return { text: found.text, ...(found.data !== undefined ? { data: toJson(found.data) } : {}) }
       },
     }),
 

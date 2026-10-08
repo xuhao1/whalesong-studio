@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { digestPending } from '../../core/pipelines/digest'
 import { correctMemory, editChapter, type EditAction, type MemoryPatch } from '../../core/pipelines/edit'
-import { importManuscript, readBookFile } from '../../core/pipelines/import'
+import { analyzeBook, importManuscript, readBookFile } from '../../core/pipelines/import'
 import { reviewChapter } from '../../core/pipelines/review'
 import { acceptProposal, rejectProposal, reviseBook, reviseChapter, reviseSpan } from '../../core/pipelines/revise'
 import { writeChapter } from '../../core/pipelines/write'
@@ -12,6 +12,7 @@ import { ProjectError } from '../../core/project'
 import { containedPath } from '../../core/util/fs'
 import type { NovelService } from '../../host/service'
 import { clip } from '../../shared/text'
+import { ANALYZE_STEPS } from '../../shared/types'
 import { brief, listOf, listParameter, novelTool, toJson } from './shared'
 
 export function manuscriptTools(service: NovelService): ToolDefinition[] {
@@ -20,17 +21,20 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
       name: 'novel_write',
       description: [
         'Have the writer model draft prose for one chapter and save it. You do not write the prose yourself: you decide what the chapter must do and say so in `brief`; the writer receives the bible, the relevant characters with their current state, the story so far, retrieved earlier passages, the open threads, this chapter\'s outline and the active style.',
-        '- `chapter`: id, number or title; omit (or "next") for the first outlined chapter without text.',
+        '- `chapter`: id, number or title; omit (or "next") for the first outlined chapter without text — on the main line, or on the line of the plot named in `line` when the story has more than one way on (novel_status lists the lines). When several lines could be gone on with and the author has not said which, ask.',
         '- `mode`: draft (default) writes the chapter from the top, replacing existing text after a snapshot; continue appends to what is there.',
         '- `brief`: what this pass must achieve that the outline does not already say — emphasis, tone, what to hold back, how to end. Keep it short; do not restate the outline.',
-        'The result gives length, the opening and closing lines and the cast used; read the chapter (novel_read) only when you need to check something specific. Make sure the chapter has beats first (novel_derive kind=beats).',
+        '- `words`: a length recommended for this pass. Leave it out unless the author named one: the chapter\'s own recommendation applies (novel_outline targetWords), else the book\'s (novel_settings action=book fields.chapterBudget), and where nobody set any the writer judges the length from what the chapter has to do.',
+        'The writer reads the story so far in two layers: as many whole chapters up to this one as half its context window holds, word for word, and the chapters before those as an outline; a chapter that already has chapters after it (one written again) is given what follows too, and must lead into it.',
+        'The result gives length, the opening and closing lines and the cast used; read the chapter (novel_read) only when you need to check something specific. Make sure the chapter has beats first (novel_derive kind=beats). To write a run of chapters in one go, use novel_batch.',
       ].join('\n'),
       mutating: true,
       parameters: {
         chapter: { type: 'string', description: 'Chapter id, number or title. Default: next unwritten chapter.' },
         brief: { type: 'string', description: 'Direction for this pass.' },
         mode: { type: 'string', enum: ['draft', 'continue'] },
-        words: { type: 'integer', description: 'Target length of this pass. Default: the chapter\'s or the project\'s chapter length.' },
+        words: { type: 'integer', description: 'A recommended length for this pass. Leave out to use the chapter\'s or the book\'s, or — where none is set — to let the writer judge.' },
+        line: { type: 'string', description: 'With `chapter` left out: the line of the plot to go on with (its id or name). Default: the main line.' },
         style: { type: 'string', description: 'Style profile to use instead of the active one.' },
         characters: listParameter('Characters to keep in view besides those the outline names.'),
       },
@@ -41,12 +45,14 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
           ...(args.brief !== undefined ? { brief: args.brief } : {}),
           ...(args.mode !== undefined ? { mode: args.mode } : {}),
           ...(args.words !== undefined ? { words: args.words } : {}),
+          ...(args.line !== undefined && args.line.trim().length > 0 ? { line: args.line.trim() } : {}),
           ...(args.style !== undefined ? { style: args.style } : {}),
           ...(listOf(args.characters) !== undefined ? { characters: listOf(args.characters)! } : {}),
         }, task))
+        const story = result.strategy === 'full' ? 'everything before it word for word' : result.strategy === 'window' ? `chapters ${result.window?.from}–${result.window?.to} word for word, the ones before as an outline` : 'no chapter whole: an outline, looked-up passages and the end of the chapter before'
         const lines = [
           `${result.mode === 'continue' ? 'Continued' : 'Drafted'} chapter ${result.index} "${result.title}" (${result.chapterId}): ${result.wordsWritten} words written, ${result.wordsTotal} in the chapter now.`,
-          `Writer: ${result.model}; context: ${result.strategy}, ~${result.contextTokens} tokens; cast in view: ${result.cast.join(', ') || 'none'}.${result.continued ? ' The model hit its output limit and the chapter was completed by continuation.' : ''}`,
+          `Writer: ${result.model}; length: ${result.budget !== undefined ? `about ${result.budget} recommended` : 'left to the writer'}; story so far: ${story}${result.following !== undefined ? `, plus the ${result.following} chapter(s) after it` : ''} (~${result.contextTokens} tokens${result.cachedTokens !== undefined ? `, ${result.cachedTokens} read from the provider's cache` : ''}); cast in view: ${result.cast.join(', ') || 'none'}.${result.continued ? ' The model hit its output limit and the chapter was completed by continuation.' : ''}`,
           result.digested ? 'Memory digested: summary, facts and character states are up to date.' : 'Not digested yet — run novel_digest before writing later chapters.',
           `Opens: ${result.preview.head}${result.preview.tail.length > 0 ? `\n…\nCloses: ${result.preview.tail}` : ''}`,
         ]
@@ -252,15 +258,30 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
 
     novelTool(service, {
       name: 'novel_import',
-      description: 'Import an existing book into the project in one pass, so it can be continued, revised or staged: an editor agent reads the text and finds its real chapters and volumes (headings written any way, a table of contents, site navigation left by a web page — it sorts them out and reports what it did), then the Studio digests every chapter, merges the cast into character cards, collects the world entries, writes chapter synopses, a logline and a premise, and learns the style from the text. Give `path` (a .txt, .md, .epub or .docx file inside the workspace; UTF-8, UTF-16 and GB18030 are detected) or the text itself. Large books take several minutes.',
+      description: [
+        'Import an existing book into the project, so it can be continued, revised or staged: an editor agent reads the text and finds its real chapters and volumes (headings written any way, a table of contents, site navigation left by a web page — it sorts them out and reports what it did), then the book is analysed — every chapter digested, the people the chapters name given their cards (the leads whole cards, those who come back a line, other names of the same person folded together, whoever passes once left a walk-on), the world entries collected, chapter synopses, a logline and a premise written, the style learned from the text. Give `path` (a .txt, .md, .epub or .docx file inside the workspace; UTF-8, UTF-16 and GB18030 are detected) or the text itself. A long book takes a long time.',
+        '- action=analyze: run the analysis on the book as it stands, without importing anything. Without `steps` it goes on where an analysis that was cut short stopped (novel_status says when one was); with `steps` (digest, cast, world, outline, style) it runs those passes again — each adds to what is there and leaves alone what the author worked on. Use it when chapters were digested since the cast was made, when a lead has no card, when an import ended early.',
+      ].join('\n'),
       mutating: true,
       parameters: {
+        action: { type: 'string', enum: ['import', 'analyze'], description: 'import (default), or analyze for the analysis alone on a book that has its chapters.' },
         path: { type: 'string', description: 'File inside the session workspace.' },
         text: { type: 'string', description: 'The manuscript text, when it is not in a file.' },
-        analyze: { type: 'boolean', description: 'false only splits into chapters and skips the analysis passes (default true).' },
+        analyze: { type: 'boolean', description: 'import: false only splits into chapters and skips the analysis passes (default true).' },
+        steps: listParameter('analyze: the passes to run, out of digest, cast, world, outline, style. Leave out to finish what an analysis left undone.'),
       },
       async run(args, env) {
         const runtime = await env.project()
+        if (args.action === 'analyze') {
+          const steps = ANALYZE_STEPS.filter(step => listOf(args.steps)?.includes(step) === true)
+          const result = await env.job('import', 'analyze', undefined, async task => await analyzeBook(env.core, runtime, steps.length > 0 ? { steps } : {}, task))
+          const state = await runtime.project.state()
+          return {
+            text: `Analysed (${result.steps.join(', ') || 'nothing was left to do'}): ${result.digested} chapters digested, ${result.characters} character cards made or filled in, ${result.merged} names folded into somebody's card as aliases, ${result.walkOns} people of one chapter left as walk-ons, ${result.worldEntries} world entries${result.style !== undefined ? `, style "${result.style}" learned` : ''}.${result.failed.length > 0 ? `\nDid not come about, and can be run again: ${result.failed.map(item => `${item.step} (${item.error})`).join('; ')}` : ''}${state.analysis !== undefined ? `\nStill to do: ${state.analysis.pending.join(', ')}.` : ''}${state.uncarded !== undefined ? `\nStill without a card though they come back: ${state.uncarded.names.join(', ')}${state.uncarded.count > state.uncarded.names.length ? ` and ${state.uncarded.count - state.uncarded.names.length} more` : ''}.` : ''}`,
+            data: toJson(result),
+            record: { summary: [`分析全书（${result.steps.join('、')}）：人物卡 ${result.characters} 张，并为别名 ${result.merged} 个，设定 ${result.worldEntries} 条`, `Read the book (${result.steps.join(', ')}): ${result.characters} cards, ${result.merged} aliases, ${result.worldEntries} world entries`] },
+          }
+        }
         let text = args.text ?? ''
         if (args.path !== undefined && args.path.trim().length > 0) {
           let file: string

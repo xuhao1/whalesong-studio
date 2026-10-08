@@ -11,7 +11,7 @@
  */
 import type { CharacterCard, SearchHit, SearchSource, WorldEntry } from '../shared/types'
 import { hashText, isCjk } from '../shared/text'
-import type { Project } from './project'
+import type { LocatedChapter, Project } from './project'
 import { errorMessage } from './util/async'
 import { readJson, writeAtomic, writeJson } from './util/fs'
 
@@ -196,8 +196,13 @@ export class RetrievalIndex {
       reuse(toDoc(key, source, ref, title, text, extra))
     }
 
-    for (const chapter of await this.project.chapters()) {
-      const label = `${chapter.index}. ${chapter.plan.title}`
+    // The main line, then what each other line of the plot adds to it.
+    const everywhere: { chapter: LocatedChapter; line?: string }[] = (await this.project.chapters()).map(chapter => ({ chapter }))
+    for (const line of await this.project.lines()) {
+      for (const chapter of await this.project.chapters(line.id)) if (chapter.line === line.id) everywhere.push({ chapter, line: line.title })
+    }
+    for (const { chapter, line } of everywhere) {
+      const label = `${line !== undefined ? `${line} · ` : ''}${chapter.index}. ${chapter.plan.title}`
       const text = await this.project.chapterText(chapter.plan.id)
       for (const chunk of chunkProse(text)) {
         add(`m:${chapter.plan.id}:${chunk.offset}`, 'manuscript', chapter.plan.id, label, chunk.text, { offset: chunk.offset, chapterIndex: chapter.index })

@@ -3,11 +3,25 @@
 import type { RpcMethod } from '../shared/rpc'
 import type {
   AmbiencePreset, CameraMove, ChapterStatus, IssueSeverity, IssueType, JobInfo, ProjectState, StoryboardDensity, Suggestion, TakeIssue,
-  ThreadKind, ThreadStatus,
+  ThreadKind, ThreadStatus, WorldCategory,
 } from '../shared/types'
 
 type Label = [zh: string, en: string]
 type Tone = 'neutral' | 'blue' | 'amber' | 'green' | 'red' | 'violet'
+
+/** The kinds an entry of the bible is filed under. */
+export const WORLD_CATEGORY: Record<WorldCategory, Label> = {
+  setting: ['世界概况', 'Setting'],
+  location: ['地点', 'Location'],
+  faction: ['势力', 'Faction'],
+  system: ['体系', 'System'],
+  item: ['物品', 'Item'],
+  history: ['历史', 'History'],
+  culture: ['文化', 'Culture'],
+  rule: ['规则', 'Rule'],
+  term: ['名词', 'Term'],
+  other: ['其他', 'Other'],
+}
 
 export const CHAPTER_STATUS: Record<ChapterStatus, Label> = {
   idea: ['构想', 'Idea'],
@@ -61,6 +75,7 @@ export const SUGGESTION_KIND: Record<Suggestion['kind'], Label> = {
   'character-status': ['人物状态', 'Character status'],
   'new-thread': ['新线索', 'New thread'],
   'thread-status': ['线索状态', 'Thread status'],
+  'bible-edit': ['修改设定', 'Bible change'],
 }
 
 export const AMBIENCE: Record<AmbiencePreset, Label> = {
@@ -128,6 +143,7 @@ export const TAKE_ISSUE_HINT: Record<TakeIssue, Label> = {
  * are not listed still show as work in progress, under the general wording.
  */
 const WAITING: Partial<Record<RpcMethod, Label>> = {
+  'world.merge': ['正在合并条目…', 'Merging the entries…'],
   'voice.audition': ['正在准备试听…', 'Getting the audition ready…'],
   'voice.design': ['正在设计声线…', 'Designing the voice…'],
   'audio.export': ['正在拼接整章音频…', 'Joining the chapter audio…'],
@@ -179,6 +195,10 @@ const WAITING: Partial<Record<RpcMethod, Label>> = {
   'audio.updateCue': ['正在保存这处声音…', 'Saving the sound…'],
   'audio.addCue': ['正在添加声音…', 'Adding the sound…'],
   'cast.settle': ['正在处理这个名字…', 'Settling the name…'],
+  'batch.stage': ['正在安排批量制作…', 'Laying out the batch…'],
+  'batch.text': ['正在安排批量任务…', 'Laying out the batch…'],
+  'batch.art': ['正在安排批量绘制…', 'Laying out the batch…'],
+  'batch.overview': ['正在读取各章的制作进度…', 'Reading where each chapter stands…'],
 }
 
 export function waitingLabel(method: RpcMethod): Label {
@@ -188,6 +208,11 @@ export function waitingLabel(method: RpcMethod): Label {
 /** A running job by the technical title its pipeline gave it. */
 const JOB_TITLES: [RegExp, Label][] = [
   [/^write$/, ['写作', 'Writing']],
+  [/^publish site$/, ['发布成网站', 'Publishing the site']],
+  [/^life /, ['写履历', 'Writing a life']],
+  [/^ties$/, ['理清关系', 'Working out the ties']],
+  [/^tidy world$/, ['整理设定条目', 'Looking the bible over']],
+  [/^illustrate item$/, ['绘制物品设定图', 'Drawing the thing']],
   [/^revise passage$/, ['修订选段', 'Revising a passage']],
   [/^revise chapter$/, ['修订整章', 'Revising the chapter']],
   [/^revise book$/, ['全书修订', 'Revising the book']],
@@ -198,6 +223,7 @@ const JOB_TITLES: [RegExp, Label][] = [
   [/^what-if$/, ['推演"如果"', 'Exploring a what-if']],
   [/^foundation$/, ['起草设定与开篇大纲', 'Drafting the bible and outline']],
   [/^import$/, ['导入并分析', 'Importing']],
+  [/^analyze$/, ['分析全书', 'Reading the book']],
   [/^index$/, ['建立语义索引', 'Indexing']],
   [/^expand /, ['AI 补全设定卡', 'Completing the card']],
   [/^visual anchor /, ['提炼视觉锚点', 'Distilling the visual anchor']],
@@ -217,9 +243,47 @@ const JOB_TITLES: [RegExp, Label][] = [
   [/^draw panels$/, ['绘制分镜画面', 'Drawing the panels']],
   [/^novelize$/, ['把幕间写成章节', 'Novelizing the interlude']],
   [/^sound$/, ['生成环境声、音效与配乐', 'Making the sounds']],
+  [/^video$/, ['后期剪视频', 'Post-production is cutting the video']],
+  [/^crew analyst$/, ['场记在办一件事', 'Continuity is on a task']],
+  [/^crew architect$/, ['策划在办一件事', 'The planner is on a task']],
+  [/^crew director$/, ['导演在办一件事', 'The director is on a task']],
+  [/^crew producer$/, ['后期在办一件事', 'Post-production is on a task']],
+  [/^stage batch$/, ['批量制作', 'Producing in a batch']],
+  [/^text batch$/, ['批量写作与整理', 'Working on the text in a batch']],
+  [/^art batch$/, ['批量绘制', 'Drawing in a batch']],
   [/^seal$/, ['加密这本书的全部文件', 'Sealing the book']],
   [/^unseal$/, ['解除这本书的加密', 'Unsealing the book']],
 ]
+
+/** The steps a batch is made of, in the author's words. */
+export const BATCH_STEP: Record<string, Label> = {
+  script: ['脚本', 'Script'],
+  voice: ['配音', 'Voices'],
+  sound: ['声音', 'Sound'],
+  storyboard: ['分镜', 'Storyboard'],
+  panels: ['画面', 'Panels'],
+  video: ['成片', 'Video'],
+  beats: ['节拍', 'Beats'],
+  write: ['写作', 'Writing'],
+  digest: ['收录', 'Memory'],
+  review: ['审校', 'Review'],
+  sheet: ['人设图', 'Design sheet'],
+  portrait: ['立绘', 'Portrait'],
+  place: ['场景设定图', 'Place art'],
+  item: ['物品设定图', 'Thing art'],
+  scene: ['插图', 'Illustration'],
+  cover: ['封面', 'Cover'],
+}
+
+/** What a step of the stage does, for whoever chooses which to run. */
+export const STAGE_STEP_HINT: Record<string, Label> = {
+  script: ['导演把正文编成逐句的台词、旁白和声音提示', 'The director turns the prose into lines, narration and sound cues'],
+  voice: ['给每一句配上人声，同一个人全书一个声音', 'Every line gets its voice; one speaker, one voice for the whole book'],
+  sound: ['按脚本里的提示生成环境声、音效和配乐', 'Ambience, effects and music made from the script\'s cues'],
+  storyboard: ['导演把脚本排成一格格画面', 'The director arranges the script into panels'],
+  panels: ['把每一格画出来', 'Every panel is drawn'],
+  video: ['后期 agent 把配音、声音和画面剪成一个视频文件', 'Post-production cuts voice, sound and pictures into a video file'],
+}
 
 /** What a job is, in the author's words. */
 export function jobTitle(job: Pick<JobInfo, 'title' | 'kind'>): Label {

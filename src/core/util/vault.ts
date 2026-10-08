@@ -24,10 +24,15 @@
  *   grant      the key that unwraps it is a token another device was given
  *              after it showed the password once
  *
+ * Beside them the stub carries a drop: a public key anything may be encrypted
+ * to while the book is locked — the conversations about the book, which are
+ * not the Studio's files and are put under the seal from outside — and its
+ * private half, wrapped with the book's key like everything else.
+ *
  * Everything the Studio reads or writes of a book goes through a `FileStore`,
  * so the rest of the code neither knows nor cares whether a book is sealed.
  */
-import { createCipheriv, createDecipheriv, createHmac, hkdfSync, randomBytes, scrypt } from 'node:crypto'
+import { createCipheriv, createDecipheriv, createHmac, createPrivateKey, createPublicKey, diffieHellman, generateKeyPairSync, hkdfSync, randomBytes, scrypt } from 'node:crypto'
 import { readdir, readFile, rm, stat } from 'node:fs/promises'
 import { basename, dirname, join, relative, sep } from 'node:path'
 import * as plain from './fs'
@@ -78,14 +83,38 @@ export interface SealedStub {
      * time the book is unlocked everything is brought back under the seal.
      */
     pending?: boolean
+    /** A way to put something under the seal while the book is locked; absent in books sealed before there was one, until they are next unlocked. */
+    drop?: DropKeys
   }
+}
+
+/**
+ * A book's drop: what is encrypted to `publicKey` only an unlocked book reads,
+ * because the private half is kept wrapped with the book's key.
+ */
+export interface DropKeys {
+  /** X25519 public key, SPKI DER, base64. */
+  publicKey: string
+  /** The private key (PKCS#8 DER), wrapped with the book's key: iv | tag | ciphertext, base64. */
+  wrapped: string
 }
 
 /** The stub of a sealed book, or undefined when the book at `root` is not sealed (or is not a book). */
 export async function readStub(root: string): Promise<SealedStub | undefined> {
   const raw = await plain.readJson<Partial<SealedStub>>(join(root, STUB_FILE)).catch(() => undefined)
   if (raw === undefined || raw.sealed === undefined || raw.sealed === null || typeof raw.id !== 'string') return undefined
-  return { schema: 1, id: raw.id, title: typeof raw.title === 'string' ? raw.title : '', sealed: { v: 1, slots: Array.isArray(raw.sealed.slots) ? raw.sealed.slots : [], ...(raw.sealed.pending === true ? { pending: true } : {}) } }
+  const drop = raw.sealed.drop
+  return {
+    schema: 1,
+    id: raw.id,
+    title: typeof raw.title === 'string' ? raw.title : '',
+    sealed: {
+      v: 1,
+      slots: Array.isArray(raw.sealed.slots) ? raw.sealed.slots : [],
+      ...(raw.sealed.pending === true ? { pending: true } : {}),
+      ...(drop !== undefined && drop !== null && typeof drop.publicKey === 'string' && typeof drop.wrapped === 'string' ? { drop: { publicKey: drop.publicKey, wrapped: drop.wrapped } } : {}),
+    },
+  }
 }
 
 export async function writeStub(root: string, stub: SealedStub): Promise<void> {
@@ -114,6 +143,86 @@ function unwrap(kek: Buffer, wrapped: string): Buffer | undefined {
     return key.length === 32 ? key : undefined
   } catch {
     return undefined
+  }
+}
+
+// ───────────────────────────── the drop ─────────────────────────────
+
+const DROP_MAGIC = Buffer.from('NVD1')
+const DROP_INFO = Buffer.from('novel-studio drop v1')
+
+/** Make a drop for a book: a key pair whose private half only the book's key gives up. */
+export function newDrop(bookKey: Buffer): DropKeys {
+  const pair = generateKeyPairSync('x25519')
+  const secret = pair.privateKey.export({ type: 'pkcs8', format: 'der' })
+  const iv = randomBytes(IV)
+  const cipher = createCipheriv('aes-256-gcm', bookKey, iv)
+  const body = Buffer.concat([cipher.update(secret), cipher.final()])
+  secret.fill(0)
+  return {
+    publicKey: pair.publicKey.export({ type: 'spki', format: 'der' }).toString('base64'),
+    wrapped: Buffer.concat([iv, cipher.getAuthTag(), body]).toString('base64'),
+  }
+}
+
+function dropKey(shared: Buffer, sender: Buffer, recipient: Buffer): Buffer {
+  return Buffer.from(hkdfSync('sha256', shared, Buffer.concat([sender, recipient]), DROP_INFO, 32))
+}
+
+/**
+ * Put data under a book's seal without its key: encrypted to the book's drop
+ * with a key pair made for this one piece and thrown away.
+ * @returns magic | length of the sender's public key | that key | iv | tag | ciphertext.
+ */
+export function dropSeal(publicKey: string, data: Uint8Array): Buffer {
+  const recipientDer = Buffer.from(publicKey, 'base64')
+  const recipient = createPublicKey({ key: recipientDer, type: 'spki', format: 'der' })
+  const sender = generateKeyPairSync('x25519')
+  const senderDer = sender.publicKey.export({ type: 'spki', format: 'der' })
+  const key = dropKey(diffieHellman({ privateKey: sender.privateKey, publicKey: recipient }), senderDer, recipientDer)
+  const iv = randomBytes(IV)
+  const cipher = createCipheriv('aes-256-gcm', key, iv)
+  const body = Buffer.concat([cipher.update(data), cipher.final()])
+  key.fill(0)
+  const size = Buffer.alloc(2)
+  size.writeUInt16BE(senderDer.length)
+  return Buffer.concat([DROP_MAGIC, size, senderDer, iv, cipher.getAuthTag(), body])
+}
+
+/**
+ * Read what was put under a book's seal through its drop.
+ * @throws VaultError `wrong-key` when the book's key does not open the drop, `damaged` when the piece is not what was sealed.
+ */
+export function dropOpen(drop: DropKeys, bookKey: Buffer, blob: Uint8Array): Buffer {
+  const data = Buffer.from(blob.buffer, blob.byteOffset, blob.byteLength)
+  if (data.length < DROP_MAGIC.length + 2 + IV + TAG || !data.subarray(0, DROP_MAGIC.length).equals(DROP_MAGIC)) throw new VaultError('damaged', 'this is not something sealed through a book\'s drop')
+  let secret: Buffer
+  try {
+    const wrapped = Buffer.from(drop.wrapped, 'base64')
+    const decipher = createDecipheriv('aes-256-gcm', bookKey, wrapped.subarray(0, IV))
+    decipher.setAuthTag(wrapped.subarray(IV, IV + TAG))
+    secret = Buffer.concat([decipher.update(wrapped.subarray(IV + TAG)), decipher.final()])
+  } catch {
+    throw new VaultError('wrong-key', 'the book\'s key does not open its drop')
+  }
+  try {
+    const size = data.readUInt16BE(DROP_MAGIC.length)
+    let at = DROP_MAGIC.length + 2
+    const senderDer = data.subarray(at, at += size)
+    const iv = data.subarray(at, at += IV)
+    const tag = data.subarray(at, at += TAG)
+    const recipientDer = Buffer.from(drop.publicKey, 'base64')
+    const shared = diffieHellman({ privateKey: createPrivateKey({ key: secret, type: 'pkcs8', format: 'der' }), publicKey: createPublicKey({ key: senderDer, type: 'spki', format: 'der' }) })
+    const key = dropKey(shared, senderDer, recipientDer)
+    const decipher = createDecipheriv('aes-256-gcm', key, iv)
+    decipher.setAuthTag(tag)
+    const body = Buffer.concat([decipher.update(data.subarray(at)), decipher.final()])
+    key.fill(0)
+    return body
+  } catch {
+    throw new VaultError('damaged', 'what was sealed through the drop does not open — it was changed, or sealed for another book')
+  } finally {
+    secret.fill(0)
   }
 }
 

@@ -10,6 +10,7 @@
  * Shared by the Host (which applies a setup) and the Studio (which previews it).
  */
 import type { EmbeddingSettings, ImageSettings, ModelRoute, TextRole, TtsProviderKind, TtsSettings } from './types'
+import { recommended, type RecommendedSlot } from './recommended'
 
 export type ServiceId = 'bailian' | 'openrouter' | 'openai' | 'custom'
 
@@ -140,19 +141,20 @@ export const DIRECT_EFFORTS: EffortOption[] = [
 
 // ───────────────────────────── recommended setups ─────────────────────────────
 
-export type SetupPart = 'text' | 'embedding' | 'image' | 'tts'
+/**
+ * What a one-click setup fills: the models that are the Studio's own to
+ * configure. Text models are not among them — every text role runs on a model
+ * of DSH's (Settings → Models there), which is also what lets a role work as an
+ * agent.
+ */
+export type SetupPart = 'embedding' | 'image' | 'tts'
 
 export interface ServiceSetup {
-  text: Record<TextRole, ModelRoute>
   embedding: EmbeddingSettings
   image: ImageSettings
   tts: TtsSettings
   /** Models worth offering next to the free-form model field, best first. */
-  suggestions: { text: string[]; embedding: string[]; image: string[]; tts: string[] }
-}
-
-function direct(service: ServiceId, origin: string | undefined, model: string, reasoningEffort?: string): ModelRoute {
-  return { provider: service, model, baseURL: compatibleBase(service, origin), ...(reasoningEffort !== undefined ? { reasoningEffort } : {}) }
+  suggestions: { embedding: string[]; image: string[]; tts: string[] }
 }
 
 /**
@@ -161,73 +163,28 @@ function direct(service: ServiceId, origin: string | undefined, model: string, r
  * @returns undefined for services without a recommended setup.
  */
 export function recommendedSetup(service: ServiceId, origin?: string): ServiceSetup | undefined {
-  if (service === 'bailian') {
-    const base = originOf(origin) ?? SERVICES.bailian.origin
-    return {
-      text: {
-        writer: direct('bailian', base, 'qwen3.8-max', 'off'),
-        analyst: direct('bailian', base, 'qwen3.8-flash', 'off'),
-        architect: direct('bailian', base, 'qwen3.8-max', 'low'),
-        director: direct('bailian', base, 'qwen3.8-flash', 'off'),
-      },
-      embedding: { provider: 'openai', baseURL: compatibleBase('bailian', base), model: 'qwen3.7-text-embedding-flash' },
-      image: { provider: 'dashscope', baseURL: base, model: 'qwen-image-3.0', size: '1280x720' },
-      tts: { provider: 'qwen-audiogen', baseURL: base, model: 'qwen-audio-3.1-tts-next', concurrency: 2 },
-      suggestions: {
-        text: ['qwen3.8-max', 'qwen3.8-flash', 'deepseek-v4-pro', 'deepseek-v4.1-flash', 'kimi-k3', 'glm-5.3'],
-        embedding: ['qwen3.7-text-embedding-flash', 'qwen3.7-text-embedding'],
-        image: ['qwen-image-3.0', 'qwen-image-3.0-pro', 'wan2.7-image', 'z-image-turbo'],
-        tts: ['qwen-audio-3.1-tts-next'],
-      },
-    }
+  // Which models: the recommendations in force (`recommended.json`). Where they are reached: the service's own addresses.
+  const slots = recommended().services[service]
+  if (service === 'custom' || slots?.embedding === undefined || slots.image === undefined || slots.tts === undefined) return undefined
+  // Bailian's own API takes the bare domain; everything that speaks OpenAI's dialect takes the compatible base.
+  const root = service === 'bailian' ? originOf(origin) ?? SERVICES.bailian.origin : undefined
+  const base = service === 'bailian' ? compatibleBase('bailian', root) : compatibleBase(service, origin)
+  const at = (slot: RecommendedSlot): string => (slot.provider === 'dashscope' || slot.provider === 'qwen-audiogen' || slot.provider === 'qwen-tts' || slot.provider === 'cosyvoice' ? root ?? base : base)
+  return {
+    embedding: { provider: slots.embedding.provider as EmbeddingSettings['provider'], baseURL: at(slots.embedding), model: slots.embedding.model },
+    image: { provider: slots.image.provider as ImageSettings['provider'], baseURL: at(slots.image), model: slots.image.model, ...(slots.image.size !== undefined ? { size: slots.image.size } : {}) },
+    tts: { provider: slots.tts.provider as TtsSettings['provider'], baseURL: at(slots.tts), model: slots.tts.model, ...(slots.tts.narratorVoice !== undefined ? { narratorVoice: slots.tts.narratorVoice } : {}) },
+    suggestions: {
+      embedding: slots.embedding.suggestions ?? [slots.embedding.model],
+      image: slots.image.suggestions ?? [slots.image.model],
+      tts: slots.tts.suggestions ?? [slots.tts.model],
+    },
   }
-  if (service === 'openrouter') {
-    const base = compatibleBase('openrouter', origin)
-    return {
-      text: {
-        writer: direct('openrouter', origin, 'anthropic/claude-sonnet-5.5'),
-        analyst: direct('openrouter', origin, 'deepseek/deepseek-v4.1-flash', 'off'),
-        architect: direct('openrouter', origin, 'deepseek/deepseek-v4-pro', 'medium'),
-        director: direct('openrouter', origin, 'deepseek/deepseek-v4.1-flash', 'off'),
-      },
-      embedding: { provider: 'openai', baseURL: base, model: 'qwen/qwen3-embedding-8b' },
-      image: { provider: 'openrouter', baseURL: base, model: 'openai/gpt-image-2.5-sunburst', size: '1536x1024' },
-      tts: { provider: 'openrouter', baseURL: base, model: 'google/gemini-3.8-flash-tts', narratorVoice: 'Charon', concurrency: 3 },
-      suggestions: {
-        text: ['anthropic/claude-sonnet-5.5', 'anthropic/claude-opus-5.5', 'openai/gpt-6.1-sol', 'google/gemini-3.8-flash', 'deepseek/deepseek-v4-pro', 'deepseek/deepseek-v4.1-flash', 'qwen/qwen3.8-max-0902', 'moonshotai/kimi-k3'],
-        embedding: ['qwen/qwen3-embedding-8b', 'baai/bge-m3', 'openai/text-embedding-3-small', 'google/gemini-embedding-2'],
-        image: ['openai/gpt-image-2.5-sunburst', 'openai/gpt-image-2.5-flare', 'openai/gpt-image-2', 'google/gemini-3-pro-image', 'bytedance-seed/seedream-5-0-pro', 'qwen/qwen-image-3-pro'],
-        tts: ['google/gemini-3.8-flash-tts', 'openai/gpt-4o-mini-tts-2025-12-15', 'minimax/speech-2.8-hd', 'fish-audio/s2.1-pro'],
-      },
-    }
-  }
-  if (service === 'openai') {
-    const base = compatibleBase('openai', origin)
-    return {
-      text: {
-        writer: direct('openai', origin, 'gpt-6.1-sol'),
-        analyst: direct('openai', origin, 'gpt-6-luna', 'low'),
-        architect: direct('openai', origin, 'gpt-6.1-sol', 'medium'),
-        director: direct('openai', origin, 'gpt-6-luna', 'low'),
-      },
-      embedding: { provider: 'openai', baseURL: base, model: 'text-embedding-3-small' },
-      image: { provider: 'openai', baseURL: base, model: 'gpt-image-2', size: '1536x1024' },
-      tts: { provider: 'openai', baseURL: base, model: 'gpt-4o-mini-tts', narratorVoice: 'alloy', concurrency: 3 },
-      suggestions: {
-        text: ['gpt-6.1-sol', 'gpt-6-sol', 'gpt-6-luna'],
-        embedding: ['text-embedding-3-small', 'text-embedding-3-large'],
-        image: ['gpt-image-2', 'gpt-image-1'],
-        tts: ['gpt-4o-mini-tts'],
-      },
-    }
-  }
-  return undefined
 }
 
 /** Pick the parts of a setup that were asked for. */
-export function setupPatch(setup: ServiceSetup, parts: readonly SetupPart[]): { models?: Record<TextRole, ModelRoute>; embedding?: EmbeddingSettings; image?: ImageSettings; tts?: TtsSettings } {
+export function setupPatch(setup: ServiceSetup, parts: readonly SetupPart[]): { embedding?: EmbeddingSettings; image?: ImageSettings; tts?: TtsSettings } {
   return {
-    ...(parts.includes('text') ? { models: setup.text } : {}),
     ...(parts.includes('embedding') ? { embedding: setup.embedding } : {}),
     ...(parts.includes('image') ? { image: setup.image } : {}),
     ...(parts.includes('tts') ? { tts: setup.tts } : {}),
@@ -237,6 +194,8 @@ export function setupPatch(setup: ServiceSetup, parts: readonly SetupPart[]): { 
 /** The project's home page and the name it is signed with. */
 export const PROJECT_HOMEPAGE = 'https://dsh-novel-studio.xuhao1.me'
 export const PROJECT_AUTHOR = 'Dr. Xu'
+/** The author's own page. */
+export const PROJECT_AUTHOR_HOME = 'https://xuhao1.me'
 
 /**
  * Which of the Studio's speech protocols drives a model of a service, or
@@ -256,7 +215,3 @@ export function speechProtocol(service: ServiceId, model: string): TtsProviderKi
   return undefined
 }
 
-/** Speech models a service serves without listing them. */
-export const UNLISTED_SPEECH: Partial<Record<ServiceId, string[]>> = {
-  bailian: ['qwen-audio-3.1-tts-next'],
-}

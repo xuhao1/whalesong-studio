@@ -8,7 +8,8 @@ You need Node.js 22 or later. DeepSeek Harness itself is a dev dependency, so no
 
 ```sh
 npm install        # installs dependencies and builds lib/
-npm run check      # typecheck (host + browser), unit tests, build
+npm run check      # typecheck (host + browser), unit tests, build into .dev/stage (what `npm run dev` runs)
+npm run release    # the same checks, then lib/ is updated in place — what an installed or linked copy runs
 ```
 
 ## Running it
@@ -61,17 +62,24 @@ src/
 │   ├── prompts.ts        every prompt, in Chinese and English
 │   ├── jobs.ts           observable long-running work
 │   ├── media/            speech, image and embedding providers; WAV utilities
+│   ├── reader.ts         what a reader is given — for another device, for a published site
 │   └── pipelines/        write, revise, digest, plot, bible, review, import,
-│                         illustrate, audio, comic, play, export, outline
+│                         illustrate, audio, comic, play, export, outline, site
 ├── host/        the Harness side: service (`ctx.novel`), model adapter, RPC handlers, routes
 ├── agent/       mounted inside the agent preset: tools, prompt sections, the /novel command
 └── client/      the Studio (React): store, views, stage players, tool rows, one stylesheet
 skills/          workflow guides the showrunner can load
+crew/            the skills of each role of the crew
+recommended.json which models each service is used with, as data (see below)
 cordis.patch.yml the bundle: the Host row and the agent preset
 tests/           unit tests with a fake model; live tests behind NOVEL_LIVE=1
 ```
 
-`scripts/build.mjs` bundles three entry points with esbuild: `lib/index.js` (Host) and `lib/agent.js` (agent) as ESM that keeps every `@deepseek-ai/*` import external and shares the core as a chunk, and `lib/client.js` in the Harness client-module format.
+`scripts/build.mjs` bundles the entry points with esbuild: `lib/index.js` (the Host half — which carries the agent half too) and `lib/agent.js` (the entry a preset names; it only asks the running Host half to mount its agent half, so the two are always of one build) as ESM that keeps every `@deepseek-ai/*` import external, and `lib/client.js` in the Harness client-module format.
+
+**`lib/` is what a running copy runs.** A profile that links this checkout loads `lib/` — and a Harness that is running swaps the Studio in its window when `lib/client.js` changes, while its Host half stays as loaded until it restarts. So nothing is built in place: a build goes to a directory of its own and is then put into `lib/` file by file, each one whole, only the files that changed (`lib/build.json` names the build; the Host compares the one it runs with the one installed and the Studio says so when they differ). Day to day, `npm run check` builds into `.dev/stage/`, a copy of the package the dev launcher runs; `npm run release` is the one command that touches `lib/`.
+
+**The Host half can be replaced while DSH runs.** DSH loads `lib/index.js` once and keeps it; so that file is only a door (`src/host/door.ts`, `src/index.ts`) that puts up the Host half proper — `lib/host.js`, from `src/host/main.ts` — as a plugin of its own, and can take it down and put up the file that lies there now. That is what *Restart* on the Studio's banner does after a release. It works because everything the Host half registers, it registers on the context it is given: keep it that way — no listener, route, tool or timer that outlives that context, and no state in a module that a later build must not inherit (code that is the same in two builds is loaded once; `forgetPackageFiles()` exists for what is cached from disk). A change to the door itself still needs DSH restarted.
 
 ## Rules of the house
 
@@ -96,6 +104,8 @@ tests/           unit tests with a fake model; live tests behind NOVEL_LIVE=1
 **The browser bundle** may import only what the Harness seeds as shared modules (see `PLATFORM_MODULES` in `scripts/build.mjs`); everything else is inlined, so keep dependencies out of `src/client`.
 
 **Keys are references.** Settings store the *name* of a credential, never its value.
+
+**No model is named in the code.** Which model a service is used with, what is offered beside a model field, what a kind of endpoint falls back on, how large a model family's window is: all of it is `recommended.json`, read through `src/shared/recommended.ts`. To change a recommendation, edit the file, raise its `version`, set its `date` and say what changed in `notes` — authors who follow the recommendations get the change with the next version and are told what moved (`src/host/recommended.ts`). `tests/recommended.test.ts` holds the file to naming a model for every kind of endpoint the code can ask about.
 
 ## Tests
 

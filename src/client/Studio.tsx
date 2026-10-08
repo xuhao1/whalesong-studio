@@ -9,11 +9,14 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'reac
 import { formatCount } from '../shared/text'
 import { WORK_MODES, type JobInfo, type ProjectRef, type ProjectState, type WorkMode } from '../shared/types'
 import type { NovelApi } from './api'
+import { JobBar } from './JobBar'
+import { RecommendedNotice } from './Recommended'
 import { Icon, type IconName } from './icons'
+import { BatchMatrix, batchOf, GateNotes } from './Batch'
 import { jobTarget, jobTitle, waitingLabel } from './labels'
 import { StudioController, type Capability, type ReadMode, type StageTab, type StudioView } from './store'
 import {
-  Button, cx, Empty, Menu, Modal, OverlayRootProvider, Popover, Progress, Spinner, StudioProvider, ThoughtButton, Toasts, useSnapshot, useStudio, useT,
+  Button, CrewRuns, cx, Empty, Menu, Modal, OverlayRootProvider, Popover, Progress, Spinner, StudioProvider, ThoughtButton, Toasts, useAction, useConfirm, useSnapshot, useStudio, useT,
   type StudioHost, type Translate,
 } from './ui'
 import { BibleView } from './views/Bible'
@@ -38,6 +41,8 @@ export interface StudioProps {
   sessionId?: string
   /** Where to land when opened from a link (a tool card, the guide); the chapter may be an id, a number or a title. */
   initial?: { view?: StudioView; chapter?: string; tab?: StageTab; mode?: ReadMode; nonce?: number }
+  /** The Studio's own page, opened by the author just now: the conversation they came from, if any. See `StudioController`. */
+  arrival?: { sessionId?: string }
 }
 
 export const MODE_LABELS: Record<WorkMode, [string, string]> = {
@@ -62,14 +67,19 @@ const MODE_HINTS: Record<WorkMode, [string, string]> = {
   play: ['下场演一段幕间', 'Step into an interlude'],
 }
 
-export function Studio({ api, locale, host, sessionId, initial }: StudioProps) {
-  const controller = useMemo(() => new StudioController(api, sessionId), [api, sessionId])
+export function Studio({ api, locale, host, sessionId, initial, arrival }: StudioProps) {
+  // The arrival is read once, as the Studio is put up: it is where the author came from then.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const controller = useMemo(() => new StudioController(api, sessionId, arrival), [api, sessionId])
   const rootRef = useRef<HTMLDivElement>(null)
   const [overlayRoot, setOverlayRoot] = useState<HTMLElement | null>(null)
   useEffect(() => {
     void controller.start()
     return () => { controller.dispose() }
   }, [controller])
+  useEffect(() => {
+    controller.refreshSessions = host.refreshSessions
+  }, [controller, host.refreshSessions])
   useEffect(() => { setOverlayRoot(rootRef.current) }, [])
   // Only a Studio on screen keeps a live connection to the Host.
   useEffect(() => {
@@ -104,6 +114,9 @@ export function Studio({ api, locale, host, sessionId, initial }: StudioProps) {
     <div ref={rootRef} className={cx('nv-root', host.where === 'page' && 'nv-root-page')} data-novel-studio="">
       <StudioProvider value={value}>
         <OverlayRootProvider value={overlayRoot}>
+          <StaleHostNotice />
+          <NoSwarmNotice />
+          <RecommendedNotice />
           <Shell />
           <ActivityDock />
           <BookNotice />
@@ -138,7 +151,13 @@ function JobNotice() {
   useEffect(() => {
     if (ended === undefined) return
     const output = (ended.job.result?.output ?? {}) as { rendered?: number; failed?: number; cached?: number; panels?: number; lines?: number }
-    if (ended.job.kind === 'audio' && typeof output.rendered === 'number') {
+    const batch = batchOf(ended.job)
+    if (batch !== undefined) {
+      const done = batch.rows.reduce((sum, row) => sum + Object.values(row.steps).filter(step => step.state === 'done').length, 0)
+      controller.toast(batch.failed > 0 ? 'info' : 'success', batch.failed > 0
+        ? t(`批量任务结束：完成 ${done} 步，${batch.failed} 步没有做成——原因在“任务”里，可以只把没做成的再做一次`, `The batch is over: ${done} steps done, ${batch.failed} did not come about — Jobs says why, and what is missing can be done again`)
+        : t(`批量任务完成：${done} 步`, `The batch is done: ${done} steps`))
+    } else if (ended.job.kind === 'audio' && typeof output.rendered === 'number') {
       const failed = output.failed ?? 0
       controller.toast(failed > 0 ? 'info' : 'success', failed > 0
         ? t(`语音合成结束：新合成 ${output.rendered} 句，${failed} 句失败（失败的句子上有原因，可单句重试）`, `Speech finished: ${output.rendered} new lines, ${failed} failed (each failed line says why and can be retried)`)
@@ -193,11 +212,12 @@ function NeedsDialog() {
 
 const NAV: { view: StudioView; icon: IconName; label: [string, string] }[] = [
   { view: 'home', icon: 'home', label: ['总览', 'Overview'] },
-  { view: 'bible', icon: 'users', label: ['设定', 'Bible'] },
+  { view: 'cast', icon: 'users', label: ['人物', 'People'] },
+  { view: 'bible', icon: 'globe', label: ['设定', 'Bible'] },
   { view: 'outline', icon: 'tree', label: ['大纲', 'Outline'] },
   { view: 'write', icon: 'pen', label: ['写作', 'Write'] },
-  { view: 'read', icon: 'eye', label: ['阅读', 'Read'] },
-  { view: 'cast', icon: 'layers', label: ['群像', 'Cast'] },
+  // What the book is to whoever reads it: its text, its people, its world — everything else is where it is made.
+  { view: 'read', icon: 'eye', label: ['观看', 'View'] },
   { view: 'review', icon: 'checkCircle', label: ['审校', 'Review'] },
   { view: 'stage', icon: 'stage', label: ['演出', 'Stage'] },
 ]
@@ -247,6 +267,84 @@ function Shell() {
       </div>
       {searching ? <SearchPanel onClose={() => { setSearching(false) }} /> : null}
     </>
+  )
+}
+
+/**
+ * The Studio on screen is newer than the Host it talks to: the plugin was
+ * updated while DSH was running. DSH puts the new Studio in the window at
+ * once, and keeps running the Host half it loaded when it started.
+ */
+function StaleHostNotice() {
+  const { controller } = useStudio()
+  const t = useT()
+  const stale = useSnapshot(snapshot => snapshot.hostStale)
+  const reloadable = useSnapshot(snapshot => snapshot.hostReloadable)
+  const running = useSnapshot(snapshot => snapshot.jobs.filter(job => job.status === 'running').length)
+  const [hidden, setHidden] = useState(false)
+  const [failed, setFailed] = useState(false)
+  const restart = useAction()
+  const confirm = useConfirm()
+  if (stale !== true || hidden) return null
+  // The Host half changes itself: its jobs stop and its sealed books lock, as they would when DSH restarts — DSH and the conversations stay.
+  const change = (): Promise<unknown> => restart.run(async () => {
+    setFailed(false)
+    try {
+      const stopped = await controller.reloadHost()
+      controller.toast('success', stopped > 0
+        ? t(`已换上新版本的后台。有 ${stopped} 个进行中的任务被中断了，可以重新开始。`, `The new backend is up. ${stopped} running jobs were stopped; start them again when you like.`)
+        : t('已换上新版本的后台。', 'The new backend is up.'))
+    } catch (error) {
+      setFailed(true)
+      throw error
+    }
+  })
+  const ask = (): void => {
+    if (running > 0) confirm.ask(t(`有 ${running} 个任务正在进行，重启后台会中断它们（做完的部分都在，之后可以接着做）。已解锁的加密书需要重新解锁。现在重启？`, `${running} jobs are running, and restarting the backend stops them (what they finished is kept; they can be taken up again). Sealed books that are unlocked will need unlocking again. Restart now?`), () => { void change() })
+    else void change()
+  }
+  const can = reloadable === true && !failed
+  return (
+    <div className="nv-banner is-warn nv-stale" role="status">
+      <span>
+        <Icon name="refresh" size={14} />
+        <b>{can ? t('小说工坊更新了', 'Novel Studio was updated') : t('请重启 DSH', 'Restart DSH')}</b>
+        {can
+          ? t('——界面已经是新的，后台还是旧版本。点“重启”把后台也换成新的：只重启工坊自己的后台，DSH 和对话都不动，几秒钟就好。', ' — what you see is the new version, what works behind it is still the old one. "Restart" brings the backend up to date: only the Studio\'s own backend restarts, DSH and its conversations stay as they are, and it takes a few seconds.')
+          : failed
+            ? t('——后台没能自己换成新版本，这一次请重启 DSH。', ' — the backend could not change to the new version by itself; restart DSH this once.')
+            : t('——小说工坊刚刚更新过：界面已经是新的，后台还是 DSH 这次启动时装载的旧版本。这一次要重启 DSH 才能一致（之后的更新可以在这里一键重启）；在那之前，新加的功能可能用不了，或者表现得不对。', ' — Novel Studio was just updated: what you see is the new version, what works behind it is still the one DSH loaded when it started. This once DSH has to be restarted for them to match (later updates restart from here with one press); until then, what is new may not work, or not as it should.')}
+      </span>
+      {can ? <Button size="sm" variant="primary" icon="refresh" busy={restart.busy} pending={t('正在重启…', 'Restarting…')} onClick={ask}>{t('重启', 'Restart')}</Button> : null}
+      <Button size="sm" variant="ghost" onClick={() => { setHidden(true) }}>{t('知道了', 'Got it')}</Button>
+      {confirm.element}
+    </div>
+  )
+}
+
+/**
+ * Every role of the crew is an agent of DSH, and DSH's subagent service is
+ * what makes one: without it a role can only be asked once and answer once —
+ * it cannot look anything up, check its own work, or be watched. A DSH that
+ * has it switched off is told so, plainly, and how to switch it on.
+ */
+function NoSwarmNotice() {
+  const t = useT()
+  const crew = useSnapshot(snapshot => snapshot.settings?.crew)
+  const [hidden, setHidden] = useState(false)
+  // Unknown on an older Host: nothing is said about what cannot be known.
+  if (crew === undefined || hidden || (crew.loop && crew.subagents !== false)) return null
+  return (
+    <div className="nv-banner is-warn nv-stale" role="status">
+      <span>
+        <Icon name="users" size={14} />
+        <b>{t('子智能体没有开启', 'Subagents are switched off')}</b>
+        {crew.loop
+          ? t('——小说工坊的场记、策划、导演、后期都是 DSH 的子智能体。现在 DSH 的子智能体功能（@deepseek-ai/dsh-subagent）被关掉了：各个角色只能一问一答地干活，不能查原文、不能自查，运行过程也看不到。请在 DSH 的"设置 → 插件"里把它启用，然后重启 DSH。', ' — the Studio\'s continuity, planner, director and post-production are subagents of DSH. DSH\'s subagent service (@deepseek-ai/dsh-subagent) is switched off here: each role can only answer one request at a time — it cannot look up the text, check its own work, or be watched. Enable it under DSH\'s Settings → Plugins, then restart DSH.')
+          : t('——这个 DSH 没有 agent 循环（纯后台模式）：各个角色只能一问一答地干活。', ' — this DSH runs no agent loop (a bare headless core): each role can only answer one request at a time.')}
+      </span>
+      <Button size="sm" variant="ghost" onClick={() => { setHidden(true) }}>{t('知道了', 'Got it')}</Button>
+    </div>
   )
 }
 
@@ -300,7 +398,9 @@ function Header({ onSearch }: { onSearch: () => void }) {
         items={[
           ...others.map(ref => ({ label: controller.sessionId !== undefined ? t(`${ref.title}（对话一起换过去）`, `${ref.title} (the conversation moves too)`) : ref.title, icon: 'book' as IconName, onSelect: () => { void controller.guard(async () => { await controller.openProject(ref.root) }) } })),
           ...(others.length > 0 ? ['separator' as const] : []),
-          { label: t('书架 / 新建项目', 'Bookshelf / new project'), icon: 'plus', onSelect: () => { controller.closeProject() } },
+          // The shelf is the home page; starting something new has a page of its own behind it.
+          { label: t('回书架', 'Back to the shelf'), icon: 'home', onSelect: () => { controller.kept.delete('onboard.page'); controller.closeProject() } },
+          { label: t('新创作…', 'New work…'), icon: 'sparkles', onSelect: () => { controller.kept.set('onboard.page', 'new'); controller.closeProject() } },
           'separator' as const,
           { label: t('加密与上锁…', 'Seal and lock…'), icon: 'lock', onSelect: () => { setSealing(true) } },
           { label: t('删除这本书…', 'Remove this book…'), icon: 'trash', danger: true, onSelect: () => { if (root !== undefined) removal.ask({ root, title: project.manifest.title }) } },
@@ -410,6 +510,10 @@ const JOB_LABELS: Record<JobInfo['kind'], [string, string]> = {
   export: ['导出', 'Exporting'],
   index: ['索引', 'Indexing'],
   seal: ['加密', 'Sealing'],
+  video: ['成片', 'Video'],
+  crew: ['班底', 'Crew'],
+  batch: ['批量', 'Batch'],
+  install: ['安装插件', 'Installing a plugin'],
 }
 
 /** What a running job is doing right now, when it says so. */
@@ -461,23 +565,8 @@ function ActivityDock() {
   const shown = folded ? 1 : 4
   return (
     <div className="nv-dock" role="status" aria-live="polite">
-      {running.slice(0, shown).map((job) => {
-        const pulse = jobPulse(job, t)
-        const done = job.progress?.done ?? 0
-        const total = job.progress?.total ?? 0
-        return (
-          <div key={job.id} className="nv-dock-row">
-            <Spinner size={12} />
-            <span className="nv-dock-title">{jobLabel(job, t, project)}</span>
-            {total > 1 ? <span className="nv-dock-count">{done}/{total}</span> : null}
-            <span className="nv-dock-pulse">{pulse ?? t('进行中…', 'working…')}</span>
-            <ThoughtButton job={job} />
-            <span className="nv-dock-time">{elapsedOf(Date.parse(job.startedAt), now)}</span>
-            {job.origin === 'agent' ? <span className="nv-dock-tag" title={t('这是对话里的总编发起的', 'Started by the showrunner in the conversation')}>{t('总编', 'agent')}</span> : null}
-            <button type="button" className="nv-dock-stop" onClick={() => { void controller.cancelJob(job.id) }} title={t('停止', 'Stop')} aria-label={t('停止', 'Stop')}><Icon name="stop" size={11} /></button>
-          </div>
-        )
-      })}
+      <GateNotes />
+      {running.slice(0, shown).map(job => <JobBar key={job.id} job={job} now={now} dense />)}
       {activity.slice(0, Math.max(0, shown - running.length)).map(item => (
         <div key={item.id} className="nv-dock-row">
           <Spinner size={12} />
@@ -517,8 +606,10 @@ function JobsButton() {
                 <div className="nv-job-main">
                   <span className="nv-job-title">{jobLabel(job, t, project)}</span>
                   <span className="nv-job-meta">{job.origin === 'agent' ? t('总编发起', 'by the agent') : t('手动', 'manual')} · {new Date(job.startedAt).toLocaleTimeString()}</span>
-                  {job.status === 'running' && (job.progress !== undefined || job.thinking !== undefined) ? <Progress done={job.progress?.done ?? 0} total={job.progress?.total ?? 0} label={jobPulse(job, t)} /> : null}
+                  {job.status === 'running' ? <JobBar job={job} /> : null}
                   {job.error !== undefined ? <span className="nv-job-error">{job.error}</span> : null}
+                  {batchOf(job) !== undefined ? <details className="nv-job-batch"><summary>{t('逐项进度', 'Step by step')}</summary><BatchMatrix job={job} compact /></details> : null}
+                  <CrewRuns job={job} />
                 </div>
                 <ThoughtButton job={job} label />
                 {job.status === 'running'

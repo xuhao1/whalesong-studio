@@ -9,6 +9,7 @@
  * switched off, in which case cues stay what they always are as well: captions
  * the reader can see, and beds the browser synthesizes.
  */
+import { providerDefault } from '../../shared/recommended'
 import { originOf } from '../../shared/services'
 import type { NovelSettings, SoundKind } from '../../shared/types'
 import { download, postJson, ProviderError, requireKey, type KeySource } from './http'
@@ -33,7 +34,6 @@ export interface SoundProvider {
 }
 
 const DASHSCOPE_BASE = 'https://dashscope.aliyuncs.com'
-const DEFAULT_MODEL = 'qwen-audio-3.1-tts-next'
 
 export interface SoundSetup {
   model: string
@@ -50,7 +50,7 @@ export function soundSetup(settings: NovelSettings): SoundSetup | undefined {
   if (provider === 'none') return undefined
   if (provider === 'qwen-audiogen') {
     return {
-      model: sound?.model ?? DEFAULT_MODEL,
+      model: sound?.model ?? providerDefault('sound', 'qwen-audiogen').model,
       shared: false,
       ...(sound?.baseURL !== undefined ? { baseURL: sound.baseURL } : {}),
       ...(sound?.apiKeyRef !== undefined ? { apiKeyRef: sound.apiKeyRef } : {}),
@@ -59,7 +59,7 @@ export function soundSetup(settings: NovelSettings): SoundSetup | undefined {
   // auto: a speech model that generates audio from a description makes sound the same way.
   if (settings.tts.provider !== 'qwen-audiogen') return undefined
   return {
-    model: sound?.model ?? settings.tts.model ?? DEFAULT_MODEL,
+    model: sound?.model ?? settings.tts.model ?? providerDefault('sound', 'qwen-audiogen').model,
     shared: true,
     ...(settings.tts.baseURL !== undefined ? { baseURL: settings.tts.baseURL } : {}),
     ...(settings.tts.apiKeyRef !== undefined ? { apiKeyRef: settings.tts.apiKeyRef } : {}),

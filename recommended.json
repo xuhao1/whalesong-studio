@@ -1,0 +1,119 @@
+{
+  "schema": 1,
+  "version": 1,
+  "date": "2026-10-08",
+  "notes": {
+    "zh": "第 1 版：把原先写在代码里的推荐搬到这个文件里——各家服务的插图、配音、检索模型，各种接口没填模型时用哪个，下拉里的候选，以及常见模型的上下文窗口。",
+    "en": "Issue 1: what used to be fixed in the code now lives in this file — the image, speech and retrieval models of each service, the model each kind of endpoint is used with when none is named, the models offered beside them, and the context windows of the usual model families."
+  },
+  "services": {
+    "bailian": {
+      "embedding": {
+        "provider": "openai",
+        "model": "qwen3.7-text-embedding-flash",
+        "suggestions": ["qwen3.7-text-embedding-flash", "qwen3.7-text-embedding"]
+      },
+      "image": {
+        "provider": "dashscope",
+        "model": "qwen-image-3.0",
+        "size": "1280x720",
+        "suggestions": ["qwen-image-3.0", "qwen-image-3.0-pro", "wan2.7-image", "z-image-turbo"],
+        "label": "Qwen-Image 3.0"
+      },
+      "tts": {
+        "provider": "qwen-audiogen",
+        "model": "qwen-audio-3.1-tts-next",
+        "suggestions": ["qwen-audio-3.1-tts-next"]
+      }
+    },
+    "openrouter": {
+      "embedding": {
+        "provider": "openai",
+        "model": "qwen/qwen3-embedding-8b",
+        "suggestions": ["qwen/qwen3-embedding-8b", "baai/bge-m3", "openai/text-embedding-3-small", "google/gemini-embedding-2"]
+      },
+      "image": {
+        "provider": "openrouter",
+        "model": "openai/gpt-image-2.5-sunburst",
+        "size": "1536x1024",
+        "suggestions": ["openai/gpt-image-2.5-sunburst", "openai/gpt-image-2.5-flare", "openai/gpt-image-2", "google/gemini-3-pro-image", "bytedance-seed/seedream-5-0-pro", "qwen/qwen-image-3-pro"],
+        "label": "GPT Image 2.5"
+      },
+      "tts": {
+        "provider": "openrouter",
+        "model": "google/gemini-3.8-flash-tts",
+        "narratorVoice": "Charon",
+        "suggestions": ["google/gemini-3.8-flash-tts", "openai/gpt-4o-mini-tts-2025-12-15", "minimax/speech-2.8-hd", "fish-audio/s2.1-pro"],
+        "label": "Gemini 3.8 Flash TTS"
+      }
+    },
+    "openai": {
+      "embedding": {
+        "provider": "openai",
+        "model": "text-embedding-3-small",
+        "suggestions": ["text-embedding-3-small", "text-embedding-3-large"]
+      },
+      "image": {
+        "provider": "openai",
+        "model": "gpt-image-2",
+        "size": "1536x1024",
+        "suggestions": ["gpt-image-2", "gpt-image-1"],
+        "label": "GPT Image 2"
+      },
+      "tts": {
+        "provider": "openai",
+        "model": "gpt-4o-mini-tts",
+        "narratorVoice": "alloy",
+        "suggestions": ["gpt-4o-mini-tts"]
+      }
+    }
+  },
+  "providers": {
+    "image": {
+      "dashscope": { "model": "qwen-image-3.0" },
+      "openai": { "model": "gpt-image-2" },
+      "openrouter": { "model": "openai/gpt-image-2.5-sunburst" }
+    },
+    "tts": {
+      "qwen-audiogen": {
+        "model": "qwen-audio-3.1-tts-next",
+        "suggestions": ["qwen-audio-3.1-tts-next"]
+      },
+      "qwen-realtime": {
+        "model": "qwen3.8-omni-flash-realtime",
+        "narratorVoice": "Serena",
+        "suggestions": ["qwen3.8-omni-flash-realtime", "qwen3.5-omni-plus-realtime", "qwen3.5-omni-flash-realtime"]
+      },
+      "dashscope": {
+        "model": "qwen3-tts-instruct-flash",
+        "designedVoiceModel": "qwen3-tts-vd-2026-01-26",
+        "narratorVoice": "Serena",
+        "suggestions": ["qwen3-tts-instruct-flash", "qwen3-tts-flash"]
+      },
+      "openrouter": { "model": "google/gemini-3.8-flash-tts" },
+      "openai": {
+        "model": "gpt-4o-mini-tts",
+        "suggestions": ["gpt-4o-mini-tts"]
+      }
+    },
+    "sound": {
+      "qwen-audiogen": { "model": "qwen-audio-3.1-tts-next" }
+    }
+  },
+  "unlisted": {
+    "bailian": {
+      "tts": ["qwen-audio-3.1-tts-next"]
+    }
+  },
+  "windows": [
+    { "match": "(^|/)qwen3\\.[5-9][^/]*-(max|plus|flash)", "tokens": 1000000 },
+    { "match": "(^|/)deepseek-v4", "tokens": 1000000 },
+    { "match": "(^|/)kimi-k3", "tokens": 1000000 },
+    { "match": "(^|/)gpt-6", "tokens": 1000000 },
+    { "match": "(^|/)claude-(opus|sonnet|fable)-5", "tokens": 1000000 },
+    { "match": "(^|/)gemini-3", "tokens": 1000000 }
+  ],
+  "maxOutput": [
+    { "match": "(^|/)deepseek-(flash|v4)", "tokens": 384000 }
+  ]
+}

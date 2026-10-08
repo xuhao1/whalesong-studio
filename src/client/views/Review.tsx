@@ -4,14 +4,16 @@
  * found while digesting, review issues per chapter, and book-wide revisions
  * (including carrying a changed setting or character through the manuscript).
  */
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import { clip } from '../../shared/text'
-import type { Proposal } from '../../shared/types'
+import type { Proposal, TextStep } from '../../shared/types'
 import { ProposalCard } from '../components/ProposalCard'
 import { SUGGESTION_KIND } from '../labels'
+import { BatchMatrix, batchOf, useBatchJob } from '../Batch'
 import {
   Button, Chip, cx, Empty, Field, Progress, SectionTitle, Select, Tabs, TextArea, useAction, useConfirm, useProject, useSnapshot, useStudio, useT,
 } from '../ui'
+import { JobBar } from '../JobBar'
 
 type ReviewTab = 'proposals' | 'suggestions' | 'issues' | 'book'
 
@@ -102,7 +104,7 @@ function Suggestions() {
     }
   })
   if (project.suggestions.length === 0) {
-    return <Empty icon="sparkles" title={t('没有待处理的设定建议', 'No bible suggestions waiting')}>{t('收录章节时，分析模型会留意正文里新出现的人物、地点与线索，以及人物的登场、退场与死亡，并在这里提出建议。', 'While digesting, the analyst notices new characters, places and threads in the prose, and entrances, exits and deaths — and proposes them here.')}</Empty>
+    return <Empty icon="sparkles" title={t('没有待处理的设定建议', 'No bible suggestions waiting')}>{t('收录章节时，场记会留意正文里新出现的人物、地点与线索，以及人物的登场、退场与死亡，并在这里提出建议。', 'While digesting, continuity notices new characters, places and threads in the prose, and entrances, exits and deaths — and proposes them here.')}</Empty>
   }
   return (
     <div className="nv-suggestions">
@@ -142,39 +144,31 @@ function Issues() {
   const t = useT()
   const { project, root } = useProject()
   const jobs = useSnapshot(snapshot => snapshot.jobs)
-  const [batch, setBatch] = useState<{ done: number; total: number } | undefined>()
-  const stop = useRef(false)
   const written = project.chapters.filter(chapter => chapter.hasText)
   const pending = written.filter(chapter => chapter.openIssues === undefined)
-  const reviewing = new Set(jobs.filter(job => job.status === 'running' && job.kind === 'review').map(job => job.target))
-  const reviewAll = (): void => {
-    stop.current = false
-    setBatch({ done: 0, total: pending.length })
-    void controller.guard(async () => {
-      let done = 0
-      for (const chapter of pending) {
-        if (stop.current) break
-        try {
-          await controller.run('ai.review', { root, chapter: chapter.id })
-        } catch (error) {
-          if (stop.current) break
-          controller.toast('error', `${chapter.title}: ${error instanceof Error ? error.message : String(error)}`)
-        }
-        done += 1
-        setBatch({ done, total: pending.length })
-      }
-    }).finally(() => { setBatch(undefined) })
-  }
+  const undigested = written.filter(chapter => !chapter.digested)
+  // One batch: the chapters are reviewed side by side, as many at once as the settings allow.
+  const batchJob = useBatchJob('text')
+  const batch = batchJob?.status === 'running' ? batchJob : undefined
+  const reviewing = new Set([
+    ...jobs.filter(job => job.status === 'running' && job.kind === 'review').map(job => job.target),
+    ...(batchOf(batch)?.rows.filter(row => row.steps.review?.state === 'running').map(row => row.id) ?? []),
+  ])
+  const start = (steps: TextStep[], chapters: string[]): Promise<unknown> => controller.guard(async () => {
+    await controller.api.call('batch.text', { root, steps, chapters })
+    await controller.refreshJobs()
+  })
   if (written.length === 0) return <Empty icon="alert" title={t('还没有可审校的正文', 'No prose to review yet')} />
   return (
     <div className="nv-issues">
       <div className="nv-toolbar">
         <span className="nv-muted">{t('审校对照设定、记忆与文风逐章检查；点开一章可以定位问题并让 AI 修。', 'A review checks each chapter against the bible, memory and style; open a chapter to locate issues and fix them with AI.')}</span>
         <span className="nv-spacer" />
-        {batch !== undefined
-          ? <><Progress done={batch.done} total={batch.total} label={`${batch.done}/${batch.total}`} /><Button size="sm" variant="ghost" icon="stop" onClick={() => { stop.current = true; for (const job of jobs) if (job.status === 'running' && job.kind === 'review') void controller.cancelJob(job.id) }}>{t('停止', 'Stop')}</Button></>
-          : pending.length > 0 ? <Button size="sm" icon="checkCircle" onClick={reviewAll}>{t(`审校未审的 ${pending.length} 章`, `Review ${pending.length} unreviewed chapters`)}</Button> : null}
+        {batch === undefined && undigested.length > 0 ? <Button size="sm" icon="layers" pending={t('正在开始…', 'Starting…')} onClick={() => start(['digest'], undigested.map(chapter => chapter.id))} title={t('审校要对照记忆：先把还没收录的章节收录进去', 'A review checks against memory: take the chapters that are not digested yet into it first')}>{t(`收录未收录的 ${undigested.length} 章`, `Digest ${undigested.length} chapters`)}</Button> : null}
+        {batch === undefined && pending.length > 0 ? <Button size="sm" icon="checkCircle" pending={t('正在开始…', 'Starting…')} onClick={() => start(['review'], pending.map(chapter => chapter.id))}>{t(`一键审校未审的 ${pending.length} 章`, `Review ${pending.length} unreviewed chapters`)}</Button> : null}
+        {batch === undefined && pending.length === 0 && written.length > 1 ? <Button size="sm" variant="ghost" icon="refresh" pending={t('正在开始…', 'Starting…')} onClick={() => controller.guard(async () => { await controller.api.call('batch.text', { root, steps: ['review'], chapters: written.map(chapter => chapter.id), redo: true }); await controller.refreshJobs() })}>{t('全部重审', 'Review all again')}</Button> : null}
       </div>
+      {batchJob !== undefined && (batch !== undefined || batchJob.status !== 'done' || (batchOf(batchJob)?.failed ?? 0) > 0) ? <div className="nv-card"><BatchMatrix job={batchJob} compact /></div> : null}
       <ul className="nv-list nv-card">
         {written.map(chapter => (
           <li key={chapter.id}>
@@ -237,7 +231,7 @@ function BookRevision({ onStarted }: { onStarted: () => void }) {
     <div className="nv-book-revision">
       <section className="nv-card">
         <SectionTitle>{t('对全书提一个修改要求', 'Ask for a change across the whole book')}</SectionTitle>
-        <p className="nv-muted nv-small">{t('架构模型先判断哪些章节受影响，写手只改这些章节；每一章的改动都作为提案等你对比定夺，不会直接覆盖正文。', 'The architect first decides which chapters are affected; the writer changes only those. Every chapter comes back as a proposal to compare — nothing is overwritten directly.')}</p>
+        <p className="nv-muted nv-small">{t('策划先判断哪些章节受影响，写手只改这些章节；每一章的改动都作为提案等你对比定夺，不会直接覆盖正文。', 'The planner first decides which chapters are affected; the writer changes only those. Every chapter comes back as a proposal to compare — nothing is overwritten directly.')}</p>
         <div className="nv-form-grid">
           {project.world.length > 0 ? (
             <Field label={t('同步一条世界观变更', 'Carry a world change through')}>
@@ -254,20 +248,14 @@ function BookRevision({ onStarted }: { onStarted: () => void }) {
           <TextArea value={instruction} minRows={4} maxRows={14} placeholder={t('例：把女主的口头禅"无所谓"全部去掉；把第一人称改成第三人称有限视角；把所有"灵力"改称"炁"并调整相关描写', 'e.g. drop the heroine\'s catchphrase everywhere; move from first person to third limited; rename "mana" to "aether" and adjust the passages around it')} onChange={(event) => { setInstruction(event.target.value) }} />
         </Field>
         <Field label={t('范围', 'Scope')}>
-          <Select value={scope} options={[{ value: 'auto', label: t('由架构模型判断哪些章节需要改', 'Let the architect decide which chapters change') }, { value: 'pick', label: t('只在我选的章节里改', 'Only the chapters I pick') }]} onChange={setScope} />
+          <Select value={scope} options={[{ value: 'auto', label: t('由策划判断哪些章节需要改', 'Let the planner decide which chapters change') }, { value: 'pick', label: t('只在我选的章节里改', 'Only the chapters I pick') }]} onChange={setScope} />
         </Field>
         {scope === 'pick' ? (
           <div className="nv-chips">
             {written.map(chapter => <Chip key={chapter.id} tone={picked.has(chapter.id) ? 'blue' : 'neutral'} active={picked.has(chapter.id)} onClick={() => { setPicked((previous) => { const next = new Set(previous); if (next.has(chapter.id)) next.delete(chapter.id); else next.add(chapter.id); return next }) }}>{chapter.index}. {chapter.title}</Chip>)}
           </div>
         ) : null}
-        {running !== undefined ? (
-          <div className="nv-activity">
-            <Progress done={running.progress?.done ?? 0} total={running.progress?.total ?? 0} label={running.progress?.label ?? (running.progress !== undefined ? `${running.progress.done}/${running.progress.total}` : undefined)} />
-            <span className="nv-spacer" />
-            <Button size="sm" variant="ghost" icon="stop" onClick={() => { void controller.cancelJob(running.id) }}>{t('停止', 'Stop')}</Button>
-          </div>
-        ) : null}
+        {running !== undefined ? <JobBar job={running} /> : null}
         {summary !== undefined ? (
           <p className={cx('nv-note', summary.failed > 0 && 'is-warn')}>
             {t(`改了 ${summary.changed} 章，${summary.untouched} 章判断为不受影响${summary.failed > 0 ? `，${summary.failed} 章失败` : ''}。`, `${summary.changed} chapters changed, ${summary.untouched} judged unaffected${summary.failed > 0 ? `, ${summary.failed} failed` : ''}.`)}

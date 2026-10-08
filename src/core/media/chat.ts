@@ -43,7 +43,8 @@ export function reasoningParams(baseURL: string, effort: string | undefined): Re
 
 interface ChatChunk {
   choices?: { delta?: { content?: unknown; reasoning_content?: unknown; reasoning?: unknown }; finish_reason?: string | null }[]
-  usage?: { prompt_tokens?: number; completion_tokens?: number } | null
+  /** Cache hits are reported the OpenAI way (`prompt_tokens_details.cached_tokens`) or the DeepSeek way (`prompt_cache_hit_tokens`). */
+  usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_cache_hit_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } | null } | null
   error?: { message?: string; code?: string | number }
 }
 
@@ -111,7 +112,8 @@ export async function completeDirect(route: ModelRoute & { baseURL: string }, re
     model: route.model,
     messages: [
       ...(request.system !== undefined && request.system.length > 0 ? [{ role: 'system', content: request.system }] : []),
-      { role: 'user', content: request.prompt },
+      // An endpoint that keeps the head of a request keeps it by what the text starts with: the part that stays the same goes first.
+      { role: 'user', content: request.stable !== undefined && request.stable.length > 0 ? `${request.stable}\n\n${request.prompt}` : request.prompt },
     ],
     stream: true,
     stream_options: { include_usage: true },
@@ -217,7 +219,10 @@ async function readStream(stream: ReadableStream<Uint8Array>, request: LlmReques
       request.onText?.(delta, text)
     }
     if (typeof choice?.finish_reason === 'string') finish = choice.finish_reason === 'length' ? 'max-tokens' : choice.finish_reason
-    if (chunk.usage !== undefined && chunk.usage !== null) usage = { inputTokens: chunk.usage.prompt_tokens ?? 0, outputTokens: chunk.usage.completion_tokens ?? 0 }
+    if (chunk.usage !== undefined && chunk.usage !== null) {
+      const cached = chunk.usage.prompt_tokens_details?.cached_tokens ?? chunk.usage.prompt_cache_hit_tokens
+      usage = { inputTokens: chunk.usage.prompt_tokens ?? 0, outputTokens: chunk.usage.completion_tokens ?? 0, ...(typeof cached === 'number' && cached > 0 ? { cachedTokens: cached } : {}) }
+    }
   }
   try {
     for (;;) {

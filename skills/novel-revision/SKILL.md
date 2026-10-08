@@ -13,7 +13,8 @@ Revision has one rule: change what was asked and nothing else. The tools enforce
 |---|---|---|
 | words the author gave you, a name, a fact, a typo | `novel_edit` | No model rewrites anything: `replace` / `insert` / `append` / `delete` / `set`, exactly. Copy `find` from `novel_read`; `all=true` for a term throughout a chapter. The result names the characters the change touches and how many later chapters exist — check them. |
 | a sentence to a few paragraphs that needs rewriting | `novel_revise scope=passage` | Quote the passage exactly as it stands (copy from `novel_read`). Say what to change and what must survive. |
-| one chapter | `novel_revise scope=chapter` | For structure, pacing or voice problems across the chapter. Not for adding plot — change the outline and redraft instead. |
+| one chapter | `novel_revise scope=chapter` | For structure, pacing or voice problems across the chapter. The chapters written after it are given to the writer, so the revision stays joined to them. Not for adding plot — change the outline and redraft instead. |
+| where the story goes from a chapter on | `novel_derive after=<chapter>` with `mode=replace` or `mode=branch` | Not a revision of prose but of the plan. `replace` swaps the outline after that chapter (what was written there is kept as a shelved plot line, never deleted); `branch` opens a plot line beside it so both ways stand. Ask the author which they mean when they say "rewrite the outline from here". |
 | the whole manuscript | `novel_revise scope=book` | One instruction ("rename X to Y and adjust the passages around it"). Triage decides which chapters it touches; each comes back as a proposal. |
 
 When the author can see the Studio, a passage is usually faster for them to select there. Offer it.

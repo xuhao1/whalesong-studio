@@ -479,6 +479,204 @@
   cursor: pointer;
 }
 
+/* A part of the settings in a line: its name, what it is set to, and the rest on a press. */
+.nv-fold {
+  padding: 0;
+}
+
+.nv-fold-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 16px;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: var(--nv-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nv-fold-head:hover {
+  background: var(--nv-hover);
+}
+
+.nv-fold-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--nv-text-2);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nv-fold-toggle {
+  color: var(--nv-text-3);
+  font-size: 12px;
+}
+
+.nv-fold-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 4px 16px 16px;
+}
+
+.nv-advanced-switch {
+  margin: 0 4px;
+}
+
+/* A role under Advanced: its model, and how it works, as one block. */
+.nv-role-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 0;
+  border-top: 1px solid var(--nv-border);
+}
+
+/* A shape for each kind of picture, side by side. */
+.nv-size-grid {
+  display: grid;
+  /* A row of its own in the form it sits in. */
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 10px 14px;
+}
+
+.nv-help {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.nv-help-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+}
+
+.nv-help-prompt {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* The chapter's name is the switch: press it for the list, the arrows for the neighbours. */
+.nv-chapter-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.nv-chapter-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 3px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--nv-radius-s);
+  background: transparent;
+  color: var(--nv-text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.nv-chapter-title strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nv-chapter-title:hover,
+.nv-chapter-title[aria-expanded='true'] {
+  border-color: var(--nv-border);
+  background: var(--nv-hover);
+}
+
+.nv-chapter-step {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: var(--nv-radius-s);
+  background: transparent;
+  color: var(--nv-text-2);
+  cursor: pointer;
+}
+
+.nv-chapter-step:hover:not(:disabled) {
+  background: var(--nv-hover);
+  color: var(--nv-text);
+}
+
+.nv-chapter-step:disabled {
+  cursor: default;
+  opacity: 0.3;
+}
+
+.nv-chapter-list {
+  display: flex;
+  flex-direction: column;
+  width: min(360px, 80vw);
+  max-height: min(60vh, 520px);
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.nv-chapter-group {
+  padding: 8px 8px 4px;
+  color: var(--nv-text-3);
+  font-size: 11.5px;
+}
+
+.nv-chapter-option {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--nv-radius-s);
+  background: transparent;
+  color: var(--nv-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nv-chapter-option:hover:not(:disabled) {
+  background: var(--nv-hover);
+}
+
+.nv-chapter-option.is-active {
+  background: var(--nv-active);
+  font-weight: 600;
+}
+
+.nv-chapter-option:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.nv-chapter-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .nv-chapter-select {
   width: auto;
   max-width: 260px;
@@ -1005,6 +1203,18 @@
   color: var(--nv-text);
 }
 
+.nv-radio-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.nv-input-narrow {
+  width: 64px;
+  text-align: center;
+}
+
 .nv-plain-list {
   display: flex;
   flex-direction: column;
@@ -1360,6 +1570,15 @@
   font-size: 22px;
 }
 
+/* The Studio's own face: the same picture DSH lists the plugin by. */
+.nv-onboard-logo {
+  width: 72px;
+  height: 72px;
+  border-radius: 18px;
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--nv-text) 14%, transparent);
+  object-fit: cover;
+}
+
 .nv-onboard-hero p {
   max-width: 520px;
 }
@@ -1532,6 +1751,63 @@
   }
 }
 
+/* The way to a book's workbench: the cover and the title lead to reading it. */
+.nv-shelf-work {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 2px 9px;
+  border: 1px solid var(--nv-border);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--nv-text-2);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.nv-shelf-work:hover:not(:disabled) {
+  border-color: var(--nv-border-strong);
+  background: var(--nv-hover);
+  color: var(--nv-text);
+}
+
+.nv-hero-read {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.nv-hero-read:disabled {
+  cursor: default;
+}
+
+.nv-hero-read:not(:disabled):hover {
+  filter: brightness(1.06);
+}
+
+.nv-hero-title {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nv-hero-title:hover {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+}
+
 .nv-shelf-title {
   font-weight: 600;
 }
@@ -1557,7 +1833,8 @@
   width: 132px;
 }
 
-.nv-hero-cover > img,
+/* The cover is the way into reading: the picture sits inside a button, and is sized here wherever it sits. */
+.nv-hero-cover img,
 .nv-hero-blank {
   display: block;
   width: 100%;
@@ -2395,24 +2672,79 @@ button.nv-stat:hover {
 
 .nv-relations-view {
   display: grid;
-  grid-template-columns: minmax(280px, 440px) minmax(0, 1fr);
+  /* The picture has most of the room: it is what the page is for. The words beside it scroll in their own column. */
+  grid-template-columns: minmax(0, 2.2fr) minmax(220px, 1fr);
   align-items: start;
   gap: 16px;
 }
 
+.nv-relations-view > .nv-relation-list {
+  max-height: min(72vh, 680px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.nv-graph-frame {
+  position: relative;
+  min-width: 0;
+}
+
 .nv-graph {
+  display: block;
   width: 100%;
-  height: auto;
+  height: min(72vh, 680px);
+  min-height: 320px;
+  border: 1px solid var(--nv-border);
+  border-radius: var(--nv-radius);
+  background: var(--nv-surface);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
 }
 
-.nv-graph-edge {
+.nv-graph.is-dragging {
+  cursor: grabbing;
+}
+
+.nv-graph-tools {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--nv-border);
+  border-radius: var(--nv-radius-s);
+  background: var(--nv-bg);
+}
+
+/* Each kind of bond in its own colour; what parts people is dashed. */
+.nv-graph-edge line {
   stroke: var(--nv-border-strong);
-  stroke-width: 1.2;
+  stroke-width: 1.4;
+  vector-effect: non-scaling-stroke;
 }
 
-.nv-graph-edge.is-dim,
-.nv-graph-node.is-dim {
-  opacity: 0.18;
+.nv-graph-edge.is-family line { stroke: var(--nv-brand); }
+.nv-graph-edge.is-love line { stroke: var(--nv-violet); stroke-width: 1.8; }
+.nv-graph-edge.is-service line { stroke: var(--nv-warn); }
+.nv-graph-edge.is-bond line { stroke: var(--nv-success); }
+.nv-graph-edge.is-enmity line { stroke: var(--nv-error); stroke-dasharray: 5 4; }
+.nv-graph-edge.is-other line { stroke: var(--nv-text-3); stroke-dasharray: 2 3; }
+
+.nv-graph-edge text {
+  fill: var(--nv-text-2);
+  font-size: 10.5px;
+  /* The word sits on its line: a rim of the ground keeps the line from running through it. */
+  paint-order: stroke;
+  stroke: var(--nv-surface);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.nv-graph-edge.is-dim {
+  opacity: 0.12;
 }
 
 .nv-graph-node {
@@ -2421,7 +2753,7 @@ button.nv-stat:hover {
 
 .nv-graph-node circle {
   fill: var(--nv-text-3);
-  stroke: var(--nv-bg);
+  stroke: var(--nv-surface);
   stroke-width: 2;
 }
 
@@ -2429,11 +2761,61 @@ button.nv-stat:hover {
 .nv-graph-node.is-deuteragonist circle { fill: var(--nv-violet); }
 .nv-graph-node.is-antagonist circle { fill: var(--nv-error); }
 .nv-graph-node.is-supporting circle { fill: var(--nv-success); }
-.nv-graph-node.is-focus circle { stroke: var(--nv-text); }
+.nv-graph-node.is-focus circle { stroke: var(--nv-text); stroke-width: 3; }
 
 .nv-graph-node text {
   fill: var(--nv-text);
   font-size: 12px;
+  /* A name is read over whatever line passes under it. */
+  paint-order: stroke;
+  stroke: var(--nv-surface);
+  stroke-width: 3.5px;
+  stroke-linejoin: round;
+}
+
+.nv-graph-node.is-protagonist text,
+.nv-graph-node.is-focus text {
+  font-weight: 600;
+}
+
+.nv-graph-node.is-far {
+  opacity: 0.55;
+}
+
+.nv-graph-node:hover circle {
+  stroke: var(--nv-text);
+}
+
+.nv-graph-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  margin-top: 8px;
+}
+
+.nv-graph-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.nv-graph-key i {
+  display: inline-block;
+  width: 18px;
+  height: 0;
+  border-top: 2px solid var(--nv-text-3);
+}
+
+.nv-graph-key.is-family i { border-color: var(--nv-brand); }
+.nv-graph-key.is-love i { border-color: var(--nv-violet); }
+.nv-graph-key.is-service i { border-color: var(--nv-warn); }
+.nv-graph-key.is-bond i { border-color: var(--nv-success); }
+.nv-graph-key.is-enmity i { border-color: var(--nv-error); border-top-style: dashed; }
+.nv-graph-key.is-other i { border-top-style: dotted; }
+
+.nv-graph-hint {
+  flex-basis: 100%;
 }
 
 .nv-relation-list {
@@ -2456,6 +2838,12 @@ button.nv-stat:hover {
   color: var(--nv-text-2);
   font-size: 12px;
 }
+
+.nv-relation-kind.is-family { color: var(--nv-brand); }
+.nv-relation-kind.is-love { color: var(--nv-violet); }
+.nv-relation-kind.is-service { color: var(--nv-warn); }
+.nv-relation-kind.is-bond { color: var(--nv-success); }
+.nv-relation-kind.is-enmity { color: var(--nv-error); }
 
 /* ───────────── search ───────────── */
 
@@ -2915,6 +3303,118 @@ button.nv-stat:hover {
   height: 100%;
   background: var(--nv-brand);
   transition: width 0.3s;
+}
+
+/* The panels of a chapter in a frame of their own height: what lies under them stays in reach. */
+.nv-deck {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.nv-deck-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.nv-deck-layout {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--nv-border);
+  border-radius: var(--nv-radius-s);
+}
+
+.nv-deck-layout button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--nv-text-2);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.nv-deck-layout button.is-active {
+  background: var(--nv-active);
+  color: var(--nv-text);
+}
+
+.nv-deck-frame {
+  position: relative;
+  /* As tall as its panels, up to about two rows of them; the grip under it makes it taller or shorter. */
+  max-height: min(48vh, 540px);
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--nv-border);
+  border-radius: var(--nv-radius);
+  background: var(--nv-bg);
+  overscroll-behavior: contain;
+}
+
+.nv-deck-frame.is-strip {
+  max-height: none;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.nv-deck-grip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 10px;
+  margin-top: -2px;
+  cursor: ns-resize;
+  touch-action: none;
+}
+
+.nv-deck-grip span {
+  width: 44px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--nv-border-strong);
+}
+
+.nv-deck-grip:hover span {
+  background: var(--nv-text-3);
+}
+
+.nv-deck-frame.is-strip .nv-cpanels {
+  display: flex;
+  width: max-content;
+}
+
+.nv-deck-frame.is-strip .nv-cpanel {
+  flex: none;
+  width: 250px;
+}
+
+.nv-deck-frame.is-choosing {
+  cursor: crosshair;
+  user-select: none;
+}
+
+.nv-deck-frame.is-choosing .nv-cpanel {
+  cursor: pointer;
+}
+
+.nv-cpanel.is-picked {
+  border-color: var(--nv-brand);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--nv-brand) 55%, transparent);
+}
+
+.nv-deck-box {
+  position: absolute;
+  z-index: 2;
+  border: 1px solid var(--nv-brand);
+  background: color-mix(in srgb, var(--nv-brand) 14%, transparent);
+  pointer-events: none;
 }
 
 .nv-cpanels {
@@ -5302,4 +5802,3804 @@ button.nv-stat:hover {
 .nv-theater-placeholder {
   justify-content: flex-start;
   padding-top: 9%;
+}
+
+/* ───────────── the crew ───────────── */
+
+.nv-crew-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 0;
+}
+
+.nv-crew-row + .nv-crew-row,
+.nv-role + .nv-crew-row {
+  border-top: 1px solid var(--nv-border);
+}
+
+.nv-crew-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.nv-role-legacy {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+/* The roles that worked in a job, under the job. */
+.nv-crewruns {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.nv-crewrun {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+}
+
+.nv-crewrun-label {
+  color: var(--nv-text);
+}
+
+.nv-crewrun-note {
+  flex-basis: 100%;
+  color: var(--nv-text-2);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* What an agent is doing, step by step, while it does it. */
+.nv-runlog {
+  max-height: 148px;
+  margin: 0;
+  overflow: auto;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--nv-text) 5%, transparent);
+  color: var(--nv-text-2);
+  font-family: var(--nv-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ───────────── a chapter's video ───────────── */
+
+.nv-video {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.nv-video-result {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.nv-video-player {
+  width: 100%;
+  max-height: 62vh;
+  border-radius: var(--nv-radius);
+  background: #000;
+}
+
+/* ───────────── a chapter in the list, and taking it away ───────────── */
+
+.nv-list-item {
+  position: relative;
+}
+
+.nv-list-item .nv-list-row {
+  padding-right: 30px;
+}
+
+.nv-list-remove {
+  position: absolute;
+  top: 50%;
+  right: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--nv-text-3);
+  cursor: pointer;
+  /* Always to be seen: a way out that only shows under the pointer is, to whoever does not hover there, no way out. */
+  opacity: 0.45;
+  transform: translateY(-50%);
+}
+
+.nv-list-item:hover .nv-list-remove,
+.nv-list-item .nv-list-row.is-active + .nv-list-remove,
+.nv-list-remove:focus-visible {
+  opacity: 1;
+}
+
+.nv-list-item.is-choosing {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.nv-list-item.is-choosing .nv-list-row {
+  flex: 1;
+  min-width: 0;
+  padding-right: 8px;
+}
+
+.nv-list-tick {
+  flex: none;
+  margin-left: 6px;
+}
+
+.nv-outline-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px 4px 8px;
+}
+
+.nv-outline-fill {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 4px 10px;
+}
+
+.nv-outline-fill > span {
+  flex: 1;
+  min-width: 180px;
+}
+
+.nv-removed {
+  margin-top: 14px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--nv-border);
+}
+
+.nv-removed-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 4px;
+  border: 0;
+  background: transparent;
+  color: var(--nv-text-2);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.nv-removed-head > span {
+  flex: 1;
+  text-align: left;
+}
+
+.nv-removed-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px;
+}
+
+.nv-removed-row .nv-person-text {
+  flex: 1;
+  min-width: 0;
+  opacity: 0.8;
+}
+
+.nv-plan-found {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.nv-list-remove:hover {
+  background: color-mix(in srgb, var(--nv-error) 14%, transparent);
+  color: var(--nv-error);
+}
+
+.nv-list-remove:disabled {
+  cursor: default;
+  opacity: 0;
+}
+
+.nv-add-row.is-suggested {
+  color: var(--nv-brand-text, var(--nv-text));
+  font-weight: 500;
+}
+
+/* ───────────── sealing a book as it is made ───────────── */
+
+.nv-onboard-seal {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.nv-onboard-seal .nv-check svg {
+  vertical-align: -1px;
+}
+
+/* ───────────── where a setting is saved ───────────── */
+
+.nv-scope {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--nv-border);
+  border-radius: var(--nv-radius);
+  background: color-mix(in srgb, var(--nv-brand) 4%, transparent);
+}
+
+.nv-scope-label {
+  color: var(--nv-text-2);
+  font-size: 12.5px;
+}
+
+.nv-segmented {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  align-self: flex-start;
+  padding: 2px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--nv-text) 8%, transparent);
+}
+
+.nv-segment {
+  padding: 4px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--nv-text-2);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.nv-segment.is-active {
+  background: var(--nv-bg);
+  color: var(--nv-text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.14);
+}
+
+.nv-scope p {
+  margin: 0;
+}
+
+/* ───────────────────────────── batches ───────────────────────────── */
+
+.nv-batch {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.nv-batch-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.nv-batch-scroll {
+  max-height: min(52vh, 460px);
+  overflow: auto;
+  border: 1px solid var(--nv-border);
+  border-radius: var(--nv-radius-s);
+  background: var(--nv-bg);
+}
+
+.nv-batch.is-compact .nv-batch-scroll {
+  max-height: 220px;
+}
+
+.nv-batch-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.nv-batch-table th,
+.nv-batch-table td {
+  padding: 5px 9px;
+  border-bottom: 1px solid var(--nv-border);
+  text-align: center;
+  white-space: nowrap;
+}
+
+.nv-batch-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--nv-surface);
+  color: var(--nv-text-3);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.nv-batch-table tbody th {
+  max-width: 260px;
+  overflow: hidden;
+  color: var(--nv-text);
+  font-weight: 400;
+  text-align: start;
+  text-overflow: ellipsis;
+}
+
+.nv-batch-table tbody tr:last-child th,
+.nv-batch-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.nv-batch-table tbody tr.is-active th {
+  font-weight: 600;
+}
+
+.nv-batch-cell {
+  color: var(--nv-text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.nv-batch-cell.is-done {
+  color: var(--nv-success);
+}
+
+.nv-batch-cell.is-failed {
+  background: color-mix(in srgb, var(--nv-error) 9%, transparent);
+  color: var(--nv-error);
+}
+
+.nv-batch-cell.is-blocked {
+  color: var(--nv-warn);
+}
+
+.nv-batch-cell.is-running {
+  background: color-mix(in srgb, var(--nv-brand) 8%, transparent);
+  color: var(--nv-brand-text);
+}
+
+.nv-batch-cell.is-absent {
+  background: color-mix(in srgb, var(--nv-text-3) 5%, transparent);
+}
+
+.nv-batch-cell.is-dim,
+.nv-batch-table th.is-dim {
+  opacity: 0.42;
+}
+
+.nv-batch-cell.is-tone-done {
+  color: var(--nv-success);
+}
+
+.nv-batch-cell.is-tone-part {
+  color: var(--nv-warn);
+}
+
+.nv-batch-cell.is-tone-stale {
+  color: var(--nv-error);
+}
+
+.nv-batch-running {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.nv-batch-mark {
+  font-size: 13px;
+}
+
+.nv-batch-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--nv-border-strong);
+}
+
+.nv-batch-note {
+  margin-inline-start: 5px;
+  color: var(--nv-text-3);
+  font-size: 11.5px;
+}
+
+.nv-batch-failures {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12.5px;
+}
+
+.nv-batch-failures li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  padding: 5px 8px;
+  border-left: 3px solid var(--nv-error);
+  border-radius: 0 var(--nv-radius-s) var(--nv-radius-s) 0;
+  background: color-mix(in srgb, var(--nv-error) 6%, transparent);
+}
+
+.nv-batch-failures li span {
+  color: var(--nv-text-2);
+  overflow-wrap: anywhere;
+}
+
+.nv-batch-pick {
+  max-height: 180px;
+  overflow: auto;
+}
+
+.nv-gate-note {
+  margin: 0;
+  font-size: 12.5px;
+}
+
+.nv-dock .nv-gate-note {
+  margin-bottom: 4px;
+}
+
+.nv-job-batch summary {
+  color: var(--nv-text-2);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.nv-job-batch[open] summary {
+  margin-bottom: 6px;
+}
+
+/* what to run: one tile per step, ticked or not */
+.nv-steps-pick {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 8px;
+}
+
+.nv-step-pick {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 8px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid var(--nv-border);
+  border-radius: var(--nv-radius-s);
+  background: var(--nv-bg);
+  cursor: pointer;
+}
+
+.nv-step-pick.is-on {
+  border-color: color-mix(in srgb, var(--nv-brand) 55%, var(--nv-border));
+  background: color-mix(in srgb, var(--nv-brand) 6%, var(--nv-bg));
+}
+
+.nv-step-pick.is-off {
+  opacity: 0.62;
+}
+
+.nv-step-pick input {
+  margin: 0;
+}
+
+.nv-step-name {
+  font-weight: 600;
+}
+
+.nv-step-name .nv-muted {
+  font-weight: 400;
+}
+
+.nv-step-hint {
+  grid-column: 2;
+  color: var(--nv-text-2);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.nv-inline-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.nv-production {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.nv-production-table th .nv-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.nv-production-title {
+  overflow: hidden;
+  color: var(--nv-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nv-context-rows {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ───────────────────────────── lines of the plot ───────────────────────────── */
+
+.nv-lines-divider {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 12px 0 2px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--nv-border-strong);
+  color: var(--nv-text-3);
+  font-size: 12px;
+}
+
+.nv-line-section {
+  border-inline-start: 3px solid var(--nv-violet);
+  padding-inline-start: 6px;
+}
+
+.nv-line-section.is-shelved {
+  border-inline-start-color: var(--nv-border-strong);
+  opacity: 0.7;
+}
+
+.nv-line-switch {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 6px 2px;
+}
+
+.nv-line-switch .nv-select {
+  flex: 1;
+  min-width: 0;
+}
+
+.nv-line-about {
+  margin: 0;
+  padding: 0 8px 4px;
+}
+
+.nv-list-item.is-shared .nv-list-row {
+  opacity: 0.55;
+}
+
+.nv-write-batch {
+  padding: 8px 6px 0;
+}
+
+.nv-next-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--nv-border);
+}
+
+.nv-next-bar.is-fork {
+  background: color-mix(in srgb, var(--nv-violet) 7%, transparent);
+}
+
+.nv-line-select {
+  max-width: 180px;
+}
+
+.nv-reader-forks {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.nv-plot {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.nv-plot-scroll {
+  overflow: auto;
+  border: 1px solid var(--nv-border);
+  border-radius: var(--nv-radius);
+  background:
+    radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--nv-text-3) 22%, transparent) 1px, transparent 0) 0 0 / 19px 19px,
+    var(--nv-bg);
+}
+
+.nv-plot-svg {
+  display: block;
+}
+
+.nv-plot-rail {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 3;
+  stroke-linecap: round;
+  opacity: 0.8;
+}
+
+.nv-plot-rail.is-main {
+  stroke-width: 5;
+  opacity: 1;
+}
+
+.nv-plot-rail.is-open {
+  stroke-dasharray: 2 6;
+  opacity: 0.55;
+}
+
+.nv-plot-track.is-active .nv-plot-rail {
+  opacity: 1;
+  stroke-width: 4.5;
+}
+
+.nv-plot-track.is-active .nv-plot-rail.is-main {
+  stroke-width: 6.5;
+}
+
+.nv-plot-track.is-shelved {
+  opacity: 0.7;
+}
+
+.nv-plot-name,
+.nv-plot-station {
+  cursor: pointer;
+  outline: none;
+}
+
+.nv-plot-label {
+  fill: currentColor;
+  font-size: 12.5px;
+  font-weight: 600;
+  text-anchor: end;
+}
+
+.nv-plot-choice {
+  fill: var(--nv-text-2);
+  font-size: 11px;
+  text-anchor: end;
+}
+
+.nv-plot-name:hover .nv-plot-label,
+.nv-plot-name:focus-visible .nv-plot-label {
+  text-decoration: underline;
+}
+
+.nv-plot-station circle {
+  fill: var(--nv-bg);
+  stroke: currentColor;
+  stroke-width: 2.5;
+  transition: r 0.12s ease;
+}
+
+.nv-plot-station.is-written circle {
+  fill: currentColor;
+}
+
+.nv-plot-station.is-idea circle {
+  stroke-dasharray: 3 3;
+}
+
+.nv-plot-station:hover circle,
+.nv-plot-station:focus-visible circle {
+  r: 13.5px;
+}
+
+.nv-plot-station.is-active circle {
+  r: 14px;
+  stroke: var(--nv-text);
+  stroke-width: 3;
+}
+
+.nv-plot-index {
+  fill: currentColor;
+  font-size: 10.5px;
+  font-weight: 600;
+  text-anchor: middle;
+  pointer-events: none;
+}
+
+.nv-plot-station.is-written .nv-plot-index {
+  fill: var(--nv-bg);
+}
+
+.nv-plot-title {
+  fill: var(--nv-text-2);
+  font-size: 10.5px;
+  text-anchor: middle;
+  pointer-events: none;
+}
+
+.nv-plot-detail p {
+  margin: 0;
+}
+
+/* The Studio is newer than its Host: said once, at the top, until DSH is restarted. */
+.nv-stale {
+  flex: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--nv-warn) 40%, transparent);
+}
+
+.nv-stale > span:first-child > .nv-icon,
+.nv-stale > span:first-child > svg {
+  vertical-align: -2px;
+  margin-right: 6px;
+}
+
+/* Who a screen is about: the same control wherever characters are listed or chosen. */
+.nv-cast-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.nv-cast-filter-roles {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.nv-cast-filter-roles .nv-chip:not(.is-active) {
+  opacity: 0.5;
+}
+
+.nv-cast-filter-search {
+  flex: none;
+  width: 150px;
+  height: 26px;
+}
+
+.nv-cast-filter-sort {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+}
+
+.nv-cast-filter-sort select {
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--nv-border);
+  border-radius: var(--nv-radius-s);
+  background: var(--nv-bg);
+  color: var(--nv-text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.nv-picker-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.nv-picker-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 2px 10px;
+  max-height: 260px;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  border: 1px solid var(--nv-border);
+  border-radius: 8px;
+  list-style: none;
+}
+
+.nv-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 4px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.nv-picker-row:hover {
+  background: var(--nv-surface);
+}
+
+.nv-picker-row.is-off {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.nv-picker-empty {
+  padding: 10px;
+}
+
+.nv-batch-who {
+  margin-top: 14px;
+}
+
+.nv-advice li:has(> .nv-button) {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.nv-advice li > .nv-button {
+  flex: none;
+}
+
+/* A job at work: one control wherever it shows; pressing it opens the agent doing the work. */
+.nv-jobbar {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--nv-border);
+  border-radius: 8px;
+  background: var(--nv-surface);
+}
+
+.nv-jobbar.is-dense {
+  padding: 2px 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+
+.nv-jobbar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.nv-jobbar-main {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nv-jobbar-main:hover {
+  background: color-mix(in srgb, var(--nv-brand) 10%, transparent);
+}
+
+.nv-jobbar-title {
+  flex: none;
+  max-width: 46%;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nv-jobbar-count,
+.nv-jobbar-time {
+  flex: none;
+  color: var(--nv-text-3);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.nv-jobbar-pulse {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--nv-text-2);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nv-jobbar-agent {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--nv-brand) 14%, transparent);
+  color: var(--nv-brand-text);
+  font-size: 11.5px;
+}
+
+.nv-jobbar-tag {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: var(--nv-surface-2);
+  color: var(--nv-text-2);
+  font-size: 11px;
+}
+
+.nv-jobbar-stop {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--nv-text-3);
+  cursor: pointer;
+}
+
+.nv-jobbar-stop:hover {
+  background: color-mix(in srgb, var(--nv-error) 16%, transparent);
+  color: var(--nv-error);
+}
+
+.nv-jobbar-track {
+  height: 3px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--nv-surface-2);
+}
+
+.nv-jobbar-track > span {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--nv-brand-text);
+  transition: width 0.3s ease;
+}
+
+.nv-jobbar-output {
+  max-height: 180px;
+  margin: 2px 0 0;
+  padding: 6px 8px;
+  overflow: auto;
+  border-radius: 6px;
+  background: var(--nv-bg);
+  color: var(--nv-text-2);
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+/* Notes on the page: what a review found, marked where it was found — shown when the author asks for them. */
+.nv-mark {
+  --mark: var(--nv-brand-text);
+  padding: 1px 0;
+  border-bottom: 2px solid var(--mark);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--mark) 14%, transparent);
+  color: inherit;
+  cursor: pointer;
+}
+
+.nv-mark.is-red { --mark: var(--nv-error); }
+.nv-mark.is-amber { --mark: var(--nv-warn); }
+
+.nv-mark:hover,
+.nv-mark.is-open {
+  background: color-mix(in srgb, var(--mark) 28%, transparent);
+}
+
+.nv-reader-notes {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--nv-border);
+  background: color-mix(in srgb, var(--nv-brand) 6%, transparent);
+  font-size: 12.5px;
+}
+
+.nv-reader-notes > span:first-child {
+  flex: 1;
+  min-width: 200px;
+}
+
+.nv-reader-notes-list {
+  display: grid;
+  flex-basis: 100%;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 8px;
+  max-height: 46vh;
+  overflow-y: auto;
+  padding: 4px 0 6px;
+}
+
+.nv-reader-note {
+  position: absolute;
+  z-index: 6;
+  width: min(380px, calc(100% - 16px));
+  border-radius: var(--nv-radius);
+  box-shadow: var(--nv-shadow);
+}
+
+.nv-reader-note > .nv-issue {
+  border-color: var(--nv-border-strong);
+  background: var(--nv-bg);
+}
+
+.nv-reader-note-close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--nv-text-3);
+  cursor: pointer;
+}
+
+.nv-reader-note-close:hover {
+  background: var(--nv-surface-2);
+  color: var(--nv-text);
+}
+
+.nv-issue-note {
+  font-size: 12.5px;
+}
+
+blockquote.nv-issue-quote {
+  margin: 0;
+  cursor: default;
+}
+
+
+/* The recommendations: which issue is in force, and what an issue changed or would change. */
+.nv-recommended {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--nv-border);
+}
+
+.nv-recommended-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
+.nv-recommended-head svg {
+  vertical-align: -2px;
+  margin-right: 6px;
+}
+
+.nv-recommended > p {
+  margin: 0;
+}
+
+.nv-recommended-inline {
+  border-radius: var(--nv-radius-s);
+}
+
+.nv-recommended-inline > span:first-child > svg {
+  vertical-align: -2px;
+  margin-right: 6px;
+}
+
+.nv-recommended-notice {
+  border-bottom-color: color-mix(in srgb, var(--nv-brand) 30%, transparent);
+}
+
+/* ── One person's page: their picture large beside who they are ── */
+.nv-person-page {
+  display: grid;
+  grid-template-columns: minmax(220px, 340px) minmax(0, 1fr);
+  align-items: start;
+  gap: 20px;
+}
+
+/* Nobody has drawn them yet: the empty frame keeps its place without taking a third of the page. */
+.nv-person-page.is-bare {
+  grid-template-columns: minmax(150px, 200px) minmax(0, 1fr);
+}
+
+/* The list beside a person's page is narrower than a list beside a form: the page has a picture to give room to. */
+.nv-split.nv-people,
+.nv-split.nv-people.has-photos {
+  grid-template-columns: minmax(200px, 264px) minmax(0, 1fr);
+}
+
+.nv-person-figure {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.nv-person-picture {
+  display: block;
+  width: 100%;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--nv-border);
+  border-radius: calc(var(--nv-radius) + 2px);
+  background: var(--nv-surface-2);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.16);
+  cursor: zoom-in;
+}
+
+.nv-person-picture img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+  object-position: top;
+  transition: transform 0.25s ease;
+}
+
+/* A design sheet is three figures side by side: shown whole, never cropped to one. */
+.nv-person-picture.is-wide img {
+  aspect-ratio: 3 / 2;
+  object-fit: contain;
+}
+
+.nv-person-picture:not(.is-empty):hover img {
+  transform: scale(1.02);
+}
+
+.nv-person-picture.is-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  aspect-ratio: 3 / 4;
+  color: var(--nv-text-3);
+  background: linear-gradient(160deg, var(--nv-surface), var(--nv-surface-2));
+  box-shadow: none;
+  cursor: default;
+}
+
+.nv-person-picture.is-empty span {
+  font-family: var(--nv-prose-font);
+  font-size: 64px;
+  line-height: 1;
+  opacity: 0.55;
+}
+
+.nv-person-picture.is-empty em {
+  font-size: 12px;
+  font-style: normal;
+}
+
+.nv-person-thumbs {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+}
+
+.nv-person-thumbs > button {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  width: 64px;
+  padding: 3px;
+  border: 1px solid var(--nv-border);
+  border-radius: var(--nv-radius-s);
+  background: var(--nv-bg);
+  color: var(--nv-text-2);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.nv-person-thumbs > button.is-wide {
+  width: 88px;
+}
+
+.nv-person-thumbs > button.is-active {
+  border-color: var(--nv-brand);
+  box-shadow: 0 0 0 1px var(--nv-brand);
+  color: var(--nv-text);
+}
+
+.nv-person-thumbs img {
+  display: block;
+  width: 100%;
+  height: 56px;
+  border-radius: 3px;
+  object-fit: cover;
+  object-position: top;
+}
+
+.nv-person-thumbs span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nv-person-draw {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.nv-person-draw > .nv-btn {
+  flex: 1 1 auto;
+  justify-content: center;
+}
+
+.nv-person-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+.nv-person-title {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.nv-person-title h2 {
+  font-family: var(--nv-prose-font);
+  font-size: 24px;
+  line-height: 1.25;
+}
+
+.nv-person-tagline {
+  margin: 0;
+  color: var(--nv-text-2);
+  font-family: var(--nv-prose-font);
+  font-size: 14.5px;
+  line-height: 1.6;
+}
+
+.nv-person-large {
+  display: block;
+  max-width: 100%;
+  max-height: calc(100cqh - 180px);
+  margin: 0 auto;
+  border-radius: var(--nv-radius-s);
+  object-fit: contain;
+}
+
+/* The notes of the ensemble, folded to a line beside the cards. */
+.nv-advice-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--nv-warn) 35%, var(--nv-border));
+  border-radius: var(--nv-radius-s);
+  background: color-mix(in srgb, var(--nv-warn) 7%, transparent);
+  color: var(--nv-text);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nv-advice-line > span:nth-of-type(1) {
+  flex: none;
+  font-weight: 600;
+}
+
+.nv-advice-line > .nv-muted {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The page narrow (a sidebar tab, a small window): the picture goes above, at a size that still reads. */
+@container studio (max-width: 900px) {
+  .nv-person-page {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .nv-person-figure {
+    position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: flex-end;
+  }
+
+  .nv-person-picture {
+    flex: none;
+    width: min(46%, 220px);
+  }
+
+  .nv-person-picture.is-wide {
+    width: min(100%, 420px);
+  }
+
+  .nv-person-thumbs,
+  .nv-person-draw {
+    flex: 1 1 180px;
+  }
+}
+
+@container studio (max-width: 680px) {
+  .nv-split.nv-people,
+  .nv-split.nv-people.has-photos {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ───────────── The home page: a banner, the shelf, who made this ───────────── */
+.nv-home-page {
+  max-width: 1040px;
+  gap: 18px;
+}
+
+/*
+ * The banner is a poster with a palette of its own — the sky blue the whale maid
+ * is painted on — so that the picture runs into it without an edge, in the light
+ * theme and in the dark one alike.
+ */
+.nv-home-hero {
+  position: relative;
+  display: flex;
+  flex: none;
+  align-items: stretch;
+  min-height: 236px;
+  overflow: hidden;
+  border-radius: 18px;
+  background: linear-gradient(105deg, #f4f8ff 0%, #e8f0fe 46%, #d3e1fc 100%);
+  box-shadow: 0 10px 30px rgba(40, 70, 150, 0.14);
+  color: #1b2a55;
+}
+
+.nv-home-hero-text {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 26px 12px 26px 30px;
+}
+
+.nv-home-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.nv-home-brand img {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(40, 70, 150, 0.22);
+}
+
+.nv-home-brand h1 {
+  color: #14224a;
+  font-family: var(--nv-prose-font);
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.nv-home-hero-text > p {
+  max-width: 480px;
+  margin: 0;
+  color: #44558a;
+  font-size: 13.5px;
+  line-height: 1.7;
+}
+
+.nv-home-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.nv-home-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 18px 10px 14px;
+  border: 1px solid rgba(47, 85, 212, 0.28);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #1f3470;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  transition: transform 0.14s ease, box-shadow 0.14s ease, background-color 0.14s ease;
+}
+
+.nv-home-cta > span {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.nv-home-cta strong {
+  font-size: 14.5px;
+  font-weight: 650;
+}
+
+.nv-home-cta small {
+  font-size: 11.5px;
+  opacity: 0.72;
+}
+
+.nv-home-cta:hover {
+  background: #fff;
+  box-shadow: 0 6px 18px rgba(40, 70, 150, 0.2);
+  transform: translateY(-1px);
+}
+
+.nv-home-cta.is-primary {
+  border-color: transparent;
+  background: linear-gradient(135deg, #3f6bf0, #2a4ed0);
+  box-shadow: 0 6px 16px rgba(42, 78, 208, 0.32);
+  color: #fff;
+}
+
+.nv-home-cta.is-primary:hover {
+  background: linear-gradient(135deg, #4a76f6, #3158dc);
+  box-shadow: 0 8px 22px rgba(42, 78, 208, 0.4);
+}
+
+.nv-home-cta:focus-visible {
+  outline: 2px solid #2a4ed0;
+  outline-offset: 2px;
+}
+
+/* The picture stands at the right, as tall as the banner, and fades into it on its left. */
+.nv-home-hero-art {
+  flex: none;
+  align-self: stretch;
+  width: auto;
+  height: auto;
+  max-height: 280px;
+  min-height: 236px;
+  margin-top: 8px;
+  aspect-ratio: 876 / 1024;
+  object-fit: cover;
+  object-position: center top;
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 22%);
+  mask-image: linear-gradient(to right, transparent 0, #000 22%);
+  pointer-events: none;
+  user-select: none;
+}
+
+.nv-home-shelf {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.nv-home-shelf-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.nv-home-shelf-head h2 {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-family: var(--nv-prose-font);
+  font-size: 18px;
+}
+
+.nv-home-shelf-head h2 .nv-muted {
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.nv-home-page .nv-shelf {
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: 22px 16px;
+}
+
+.nv-home-page .nv-shelf-cover {
+  border-radius: var(--nv-radius);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.14);
+}
+
+.nv-home-page .nv-shelf-open:hover:not(:disabled) .nv-shelf-cover {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 26px rgba(0, 0, 0, 0.2);
+}
+
+/* The ways into a book, under it: only those there is something for. */
+.nv-shelf-ways {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px;
+  margin-top: 6px;
+  font-size: 11.5px;
+}
+
+.nv-shelf-ways > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  border: 1px solid color-mix(in srgb, var(--nv-brand) 35%, var(--nv-border));
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--nv-brand) 8%, transparent);
+  color: var(--nv-text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.nv-shelf-ways > button:hover:not(:disabled) {
+  border-color: var(--nv-brand);
+  background: color-mix(in srgb, var(--nv-brand) 16%, transparent);
+}
+
+/* The way to a book's workbench stands on its cover: a box laid over the cover, the button in its corner. */
+.nv-shelf-over {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  aspect-ratio: 3 / 4;
+  pointer-events: none;
+}
+
+.nv-shelf-edit {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 12px;
+  background: rgba(18, 22, 34, 0.72);
+  color: #fff;
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+  pointer-events: auto;
+  backdrop-filter: blur(6px);
+  transition: background-color 0.14s ease, transform 0.14s ease;
+}
+
+.nv-shelf-edit:hover:not(:disabled) {
+  background: var(--nv-brand);
+  transform: translateY(-1px);
+}
+
+.nv-shelf-edit:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+.nv-shelf-ways > button:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+/* The last place on the shelf is where the next book goes. */
+.nv-shelf-new {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  aspect-ratio: 3 / 4;
+  align-self: start;
+  border: 1.5px dashed var(--nv-border-strong);
+  border-radius: var(--nv-radius);
+  background: transparent;
+  color: var(--nv-text-3);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: border-color 0.14s ease, color 0.14s ease, background-color 0.14s ease;
+}
+
+.nv-shelf-new:hover {
+  border-color: var(--nv-brand);
+  background: color-mix(in srgb, var(--nv-brand) 6%, transparent);
+  color: var(--nv-brand-text, var(--nv-brand));
+}
+
+.nv-home-empty {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 22px;
+  padding: 26px 20px;
+  border: 1px dashed var(--nv-border-strong);
+  border-radius: 18px;
+}
+
+.nv-home-empty img {
+  width: 176px;
+  height: 176px;
+  border-radius: 24px;
+  box-shadow: 0 8px 22px rgba(40, 70, 150, 0.18);
+}
+
+.nv-home-empty > div {
+  display: flex;
+  flex: 1 1 240px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 420px;
+}
+
+.nv-home-empty strong {
+  font-family: var(--nv-prose-font);
+  font-size: 18px;
+}
+
+.nv-home-empty p {
+  margin: 0;
+  line-height: 1.7;
+}
+
+.nv-credits {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 4px 14px;
+  margin-top: auto;
+  padding-top: 18px;
+  border-top: 1px solid var(--nv-border);
+  color: var(--nv-text-3);
+  font-size: 12px;
+}
+
+.nv-credits-art {
+  cursor: help;
+}
+
+/* Whom a conversation is about. */
+.nv-talk-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.nv-talk-list button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--nv-border);
+  border-radius: var(--nv-radius);
+  background: var(--nv-bg);
+  color: var(--nv-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nv-talk-list button:hover:not(:disabled) {
+  border-color: var(--nv-brand);
+  background: color-mix(in srgb, var(--nv-brand) 6%, transparent);
+}
+
+.nv-talk-list button:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+.nv-talk-list button.is-new {
+  border-style: dashed;
+}
+
+.nv-talk-cover {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 48px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--nv-surface-2);
+  color: var(--nv-text-3);
+}
+
+.nv-talk-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.nv-talk-cover.is-new {
+  background: color-mix(in srgb, var(--nv-brand) 12%, transparent);
+  color: var(--nv-brand-text, var(--nv-brand));
+}
+
+.nv-talk-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.nv-talk-text .nv-muted {
+  overflow: hidden;
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Starting something new has a page of its own. */
+.nv-new-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+}
+
+.nv-new-title h1 {
+  font-family: var(--nv-prose-font);
+  font-size: 24px;
+}
+
+.nv-new-title p {
+  margin: 4px 0 0;
+}
+
+.nv-new-art {
+  width: 120px;
+  height: 120px;
+  border-radius: 22px;
+  box-shadow: 0 8px 22px rgba(40, 70, 150, 0.18);
+}
+
+@container studio (max-width: 620px) {
+  .nv-home-hero {
+    min-height: 0;
+  }
+
+  .nv-home-hero-text {
+    padding: 20px 18px;
+  }
+
+  .nv-home-brand h1 {
+    font-size: 24px;
+  }
+
+  /* Narrow, the picture stands behind the words, light enough to read over. */
+  .nv-home-hero-art {
+    position: absolute;
+    right: -30px;
+    bottom: 0;
+    min-height: 0;
+    height: 100%;
+    opacity: 0.28;
+    -webkit-mask-image: linear-gradient(to right, transparent 0, #000 45%);
+    mask-image: linear-gradient(to right, transparent 0, #000 45%);
+  }
+
+  .nv-new-head {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .nv-new-art {
+    display: none;
+  }
+}
+
+/* ── Watching a chapter in the reader: the motion comic where the page was ── */
+.nv-reader-watch {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px max(14px, calc((100% - 60em) / 2)) 40px;
+}
+
+.nv-reader-watch-title {
+  margin: 4px 0 0;
+  font-family: var(--nv-prose-font);
+  font-size: 19px;
+}
+
+.nv-reader-watch-turn {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+/* ── Where the voice is: a mark that runs through the line being spoken, at the pace it is spoken ── */
+.nv-reader-page.is-listening .nv-said.is-speaking {
+  background-color: color-mix(in srgb, var(--nv-brand) 9%, transparent);
+  background-image: linear-gradient(color-mix(in srgb, var(--nv-brand) 26%, transparent), color-mix(in srgb, var(--nv-brand) 26%, transparent));
+  background-repeat: no-repeat;
+  background-size: 0% 100%;
+  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--nv-brand) 70%, transparent);
+  animation: nv-say var(--nv-say, 3s) linear forwards;
+}
+
+.nv-reader-page.is-listening .nv-said.is-speaking.is-held {
+  animation-play-state: paused;
+}
+
+@keyframes nv-say {
+  to { background-size: 100% 100%; }
+}
+
+/* In the script: the row being spoken has a bright edge, and a line under it that fills as the voice goes. */
+.nv-line.is-current .nv-line-row {
+  position: relative;
+  box-shadow: inset 3px 0 0 var(--nv-brand);
+}
+
+.nv-line.is-current .nv-line-row::after {
+  content: '';
+  position: absolute;
+  right: 8px;
+  bottom: 0;
+  left: 8px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--nv-brand);
+  transform: scaleX(0);
+  transform-origin: left center;
+  animation: nv-say-line var(--nv-say, 3s) linear forwards;
+}
+
+.nv-line.is-current.is-held .nv-line-row::after {
+  animation-play-state: paused;
+}
+
+@keyframes nv-say-line {
+  to { transform: scaleX(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nv-reader-page.is-listening .nv-said.is-speaking,
+  .nv-line.is-current .nv-line-row::after {
+    animation: none;
+  }
+
+  .nv-reader-page.is-listening .nv-said.is-speaking {
+    background-size: 100% 100%;
+  }
+}
+
+/* A picture of the chapter, where the script reaches it. */
+.nv-line-figure {
+  margin: 10px 0 14px;
+}
+
+.nv-line-figure img {
+  max-height: 46vh;
+}
+
+/* ── Publishing a book as a site ── */
+.nv-site-options {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.nv-site-sealed {
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--nv-warn) 45%, var(--nv-border));
+  border-radius: var(--nv-radius-s);
+  background: color-mix(in srgb, var(--nv-warn) 8%, transparent);
+}
+
+.nv-site-done {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* ── The bible's entries: a place or a thing with its picture ── */
+.nv-entry-row {
+  align-items: center;
+  gap: 8px;
+}
+
+.nv-entry-thumb {
+  display: block;
+  flex: none;
+  width: 44px;
+  height: 32px;
+  border-radius: 4px;
+  background: var(--nv-surface-2);
+  object-fit: cover;
+}
+
+.nv-entry-thumb.is-empty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--nv-text-3);
+}
+
+.nv-entry-picture {
+  display: block;
+  width: 100%;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--nv-border);
+  border-radius: calc(var(--nv-radius) + 2px);
+  background: var(--nv-surface-2);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.16);
+  cursor: zoom-in;
+}
+
+.nv-entry-picture img {
+  display: block;
+  width: 100%;
+  max-height: 380px;
+  object-fit: cover;
+}
+
+/* A thing is drawn alone on a plain ground: shown whole, at the size of a picture on a page. */
+.nv-entry-picture.is-item {
+  width: min(100%, 320px);
+}
+
+.nv-entry-picture.is-item img {
+  aspect-ratio: 1;
+  max-height: none;
+  object-fit: contain;
+}
+
+/* ── A life on the page: the strip of chapters, the line that says it, the notes behind a fold ── */
+.nv-life {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.nv-life-strip {
+  display: flex;
+  gap: 1px;
+  height: 22px;
+  padding: 3px;
+  border: 1px solid var(--nv-border);
+  border-radius: var(--nv-radius-s);
+  background: var(--nv-surface);
+}
+
+.nv-life-tick {
+  flex: 1 1 0;
+  min-width: 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 1.5px;
+  background: color-mix(in srgb, var(--nv-text) 9%, transparent);
+  cursor: pointer;
+}
+
+.nv-life-tick.is-unread {
+  background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--nv-text) 9%, transparent) 0 2px, transparent 2px 4px);
+}
+
+.nv-life-tick.is-on {
+  background: var(--nv-brand);
+}
+
+.nv-life-tick.is-enter,
+.nv-life-tick.is-return {
+  background: var(--nv-ok, #2e9e5b);
+}
+
+.nv-life-tick.is-exit {
+  background: var(--nv-warn);
+}
+
+.nv-life-tick.is-death {
+  background: var(--nv-error);
+}
+
+.nv-life-tick:hover {
+  outline: 2px solid var(--nv-text);
+  outline-offset: 1px;
+}
+
+.nv-life-line {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+
+.nv-life-line .is-dead {
+  color: var(--nv-error);
+}
+
+.nv-life-events {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12.5px;
+}
+
+.nv-life-events > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  padding-left: 8px;
+  border-left: 2px solid var(--nv-border);
+}
+
+.nv-life-events > li.is-enter,
+.nv-life-events > li.is-return {
+  border-left-color: var(--nv-ok, #2e9e5b);
+}
+
+.nv-life-events > li.is-exit {
+  border-left-color: var(--nv-warn);
+}
+
+.nv-life-events > li.is-death {
+  border-left-color: var(--nv-error);
+}
+
+/* The people page: which line of the plot, and the board at a chapter of it. */
+.nv-cast-line,
+.nv-cast-moment {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 8px;
+}
+
+.nv-cast-line .nv-select {
+  width: auto;
+  max-width: 260px;
+}
+
+.nv-cast-slider {
+  flex: 1 1 220px;
+  max-width: 520px;
+}
+
+/* ── The script as a reader has it: set in the reader's own type ── */
+.nv-script-page {
+  max-width: 46em;
+  padding-top: 24px;
+}
+
+.nv-script-page .nv-line-body p {
+  font-size: 1em;
+  line-height: 1.8;
+}
+
+.nv-script-page.is-serif .nv-line-body p,
+.nv-script-page.is-serif .nv-reader-head h1 {
+  font-family: var(--nv-prose-font);
+}
+
+.nv-script-page .nv-line-meta {
+  font-size: 0.78em;
+}
+
+.nv-script-page .nv-cue {
+  font-size: 0.8em;
+}
+
+.nv-script-page .nv-reader-head {
+  margin-bottom: 1.6em;
+}
+
+.nv-script-page .nv-reader-foot {
+  margin-top: 2em;
+}
+
+/* ── Reading settings: one panel, wherever the reader is ── */
+.nv-reader-settings-mask {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  padding: 46px 12px 12px;
+  background: rgba(0, 0, 0, 0.12);
+  animation: nv-fade 0.12s ease-out;
+}
+
+.nv-reader-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(100%, 420px);
+  color: var(--nv-text);
+  font-family: var(--nv-font, inherit);
+  font-size: 13px;
+}
+
+.nv-reader-settings.is-floating {
+  max-height: 100%;
+  padding: 16px;
+  overflow: auto;
+  border: 1px solid var(--nv-border);
+  border-radius: 14px;
+  background: var(--nv-bg);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.22);
+}
+
+.nv-reader-settings-row {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.nv-reader-settings-label {
+  color: var(--nv-text-2);
+  font-size: 12.5px;
+}
+
+.nv-reader-settings-size {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.nv-reader-settings-size .nv-btn {
+  min-width: 52px;
+  justify-content: center;
+}
+
+.nv-reader-settings-value {
+  min-width: 24px;
+  color: var(--nv-text-2);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.nv-reader-settings .nv-seg {
+  flex-wrap: wrap;
+}
+
+.nv-reader-settings .nv-seg > button {
+  min-height: 30px;
+  padding: 4px 10px;
+}
+
+.nv-reader-settings-more {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 4px;
+}
+
+.nv-reader-settings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.nv-reader-settings-list .nv-range {
+  flex: 1;
+  min-width: 80px;
+  max-width: 160px;
+}
+
+.nv-reader-settings-foot {
+  margin: 0;
+}
+
+/* On a phone the panel comes up from the bottom, where a thumb is. */
+@container studio (max-width: 560px) {
+  .nv-reader-settings-mask {
+    align-items: flex-end;
+    justify-content: center;
+    padding: 0;
+  }
+
+  .nv-reader-settings.is-floating {
+    width: 100%;
+    max-height: 78%;
+    padding: 18px 16px calc(18px + env(safe-area-inset-bottom, 0px));
+    border-width: 1px 0 0;
+    border-radius: 18px 18px 0 0;
+  }
+
+  .nv-reader-settings .nv-seg > button {
+    min-height: 38px;
+    padding: 6px 12px;
+  }
+
+  .nv-reader-settings-size .nv-btn {
+    min-width: 64px;
+    min-height: 38px;
+  }
+}
+
+/* The settings panel is laid over the reader, not over the whole Studio. */
+.nv-reader {
+  position: relative;
+}
+
+/* ── Ties: what stands around a thing, on its own page ── */
+.nv-ties {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--nv-border);
+  border-radius: var(--nv-radius);
+  background: var(--nv-surface);
+}
+
+.nv-ties-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.nv-ties-row {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+}
+
+.nv-ties-label {
+  padding-top: 3px;
+  color: var(--nv-text-2);
+  font-size: 12px;
+}
+
+.nv-ties-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.nv-tie {
+  display: inline-flex;
+  align-items: stretch;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--nv-brand) 30%, var(--nv-border));
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--nv-brand) 7%, transparent);
+  font-size: 12.5px;
+}
+
+.nv-tie-open,
+.nv-tie-remove {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  background: transparent;
+  color: var(--nv-text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.nv-tie-open {
+  padding: 2px 4px 2px 9px;
+}
+
+.nv-tie-open em {
+  color: var(--nv-text-3);
+  font-size: 11px;
+  font-style: normal;
+}
+
+.nv-tie-open:hover {
+  background: color-mix(in srgb, var(--nv-brand) 14%, transparent);
+}
+
+.nv-tie-remove {
+  padding: 0 7px 0 3px;
+  color: var(--nv-text-3);
+}
+
+.nv-tie-remove:hover:not(:disabled) {
+  color: var(--nv-error);
+}
+
+/* Places by what is in what. */
+.nv-entry-layout {
+  align-self: flex-start;
+}
+
+.nv-entry-tree,
+.nv-entry-tree ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.nv-entry-children {
+  margin-left: 14px !important;
+  padding-left: 8px !important;
+  border-left: 1px solid var(--nv-border);
+}
+
+/* ── The world, walked ── */
+.nv-explore {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.nv-explore h3 {
+  margin: 4px 0 -4px;
+  font-family: var(--nv-prose-font);
+  font-size: 15px;
+}
+
+.nv-explore-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.nv-explore-top h2 {
+  font-family: var(--nv-prose-font);
+  font-size: 24px;
+}
+
+.nv-explore-top p {
+  max-width: 560px;
+  margin: 4px 0 0;
+}
+
+.nv-explore-trail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 4px;
+  font-size: 12.5px;
+}
+
+.nv-explore-trail > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.nv-explore-hero {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  min-height: 300px;
+  overflow: hidden;
+  border-radius: 18px;
+  background: var(--nv-surface-2);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.2);
+}
+
+.nv-explore-hero.is-bare {
+  min-height: 0;
+  background: linear-gradient(135deg, var(--nv-surface), var(--nv-surface-2));
+  box-shadow: none;
+}
+
+.nv-explore-hero-art {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* A person's picture is a portrait: it stands at the side, whole, instead of being cropped to a band. */
+.nv-explore-hero.is-person:not(.is-bare) {
+  background: #14161c;
+}
+
+.nv-explore-hero.is-person .nv-explore-hero-art {
+  left: auto;
+  width: auto;
+  max-width: 46%;
+  object-fit: contain;
+  object-position: right bottom;
+}
+
+.nv-explore-hero-text {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  width: 100%;
+  padding: 60px 22px 18px;
+  background: linear-gradient(to top, rgba(8, 10, 16, 0.86), rgba(8, 10, 16, 0.5) 62%, transparent);
+  color: #fff;
+}
+
+.nv-explore-hero.is-bare .nv-explore-hero-text {
+  padding-top: 18px;
+  background: none;
+  color: var(--nv-text);
+}
+
+.nv-explore-hero-text h2 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--nv-prose-font);
+  font-size: 28px;
+  letter-spacing: 0.04em;
+}
+
+.nv-explore-hero-text p {
+  max-width: 640px;
+  margin: 0;
+  line-height: 1.7;
+}
+
+.nv-explore-time {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.nv-explore-time .nv-range {
+  flex: 1 1 200px;
+  max-width: 460px;
+}
+
+.nv-explore-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.nv-explore-tile {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0 0 8px;
+  border: 1px solid var(--nv-border);
+  border-radius: 12px;
+  background: var(--nv-bg);
+  color: var(--nv-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.14s ease, box-shadow 0.14s ease, border-color 0.14s ease;
+}
+
+.nv-explore-tile:hover {
+  border-color: var(--nv-brand);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.16);
+  transform: translateY(-2px);
+}
+
+.nv-explore-tile-art {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  background-color: var(--nv-surface-2);
+  object-fit: cover;
+}
+
+.nv-explore-tile.is-person .nv-explore-tile-art {
+  aspect-ratio: 1;
+  object-position: top;
+  font-size: 30px;
+}
+
+.nv-explore-tile-art.is-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--nv-text-3);
+}
+
+.nv-explore-tile-name {
+  padding: 7px 10px 0;
+  font-family: var(--nv-prose-font);
+  font-size: 14.5px;
+  font-weight: 600;
+}
+
+.nv-explore-tile-meta {
+  display: -webkit-box;
+  overflow: hidden;
+  padding: 2px 10px 0;
+  color: var(--nv-text-3);
+  font-size: 11.5px;
+  line-height: 1.5;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+/* Somebody who is not there at the chosen chapter stands back. */
+.nv-explore-tile.is-planned,
+.nv-explore-tile.is-retired,
+.nv-explore-tile.is-dead {
+  opacity: 0.55;
+}
+
+.nv-explore-tile.is-dead .nv-explore-tile-art {
+  filter: grayscale(1);
+}
+
+/* Whatever has no picture is a line with its name. */
+.nv-explore-tile.is-plain {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+}
+
+.nv-explore-tile-mark {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--nv-surface-2);
+  color: var(--nv-text-3);
+  font-family: var(--nv-prose-font);
+  font-size: 16px;
+}
+
+.nv-explore-tile-words {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.nv-explore-tile.is-plain .nv-explore-tile-name,
+.nv-explore-tile.is-plain .nv-explore-tile-meta {
+  padding: 0;
+}
+
+.nv-explore-tile.is-plain .nv-explore-tile-meta {
+  -webkit-line-clamp: 1;
+}
+
+.nv-explore-grid {
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+}
+
+/* A tile with a picture stands taller than a line with a name: each keeps its own height. */
+.nv-explore-grid {
+  align-items: start;
+}
+
+.nv-explore-grid.is-drawn {
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+}
+
+/* ───────────────────────────── the album: people and the world, to be looked at ───────────────────────────── */
+
+.nv-album {
+  width: 100%;
+  max-width: 1080px;
+  margin: 0 auto;
+}
+
+.nv-album-hero-open,
+.nv-album-person-open {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-in;
+}
+
+.nv-album-hero-open {
+  position: absolute;
+  inset: 0;
+}
+
+/* A thing is shown whole on its own ground, not cropped to a band. */
+.nv-explore-hero.is-thing:not(.is-bare) {
+  min-height: min(460px, 62vh);
+  background: #ece7dc;
+}
+
+.nv-explore-hero.is-thing .nv-explore-hero-art {
+  object-fit: contain;
+}
+
+.nv-album-edit {
+  margin-top: 4px;
+}
+
+.nv-explore-hero:not(.is-bare) .nv-album-edit {
+  border-color: rgba(255, 255, 255, 0.5);
+  background: rgba(0, 0, 0, 0.28);
+  color: #fff;
+}
+
+.nv-album-also {
+  opacity: 0.8;
+}
+
+/* Everybody with a picture stands as a card of their own: the leads large. */
+.nv-album-cast {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.nv-album-cast.is-leads {
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 16px;
+}
+
+.nv-album-card {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  border-radius: 14px;
+  background: var(--nv-surface-2);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.16);
+  color: #fff;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.16s ease, box-shadow 0.16s ease;
+}
+
+.nv-album-card:hover {
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.26);
+  transform: translateY(-3px);
+}
+
+.nv-album-card-art {
+  display: block;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  font-size: 40px;
+  transition: transform 0.4s ease;
+}
+
+.nv-album-card:hover .nv-album-card-art {
+  transform: scale(1.04);
+}
+
+.nv-album-card-plate {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 34px 12px 10px;
+  background: linear-gradient(to top, rgba(8, 10, 16, 0.88), rgba(8, 10, 16, 0.42) 60%, transparent);
+}
+
+.nv-album-card-plate strong {
+  font-family: var(--nv-prose-font);
+  font-size: 16px;
+  letter-spacing: 0.04em;
+}
+
+.nv-album-cast.is-leads .nv-album-card-plate strong {
+  font-size: 20px;
+}
+
+.nv-album-card-plate em {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 11.5px;
+  font-style: normal;
+  line-height: 1.45;
+  opacity: 0.86;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.nv-album-card.is-retired,
+.nv-album-card.is-dead {
+  opacity: 0.7;
+}
+
+.nv-album-card.is-dead .nv-album-card-art {
+  filter: grayscale(1);
+}
+
+/* Somebody's page: the picture stands large at the side, what is written of them beside it. */
+.nv-album-person {
+  display: grid;
+  grid-template-columns: minmax(240px, 400px) minmax(0, 1fr);
+  gap: 26px;
+  align-items: start;
+}
+
+.nv-album-person.is-bare {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.nv-album-person-art {
+  position: sticky;
+  top: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.nv-album-person-open {
+  width: 100%;
+  overflow: hidden;
+  border-radius: 16px;
+  background: var(--nv-surface-2);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.22);
+}
+
+.nv-album-person-open img {
+  display: block;
+  width: 100%;
+  max-height: 72vh;
+  object-fit: contain;
+}
+
+.nv-album-person-pick {
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.nv-album-person-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.nv-album-person-text h2 {
+  font-family: var(--nv-prose-font);
+  font-size: 34px;
+  letter-spacing: 0.06em;
+  line-height: 1.2;
+}
+
+.nv-album-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+}
+
+.nv-album-tagline {
+  margin: 2px 0;
+  color: var(--nv-text-2);
+  font-family: var(--nv-prose-font);
+  font-size: 16px;
+  line-height: 1.7;
+}
+
+.nv-album-fact {
+  width: 100%;
+}
+
+.nv-album-fact h4,
+.nv-album-prose h4 {
+  margin: 8px 0 2px;
+  color: var(--nv-text-3);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+}
+
+.nv-album-prose {
+  max-width: 720px;
+  font-family: var(--nv-prose-font);
+  font-size: 15px;
+  line-height: 1.85;
+}
+
+.nv-album-prose p {
+  margin: 0 0 0.5em;
+}
+
+.nv-album-prose ul {
+  margin: 0 0 0.5em;
+  padding-left: 1.3em;
+}
+
+.nv-album-life {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.nv-album-life > .nv-album-track,
+.nv-album-life > .nv-album-events {
+  width: 100%;
+}
+
+/* A life along the chapters: where they are on the page, where it ends, and where the story stands. */
+.nv-album-track {
+  position: relative;
+  height: 10px;
+  max-width: 720px;
+  border-radius: 5px;
+  background: var(--nv-surface-2);
+}
+
+.nv-album-track-span {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 3px;
+  border-radius: 5px;
+  background: var(--nv-brand);
+}
+
+.nv-album-track-end {
+  position: absolute;
+  top: -3px;
+  width: 3px;
+  height: 16px;
+  border-radius: 2px;
+  background: var(--nv-error);
+  transform: translateX(-50%);
+}
+
+.nv-album-track-now {
+  position: absolute;
+  top: -4px;
+  width: 2px;
+  height: 18px;
+  background: var(--nv-text);
+  transform: translateX(-50%);
+}
+
+/* One table for the whole life: the chapter, what it is to them, what happened — whatever the words are long. */
+.nv-album-events {
+  display: grid;
+  grid-template-columns: max-content max-content minmax(0, 1fr);
+  gap: 5px 10px;
+  align-items: baseline;
+  max-width: 760px;
+  margin: 2px 0 0;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  list-style: none;
+}
+
+.nv-album-events li {
+  display: contents;
+}
+
+/* Between the first turns of a life and its last, the chapters left out. */
+.nv-album-events li.is-gap {
+  display: block;
+  grid-column: 1 / -1;
+  height: 0;
+  margin: 3px 0;
+  border-top: 1px dashed var(--nv-border-strong);
+}
+
+.nv-album-event-at {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--nv-text-3);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+}
+
+button.nv-album-event-at {
+  color: var(--nv-brand-text);
+  cursor: pointer;
+}
+
+button.nv-album-event-at:hover {
+  text-decoration: underline;
+}
+
+.nv-album-event-kind {
+  color: var(--nv-text-2);
+  font-size: 12px;
+}
+
+.nv-album-events li.is-enter .nv-album-event-kind,
+.nv-album-events li.is-return .nv-album-event-kind {
+  color: var(--nv-success);
+}
+
+.nv-album-events li.is-death .nv-album-event-kind,
+.nv-album-events li.is-exit .nv-album-event-kind {
+  color: var(--nv-error);
+}
+
+.nv-album-event-what em {
+  color: var(--nv-text-3);
+  font-style: normal;
+}
+
+.nv-album-named {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  font-size: 12.5px;
+}
+
+.nv-album-chapter {
+  min-width: 24px;
+  height: 22px;
+  padding: 0 5px;
+  border: 1px solid var(--nv-border);
+  border-radius: 11px;
+  background: var(--nv-bg);
+  color: var(--nv-text-2);
+  font: inherit;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  line-height: 20px;
+  text-align: center;
+}
+
+button.nv-album-chapter {
+  cursor: pointer;
+}
+
+button.nv-album-chapter:hover {
+  border-color: var(--nv-brand);
+  color: var(--nv-brand-text);
+}
+
+/* The ideas of a world are read, not looked at: each a card of words. */
+.nv-album-ideas {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.nv-album-idea {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--nv-border);
+  border-left: 3px solid var(--nv-brand);
+  border-radius: 10px;
+  background: var(--nv-bg);
+  color: var(--nv-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.14s ease, box-shadow 0.14s ease;
+}
+
+.nv-album-idea:hover {
+  border-color: var(--nv-brand);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
+}
+
+.nv-album-idea strong {
+  font-family: var(--nv-prose-font);
+  font-size: 15px;
+}
+
+.nv-album-idea span {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--nv-text-2);
+  font-size: 12.5px;
+  line-height: 1.6;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+/* A picture, large, over everything: pressed anywhere, it goes. */
+.nv-album-zoom {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  border: 0;
+  background: rgba(6, 7, 10, 0.9);
+  cursor: zoom-out;
+}
+
+.nv-album-zoom img {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 8px;
+  object-fit: contain;
+}
+
+/* The halves of the viewer: the text, the people, the world. */
+.nv-album-tabs {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--nv-radius-s);
+  background: var(--nv-surface-2);
+}
+
+.nv-album-tabs > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: calc(var(--nv-radius-s) - 1px);
+  background: transparent;
+  color: var(--nv-text-2);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.nv-album-tabs > button.is-active {
+  background: var(--nv-bg);
+  color: var(--nv-text);
+  box-shadow: 0 0 0 1px var(--nv-border);
+}
+
+/* The album inside the Studio's viewer: a page of its own under the viewer's bar. */
+.nv-album-page {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 18px 22px 40px;
+}
+
+@container studio (max-width: 720px) {
+  .nv-album-person {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+
+  .nv-album-person-art {
+    position: static;
+  }
+
+  .nv-album-person-open img {
+    max-height: 60vh;
+  }
+
+  .nv-album-person-text h2 {
+    font-size: 28px;
+  }
+
+  .nv-album-page {
+    padding: 14px 14px 32px;
+  }
+
+  .nv-explore-hero {
+    min-height: 220px;
+  }
+
+  .nv-explore-hero-text h2 {
+    font-size: 22px;
+  }
+
+  .nv-album-cast.is-leads {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 12px;
+  }
+
+  .nv-album-cast {
+    grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+    gap: 10px;
+  }
+
+  .nv-explore-grid,
+  .nv-explore-grid.is-drawn {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  }
+
+}
+
+/* Beside a conversation the viewer's bar is short of room: its halves show as their marks, and the chapter's name gives way. */
+@container studio (max-width: 680px) {
+  .nv-reader-bar .nv-album-tabs > button > span {
+    display: none;
+  }
+
+  .nv-reader-bar .nv-album-tabs > button {
+    padding: 0 8px;
+  }
+
+  .nv-reader-bar .nv-album-tabs > button.is-active > span {
+    display: inline;
+  }
+
+  .nv-reader-bar .nv-chapter-select {
+    flex: 1 1 120px;
+    min-width: 0;
+    max-width: 260px;
+  }
+}
+
+/* ───────────────────────────── a place's picture as a scene to step into ───────────────────────────── */
+
+.nv-explore-hero.is-scene {
+  display: block;
+  min-height: 0;
+  background: #101218;
+}
+
+/* The picture keeps its shape at a height that shows it; where the page is narrower than it, it is moved sideways. */
+.nv-scene-pan {
+  display: flex;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.nv-scene-pan::-webkit-scrollbar {
+  display: none;
+}
+
+.nv-scene-stage {
+  --scene-h: min(64vh, 580px);
+  position: relative;
+  flex: none;
+  width: calc(var(--scene-h) * var(--ratio, 1.7778));
+  height: var(--scene-h);
+  margin: 0 auto;
+}
+
+.nv-scene-art {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  cursor: zoom-in;
+  user-select: none;
+}
+
+.nv-explore-hero.is-scene.is-arranging .nv-scene-art {
+  cursor: default;
+  filter: brightness(0.82);
+}
+
+/* The place's name stands over the foot of the scene, and lets a press through to what is under it. */
+.nv-explore-hero.is-scene > .nv-explore-hero-text {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  width: auto;
+  pointer-events: none;
+}
+
+.nv-explore-hero.is-scene > .nv-explore-hero-text > * {
+  pointer-events: auto;
+}
+
+/* A mark: something that stands in the place, where it is in the picture. */
+.nv-scene-spot {
+  position: absolute;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 46%;
+  padding: 4px 11px 4px 5px;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  border-radius: 999px;
+  background: rgba(14, 16, 22, 0.62);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  color: #fff;
+  font: inherit;
+  font-family: var(--nv-prose-font);
+  font-size: 13.5px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  cursor: pointer;
+  transform: translate(-50%, -50%);
+  transition: background 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease, scale 0.16s ease;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.nv-scene-spot:hover,
+.nv-scene-spot:focus-visible {
+  z-index: 2;
+  border-color: #fff;
+  background: rgba(14, 16, 22, 0.82);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.5), 0 0 0 4px rgba(255, 255, 255, 0.16);
+  scale: 1.06;
+}
+
+.nv-scene-spot-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* A place or a house: a point of light that breathes, so the eye finds where to press. */
+.nv-scene-spot-pin {
+  position: relative;
+  flex: none;
+  width: 10px;
+  height: 10px;
+  margin: 0 3px 0 5px;
+  border-radius: 50%;
+  background: #ffd98a;
+  box-shadow: 0 0 0 3px rgba(255, 217, 138, 0.28);
+}
+
+.nv-scene-spot-pin::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border: 1px solid rgba(255, 217, 138, 0.7);
+  border-radius: 50%;
+  animation: nv-scene-breathe 2.6s ease-out infinite;
+}
+
+@keyframes nv-scene-breathe {
+  from { opacity: 0.9; transform: scale(1); }
+  to { opacity: 0; transform: scale(2.4); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nv-scene-spot-pin::after {
+    animation: none;
+  }
+}
+
+/* Somebody: their face. */
+.nv-scene-spot.is-person {
+  padding-left: 4px;
+}
+
+.nv-scene-spot-face {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  font-size: 13px;
+}
+
+.nv-scene-spot.is-planned,
+.nv-scene-spot.is-retired,
+.nv-scene-spot.is-dead {
+  opacity: 0.6;
+}
+
+.nv-scene-spot.is-dead .nv-scene-spot-face {
+  filter: grayscale(1);
+}
+
+/* Arranging: the marks are taken hold of, and one that is pinned says so. */
+.nv-explore-hero.is-scene.is-arranging .nv-scene-spot {
+  cursor: grab;
+  touch-action: none;
+  border-style: dashed;
+}
+
+.nv-explore-hero.is-scene.is-arranging .nv-scene-spot:active {
+  cursor: grabbing;
+}
+
+.nv-explore-hero.is-scene.is-arranging .nv-scene-spot.is-pinned {
+  border-style: solid;
+  border-color: #ffd98a;
+}
+
+.nv-scene-tools {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  max-width: calc(100% - 20px);
+}
+
+.nv-scene-tool {
+  border-color: rgba(255, 255, 255, 0.5);
+  background: rgba(14, 16, 22, 0.6);
+  color: #fff;
+}
+
+.nv-scene-tool.is-active {
+  border-color: #ffd98a;
+  color: #ffd98a;
+}
+
+.nv-scene-hint {
+  max-width: 420px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: rgba(14, 16, 22, 0.72);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+@container studio (max-width: 720px) {
+  .nv-scene-stage {
+    --scene-h: min(52vh, 380px);
+  }
+
+  .nv-scene-spot {
+    font-size: 12.5px;
+  }
+}
+
+/* ── Tidying the bible: what the planner found, a line each to tick ── */
+.nv-tidy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.nv-tidy h3 {
+  font-size: 13px;
+}
+
+.nv-tidy-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--nv-border);
+  border-radius: var(--nv-radius-s);
+  background: var(--nv-bg);
+  cursor: pointer;
+}
+
+.nv-tidy-row > input {
+  margin-top: 4px;
+}
+
+.nv-tidy-what {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.nv-tidy-names {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+
+.nv-tidy-keep {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+}
+
+.nv-tidy-keep .nv-select {
+  width: auto;
+  max-width: 160px;
+  height: 26px;
+  font-size: 12.5px;
+}
+
+.nv-entry-layout-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+/* ── A line of the plot as a world of its own, and two lines held against each other ── */
+.nv-worldline {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--nv-border);
+}
+
+.nv-worldline-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+
+.nv-worldline-standings {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.nv-worldline-standing {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.nv-worldline-standing > .nv-chip {
+  flex: none;
+}
+
+.nv-worldline-names {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  min-width: 0;
+}
+
+.nv-worldline-against {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+}
+
+.nv-worldline-against .nv-select {
+  width: auto;
+  max-width: 240px;
+  height: 26px;
+  font-size: 12.5px;
+}
+
+.nv-worldline-compare {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.nv-worldline-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.nv-worldline-table th,
+.nv-worldline-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--nv-border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.nv-worldline-table thead th {
+  color: var(--nv-text-3);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.nv-worldline-table tbody th {
+  width: 24%;
+  font-weight: 600;
+}
+
+.nv-worldline-table td {
+  width: 38%;
+}
+
+/* A fate that differs is what the comparison is for. */
+.nv-worldline-table tr.is-fate > th {
+  box-shadow: inset 3px 0 0 var(--nv-warn);
+}
+
+/* ── An interlude as it went: the transcript, wherever it is read — where it is played, and as a side story ── */
+.nr-play-scroll {
+  flex: 1;
+  min-height: 0;
+  padding: 16px max(16px, calc((100% - 40em) / 2)) 24px;
+  overflow-y: auto;
+  background-position: center;
+  background-size: cover;
+  font-family: var(--nv-prose-font);
+  font-size: 16px;
+  line-height: 1.85;
+}
+
+.nr-play-scroll p {
+  margin: 0 0 0.6em;
+}
+
+.nr-play-situation {
+  padding: 10px 12px;
+  border-left: 3px solid var(--nv-brand);
+  background: color-mix(in srgb, var(--nv-brand) 8%, transparent);
+  color: var(--nv-text-2);
+  font-size: 0.92em;
+}
+
+.nr-play-turn {
+  margin-top: 1.1em;
+}
+
+.nr-play-input {
+  width: fit-content;
+  max-width: 88%;
+  margin-left: auto !important;
+  padding: 6px 12px;
+  border-radius: 14px 14px 4px 14px;
+  background: var(--nv-primary);
+  color: var(--nv-on-accent);
+  font-family: var(--dsw-font-family, system-ui, sans-serif);
+  font-size: 0.9em;
+}
+
+.nr-play-input.is-do,
+.nr-play-input.is-direct {
+  font-style: italic;
+}
+
+.nr-play-scene {
+  color: var(--nv-text-3);
+  font-family: var(--dsw-font-family, system-ui, sans-serif);
+  font-size: 0.78em;
+  letter-spacing: 0.04em;
+}
+
+.nr-play-narration {
+  text-indent: 2em;
+}
+
+.nr-play-speaker {
+  margin-right: 0.5em;
+  color: var(--nv-brand-text);
+  font-family: var(--dsw-font-family, system-ui, sans-serif);
+  font-size: 0.86em;
+  font-weight: 600;
+}
+
+.nr-play-action {
+  color: var(--nv-text-3);
+  font-size: 0.9em;
+}
+
+
+.nr-play-over {
+  margin-top: 1.4em !important;
+  color: var(--nv-text-3);
+  text-align: center;
+}
+
+/* ── Side stories: the list of them ── */
+.nv-sides {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+.nv-sides-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.nv-side {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--nv-border);
+  border-radius: 12px;
+  background: var(--nv-bg);
+  color: var(--nv-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.14s ease, box-shadow 0.14s ease;
+}
+
+.nv-side:hover {
+  border-color: var(--nv-brand);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
+}
+
+.nv-side-mark {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--nv-surface-2);
+  color: var(--nv-text-3);
+}
+
+.nv-side-words {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.nv-side-words strong {
+  font-family: var(--nv-prose-font);
+  font-size: 15.5px;
+}
+
+.nv-side-words span {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--nv-text-2);
+  font-size: 12.5px;
+  line-height: 1.6;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.nv-side-turns {
+  flex: none;
+  color: var(--nv-text-3);
+  font-size: 12px;
+}
+
+/* A side story read in the Studio's viewer: the transcript on the page, not a screen of its own. */
+.nv-album-page .nr-play-scroll {
+  max-width: 760px;
+  margin: 0 auto;
+  /* The page's own column, not a share of the whole screen's width. */
+  padding: 22px 30px 28px;
+  overflow: visible;
+  border-radius: 14px;
+}
+
+.nv-sides-trail {
+  max-width: 760px;
+  margin: 0 auto 10px;
+}
+
+
+/* ── The course of a place, a house, a thing: what is no more stands back, what is in decline is told so ── */
+.nv-explore-tile.is-gone {
+  opacity: 0.55;
+}
+
+.nv-explore-tile.is-gone .nv-explore-tile-art {
+  filter: grayscale(1);
+}
+
+.nv-album-events li.is-course-begin .nv-album-event-kind {
+  color: var(--nv-success);
+}
+
+.nv-album-events li.is-course-decline .nv-album-event-kind {
+  color: var(--nv-warn);
+}
+
+.nv-album-events li.is-course-end .nv-album-event-kind {
+  color: var(--nv-error);
+}
+
+/* The course of an entry, where it is written down by hand. */
+.nv-course {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--nv-border);
+  border-radius: var(--nv-radius);
+  background: var(--nv-surface);
+}
+
+.nv-course-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) 96px minmax(0, 2fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.nv-course-row .nv-select,
+.nv-course-row .nv-input {
+  height: 28px;
+  font-size: 12.5px;
+}
+
+@container studio (max-width: 720px) {
+  .nv-course-row {
+    grid-template-columns: minmax(0, 1fr) 88px;
+  }
+
+  .nv-course-row > .nv-input {
+    grid-column: 1 / -1;
+  }
 }

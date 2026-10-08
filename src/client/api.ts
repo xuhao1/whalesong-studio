@@ -17,22 +17,41 @@ export class RpcError extends Error {
 }
 
 export interface NovelApi {
-  call<M extends RpcMethod>(method: M, params: RpcParams<M>, signal?: AbortSignal): Promise<RpcResult<M>>
+  /** @param session - the conversation the calling Studio sits beside: work the call starts belongs to it. */
+  call<M extends RpcMethod>(method: M, params: RpcParams<M>, signal?: AbortSignal, session?: string): Promise<RpcResult<M>>
   /** URL of a generated image, audio file or export of a project. */
   media(projectId: string, path: string, options?: { download?: boolean; version?: string | number }): string
 }
 
-export function createApi(connection: ConnectionLike): NovelApi {
+/** What the Studio is told when its Host turns out to be older than itself. */
+export interface ApiOptions {
+  /** A call the Studio knows and its Host does not: the Host was loaded from an earlier build. */
+  onOlderHost?(method: string): void
+  /** The words for it, in the author's language. */
+  olderHostMessage?(): string
+}
+
+export function createApi(connection: ConnectionLike, options: ApiOptions = {}): NovelApi {
   return {
-    async call(method, params, signal) {
+    async call(method, params, signal, session) {
       let result: Awaited<ReturnType<ConnectionLike['rpc']['call']>>
       try {
-        result = await connection.rpc.call('/api', RPC_ENDPOINT, { method, params }, signal)
+        result = await connection.rpc.call('/api', RPC_ENDPOINT, { method, params, ...(session !== undefined ? { session } : {}) }, signal)
       } catch (error) {
         if (signal?.aborted === true) throw new RpcError('novel/cancelled', 'cancelled')
         throw new RpcError('novel/transport', error instanceof Error ? error.message : String(error))
       }
-      if (!result.ok) throw new RpcError(result.error.code, result.error.message, result.error.details)
+      if (!result.ok) {
+        if (result.error.code === 'novel/unknown-method') {
+          try {
+            options.onOlderHost?.(method)
+          } catch {
+            // an observer must not change what the caller is told
+          }
+          throw new RpcError(result.error.code, options.olderHostMessage?.() ?? result.error.message, { ...result.error.details, method })
+        }
+        throw new RpcError(result.error.code, result.error.message, result.error.details)
+      }
       return result.value as RpcResult<typeof method>
     },
     media(projectId, path, options = {}) {

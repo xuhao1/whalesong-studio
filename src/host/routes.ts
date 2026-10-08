@@ -17,7 +17,7 @@ import { ProviderError } from '../core/media/http'
 import { ProjectError } from '../core/project'
 import { errorMessage, isAbort } from '../core/util/async'
 import type { RpcEnvelope, RpcMethod } from '../shared/rpc'
-import { createHandlers } from './rpc'
+import { calling, createHandlers } from './rpc'
 import type { NovelService } from './service'
 
 const RPC_ROUTE = '/api/novel/rpc'
@@ -37,6 +37,10 @@ const MIME: Record<string, string> = {
   '.txt': 'text/plain; charset=utf-8',
   '.html': 'text/html; charset=utf-8',
   '.epub': 'application/epub+zip',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.vtt': 'text/vtt; charset=utf-8',
+  '.srt': 'application/x-subrip; charset=utf-8',
 }
 
 interface Failure {
@@ -75,7 +79,8 @@ export function mountRoutes(ctx: Context, service: NovelService): void {
       if (!Object.hasOwn(handlers, method)) return reply({ ok: false, error: { code: 'novel/unknown-method', message: `unknown method "${method}"`, details: {} } })
       const handler = handlers[method as RpcMethod] as (params: unknown, signal: AbortSignal) => Promise<unknown>
       try {
-        const value = await handler(envelope?.params ?? {}, request.signal)
+        const session = typeof envelope?.session === 'string' && envelope.session.length > 0 ? envelope.session : undefined
+        const value = await calling.run({ ...(session !== undefined ? { session } : {}) }, async () => await handler(envelope?.params ?? {}, request.signal))
         return reply({ ok: true, value: value ?? null })
       } catch (error) {
         const failure = failureOf(error, request.signal)

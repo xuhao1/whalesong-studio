@@ -4,6 +4,11 @@
  * Development launcher: boots DeepSeek Harness Web with this checkout mounted
  * as a bundle, inside an isolated Harness home so nothing touches `~/.dsh`.
  *
+ * What it mounts is the stage (`.dev/stage`): the package with a `lib/` of its
+ * own, built by `npm run check` or `node scripts/build.mjs --stage`. The
+ * checkout's own `lib/` is the released build — a profile that links this
+ * checkout may be running it — and is left alone.
+ *
  *   npm run dev                         # http://127.0.0.1:3199
  *   npm run dev -- --port 4000          # another port
  *   npm run dev -- --workspace ~/novel  # serve a specific workspace directory
@@ -14,7 +19,7 @@
  * `--home` to reuse a home that already has them.
  */
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync, lstatSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readlinkSync, symlinkSync, writeFileSync, rmSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { homedir } from 'node:os'
@@ -39,9 +44,10 @@ if (!existsSync(dsh)) {
   console.error('[dev] node_modules/.bin/dsh is missing — run `npm install` first.')
   process.exit(1)
 }
-if (!existsSync(resolve(root, 'lib/index.js'))) {
-  console.log('[dev] lib/ is missing — building once…')
-  const built = spawnSync(process.execPath, [resolve(root, 'scripts/build.mjs'), '--dev'], { stdio: 'inherit' })
+const stage = resolve(root, '.dev/stage')
+if (!existsSync(resolve(stage, 'lib/index.js'))) {
+  console.log('[dev] the stage is not built yet — building once…')
+  const built = spawnSync(process.execPath, [resolve(root, 'scripts/build.mjs'), '--stage'], { stdio: 'inherit' })
   if (built.status !== 0) process.exit(built.status ?? 1)
 }
 
@@ -62,7 +68,7 @@ if (!existsSync(resolve(profileDir, 'package.json'))) {
 // Mirror what `dsh plugin add <checkout>` records: a linked dependency plus a bundle entry.
 const manifestPath = resolve(profileDir, 'package.json')
 const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
-manifest.dependencies = { ...manifest.dependencies, [pkg.name]: `link:${root}` }
+manifest.dependencies = { ...manifest.dependencies, [pkg.name]: `link:${stage}` }
 const bundles = manifest.dsh?.profile?.bundles ?? []
 if (!bundles.includes(pkg.name)) bundles.push(pkg.name)
 manifest.dsh = { ...manifest.dsh, profile: { ...manifest.dsh?.profile, bundles } }
@@ -70,13 +76,13 @@ writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
 
 const link = resolve(profileDir, 'node_modules', pkg.name)
 mkdirSync(dirname(link), { recursive: true })
-let linked = false
+let linked
 try {
-  linked = lstatSync(link).isSymbolicLink()
-} catch { /* absent */ }
-if (!linked) {
+  linked = readlinkSync(link)
+} catch { /* absent, or not a link */ }
+if (linked !== stage) {
   rmSync(link, { recursive: true, force: true })
-  symlinkSync(root, link, 'dir')
+  symlinkSync(stage, link, 'dir')
 }
 
 console.log(`[dev] home      ${home}`)

@@ -96,6 +96,28 @@ export async function renderStatus(runtime: ProjectRuntime, mode: WorkMode, rela
   }
   if (state.chapters.length > shown) lines.push(zh ? `…… 其余 ${state.chapters.length - shown} 章未列出（detail=full 查看全部，或 novel_read what=outline）` : `… ${state.chapters.length - shown} more chapters not listed (detail=full shows all, or novel_read what=outline)`)
 
+  // The other ways the story goes: what was said above is the main line.
+  const others = state.outline.lines ?? []
+  if (others.length > 0) {
+    lines.push('', zh ? '## 剧情线（上面的大纲是主线；下面是故事的其它走法）' : '## Lines of the plot (the outline above is the main line; these are the other ways the story goes)')
+    const whereOf = (id: string | undefined): string => {
+      if (id === undefined) return zh ? '从开头' : 'from the start'
+      const onMain = state.chapters.find(chapter => chapter.id === id)
+      if (onMain !== undefined) return zh ? `主线第${onMain.index}章之后` : `after main-line chapter ${onMain.index}`
+      const home = others.find(line => line.chapters.some(chapter => chapter.id === id))
+      return home !== undefined ? (zh ? `「${home.title}」的 ${id} 之后` : `after ${id} of "${home.title}"`) : id
+    }
+    for (const line of others) {
+      const info = state.lines?.find(candidate => candidate.id === line.id)
+      const written = info?.chapters.filter(chapter => chapter.hasText).length ?? 0
+      lines.push(`### ${line.title} [${line.id}]${line.shelved === true ? (zh ? '（已搁置）' : ' (put aside)') : ''} — ${whereOf(line.from)}${zh ? '分出' : ''}${line.choice !== undefined ? `${zh ? '，抉择：' : '; the choice: '}${line.choice}` : ''}${line.into !== undefined ? `${zh ? '，汇入 ' : '; arrives at '}${line.into}` : ''}${zh ? `；${line.chapters.length} 章，已写 ${written} 章` : `; ${line.chapters.length} chapters, ${written} written`}${line.premise !== undefined && detail === 'full' ? `\n${line.premise}` : ''}`)
+      for (const chapter of (info?.chapters ?? []).slice(0, detail === 'full' ? 200 : 8)) {
+        const flags = [chapter.status, chapter.hasText ? `${chapter.words}${zh ? '字' : 'w'}` : (zh ? '未写' : 'no text')].join(', ')
+        lines.push(`${chapter.index}. ${chapter.title} [${chapter.id}; ${flags}]`)
+      }
+    }
+  }
+
   lines.push('', zh ? '## 人物' : '## Cast')
   if (state.characters.length === 0) lines.push(zh ? '（暂无）' : '(none)')
   for (const card of state.characters.slice(0, detail === 'full' ? 200 : 30)) {
@@ -119,11 +141,15 @@ export async function renderStatus(runtime: ProjectRuntime, mode: WorkMode, rela
 
   if (state.proposals.length > 0) {
     lines.push('', zh ? '## 待审的修订提案' : '## Pending revision proposals')
-    for (const proposal of state.proposals.slice(0, 20)) lines.push(`- ${proposal.id}: ${proposal.kind} @ ${proposal.chapterId} — ${proposal.instruction.slice(0, 80)}`)
+    const shown = detail === 'full' ? state.proposals : state.proposals.slice(0, 20)
+    for (const proposal of shown) lines.push(`- ${proposal.id}: ${proposal.kind} @ ${proposal.chapterId} — ${proposal.instruction.slice(0, 80)}`)
+    if (shown.length < state.proposals.length) lines.push(zh ? `……另有 ${state.proposals.length - shown.length} 条（detail=full 列出全部）` : `… and ${state.proposals.length - shown.length} more (detail=full lists them all)`)
   }
   if (state.suggestions.length > 0) {
     lines.push('', zh ? '## 待确认的设定建议（novel_bible action=accept_suggestion / dismiss_suggestion）' : '## Bible suggestions waiting (novel_bible action=accept_suggestion / dismiss_suggestion)')
-    for (const suggestion of state.suggestions.slice(0, 20)) lines.push(`- ${suggestion.id}: ${suggestion.title}${suggestion.detail.length > 0 ? ` — ${suggestion.detail.slice(0, 80)}` : ''}`)
+    const shown = detail === 'full' ? state.suggestions : state.suggestions.slice(0, 20)
+    for (const suggestion of shown) lines.push(`- ${suggestion.id}: ${suggestion.title}${suggestion.detail.length > 0 ? ` — ${suggestion.detail.slice(0, 80)}` : ''}`)
+    if (shown.length < state.suggestions.length) lines.push(zh ? `……另有 ${state.suggestions.length - shown.length} 条（detail=full 列出全部）。新人物很多时不必逐条采纳：novel_import action=analyze steps=["cast"] 会按出场多少归并人物表。` : `… and ${state.suggestions.length - shown.length} more (detail=full lists them all). When most are new characters there is no need to accept them one by one: novel_import action=analyze steps=["cast"] makes the cast by how much each is on the page.`)
   }
   const recent = (state.activity ?? []).slice(0, detail === 'full' ? 20 : 6)
   if (recent.length > 0) {

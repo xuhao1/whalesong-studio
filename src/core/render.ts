@@ -128,11 +128,26 @@ const POV_LABEL: Record<NonNullable<StyleProfile['pov']>, [string, string]> = {
   'multi': ['多视角轮换（每个场景只用一个视角，换视角须换场景）', 'rotating viewpoints (one viewpoint per scene; switch only at scene breaks)'],
 }
 
+/** How much of the style block the author's samples may take, in characters: all of them when they are short, the first ones when they are long. */
+const EXEMPLAR_CHARS = 9000
+
+/** The items from the front that fit a size together; the first always does. */
+function fitting<T>(items: readonly T[], size: (item: T) => number, room: number): T[] {
+  const out: T[] = []
+  let used = 0
+  for (const item of items) {
+    if (out.length > 0 && used + size(item) > room) break
+    out.push(item)
+    used += size(item)
+  }
+  return out
+}
+
 /** A style profile as instructions to the writer. */
 export function renderStyle(style: StyleProfile | undefined, lang: PromptLanguage): string {
   if (style === undefined) return L(lang, '（未设定文风：使用克制、具体、有画面感的现代小说笔法。）', '(No style set: write restrained, concrete, sensory modern prose.)')
   const bullets = (items: string[] | undefined): string | undefined => items !== undefined && items.length > 0 ? items.map(item => `- ${item}`).join('\n') : undefined
-  const exemplars = style.exemplars?.slice(0, 3).map((exemplar, index) => `${L(lang, '范文', 'Sample')} ${index + 1}${exemplar.label !== undefined ? ` (${exemplar.label})` : ''}:\n"""\n${exemplar.text.trim()}\n"""`).join('\n\n')
+  const exemplars = fitting(style.exemplars ?? [], exemplar => exemplar.text.length, EXEMPLAR_CHARS).map((exemplar, index) => `${L(lang, '范文', 'Sample')} ${index + 1}${exemplar.label !== undefined ? ` (${exemplar.label})` : ''}:\n"""\n${exemplar.text.trim()}\n"""`).join('\n\n')
   return join([
     line(L(lang, '文风', 'Style'), style.name, lang),
     line(L(lang, '叙事视角', 'Point of view'), style.pov !== undefined ? POV_LABEL[style.pov][lang === 'zh' ? 0 : 1] : undefined, lang),

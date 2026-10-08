@@ -61,10 +61,9 @@ describe('services', () => {
   it('recommends a complete setup per service and lets parts be picked', () => {
     for (const service of ['bailian', 'openrouter', 'openai'] as const) {
       const setup = recommendedSetup(service)!
-      for (const role of ['writer', 'analyst', 'architect', 'director'] as const) {
-        expect(isDirect(setup.text[role])).toBe(true)
-        expect(serviceOf(setup.text[role].baseURL)).toBe(service)
-      }
+      // Text models are DSH's to configure: a setup fills only what is the Studio's own.
+      expect(Object.keys(setup).sort()).toEqual(['embedding', 'image', 'suggestions', 'tts'])
+      expect(serviceOf(setup.embedding.baseURL)).toBe(service)
       expect(setup.embedding.provider).toBe('openai')
       expect(setup.image.provider).not.toBe('none')
       expect(setup.tts.provider).not.toBe('none')
@@ -78,8 +77,9 @@ describe('services', () => {
 
   it('merges a setup into saved settings without losing the rest', () => {
     const setup = recommendedSetup('openrouter')!
-    const merged = mergeSettings(structuredClone(DEFAULT_SETTINGS), { ...setupPatch(setup, ['text', 'image']), setup: { done: true } })
-    expect(merged.models.writer?.model).toBe(setup.text.writer.model)
+    const merged = mergeSettings(structuredClone(DEFAULT_SETTINGS), { ...setupPatch(setup, ['image']), models: { writer: { provider: 'deepseek', model: 'deepseek-v4-pro' } }, setup: { done: true } })
+    // A setup leaves the text roles alone.
+    expect(merged.models).toEqual({ writer: { provider: 'deepseek', model: 'deepseek-v4-pro' } })
     expect(merged.image.provider).toBe('openrouter')
     expect(merged.tts.provider).toBe('none')
     expect(merged.setup?.done).toBe(true)

@@ -9,6 +9,7 @@
  *               the Host provides (the Codex Connect plugin or the Codex CLI);
  *               it has no key of its own.
  */
+import { providerDefault } from '../../shared/recommended'
 import { compatibleBase, originOf } from '../../shared/services'
 import type { CodexBridgeKind, ImageProviderKind, ImageSettings } from '../../shared/types'
 import { download, postJson, ProviderError, requireKey, trimBase, type KeySource } from './http'
@@ -38,8 +39,8 @@ export interface ImageResult {
   referencesUsed?: number
 }
 
-/** Most models take a handful of references at best; three faces is also about what one picture can hold. */
-export const MAX_REFERENCES = 3
+/** The most reference images a request is sent with, whatever was asked: no image model the Studio talks to takes more. How many a picture gets is the author's setting (`image.references`). */
+export const MAX_REFERENCES = 10
 
 function dataUrl(reference: ImageReference): string {
   return `data:${reference.mime};base64,${Buffer.from(reference.data).toString('base64')}`
@@ -144,7 +145,7 @@ class DashScopeImages implements ImageProvider {
   readonly model: string
 
   constructor(private readonly settings: ImageSettings, private readonly keys: KeySource) {
-    this.model = settings.model ?? 'qwen-image-3.0'
+    this.model = settings.model ?? providerDefault('image', 'dashscope').model
   }
 
   async generate(request: ImageRequest): Promise<ImageResult> {
@@ -181,7 +182,7 @@ class OpenAiImages implements ImageProvider {
   readonly model: string
 
   constructor(private readonly settings: ImageSettings, private readonly keys: KeySource) {
-    this.model = settings.model ?? 'gpt-image-2'
+    this.model = settings.model ?? providerDefault('image', 'openai').model
   }
 
   async generate(request: ImageRequest): Promise<ImageResult> {
@@ -232,7 +233,7 @@ class OpenRouterImages implements ImageProvider {
   readonly model: string
 
   constructor(private readonly settings: ImageSettings, private readonly keys: KeySource) {
-    this.model = settings.model ?? 'openai/gpt-image-2.5-sunburst'
+    this.model = settings.model ?? providerDefault('image', 'openrouter').model
   }
 
   async generate(request: ImageRequest): Promise<ImageResult> {

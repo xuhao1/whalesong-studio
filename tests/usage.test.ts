@@ -93,7 +93,7 @@ describe('the usage ledger', () => {
     await illustrate(bed.core, bed.runtime, { kind: 'sheet', target: card.id }, { origin: 'user' })
     const events = await bed.core.usage.read()
     expect(events.map(event => event.kind)).toEqual(['text', 'image'])
-    expect(events[0]).toMatchObject({ role: 'analyst', model: 'fake-model', via: 'fake', input: 1200, output: 40, book: bed.runtime.project.root, bookTitle: '测试之书' })
+    expect(events[0]).toMatchObject({ role: 'director', model: 'fake-model', via: 'fake', input: 1200, output: 40, book: bed.runtime.project.root, bookTitle: '测试之书' })
     expect(events[0]!.estimated).toBeUndefined()
     expect(events[1]).toMatchObject({ kind: 'image', model: 'gpt-image', via: 'codex', images: 1, book: bed.runtime.project.root })
     // An endpoint that reports nothing is counted by the length of the text.

@@ -7,11 +7,12 @@
  */
 import { useEffect, useState } from 'react'
 import type { AmbiencePreset, AudioCue, AudioLine, AudioLineKind, AudioScript, ChapterInfo, JobInfo, SoundKind } from '../../shared/types'
+import { inBatch, type ChapterJob } from '../Batch'
 import { Icon } from '../icons'
 import { AMBIENCE, TAKE_ISSUE, TAKE_ISSUE_HINT } from '../labels'
 import { cueCaption, formatDuration, usePlayerOptions } from '../reader/parts'
 import {
-  Button, Chip, cx, Field, Modal, Progress, Select, Spinner, TextArea, TextInput, useAction, useMediaUrl, useProject, useSnapshot, useStudio, useT, type Translate,
+  Button, Chip, cx, Field, Modal, Progress, ProjectImage, Select, Spinner, TextArea, TextInput, useAction, useConfirm, useMediaUrl, useProject, useSnapshot, useStudio, useT, type Translate,
 } from '../ui'
 import { NeedsSetup } from '../views/Settings'
 import type { LinePlayer, PlayerOptions, PlayerState } from './player'
@@ -103,13 +104,12 @@ function generated(cues: readonly AudioCue[], beds: 'generate' | 'browser'): Aud
  * next, and what is running. Shown above the page in the reader's listening
  * mode — only to the author.
  */
-export function AudioDesk({ chapter, view, job, player, body, onBody, onChanged }: {
+export function AudioDesk({ chapter, view, job, player, onBody, onChanged }: {
   chapter: ChapterInfo
   view: ScriptView
-  job: JobInfo | undefined
+  job: ChapterJob | undefined
   player: LinePlayer
-  /** What the page under the desk shows: the prose, or the script line by line. */
-  body: 'text' | 'script'
+  /** Turn the page under the desk to the prose, or to the script line by line: the desk points at lines there. */
   onBody: (body: 'text' | 'script') => void
   /** The script was changed from the desk. */
   onChanged?: () => void
@@ -119,6 +119,7 @@ export function AudioDesk({ chapter, view, job, player, body, onBody, onChanged 
   const { project, root } = useProject()
   const [exported, setExported] = useState<{ path: string; duration: number; missing: number } | undefined>()
   const { busy, run } = useAction()
+  const confirmScript = useConfirm()
   const script = view.script
   const all = script?.lines ?? []
   // Lines left unspoken — "he said" between two voices — are not waiting for a voice.
@@ -128,17 +129,30 @@ export function AudioDesk({ chapter, view, job, player, body, onBody, onChanged 
   const failed = lines.filter(line => line.error !== undefined).length
   const flagged = lines.filter(line => line.check !== undefined).length
   const duration = lines.reduce((sum, line) => sum + (line.duration ?? 0), 0)
-  const working = busy || job !== undefined
+  // A batch that has this chapter on its list is at work on it even between its steps.
+  const batch = inBatch(useSnapshot(snapshot => snapshot.jobs), chapter.id)
+  const working = busy || job !== undefined || batch !== undefined
   const soundReady = useSnapshot(snapshot => snapshot.settings?.ready.sound) === true || view.sound !== undefined
   const cues = script?.cues ?? []
   const toMake = generated(cues, view.sound?.beds ?? 'generate')
   const made = toMake.filter(cue => cue.audio !== undefined).length
+  // Something of the audio version is still to make: no script, lines without a voice, or sounds a model could make and has not.
+  const incomplete = script === undefined || (!view.stale && (voiced < lines.length || (soundReady && made < toMake.length)))
   const start = (method: 'audio.build' | 'audio.synthesize', params: { force?: boolean; lines?: string[] } = {}): Promise<unknown> | undefined => {
     // Without a speech model there is nothing to start: say so, and show the way to the settings.
     if (method === 'audio.synthesize' && !controller.need('tts')) return undefined
     return run(async () => {
       player.stop()
       await controller.api.call(method, { root, chapter: chapter.id, ...params })
+      await controller.refreshJobs()
+    })
+  }
+  /** Script, voices and — where something can make it — sound, in one go; what is there already is not made again. */
+  const makeAll = (): Promise<unknown> | undefined => {
+    if (!controller.need('tts')) return undefined
+    return run(async () => {
+      player.stop()
+      await controller.api.call('batch.stage', { root, chapters: [chapter.id], steps: ['script', 'voice', ...(soundReady ? ['sound' as const] : [])] })
       await controller.refreshJobs()
     })
   }
@@ -188,30 +202,28 @@ export function AudioDesk({ chapter, view, job, player, body, onBody, onChanged 
         {view.stale ? <Chip tone="amber" title={t('正文在脚本生成之后改过', 'The text changed after this script was made')}>{t('脚本已过期', 'Script is stale')}</Chip> : null}
       </div>
       <div className="nv-row-wrap">
-        {script === undefined
-          ? <Button variant="primary" icon="headphones" busy={synthesizing} disabled={working} pending={t('正在生成有声版…', 'Making the audio version…')} onClick={() => start('audio.synthesize')}>{t('生成有声版', 'Make the audio version')}</Button>
+        {incomplete
+          ? <Button variant="primary" icon="headphones" busy={job?.batch === true || (script === undefined && synthesizing)} disabled={working} pending={t('正在生成有声版…', 'Making the audio version…')} onClick={makeAll} title={soundReady ? t('一次做完：编排脚本、合成每一句的配音、生成环境声、音效和配乐。已经做好的不会重做。', 'All in one go: the script, a voice for every line, and the ambience, effects and music. What is there already is not made again.') : t('一次做完：编排脚本、合成每一句的配音。（还没有能生成声音的模型，环境声由浏览器合成。）', 'All in one go: the script and a voice for every line. (Nothing can make sound yet; the browser synthesizes the ambience.)')}>{script === undefined ? t('一键生成有声版', 'Make the audio version') : t('一键补齐配音和声音', 'Finish voices and sound')}</Button>
           : null}
         {script === undefined || view.stale
           ? <Button variant={script === undefined ? 'outline' : 'primary'} icon="sparkles" busy={directing} disabled={working} pending={t('正在编排脚本…', 'Directing the script…')} onClick={() => start('audio.build', { force: view.stale })}>{script === undefined ? t('只编排脚本', 'Direct the script only') : t('按新正文重排脚本', 'Redo the script')}</Button>
           : null}
-        {script !== undefined ? <Button variant={voiced < lines.length && !view.stale ? 'primary' : 'outline'} icon="mic" busy={synthesizing} disabled={working} pending={t('正在合成…', 'Voicing…')} onClick={() => start('audio.synthesize')}>{voiced === 0 ? t('合成全部语音', 'Synthesize all') : voiced < lines.length ? t(`合成剩余 ${lines.length - voiced} 句`, `Synthesize the other ${lines.length - voiced}`) : t('听检并补合成', 'Check and repair')}</Button> : null}
+        {script !== undefined ? <Button icon="mic" busy={synthesizing} disabled={working} pending={t('正在合成…', 'Voicing…')} onClick={() => start('audio.synthesize')}>{voiced === 0 ? t('只合成语音', 'Voices only') : voiced < lines.length ? t(`合成剩余 ${lines.length - voiced} 句`, `Synthesize the other ${lines.length - voiced}`) : t('听检并补合成', 'Check and repair')}</Button> : null}
         {script !== undefined && toMake.length > 0 ? (
-          <Button variant={made < toMake.length && voiced >= lines.length && !view.stale ? 'primary' : 'outline'} icon="volume" busy={sounding} disabled={working} pending={t('正在生成声音…', 'Making sounds…')} onClick={() => makeSound(made >= toMake.length)} title={view.sound !== undefined ? t(`用 ${view.sound.model} 生成环境声、音效和配乐${view.sound.shared ? '（沿用语音的设置）' : ''}`, `Make ambience, effects and music with ${view.sound.model}${view.sound.shared ? ' (the speech setup)' : ''}`) : t('还没有能生成声音的模型——点一下去设置', 'Nothing can make sound yet — click to set it up')}>{made === 0 ? t(`生成声音（${toMake.length} 处）`, `Make the sounds (${toMake.length})`) : made < toMake.length ? t(`生成剩余 ${toMake.length - made} 处声音`, `Make the other ${toMake.length - made} sounds`) : t('重新生成声音', 'Make the sounds again')}</Button>
+          <Button icon="volume" busy={sounding} disabled={working} pending={t('正在生成声音…', 'Making sounds…')} onClick={() => makeSound(made >= toMake.length)} title={view.sound !== undefined ? t(`用 ${view.sound.model} 生成环境声、音效和配乐${view.sound.shared ? '（沿用语音的设置）' : ''}`, `Make ambience, effects and music with ${view.sound.model}${view.sound.shared ? ' (the speech setup)' : ''}`) : t('还没有能生成声音的模型——点一下去设置', 'Nothing can make sound yet — click to set it up')}>{made === 0 ? t(`生成声音（${toMake.length} 处）`, `Make the sounds (${toMake.length})`) : made < toMake.length ? t(`生成剩余 ${toMake.length - made} 处声音`, `Make the other ${toMake.length - made} sounds`) : t('重新生成声音', 'Make the sounds again')}</Button>
         ) : null}
         {script !== undefined && voiced > 0 ? (
           <Button icon="download" disabled={working} pending={t('正在拼接…', 'Joining…')} onClick={() => controller.guard(async () => { setExported(await controller.api.call('audio.export', { root, chapter: chapter.id })) })}>{t('导出整章音频', 'Export chapter audio')}</Button>
         ) : null}
         {script !== undefined ? <Button variant="ghost" icon="refresh" disabled={working} onClick={() => start('audio.build', { force: true })} title={t('重新编排脚本（已合成的相同台词会复用）', 'Redo the script (unchanged lines keep their audio)')} /> : null}
+        {script !== undefined ? <Button variant="ghost" icon="trash" disabled={working} onClick={() => { confirmScript.ask(t('删除这一章的整份有声脚本？已经合成的配音文件会留在磁盘上，重新编排后内容相同的句子会直接复用；这一章的分镜是照着这份脚本排的，会跟着失效。正文不受影响。', 'Delete this chapter\'s whole audio script? Takes already spoken stay on disk and are reused by lines that come back unchanged; the chapter\'s storyboard was cut to this script and goes stale with it. The manuscript is untouched.'), () => { void controller.guard(async () => { await controller.api.call('audio.clear', { root, chapter: chapter.id }); controller.toast('success', t('已删除这一章的有声脚本', 'The audio script is deleted')); onChanged?.() }) }) }} title={t('删除这一章的有声脚本', 'Delete this chapter\'s audio script')} /> : null}
+        {confirmScript.element}
         <span className="nv-spacer" />
-        {script !== undefined ? (
-          <div className="nv-modes nv-modes-sm" role="tablist">
-            <button type="button" role="tab" aria-selected={body === 'text'} className={cx('nv-mode', body === 'text' && 'is-active')} onClick={() => { onBody('text') }}>{t('正文', 'Prose')}</button>
-            <button type="button" role="tab" aria-selected={body === 'script'} className={cx('nv-mode', body === 'script' && 'is-active')} onClick={() => { onBody('script') }}>{t('脚本', 'Script')}</button>
-          </div>
-        ) : null}
       </div>
       <NeedsSetup what="tts">{t('编排脚本不需要它，合成人声才需要。', 'Directing the script works without it; voicing the lines needs it.')}</NeedsSetup>
       {job !== undefined ? <JobProgress job={job} synthesizing={synthesizing} sounding={sounding} onStop={() => { void controller.cancelJob(job.id) }} /> : null}
+      {job === undefined && batch !== undefined ? <p className="nv-note"><Spinner size={12} /> {t('批量制作正在处理这一章（现在在做别的步骤，或者排在后面）。', 'A batch is at work on this chapter (on another step right now, or it is waiting its turn).')} <button type="button" className="nv-link" onClick={() => { controller.navigate({ view: 'stage', tab: 'production' }) }}>{t('看整体进度', 'See the whole batch')}</button></p> : null}
+      {job?.batch === true ? <p className="nv-muted nv-small">{t('这是批量任务里的一步；“停止”会停下整个批量任务，已经做好的都保留。', 'This is one step of a batch; Stop stops the whole batch, and what is made is kept.')}</p> : null}
       {oldShape && job === undefined ? (
         <p className="nv-note is-warn">
           {t(`这份脚本是旧的切法：旁白被切成了 ${all.filter(line => line.kind === 'narration').length} 小段，每段单独配音，听起来断断续续。重新整理会把相邻的旁白合成一口气念的大段，并把夹在对白之间的"他说"标为不念——不调用模型；对白的配音保留，合并过的旁白要重新合成。`, `This script is cut the old way: its narration is in ${all.filter(line => line.kind === 'narration').length} short pieces, each voiced on its own, which sounds choppy. Reshaping joins neighbouring narration into takes spoken in one breath and marks the "he said" between spoken lines as unspoken — without calling a model; dialogue keeps its recordings, joined narration is voiced again.`)}{' '}
@@ -250,7 +262,7 @@ export function AudioDesk({ chapter, view, job, player, body, onBody, onChanged 
               {speaker.name} · {speaker.count}{speaker.voice !== undefined ? ` · ${speaker.voice.startsWith('qwen-tts-vd') ? t('专属声线', 'designed') : speaker.voice.length > 14 ? `${speaker.voice.slice(0, 14)}…` : speaker.voice}` : ''}
             </Chip>
           ))}
-          <Button size="sm" variant="ghost" icon="users" onClick={() => { controller.setView('bible') }}>{t('调整配音', 'Adjust voices')}</Button>
+          <Button size="sm" variant="ghost" icon="users" onClick={() => { controller.openCast('cards') }} title={t('音色在每个人物自己的卡上', 'A voice is set on the character\'s own card')}>{t('调整配音', 'Adjust voices')}</Button>
         </div>
       ) : null}
     </section>
@@ -265,7 +277,7 @@ const SOUND_KIND: Record<SoundKind, [string, string]> = {
 const SOUND_MARK: Record<SoundKind, string> = { bed: '≋', effect: '◦', music: '♪' }
 
 /** The script line by line: each with its speaker, its delivery, its take, the sounds placed on it — and the tools to change any of them. */
-export function ScriptTable({ chapter, lines, cues, state, player, job, sound, onChanged }: {
+export function ScriptTable({ chapter, lines, cues, state, player, job, sound, onChanged, tools = true, pictures, pace }: {
   chapter: ChapterInfo
   lines: AudioLine[]
   cues: AudioCue[]
@@ -274,6 +286,12 @@ export function ScriptTable({ chapter, lines, cues, state, player, job, sound, o
   job: JobInfo | undefined
   sound?: ScriptView['sound']
   onChanged: () => void
+  /** false: the script as something to follow while listening — nothing to change a line or a sound with, and nothing about takes. */
+  tools?: boolean
+  /** How long the line being spoken takes as it is played, and whether the voice is held: the line under the current row runs by it. */
+  pace?: { seconds: number; paused: boolean }
+  /** The pictures of the chapter: each before the line that follows it in the text, and those after the last line. */
+  pictures?: { before: ReadonlyMap<string, { path: string; alt: string }[]>; after: { path: string; alt: string }[] }
 }) {
   const { controller } = useStudio()
   const t = useT()
@@ -312,7 +330,8 @@ export function ScriptTable({ chapter, lines, cues, state, player, job, sound, o
           const current = index === state.index
           const skipped = line.skip === true
           return (
-            <li key={line.id} data-script-line={line.id} className={cx('nv-line', `is-${line.kind}`, current && 'is-current', skipped && 'is-skipped')}>
+            <li key={line.id} data-script-line={line.id} className={cx('nv-line', `is-${line.kind}`, current && 'is-current', current && pace?.paused === true && 'is-held', skipped && 'is-skipped')} style={current && pace !== undefined ? { ['--nv-say' as string]: `${pace.seconds.toFixed(2)}s` } : undefined}>
+              {(pictures?.before.get(line.id) ?? []).map(picture => <figure key={picture.path} className="nv-figure nv-line-figure"><ProjectImage path={picture.path} alt={picture.alt} />{picture.alt.length > 0 ? <figcaption>{picture.alt}</figcaption> : null}</figure>)}
               {here.map((cue) => {
                 const kind = kindOf(cue)
                 const caption = cueCaption(cue, t)
@@ -328,7 +347,7 @@ export function ScriptTable({ chapter, lines, cues, state, player, job, sound, o
                       : cue.error !== undefined ? <Chip tone="red" title={cue.error}>{t('生成失败', 'failed')}</Chip>
                         : synthesized ? <span className="nv-muted nv-small" title={t('还没有生成的声音：播放时由浏览器合成', 'No generated clip yet: synthesized by the browser at playback')}>{t(`浏览器合成 · ${AMBIENCE[cue.ambience][0]}`, `synthesized · ${AMBIENCE[cue.ambience][1]}`)}</span>
                           : <span className="nv-muted nv-small">{t('只有注释，还没有声音', 'a note only, no sound yet')}</span>}
-                    {cue.id !== undefined ? <button type="button" className="nv-cue-tool" onClick={() => { setCueEdit({ cue, at: cue.at }) }} title={t('修改这处声音', 'Edit this sound')}><Icon name="pen" size={11} /></button> : null}
+                    {tools && cue.id !== undefined ? <button type="button" className="nv-cue-tool" onClick={() => { setCueEdit({ cue, at: cue.at }) }} title={t('修改这处声音', 'Edit this sound')}><Icon name="pen" size={11} /></button> : null}
                   </div>
                 )
               })}
@@ -347,10 +366,11 @@ export function ScriptTable({ chapter, lines, cues, state, player, job, sound, o
                         : line.error !== undefined ? <Chip tone="red" title={line.error}>{t('合成失败', 'failed')}</Chip>
                           : queued.has(line.id) ? <span className="nv-muted nv-small">{t('排队中', 'queued')}</span>
                             : line.audio !== undefined ? <span className="nv-muted nv-small">{formatDuration(line.duration ?? 0)}{line.takes !== undefined ? t(` · 念了 ${line.takes} 次`, ` · ${line.takes} takes`) : ''}</span> : null}
-                    {!skipped && !inBooth.has(line.id) && line.check !== undefined ? line.check.map(issue => <Chip key={issue} tone="amber" title={t(TAKE_ISSUE_HINT[issue][0], TAKE_ISSUE_HINT[issue][1])}>{t(...TAKE_ISSUE[issue])}</Chip>) : null}
+                    {tools && !skipped && !inBooth.has(line.id) && line.check !== undefined ? line.check.map(issue => <Chip key={issue} tone="amber" title={t(TAKE_ISSUE_HINT[issue][0], TAKE_ISSUE_HINT[issue][1])}>{t(...TAKE_ISSUE[issue])}</Chip>) : null}
                   </div>
                   <p>{line.text}</p>
                 </div>
+                {tools ? (
                 <div className="nv-line-tools">
                   {skipped
                     ? <Button size="sm" variant="ghost" icon="volume" pending={t('正在改…', 'Changing…')} onClick={() => voice(line, true)} title={t('还是念出来', 'Have it spoken after all')} />
@@ -359,10 +379,16 @@ export function ScriptTable({ chapter, lines, cues, state, player, job, sound, o
                   <Button size="sm" variant="ghost" icon="pen" onClick={() => { setEditing(line) }} title={t('修改这一句', 'Edit this line')} />
                   {skipped ? null : <Button size="sm" variant="ghost" icon="mic" disabled={job !== undefined} pending={t('正在开始重念…', 'Starting the retake…')} onClick={() => retake(line)} title={t('把这一句再念一次', 'Speak this line again')} />}
                 </div>
+                ) : null}
               </div>
             </li>
           )
         })}
+        {(pictures?.after ?? []).length > 0 ? (
+          <li className="nv-line">
+            {pictures!.after.map(picture => <figure key={picture.path} className="nv-figure nv-line-figure"><ProjectImage path={picture.path} alt={picture.alt} />{picture.alt.length > 0 ? <figcaption>{picture.alt}</figcaption> : null}</figure>)}
+          </li>
+        ) : null}
       </ol>
       {editing !== undefined ? <LineEditor chapterId={chapter.id} line={editing} onClose={() => { setEditing(undefined) }} onSaved={onChanged} /> : null}
       {cueEdit !== undefined ? <CueEditor chapterId={chapter.id} at={cueEdit.at} cue={cueEdit.cue} sound={sound} busy={job !== undefined} onClose={() => { setCueEdit(undefined) }} onSaved={onChanged} /> : null}
@@ -453,8 +479,26 @@ function LineEditor({ chapterId, line, onClose, onSaved }: { chapterId: string; 
     onSaved()
     onClose()
   })
+  const confirm = useConfirm()
+  const remove = (): void => {
+    confirm.ask(t('把这一句从有声脚本里删掉？正文不受影响；从这一句开始的声音提示会顺延到下一句，只对着它的分镜格会一并去掉。', 'Take this line out of the audio script? The manuscript is untouched; a sound cue that began here moves to the next line, and a storyboard panel that showed only this line goes with it.'), () => {
+      void run(async () => {
+        const done = await controller.api.call('audio.removeLine', { root, chapter: chapterId, line: line.id })
+        controller.toast('success', done.panels > 0 ? t(`已删除这一句，连带去掉 ${done.panels} 格分镜`, `Line removed, and ${done.panels} storyboard panel(s) with it`) : t('已删除这一句', 'Line removed'))
+        onSaved()
+        onClose()
+      })
+    })
+  }
   return (
-    <Modal title={t('修改台词', 'Edit line')} onClose={onClose} footer={<Button variant="primary" busy={busy} pending={t('正在保存…', 'Saving…')} disabled={text.trim().length === 0} onClick={save}>{t('保存', 'Save')}</Button>}>
+    <Modal title={t('修改台词', 'Edit line')} onClose={onClose} footer={(
+      <>
+        <Button variant="ghost" icon="trash" disabled={busy} onClick={remove}>{t('删除这一句', 'Delete this line')}</Button>
+        <span className="nv-spacer" />
+        <Button variant="primary" busy={busy} pending={t('正在保存…', 'Saving…')} disabled={text.trim().length === 0} onClick={save}>{t('保存', 'Save')}</Button>
+      </>
+    )}>
+      {confirm.element}
       <div className="nv-form-grid">
         <Field label={t('类型', 'Kind')}><Select value={kind} options={(Object.keys(KIND) as AudioLineKind[]).map(value => ({ value, label: t(...KIND[value]) }))} onChange={setKind} /></Field>
         {kind !== 'narration' ? <Field label={t('说话人', 'Speaker')}><Select value={speaker} options={[{ value: '', label: line.speaker === undefined && line.speakerName !== undefined ? line.speakerName : t('（未指定）', '(unassigned)') }, ...project.characters.map(card => ({ value: card.id, label: card.name }))]} onChange={setSpeaker} /></Field> : null}
