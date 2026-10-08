@@ -61,6 +61,7 @@ const MIME: Record<string, string> = {
   '.gif': 'image/gif',
   '.wav': 'audio/wav',
   '.mp3': 'audio/mpeg',
+  '.m4a': 'audio/mp4',
   '.ogg': 'audio/ogg',
 }
 

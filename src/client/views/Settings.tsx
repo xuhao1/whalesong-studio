@@ -59,6 +59,44 @@ function sectionPatch<T extends object>(before: T, after: T): Record<string, unk
   return patch
 }
 
+/**
+ * How a role of the crew works, as one choice: as an agent with the tools its
+ * work calls for, as an agent with everything the conversation has, or by
+ * plain calls. (Kept as two settings — `mode` and `tools` — because the second
+ * means nothing without the first.)
+ */
+type CrewWay = 'own' | 'all' | 'call'
+
+const CREW_WAYS: { value: CrewWay; label: [string, string] }[] = [
+  { value: 'own', label: ['agent 模式（默认，内部工具）', 'Agent, with its own tools (default)'] },
+  { value: 'all', label: ['agent 模式（所有工具）', 'Agent, with all tools'] },
+  { value: 'call', label: ['非 agent 模式', 'Not an agent: plain calls'] },
+]
+
+const CREW_WAY_HINT: [string, string] = [
+  '内部工具：工坊给这个角色的工具，外加它的活用得上的少数几样（策划联网搜索、后期用命令行）。所有工具：对话里装了的它都有——命令行、读写文件、联网、MCP……按当前对话的权限模式运行。非 agent：一问一答，快而省，但看不到书里别处，也没有工具。无论哪一种，书稿本身只能通过工坊的工具改动。',
+  'Its own tools: what the Studio gives the role, and the few of the conversation\'s that its work calls for (the planner searches the web, post-production has a shell). All tools: whatever the conversation has — the shell, files, the web, MCP… — under the conversation\'s permission mode. Not an agent: one question, one answer; faster and cheaper, but blind to the rest of the book and without tools. Whichever it is, the book itself changes only through the Studio\'s own tools.',
+]
+
+/** What a role's settings come to; what they leave unsaid is taken from `under` (the settings for every book), then from the built-in default. */
+function crewWay(set: CrewRoleSettings | undefined, under?: CrewRoleSettings): CrewWay {
+  const mode = set?.mode ?? under?.mode ?? 'agent'
+  const tools = set?.tools ?? under?.tools ?? 'own'
+  return mode === 'call' ? 'call' : tools === 'all' ? 'all' : 'own'
+}
+
+/**
+ * A role's settings with a way of working put in; `''` takes the choice out.
+ * @param spelled - say the default too: in a book's own settings, unsaid means "as for every book".
+ */
+function withCrewWay(set: CrewRoleSettings | undefined, way: CrewWay | '', spelled: boolean): CrewRoleSettings {
+  const { mode: _mode, tools: _tools, ...kept } = set ?? {}
+  if (way === '') return kept
+  if (way === 'call') return { ...kept, mode: 'call' }
+  if (spelled) return { ...kept, mode: 'agent', tools: way }
+  return way === 'all' ? { ...kept, tools: 'all' } : kept
+}
+
 /** A number of parallel requests as typed: within range, or nothing for an empty field (the default then applies). */
 function parallel(text: string): number | undefined {
   const value = number(text)
@@ -205,6 +243,26 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
   const routeOf = (role: TextRole): ModelRoute | undefined => (scope === 'book' ? own.models[role] : draft.models[role])
   // One model for the whole crew is the usual case; a crew whose roles differ is shown as such.
   const crewSame = CREW_ROLES.every(role => JSON.stringify(routeOf(role) ?? null) === JSON.stringify(routeOf(CREW_ROLES[0]!) ?? null))
+  // The same for how they work: one choice for all four, said as "differs" when they do.
+  const inBook = scope === 'book'
+  const said = (role: CrewRole): boolean => own.crew[role]?.mode !== undefined || own.crew[role]?.tools !== undefined
+  const wayOf = (role: CrewRole): CrewWay | '' => (inBook ? (said(role) ? crewWay(own.crew[role], draft.crew?.[role]) : '') : crewWay(draft.crew?.[role]))
+  const crewWays = CREW_ROLES.map(wayOf)
+  const crewWayNow: CrewWay | '' | 'mixed' = crewWays.every(way => way === crewWays[0]) ? crewWays[0]! : 'mixed'
+  const everywhereWays = CREW_ROLES.map(role => crewWay(draft.crew?.[role]))
+  const everywhereWay = everywhereWays.every(way => way === everywhereWays[0]) ? t(...CREW_WAYS.find(item => item.value === everywhereWays[0])!.label) : t('各角色不同', 'differs by role')
+  const setCrewWay = (way: CrewWay | ''): void => {
+    const table: CrewSettings = (inBook ? own.crew : draft.crew) ?? {}
+    const next: CrewSettings = {}
+    for (const role of CREW_ROLES) {
+      const set = withCrewWay(table[role], way, inBook)
+      if (Object.keys(set).length > 0) next[role] = set
+    }
+    if (inBook) updateOwn({ crew: next })
+    else update({ crew: next })
+  }
+  // A role whose model cannot drive an agent works by plain calls whatever is chosen here: said, not found out later.
+  const unable = view.crew !== undefined ? view.crew.roles.filter(item => (CREW_ROLES as readonly string[]).includes(item.role) && !(item.agent && view.crew!.loop)) : []
   const roleRow = (role: TextRole, label: string, hint: string): ReactNode => {
     const global = draft.models[role]
     return (
@@ -313,6 +371,22 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
               keys={keys}
               t={t}
               {...(!crewSame ? { unset: t('各角色不同——见高级选项', 'Differs by role — see Advanced') } : scope === 'book' ? { unset: t('沿用全局设置', 'As set for every book') } : {})}
+              extra={view.crew !== undefined ? (
+                <Field
+                  label={t('agent 能力范围', 'What the crew may do')}
+                  hint={`${t(...CREW_WAY_HINT)}${crewWayNow !== 'call' && unable.length > 0 ? t(` 现在有 ${unable.length} 个角色的模型当不了 agent（${unable.map(item => t(...(ROLE_NAME[item.role] ?? [item.role, item.role]))).join('、')}），它们会按普通调用干活——在“高级选项”里看原因。`, ` ${unable.length} of the roles have a model that cannot drive an agent now (${unable.map(item => t(...(ROLE_NAME[item.role] ?? [item.role, item.role]))).join(', ')}); they work by plain calls — Advanced says why.`) : ''}`}
+                >
+                  <Select<CrewWay | '' | 'mixed'>
+                    value={crewWayNow}
+                    options={[
+                      ...(crewWayNow === 'mixed' ? [{ value: 'mixed' as const, label: t('各角色不同——见高级选项', 'Differs by role — see Advanced') }] : []),
+                      ...(inBook ? [{ value: '' as const, label: t(`沿用全局设置：${everywhereWay}`, `As set for every book: ${everywhereWay}`) }] : []),
+                      ...CREW_WAYS.map(item => ({ value: item.value, label: t(...item.label) })),
+                    ]}
+                    onChange={(way) => { if (way !== 'mixed') setCrewWay(way) }}
+                  />
+                </Field>
+              ) : undefined}
               onChange={(route) => {
                 const table = scope === 'book' ? own.models : draft.models
                 const rest = Object.fromEntries(Object.entries(table).filter(([role]) => !(CREW_ROLES as readonly string[]).includes(role))) as Partial<TextModelRouting>
@@ -338,35 +412,36 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
               else update({ crew: { ...draft.crew, [role]: next } })
             }
             // In a book's own settings, "not set" means "as for every book"; Studio-wide it means the built-in default.
-            const inBook = scope === 'book'
-            const modeNow = set.mode ?? (inBook ? everywhere.mode : undefined) ?? 'agent'
-            const toolsNow = set.tools ?? (inBook ? everywhere.tools : undefined) ?? 'own'
-            const label = ROLES.find(item => item.role === role)?.label ?? [role, role]
+            const spoken = set.mode !== undefined || set.tools !== undefined
+            const wayNow = crewWay(set, inBook ? everywhere : undefined)
             const able = info?.agent === true && view.crew!.loop
             return (
               <div key={role} className="nv-role-block" data-section={role === 'analyst' ? 'crew' : undefined}>
                 {roleRow(role, t(...item.label), t(...item.hint))}
                 <div className="nv-crew-head">
-                  {modeNow === 'call'
+                  {wayNow === 'call'
                     ? <Chip tone="amber">{t('普通调用', 'Plain calls')}</Chip>
                     : able
                       ? <Chip tone="green">{t(`agent · ${info?.model ?? ''}`, `agent · ${info?.model ?? ''}`)}</Chip>
                       : <Chip tone="red" title={info?.direct === true ? t('它的模型是旧的直连接口，进不了 DSH 的 agent 循环', 'Its model is a directly called endpoint of the old kind and cannot run on DSH\'s agent loop') : t('这里没有可以驱动 agent 的模型', 'No model here can drive an agent')}>{info?.direct === true ? t('当不了 agent：旧的直连接口', 'Not an agent: direct endpoint') : t('当不了 agent：没有可用的 DSH 模型', 'Not an agent: no DSH model')}</Chip>}
                 </div>
                 <div className="nv-form-grid">
-                  <Field label={t('怎么干活', 'How it works')} hint={t('agent：带着工具自己查、自己试、交回结果，过程全程可查。普通调用：一问一答，快而省，但它看不到书里别处，也没有工具。', 'Agent: it looks things up, tries, and hands the result in with tools — every step on record. Plain call: one question, one answer; faster and cheaper, but blind to the rest of the book and without tools.')}>
-                    <Select<'' | 'agent' | 'call'> value={inBook ? set.mode ?? '' : modeNow} options={[
-                      ...(inBook ? [{ value: '' as const, label: t(`沿用全局设置（${everywhere.mode === 'call' ? '普通调用' : 'agent'}）`, `As set for every book (${everywhere.mode === 'call' ? 'plain calls' : 'agent'})`) }] : []),
-                      { value: 'agent', label: t('作为 agent（推荐）', 'As an agent (recommended)') },
-                      { value: 'call', label: t('普通调用', 'Plain calls') },
-                    ]} onChange={(mode) => { change({ mode: mode === '' || (!inBook && mode === 'agent') ? undefined : mode }) }} />
-                  </Field>
-                  <Field label={t('能用哪些工具', 'Which tools it may use')} hint={info !== undefined && info.own.length > 0 ? t(`“自己的工具”之外，这个角色的活还用得上对话里的这几样（装了才有）：${info.own.join('、')}。`, `Beside its own, this role's work calls for these of the conversation's tools (where present): ${info.own.join(', ')}.`) : t('这个角色默认只用工坊给它的工具：查书、交回结果。', 'By default this role uses only the tools the Studio gives it: reading the book, handing in.')}>
-                    <Select<'' | 'own' | 'all'> value={inBook ? set.tools ?? '' : toolsNow} options={[
-                      ...(inBook ? [{ value: '' as const, label: t(`沿用全局设置（${everywhere.tools === 'all' ? '全部工具' : '它自己的工具'}）`, `As set for every book (${everywhere.tools === 'all' ? 'all tools' : 'its own tools'})`) }] : []),
-                      { value: 'own', label: t('它自己的工具（推荐）', 'Its own tools (recommended)') },
-                      { value: 'all', label: t('DSH 的全部工具：对话里有的它都有', 'All of DSH\'s tools: whatever the conversation has') },
-                    ]} onChange={(tools) => { change({ tools: tools === '' || (!inBook && tools === 'own') ? undefined : tools }) }} />
+                  <Field
+                    label={t('agent 能力范围', 'What it may do')}
+                    hint={`${t(...CREW_WAY_HINT)}${info !== undefined && info.own.length > 0 ? t(` 这个角色的“内部工具”里，来自对话的是这几样（装了才有）：${info.own.join('、')}。`, ` Of the conversation's tools, this role's own are these (where present): ${info.own.join(', ')}.`) : ''}`}
+                  >
+                    <Select<CrewWay | ''>
+                      value={inBook && !spoken ? '' : wayNow}
+                      options={[
+                        ...(inBook ? [{ value: '' as const, label: t(`沿用全局设置：${t(...CREW_WAYS.find(candidate => candidate.value === crewWay(everywhere))!.label)}`, `As set for every book: ${t(...CREW_WAYS.find(candidate => candidate.value === crewWay(everywhere))!.label)}`) }] : []),
+                        ...CREW_WAYS.map(candidate => ({ value: candidate.value, label: t(...candidate.label) })),
+                      ]}
+                      onChange={(way) => {
+                        const next = withCrewWay(set, way, inBook)
+                        if (inBook) updateOwn({ crew: { ...own.crew, [role]: next } })
+                        else update({ crew: { ...draft.crew, [role]: next } })
+                      }}
+                    />
                   </Field>
                   <Field label={t('最多几步', 'Step limit')} hint={t(`一次运行最多调用多少次工具；到了就让它收尾。留空用默认的 ${info?.steps ?? 40} 步。`, `How many tool calls one run may make before it is told to wrap up. Empty uses the default of ${info?.steps ?? 40}.`)}>
                     <TextInput inputMode="numeric" value={set.steps !== undefined ? String(set.steps) : ''} placeholder={String((inBook ? everywhere.steps : undefined) ?? info?.steps ?? 40)} onChange={(event) => { const value = number(event.target.value); change({ steps: value !== undefined && value >= 4 ? Math.round(value) : undefined }) }} />
@@ -717,10 +792,12 @@ function EndpointField({ value, placeholder, hint, onChange, t }: { value: strin
 /** Where a role's model comes from: the chat model, one of the providers the Harness reaches (`harness:<id>`), or an endpoint named here. */
 type RoleSource = '' | `harness:${string}` | ServiceId
 
-function RoleRow({ role, label, hint, route, models, providers, fallback, keys, onChange, t, unset }: {
+function RoleRow({ role, label, hint, route, models, providers, fallback, keys, onChange, t, unset, extra }: {
   role: TextRole
   label: string
   hint: string
+  /** Something chosen together with the model, shown beside it: how the roles that share this model work. */
+  extra?: ReactNode
   /** What "nothing chosen" means here, when it is not "follow the chat model": a book's row falls back on the Studio-wide setting. */
   unset?: string
   route: ModelRoute | undefined
@@ -778,7 +855,7 @@ function RoleRow({ role, label, hint, route, models, providers, fallback, keys, 
   const suggestions: string[] = []
   return (
     <div className="nv-role">
-      <div className="nv-role-main">
+      <div className={cx('nv-role-main', extra !== undefined && extra !== null && 'has-extra')}>
         <Field label={label} hint={hint}>
           <Select<RoleSource>
             value={source}
@@ -797,6 +874,7 @@ function RoleRow({ role, label, hint, route, models, providers, fallback, keys, 
             onChange={pick}
           />
         </Field>
+        {extra}
         {route !== undefined ? <Button size="sm" variant="ghost" icon={advanced ? 'chevronUp' : 'chevronDown'} onClick={() => { setAdvanced(value => !value) }}>{t('参数', 'Parameters')}</Button> : null}
       </div>
       {route !== undefined ? (

@@ -884,7 +884,12 @@ export class StudioController {
   async run<M extends JobMethod>(method: M, params: RpcParams<M>, onText?: (text: string, info: JobInfo) => void): Promise<JobInfo> {
     const started = await this.api.call(method, params) as JobStarted
     void this.refreshJobs()
-    return await this.follow(started.jobId, onText).done
+    try {
+      return await this.follow(started.jobId, onText).done
+    } finally {
+      // Whoever waited for it sees that it is over at once — not at the next turn of the watch, which rests while the Studio is out of sight.
+      void this.refreshJobs()
+    }
   }
 
   /**

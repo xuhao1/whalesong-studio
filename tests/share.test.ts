@@ -57,6 +57,9 @@ describe('the reader for other devices', () => {
     await share.apply()
     const status = await share.status()
     expect(status.running).toBe(true)
+    // The port asked for was free when it was looked for; a test of another file may have taken it since, and then the reader
+    // listens on the next one (which is what it is for). The tests talk to where it listens.
+    port = status.port ?? port
     const token = (await bed.core.settings.get()).share!.token!
     expect(token.length).toBeGreaterThanOrEqual(20)
     for (const url of status.urls) expect(url).toContain(`:${port}/${token}/`)
@@ -65,8 +68,8 @@ describe('the reader for other devices', () => {
 
   it('is closed until it is switched on, and closed again when it is switched off', async () => {
     await share.apply()
+    // (Not asked of the network: whether anybody answers on that port is not this reader's doing alone — another test may listen there.)
     expect(await share.status()).toMatchObject({ enabled: false, running: false, urls: [], books: [] })
-    await expect(fetch(`http://127.0.0.1:${port}/`)).rejects.toThrow()
     // Switched on without a book to share, there is still nothing to serve.
     await bed.core.settings.update({ share: { enabled: true, port, books: [] } })
     await share.apply()
@@ -76,7 +79,8 @@ describe('the reader for other devices', () => {
     await bed.core.settings.update({ share: { enabled: false } })
     await share.apply()
     expect((await share.status()).running).toBe(false)
-    await expect(fetch(`${base}/api/books`)).rejects.toThrow()
+    // Nothing of this reader answers there any more. (Whoever listens on the port a moment later — a test of another file — knows nothing of this address.)
+    expect(await fetch(`${base}/api/books`).then(response => response.status, () => 0)).not.toBe(200)
   })
 
   it('serves the shared book, its chapters and their media to whoever has the address', async () => {
@@ -213,6 +217,7 @@ describe('the reader for other devices', () => {
     const card = await project.saveCharacter({ name: '白页', role: 'protagonist', status: 'active' })
     await bed.core.settings.update({ share: { enabled: true, port, books: [project.root], edit: [project.root] } })
     await share.apply()
+    port = (await share.status()).port ?? port
     const base = `http://127.0.0.1:${port}/${(await bed.core.settings.get()).share!.token!}`
     expect((await share.status()).books).toEqual([expect.objectContaining({ mode: 'edit' })])
     const detail = await (await fetch(`${base}/api/books/${id}`)).json() as { book: { mode: string } }

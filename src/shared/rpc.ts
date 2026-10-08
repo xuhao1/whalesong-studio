@@ -210,6 +210,8 @@ export interface SitePlan {
   previous?: { publishedAt: string; files: number; sameBook: boolean }
   /** The folder exists and holds something that is not a site published from here. */
   occupied?: boolean
+  /** Sound can go out compressed: ffmpeg is on this computer. Absent from a Host that publishes sound only as it lies in the book. */
+  press?: boolean
 }
 
 /** What a publication wrote. */
@@ -224,6 +226,10 @@ export interface SiteDone {
   written: number
   removed: number
   missing: string[]
+  /** Uncompressed sound that went out compressed: how many files, their size before and after; `failed` went out as they are. */
+  sound?: { files: number; from: number; to: number; failed: string[]; reason?: string }
+  /** Compressed sound was wanted and this computer has no ffmpeg to make it: the sound went out as it lies in the book. */
+  unpressed?: boolean
 }
 
 /** How much of a model's window the story so far gets, role by role — what the context settings come to for the models in use. */
@@ -548,6 +554,8 @@ export interface NovelRpc {
     sides?: boolean
     /** How the site opens for a visitor who has set nothing: the publisher's own reading settings, as their browser keeps them. */
     defaults?: { prefs?: object; options?: object }
+    /** `false` publishes voices and sound as they lie in the book (WAV); otherwise they go out as AAC, a quarter the size, when this computer has ffmpeg. */
+    press?: boolean
     sealedOk?: boolean
   }; result: JobStarted }
   /** The people and the world of a book as its viewer shows them — to the author: also who and what the text has not come to yet. */

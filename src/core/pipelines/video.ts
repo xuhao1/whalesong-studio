@@ -12,10 +12,9 @@
  * sound for its whole length, and is as long as the chapter's telling.
  */
 import { execFile } from 'node:child_process'
-import { constants } from 'node:fs'
 import { access, copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { delimiter, dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { clip, FFMPEG_INSTALL } from '../../shared/text'
 import type { AudioCue, AudioLine, CameraMove, ChapterVideo } from '../../shared/types'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
@@ -25,38 +24,12 @@ import { encodeWav, parseWav, resample, type PcmAudio } from '../media/wav'
 import { ProjectError } from '../project'
 import { L, promptLanguage } from '../render'
 import { argText, type RoleTool } from '../roles'
+import { findProgram } from '../util/program'
 import { isSkipped } from './audio'
 
 // ───────────────────────────── the tools on this computer ─────────────────────────────
 
-const found = new Map<string, Promise<string | undefined>>()
-
-/** Where a program is, by the PATH this process has and the places package managers put things. */
-export function findProgram(name: string): Promise<string | undefined> {
-  let pending = found.get(name)
-  if (pending === undefined) {
-    pending = (async () => {
-      const dirs = [...(process.env.PATH ?? '').split(delimiter), '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/opt/local/bin'].filter(dir => dir.length > 0)
-      const names = process.platform === 'win32' ? [`${name}.exe`, name] : [name]
-      for (const dir of dirs) {
-        for (const file of names) {
-          const path = join(dir, file)
-          try {
-            await access(path, constants.X_OK)
-            return path
-          } catch {
-            // not here
-          }
-        }
-      }
-      return undefined
-    })()
-    found.set(name, pending)
-    // A program installed a minute from now should be found then.
-    void pending.then((path) => { if (path === undefined) found.delete(name) })
-  }
-  return pending
-}
+export { findProgram }
 
 function run(program: string, args: string[], options: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolvePromise, reject) => {

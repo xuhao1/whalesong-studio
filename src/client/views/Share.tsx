@@ -11,7 +11,7 @@
 import { useMemo, useState } from 'react'
 import { qrPath } from '../../shared/qr'
 import type { ShareStatus, SiteDone } from '../../shared/rpc'
-import { formatCount } from '../../shared/text'
+import { FFMPEG_INSTALL, formatCount } from '../../shared/text'
 import { Icon } from '../icons'
 import { readerSettings } from '../reader/parts'
 import { Button, Chip, Field, Modal, Progress, Select, Spinner, Tabs, TextInput, useAction, useLoad, useProject, useRunningJob, useSnapshot, useStudio, useT } from '../ui'
@@ -136,6 +136,12 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
   )
 }
 
+/** When a site was published, by this computer's clock; as it was written down when that is no date. */
+const publishedWhen = (iso: string, locale: string): string => {
+  const at = new Date(iso)
+  return Number.isNaN(at.getTime()) ? iso : at.toLocaleString(locale, { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
 const megabytes = (bytes: number): string => (bytes >= 1024 * 1024 * 1024 ? `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB` : bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`)
 
 /**
@@ -154,6 +160,8 @@ function PublishSite() {
   // A book published a part at a time: as far as one chapter; everything written when none is chosen.
   const [upto, setUpto] = useState('')
   const [mine, setMine] = useState(true)
+  // Voices lie in the book uncompressed; on the way out they are made a quarter the size unless the author keeps them as they are.
+  const [press, setPress] = useState(true)
   const written = project.chapters.filter(chapter => chapter.hasText)
   const part = written.find(chapter => chapter.id === upto)
   const [sealedOk, setSealedOk] = useState(false)
@@ -164,7 +172,7 @@ function PublishSite() {
   const data = plan.data
   const publish = (): Promise<unknown> => run(async () => {
     setDone(undefined)
-    const finished = await controller.run('site.publish', { root, ...(out.trim().length > 0 ? { out: out.trim() } : {}), listen, watch, album, sides, ...(part !== undefined ? { upto: part.id } : {}), ...(mine ? { defaults: readerSettings() } : {}), ...(sealedOk ? { sealedOk: true } : {}) })
+    const finished = await controller.run('site.publish', { root, ...(out.trim().length > 0 ? { out: out.trim() } : {}), listen, watch, album, sides, ...(press ? {} : { press: false }), ...(part !== undefined ? { upto: part.id } : {}), ...(mine ? { defaults: readerSettings() } : {}), ...(sealedOk ? { sealedOk: true } : {}) })
     const output = finished.result?.output as SiteDone | undefined
     if (output !== undefined) setDone(output)
   })
@@ -193,6 +201,17 @@ function PublishSite() {
       ) : null}
       <div className="nv-site-options">
         <label className="nv-check"><input type="checkbox" checked={listen} disabled={data.voiced === 0} onChange={(event) => { setListen(event.target.checked) }} /><span>{t('带上有声版（脚本、配音、环境声与音效）', 'With the audio drama (script, voices, ambience and effects)')}{data.voiced === 0 ? t('——这本书还没有配过音', ' — nothing is voiced yet') : ''}</span></label>
+        {data.press !== undefined && (data.voiced > 0 || (data.sides ?? 0) > 0) ? (
+          <label className="nv-check nv-site-press">
+            <input type="checkbox" checked={press && data.press} disabled={!data.press || (!listen && !sides)} onChange={(event) => { setPress(event.target.checked) }} />
+            <span>
+              {t('把配音和声音压缩成 AAC（高质量：听起来一样，体积约为原来的四分之一）', 'Compress voices and sound to AAC (high quality: it sounds the same, at about a quarter the size)')}
+              {data.press
+                ? <em className="nv-muted nv-small">{t(' 书里的原件不动，压缩的只是带出去的那一份；不勾就按书里的原样（WAV）带出去。再次发布时只压缩有变化的声音。', ' What is in the book stays as it is; only the copy that goes out is compressed. Unticked, sound goes out as it lies in the book (WAV). Published again, only sound that changed is compressed.')}</em>
+                : <em className="nv-site-press-missing">{t(`——这台电脑上没有 ffmpeg，压缩不了：声音会按书里的原样（WAV）带上，网站会大得多。装上之后再发布一次就会换成压缩的——${FFMPEG_INSTALL[0]}。`, ` — this computer has no ffmpeg, so it cannot: sound goes out as it lies in the book (WAV), and the site is much larger. Install it and publish again to have it compressed — ${FFMPEG_INSTALL[1]}.`)}</em>}
+            </span>
+          </label>
+        ) : null}
         <label className="nv-check"><input type="checkbox" checked={watch} disabled={data.drawn === 0} onChange={(event) => { setWatch(event.target.checked) }} /><span>{t('带上有声漫（分镜画面）', 'With the motion comic (its panels)')}{data.drawn === 0 ? t('——这本书还没有画过分镜', ' — no panel is drawn yet') : ''}</span></label>
         <label className="nv-check">
           <input type="checkbox" checked={album && data.album !== undefined} disabled={data.album === undefined} onChange={(event) => { setAlbum(event.target.checked) }} />
@@ -224,7 +243,7 @@ function PublishSite() {
       </Field>
       {data.previous !== undefined
         ? <p className={data.previous.sameBook ? 'nv-note' : 'nv-note is-warn'}>{data.previous.sameBook
-            ? t(`这个文件夹里已经发布过这本书（${data.previous.publishedAt.slice(0, 16).replace('T', ' ')}，${data.previous.files} 个文件）。再发布一次只更新有变化的部分。`, `This book was published into this folder before (${data.previous.publishedAt.slice(0, 16).replace('T', ' ')}, ${data.previous.files} files). Publishing again writes only what changed.`)
+            ? t(`这个文件夹里已经发布过这本书（${publishedWhen(data.previous.publishedAt, locale)}，${data.previous.files} 个文件）。再发布一次只更新有变化的部分。`, `This book was published into this folder before (${publishedWhen(data.previous.publishedAt, locale)}, ${data.previous.files} files). Publishing again writes only what changed.`)
             : t('这个文件夹里发布的是另一本书。继续的话，那本书的网站会被这本书的替换掉。', 'Another book was published into this folder. Going on replaces that book\'s site with this one\'s.')}</p>
         : data.occupied === true ? <p className="nv-note is-warn">{t('这个文件夹里已经有别的东西。网站的文件会写在它们旁边（不会删改不是这里发布的文件）——通常还是换一个空文件夹更好。', 'This folder already holds other things. The site\'s files are written beside them (nothing that was not published from here is changed or removed) — an empty folder is usually the better choice.')}</p> : null}
       {data.sealed ? (
@@ -242,6 +261,13 @@ function PublishSite() {
         <div className="nv-note is-ok nv-site-done" role="status">
           <strong>{t('发布好了。', 'Published.')}</strong>
           <span>{t(`${done.chapters} 章${(done.sides ?? 0) > 0 ? `，${done.sides} 场番外` : ''}${done.album !== undefined ? `，画册里 ${done.album.people} 位人物、${done.album.places + done.album.factions + done.album.items + done.album.ideas} 条设定` : ''}，${formatCount(done.files, locale)} 个文件，共 ${megabytes(done.bytes)}；这一次写了 ${formatCount(done.written, locale)} 个${done.removed > 0 ? `，清掉上次留下而这次没有的 ${done.removed} 个` : ''}。`, `${done.chapters} chapters${(done.sides ?? 0) > 0 ? `, ${done.sides} side stories` : ''}${done.album !== undefined ? `, an album of ${done.album.people} people and ${done.album.places + done.album.factions + done.album.items + done.album.ideas} entries` : ''}, ${formatCount(done.files, locale)} files, ${megabytes(done.bytes)} in all; ${formatCount(done.written, locale)} written this time${done.removed > 0 ? `, ${done.removed} left from last time removed` : ''}.`)}</span>
+          {done.sound !== undefined ? (
+            <span>
+              {t(`配音和声音：${formatCount(done.sound.files, locale)} 个文件压缩成了 AAC，${megabytes(done.sound.from)} → ${megabytes(done.sound.to)}。`, `Voices and sound: ${formatCount(done.sound.files, locale)} files went out as AAC, ${megabytes(done.sound.from)} → ${megabytes(done.sound.to)}.`)}
+              {done.sound.failed.length > 0 ? t(`有 ${done.sound.failed.length} 个没能压缩，按原样（WAV）带上了：${done.sound.failed.slice(0, 3).join('、')}${done.sound.failed.length > 3 ? ' 等' : ''}${done.sound.reason !== undefined ? `（${done.sound.reason}）` : ''}`, ` ${done.sound.failed.length} could not be compressed and went out as WAV: ${done.sound.failed.slice(0, 3).join(', ')}${done.sound.failed.length > 3 ? '…' : ''}${done.sound.reason !== undefined ? ` (${done.sound.reason})` : ''}`) : ''}
+            </span>
+          ) : null}
+          {done.unpressed === true ? <span>{t(`配音和声音是按书里的原样（WAV）带上的：这台电脑上没有 ffmpeg。装上之后再发布一次就会换成压缩的——${FFMPEG_INSTALL[0]}。`, `Voices and sound went out as they lie in the book (WAV): this computer has no ffmpeg. Install it and publish again to have them compressed — ${FFMPEG_INSTALL[1]}.`)}</span> : null}
           <code className="nv-share-url">{done.dir}</code>
           <div className="nv-row-wrap">
             <Button size="sm" icon="copy" onClick={() => controller.guard(async () => { await navigator.clipboard.writeText(done.dir); controller.toast('success', t('路径已复制', 'Path copied')) })}>{t('复制路径', 'Copy the path')}</Button>

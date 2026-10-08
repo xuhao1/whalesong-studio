@@ -21,6 +21,7 @@ import { resolveRoute } from '../core/llm'
 import { promptLanguage } from '../core/render'
 import { digestPending, fillPlans } from '../core/pipelines/digest'
 import { exportBook, missingImages } from '../core/pipelines/export'
+import { findSoundPress } from '../core/media/press'
 import { publishSite, siteChaptersUpTo, siteDefaults, siteFolder } from '../core/pipelines/site'
 import { listChapters, listSides, readAlbum, readSide } from '../core/reader'
 import { albumCounts, albumEmpty } from '../shared/album'
@@ -889,6 +890,7 @@ export function createHandlers(service: NovelService): Handlers {
         ...await listSides(runtime).then(kept => (kept.length > 0 ? { sides: kept.length } : {})),
         ...(previous !== undefined ? { previous } : {}),
         ...(occupied ? { occupied: true } : {}),
+        press: await findSoundPress() !== undefined,
       }
     },
     // The author's own viewer: the same album a reader is given, with what the text has not come to yet.
@@ -898,7 +900,7 @@ export function createHandlers(service: NovelService): Handlers {
       const play = typeof id === 'string' && id.length > 0 ? await readSide(runtime, id) : undefined
       return { sides: await listSides(runtime), ...(play !== undefined ? { play } : {}) }
     },
-    'site.publish': async ({ root, out, chapters, upto, listen, watch, album, sides, defaults, sealedOk }) => {
+    'site.publish': async ({ root, out, chapters, upto, listen, watch, album, sides, defaults, press, sealedOk }) => {
       const runtime = await open(root)
       const manifest = await runtime.project.manifest()
       // A sealed book lies on disk as ciphertext and nothing else; a site of it is the book in the open. Only on the author's word.
@@ -909,9 +911,12 @@ export function createHandlers(service: NovelService): Handlers {
       // A part at a time: up to one chapter of the main line, or the chapters named.
       const part = typeof upto === 'string' && upto.trim().length > 0 ? await siteChaptersUpTo(runtime, upto) : Array.isArray(chapters) && chapters.length > 0 ? chapters.filter((id): id is string => typeof id === 'string') : undefined
       const opening = siteDefaults(defaults)
-      return job(runtime, 'export', 'publish site', undefined, async task => await publishSite(core, runtime, {
+      // Sound goes out compressed unless the author keeps it as it is; where no ffmpeg is installed it cannot, and the result says so.
+      const soundPress = press === false ? undefined : await findSoundPress()
+      return job(runtime, 'export', 'publish site', undefined, async task => ({ ...await publishSite(core, runtime, {
         out: target,
         reader,
+        ...(soundPress !== undefined ? { press: soundPress } : {}),
         ...(part !== undefined ? { chapters: part } : {}),
         ...(opening !== undefined ? { defaults: opening } : {}),
         ...(listen === false ? { listen: false } : {}),
@@ -920,7 +925,7 @@ export function createHandlers(service: NovelService): Handlers {
         ...(sides === false ? { sides: false } : {}),
         // The site says what it was made with, in the book's own language.
         credit: { name: manifest.language.toLowerCase().startsWith('zh') ? '小说工坊' : 'Novel Studio', url: PROJECT_HOMEPAGE },
-      }, task))
+      }, task), ...(press !== false && soundPress === undefined ? { unpressed: true } : {}) }))
     },
 
     // ── reading on other devices ──

@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import type { SoundPress } from '../src/core/media/press'
 import { publishSite, siteChaptersUpTo, siteDefaults, siteFolder, sitePage } from '../src/core/pipelines/site'
 import { bookAnswer, ReaderRefused } from '../src/core/reader'
 import { hashText, proseOnly } from '../src/shared/text'
@@ -164,6 +165,85 @@ describe('a book as a site', () => {
     expect(sitePage('一本书', 'zh')).not.toContain('novel-defaults')
     await publishSite(bed.core, bed.runtime, { out, reader: READER, defaults: { prefs: { size: 24 } } })
     expect(await readFile(join(out, 'index.html'), 'utf8')).toContain('novel-defaults')
+  })
+
+  it('carries uncompressed sound pressed, under the name of what it then is, and presses it again only when it changes', async () => {
+    const { project } = bed.runtime
+    const id = (await project.manifest()).id
+    await project.writeAsset('audio/ch001/l1.wav', new Uint8Array(64).fill(9))
+    await project.writeAsset('audio/ch001/rain.wav', new Uint8Array(48).fill(7))
+    const pressed: number[] = []
+    const press = (key: string): SoundPress => ({ ext: 'm4a', key, press: async (wav) => { pressed.push(wav.byteLength); return Uint8Array.from([0xaa, wav[0]!]) } })
+    const sounds = async (): Promise<string[]> => (await tree(out)).filter(path => path.includes('/audio/'))
+    const told = async (): Promise<{ line?: string; cue?: string }> => {
+      const chapter = JSON.parse(await readFile(join(out, 'data', id, 'chapters', 'ch001.json'), 'utf8'))
+      return { line: chapter.script.lines[0].audio, cue: chapter.script.cues[0].audio }
+    }
+    const first = await publishSite(bed.core, bed.runtime, { out, reader: READER, press: press('fake/1') })
+    expect(await sounds()).toEqual([`media/${id}/assets/audio/ch001/l1.m4a`, `media/${id}/assets/audio/ch001/rain.m4a`])
+    // The reader is told the name the sound went out under; everything else it is told is as a device on the network gets it.
+    expect(await told()).toEqual({ line: 'assets/audio/ch001/l1.m4a', cue: 'assets/audio/ch001/rain.m4a' })
+    expect(first).toMatchObject({ files: 11, written: 11, sound: { files: 2, from: 112, to: 4, failed: [] } })
+    expect(await readFile(join(out, 'media', id, 'assets', 'audio', 'ch001', 'l1.m4a'))).toEqual(Buffer.from([0xaa, 9]))
+    // Pictures are not sound: they go as they are.
+    expect(await readFile(join(out, 'media', id, 'assets', 'images', 'scene-1.png'))).toEqual(Buffer.from([1, 2, 3, 4]))
+    // Several are pressed at once: which comes first is not said.
+    expect([...pressed].sort()).toEqual([48, 64])
+
+    // Published again with nothing changed: nothing is written, and nothing is pressed.
+    const again = await publishSite(bed.core, bed.runtime, { out, reader: READER, press: press('fake/1') })
+    expect(again).toMatchObject({ files: 11, written: 0, removed: 0, sound: { files: 2, from: 112, to: 4 } })
+    expect(pressed).toHaveLength(2)
+
+    // One sound made anew: that one is pressed, the other is not.
+    await project.writeAsset('audio/ch001/rain.wav', new Uint8Array(40).fill(3))
+    expect(await publishSite(bed.core, bed.runtime, { out, reader: READER, press: press('fake/1') })).toMatchObject({ written: 1, sound: { files: 2, from: 104 } })
+    expect(pressed).toHaveLength(3)
+    expect(pressed.at(-1)).toBe(40)
+    // A pressed file that is gone from the folder, or not what was written, is made again.
+    await rm(join(out, 'media', id, 'assets', 'audio', 'ch001', 'l1.m4a'))
+    await writeFile(join(out, 'media', id, 'assets', 'audio', 'ch001', 'rain.m4a'), 'something else')
+    expect(await publishSite(bed.core, bed.runtime, { out, reader: READER, press: press('fake/1') })).toMatchObject({ written: 2 })
+    expect(pressed).toHaveLength(5)
+    // Another way of pressing: everything is pressed anew.
+    await publishSite(bed.core, bed.runtime, { out, reader: READER, press: press('fake/2') })
+    expect(pressed).toHaveLength(7)
+
+    // Without a press the sound goes out as it lies in the book, and the pressed files of last time are taken away.
+    const plain = await publishSite(bed.core, bed.runtime, { out, reader: READER })
+    expect(plain.sound).toBeUndefined()
+    expect(plain).toMatchObject({ files: 11, removed: 2 })
+    expect(await sounds()).toEqual([`media/${id}/assets/audio/ch001/l1.wav`, `media/${id}/assets/audio/ch001/rain.wav`])
+    expect(await told()).toEqual({ line: 'assets/audio/ch001/l1.wav', cue: 'assets/audio/ch001/rain.wav' })
+    expect(JSON.parse(await readFile(join(out, 'site.json'), 'utf8')).sources).toBeUndefined()
+    // And pressed again after that: the plain files go, the reader is told the new names.
+    expect(await publishSite(bed.core, bed.runtime, { out, reader: READER, press: press('fake/2') })).toMatchObject({ removed: 2, sound: { files: 2 } })
+    expect(await sounds()).toEqual([`media/${id}/assets/audio/ch001/l1.m4a`, `media/${id}/assets/audio/ch001/rain.m4a`])
+  })
+
+  it('publishes a sound the press cannot do as it is, and says so — and one that would be no smaller', async () => {
+    const { project } = bed.runtime
+    const id = (await project.manifest()).id
+    await project.writeAsset('audio/ch001/l1.wav', new Uint8Array(64).fill(9))
+    await project.writeAsset('audio/ch001/rain.wav', new Uint8Array(48).fill(7))
+    const stubborn: SoundPress = { ext: 'm4a', key: 'fake/1', press: async (wav) => { if (wav[0] === 7) throw new Error('no sound in it'); return Uint8Array.from([0xaa]) } }
+    const result = await publishSite(bed.core, bed.runtime, { out, reader: READER, press: stubborn })
+    expect(result.sound).toEqual({ files: 1, from: 64, to: 1, failed: ['assets/audio/ch001/rain.wav'], reason: 'no sound in it' })
+    expect((await tree(out)).filter(path => path.includes('/audio/'))).toEqual([`media/${id}/assets/audio/ch001/l1.m4a`, `media/${id}/assets/audio/ch001/rain.wav`])
+    const chapter = JSON.parse(await readFile(join(out, 'data', id, 'chapters', 'ch001.json'), 'utf8'))
+    expect([chapter.script.lines[0].audio, chapter.script.cues[0].audio]).toEqual(['assets/audio/ch001/l1.m4a', 'assets/audio/ch001/rain.wav'])
+    expect(await readFile(join(out, 'media', id, 'assets', 'audio', 'ch001', 'rain.wav'))).toEqual(Buffer.from(new Uint8Array(48).fill(7)))
+
+    // A press that makes nothing smaller is not used: the sound goes as it lies, and that is no failure.
+    const useless: SoundPress = { ext: 'm4a', key: 'fake/3', press: async wav => new Uint8Array(wav.byteLength + 1) }
+    const kept = await publishSite(bed.core, bed.runtime, { out, reader: READER, press: useless })
+    expect(kept.sound).toBeUndefined()
+    expect((await tree(out)).filter(path => path.includes('/audio/'))).toEqual([`media/${id}/assets/audio/ch001/l1.wav`, `media/${id}/assets/audio/ch001/rain.wav`])
+
+    // Stopped in the middle, it stops: a press that was told to stop is not taken for one that cannot.
+    const stop = new AbortController()
+    const halted: SoundPress = { ext: 'm4a', key: 'fake/4', press: async () => { stop.abort(); throw new Error('stopped') } }
+    await expect(publishSite(bed.core, bed.runtime, { out, reader: READER, press: halted }, { origin: 'user', signal: stop.signal })).rejects.toThrow()
   })
 
   it('goes into the folder its author names, else one beside the book — never a name that is no folder', () => {

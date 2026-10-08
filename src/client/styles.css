@@ -2945,6 +2945,15 @@ button.nv-stat:hover {
   margin-top: 20px;
 }
 
+/* A model and, beside it, how the roles on it work: side by side where there is room, one under the other where there is not. */
+.nv-role-main.has-extra {
+  flex-wrap: wrap;
+}
+
+.nv-role-main.has-extra .nv-field {
+  flex: 1 1 240px;
+}
+
 .nv-credential {
   display: flex;
   flex-wrap: wrap;
@@ -7765,6 +7774,12 @@ blockquote.nv-issue-quote {
   gap: 6px;
 }
 
+/* Sound cannot be compressed on this computer: said where the choice is, not after the fact. */
+.nv-site-press-missing {
+  font-style: normal;
+  color: var(--nv-warn);
+}
+
 /* ── The bible's entries: a place or a thing with its picture ── */
 .nv-entry-row {
   align-items: center;
@@ -8447,6 +8462,51 @@ blockquote.nv-issue-quote {
 
 .nv-explore-grid.is-drawn {
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+}
+
+/* The first page of the world: each kind by how much of the story a thing carries, the heart of it first and large. */
+.nv-album-tier h4 {
+  margin: 12px 0 0;
+  color: var(--nv-text-3);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+
+.nv-album-tier h4 span {
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.nv-album-tier.is-core .nv-explore-grid.is-drawn {
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+}
+
+.nv-album-tier.is-core .nv-explore-tile-name {
+  font-size: 17px;
+}
+
+.nv-album-tier.is-core .nv-explore-tile.is-plain {
+  padding: 12px 14px;
+  border-color: color-mix(in srgb, var(--nv-brand) 34%, var(--nv-border));
+}
+
+.nv-album-tier.is-rest .nv-explore-tile.is-plain {
+  padding: 6px 10px;
+}
+
+/* The other way in: from the outermost place, a step at a time. */
+.nv-album-outer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  margin: 8px 0 0;
+  font-size: 12.5px;
+}
+
+.nv-album-fold {
+  align-self: flex-start;
+  margin-top: 8px;
 }
 
 /* ───────────────────────────── the album: people and the world, to be looked at ───────────────────────────── */

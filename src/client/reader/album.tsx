@@ -18,7 +18,7 @@
  * tools on the first page of the world.
  */
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from 'react'
-import { albumEmpty, entryStateAt, standingAt, type Album, type AlbumAt, type AlbumCounts, type AlbumEntry, type AlbumEvent, type AlbumPerson, type EntryState } from '../../shared/album'
+import { albumEmpty, entryStateAt, standingAt, worldFront, type Album, type AlbumAt, type AlbumCounts, type AlbumEntry, type AlbumEvent, type AlbumPerson, type EntryState } from '../../shared/album'
 import type { LifeEvent } from '../../shared/life'
 import { layoutSpots, spotKey, type ScenePoint } from '../../shared/scene'
 import { neighbours, STANDINGS, tiesAt, trail, type Standing, type Tie, type TieEnd } from '../../shared/ties'
@@ -74,6 +74,27 @@ const ENTRY_STATE: Record<Exclude<EntryState, 'there'>, [string, string]> = {
   before: ['那时还没有', 'not there yet'],
   declined: ['已衰败', 'in decline'],
   gone: ['已不在了', 'no more'],
+}
+
+/** The kinds of thing the first page of the world lays out by weight. */
+const KIND_LABEL: Record<'places' | 'factions' | 'items', [string, string]> = {
+  places: ['地方', 'Places'],
+  factions: ['家族与组织', 'Houses'],
+  items: ['物品', 'Things'],
+}
+
+/** How much of the story a thing carries, as the first page of the world heads its rows. */
+const WEIGHT_LABEL: Record<'core' | 'major' | 'minor', [string, string]> = {
+  core: ['核心', 'At the heart of the story'],
+  major: ['重要', 'Important'],
+  minor: ['次要与路过', 'Minor, and passed by'],
+}
+
+/** What the fold over the long tail of a kind says is behind it. */
+const REST_LABEL: Record<'places' | 'factions' | 'items', [string, string]> = {
+  places: ['个次要的、只路过的地方', 'places of less weight'],
+  factions: ['个次要的家族与组织', 'houses of less weight'],
+  items: ['件次要的物品', 'things of less weight'],
 }
 
 const COURSE_LABEL: Record<AlbumEvent['kind'], [string, string]> = {
@@ -451,16 +472,61 @@ export function AlbumView({ t, album, media, at, go, onRead, onEdit, worldTools,
   }
 
   // ── the world ──
-  const inSomething = new Set(ties.filter(tie => tie.kind === 'within').map(tie => tie.from.id))
+  // Laid out by how much of the story a thing carries, wherever it lies: the garden half the book happens in is met on the first
+  // page, though on the map it is a part of a house that is a part of a city. What is in what is told on each thing's own page.
   const tied = new Set(ties.flatMap(tie => [tie.from, tie.to]).filter(end => end.type === 'world').map(end => end.id))
   const seenBy = (candidate: AlbumEntry): boolean => moment === undefined || candidate.group === 'ideas' || ((candidate.chapters.some(index => index <= moment) || tied.has(candidate.id)) && stateOf(candidate) !== 'before')
   const of = (group: WorldGroup): AlbumEntry[] => album.world.filter(candidate => candidate.group === group && seenBy(candidate))
-  const outer = of('places').filter(candidate => !inSomething.has(candidate.id))
-  // A place passed once that nothing is tied to is not where a walk starts: those are behind a fold.
-  const loose = outer.filter(candidate => !tied.has(candidate.id) && candidate.weight === 'once')
-  const tops = outer.filter(candidate => !loose.includes(candidate))
-  const heads = of('factions').filter(candidate => !inSomething.has(candidate.id))
-  const things = of('items')
+  /** Something on the first page, with where it lies said on it: what a place is in, where a house has its seat. */
+  const placed = (candidate: AlbumEntry): { end: TieEnd; note: string } => {
+    const end: TieEnd = { type: 'world', id: candidate.id }
+    const around = neighbours(ties, end)
+    const lies = (around.parent ?? around.seat)?.find(item => there(item.end))
+    const state = stateOf(candidate)
+    const note = [
+      lies !== undefined ? t(`在${nameOf(lies.end)}`, `in ${nameOf(lies.end)}`) : '',
+      state !== 'there' ? t(...ENTRY_STATE[state]) : candidate.summary ?? '',
+    ].filter(part => part.length > 0).join(' · ')
+    return { end, note }
+  }
+  const tiers = (group: 'places' | 'factions' | 'items'): ReactNode => {
+    const all = of(group)
+    if (all.length === 0) return null
+    const { heavy, rest, outermost: outer } = worldFront(all, ties)
+    // The long tail is a wall of names: behind a fold, where there is something above it to look at first.
+    // What somebody drew a picture of is never part of that wall.
+    const drawn = rest.filter(candidate => candidate.image !== undefined)
+    const plain = rest.filter(candidate => candidate.image === undefined)
+    const foldable = heavy.length + drawn.length > 0 && plain.length > 12
+    const folded = foldable && more[group] !== true
+    const shown = folded ? drawn : rest
+    // The other way in: from the outermost, a step at a time — where that is not already everything there is.
+    const outermost = group === 'items' ? [] : outer
+    return (
+      <section key={group} className="nv-album-kind">
+        <h3>{t(...KIND_LABEL[group])}<span className="nv-muted"> {all.length}</span></h3>
+        {outermost.length > 0 && all.length > outermost.length ? (
+          <p className="nv-album-outer">
+            <span className="nv-muted">{t('从最外面一层层走进去：', 'From the outside in: ')}</span>
+            {outermost.map(candidate => <button key={candidate.id} type="button" className="nv-link" onClick={() => { open({ type: 'world', id: candidate.id }) }}>{candidate.name}</button>)}
+          </p>
+        ) : null}
+        {heavy.map(tier => (
+          <div key={tier.weight} className={cx('nv-album-tier', `is-${tier.weight}`)}>
+            {heavy.length + (rest.length > 0 ? 1 : 0) > 1 ? <h4>{t(...WEIGHT_LABEL[tier.weight])}<span> {tier.list.length}</span></h4> : null}
+            {rows(tier.list.map(placed))}
+          </div>
+        ))}
+        {shown.length > 0 ? (
+          <div className="nv-album-tier is-rest">
+            {heavy.length > 0 ? <h4>{t(...WEIGHT_LABEL.minor)}<span> {rest.length}</span></h4> : null}
+            {rows(shown.map(placed))}
+          </div>
+        ) : null}
+        {foldable ? <button type="button" className="nv-link nv-small nv-album-fold" onClick={() => { setMore({ ...more, [group]: folded }) }}>{folded ? t(`还有 ${plain.length} ${REST_LABEL[group][0]}`, `${plain.length} more ${REST_LABEL[group][1]}`) : t('收起', 'Fold')}</button> : null}
+      </section>
+    )
+  }
   const ideas = of('ideas')
   const nothing = album.world.length === 0
   return (
@@ -468,14 +534,14 @@ export function AlbumView({ t, album, media, at, go, onRead, onEdit, worldTools,
       <header className="nv-explore-top">
         <div>
           <h2>{t('这个世界', 'This world')}</h2>
-          <p className="nv-muted">{nothing ? t('这本书的设定里还没有地点、家族、物品和世界观。', 'The book\'s bible has no places, houses, things or ideas yet.') : album.ties.length > 0 ? t('从一个地方或一户人家点进去：里面有什么、谁在那里。', 'Step into a place or a house: what is in it, who is there.') : t('地点、家族、物品和世界观。点一处看它的样子和来历。', 'Places, houses, things and ideas. Open one for how it looks and what it is.')}</p>
+          <p className="nv-muted">{nothing ? t('这本书的设定里还没有地点、家族、物品和世界观。', 'The book\'s bible has no places, houses, things or ideas yet.') : album.ties.length > 0 ? t('故事里最要紧的排在前面。点一处进去：里面有什么、谁在那里。', 'What the story lives in comes first. Step into one: what is in it, who is there.') : t('地点、家族、物品和世界观，故事里最要紧的排在前面。点一处看它的样子和来历。', 'Places, houses, things and ideas, what the story lives in first. Open one for how it looks and what it is.')}</p>
         </div>
         {worldTools}
       </header>
       {time}
-      {tops.length > 0 ? <section><h3>{t('地方', 'Places')}<span className="nv-muted"> {tops.length}</span></h3>{worldRows(tops)}</section> : null}
-      {heads.length > 0 ? <section><h3>{t('家族与组织', 'Houses')}<span className="nv-muted"> {heads.length}</span></h3>{worldRows(heads)}</section> : null}
-      {things.length > 0 ? <section><h3>{t('物品', 'Things')}<span className="nv-muted"> {things.length}</span></h3>{worldRows(things)}</section> : null}
+      {tiers('places')}
+      {tiers('factions')}
+      {tiers('items')}
       {ideas.length > 0 ? (
         <section>
           <h3>{t('世界观', 'Ideas of the world')}<span className="nv-muted"> {ideas.length}</span></h3>
@@ -487,12 +553,6 @@ export function AlbumView({ t, album, media, at, go, onRead, onEdit, worldTools,
               </button>
             ))}
           </div>
-        </section>
-      ) : null}
-      {loose.length > 0 ? (
-        <section>
-          <button type="button" className="nv-link nv-small" onClick={() => { setMore({ ...more, loose: more.loose !== true }) }}>{more.loose === true ? t('收起', 'Fold') : t(`还有 ${loose.length} 个只路过一次的地方`, `${loose.length} more places passed once`)}</button>
-          {more.loose === true ? worldRows(loose) : null}
         </section>
       ) : null}
       {lightbox}

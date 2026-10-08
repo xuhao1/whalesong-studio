@@ -49,6 +49,25 @@ export function parseWav(bytes: Uint8Array): PcmAudio {
   throw new Error('WAV file has no data chunk')
 }
 
+/** What a WAV file says of itself, without decoding it; nothing when the bytes are no WAV file. */
+export function wavFormat(bytes: Uint8Array): { sampleRate: number; channels: number } | undefined {
+  const tag = (offset: number): string => String.fromCharCode(bytes[offset]!, bytes[offset + 1]!, bytes[offset + 2]!, bytes[offset + 3]!)
+  if (bytes.length < 28 || tag(0) !== 'RIFF' || tag(8) !== 'WAVE') return undefined
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  let offset = 12
+  while (offset + 8 <= bytes.length) {
+    const declared = view.getUint32(offset + 4, true)
+    if (tag(offset) === 'fmt ') {
+      if (offset + 16 > bytes.length) return undefined
+      const channels = view.getUint16(offset + 10, true)
+      const sampleRate = view.getUint32(offset + 12, true)
+      return channels > 0 && sampleRate > 0 ? { sampleRate, channels } : undefined
+    }
+    offset += 8 + declared + (declared % 2)
+  }
+  return undefined
+}
+
 /** Encode PCM16 mono as a WAV file. */
 export function encodeWav(audio: PcmAudio): Uint8Array {
   const dataSize = audio.pcm.length * 2

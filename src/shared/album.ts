@@ -124,6 +124,36 @@ export function albumEmpty(counts: AlbumCounts | undefined): boolean {
   return counts === undefined || counts.people + counts.places + counts.factions + counts.items + counts.ideas === 0
 }
 
+/** One kind of thing — the places, the houses, the things — as the first page of the world lays it out. */
+export interface WorldFront {
+  /**
+   * What the story lives in and what it keeps coming back to, a row each, wherever on the map they lie:
+   * the garden half the book happens in is met on the first page, though it is a part of a house that is
+   * a part of a city. A row with nothing in it is left out.
+   */
+  heavy: { weight: 'core' | 'major'; list: AlbumEntry[] }[]
+  /** Everything of less weight: named in a chapter or two, passed once. */
+  rest: AlbumEntry[]
+  /** Where a walk from the outside starts: what is in nothing and has something in it. */
+  outermost: AlbumEntry[]
+}
+
+/**
+ * The first page of the world for one kind of thing: by weight, not by what is in what.
+ * @param entries - the entries of the kind, the heaviest first (as an album has them).
+ * @param ties - the ties in force at the chapter looked at.
+ */
+export function worldFront(entries: readonly AlbumEntry[], ties: readonly Tie[]): WorldFront {
+  const within = ties.filter(tie => tie.kind === 'within')
+  const inSomething = new Set(within.map(tie => tie.from.id))
+  const holdsSomething = new Set(within.map(tie => tie.to.id))
+  return {
+    heavy: (['core', 'major'] as const).map(weight => ({ weight, list: entries.filter(entry => entry.weight === weight) })).filter(tier => tier.list.length > 0),
+    rest: entries.filter(entry => entry.weight !== 'core' && entry.weight !== 'major'),
+    outermost: entries.filter(entry => !inSomething.has(entry.id) && holdsSomething.has(entry.id)),
+  }
+}
+
 /** Where in an album a page is: one of its two halves, or the page of one thing. */
 export interface AlbumAt {
   section: 'people' | 'world'

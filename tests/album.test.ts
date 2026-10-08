@@ -6,8 +6,9 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { publishSite } from '../src/core/pipelines/site'
 import { bookAnswer, listSides, readAlbum, readSide, ReaderRefused } from '../src/core/reader'
-import { albumCounts, cutAlbum, entryStateAt, standingAt } from '../src/shared/album'
+import { albumCounts, cutAlbum, entryStateAt, standingAt, worldFront, type AlbumEntry } from '../src/shared/album'
 import { layoutSpots, SCENE_BAND, SCENE_SPOTS } from '../src/shared/scene'
+import type { Tie } from '../src/shared/ties'
 import { hashText, proseOnly } from '../src/shared/text'
 import type { ChapterMemory, CharacterMoment } from '../src/shared/types'
 import { createTestBed, type TestBed } from './support/harness'
@@ -300,5 +301,31 @@ describe('the album of a book', () => {
     } finally {
       await rm(out, { recursive: true, force: true })
     }
+  })
+})
+
+describe('the first page of the world', () => {
+  const place = (id: string, weight: AlbumEntry['weight'], chapters: number): AlbumEntry => ({ id, name: id, category: 'location', group: 'places', weight, chapters: Array.from({ length: chapters }, (_, at) => at + 1) })
+  const inside = (from: string, to: string, since?: string): Tie => ({ id: `${from}-${to}`, kind: 'within', from: { type: 'world', id: from }, to: { type: 'world', id: to }, ...(since !== undefined ? { since } : {}) })
+
+  it('lays the places out by how much of the story they carry, not by what is in what', () => {
+    // A city the text names twice, the house in it the story keeps coming back to, the garden in that house where half the book happens, and an inn passed once.
+    const places = [place('garden', 'core', 25), place('house', 'major', 9), place('pavilion', 'major', 4), place('city', 'minor', 2), place('inn', 'once', 1)]
+    const ties = [inside('house', 'city'), inside('garden', 'house'), inside('pavilion', 'garden')]
+    const front = worldFront(places, ties)
+    // The garden is met first, though on the map it is two steps down from the top; a row of each weight, in the order given.
+    expect(front.heavy.map(tier => [tier.weight, tier.list.map(entry => entry.id)])).toEqual([['core', ['garden']], ['major', ['house', 'pavilion']]])
+    expect(front.rest.map(entry => entry.id)).toEqual(['city', 'inn'])
+    // The walk from the outside starts at what is in nothing and has something in it: the city, not the inn.
+    expect(front.outermost.map(entry => entry.id)).toEqual(['city'])
+
+    // Nothing weighs much: no rows above, and everything is "the rest" — which a page then shows as it is.
+    const light = worldFront([place('a', 'minor', 2), place('b', 'once', 1)], [])
+    expect(light).toEqual({ heavy: [], rest: [place('a', 'minor', 2), place('b', 'once', 1)], outermost: [] })
+    // Before the garden was laid out in the house (the ties in force at an earlier chapter), the house is no way further in.
+    expect(worldFront(places, [inside('house', 'city')]).outermost.map(entry => entry.id)).toEqual(['city'])
+    expect(worldFront(places, []).outermost).toEqual([])
+    // A row that would be empty is left out.
+    expect(worldFront([place('house', 'major', 9), place('inn', 'once', 1)], []).heavy.map(tier => tier.weight)).toEqual(['major'])
   })
 })

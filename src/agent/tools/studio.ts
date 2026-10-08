@@ -13,6 +13,7 @@ import { artDirectionOf } from '../../core/pipelines/illustrate'
 import { clearComicBoard, removeComicPanel, updateComicPanel } from '../../core/pipelines/comic'
 import { rewindPlay, setPlayOutcome } from '../../core/pipelines/play'
 import { clearReview, resolveIssue } from '../../core/pipelines/review'
+import { findSoundPress } from '../../core/media/press'
 import { publishSite, siteChaptersUpTo, siteFolder } from '../../core/pipelines/site'
 import { ProjectError } from '../../core/project'
 import { readStub } from '../../core/util/vault'
@@ -20,6 +21,7 @@ import type { DeepPartial } from '../../core/settings'
 import { describeRow, rangeStart, summarize, type UsageRange } from '../../core/usage'
 import type { NovelService } from '../../host/service'
 import { hostOf, PROJECT_HOMEPAGE, SERVICES, type ServiceId, type SetupPart } from '../../shared/services'
+import { FFMPEG_INSTALL } from '../../shared/text'
 import type { AmbiencePreset, CameraMove, ModelRoute, NovelSettings, ProjectManifest, SoundKind, TextRole } from '../../shared/types'
 import { brief, listOf, listParameter, novelTool, toJson } from './shared'
 
@@ -200,7 +202,7 @@ export function studioTools(service: NovelService) {
         '- action=on: share the book in play (or `book`) and start the reader; the author is asked to confirm. `mode`=read (default) lets a device read, listen and watch, and change nothing. `mode`=edit also lets it edit the chapters\' text (a version is kept before each save, and the change goes on the book\'s record) and play the book\'s interludes, which calls the models set up on this computer. Give the author the address — it carries a secret token, so whoever has it can do what the mode allows with the shared books, and nothing else: settings, keys and other books stay out of reach. A sealed book asks every device for its password once. Their computer may ask once whether to allow incoming connections.',
         '- action=off: stop sharing this book (`all`=true: switch the reader off altogether).',
         '- action=renew: replace the address, so links given out earlier stop working.',
-        '- action=publish: write the book out as a site of its own — a folder any static host serves (the same reader, the chapters, voices, motion comic, pictures, and the album of the people and the world as a reader is given it), needing neither DSH nor this computer. `out` names the folder (default: one beside the book, `<title>-site`; never inside the book\'s own); `upto` publishes the written chapters of the main line as far as that chapter (its id, number or title) and cuts the album there; listen=false, watch=false, album=false leave a part out. Published again into the same folder, only what changed is written. A sealed book is not published from the conversation: what is published lies in the open, and that is the author\'s to confirm in the Studio (the phone button of the viewer → Publish as a site).',
+        '- action=publish: write the book out as a site of its own — a folder any static host serves (the same reader, the chapters, voices, motion comic, pictures, and the album of the people and the world as a reader is given it), needing neither DSH nor this computer. `out` names the folder (default: one beside the book, `<title>-site`; never inside the book\'s own); `upto` publishes the written chapters of the main line as far as that chapter (its id, number or title) and cuts the album there; listen=false, watch=false, album=false leave a part out. Voices and sound lie in the book uncompressed (WAV) and go out as AAC, a quarter the size and sounding the same, when this computer has ffmpeg (the result says when it has not, and they went out as WAV); press=false keeps them as WAV. Published again into the same folder, only what changed is written, and only sound that changed is compressed again. A sealed book is not published from the conversation: what is published lies in the open, and that is the author\'s to confirm in the Studio (the phone button of the viewer → Publish as a site).',
         '`port` moves the reader to another port (default 4319) when the usual one is taken.',
       ].join('\n'),
       mutating: args => args.action !== 'status',
@@ -214,6 +216,7 @@ export function studioTools(service: NovelService) {
         listen: { type: 'boolean', description: 'publish: false leaves the audio drama out.' },
         watch: { type: 'boolean', description: 'publish: false leaves the motion comic out.' },
         album: { type: 'boolean', description: 'publish: false leaves the album of the people and the world out.' },
+        press: { type: 'boolean', description: 'publish: false publishes voices and sound uncompressed (WAV), as they lie in the book; by default they go out as AAC.' },
       },
       async run(args, env) {
         if (args.action === 'publish') {
@@ -223,9 +226,11 @@ export function studioTools(service: NovelService) {
           const reader = await service.share.readerScript()
           if (reader === undefined) throw new ProjectError('novel/unsupported', 'the reader\'s script (lib/reader.js) is missing from this installation')
           const chapters = typeof args.upto === 'string' && args.upto.trim().length > 0 ? await siteChaptersUpTo(runtime, args.upto) : undefined
+          const press = args.press === false ? undefined : await findSoundPress()
           const done = await env.job('export', 'publish site', undefined, async task => await publishSite(env.core, runtime, {
             out: siteFolder(runtime.project.root, manifest.title, args.out),
             reader,
+            ...(press !== undefined ? { press } : {}),
             ...(chapters !== undefined ? { chapters } : {}),
             ...(args.listen === false ? { listen: false } : {}),
             ...(args.watch === false ? { watch: false } : {}),
@@ -233,8 +238,12 @@ export function studioTools(service: NovelService) {
             credit: { name: manifest.language.toLowerCase().startsWith('zh') ? '小说工坊' : 'Novel Studio', url: PROJECT_HOMEPAGE },
           }, task))
           const megabytes = (done.bytes / 1024 / 1024).toFixed(1)
+          const mb = (bytes: number): string => `${(bytes / 1024 / 1024).toFixed(1)} MB`
+          const sound = done.sound !== undefined
+            ? ` Voices and sound: ${done.sound.files} files went out as AAC, ${mb(done.sound.from)} → ${mb(done.sound.to)}.${done.sound.failed.length > 0 ? ` ${done.sound.failed.length} could not be compressed and went out as WAV (${done.sound.reason ?? 'no reason given'}): ${done.sound.failed.slice(0, 3).join(', ')}${done.sound.failed.length > 3 ? '…' : ''}.` : ''}`
+            : args.press !== false && press === undefined ? ` Voices and sound went out uncompressed (WAV): compressing them needs ffmpeg, which is not on this computer (${FFMPEG_INSTALL[1]}).` : ''
           return {
-            text: `Published "${manifest.title}" as a site: ${done.chapters} chapters${done.sides > 0 ? `, ${done.sides} side stories` : ''}${done.album !== undefined ? `, an album of ${done.album.people} people and ${done.album.places + done.album.factions + done.album.items + done.album.ideas} entries` : ''}, ${done.files} files, ${megabytes} MB in all (${done.written} written this time${done.removed > 0 ? `, ${done.removed} left from last time removed` : ''}) in ${done.dir}.${done.missing.length > 0 ? ` ${done.missing.length} pictures or sounds the book names are not on disk and were left out.` : ''} The folder goes onto any static host as it is; to look at it first, serve it locally (\`npx serve\`, \`python3 -m http.server\`) — index.html opened from disk cannot read the data beside it.`,
+            text: `Published "${manifest.title}" as a site: ${done.chapters} chapters${done.sides > 0 ? `, ${done.sides} side stories` : ''}${done.album !== undefined ? `, an album of ${done.album.people} people and ${done.album.places + done.album.factions + done.album.items + done.album.ideas} entries` : ''}, ${done.files} files, ${megabytes} MB in all (${done.written} written this time${done.removed > 0 ? `, ${done.removed} left from last time removed` : ''}) in ${done.dir}.${done.missing.length > 0 ? ` ${done.missing.length} pictures or sounds the book names are not on disk and were left out.` : ''}${sound} The folder goes onto any static host as it is; to look at it first, serve it locally (\`npx serve\`, \`python3 -m http.server\`) — index.html opened from disk cannot read the data beside it.`,
             data: toJson(done),
           }
         }
