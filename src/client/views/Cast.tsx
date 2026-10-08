@@ -11,7 +11,7 @@ import type { CharacterCard, CharacterStatus, WalkOn } from '../../shared/types'
 import { Icon } from '../icons'
 import type { CastTab } from '../store'
 import {
-  Button, Chip, cx, Empty, Menu, SectionTitle, Select, Spinner, Tabs, useAction, useKept, useLoad, useProject, useQuote, useSnapshot, useStudio, useT,
+  Button, Chip, cx, Empty, Menu, SectionTitle, Select, Spinner, Tabs, useAction, useKept, useLoad, useProject, useQuote, useSnapshot, useStudio, useT, useMediaUrl,
 } from '../ui'
 import { byWeight, CastFilterBar, MAIN_ROLES, matchesCast, sortCast, useCastFilter } from '../CharacterPicker'
 import { CardPhoto, CharacterCards, ROLE_LABELS, STATUS_LABELS, STATUS_TONES, type Lives } from './Characters'
@@ -303,8 +303,8 @@ export function CastView() {
   )
 }
 
-/** How large somebody's mark is: by the weight of their part. */
-const MARK: Record<CharacterCard['role'], number> = { protagonist: 13, deuteragonist: 11, antagonist: 11, supporting: 8.5, minor: 6, cameo: 5 }
+/** How large somebody's mark is: by the weight of their part — large enough, for those who carry the story, to show a face in. */
+const MARK: Record<CharacterCard['role'], number> = { protagonist: 17, deuteragonist: 14, antagonist: 14, supporting: 10.5, minor: 6.5, cameo: 5 }
 
 const KIND_LABELS: Record<RelationKind, [string, string]> = {
   family: ['亲属', 'Family'],
@@ -327,6 +327,7 @@ interface Box { x: number; y: number; width: number; height: number }
 function Relations({ cards }: { cards: CharacterCard[] }) {
   const { controller } = useStudio()
   const t = useT()
+  const mediaUrl = useMediaUrl()
   const [focus, setFocus] = useState<string | undefined>()
   const edges = useMemo(() => {
     const byId = new Map(cards.map(card => [card.id, card]))
@@ -417,6 +418,8 @@ function Relations({ cards }: { cards: CharacterCard[] }) {
               <g key={card.id} className={cx('nv-graph-node', `is-${card.role}`, far && 'is-far', centred === card.id && 'is-focus')} transform={`translate(${position.x} ${position.y})`} onClick={() => { setFocus(centred === card.id ? undefined : card.id) }}>
                 <title>{t(`${card.name}：点一下以这个人为中心`, `${card.name}: click to put them in the middle`)}</title>
                 <circle r={MARK[card.role]} />
+                {/* Whoever has a face shows it: the mark is their portrait, in a ring of their part's colour. */}
+                {card.visual?.portrait !== undefined ? <image className="nv-graph-face" href={mediaUrl(card.visual.portrait)} x={-MARK[card.role]} y={-MARK[card.role]} width={MARK[card.role] * 2} height={MARK[card.role] * 2} preserveAspectRatio="xMidYMin slice" /> : null}
                 <text y={MARK[card.role] + 14} textAnchor="middle">{card.name}</text>
               </g>
             )

@@ -2763,6 +2763,12 @@ button.nv-stat:hover {
 .nv-graph-node.is-supporting circle { fill: var(--nv-success); }
 .nv-graph-node.is-focus circle { stroke: var(--nv-text); stroke-width: 3; }
 
+/* A face in the mark: cut round, inside the ring. */
+.nv-graph-face {
+  clip-path: circle(calc(50% - 1.5px));
+  pointer-events: none;
+}
+
 .nv-graph-node text {
   fill: var(--nv-text);
   font-size: 12px;

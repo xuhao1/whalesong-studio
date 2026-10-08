@@ -3,7 +3,7 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { artDirectionOf, deriveArtDirection, deriveVisual, illustrate, looksOf } from '../src/core/pipelines/illustrate'
+import { artDirectionOf, deriveArtDirection, deriveLook, deriveVisual, illustrate, looksOf } from '../src/core/pipelines/illustrate'
 import { reconcileLooks, upsertLooks } from '../src/core/project'
 import { DEFAULT_SETTINGS } from '../src/core/settings'
 import { DEFAULT_ART_STYLE, mergeAvoid, resolveArtStyle, splitAvoid } from '../src/shared/art'
@@ -228,6 +228,50 @@ describe('design sheets and looks', () => {
     ])
     expect(images.calls.at(-1)!.references).toHaveLength(2)
     expect(scene.prompt).toContain('参考图：第1张是沈砚（丧服）；第2张是场所「咏礼庭」')
+  })
+
+  it('has the director write down how a place or a thing looks, from the book, before its design art is drawn', async () => {
+    const { bed, images } = await studio()
+    const { project } = bed.runtime
+    const chapter = await project.addChapter({ title: '入园' })
+    await project.saveChapterText(chapter.id, '进了园门，只见迎面一带翠嶂挡在前面。往前一望，见白石崚嶒，或如鬼怪，或如猛兽，纵横拱立。\n\n再进数步，渐向北边，平坦宽豁，两边飞楼插空，雕甍绣槛，皆隐于山坳树杪之间。')
+    const garden = await project.saveWorld({ name: '大观园', aliases: ['园门'], category: 'location', summary: '为省亲而建的园子' })
+    const mirror = await project.saveWorld({ name: '风月宝鉴', category: 'item', summary: '两面皆可照人的镜子' })
+    const idea = await project.saveWorld({ name: '金玉良缘', category: 'rule' })
+    bed.llm.responder = () => JSON.stringify({ look: '一进园门是翠嶂假山，白石嶙峋；其后地势开阔，两侧楼阁隐在树梢之间，雕梁绣槛，粉墙黛瓦。' })
+    const made = await deriveLook(bed.core, bed.runtime, { entry: '大观园', direction: '要有水' }, task)
+    expect(made.look).toContain('翠嶂假山')
+    expect((await project.findWorld(garden.id))!.visualPrompt).toBe(made.look)
+    // The director was handed what the bible says of it and where the text names it — by its name or another of its names — and the author's wish.
+    const asked = bed.llm.requests.at(-1)!.prompt
+    expect(asked).toContain('为省亲而建的园子')
+    expect(asked).toContain('第 1 章')
+    expect(asked).toContain('迎面一带翠嶂')
+    expect(asked).toContain('要有水')
+    // An idea of the world is nothing a picture shows; a name nothing answers to is said.
+    await expect(deriveLook(bed.core, bed.runtime, { entry: idea.id }, task)).rejects.toThrow(/idea of the world/)
+    await expect(deriveLook(bed.core, bed.runtime, { entry: '没有这个地方' }, task)).rejects.toThrow(/no world entry/)
+
+    // Drawn without a look written down: the director writes one first — once — and the picture is drawn from it.
+    const requests = bed.llm.requests.length
+    bed.llm.responder = () => JSON.stringify({ look: '一面带柄的铜镜，镜背錾着"风月宝鉴"四字，两面皆可照人。' })
+    const art = await illustrate(bed.core, bed.runtime, { kind: 'item', target: mirror.id }, task)
+    expect(bed.llm.requests.length).toBe(requests + 1)
+    expect(art.parts?.subject).toContain('一面带柄的铜镜')
+    expect((await project.findWorld(mirror.id))!.visualPrompt).toContain('一面带柄的铜镜')
+    await illustrate(bed.core, bed.runtime, { kind: 'item', target: mirror.id }, task)
+    expect(bed.llm.requests.length).toBe(requests + 1)
+    // A place that has its look is drawn from it, and nobody is asked.
+    const scene = await illustrate(bed.core, bed.runtime, { kind: 'location', target: garden.id }, task)
+    expect(bed.llm.requests.length).toBe(requests + 1)
+    expect(scene.parts?.subject).toContain('翠嶂假山')
+    // Where the director cannot be had, a picture is still drawn — from the entry's own words, and the entry is left without a look.
+    const inn = await project.saveWorld({ name: '悦来客栈', category: 'location', summary: '城门口的小客栈' })
+    bed.llm.responder = () => { throw new Error('the director is not answering') }
+    const fallback = await illustrate(bed.core, bed.runtime, { kind: 'location', target: inn.id }, task)
+    expect(fallback.parts?.subject).toContain('城门口的小客栈')
+    expect((await project.findWorld(inn.id))!.visualPrompt).toBeUndefined()
+    expect(images.calls.length).toBeGreaterThanOrEqual(4)
   })
 
   it('composes a cover from what the book is — its story, its tone, its leads — not from its title', async () => {

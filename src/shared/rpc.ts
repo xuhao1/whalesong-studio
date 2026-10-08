@@ -402,6 +402,8 @@ export interface NovelRpc {
    */
   'ai.ties': { params: { root: string; direction?: string }; result: JobStarted }
   'world.expand': { params: { root: string; id: string; direction?: string }; result: JobStarted }
+  /** Have the director write down how a place or a thing looks, from what the book says of it; kept on the entry. A job. */
+  'ai.worldLook': { params: { root: string; id: string; direction?: string }; result: JobStarted }
   'style.save': { params: { root: string; style: Partial<StyleProfile>; activate?: boolean }; result: StyleProfile }
   'style.delete': { params: { root: string; id: string }; result: { deleted: boolean } }
   'style.extract': { params: { root: string; sample: string; name?: string; activate?: boolean }; result: JobStarted }
@@ -570,6 +572,8 @@ export interface NovelRpc {
     press?: boolean
     sealedOk?: boolean
   }; result: JobStarted }
+  /** Where the book was last read, on whichever device; with `chapter`, leave the Studio's own place there. Nothing when nobody left one. */
+  'reader.position': { params: { root: string; chapter?: string }; result: { position?: { chapter: string; at: string; by: string } } }
   /** The people and the world of a book as its viewer shows them — to the author: also who and what the text has not come to yet. */
   'reader.album': { params: { root: string }; result: Album }
   /** The interludes kept as side stories, as the viewer lists them; with `id`, one of them as it is read. */

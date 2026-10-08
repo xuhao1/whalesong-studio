@@ -187,10 +187,10 @@ function go(place: Place): void {
         : `${book}${place.chapter !== undefined ? `/${encodeURIComponent(place.chapter)}` : ''}`
 }
 
-/** Where the reader left each book, kept on this device. */
-function remembered(book: string): { chapter?: string } {
+/** Where the reader left each book, kept on this device — and when, so that a later place left on another device is told from it. */
+function remembered(book: string): { chapter?: string; at?: string } {
   try {
-    return JSON.parse(localStorage.getItem(`novel-reader:at:${book}`) ?? '{}') as { chapter?: string }
+    return JSON.parse(localStorage.getItem(`novel-reader:at:${book}`) ?? '{}') as { chapter?: string; at?: string }
   } catch {
     return {}
   }
@@ -198,10 +198,13 @@ function remembered(book: string): { chapter?: string } {
 
 function remember(book: string, chapter: string): void {
   try {
-    localStorage.setItem(`novel-reader:at:${book}`, JSON.stringify({ chapter }))
+    localStorage.setItem(`novel-reader:at:${book}`, JSON.stringify({ chapter, at: new Date().toISOString() }))
   } catch {
     // Not remembered on this device; nothing is lost but the bookmark.
   }
+  // Left with the book too, where there is somebody to leave it with: the next device picks the book up here.
+  // (A site is files: its reader keeps its place on the device alone. A Host from before this was kept answers "not found", which is no harm.)
+  if (!SITE) void send('POST', `api/books/${encodeURIComponent(book)}/position`, { chapter }).catch(() => {})
 }
 
 function useLoad<T>(load: (signal: AbortSignal) => Promise<T>, deps: readonly unknown[]): { data: T | undefined; error: string | undefined; reload: () => void; set: (data: T) => void } {
@@ -328,7 +331,7 @@ function useLine(book: string): [string, (line: string) => void] {
 }
 
 function BookScreen({ id, place, t }: { id: string; place: Place; t: Translate }) {
-  const detail = useLoad(signal => get<{ book: Book; chapters: ChapterRef[]; lines?: Line[]; album?: AlbumCounts; sides?: number }>(`api/books/${encodeURIComponent(id)}`, signal), [id])
+  const detail = useLoad(signal => get<{ book: Book; chapters: ChapterRef[]; lines?: Line[]; album?: AlbumCounts; sides?: number; position?: { chapter: string; at: string; by: string } }>(`api/books/${encodeURIComponent(id)}`, signal), [id])
   const every = useMemo(() => detail.data?.chapters ?? [], [detail.data])
   const [chosen, chooseLine] = useLine(id)
   // Along the line being read: a book that goes one way has only that one.
@@ -349,7 +352,13 @@ function BookScreen({ id, place, t }: { id: string; place: Place; t: Translate }
   // The side stories the author kept: to be read, by whoever reads the book.
   if (place.side !== undefined && sides > 0) return <SidesScreen key={String(place.side)} book={book} counts={detail.data.album} sides={sides} side={typeof place.side === 'string' ? place.side : undefined} t={t} />
   const chapter = chapters.find(candidate => candidate.id === place.chapter)
-  if (chapter === undefined) return <Contents book={book} chapters={chapters} counts={detail.data.album} sides={sides} lines={detail.data.lines} line={line} onLine={chooseLine} t={t} />
+  if (chapter === undefined) {
+    // Read further on another device since this one was last at the book: that is where reading goes on.
+    const mine = remembered(id)
+    const left = detail.data.position
+    const there = left !== undefined && left.chapter !== mine.chapter && (mine.at === undefined || left.at > mine.at) ? every.find(candidate => candidate.id === left.chapter) : undefined
+    return <Contents book={book} chapters={chapters} counts={detail.data.album} sides={sides} lines={detail.data.lines} line={line} onLine={chooseLine} elsewhere={there !== undefined ? { chapter: there, by: left!.by } : undefined} t={t} />
+  }
   return <Chapter book={book} chapters={chapters} chapter={chapter} ways={ways} onLine={chooseLine} t={t} />
 }
 
@@ -423,7 +432,7 @@ function AlbumScreen({ book, chapters, counts, sides, at, t }: { book: Book; cha
   )
 }
 
-function Contents({ book, chapters, counts, sides, lines, line, onLine, t }: { book: Book; chapters: ChapterRef[]; counts: AlbumCounts | undefined; sides: number; lines?: Line[] | undefined; line?: Line | undefined; onLine: (line: string) => void; t: Translate }) {
+function Contents({ book, chapters, counts, sides, lines, line, onLine, elsewhere, t }: { book: Book; chapters: ChapterRef[]; counts: AlbumCounts | undefined; sides: number; lines?: Line[] | undefined; line?: Line | undefined; onLine: (line: string) => void; /** Where the book was read on another device, later than on this one. */ elsewhere?: { chapter: ChapterRef; by: string } | undefined; t: Translate }) {
   const last = remembered(book.id).chapter
   const resume = chapters.find(chapter => chapter.id === last)
   const credit = useMemo(siteCredit, [])
@@ -443,10 +452,16 @@ function Contents({ book, chapters, counts, sides, lines, line, onLine, t }: { b
             {book.logline !== undefined ? <p className="nr-book-logline">{book.logline}</p> : null}
             <p className="nv-muted nv-small">{t(`${book.chapters} 章 · ${book.words.toLocaleString()} 字`, `${book.chapters} chapters · ${book.words.toLocaleString()} words`)}</p>
             <div className="nr-book-actions">
-              {chapters.length > 0 ? (
-                <button type="button" className="nv-btn nv-btn-primary" onClick={() => { go({ book: book.id, chapter: (resume ?? chapters[0]!).id }) }}>
+              {elsewhere !== undefined ? (
+                <button type="button" className="nv-btn nv-btn-primary" onClick={() => { go({ book: book.id, chapter: elsewhere.chapter.id }) }} title={elsewhere.chapter.title}>
                   <Icon name="eye" size={15} />
-                  <span>{resume !== undefined ? t(`接着读：第 ${resume.index} 章`, `Continue: chapter ${resume.index}`) : t('开始读', 'Start reading')}</span>
+                  <span>{t(`接着读：第 ${elsewhere.chapter.index} 章`, `Continue: chapter ${elsewhere.chapter.index}`)}</span>
+                </button>
+              ) : null}
+              {chapters.length > 0 ? (
+                <button type="button" className={cx('nv-btn', elsewhere !== undefined ? 'nv-btn-outline' : 'nv-btn-primary')} onClick={() => { go({ book: book.id, chapter: (resume ?? chapters[0]!).id }) }}>
+                  {elsewhere !== undefined ? null : <Icon name="eye" size={15} />}
+                  <span>{resume !== undefined ? (elsewhere !== undefined ? t(`这台设备上次：第 ${resume.index} 章`, `On this device: chapter ${resume.index}`) : t(`接着读：第 ${resume.index} 章`, `Continue: chapter ${resume.index}`)) : elsewhere !== undefined ? t('从头读', 'From the start') : t('开始读', 'Start reading')}</span>
                 </button>
               ) : null}
               {book.mode === 'edit' ? (
@@ -456,6 +471,7 @@ function Contents({ book, chapters, counts, sides, lines, line, onLine, t }: { b
                 </button>
               ) : null}
             </div>
+            {elsewhere !== undefined ? <p className="nv-muted nv-small">{t(`在${elsewhere.by === 'Studio' ? '电脑上的工坊里' : `另一台设备（${elsewhere.by}）上`}读到了第 ${elsewhere.chapter.index} 章《${elsewhere.chapter.title}》。`, `Read as far as chapter ${elsewhere.chapter.index}, "${elsewhere.chapter.title}", ${elsewhere.by === 'Studio' ? 'in the Studio on the computer' : `on another device (${elsewhere.by})`}.`)}</p> : null}
             {book.mode === 'edit' ? <p className="nv-muted nv-small">{t('作者允许在这台设备上改这本书：可以编辑正文，也可以玩幕间。', 'The author lets this device change the book: the text can be edited and interludes played.')}</p> : null}
           </div>
         </div>

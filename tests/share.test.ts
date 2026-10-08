@@ -5,6 +5,7 @@ import { createServer } from 'node:net'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { addresses, ShareServer } from '../src/host/share'
+import { readPosition, savePosition } from '../src/core/reader'
 import { encodeWav } from '../src/core/media/wav'
 import { hashText, proseOnly } from '../src/shared/text'
 import { createTestBed, PIXEL, type TestBed } from './support/harness'
@@ -284,6 +285,37 @@ describe('the reader for other devices', () => {
     // What the models were asked is the author's business.
     expect(JSON.stringify(chapter)).not.toContain('提示词')
     expect(JSON.stringify(chapter)).not.toContain('只给声音模型')
+  })
+
+  it('keeps where the book was last read, so that the next device picks it up there', async () => {
+    const { project } = bed.runtime
+    const { id } = await project.manifest()
+    const base = await turnOn()
+    // Nobody has left a place yet.
+    expect((await (await fetch(`${base}/api/books/${id}`)).json() as { position?: unknown }).position).toBeUndefined()
+    const before = project.revision
+    // A reader may leave their place whatever else they may do with the book: this one is read-only.
+    const left = await fetch(`${base}/api/books/${id}/position`, { method: 'POST', headers: reader, body: JSON.stringify({ chapter: chapterId }) })
+    expect(left.status).toBe(200)
+    const position = (await left.json() as { position: { chapter: string; at: string; by: string } }).position
+    expect(position).toMatchObject({ chapter: chapterId })
+    expect(Date.parse(position.at)).toBeGreaterThan(0)
+    expect(position.by.length).toBeGreaterThan(0)
+    // The next device to open the book is told; and the Studio, which leaves its own place the same way.
+    expect((await (await fetch(`${base}/api/books/${id}`)).json() as { position?: unknown }).position).toEqual(position)
+    expect(await readPosition(bed.runtime)).toEqual(position)
+    expect((await savePosition(bed.runtime, chapterId, 'Studio')).by).toBe('Studio')
+    expect((await (await fetch(`${base}/api/books/${id}`)).json() as { position: { by: string } }).position.by).toBe('Studio')
+    // It is no change of the book: nothing that watches the book is told of it.
+    expect(project.revision).toBe(before)
+    // A chapter that is none of the book's, or has nothing to read, is no place to leave.
+    const second = (await project.chapterInfos()).find(chapter => !chapter.hasText)!
+    for (const chapter of ['ch999', second.id, '../novel', 12, undefined]) {
+      expect((await fetch(`${base}/api/books/${id}/position`, { method: 'POST', headers: reader, body: JSON.stringify({ chapter }) })).status, String(chapter)).toBe(404)
+    }
+    // A place in a chapter that is gone is no place any more.
+    await project.removeChapter(chapterId)
+    expect(await readPosition(bed.runtime)).toBeUndefined()
   })
 
   it('serves a chapter\'s finished video and its words — and nothing from the bench it was cut on', async () => {

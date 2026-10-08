@@ -1015,6 +1015,54 @@ Rules:
 }
 
 /** Distill a character's prose appearance into an anchor an image model can draw the same way every time. */
+/**
+ * The look of a place or a thing, written down from what the book says of it:
+ * what its design art is drawn from, and every picture that shows it after.
+ * @param base.kind - `place` or `thing`: a house or an organization is drawn as the place it has its seat at.
+ * @param base.passages - where the text names it, a few lines each, with the chapter.
+ */
+export function lookTask(base: Base & { kind: 'place' | 'thing'; entry: string; passages: string; avoid?: string[]; direction?: string }): string {
+  const avoid = (base.avoid ?? []).join(base.lang === 'zh' ? '、' : ', ')
+  const place = base.kind === 'place'
+  return L(base.lang, `请把《${base.title}》里的这${place ? '个地方' : '件东西'}写成一段"它长什么样"：它的设定图照这段话画，以后凡是画到它的图也都带着这段话，所以要具体、稳定、画得出来。
+
+## 设定里怎么写它
+${base.entry}
+
+## 正文里写到它的地方
+${base.passages.length > 0 ? base.passages : '（正文里还没有找到直接写它样子的句子——需要的话自己去查原文。）'}
+${base.direction !== undefined && base.direction.length > 0 ? `\n## 作者的要求\n${base.direction}\n` : ''}
+## 这本书的画面里不能出现
+${avoid.length > 0 ? avoid : '（无特别限制）'}
+
+要求：
+1. 用这本书的语言写，80–160 字，一段话，不分条。
+2. 只写看得见的、不随情节变的：${place ? '格局与规模（几进院落、有没有水、地势高低）、主要的建筑和它们的样式、材质与颜色、草木与陈设、年代与地域的感觉' : '形状与大小、材质、颜色、纹饰或刻着的字样（照原文）、新旧与磨损、拿在手里或摆着时的样子'}。
+3. 以正文为准：正文写了的照着写，不要改；正文没写的可以补全，但要与这本书的时代、地域、身份相称，一旦写下就是定论。
+4. 不写人物、不写事件、不写某一场戏里的情形；不写气味、声音、寓意这类画不出来的东西；不写画风、镜头、光线效果、画质——那些由全书的画风统一决定。
+5. 不要用只有读过这本书才懂的名字来代替描述：${place ? '"某某的住处"要写成它实际的样子' : '"那面镜子"要写成它实际的样子'}。
+
+只输出 JSON：{"look": ""}`, `Write down what this ${place ? 'place' : 'thing'} of "${base.title}" looks like: its design art is drawn from this paragraph, and every later picture that shows it carries it along — so it has to be concrete, stable and drawable.
+
+## What the bible says of it
+${base.entry}
+
+## Where the text names it
+${base.passages.length > 0 ? base.passages : '(No sentence of the text was found that says how it looks — read the text yourself where you need to.)'}
+${base.direction !== undefined && base.direction.length > 0 ? `\n## The author asks\n${base.direction}\n` : ''}
+## Must not appear in this book's pictures
+${avoid.length > 0 ? avoid : '(nothing in particular)'}
+
+Rules:
+1. In the language of the book, 50–110 words, one paragraph, no list.
+2. Only what can be seen and does not change with the plot: ${place ? 'its layout and size (courts, water, the lie of the land), its main buildings and how they are built, materials and colours, what grows and what is kept there, the feel of its time and region' : 'its shape and size, material, colour, ornament or what is written on it (as the text has it), its age and wear, how it sits in a hand or on a table'}.
+3. The text is law: what it says, say as it says it; what it leaves open may be filled in, in keeping with the book's time, region and the standing of whoever owns it — once written it is canon.
+4. No people, no events, nothing of one particular scene; nothing that cannot be drawn (smell, sound, meaning); no words about art style, camera, lighting effects or image quality — the book's art direction decides those for every picture.
+5. Do not put a name only a reader of the book understands in place of a description.
+
+Output JSON only: {"look": ""}`)
+}
+
 export function visualAnchorTask(base: Base & { card: string; avoid?: string[]; direction?: string }): string {
   const avoid = (base.avoid ?? []).join(', ')
   return L(base.lang, `请把下面这个人物的外貌，改写成给绘图模型用的"视觉锚点"：以后每一张有此人的图都会原样带上它，所以它必须具体、稳定、画得出来。

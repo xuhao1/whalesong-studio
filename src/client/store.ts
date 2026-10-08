@@ -42,7 +42,7 @@ export interface Activity {
 const QUIET: ReadonlySet<RpcMethod> = new Set<RpcMethod>([
   'events.wait', 'jobs.read', 'jobs.list', 'jobs.cancel', 'project.state', 'workspace.info', 'settings.get', 'key.state', 'model.info', 'conversation.open',
   'audio.script', 'comic.board', 'image.list', 'chapter.read', 'chapter.version', 'chapter.save', 'usage.summary', 'find', 'search',
-  'play.list', 'play.get', 'share.status', 'reader.album', 'reader.sides', 'world.pin', 'line.world', 'cast.lives',
+  'play.list', 'play.get', 'share.status', 'reader.album', 'reader.sides', 'reader.position', 'world.pin', 'line.world', 'cast.lives',
 ])
 /** How long a request may take before it is worth saying that it is running. */
 const ACTIVITY_AFTER_MS = 350
@@ -222,6 +222,8 @@ type JobMethod = { [M in RpcMethod]: NovelRpcResult<M> extends JobStarted ? M : 
 type NovelRpcResult<M extends RpcMethod> = import('../shared/rpc').RpcResult<M>
 
 export class StudioController {
+  /** The place last left with the book, so that one chapter is left there once. */
+  private positionLeft: string | undefined
   private snapshot: StudioSnapshot = { status: 'loading', workspaces: [], jobs: [], view: 'home', readMode: 'read', album: { section: 'text' }, activity: [], toasts: [] }
   private readonly listeners = new Set<() => void>()
   private abort = new AbortController()
@@ -287,6 +289,9 @@ export class StudioController {
       this.onShelf = place.shelf === true
       // Where the author was is where they chose to be: the first-run guide does not take over.
       if (place.view !== undefined && place.view !== 'home') this.navigated = true
+      // A place found again is not a chapter being read now: it is not left with the book a second time —
+      // somebody may have read on from there on another device since.
+      if (place.root !== undefined && place.chapterId !== undefined) this.positionLeft = `${place.root}:${place.chapterId}`
       this.snapshot = {
         ...this.snapshot,
         ...(place.view !== undefined ? { view: place.view } : {}),
@@ -358,6 +363,12 @@ export class StudioController {
         globalThis.localStorage?.setItem(`${LAST_READ}${book}`, chapterId)
       } catch {
         // Without storage a book opens at its first chapter.
+      }
+      // And left with the book, once for each chapter come to: a phone picks the book up where the computer left it.
+      const left = `${root}:${chapterId}`
+      if (root !== undefined && this.positionLeft !== left) {
+        this.positionLeft = left
+        void this.api.call('reader.position', { root, chapter: chapterId }).catch(() => {})
       }
     }
     const text = JSON.stringify(place)
@@ -442,6 +453,7 @@ export class StudioController {
       // Back on the book the page was last on: back on the page of it, too.
       const place = arrival.place?.root === from ? arrival.place : undefined
       if (place?.view !== undefined && place.view !== 'home') this.navigated = true
+      if (place?.root !== undefined && place.chapterId !== undefined) this.positionLeft = `${place.root}:${place.chapterId}`
       this.set({
         view: place?.view ?? 'home',
         ...(place?.chapterId !== undefined ? { chapterId: place.chapterId } : {}),
@@ -718,7 +730,11 @@ export class StudioController {
     } catch {
       last = undefined
     }
-    this.openReader('read', (written.find(chapter => chapter.id === last) ?? written[0]!).id)
+    // Where it was last read on any device — this one's own place is left there too, so the latest of them all is what it says.
+    // (A Host from before places were kept answers with an error: then this device's own memory stands.)
+    const anywhere = await this.api.call('reader.position', { root }).then(answer => answer.position?.chapter, () => undefined)
+    if (this.snapshot.root !== root) return
+    this.openReader('read', (written.find(chapter => chapter.id === anywhere) ?? written.find(chapter => chapter.id === last) ?? written[0]!).id)
   }
 
   setReadMode(mode: ReadMode): void {

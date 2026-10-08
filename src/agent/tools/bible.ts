@@ -5,11 +5,12 @@ import { acceptSuggestion, deriveTies, dismissSuggestion, expandCharacter, expan
 import { applyOutlineOps, type OutlineOp } from '../../core/pipelines/outline'
 import { buildFoundation, deriveBeats, deriveChapters, whatIf } from '../../core/pipelines/plot'
 import { ProjectError, upsertLooks } from '../../core/project'
-import { deriveVisual } from '../../core/pipelines/illustrate'
+import { deriveLook, deriveVisual } from '../../core/pipelines/illustrate'
 import { promptLanguage, renderCharacter, renderWorld } from '../../core/render'
 import type { NovelService } from '../../host/service'
 import { TIE_ENDS, TIE_KINDS, type Tie, type TieEnd, type TieKind } from '../../shared/ties'
 import { WORLD_EVENT_KINDS, type CharacterCard, type StyleProfile, type WorldEntry, type WorldEvent } from '../../shared/types'
+import { groupOf } from '../../shared/world'
 import { brief, novelTool, toJson } from './shared'
 
 const CHARACTER_FIELDS = 'name, aliases[], role (protagonist|deuteragonist|antagonist|supporting|minor|cameo), status (planned|active|offstage|retired|dead), tagline, gender, age, appearance, personality, background, motivation, flaw, arc, voice, abilities, secrets, persona {traits[{name,level 1-5}], values[], speech[], taboos[], underPressure}, relationships[{target, kind, note}], tags[], visual {prompt (the visual anchor: concrete, drawable phrases for an image model — build, face, hair, clothing, signature items; English works best), negative (what must not be drawn on them), looks[{name, prompt (what the outfit changes), when (when it is worn)}] — looks are added or updated by name and the others stay; {name, remove: true} takes one away; their design sheets are drawn with novel_illustrate kind=sheet look=…}, voiceProfile {voice, instructions, designPrompt}, notes'
@@ -39,6 +40,7 @@ export function bibleTools(service: NovelService): ToolDefinition[] {
         '- action=derive_ties has the planner work the ties and the course of places and things out from the bible and the digests (`direction` steers it); ties that are there stay unless it finds them wrong. action=tidy (kind=world) has the planner look over the entries for the same thing written down twice and for entries in the wrong category: it proposes, nothing is changed — act on what you agree with by merge and save, after telling the author.',
         '- action=pin (kind=world) puts the mark of something that stands in a place onto that place\'s picture, as the viewer shows it: `ref` is the place (or house) whose picture it is, fields {mark: the place, house or character marked, x, y} with x and y from 0 (left, top) to 1 (right, bottom); fields {mark, clear: true} lets that mark be laid out by itself again, fields {clear: true} all of them. Marks are laid out by themselves until pinned.',
         '- action=expand lets the architect model flesh out a character or world entry in agreement with the written text (`direction` steers it).',
+        '- action=derive_visual (kind=world) has the director write down how a place or a thing looks, from what the book says of it, and keeps it on the entry (visualPrompt): its design art is drawn from that, and it is done by itself the first time such art is drawn (`direction` steers it).',
         '- action=derive_visual (kind=character) distills the prose appearance of a character into a visual anchor and a negative list for image generation, and stores both on the card (`direction` steers it). Do this — or write fields.visual yourself — before drawing someone: an image model handed the prose of a card invents what the prose leaves open.',
         '- action=learn_style (kind=style) distills a style profile from a sample passage in fields.sample.',
         '- action=accept_suggestion / dismiss_suggestion settle a suggestion that digest left (ids are listed by novel_status).',
@@ -241,8 +243,14 @@ export function bibleTools(service: NovelService): ToolDefinition[] {
           return { text: `Learned style "${style.name}" (${style.id})${args.activate === true ? ', now active' : ''}: ${[style.tone, style.rhythm].filter(Boolean).join('; ')}`, data: toJson(style) }
         }
 
+        if (args.action === 'derive_visual' && args.kind === 'world') {
+          if (args.ref === undefined) throw new ProjectError('novel/invalid', '`ref` names the place or the thing')
+          const ref = args.ref
+          const result = await env.job('bible', `look ${ref}`, ref, async task => await deriveLook(env.core, runtime, { entry: ref, ...(args.direction !== undefined ? { direction: args.direction } : {}) }, task))
+          return { text: `How "${result.entry.name}" looks, as the director wrote it down from the book: ${result.look}\nIt is what its design art is drawn from (novel_illustrate kind=${groupOf(result.entry.category) === 'items' ? 'item' : 'location'}) and what every picture that shows it carries along; the author can change it on the entry's page.`, data: toJson(result.entry), record: { summary: [`导演写下了「${result.entry.name}」的样子`, `The director wrote down how "${result.entry.name}" looks`] } }
+        }
         if (args.action === 'derive_visual') {
-          if (args.kind !== 'character' || args.ref === undefined) throw new ProjectError('novel/invalid', 'derive_visual works on a character: pass kind=character and `ref`')
+          if (args.kind !== 'character' || args.ref === undefined) throw new ProjectError('novel/invalid', 'derive_visual works on a character or on a place or thing of the world: pass kind and `ref`')
           const character = args.ref
           const result = await env.job('bible', `visual anchor ${character}`, character, async task => await deriveVisual(env.core, runtime, { character, ...(args.direction !== undefined ? { direction: args.direction } : {}) }, task))
           return { text: `Visual anchor of ${result.card.name}: ${result.prompt}${result.negative !== undefined ? `\nNever drawn on them: ${result.negative}` : ''}\nIt is restated in every picture that shows them. Draw their design sheet next (novel_illustrate kind=sheet).`, data: toJson({ prompt: result.prompt, negative: result.negative ?? null }) }

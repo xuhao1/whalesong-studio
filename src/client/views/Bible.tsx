@@ -289,6 +289,8 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
   // What can be drawn of it: a place as somewhere to stand, a thing as the thing itself.
   const picture: 'location' | 'item' | undefined = draft.category === 'location' || draft.category === 'setting' ? 'location' : draft.category === 'item' ? 'item' : undefined
   const drawing = useRunningJob(job => job.kind === 'illustrate' && job.target === entry.id) !== undefined
+  // The director writing down how it looks: said on the button that asked, and while a drawing has it done first.
+  const looking = useRunningJob(job => job.kind === 'bible' && job.target === entry.id && job.title.startsWith('look ')) !== undefined
   const draw = (): Promise<unknown> | undefined => (!controller.need('image') ? undefined : controller.guard(async () => {
     await controller.run('image.create', { root, kind: picture ?? 'location', target: entry.id })
     controller.toast('success', picture === 'item' ? t('物品设定图已生成', 'Object art ready') : t('场景设定图已生成', 'Place art ready'))
@@ -364,6 +366,17 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
         >
           <div className="nv-row">
             <TextArea value={draft.visualPrompt ?? ''} onChange={(event) => { set('visualPrompt', event.target.value) }} />
+            <Button
+              size="sm"
+              icon="sparkles"
+              disabled={dirty || looking}
+              busy={looking}
+              pending={t('导演在照正文写…', 'The director is writing…')}
+              onClick={() => { void run(async () => { await controller.run('ai.worldLook', { root, id: entry.id, ...(direction.trim().length > 0 ? { direction: direction.trim() } : {}) }) }) }}
+              title={dirty ? t('先保存当前修改', 'Save your edits first') : t('让导演读正文里写到它的地方，把它实际的样子写在这里（上面"补全方向"里写了要求的话会照着办）。画设定图时这里空着也会先做这一步。', 'Have the director read where the text names it and write down here what it actually looks like (a wish written under "Direction" above is followed). Drawing its design art does this first when this is empty.')}
+            >
+              {(draft.visualPrompt ?? '').trim().length > 0 ? t('让导演重写', 'Have the director rewrite') : t('让导演照正文写', 'Have the director write it')}
+            </Button>
             <Button size="sm" icon="image" disabled={dirty || drawing} busy={drawing} pending={picture === 'item' ? t('正在画物品设定图…', 'Drawing the object…') : t('正在画场景设定图…', 'Drawing the place…')} onClick={draw} title={dirty ? t('先保存当前修改', 'Save your edits first') : undefined}>
               {draft.visualImage !== undefined ? t('重画设定图', 'Redraw') : picture === 'item' ? t('画物品设定图', 'Draw the object') : t('画场景设定图', 'Draw the place')}
             </Button>

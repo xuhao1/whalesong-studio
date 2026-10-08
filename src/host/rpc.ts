@@ -23,9 +23,9 @@ import { digestPending, fillPlans } from '../core/pipelines/digest'
 import { exportBook, missingImages } from '../core/pipelines/export'
 import { findSoundPress } from '../core/media/press'
 import { publishSite, siteChaptersUpTo, siteDefaults, siteFolder } from '../core/pipelines/site'
-import { listChapters, listLines, listSides, readAlbum, readSide } from '../core/reader'
+import { listChapters, listLines, listSides, readAlbum, readPosition, readSide, savePosition } from '../core/reader'
 import { albumCounts, albumEmpty } from '../shared/album'
-import { deriveArtDirection, deriveVisual, illustrate } from '../core/pipelines/illustrate'
+import { deriveArtDirection, deriveLook, deriveVisual, illustrate } from '../core/pipelines/illustrate'
 import { analyzeBook, importManuscript, readBookFile } from '../core/pipelines/import'
 import { applyOutlineOps, type OutlineOp } from '../core/pipelines/outline'
 import {
@@ -378,6 +378,10 @@ export function createHandlers(service: NovelService): Handlers {
       // A patch that names one mark changes that one; `null` lets a mark — or all of them — go.
       const spots = key === undefined ? null : { [key]: at !== undefined ? { x: fraction(at.x), y: fraction(at.y) } : null }
       return await (await open(root)).project.saveWorld({ id, spots } as never)
+    },
+    'ai.worldLook': async ({ root, id, direction }) => {
+      const runtime = await open(root)
+      return job(runtime, 'bible', `look ${id}`, id, async task => await deriveLook(core, runtime, { entry: requireString(id, 'id'), ...(typeof direction === 'string' && direction.trim().length > 0 ? { direction: direction.trim() } : {}) }, task))
     },
     'world.delete': async ({ root, id }) => ({ deleted: await (await open(root)).project.deleteWorld(id) }),
     'world.expand': async ({ root, id, direction }) => {
@@ -898,6 +902,11 @@ export function createHandlers(service: NovelService): Handlers {
       }
     },
     // The author's own viewer: the same album a reader is given, with what the text has not come to yet.
+    'reader.position': async ({ root, chapter }) => {
+      const runtime = await open(root)
+      const position = typeof chapter === 'string' && chapter.length > 0 ? await savePosition(runtime, chapter, 'Studio').catch(() => undefined) : await readPosition(runtime)
+      return position !== undefined ? { position } : {}
+    },
     'reader.album': async ({ root }) => await readAlbum(await open(root), { all: true }),
     'reader.sides': async ({ root, id }) => {
       const runtime = await open(root)

@@ -129,8 +129,12 @@ export async function bookAnswer(core: NovelCore, runtime: ProjectRuntime, mode:
     const chapters = await listChapters(runtime)
     // Where the book goes more than one way: the ways, and the chapters only the other ways have.
     const ways = await listLines(runtime, chapters)
-    return { book: await describeBook(runtime, mode), chapters: [...chapters, ...(ways?.chapters ?? [])], ...(ways !== undefined ? { lines: ways.lines } : {}), ...(albumEmpty(album) ? {} : { album }), ...(sides > 0 ? { sides } : {}) }
+    // Where the book was last read, on whichever device: picked up on the next one.
+    const position = await readPosition(runtime)
+    return { book: await describeBook(runtime, mode), chapters: [...chapters, ...(ways?.chapters ?? [])], ...(ways !== undefined ? { lines: ways.lines } : {}), ...(albumEmpty(album) ? {} : { album }), ...(sides > 0 ? { sides } : {}), ...(position !== undefined ? { position } : {}) }
   }
+  // A reader's place is theirs to leave, whatever else they may do with the book: it changes nothing of it.
+  if (section === 'position' && rest.length === 1 && method === 'POST') return { position: await savePosition(runtime, body.chapter, request.by) }
   if (section === 'album' && rest.length === 1 && reading) return await readAlbum(runtime)
   if (section === 'chapters' && rest.length === 2) {
     if (reading) {
@@ -269,6 +273,39 @@ export async function listLines(runtime: ProjectRuntime, main?: SharedChapter[])
     for (const chapter of own) chapters.push({ ...await listed(runtime, chapter), line: line.id })
   }
   return lines.length > 1 ? { lines, chapters } : undefined
+}
+
+/** Where a book was last read: the chapter, when, and on what. */
+export interface ReadingPosition {
+  chapter: string
+  at: string
+  /** The device, in a few words: "iPhone (192.168.1.7)", "the Studio". */
+  by: string
+}
+
+const POSITION = 'reading.json'
+
+/** Where the book was last read, on whichever device; nothing when nobody left a place, or the chapter is no longer there to read. */
+export async function readPosition(runtime: ProjectRuntime): Promise<ReadingPosition | undefined> {
+  const kept = await runtime.project.readState<Partial<ReadingPosition>>(POSITION).catch(() => undefined)
+  if (kept === undefined || typeof kept.chapter !== 'string' || typeof kept.at !== 'string') return undefined
+  const located = await runtime.project.findChapter(kept.chapter)
+  if (located === undefined || located.plan.id !== kept.chapter || (await runtime.project.chapterText(kept.chapter)).trim().length === 0) return undefined
+  return { chapter: kept.chapter, at: kept.at, by: typeof kept.by === 'string' ? kept.by : '' }
+}
+
+/**
+ * Leave a place in the book: the chapter being read, for the next device to pick up.
+ * Kept with the book's own state — sealed with it — and not a change of the book: nothing that watches it is told.
+ * @throws ReaderRefused 404 when the chapter is none of the book's, or has nothing to read.
+ */
+export async function savePosition(runtime: ProjectRuntime, chapter: unknown, by: string): Promise<ReadingPosition> {
+  const id = typeof chapter === 'string' && /^[\w-]{1,80}$/.test(chapter) ? chapter : undefined
+  const located = id !== undefined ? await runtime.project.findChapter(id) : undefined
+  if (id === undefined || located === undefined || located.plan.id !== id || (await runtime.project.chapterText(id)).trim().length === 0) throw new ReaderRefused(404, 'not found')
+  const position: ReadingPosition = { chapter: id, at: new Date().toISOString(), by: by.slice(0, 80) }
+  await runtime.project.writeState([POSITION], { schema: 1, ...position }, false)
+  return position
 }
 
 /** A chapter for the reader: its text, its audio script and its storyboard, without anything only the author needs. */

@@ -24,6 +24,7 @@ import { mergeAvoid, pictureSize, resolveArtStyle, splitAvoid, type ArtSource } 
 import type { CharacterCard, CharacterLook, IllustrationInfo, IllustrationParts, PromptLanguage, WorldEntry } from '../../shared/types'
 import { referencesOf } from '../../shared/types'
 import { clip, fuzzyFind, hashText, newId, sameName, slugify } from '../../shared/text'
+import { groupOf } from '../../shared/world'
 import { detectCharacters } from '../context'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { asList, asRecord, asText, extractJson } from '../llm'
@@ -31,8 +32,8 @@ import { assign } from '../crew'
 import { extensionOf, type ImageProvider, type ImageReference } from '../media/image'
 import { ProviderError } from '../media/http'
 import { ProjectError } from '../project'
-import { artDirectionTask, coverPromptTask, illustrationPromptTask, visualAnchorTask } from '../prompts'
-import { L, promptLanguage, renderCharacter } from '../render'
+import { artDirectionTask, coverPromptTask, illustrationPromptTask, lookTask, visualAnchorTask } from '../prompts'
+import { L, promptLanguage, renderCharacter, renderWorld } from '../render'
 import { isAbort } from '../util/async'
 
 export { DEFAULT_ART_STYLE } from '../../shared/art'
@@ -275,6 +276,86 @@ async function withAnchor(core: NovelCore, runtime: ProjectRuntime, card: Charac
   }
 }
 
+/** How much of the text that names a place or a thing the director is handed with the task; more is theirs to look up. */
+const LOOK_PASSAGES = 3200
+
+/**
+ * Write down what a place or a thing looks like, from what the book says of
+ * it, and keep it on the entry (`visualPrompt`): what its design art is drawn
+ * from, and what every picture that shows it carries along.
+ * @throws ProjectError `novel/not-found` when no entry answers to the name; `novel/invalid` for an idea of the world, which has no look.
+ */
+export async function deriveLook(core: NovelCore, runtime: ProjectRuntime, params: { entry: string; direction?: string }, task: TaskContext): Promise<{ entry: WorldEntry; look: string }> {
+  const { project } = runtime
+  const entry = await project.findWorld(params.entry)
+  if (entry === undefined) throw new ProjectError('novel/not-found', `no world entry matches "${params.entry}"`)
+  const group = groupOf(entry.category)
+  if (group === 'ideas') throw new ProjectError('novel/invalid', `"${entry.name}" is an idea of the world, not something a picture shows`)
+  const manifest = await project.manifest()
+  const lang = promptLanguage(manifest.language)
+  const art = await artDirectionOf(core, runtime)
+  // Where the text names it: the sentences around each mention, earliest chapters first, as far as the room goes.
+  const names = [entry.name, ...(entry.aliases ?? [])].map(name => name.trim()).filter(name => name.length >= 2)
+  const passages: string[] = []
+  let room = LOOK_PASSAGES
+  for (const chapter of await project.chapterInfos()) {
+    if (!chapter.hasText || room <= 0 || names.length === 0) continue
+    const text = await project.chapterText(chapter.id)
+    let from = 0
+    for (let found = 0; found < 3 && room > 0; found++) {
+      const hits = names.map(name => text.indexOf(name, from)).filter(at => at >= 0)
+      if (hits.length === 0) break
+      const at = Math.min(...hits)
+      const excerpt = text.slice(Math.max(0, at - 120), Math.min(text.length, at + 240)).replace(/\s+/g, ' ').trim()
+      passages.push(L(lang, `第 ${chapter.index} 章：……${excerpt}……`, `Chapter ${chapter.index}: …${excerpt}…`))
+      room -= excerpt.length
+      from = at + 240
+    }
+  }
+  const { value } = await assign(core, runtime, task, {
+    role: 'director',
+    label: L(lang, `定样子 · ${entry.name}`, `Look · ${entry.name}`),
+    tool: 'set_look',
+    // The passages come with the task; a few looks at the book beyond them, then the result.
+    maxSteps: 10,
+    what: L(lang, '这个地方（或这件东西）长什么样：一段给画面用的描述', 'what this place (or thing) looks like: a paragraph for its pictures'),
+    prompt: lookTask({
+      lang,
+      language: manifest.language,
+      title: manifest.title,
+      kind: group === 'items' ? 'thing' : 'place',
+      entry: renderWorld({ ...entry, visualPrompt: undefined } as WorldEntry, lang),
+      passages: passages.join('\n'),
+      avoid: art.avoid,
+      ...(params.direction !== undefined ? { direction: params.direction } : {}),
+    }),
+    temperature: 0.3,
+    validate: (raw) => {
+      const record = asRecord(raw)
+      if (asText(record.look) === undefined) throw new Error('"look" is empty')
+      return record
+    },
+  })
+  const look = asText(value.look)!
+  const saved = await project.saveWorld({ id: entry.id, visualPrompt: look })
+  return { entry: saved, look }
+}
+
+/**
+ * Make sure a place or a thing has a look written down before it is drawn: a picture made from a name and a line of
+ * summary is the image model's guess. Where no model can write one, the entry's own words stand in.
+ */
+async function withLook(core: NovelCore, runtime: ProjectRuntime, entry: WorldEntry, task: TaskContext): Promise<WorldEntry> {
+  if (entry.visualPrompt !== undefined && entry.visualPrompt.trim().length > 0) return entry
+  try {
+    return (await deriveLook(core, runtime, { entry: entry.id }, task)).entry
+  } catch (error) {
+    if (isAbort(error) || task.signal?.aborted === true) throw error
+    core.log(`could not write down how ${entry.name} looks; drawing from the entry's own words`, error)
+    return entry
+  }
+}
+
 // ───────────────────────────── one picture ─────────────────────────────
 
 export interface RenderInput {
@@ -454,8 +535,10 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
   }
 
   if (params.kind === 'location') {
-    const entry = params.target !== undefined ? await project.findWorld(params.target) : undefined
-    if (entry === undefined) throw new ProjectError('novel/not-found', `no world entry matches "${params.target ?? ''}"`)
+    const found = params.target !== undefined ? await project.findWorld(params.target) : undefined
+    if (found === undefined) throw new ProjectError('novel/not-found', `no world entry matches "${params.target ?? ''}"`)
+    // What it looks like is written down first, from the book: then it is drawn, and drawn the same again.
+    const entry = await withLook(core, runtime, found, task)
     const subject = joinParts([
       L(lang, '场景设定图，无人物，远景，交代空间结构、材质与光线', 'environment design art, no people, wide shot showing layout, materials and light'),
       entry.visualPrompt ?? `${entry.name}${comma}${entry.summary ?? clip(entry.body ?? '', 200, '')}`,
@@ -468,8 +551,9 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
   }
 
   if (params.kind === 'item') {
-    const entry = params.target !== undefined ? await project.findWorld(params.target) : undefined
-    if (entry === undefined) throw new ProjectError('novel/not-found', `no world entry matches "${params.target ?? ''}"`)
+    const found = params.target !== undefined ? await project.findWorld(params.target) : undefined
+    if (found === undefined) throw new ProjectError('novel/not-found', `no world entry matches "${params.target ?? ''}"`)
+    const entry = await withLook(core, runtime, found, task)
     // A thing is drawn as a thing: alone, whole, close enough to read what it is made of and what is written or carved on it.
     const subject = joinParts([
       L(lang, '关键物品设定图：只画这一件物品，完整入画，居中，干净的浅色素底；看得清形状、材质、纹饰与大小的感觉；没有人物，没有手，画面里不出现任何文字说明', 'design art of one key object: the object alone, whole and centred on a clean pale ground; its shape, material, ornament and sense of size readable; no people, no hands, no lettering'),
