@@ -32,8 +32,8 @@ import {
   ensurePortrait, novelizePlay, paintPlayScene, playTurn, rewindPlay, setPlayOutcome, startPlay, voicePlayLine,
 } from '../core/pipelines/play'
 import { buildFoundation, deriveBeats, deriveChapters, whatIf } from '../core/pipelines/plot'
-import { clearReview, resolveIssue, reviewChapter } from '../core/pipelines/review'
-import { fixIssue, acceptProposal, rejectProposal, reviseBook, reviseChapter, reviseSpan } from '../core/pipelines/revise'
+import { clearReview, listReviews, noteIssue, resolveIssue, reviewChapter } from '../core/pipelines/review'
+import { fixIssue, fixIssues, acceptProposal, rejectProposal, reviseBook, reviseChapter, reviseSpan } from '../core/pipelines/revise'
 import { writeChapter } from '../core/pipelines/write'
 import { ProjectError } from '../core/project'
 import { listWalkOns, settleWalkOn } from '../core/walkons'
@@ -548,6 +548,15 @@ export function createHandlers(service: NovelService): Handlers {
         ...(typeof note === 'string' && note.trim().length > 0 ? { note: note.trim() } : {}),
       }, task))
     },
+    'ai.fixIssues': async ({ root, issues, atLeast, chapters, note }) => {
+      const runtime = await open(root)
+      const named = Array.isArray(issues) ? issues.filter(item => typeof item?.chapter === 'string' && typeof item?.issue === 'string').map(item => ({ chapter: item.chapter, issue: item.issue, ...(typeof item.note === 'string' && item.note.trim().length > 0 ? { note: item.note.trim() } : {}) })) : []
+      if (named.length === 0 && atLeast === undefined) throw new ProjectError('novel/invalid', 'name the issues to mend, or the severity to mend from')
+      return job(runtime, 'revise', 'revise book', undefined, async task => await fixIssues(core, runtime, {
+        ...(named.length > 0 ? { issues: named } : { atLeast: atLeast === 'low' || atLeast === 'medium' ? atLeast : 'high', ...(Array.isArray(chapters) && chapters.length > 0 ? { chapters: chapters.filter((item): item is string => typeof item === 'string') } : {}) }),
+        ...(typeof note === 'string' && note.trim().length > 0 ? { note: note.trim() } : {}),
+      }, task))
+    },
     'ai.reviseBook': async ({ root, instruction, chapters }) => {
       const runtime = await open(root)
       return job(runtime, 'revise', 'revise book', undefined, async task => await reviseBook(core, runtime, { instruction: requireString(instruction, 'instruction'), ...(chapters !== undefined ? { chapters } : {}) }, task))
@@ -631,6 +640,8 @@ export function createHandlers(service: NovelService): Handlers {
     'proposal.accept': async ({ root, id }) => await acceptProposal(core, await open(root), id, { origin: 'user' }),
     'proposal.reject': async ({ root, id }) => ({ ok: (await rejectProposal(await open(root), id)) !== undefined }),
     'review.resolve': async ({ root, chapter, issue, resolved }) => ({ ok: (await resolveIssue(await open(root), chapter, issue, resolved)) !== undefined }),
+    'review.note': async ({ root, chapter, issue, note }) => ({ ok: (await noteIssue(await open(root), requireString(chapter, 'chapter'), requireString(issue, 'issue'), typeof note === 'string' ? note : '')) !== undefined }),
+    'review.list': async ({ root }) => ({ reviews: await listReviews(await open(root)) }),
     'review.clear': async ({ root, chapter }) => ({ removed: (await clearReview(await open(root), requireString(chapter, 'chapter'))).removed }),
 
     // ── batches ──

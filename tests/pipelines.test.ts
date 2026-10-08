@@ -9,7 +9,8 @@ import { digestChapter, digestPending } from '../src/core/pipelines/digest'
 import { exportBook, zipStore } from '../src/core/pipelines/export'
 import { decodeText, importManuscript, splitChapters } from '../src/core/pipelines/import'
 import { deriveChapters } from '../src/core/pipelines/plot'
-import { fixIssue, acceptProposal, reviseSpan } from '../src/core/pipelines/revise'
+import { fixIssue, fixIssues, acceptProposal, reviseSpan } from '../src/core/pipelines/revise'
+import { listReviews, noteIssue } from '../src/core/pipelines/review'
 import { cleanProse, writeChapter } from '../src/core/pipelines/write'
 import { chunkProse, tokenize } from '../src/core/retrieval'
 import { createTestBed, type TestBed } from './support/harness'
@@ -294,6 +295,67 @@ describe('pipelines', () => {
     expect(waiting[0]).toMatchObject({ title: '修改人物卡：沈璃 · appearance', payload: { target: 'character', id: card.id, field: 'appearance', value: '左撇子，惯用左手' } })
     await acceptSuggestion(bed.runtime, waiting[0]!.id)
     expect(await project.findCharacter('沈璃')).toMatchObject({ appearance: '左撇子，惯用左手', personality: '倔强' })
+  })
+
+  it('mends several things a review found together, across chapters, each chapter once', async () => {
+    const { project } = bed.runtime
+    const one = await project.addChapter({ title: '雨夜' })
+    const two = await project.addChapter({ title: '下山' })
+    const three = await project.addChapter({ title: '渡口' })
+    await project.saveChapterText(one.id, '她是左撇子，从小如此。山门前的雪还没化。')
+    await project.saveChapterText(two.id, '她右手握着剑下了山。那是盛夏。')
+    await project.saveChapterText(three.id, '渡口没有人，她用右手解开缆绳。')
+    await project.saveReview({ chapterId: one.id, textHash: 'x', createdAt: '', verdict: '', issues: [{ id: 'a1', severity: 'low', type: 'language', quote: '从小如此', explanation: '这句是废话。' }] })
+    await project.saveReview({ chapterId: two.id, textHash: 'x', createdAt: '', verdict: '', issues: [
+      { id: 'b1', severity: 'high', type: 'continuity', quote: '右手握着剑', explanation: '第一章写她是左撇子。', suggestion: '改成左手' },
+      { id: 'b2', severity: 'medium', type: 'timeline', quote: '那是盛夏', explanation: '上一章还是雪天。' },
+      { id: 'b3', severity: 'high', type: 'logic', explanation: '早就处理过的。', resolved: true },
+    ] })
+    // What the author says of one issue is kept with it — and taken off again by an empty note.
+    await noteIssue(bed.runtime, two.id, 'b2', '改成初春，不要盛夏')
+    expect((await project.review(two.id))!.issues[1]!.note).toBe('改成初春，不要盛夏')
+    await noteIssue(bed.runtime, one.id, 'a1', '  ')
+    expect((await project.review(one.id))!.issues[0]!.note).toBeUndefined()
+    expect(await noteIssue(bed.runtime, two.id, 'nope', 'x')).toBeUndefined()
+    // The page that lists them reads every review in reading order.
+    expect((await listReviews(bed.runtime)).map(review => [review.index, review.title, review.issues.length])).toEqual([[1, '雨夜', 1], [2, '下山', 3]])
+
+    bed.llm.responder = (request) => {
+      if (request.prompt.includes('责任编辑')) return JSON.stringify({ chapters: [{ index: 2, reason: '右手改左手；季节改成初春' }, { index: 3, reason: '解缆绳也改成左手' }], note: '惯用手要三章一致。' })
+      return request.prompt.includes('渡口') || request.prompt.includes('解缆绳') ? '渡口没有人，她用左手解开缆绳。' : '她左手握着剑下了山。那是初春。'
+    }
+    // Named one by one, with a word on the batch and a word on one of them given at the moment.
+    const result = await fixIssues(bed.core, bed.runtime, { issues: [{ chapter: two.id, issue: 'b2' }, { chapter: two.id, issue: 'b1', note: '一律左手' }], note: '动得越少越好' }, { origin: 'user' })
+    expect(result).toMatchObject({ issues: 2, chapters: 1 })
+    // One planner read them side by side: both issues, what the author said of each — the note kept with one, the
+    // one given now — and of the batch; and it was asked how far they reach.
+    const scope = bed.llm.requests.find(request => request.prompt.includes('责任编辑'))!.prompt
+    for (const part of ['发现了下面 2 个问题', '### 第 2 章《下山》', '第一章写她是左撇子', '审校的建议：改成左手', '作者对怎么改的要求（以此为准）：一律左手', '上一章还是雪天', '作者对怎么改的要求（以此为准）：改成初春，不要盛夏', '作者对这一批的总要求（以此为准）：动得越少越好', '前后改成一致', '还有哪些章节']) expect(scope, part).toContain(part)
+    // Each chapter is rewritten once: chapter 2 for both of its issues, chapter 3 — which nobody named — because it
+    // tells of the same hand. Both wait as proposals; the text is as it was.
+    expect(result.book!.results.map(item => item.index)).toEqual([2, 3])
+    const writers = bed.llm.requests.filter(request => !request.prompt.includes('责任编辑')).map(request => request.prompt)
+    expect(writers).toHaveLength(2)
+    const second = writers.find(prompt => prompt.includes('审校在这一章发现了下面的问题'))!
+    for (const part of ['第一章写她是左撇子', '上一章还是雪天', '一律左手', '改成初春，不要盛夏', '动得越少越好', '策划对这一章的安排：右手改左手；季节改成初春', '只改为解决这些问题必须改的地方']) expect(second, part).toContain(part)
+    const third = writers.find(prompt => prompt.includes('这一章本身没有被点名的问题'))!
+    for (const part of ['策划对这一章的安排：解缆绳也改成左手', '这一批同时在修的问题', '第 2 章：第一章写她是左撇子']) expect(third, part).toContain(part)
+    expect(await project.chapterText(two.id)).toContain('右手')
+    expect((await project.proposals()).filter(item => item.status === 'pending')).toHaveLength(2)
+    // The issues handed over say so, and stay open; the one not in the batch does not.
+    const after = (await project.review(two.id))!.issues
+    expect(after.map(issue => [issue.id, issue.mending !== undefined, issue.resolved === true])).toEqual([['b1', true, false], ['b2', true, false], ['b3', false, true]])
+    expect(after[0]!.mending).toBe(result.book!.batchId)
+
+    // From a severity up: every open issue that grave or graver, the settled one left out; `low` takes them all.
+    const requests = bed.llm.requests.length
+    const grave = await fixIssues(bed.core, bed.runtime, { atLeast: 'high' }, { origin: 'user' })
+    expect(grave).toMatchObject({ issues: 1, chapters: 1 })
+    expect(bed.llm.requests[requests]!.prompt).toContain('发现了下面 1 个问题')
+    expect(bed.llm.requests[requests]!.prompt).not.toContain('早就处理过的')
+    expect(await fixIssues(bed.core, bed.runtime, { atLeast: 'low' }, { origin: 'user' })).toMatchObject({ issues: 3, chapters: 2 })
+    expect(await fixIssues(bed.core, bed.runtime, { atLeast: 'medium', chapters: [one.id] }, { origin: 'user' })).toEqual({ issues: 0, chapters: 0 })
+    await expect(fixIssues(bed.core, bed.runtime, { issues: [{ chapter: two.id, issue: 'nope' }] }, { origin: 'user' })).rejects.toThrow('no review issue')
   })
 
   it('derives chapters into the outline and links cast and threads', async () => {

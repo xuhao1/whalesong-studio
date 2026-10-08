@@ -22,7 +22,7 @@ import type {
   PriceEntry,
   UsageSummary,
   TtsProviderKind,
-  AmbiencePreset, AudioCue, AudioLine, AudioScript, BookLock, ChapterMemory, ChapterPlan, ChapterReview, CharacterCard, CharacterRole, ComicBoard, ComicPanel, LifeMark, SheetsAsk,
+  AmbiencePreset, AudioCue, AudioLine, AudioScript, BookLock, ChapterMemory, ChapterPlan, ChapterReview, IssueSeverity, CharacterCard, CharacterRole, ComicBoard, ComicPanel, LifeMark, SheetsAsk,
   ChapterVideo, CrewRole, GateKind, GateState, IllustrationInfo, JobInfo, ModelRoute, NovelSettings, PlaySession, PlayTurn, ProjectManifest, ProjectRef, ProjectState, RecommendedState,
   Proposal, SearchHit, SearchSource, SoundKind, StageStatus, StageStep, StoryboardDensity, StyleProfile, TextRole, TextStep, VersionInfo, WalkOn, WorkMode, WorldEntry,
 } from './types'
@@ -478,6 +478,16 @@ export interface NovelRpc {
   'review.resolve': { params: { root: string; chapter: string; issue: string; resolved: boolean }; result: { ok: boolean } }
   /** Throw a chapter's review away. */
   'review.clear': { params: { root: string; chapter: string }; result: { removed: boolean } }
+  /** Keep what the author says of how an issue is to be mended (an empty note takes it off). */
+  'review.note': { params: { root: string; chapter: string; issue: string; note: string }; result: { ok: boolean } }
+  /** Every review there is, in reading order — what a page that lists issues across chapters shows. */
+  'review.list': { params: { root: string }; result: { reviews: (ChapterReview & { index: number; title: string })[] } }
+  /**
+   * Mend several issues in one go, also across chapters: one planner reads them side by side and each chapter is
+   * rewritten once. `issues` names them (with what the author says of each); or `atLeast` takes every open issue that
+   * grave or graver. Every change waits as a proposal. A job.
+   */
+  'ai.fixIssues': { params: { root: string; issues?: { chapter: string; issue: string; note?: string }[]; atLeast?: IssueSeverity; chapters?: string[]; note?: string }; result: JobStarted }
 
   // ── batches: the same work for many chapters, characters or places, as one job ──
   /** Where the stage production of each written chapter stands, and what each step lacks to run at all. */

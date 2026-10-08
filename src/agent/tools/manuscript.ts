@@ -6,7 +6,7 @@ import { digestPending } from '../../core/pipelines/digest'
 import { correctMemory, editChapter, type EditAction, type MemoryPatch } from '../../core/pipelines/edit'
 import { analyzeBook, importManuscript, readBookFile } from '../../core/pipelines/import'
 import { reviewChapter } from '../../core/pipelines/review'
-import { acceptProposal, rejectProposal, reviseBook, reviseChapter, reviseSpan } from '../../core/pipelines/revise'
+import { acceptProposal, rejectProposal, fixIssues, reviseBook, reviseChapter, reviseSpan } from '../../core/pipelines/revise'
 import { writeChapter } from '../../core/pipelines/write'
 import { ProjectError } from '../../core/project'
 import { containedPath } from '../../core/util/fs'
@@ -68,12 +68,15 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
         '- scope=passage: rewrite one passage in place. Quote it exactly in `quote` (copy it from novel_read) and say what to change in `instruction`.',
         '- scope=chapter: rewrite one whole chapter to `instruction`.',
         '- scope=book: apply one instruction across the book ("rename the city to …", "make her colder until chapter 8"). Triage decides which chapters it touches (or pass `chapters`); each becomes a proposal for the author to review unless apply=true.',
+        '- scope=issues: mend what reviews found, together — also across chapters. Name them in `issues` as `<chapter>:<issue id>` (ids are in a chapter\'s review: novel_review, novel_read what=review), or pass `severity` (high | medium | low) to take every open issue that grave or graver, in `chapters` if given. `instruction` is what the author says of the whole batch (optional); what they said of single issues is kept with those and goes along. One planner reads them side by side and settles which chapters change and how — also chapters nobody named, where they tell of the same facts — and each chapter is rewritten once, so one fact is mended one way throughout. Every change waits as a proposal; changes to the bible wait as suggestions.',
         '- scope=accept / scope=reject: settle a pending proposal by `proposal` id.',
         'Every applied change snapshots the previous text first. Passage and chapter revisions apply directly unless the author turned on review of agent revisions; pass apply=false to always leave a proposal.',
       ].join('\n'),
       mutating: args => args.scope !== 'reject',
       parameters: {
-        scope: { type: 'string', required: true, enum: ['passage', 'chapter', 'book', 'accept', 'reject'] },
+        scope: { type: 'string', required: true, enum: ['passage', 'chapter', 'book', 'issues', 'accept', 'reject'] },
+        issues: listParameter('issues: which review issues, each as `<chapter>:<issue id>`.'),
+        severity: { type: 'string', enum: ['high', 'medium', 'low'], description: 'issues: instead of naming them, every open issue this grave or graver.' },
         chapter: { type: 'string', description: 'passage/chapter: which chapter.' },
         quote: { type: 'string', description: 'passage: the exact text to rewrite.' },
         instruction: { type: 'string', description: 'What to change and why.' },
@@ -91,6 +94,25 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
           }
           const rejected = await rejectProposal(runtime, args.proposal)
           return { text: rejected !== undefined ? `Rejected proposal ${args.proposal}.` : `No proposal "${args.proposal}".` }
+        }
+        if (args.scope === 'issues') {
+          const named = (listOf(args.issues) ?? []).map((item) => {
+            const at = item.lastIndexOf(':')
+            if (at <= 0) throw new ProjectError('novel/invalid', `"${item}" does not name an issue: write <chapter>:<issue id>`)
+            return { chapter: item.slice(0, at).trim(), issue: item.slice(at + 1).trim() }
+          })
+          if (named.length === 0 && args.severity === undefined) throw new ProjectError('novel/invalid', 'scope=issues needs `issues` (each <chapter>:<issue id>) or `severity`')
+          const severity = args.severity === 'low' || args.severity === 'medium' ? args.severity : 'high'
+          const result = await env.job('revise', 'revise book', undefined, async task => await fixIssues(env.core, runtime, {
+            ...(named.length > 0 ? { issues: named } : { atLeast: severity, ...((listOf(args.chapters)?.length ?? 0) > 0 ? { chapters: listOf(args.chapters)! } : {}) }),
+            ...(args.instruction !== undefined && args.instruction.trim().length > 0 ? { note: args.instruction.trim() } : {}),
+          }, task))
+          if (result.book === undefined) return { text: 'No open issue matches: nothing was handed over. Review the chapters first (novel_review), or name the issues.', record: false }
+          const lines = result.book.results.map(item => `- chapter ${item.index} "${item.title}": ${item.wordsBefore} → ${item.wordsAfter} words, proposal ${item.proposalId ?? ''} — ${brief(item.reason, 120)}`)
+          return {
+            text: `${result.issues} issue(s) in ${result.chapters} chapter(s) were read together; ${result.book.results.length} chapter(s) rewritten${result.book.failed.length > 0 ? `, ${result.book.failed.length} failed` : ''}.${result.book.note !== undefined ? `\n${result.book.note}` : ''}\n${lines.join('\n')}${result.book.failed.map(item => `\n✗ ${item.chapterId}: ${item.error}`).join('')}${(result.book.bible?.length ?? 0) > 0 ? `\nChanges to the bible wait among the suggestions: ${result.book.bible!.map(item => `${item.name} · ${item.field}`).join(', ')}.` : ''}\nThe proposals wait for the author in Novel Studio → Review; the issues stay open, marked as handed over, until the author settles them. Tell the author which chapters changed and why.`,
+            data: toJson(result),
+          }
         }
         if (args.instruction === undefined || args.instruction.trim().length === 0) throw new ProjectError('novel/invalid', '`instruction` is required')
         const instruction = args.instruction

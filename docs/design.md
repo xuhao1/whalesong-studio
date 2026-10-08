@@ -124,6 +124,7 @@ Retrieval is hybrid: BM25 over CJK bigrams and Latin words, optional embeddings,
 | chapter revision | the writer rewrites one chapter to an instruction → a proposal |
 | whole-book revision | the architect triages which chapters are affected, the writer changes only those, one proposal per chapter, grouped as a batch |
 | world / character revision | change the bible first, then start a whole-book revision that carries the change through |
+| mend what a review found | one: the writer rewrites the quoted place. A batch: tick several issues (across chapters), say a word on each, and the planner reads them side by side, settles which chapters change and how — also chapters nobody named that tell of the same thing — and each is rewritten once; or hand over every issue from a severity up in one click |
 
 Shared rules: changes are **proposals** with a diff (revisions started in the Studio always; the showrunner's apply directly unless you ask to review them); the previous text is **snapshotted** before anything applies; a passage proposal goes **stale** when its target text has since changed — better that than pasting a rewrite in the wrong place; mutating tools **ask first** in read-only sessions.
 

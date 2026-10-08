@@ -87,6 +87,37 @@ export async function resolveIssue(runtime: ProjectRuntime, chapterId: string, i
   return next
 }
 
+/** Keep what the author says of how an issue is to be mended; an empty note takes it off. */
+export async function noteIssue(runtime: ProjectRuntime, chapterId: string, issueId: string, note: string): Promise<ChapterReview | undefined> {
+  const review = await runtime.project.review(chapterId)
+  if (review === undefined || !review.issues.some(issue => issue.id === issueId)) return undefined
+  const said = note.trim()
+  const next: ChapterReview = { ...review, issues: review.issues.map((issue) => {
+    if (issue.id !== issueId) return issue
+    const { note: _was, ...rest } = issue
+    return said.length > 0 ? { ...rest, note: said } : rest
+  }) }
+  await runtime.project.saveReview(next)
+  return next
+}
+
+/** Every chapter's review that there is, in reading order along the main line, then the other lines'. */
+export async function listReviews(runtime: ProjectRuntime): Promise<(ChapterReview & { index: number; title: string })[]> {
+  const { project } = runtime
+  const seen = new Set<string>()
+  const out: (ChapterReview & { index: number; title: string })[] = []
+  const lines = [undefined, ...((await project.outline()).lines ?? []).map(line => line.id)]
+  for (const line of lines) {
+    for (const chapter of await project.chapters(line)) {
+      if (seen.has(chapter.plan.id)) continue
+      seen.add(chapter.plan.id)
+      const review = await project.review(chapter.plan.id)
+      if (review !== undefined) out.push({ ...review, index: chapter.index, title: chapter.plan.title })
+    }
+  }
+  return out
+}
+
 /** Throw a chapter's review away: its verdict and every issue, resolved or not. */
 export async function clearReview(runtime: ProjectRuntime, chapterRef: string): Promise<{ chapterId: string; removed: boolean }> {
   const chapter = await runtime.project.findChapter(chapterRef)

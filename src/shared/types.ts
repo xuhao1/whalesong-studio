@@ -645,6 +645,10 @@ export interface ReviewIssue {
   explanation: string
   suggestion?: string
   resolved?: boolean
+  /** What the author says of how to mend it, in their words; it goes with the issue to whoever mends it. */
+  note?: string
+  /** It was handed over to be mended — the batch of proposals that came of it — and waits on those proposals. */
+  mending?: string
 }
 
 export interface ChapterReview {

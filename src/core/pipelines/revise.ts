@@ -9,7 +9,7 @@
  * A revision either applies at once (the old text is snapshotted first) or
  * becomes a proposal that waits for accept/reject in the review panel.
  */
-import type { Proposal } from '../../shared/types'
+import type { IssueSeverity, Proposal, ReviewIssue } from '../../shared/types'
 import { clip, clipTail, countWords, fuzzyFind, newId } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { asArray, asRecord, asText } from '../llm'
@@ -218,6 +218,8 @@ export interface ReviseBookParams {
   concurrency?: number
   /** The planner may also say what the bible should read otherwise; each such change waits as a suggestion. */
   bible?: boolean
+  /** What the writer of one chapter is told, in place of the instruction with the planner's reason for that chapter appended. */
+  brief?: (chapterId: string, reason: string) => string
 }
 
 export interface ReviseBookResult {
@@ -284,7 +286,8 @@ export async function reviseBook(core: NovelCore, runtime: ProjectRuntime, param
   task.job?.progress(0, targets.length)
   await mapLimit(targets, params.concurrency ?? core.parallel('text'), async (target) => {
     try {
-      const instruction = target.reason === params.instruction ? params.instruction : `${params.instruction}\n\n${L(lang, '具体到本章', 'For this chapter specifically')}${lang === 'zh' ? '：' : ': '}${target.reason}`
+      const instruction = params.brief !== undefined ? params.brief(target.id, target.reason === params.instruction ? '' : target.reason)
+        : target.reason === params.instruction ? params.instruction : `${params.instruction}\n\n${L(lang, '具体到本章', 'For this chapter specifically')}${lang === 'zh' ? '：' : ': '}${target.reason}`
       // Per-chapter streams would interleave in one job buffer, so the batch reports progress only.
       const inner: TaskContext = { origin: task.origin, ...(task.signal !== undefined ? { signal: task.signal } : {}), ...(task.agentRoute !== undefined ? { agentRoute: task.agentRoute } : {}) }
       const result = await reviseChapter(core, runtime, { chapter: target.id, instruction, apply, batchId }, inner)
@@ -412,6 +415,112 @@ export async function fixIssue(core: NovelCore, runtime: ProjectRuntime, params:
   // A problem that quotes nothing — pacing, a missing beat — or whose quote has since been rewritten is the chapter's.
   if (range === undefined) return { scope: 'chapter', passage: await reviseChapter(core, runtime, { chapter: chapter.plan.id, instruction }, task) }
   return { scope: 'passage', passage: await reviseSpan(core, runtime, { chapter: chapter.plan.id, start: range.start, end: range.end, quote: text.slice(range.start, range.end), instruction }, task) }
+}
+
+export interface FixIssuesParams {
+  /** The issues to mend together, each named where its review found it; `note`: what the author says of that one (else the note kept on it). */
+  issues?: { chapter: string; issue: string; note?: string }[]
+  /** Instead of naming them: every open issue this grave or graver — `high`; `medium`: high and medium; `low`: all of them. */
+  atLeast?: IssueSeverity
+  /** With `atLeast`: only in these chapters. */
+  chapters?: string[]
+  /** What the author says of the whole batch. */
+  note?: string
+}
+
+export interface FixIssuesResult {
+  /** How many issues were handed over, in how many chapters. */
+  issues: number
+  chapters: number
+  book?: ReviseBookResult
+}
+
+const GRAVITY: Record<string, number> = { high: 3, critical: 3, medium: 2, major: 2, low: 1, minor: 1 }
+
+/**
+ * Mend several things a review found in one go — also across chapters. One
+ * planner reads them all side by side, with what the author said of each,
+ * and settles which chapters change and how; each chapter is then rewritten
+ * once, for everything that concerns it. That is what keeps the mending of a
+ * fact, or of how somebody behaves, the same from chapter to chapter — which
+ * mending issue by issue does not. Every change waits as a proposal, a
+ * change to the bible as a suggestion.
+ */
+export async function fixIssues(core: NovelCore, runtime: ProjectRuntime, params: FixIssuesParams, task: TaskContext): Promise<FixIssuesResult> {
+  const { project } = runtime
+  const lang = promptLanguage((await project.manifest()).language)
+  type Found = { chapter: { id: string; index: number; title: string }; issue: ReviewIssue; note?: string }
+  const found: Found[] = []
+  if (params.issues !== undefined && params.issues.length > 0) {
+    for (const asked of params.issues) {
+      const chapter = await project.findChapter(asked.chapter)
+      if (chapter === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${asked.chapter}"`)
+      const issue = (await project.review(chapter.plan.id))?.issues.find(candidate => candidate.id === asked.issue)
+      if (issue === undefined) throw new ProjectError('novel/not-found', `chapter ${chapter.index} has no review issue "${asked.issue}" — run the review again`)
+      const note = asked.note?.trim() || issue.note
+      found.push({ chapter: { id: chapter.plan.id, index: chapter.index, title: chapter.plan.title }, issue, ...(note !== undefined && note.length > 0 ? { note } : {}) })
+    }
+  } else {
+    const floor = GRAVITY[params.atLeast ?? 'high'] ?? 3
+    const only = params.chapters !== undefined && params.chapters.length > 0 ? new Set((await Promise.all(params.chapters.map(ref => project.findChapter(ref)))).map(chapter => chapter?.plan.id)) : undefined
+    for (const chapter of await project.chapters()) {
+      if (only !== undefined && !only.has(chapter.plan.id)) continue
+      for (const issue of (await project.review(chapter.plan.id))?.issues ?? []) {
+        if (issue.resolved === true || (GRAVITY[issue.severity] ?? 1) < floor) continue
+        found.push({ chapter: { id: chapter.plan.id, index: chapter.index, title: chapter.plan.title }, issue, ...(issue.note !== undefined ? { note: issue.note } : {}) })
+      }
+    }
+  }
+  if (found.length === 0) return { issues: 0, chapters: 0 }
+  found.sort((left, right) => left.chapter.index - right.chapter.index)
+  const said = params.note?.trim() ?? ''
+  /** One issue, as whoever mends it reads it. */
+  const told = (item: Found, at: number): string => lang === 'zh'
+    ? [
+        `${at + 1}. （${ISSUE_TYPE_ZH[item.issue.type] ?? item.issue.type}，${SEVERITY_ZH[item.issue.severity] ?? item.issue.severity}）${item.issue.explanation}`,
+        item.issue.quote !== undefined ? `   原文："${item.issue.quote}"` : undefined,
+        item.issue.suggestion !== undefined ? `   审校的建议：${item.issue.suggestion}` : undefined,
+        item.note !== undefined ? `   作者对怎么改的要求（以此为准）：${item.note}` : undefined,
+      ].filter(Boolean).join('\n')
+    : [
+        `${at + 1}. (${item.issue.type}, ${item.issue.severity}) ${item.issue.explanation}`,
+        item.issue.quote !== undefined ? `   The text: "${item.issue.quote}"` : undefined,
+        item.issue.suggestion !== undefined ? `   The review suggests: ${item.issue.suggestion}` : undefined,
+        item.note !== undefined ? `   What the author wants done about it (this decides): ${item.note}` : undefined,
+      ].filter(Boolean).join('\n')
+  const byChapter = new Map<string, Found[]>()
+  for (const item of found) byChapter.set(item.chapter.id, [...(byChapter.get(item.chapter.id) ?? []), item])
+  const head = (chapter: Found['chapter']): string => L(lang, `### 第 ${chapter.index} 章《${chapter.title}》`, `### Chapter ${chapter.index}, "${chapter.title}"`)
+  const all = [...byChapter.values()].map(items => `${head(items[0]!.chapter)}\n${items.map(told).join('\n')}`).join('\n\n')
+  const instruction = L(lang,
+    `审校在这本书里发现了下面 ${found.length} 个问题，作者要把它们一起修掉：\n\n${all}\n${said.length > 0 ? `\n作者对这一批的总要求（以此为准）：${said}\n` : ''}\n请把它们放在一起看：同一章的几个问题在一次修改里改完；彼此有牵连的（同一个事实、同一条因果、同一个人物的表现）前后改成一致，不要这一章改成这样、那一章改成那样。除了上面点到的章节，还有哪些章节写到了与它们相关的事实、因果或人物表现，需要一起改才能前后一致；与此无关的内容保持原样。`,
+    `A review found the ${found.length} problems below in this book, and the author wants them mended together:\n\n${all}\n${said.length > 0 ? `\nWhat the author says of the whole batch (this decides): ${said}\n` : ''}\nRead them side by side: the problems of one chapter are mended in one rewrite of it; those that hang together (one fact, one chain of cause, how one person behaves) are mended the same way from chapter to chapter. Besides the chapters named above, which chapters state facts, causes or behaviour that depend on them and have to change with them for the book to agree with itself; leave everything else as it is.`)
+  const oneLine = found.map(item => L(lang, `第 ${item.chapter.index} 章：${clip(item.issue.explanation, 60)}`, `Chapter ${item.chapter.index}: ${clip(item.issue.explanation, 80)}`)).join('\n')
+  const book = await reviseBook(core, runtime, {
+    instruction,
+    bible: true,
+    // The writer of one chapter mends what is that chapter's — in full — and knows what else is being mended, to agree with it.
+    brief: (chapterId, reason) => {
+      const mine = byChapter.get(chapterId)
+      return [
+        mine !== undefined
+          ? L(lang, `审校在这一章发现了下面的问题，这一次一起改掉：\n${mine.map(told).join('\n')}`, `A review found the problems below in this chapter; mend them all in this rewrite:\n${mine.map(told).join('\n')}`)
+          : L(lang, '这一章本身没有被点名的问题：它写到了别的章节正在修的事，要跟着改才能前后一致。', 'No problem was named in this chapter itself: it tells of things being mended in other chapters, and has to change with them for the book to agree with itself.'),
+        said.length > 0 ? L(lang, `作者对这一批的总要求（以此为准）：${said}`, `What the author says of the whole batch (this decides): ${said}`) : '',
+        reason.length > 0 ? L(lang, `策划对这一章的安排：${reason}`, `What the planner settled for this chapter: ${reason}`) : '',
+        found.length > (mine?.length ?? 0) ? L(lang, `这一批同时在修的问题（别的章节的不在这一章里改；写到相关的事时与它们的改法保持一致）：\n${oneLine}`, `What is being mended in the same batch (other chapters' problems are not mended here; where this chapter touches them, agree with how they are mended):\n${oneLine}`) : '',
+        L(lang, '只改为解决这些问题必须改的地方，别的不要动。', 'Change only what mending these takes; leave the rest as it is.'),
+      ].filter(part => part.length > 0).join('\n\n')
+    },
+  }, task)
+  // Each issue handed over says so, until its proposals are settled and the author marks it.
+  for (const [chapterId, items] of byChapter) {
+    const review = await project.review(chapterId)
+    if (review === undefined) continue
+    const ids = new Set(items.map(item => item.issue.id))
+    await project.saveReview({ ...review, issues: review.issues.map(issue => ids.has(issue.id) ? { ...issue, mending: book.batchId } : issue) })
+  }
+  return { issues: found.length, chapters: byChapter.size, book }
 }
 
 /** Apply a pending proposal to the manuscript. */

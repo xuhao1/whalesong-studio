@@ -8,7 +8,7 @@
  * author has something to say about how: the card takes their words and hands
  * them on with the problem.
  *
- *   IssueCard     one issue: what is wrong, the author's say, mend here / mend everywhere / settled
+ *   IssueCard     one issue: what is wrong, the author's say (kept with the issue), mend here / mend everywhere / settled; ticked, it is one of a batch
  *   issueMarks    where the issues of a chapter sit in its text, for a page that marks them
  */
 import type { ChapterReview, ReviewIssue } from '../shared/types'
@@ -51,12 +51,15 @@ export function issueMarks(text: string, review: ChapterReview | undefined): { m
   return { marks: kept, loose }
 }
 
+/** Under which name what the author is typing about an issue is kept on this screen. */
+export const issueNoteKey = (chapterId: string, issueId: string): string => `issue.note.${chapterId}.${issueId}`
+
 /**
  * @param before - asked before a fix is started (the editor saves what is being typed); a `false` calls it off.
  * @param after - told once a fix has been started.
  * @param onLocate - show the quoted words in the text.
  */
-export function IssueCard({ chapterId, issue, onLocate, onChanged, before, after, className }: {
+export function IssueCard({ chapterId, issue, onLocate, onChanged, before, after, className, selected, onSelect }: {
   chapterId: string
   issue: ReviewIssue
   onLocate?: (quote: string) => void
@@ -64,11 +67,20 @@ export function IssueCard({ chapterId, issue, onLocate, onChanged, before, after
   before?: () => Promise<boolean>
   after?: (scope: 'passage' | 'book') => void
   className?: string
+  /** One of a batch to be mended together: shown with a tick box. */
+  selected?: boolean
+  onSelect?: (on: boolean) => void
 }) {
   const { controller } = useStudio()
   const t = useT()
   const { root } = useProject()
-  const [note, setNote] = useKept(`issue.note.${chapterId}.${issue.id}`, '')
+  const [note, setNote] = useKept(issueNoteKey(chapterId, issue.id), issue.note ?? '')
+  // What the author says of an issue is kept with it: it goes along when the issue is mended in a batch, and to the showrunner.
+  const keep = (): void => {
+    if (note.trim() === (issue.note ?? '')) return
+    // (A Host from before notes were kept refuses: the words stay in the box and still go along with a fix started here.)
+    void controller.api.call('review.note', { root, chapter: chapterId, issue: issue.id, note: note.trim() }).then(() => { onChanged?.() }, () => {})
+  }
   const here = useAction()
   const everywhere = useAction()
   const settle = useAction()
@@ -77,7 +89,7 @@ export function IssueCard({ chapterId, issue, onLocate, onChanged, before, after
     await controller.api.call('ai.fixIssue', { root, chapter: chapterId, issue: issue.id, scope, ...(note.trim().length > 0 ? { note: note.trim() } : {}) })
     await controller.refreshJobs()
     controller.toast('info', scope === 'book'
-      ? t('策划正在查这个问题牵涉到哪些章节和设定；每一处改动都会作为提案（设定的改动作为建议）等你确认。', 'The planner is tracing this problem through the chapters and the bible; every change will wait for you as a proposal (changes to the bible as suggestions).')
+      ? t('策划正在查这个问题牵涉的范围，改动会作为提案等你确认。', 'The planner is tracing how far this reaches; the changes will wait as proposals.')
       : t('改好之后会作为一条提案等你确认。', 'The rewrite will wait for you as a proposal.'))
     after?.(scope)
   }
@@ -85,8 +97,10 @@ export function IssueCard({ chapterId, issue, onLocate, onChanged, before, after
   return (
     <article className={cx('nv-issue', !open && 'is-resolved', className)}>
       <header>
+        {onSelect !== undefined && open ? <input type="checkbox" checked={selected === true} onChange={(event) => { onSelect(event.target.checked) }} aria-label={t('选中这个问题', 'Select this issue')} /> : null}
         <Chip tone={SEVERITY_TONE[issue.severity]}>{t(...SEVERITY[issue.severity])}</Chip>
         <Chip>{t(...ISSUE_TYPE[issue.type])}</Chip>
+        {issue.mending !== undefined && open ? <Chip tone="blue">{t('已交给修复', 'Handed over')}</Chip> : null}
       </header>
       {issue.quote !== undefined ? (
         onLocate !== undefined
@@ -101,17 +115,18 @@ export function IssueCard({ chapterId, issue, onLocate, onChanged, before, after
           minRows={1}
           maxRows={6}
           value={note}
-          placeholder={t('你想怎么改？（可不填：不填就按上面的建议改）', 'How do you want it mended? (Optional: left empty, the suggestion above is followed)')}
+          placeholder={t('你想怎么改？', 'How do you want it mended?')}
           onChange={(event) => { setNote(event.target.value) }}
+          onBlur={keep}
         />
       ) : null}
       <footer>
         {open ? (
           <>
-            <Button size="sm" icon="wand" busy={here.busy} pending={t('正在开始…', 'Starting…')} onClick={() => here.run(fix('passage'))} title={issue.quote !== undefined ? t('只改引文这一处', 'Rewrite the quoted place only') : t('这个问题没有引用具体的句子：按它重写这一章', 'This problem quotes no sentence: the chapter is rewritten for it')}>
+            <Button size="sm" icon="wand" busy={here.busy} pending={t('正在开始…', 'Starting…')} onClick={() => here.run(fix('passage'))} title={issue.quote !== undefined ? t('只改引文这一处', 'Rewrite the quoted place only') : t('按它重写这一章', 'Rewrite the chapter for it')}>
               {issue.quote !== undefined ? t('修这一处', 'Mend it here') : t('修这一章', 'Mend the chapter')}
             </Button>
-            <Button size="sm" icon="layers" busy={everywhere.busy} pending={t('正在开始…', 'Starting…')} onClick={() => everywhere.run(fix('book'))} title={t('让策划查清这个问题在全书的影响范围，把牵涉到的章节和设定一起改；每一处改动都等你确认', 'The planner traces how far the problem reaches and changes every chapter and bible entry it touches; each change waits for your yes')}>
+            <Button size="sm" icon="layers" busy={everywhere.busy} pending={t('正在开始…', 'Starting…')} onClick={() => everywhere.run(fix('book'))} title={t('让策划查清牵涉的章节和设定，一起改', 'The planner traces the chapters and the bible it reaches, and mends them together')}>
               {t('全局修复', 'Mend it everywhere')}
             </Button>
           </>
