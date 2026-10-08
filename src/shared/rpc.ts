@@ -434,7 +434,9 @@ export interface NovelRpc {
   /** Ask a ComfyUI server what it has to draw with. `baseURL`: the address as typed; left out, the one in the settings. */
   'image.comfy': { params: { baseURL?: string }; result: ComfyCatalog }
   /** The last run of that server that made a picture, as a workflow with the Studio's placeholders in it: what the settings keep as the workflow. */
-  'image.comfyAdopt': { params: { baseURL?: string }; result: { workflow: string; model?: string; nodes: string[] } }
+  'image.comfyAdopt': { params: { baseURL?: string }; result: { workflow: string; model?: string; nodes: string[]; images: number } }
+  /** A workflow saved on that server (`path` under its workflows folder), as a workflow the Studio fills in: converted from the editor's format, with placeholders for the words, the size, the seed and the reference pictures. */
+  'image.comfyTake': { params: { baseURL?: string; path: string }; result: { workflow: string; model?: string; nodes: string[]; images: number } }
   /** Have the planner look through the names without a card and say who is worth one. `all`: every name again, also those already looked at or proposed. */
   'cast.sift': { params: { root: string; all?: boolean; direction?: string }; result: JobStarted }
   'cast.settle': { params: { root: string; name: string; action: 'card' | 'alias' | 'ignore' | 'restore'; target?: string; role?: CharacterRole }; result: { walkons: WalkOn[]; card?: CharacterCard; lines: number } }

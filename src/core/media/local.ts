@@ -24,6 +24,8 @@ import { ProviderError, trimBase } from './http'
 import type { ImageProvider, ImageReference, ImageRequest, ImageResult } from './image'
 
 export const COMFY_DEFAULT = 'http://127.0.0.1:8188'
+/** The key a workflow kept in the settings says under where it was taken from. */
+export const WORKFLOW_NOTE = '_novel'
 
 /** `WIDTHxHEIGHT` in pixels a latent model can make: each side a multiple of 16. */
 function sides(size: string | undefined): { width: number; height: number } {
@@ -122,7 +124,7 @@ const isFile = (name: string): boolean => /\.(safetensors|ckpt|pt|pth|bin|gguf|s
  * models it loads, the sampler, the steps — stays as the server ran it: those are what made the run work.
  * @returns undefined for a graph that has no sampler fed by a text the Studio could replace.
  */
-export function workflowTemplate(run: unknown): { workflow: Graph; model?: string; nodes: string[] } | undefined {
+export function workflowTemplate(run: unknown): { workflow: Graph; model?: string; nodes: string[]; images: number } | undefined {
   if (run === null || typeof run !== 'object' || Array.isArray(run)) return undefined
   const graph = JSON.parse(JSON.stringify(run)) as Graph
   const linked = (node: Graph[string] | undefined, input: string): string | undefined => {
@@ -168,17 +170,167 @@ export function workflowTemplate(run: unknown): { workflow: Graph; model?: strin
   }
   for (const key of ['seed', 'noise_seed']) if (typeof sampler.inputs?.[key] === 'number') sampler.inputs[key] = '%seed%'
   for (const node of Object.values(graph)) if (node.class_type === 'SaveImage' && node.inputs !== undefined) node.inputs.filename_prefix = 'novel-studio'
+  // The pictures it loads are the reference pictures' places: the first by the input it feeds (image_1 before image_2), then by its number.
+  const feeds = (id: string): string => {
+    for (const node of Object.values(graph)) for (const [key, value] of Object.entries(node.inputs ?? {})) if (Array.isArray(value) && String(value[0]) === id) return key
+    return ''
+  }
+  const loaded = Object.entries(graph).filter(([, node]) => node.class_type === 'LoadImage' && typeof node.inputs?.image === 'string')
+    .sort(([left], [right]) => feeds(left).localeCompare(feeds(right), undefined, { numeric: true }) || Number(left) - Number(right))
+  loaded.forEach(([, node], at) => { node.inputs!.image = `%image${at + 1}%` })
   const loaders = Object.values(graph)
   const named = (type: string, input: string): string | undefined => {
     const value = loaders.find(node => node.class_type === type)?.inputs?.[input]
     return typeof value === 'string' ? value : undefined
   }
   const model = named('UNETLoader', 'unet_name') ?? named('CheckpointLoaderSimple', 'ckpt_name') ?? named('CheckpointLoader', 'ckpt_name') ?? named('UnetLoaderGGUF', 'unet_name')
-  return { workflow: graph, ...(model !== undefined ? { model } : {}), nodes: Object.values(graph).map(node => node.class_type ?? '?') }
+  return { workflow: graph, ...(model !== undefined ? { model } : {}), nodes: Object.values(graph).map(node => node.class_type ?? '?'), images: loaded.length }
+}
+
+/** What the server says of one kind of node: its inputs in order, and whether running it leaves something. */
+interface NodeInfo {
+  input?: { required?: Record<string, unknown>; optional?: Record<string, unknown> }
+  input_order?: { required?: string[]; optional?: string[] }
+  output_node?: boolean
+}
+
+/**
+ * A workflow as ComfyUI's editor saves it, turned into the graph its server runs. The editor keeps what a node's
+ * widgets are set to as a list without names, beside buttons and notes the server knows nothing of; the server wants
+ * every input by name. What each kind of node takes is asked of the server (`info`).
+ * @throws ProviderError for what cannot be told from the file: a workflow with subgraphs, or a node switched to bypass.
+ */
+export function editorToApi(saved: unknown, info: Record<string, NodeInfo | undefined>): Graph {
+  const file = saved as { nodes?: unknown[]; links?: unknown[]; definitions?: { subgraphs?: unknown[] } }
+  if (!Array.isArray(file.nodes)) throw new ProviderError('this is not a workflow as ComfyUI saves it')
+  if ((file.definitions?.subgraphs?.length ?? 0) > 0) throw new ProviderError('this workflow has subgraphs, which cannot be told from the saved file: export it in API format (Workflow → Export (API)) and name that file')
+  type Node = { id: number | string; type?: string; mode?: number; inputs?: { name?: string; link?: number | null; widget?: unknown; type?: string }[]; widgets_values?: unknown }
+  const nodes = new Map((file.nodes as Node[]).map(node => [String(node.id), node]))
+  // A link: [id, from node, from slot, to node, to slot, type] — or the same as an object.
+  const links = new Map<number, { from: string; slot: number }>()
+  for (const raw of file.links ?? []) {
+    if (Array.isArray(raw)) links.set(Number(raw[0]), { from: String(raw[1]), slot: Number(raw[2]) })
+    else if (raw !== null && typeof raw === 'object') {
+      const link = raw as { id?: number; origin_id?: number | string; origin_slot?: number }
+      if (link.id !== undefined && link.origin_id !== undefined) links.set(link.id, { from: String(link.origin_id), slot: link.origin_slot ?? 0 })
+    }
+  }
+  const CONTROL = new Set(['fixed', 'increment', 'decrement', 'randomize'])
+  const isWidget = (spec: unknown): boolean => {
+    const type = Array.isArray(spec) ? spec[0] : undefined
+    return Array.isArray(type) || type === 'COMBO' || type === 'INT' || type === 'FLOAT' || type === 'STRING' || type === 'BOOLEAN'
+  }
+  const optionsOf = (spec: unknown): Record<string, unknown> => (Array.isArray(spec) && spec[1] !== null && typeof spec[1] === 'object' ? spec[1] as Record<string, unknown> : {})
+  /** What comes out of a link: another node's output, or — through the editor's own helper nodes — a plain value. */
+  const through = (id: number | null | undefined, depth = 0): [string, number] | { value: unknown } | undefined => {
+    const link = id !== null && id !== undefined ? links.get(id) : undefined
+    const from = link !== undefined ? nodes.get(link.from) : undefined
+    if (link === undefined || from === undefined || depth > 16) return undefined
+    if (from.type === 'Reroute') return through(from.inputs?.[0]?.link, depth + 1)
+    if (from.type === 'PrimitiveNode') return { value: Array.isArray(from.widgets_values) ? from.widgets_values[0] : undefined }
+    if (from.mode === 4) throw new ProviderError(`this workflow has a node switched to bypass (${from.type ?? '?'}), which cannot be told from the saved file: switch it back on or take it out, or export the workflow in API format`)
+    if (from.mode === 2 || info[from.type ?? ''] === undefined) return undefined
+    return [link.from, link.slot]
+  }
+  const graph: Graph = {}
+  for (const [id, node] of nodes) {
+    const about = node.type !== undefined ? info[node.type] : undefined
+    // Notes and the editor's helpers are no nodes of the server's; a muted node does not run.
+    if (about === undefined || node.mode === 2 || node.mode === 4) continue
+    const specs: Record<string, unknown> = { ...(about.input?.required ?? {}), ...(about.input?.optional ?? {}) }
+    const order = [...(about.input_order?.required ?? Object.keys(about.input?.required ?? {})), ...(about.input_order?.optional ?? Object.keys(about.input?.optional ?? {}))]
+    const listed = node.inputs ?? []
+    // The widgets in the order the editor keeps their values: named by the file where it names them, else as the server orders them.
+    const flagged = listed.filter(input => input.widget !== undefined && input.widget !== null && input.name !== undefined).map(input => input.name!)
+    const widgets = flagged.length > 0 ? flagged : order.filter(name => isWidget(specs[name]))
+    const inputs: Record<string, unknown> = {}
+    const values = node.widgets_values
+    if (Array.isArray(values)) {
+      let at = 0
+      for (const name of widgets) {
+        if (at >= values.length) break
+        const value = values[at++]
+        if (name in specs) inputs[name] = value
+        // Beside a seed the editor keeps what to do with it after a run; beside a picture, its upload button.
+        if ((optionsOf(specs[name]).control_after_generate === true || /^(noise_)?seed$/.test(name)) && typeof values[at] === 'string' && CONTROL.has(values[at] as string)) at += 1
+        if (flagged.length === 0 && optionsOf(specs[name]).image_upload === true && values[at] === 'image') at += 1
+      }
+    } else if (values !== null && typeof values === 'object') {
+      for (const [name, value] of Object.entries(values as Record<string, unknown>)) if (name in specs) inputs[name] = value
+    }
+    for (const input of listed) {
+      if (input.name === undefined || input.link === null || input.link === undefined) continue
+      // An input of a group that grows ("images.image_1") is the server's by the group's name.
+      if (!(input.name in specs) && !(input.name.split('.')[0]! in specs) && Object.keys(specs).length > 0) continue
+      const from = through(input.link)
+      if (from === undefined) continue
+      inputs[input.name] = Array.isArray(from) ? from : from.value
+    }
+    graph[id] = { class_type: node.type!, inputs }
+  }
+  // Only what leads to something kept: a picture loader left unconnected would be checked by the server for a file it has no use for.
+  const ends = Object.entries(graph).filter(([, node]) => info[node.class_type ?? '']?.output_node === true).map(([id]) => id)
+  if (ends.length === 0) return graph
+  const wanted = new Set<string>()
+  const walk = (id: string): void => {
+    if (wanted.has(id) || graph[id] === undefined) return
+    wanted.add(id)
+    for (const value of Object.values(graph[id]!.inputs ?? {})) if (Array.isArray(value) && typeof value[0] === 'string') walk(value[0])
+  }
+  ends.forEach(walk)
+  return Object.fromEntries(Object.entries(graph).filter(([id]) => wanted.has(id)))
+}
+
+/** The workflows saved on a ComfyUI server, by their path under its workflows folder. */
+export async function comfyWorkflows(baseURL: string | undefined, signal?: AbortSignal): Promise<string[]> {
+  const base = trimmedBase(baseURL)
+  const answered = await fetch(`${base}/userdata?dir=workflows&recurse=true&split=false&full_info=true`, { signal: signal ?? AbortSignal.timeout(15_000) }).catch(() => undefined)
+  if (answered === undefined || !answered.ok) return []
+  const listed = await answered.json().catch(() => []) as unknown
+  return (Array.isArray(listed) ? listed : [])
+    .map(item => (typeof item === 'string' ? item : (item as { path?: string } | null)?.path))
+    .filter((path): path is string => typeof path === 'string' && path.toLowerCase().endsWith('.json'))
+    .sort((left, right) => left.localeCompare(right))
+}
+
+/**
+ * Take a workflow saved on the server — as its editor saves it — as a workflow the Studio fills in: turned into the
+ * graph the server runs, with the words, the size and the seed as placeholders and the pictures it loads as the
+ * reference pictures' places.
+ * @throws ProviderError naming what stands in the way: no such file, a file that is no workflow, a graph with no sampler fed by a text.
+ */
+export async function comfyTakeWorkflow(baseURL: string | undefined, path: string, signal?: AbortSignal): Promise<{ workflow: Graph; model?: string; nodes: string[]; images: number }> {
+  const base = trimmedBase(baseURL)
+  const ask = async (url: string): Promise<Response> => {
+    try {
+      return await fetch(url, { signal: signal ?? AbortSignal.timeout(20_000) })
+    } catch (error) {
+      if (signal?.aborted === true) throw error
+      throw new ProviderError(`ComfyUI at ${base} did not answer (${error instanceof Error ? error.message : String(error)}) — is it running?`)
+    }
+  }
+  const fetched = await ask(`${base}/userdata/${encodeURIComponent(`workflows/${path}`)}`)
+  if (!fetched.ok) throw new ProviderError(`ComfyUI has no saved workflow "${path}" (${fetched.status})`, fetched.status)
+  const saved = await fetched.json().catch(() => undefined) as unknown
+  let graph: unknown = saved
+  // As the editor saves it: turned into what the server runs, with what the server says each of its nodes takes.
+  if (saved !== null && typeof saved === 'object' && Array.isArray((saved as { nodes?: unknown }).nodes)) {
+    const types = [...new Set(((saved as { nodes: { type?: string }[] }).nodes).map(node => node.type).filter((type): type is string => typeof type === 'string'))]
+    const info: Record<string, NodeInfo | undefined> = {}
+    await Promise.all(types.map(async (type) => {
+      const answered = await ask(`${base}/object_info/${encodeURIComponent(type)}`)
+      const body = answered.ok ? await answered.json().catch(() => ({})) as Record<string, NodeInfo> : {}
+      if (body[type] !== undefined) info[type] = body[type]
+    }))
+    graph = editorToApi(saved, info)
+  }
+  const made = workflowTemplate(graph)
+  if (made === undefined) throw new ProviderError(`the workflow "${path}" has no sampler fed by a text the Studio could fill in: it is not one that draws a picture from a prompt`)
+  return made
 }
 
 /** The last run in the server's history that made a picture, as a workflow to fill in. The history is the server's memory only: it is gone when the server restarts. */
-export async function comfyLastWorkflow(baseURL: string | undefined, signal?: AbortSignal): Promise<{ workflow: Graph; model?: string; nodes: string[] } | undefined> {
+export async function comfyLastWorkflow(baseURL: string | undefined, signal?: AbortSignal): Promise<{ workflow: Graph; model?: string; nodes: string[]; images: number } | undefined> {
   const base = trimmedBase(baseURL)
   const answered = await fetch(`${base}/history?max_items=24`, { signal: signal ?? AbortSignal.timeout(15_000) }).catch(() => undefined)
   if (answered === undefined || !answered.ok) return undefined
@@ -211,13 +363,14 @@ export async function comfyCatalog(baseURL: string | undefined, signal?: AbortSi
     if (signal?.aborted === true) throw error
     throw new ProviderError(`ComfyUI at ${base} did not answer (${error instanceof Error ? error.message : String(error)}) — is it running, and reachable from this computer?`)
   }
-  const [checkpoints, diffusion, encoders, encoderTypes, vaes, last] = await Promise.all([
+  const [checkpoints, diffusion, encoders, encoderTypes, vaes, last, workflows] = await Promise.all([
     loaderChoices(base, 'CheckpointLoaderSimple', 'ckpt_name', signal),
     loaderChoices(base, 'UNETLoader', 'unet_name', signal),
     loaderChoices(base, 'CLIPLoader', 'clip_name', signal),
     loaderChoices(base, 'CLIPLoader', 'type', signal),
     loaderChoices(base, 'VAELoader', 'vae_name', signal),
     comfyLastWorkflow(base, signal),
+    comfyWorkflows(base, signal),
   ])
   const device = stats.devices?.[0]
   return {
@@ -230,6 +383,7 @@ export async function comfyCatalog(baseURL: string | undefined, signal?: AbortSi
     vaes: vaes.filter(isFile),
     encoderTypes,
     ...(last !== undefined ? { last: { ...(last.model !== undefined ? { model: last.model } : {}), nodes: last.nodes } } : {}),
+    workflows,
   }
 }
 
@@ -245,8 +399,10 @@ async function readWorkflow(source: string): Promise<unknown> {
     throw new ProviderError('the ComfyUI workflow is not JSON')
   }
   if (graph !== null && typeof graph === 'object' && Array.isArray((graph as { nodes?: unknown }).nodes)) {
-    throw new ProviderError('this ComfyUI workflow is in the editor\'s format, which the server does not run: export it in API format (Workflow → Export (API)) and name that file')
+    throw new ProviderError('this ComfyUI workflow is in the editor\'s format, which the server does not run: choose it from the server\'s saved workflows under Settings → Images, or export it in API format (Workflow → Export (API)) and name that file')
   }
+  // Where the settings keep a workflow taken from the server, they keep beside it where it came from: no node of the graph.
+  if (graph !== null && typeof graph === 'object') delete (graph as Record<string, unknown>)[WORKFLOW_NOTE]
   return graph
 }
 

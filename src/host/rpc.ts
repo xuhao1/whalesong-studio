@@ -38,7 +38,7 @@ import { fixIssue, fixIssues, acceptProposal, rejectProposal, reviseBook, revise
 import { writeChapter } from '../core/pipelines/write'
 import { ProjectError } from '../core/project'
 import { siftCast } from '../core/pipelines/cast'
-import { comfyCatalog, comfyLastWorkflow } from '../core/media/local'
+import { comfyCatalog, comfyLastWorkflow, comfyTakeWorkflow, WORKFLOW_NOTE } from '../core/media/local'
 import { listWalkOns, settleWalkOn } from '../core/walkons'
 import { checkPassword, readStub, VaultError } from '../core/util/vault'
 import type { DeepPartial } from '../core/settings'
@@ -425,7 +425,11 @@ export function createHandlers(service: NovelService): Handlers {
     'image.comfyAdopt': async ({ baseURL }) => {
       const last = await comfyLastWorkflow(typeof baseURL === 'string' && baseURL.trim().length > 0 ? baseURL : core.currentSettings().image.baseURL)
       if (last === undefined) throw new ProjectError('novel/not-found', 'the ComfyUI server has no run in its history that made a picture from a text — run the workflow once in ComfyUI, or export it in API format and name the file')
-      return { workflow: JSON.stringify(last.workflow), ...(last.model !== undefined ? { model: last.model } : {}), nodes: last.nodes }
+      return { workflow: JSON.stringify({ ...last.workflow, [WORKFLOW_NOTE]: { from: 'the server\'s last run' } }), ...(last.model !== undefined ? { model: last.model } : {}), nodes: last.nodes, images: last.images }
+    },
+    'image.comfyTake': async ({ baseURL, path }) => {
+      const taken = await comfyTakeWorkflow(typeof baseURL === 'string' && baseURL.trim().length > 0 ? baseURL : core.currentSettings().image.baseURL, requireString(path, 'path'))
+      return { workflow: JSON.stringify({ ...taken.workflow, [WORKFLOW_NOTE]: { from: path } }), ...(taken.model !== undefined ? { model: taken.model } : {}), nodes: taken.nodes, images: taken.images }
     },
     'cast.sift': async ({ root, all, direction }) => {
       const runtime = await open(root)

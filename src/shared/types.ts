@@ -1768,6 +1768,8 @@ export interface ComfyCatalog {
   encoderTypes: string[]
   /** The last run of the server that made a picture, where its history has one: what it drew with, and the nodes it ran. */
   last?: { model?: string; nodes: string[] }
+  /** The workflows saved on the server (in its editor), by their path under its workflows folder. */
+  workflows: string[]
 }
 
 /**

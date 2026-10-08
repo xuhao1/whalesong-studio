@@ -1083,9 +1083,44 @@ function ComfyFields({ value, onChange, t }: { value: ImageSettings; onChange: (
   const set = <K extends keyof ImageSettings>(key: K, next: ImageSettings[K] | undefined): void => { onChange(without(value, key, next)) }
   const typed = (key: 'baseURL' | 'model' | 'workflow' | 'editWorkflow', placeholder: string) => ({ value: value[key] ?? '', placeholder, onChange: (event: { target: { value: string } }) => { set(key, event.target.value.length > 0 ? event.target.value : undefined) } })
   const workflow = value.workflow?.trim() ?? ''
-  // Kept in the settings as the JSON itself: taken from the server's own last run.
-  const kept = workflow.startsWith('{')
-  const keptNodes = (() => { try { return kept ? Object.keys(JSON.parse(workflow) as object).length : 0 } catch { return 0 } })()
+  // Kept in the settings as the JSON itself: taken from the server — a workflow saved there, or its last run.
+  const keptIn = (source: string | undefined): { nodes: number; images: number; from?: string } | undefined => {
+    const text = source?.trim() ?? ''
+    if (!text.startsWith('{')) return undefined
+    try {
+      const graph = JSON.parse(text) as Record<string, unknown>
+      const from = (graph._novel as { from?: unknown } | undefined)?.from
+      const places = text.match(/%image(\d+)%/g) ?? []
+      return { nodes: Object.keys(graph).filter(key => key !== '_novel').length, images: new Set(places).size, ...(typeof from === 'string' ? { from } : {}) }
+    } catch {
+      return { nodes: 0, images: 0 }
+    }
+  }
+  const kept = keptIn(value.workflow)
+  const keptEdit = keptIn(value.editWorkflow)
+  const [taking, setTaking] = useState(false)
+  // A workflow saved on the server, taken as it is: one that loads pictures is the one for pictures with references, any other the plain one.
+  const take = (path: string): void => {
+    if (path.length === 0) return
+    setTaking(true)
+    controller.api.call('image.comfyTake', { ...(address.length > 0 ? { baseURL: address } : {}), path })
+      .then((taken) => {
+        onChange({ ...value, [taken.images > 0 ? 'editWorkflow' : 'workflow']: taken.workflow })
+        controller.toast('success', taken.images > 0
+          ? t(`已取来「${path}」：它带 ${taken.images} 张参考图，放进了"带参考图的工作流"。保存后生效。`, `Taken "${path}": it loads ${taken.images} reference picture(s), so it is the workflow for pictures with references. It holds once saved.`)
+          : t(`已取来「${path}」，放进了"工作流"。保存后生效。`, `Taken "${path}" as the workflow. It holds once saved.`))
+      })
+      .catch((error: unknown) => { controller.toast('error', messageOf(error)) })
+      .finally(() => { setTaking(false) })
+  }
+  const keptLine = (found: { nodes: number; images: number; from?: string }, clear: () => void): ReactNode => (
+    <div className="nv-row">
+      <span className="nv-muted nv-small">{t(
+        `存在设置里：${found.from !== undefined ? `${found.from === 'the server\'s last run' ? '服务器上次的运行' : found.from} · ` : ''}${found.nodes} 个节点${found.images > 0 ? ` · ${found.images} 张参考图` : ''}`,
+        `Kept in the settings: ${found.from !== undefined ? `${found.from} · ` : ''}${found.nodes} nodes${found.images > 0 ? ` · ${found.images} reference picture(s)` : ''}`)}</span>
+      <Button size="sm" variant="ghost" icon="x" onClick={clear}>{t('清除', 'Clear')}</Button>
+    </div>
+  )
   const model = value.model?.trim() ?? ''
   const listed = catalog !== undefined ? [...catalog.checkpoints, ...catalog.diffusion] : []
   const alone = catalog !== undefined && catalog.diffusion.includes(model)
@@ -1114,14 +1149,16 @@ function ComfyFields({ value, onChange, t }: { value: ImageSettings; onChange: (
           </p>
         ) : server?.error !== undefined ? <p className="nv-note is-warn nv-small">{server.error}</p> : null}
       </Field>
-      <Field label={t('工作流', 'Workflow')} hint={kept ? undefined : t('API 格式导出的 JSON 文件，里面写 %prompt%、%negative_prompt%、%width%、%height%、%seed%；留空用内置流程', 'A JSON file exported in API format, with %prompt%, %negative_prompt%, %width%, %height%, %seed% in it; empty: the built-in graph')}>
-        {kept ? (
+      {catalog !== undefined && catalog.workflows.length > 0 ? (
+        <Field label={t('服务器上存的工作流', 'Workflows saved on the server')} hint={t('选一个就取来用：带参考图的放进"带参考图的工作流"，其余放进"工作流"', 'Choose one to use it: one that loads pictures becomes the workflow for pictures with references, any other the plain one')}>
           <div className="nv-row">
-            <span className="nv-muted nv-small">{t(`存在设置里的工作流（${keptNodes} 个节点）`, `A workflow kept in the settings (${keptNodes} nodes)`)}</span>
-            <Button size="sm" variant="ghost" icon="x" onClick={() => { set('workflow', undefined) }}>{t('清除', 'Clear')}</Button>
+            <Select value="" options={[{ value: '', label: taking ? t('正在取…', 'Taking it…') : t('选一个…', 'Choose one…') }, ...catalog.workflows.map(path => ({ value: path, label: path.replace(/\.json$/i, '') }))]} onChange={take} />
           </div>
-        ) : <TextInput {...typed('workflow', '~/ComfyUI/user/default/workflows/novel.json')} />}
-        {!kept && workflow.length === 0 && catalog?.last !== undefined ? (
+        </Field>
+      ) : null}
+      <Field label={t('工作流', 'Workflow')} hint={kept !== undefined ? t('没有参考图的图（人设图、设定图）用它', 'For pictures without references: design sheets, places') : t('这台电脑上 API 格式导出的 JSON 文件，里面写 %prompt%、%negative_prompt%、%width%、%height%、%seed%；留空用内置流程', 'A JSON file on this computer, exported in API format, with %prompt%, %negative_prompt%, %width%, %height%, %seed% in it; empty: the built-in graph')}>
+        {kept !== undefined ? keptLine(kept, () => { set('workflow', undefined) }) : <TextInput {...typed('workflow', '~/ComfyUI/user/default/workflows/novel.json')} />}
+        {kept === undefined && workflow.length === 0 && catalog?.last !== undefined ? (
           <div className="nv-row">
             <span className="nv-muted nv-small">{t(`这台服务器上次跑成功的一次：${catalog.last.model ?? ''}（${catalog.last.nodes.length} 个节点）`, `The server's last run that made a picture: ${catalog.last.model ?? ''} (${catalog.last.nodes.length} nodes)`)}</span>
             <Button size="sm" icon="download" busy={adopting} pending={t('正在取…', 'Taking it…')} onClick={adopt} title={t('把那一次的工作流取来当模板：提示词、尺寸、种子换成工坊填的，模型和采样照它的', 'Take that run as the template: prompt, size and seed become the Studio\'s to fill, models and sampling stay its own')}>{t('用它当工作流', 'Use it as the workflow')}</Button>
@@ -1140,7 +1177,9 @@ function ComfyFields({ value, onChange, t }: { value: ImageSettings; onChange: (
           <Field label="VAE"><Select value={value.vae ?? ''} options={choice(catalog.vaes, value.vae, catalog.vaes.length === 1 ? catalog.vaes[0]! : t('（请选）', '(choose)'))} onChange={(next) => { set('vae', next.length > 0 ? next : undefined) }} /></Field>
         </>
       ) : null}
-      <Field label={t('带参考图的工作流', 'Workflow with reference pictures')} hint={t('用 %image1%、%image2% 载入参考图；留空则不带参考图', 'Loads them as %image1%, %image2%; empty: reference pictures do not go along')}><TextInput {...typed('editWorkflow', '~/ComfyUI/user/default/workflows/novel-edit.json')} /></Field>
+      <Field label={t('带参考图的工作流', 'Workflow with reference pictures')} hint={keptEdit !== undefined ? t('有参考图的图（照人设图画立绘、画面里有人）用它', 'For pictures with references: a portrait against a design sheet, a scene with people in it') : t('这台电脑上的文件，用 %image1%、%image2% 载入参考图；留空则不带参考图', 'A file on this computer that loads them as %image1%, %image2%; empty: reference pictures do not go along')}>
+        {keptEdit !== undefined ? keptLine(keptEdit, () => { set('editWorkflow', undefined) }) : <TextInput {...typed('editWorkflow', '~/ComfyUI/user/default/workflows/novel-edit.json')} />}
+      </Field>
     </>
   )
 }

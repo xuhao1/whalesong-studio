@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createImageProvider } from '../src/core/media/image'
-import { comfyCatalog, comfyLastWorkflow, fillWorkflow, stopLocalWorkers, workflowImages, workflowTemplate } from '../src/core/media/local'
+import { comfyCatalog, comfyLastWorkflow, comfyTakeWorkflow, comfyWorkflows, editorToApi, fillWorkflow, stopLocalWorkers, workflowImages, workflowTemplate } from '../src/core/media/local'
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3])
 const keys = { get: async () => undefined } as never
@@ -24,6 +24,96 @@ describe('a workflow\'s placeholders', () => {
     expect(fillWorkflow(graph, { prompt: '一座桥', width: 1024, height: 768, seed: 7 })).toEqual({ 1: { inputs: { text: '一座桥', width: 1024, note: 'seed 7 of %unknown%', list: [768, ['4', 0]] } } })
     expect(workflowImages(graph)).toBe(0)
     expect(workflowImages({ 2: { inputs: { image: '%image1%' } }, 3: { inputs: { image: '%image3%' } } })).toBe(3)
+  })
+})
+
+/** What a server says of the nodes the workflows below are made of. */
+const INFO = {
+  UNETLoader: { input: { required: { unet_name: [['noct.safetensors']], weight_dtype: [['default']] } }, input_order: { required: ['unet_name', 'weight_dtype'] } },
+  CLIPLoader: { input: { required: { clip_name: [['enc-8b.safetensors']], type: [['qwen_image']] }, optional: { device: [['default', 'cpu']] } }, input_order: { required: ['clip_name', 'type'], optional: ['device'] } },
+  VAELoader: { input: { required: { vae_name: [['image-vae.safetensors']] } }, input_order: { required: ['vae_name'] } },
+  TextEncodeQwenImage21: { input: { required: { clip: ['CLIP', {}], prompt: ['STRING', { multiline: true }], negative_prompt: ['STRING', { multiline: true }], resolution: ['INT', { default: 1024 }], images: ['COMFY_AUTOGROW_V3', { names: ['image_1', 'image_2', 'image_3'] }] }, optional: { vae: ['VAE', {}] } }, input_order: { required: ['clip', 'prompt', 'negative_prompt', 'resolution', 'images'], optional: ['vae'] } },
+  EmptyLatentImage: { input: { required: { width: ['INT', {}], height: ['INT', {}], batch_size: ['INT', {}] } }, input_order: { required: ['width', 'height', 'batch_size'] } },
+  KSampler: { input: { required: { model: ['MODEL', {}], seed: ['INT', { control_after_generate: true }], steps: ['INT', {}], cfg: ['FLOAT', {}], sampler_name: [['euler']], scheduler: [['simple']], positive: ['CONDITIONING', {}], negative: ['CONDITIONING', {}], latent_image: ['LATENT', {}], denoise: ['FLOAT', {}] } }, input_order: { required: ['model', 'seed', 'steps', 'cfg', 'sampler_name', 'scheduler', 'positive', 'negative', 'latent_image', 'denoise'] } },
+  VAEDecode: { input: { required: { samples: ['LATENT', {}], vae: ['VAE', {}] } }, input_order: { required: ['samples', 'vae'] } },
+  SaveImage: { input: { required: { images: ['IMAGE', {}], filename_prefix: ['STRING', {}] } }, input_order: { required: ['images', 'filename_prefix'] }, output_node: true },
+  LoadImage: { input: { required: { image: [['a.png'], { image_upload: true }] } }, input_order: { required: ['image'] } },
+}
+
+/**
+ * A workflow as the editor saves it: a diffusion model loaded by parts, one node encoding both prompts and taking a
+ * reference picture, a second picture loader left unconnected, and a note.
+ * @param named - whether the file names the widgets among a node's inputs (newer editors do; older ones list only what is linked).
+ */
+function savedWorkflow(named: boolean) {
+  const widget = (name: string, type: string) => (named ? [{ name, type, link: null, widget: { name } }] : [])
+  return {
+    version: 0.4,
+    nodes: [
+      { id: 1, type: 'UNETLoader', mode: 0, inputs: [...widget('unet_name', 'COMBO'), ...widget('weight_dtype', 'COMBO')], widgets_values: ['noct.safetensors', 'default'] },
+      { id: 2, type: 'CLIPLoader', mode: 0, inputs: [...widget('clip_name', 'COMBO'), ...widget('type', 'COMBO'), ...widget('device', 'COMBO')], widgets_values: ['enc-8b.safetensors', 'qwen_image', 'default'] },
+      { id: 3, type: 'VAELoader', mode: 0, inputs: widget('vae_name', 'COMBO'), widgets_values: ['image-vae.safetensors'] },
+      { id: 4, type: 'TextEncodeQwenImage21', mode: 0, inputs: [{ name: 'clip', type: 'CLIP', link: 1 }, { name: 'images.image_1', type: 'IMAGE', link: 10 }, { name: 'images.image_2', type: 'IMAGE', link: null }, { name: 'vae', type: 'VAE', link: 9 }, ...widget('prompt', 'STRING'), ...widget('negative_prompt', 'STRING'), ...widget('resolution', 'INT')], widgets_values: ['the subject of picture 1, on the moon', 'blurry', 768] },
+      { id: 5, type: 'EmptyLatentImage', mode: 0, inputs: [...widget('width', 'INT'), ...widget('height', 'INT'), ...widget('batch_size', 'INT')], widgets_values: [768, 768, 1] },
+      { id: 6, type: 'KSampler', mode: 0, inputs: [{ name: 'model', type: 'MODEL', link: 2 }, { name: 'positive', type: 'CONDITIONING', link: 3 }, { name: 'negative', type: 'CONDITIONING', link: 4 }, { name: 'latent_image', type: 'LATENT', link: 5 }, ...widget('seed', 'INT'), ...widget('steps', 'INT'), ...widget('cfg', 'FLOAT'), ...widget('sampler_name', 'COMBO'), ...widget('scheduler', 'COMBO'), ...widget('denoise', 'FLOAT')], widgets_values: [20261009, 'randomize', 25, 3, 'euler', 'simple', 1] },
+      { id: 7, type: 'VAEDecode', mode: 0, inputs: [{ name: 'samples', type: 'LATENT', link: 6 }, { name: 'vae', type: 'VAE', link: 7 }] },
+      { id: 8, type: 'SaveImage', mode: 0, inputs: [{ name: 'images', type: 'IMAGE', link: 8 }, ...widget('filename_prefix', 'STRING')], widgets_values: ['mine/reference'] },
+      { id: 9, type: 'MarkdownNote', mode: 0, inputs: [], widgets_values: ['how to use this'] },
+      { id: 10, type: 'LoadImage', mode: 0, inputs: [...widget('image', 'COMBO'), ...widget('upload', 'IMAGEUPLOAD')], widgets_values: ['sample.png', 'image'] },
+      { id: 11, type: 'LoadImage', mode: 0, inputs: [...widget('image', 'COMBO'), ...widget('upload', 'IMAGEUPLOAD')], widgets_values: ['other.png', 'image'] },
+    ],
+    links: [[1, 2, 0, 4, 0, 'CLIP'], [2, 1, 0, 6, 0, 'MODEL'], [3, 4, 0, 6, 1, 'CONDITIONING'], [4, 4, 1, 6, 2, 'CONDITIONING'], [5, 5, 0, 6, 3, 'LATENT'], [6, 6, 0, 7, 0, 'LATENT'], [7, 3, 0, 7, 1, 'VAE'], [8, 7, 0, 8, 0, 'IMAGE'], [9, 3, 0, 4, 3, 'VAE'], [10, 10, 0, 4, 1, 'IMAGE']],
+  }
+}
+
+describe('a workflow as ComfyUI\'s editor saves it', () => {
+  const RUNS = {
+    1: { class_type: 'UNETLoader', inputs: { unet_name: 'noct.safetensors', weight_dtype: 'default' } },
+    2: { class_type: 'CLIPLoader', inputs: { clip_name: 'enc-8b.safetensors', type: 'qwen_image', device: 'default' } },
+    3: { class_type: 'VAELoader', inputs: { vae_name: 'image-vae.safetensors' } },
+    4: { class_type: 'TextEncodeQwenImage21', inputs: { prompt: 'the subject of picture 1, on the moon', negative_prompt: 'blurry', resolution: 768, clip: ['2', 0], 'images.image_1': ['10', 0], vae: ['3', 0] } },
+    5: { class_type: 'EmptyLatentImage', inputs: { width: 768, height: 768, batch_size: 1 } },
+    6: { class_type: 'KSampler', inputs: { seed: 20261009, steps: 25, cfg: 3, sampler_name: 'euler', scheduler: 'simple', denoise: 1, model: ['1', 0], positive: ['4', 0], negative: ['4', 1], latent_image: ['5', 0] } },
+    7: { class_type: 'VAEDecode', inputs: { samples: ['6', 0], vae: ['3', 0] } },
+    8: { class_type: 'SaveImage', inputs: { filename_prefix: 'mine/reference', images: ['7', 0] } },
+    10: { class_type: 'LoadImage', inputs: { image: 'sample.png' } },
+  }
+
+  it('becomes the graph the server runs: every widget by its name, the editor\'s own things left out', () => {
+    // Whether the file names its widgets or not, the same graph: the seed without what the editor does with it after a
+    // run, the picture without its upload button, no note, and no picture loader that leads nowhere.
+    expect(editorToApi(savedWorkflow(true), INFO)).toEqual(RUNS)
+    expect(editorToApi(savedWorkflow(false), INFO)).toEqual(RUNS)
+  })
+
+  it('reads through the editor\'s helpers, leaves out what is switched off, and says what it cannot tell', () => {
+    const file = savedWorkflow(true)
+    // The model comes through a reroute, the steps from a primitive; a muted loader feeds the second picture.
+    file.nodes.push({ id: 20, type: 'Reroute', mode: 0, inputs: [{ name: '', type: '*', link: 2 }] } as never)
+    file.nodes.push({ id: 21, type: 'PrimitiveNode', mode: 0, inputs: [], widgets_values: [12, 'fixed'] } as never)
+    file.nodes.find(node => node.id === 11)!.mode = 2
+    file.links = file.links.filter(link => link[0] !== 2)
+    file.links.push([2, 1, 0, 20, 0, 'MODEL'], [30, 20, 0, 6, 0, 'MODEL'], [31, 21, 0, 6, 5, 'INT'], [32, 11, 0, 4, 2, 'IMAGE'])
+    const sampler = file.nodes.find(node => node.id === 6)!
+    sampler.inputs.find(input => input.name === 'model')!.link = 30
+    sampler.inputs.find(input => input.name === 'steps')!.link = 31
+    file.nodes.find(node => node.id === 4)!.inputs.find(input => input.name === 'images.image_2')!.link = 32
+    const graph = editorToApi(file, INFO)
+    expect(graph[6]!.inputs).toMatchObject({ model: ['1', 0], steps: 12, cfg: 3 })
+    expect(Object.keys(graph[4]!.inputs!)).not.toContain('images.image_2')
+    expect(Object.keys(graph).sort()).toEqual(['1', '10', '2', '3', '4', '5', '6', '7', '8'])
+    // A node on bypass, and a workflow with subgraphs, cannot be told from the file: said, with the way out.
+    file.nodes.find(node => node.id === 10)!.mode = 4
+    expect(() => editorToApi(file, INFO)).toThrow('switched to bypass (LoadImage)')
+    expect(() => editorToApi({ ...savedWorkflow(true), definitions: { subgraphs: [{}] } }, INFO)).toThrow('has subgraphs')
+    expect(() => editorToApi({ 1: { class_type: 'X' } }, INFO)).toThrow('not a workflow as ComfyUI saves it')
+    // Its words, size, seed — and the picture it loads — are the Studio's to fill.
+    const made = workflowTemplate(RUNS)!
+    expect(made.images).toBe(1)
+    expect((made.workflow as Record<string, { inputs: Record<string, unknown> }>)[10]!.inputs.image).toBe('%image1%')
+    const three = workflowTemplate({ ...RUNS, 4: { ...RUNS[4], inputs: { ...RUNS[4].inputs, 'images.image_1': ['12', 0], 'images.image_2': ['10', 0] } }, 12: { class_type: 'LoadImage', inputs: { image: 'first.png' } } })!
+    // By the input each feeds — picture 1 before picture 2 —, not by their numbers.
+    expect([(three.workflow as Record<string, { inputs: Record<string, unknown> }>)[12]!.inputs.image, (three.workflow as Record<string, { inputs: Record<string, unknown> }>)[10]!.inputs.image, three.images]).toEqual(['%image1%', '%image2%', 2])
   })
 })
 
@@ -57,6 +147,14 @@ describe('ComfyUI', () => {
         if (url.pathname === '/object_info/VAELoader') return json(200, { VAELoader: { input: { required: { vae_name: [['video-vae.safetensors', 'image-vae.safetensors', 'taesd', 'pixel_space']] } } } })
         if (url.pathname === '/system_stats') return json(200, { system: { comfyui_version: '0.39.0' }, devices: [{ name: 'cuda:0 NVIDIA GeForce RTX 4080 SUPER : cudaMallocAsync', vram_total: 16 * 2 ** 30 }] })
         if (url.pathname === '/history') return json(200, seen.runs)
+        // What the author saved in the editor: listed, and handed over as the editor saved it.
+        if (url.pathname === '/userdata' && url.searchParams.get('dir') === 'workflows') return json(200, [{ path: 'noct/reference.json', size: 1 }, { path: 'text.json', size: 1 }, { path: 'notes.txt', size: 1 }])
+        if (url.pathname === `/userdata/${encodeURIComponent('workflows/noct/reference.json')}`) return json(200, savedWorkflow(true))
+        if (url.pathname === `/userdata/${encodeURIComponent('workflows/text.json')}`) return json(200, { ...savedWorkflow(false), nodes: savedWorkflow(false).nodes.filter(node => node.type !== 'LoadImage').map(node => (node.id === 4 ? { ...node, inputs: node.inputs.filter(input => !input.name.startsWith('images.') && input.name !== 'vae') } : node)), links: savedWorkflow(false).links.filter(link => link[0] !== 9 && link[0] !== 10) })
+        if (url.pathname.startsWith('/object_info/') && decodeURIComponent(url.pathname.slice('/object_info/'.length)) in INFO) {
+          const type = decodeURIComponent(url.pathname.slice('/object_info/'.length)) as keyof typeof INFO
+          return json(200, { [type]: INFO[type] })
+        }
         if (url.pathname === '/upload/image') { seen.uploads += 1; return json(200, { name: `up-${seen.uploads}.png`, subfolder: '', type: 'input' }) }
         if (url.pathname === '/interrupt') { seen.interrupted += 1; return json(200, {}) }
         if (url.pathname === '/prompt') {
@@ -115,6 +213,7 @@ describe('ComfyUI', () => {
       encoders: ['enc-32b.safetensors', 'enc-8b.safetensors'],
       vaes: ['video-vae.safetensors', 'image-vae.safetensors'],
       encoderTypes: ['sd3', 'qwen_image', 'flux2'],
+      workflows: ['noct/reference.json', 'text.json'],
     })
     await expect(comfyCatalog('http://127.0.0.1:9')).rejects.toThrow('did not answer')
     // A model the server lists among its diffusion models: loaded by parts, with what the settings name beside it.
@@ -183,6 +282,32 @@ describe('ComfyUI', () => {
     expect(workflowTemplate({ 1: { class_type: 'LoadImage', inputs: { image: 'x.png' } } })).toBeUndefined()
     expect(workflowTemplate(null)).toBeUndefined()
     seen.runs = {}
+  })
+
+  it('takes a workflow saved on the server as it is, and draws with it', async () => {
+    expect(await comfyWorkflows(base)).toEqual(['noct/reference.json', 'text.json'])
+    // Converted from what the editor saved, with the Studio's placeholders in it — the picture it loads among them.
+    const withPicture = await comfyTakeWorkflow(base, 'noct/reference.json')
+    expect([withPicture.model, withPicture.images, withPicture.nodes.length]).toEqual(['noct.safetensors', 1, 9])
+    const plain = await comfyTakeWorkflow(base, 'text.json')
+    expect([plain.images, plain.nodes]).toEqual([0, ['UNETLoader', 'CLIPLoader', 'VAELoader', 'TextEncodeQwenImage21', 'EmptyLatentImage', 'KSampler', 'VAEDecode', 'SaveImage']])
+    await expect(comfyTakeWorkflow(base, 'gone.json')).rejects.toThrow('has no saved workflow "gone.json"')
+    // Kept in the settings — with a note of where each came from, which is no node of the graph — they draw: the plain
+    // one a picture from words, the other a picture held to its reference, uploaded and named in its place.
+    const provider = createImageProvider({ provider: 'comfyui', baseURL: base, workflow: JSON.stringify({ ...plain.workflow, _novel: { from: 'text.json' } }), editWorkflow: JSON.stringify({ ...withPicture.workflow, _novel: { from: 'noct/reference.json' } }) }, keys)!
+    await provider.generate({ prompt: '人设图', size: '1536x1024' })
+    const first = seen.prompts.at(-1) as Record<string, { inputs: Record<string, unknown> }>
+    expect(Object.keys(first)).not.toContain('_novel')
+    expect(first[4]!.inputs).toMatchObject({ prompt: '人设图', resolution: 768 })
+    expect(Object.values(first).some(node => (node as { class_type?: string }).class_type === 'LoadImage')).toBe(false)
+    const before = seen.uploads
+    const held = await provider.generate({ prompt: '立绘', negativePrompt: '字', size: '768x1024', references: [{ data: PNG, mime: 'image/png' }, { data: PNG, mime: 'image/png' }] })
+    const second = seen.prompts.at(-1) as Record<string, { inputs: Record<string, unknown> }>
+    // One place: one picture went, however many were offered.
+    expect([seen.uploads - before, held.referencesUsed]).toEqual([1, 1])
+    expect(second[10]!.inputs.image).toBe(`up-${seen.uploads}.png`)
+    expect(second[4]!.inputs).toMatchObject({ prompt: '立绘', negative_prompt: '字', 'images.image_1': ['10', 0] })
+    expect(second[5]!.inputs).toMatchObject({ width: 768, height: 1024 })
   })
 
   it('runs the author\'s own workflow, and the one that takes reference pictures where there are some', async () => {
