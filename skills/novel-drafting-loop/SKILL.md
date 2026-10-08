@@ -34,7 +34,7 @@ Three or four sentences. Never restate the outline, never dictate sentences, nev
 
 1. Read the result the tool returns (length, opening and closing lines, cast used). Open the chapter with `novel_read` only to check something specific.
 2. Tell the author, in a few lines: what happened, how long it is, and the one or two places you would look at. Do not paste the chapter; they read it in the Studio.
-3. Let digest finish (it runs automatically after a write unless switched off) before the next chapter. Then settle what it left: new characters or places it found, lifecycle changes, threads — accept the obvious ones, ask about the rest.
+3. Let digest finish (it runs automatically after a write unless switched off) before the next chapter. Then settle what it left: new characters or places it found, threads — accept the obvious ones, ask about the rest. (Who came on, left or died needs no settling: it is read off the digest itself.)
 4. "Continue" from the author means: the next chapter, same loop.
 
 ## A run of chapters

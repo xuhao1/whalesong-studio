@@ -9,7 +9,9 @@ import { formatCount } from '../../shared/text'
 import { resolveArtStyle, splitAvoid } from '../../shared/art'
 import { PROJECT_AUTHOR, PROJECT_AUTHOR_HOME, PROJECT_HOMEPAGE } from '../../shared/services'
 import { chapterBudgetOf, type AnalyzeStep, type ProjectManifest, type ProjectRef } from '../../shared/types'
+import { MAIN_ROLES } from '../CharacterPicker'
 import { Icon } from '../icons'
+import { sheetsDrawn } from '../labels'
 import { jobLabel, jobPulse } from '../Studio'
 import {
   Button, Chip, crewLabel, cx, Field, Modal, Progress, ProjectImage, SectionTitle, Select, TextArea, TextInput, useAction, useConfirm, useKept, useProject, useRunningJob,
@@ -619,9 +621,9 @@ export function HomeView() {
   const paintCover = (): Promise<unknown> | undefined => {
     if (!controller.need('image')) return undefined
     return controller.guard(async () => {
-      await controller.run('image.create', { root, kind: 'cover' })
+      const job = await controller.run('image.create', { root, kind: 'cover' })
       await controller.refreshProject()
-      controller.toast('success', t('封面画好了', 'The cover is ready'))
+      controller.toast('success', `${t('封面画好了', 'The cover is ready')}${sheetsDrawn(job, t)}`)
     })
   }
   const next = chapters.find(chapter => !chapter.hasText)
@@ -630,7 +632,7 @@ export function HomeView() {
   const running = jobs.filter(job => job.status === 'running')
   const neglected = project.presence
     .map(entry => ({ entry, card: project.characters.find(card => card.id === entry.character) }))
-    .filter(item => item.card !== undefined && item.card.status === 'active' && item.entry.chapters.length > 0 && item.entry.absentFor >= 5)
+    .filter(item => item.card !== undefined && MAIN_ROLES.includes(item.card.role) && item.entry.death === undefined && item.entry.exit === undefined && item.entry.chapters.length > 0 && item.entry.absentFor >= 5)
     .slice(0, 5)
 
   const writeNext = (): void => {
@@ -736,7 +738,7 @@ export function HomeView() {
               <Step icon="checkCircle" title={t('有待你定夺的提案与建议', 'Proposals and suggestions are waiting')} body={t(`修订提案 ${stats.pendingProposals} 条，设定建议 ${stats.pendingSuggestions} 条。`, `${stats.pendingProposals} revision proposals, ${stats.pendingSuggestions} bible suggestions.`)} action={t('去审校', 'Open Review')} onClick={() => { controller.setView('review') }} />
             ) : null}
             {neglected.length > 0 ? (
-              <Step icon="users" title={t('有人物久未出场', 'Some characters have been away')} body={neglected.map(item => `${item.card!.name}（${t(`${item.entry.absentFor} 章`, `${item.entry.absentFor} ch.`)}）`).join(t('、', ', '))} action={t('看生命周期', 'Open the lifecycle')} onClick={() => { controller.openCast('board') }} />
+              <Step icon="users" title={t('有人物久未出场', 'Some characters have been away')} body={neglected.map(item => `${item.card!.name}（${t(`${item.entry.absentFor} 章`, `${item.entry.absentFor} ch.`)}）`).join(t('、', ', '))} action={t('看履历表', 'Open the life table')} onClick={() => { controller.openCast('lives') }} />
             ) : null}
             {chapters.some(chapter => chapter.hasText && chapter.digested) ? (
               <Step

@@ -462,9 +462,6 @@ export async function acceptSuggestion(runtime: ProjectRuntime, id: string): Pro
     case 'new-world':
       await project.saveWorld(payload as Partial<WorldEntry> & { name: string })
       break
-    case 'character-status':
-      await project.saveCharacter({ id: String(payload.character), status: payload.status as CharacterCard['status'] })
-      break
     case 'thread-status':
       await project.saveThread({ id: String(payload.thread), status: payload.status as 'open' | 'paid' | 'dropped' })
       break

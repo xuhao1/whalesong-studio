@@ -108,7 +108,6 @@ id: 沈蘅
 name: 沈蘅
 aliases: [沈小姐]
 role: protagonist            # protagonist | deuteragonist | antagonist | supporting | minor | cameo
-status: active               # planned | active | offstage | retired | dead
 tagline: 替别人写爱，替自己留白。
 gender: 女
 age: "27"

@@ -2,7 +2,7 @@
 /** Renders a project for the orchestrator: a one-screen status and a few-line digest. */
 import type { ProjectRuntime } from '../core/core'
 import type { JobInfo, ProjectState, WorkMode } from '../shared/types'
-import { roleLabel, statusLabel, promptLanguage } from '../core/render'
+import { roleLabel, promptLanguage } from '../core/render'
 
 const MODE_LABEL: Record<WorkMode, [string, string]> = {
   ideate: ['构思', 'ideate'],
@@ -41,8 +41,10 @@ function nextStep(state: ProjectState, zh: boolean): string {
 export function renderDigest(state: ProjectState, mode: WorkMode, relativeRoot: string): string {
   const zh = promptLanguage(state.manifest.language) === 'zh'
   const { stats } = state
+  // Those the main line has not let go of: nobody the digests have dead or gone for good.
+  const gone = new Set(state.presence.filter(entry => entry.death !== undefined || entry.exit !== undefined).map(entry => entry.character))
   const leads = state.characters
-    .filter(card => card.status !== 'retired' && card.status !== 'dead')
+    .filter(card => !gone.has(card.id))
     .sort((left, right) => ['protagonist', 'deuteragonist', 'antagonist', 'supporting', 'minor', 'cameo'].indexOf(left.role) - ['protagonist', 'deuteragonist', 'antagonist', 'supporting', 'minor', 'cameo'].indexOf(right.role))
     .slice(0, 10)
     .map(card => card.name)
@@ -122,10 +124,12 @@ export async function renderStatus(runtime: ProjectRuntime, mode: WorkMode, rela
   if (state.characters.length === 0) lines.push(zh ? '（暂无）' : '(none)')
   for (const card of state.characters.slice(0, detail === 'full' ? 200 : 30)) {
     const presence = state.presence.find(entry => entry.character === card.id)
-    const away = presence !== undefined && presence.chapters.length > 0 && presence.absentFor >= 5 && card.status === 'active'
-      ? (zh ? `，已 ${presence.absentFor} 章未出场` : `, absent for ${presence.absentFor} chapters`)
-      : ''
-    lines.push(`- ${card.name} [${card.id}] ${roleLabel(card.role, lang)}, ${statusLabel(card.status, lang)}${presence !== undefined ? (zh ? `，出场 ${presence.chapters.length} 章` : `, in ${presence.chapters.length} chapters`) : ''}${away}${card.tagline !== undefined ? ` — ${card.tagline}` : ''}`)
+    // Where they are in the book, as the digests of the main line have it — a death or a leaving with its chapter, else how long they have been away.
+    const on = presence !== undefined && presence.chapters.length > 0
+    const fate = presence?.death !== undefined ? (zh ? `，第 ${presence.death} 章死亡` : `, dies in chapter ${presence.death}`)
+      : presence?.exit !== undefined ? (zh ? `，第 ${presence.exit} 章离开` : `, leaves in chapter ${presence.exit}`)
+        : on && presence.absentFor >= 5 ? (zh ? `，已 ${presence.absentFor} 章未出场` : `, absent for ${presence.absentFor} chapters`) : ''
+    lines.push(`- ${card.name} [${card.id}] ${roleLabel(card.role, lang)}${on ? (zh ? `，出场 ${presence.chapters.length} 章` : `, in ${presence.chapters.length} chapters`) : (zh ? '，正文里还没有出场' : ', not on the page yet')}${fate}${card.tagline !== undefined ? ` — ${card.tagline}` : ''}`)
   }
 
   if (state.world.length > 0) {

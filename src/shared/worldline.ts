@@ -11,14 +11,15 @@
  *   LineWorld      the people and the threads as they stand at the end of a line, and what each has come to know along it
  *   compareLines   where two lines part, and what is different between them after that
  */
-import type { CharacterRole, CharacterStatus } from './types'
+import type { LifeStanding } from './life'
+import type { CharacterRole } from './types'
 
 /** Somebody as they stand at the end of a line. */
 export interface LinePerson {
   id: string
   name: string
   role: CharacterRole
-  status: CharacterStatus
+  status: LifeStanding
   /** Places, in reading order along the line, of the chapter they come on in and the last they are in. */
   first: number
   last: number
@@ -106,7 +107,7 @@ export interface LineComparison {
 const KINDS: readonly PersonDifference['kind'][] = ['fate', 'only', 'course']
 
 /** How it ended for somebody, as far as a line tells: dead, gone for good, or still of the story. */
-export function fateOf(status: CharacterStatus): 'dead' | 'gone' | 'there' {
+export function fateOf(status: LifeStanding): 'dead' | 'gone' | 'there' {
   return status === 'dead' ? 'dead' : status === 'retired' ? 'gone' : 'there'
 }
 

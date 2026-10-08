@@ -10,12 +10,13 @@
  * nothing of it is kept, so it is as true as the digests are.
  */
 import { useMemo, useState } from 'react'
-import { MAIN_LINE, type CharacterStatus } from '../../shared/types'
+import { MAIN_LINE } from '../../shared/types'
+import type { LifeStanding } from '../../shared/life'
 import { compareLines, type LinePerson, type LineThread, type LineWorld } from '../../shared/worldline'
 import { Chip, cx, Select, Spinner, useKept, useLoad, useProject, useStudio, useT, type Translate } from '../ui'
-import { STATUS_LABELS, STATUS_TONES } from './Characters'
+import { STANDING_LABELS, STANDING_TONES } from './Characters'
 
-const STANDINGS: readonly CharacterStatus[] = ['active', 'offstage', 'retired', 'dead']
+const STANDINGS: readonly LifeStanding[] = ['active', 'offstage', 'retired', 'dead']
 
 /** How somebody stands at the end of a line, in a few words: where they were last seen, where it ended for them. */
 function standing(person: LinePerson | undefined, t: Translate): string {
@@ -66,7 +67,7 @@ export function LineWorldPanel({ line, names }: { line: string; names: { id: str
   const world = own.data
   const written = world.path.filter(chapter => chapter.hasText).length
   const digested = world.path.filter(chapter => chapter.digested).length
-  const count = (status: CharacterStatus): LinePerson[] => world.people.filter(person => person.status === status)
+  const count = (status: LifeStanding): LinePerson[] => world.people.filter(person => person.status === status)
   const open_ = world.threads.filter(thread => thread.state === 'open')
   const fates = compared?.people.filter(item => item.kind === 'fate') ?? []
   const only = compared?.people.filter(item => item.kind === 'only') ?? []
@@ -90,7 +91,7 @@ export function LineWorldPanel({ line, names }: { line: string; names: { id: str
             if (list.length === 0) return null
             return (
               <div key={status} className="nv-worldline-standing">
-                <Chip tone={STATUS_TONES[status]}>{t(...STATUS_LABELS[status])} {list.length}</Chip>
+                <Chip tone={STANDING_TONES[status]}>{t(...STANDING_LABELS[status])} {list.length}</Chip>
                 <span className="nv-worldline-names">
                   {list.slice(0, status === 'active' ? 12 : 24).map(person => <button key={person.id} type="button" className="nv-link" onClick={() => { open(person.id, line) }} title={`${standing(person, t)}${(person.learned?.length ?? 0) > 0 ? t(`\n知道了：${person.learned!.slice(-3).map(item => item.what).join('；')}`, `\nHas learned: ${person.learned!.slice(-3).map(item => item.what).join('; ')}`) : ''}`}>{person.name}</button>)}
                   {list.length > (status === 'active' ? 12 : 24) ? <span className="nv-muted">{t(` 等 ${list.length} 人`, ` and ${list.length - (status === 'active' ? 12 : 24)} more`)}</span> : null}
@@ -155,7 +156,7 @@ export function LineWorldPanel({ line, names }: { line: string; names: { id: str
                       const learned = known(item.knows?.[side], t)
                       return (
                         <td key={side}>
-                          {here !== undefined ? <Chip tone={STATUS_TONES[here.status]}>{t(...STATUS_LABELS[here.status])}</Chip> : null} <span className="nv-small">{standing(here, t)}</span>
+                          {here !== undefined ? <Chip tone={STANDING_TONES[here.status]}>{t(...STANDING_LABELS[here.status])}</Chip> : null} <span className="nv-small">{standing(here, t)}</span>
                           {learned !== undefined ? <span className="nv-small nv-worldline-learned" title={item.knows![side].join('\n')}>{t('分开之后得知：', 'Learned after the parting: ')}{learned}</span> : null}
                         </td>
                       )

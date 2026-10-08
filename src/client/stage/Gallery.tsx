@@ -7,6 +7,7 @@ import {
   Button, Chip, Empty, Field, Modal, ProjectImage, Select, Spinner, TextArea, TextInput, useAction, useConfirm, useLoad, useProject, useSnapshot, useStudio, useT,
 } from '../ui'
 import { ArtBatchDialog, batchOf } from '../Batch'
+import { sheetsDrawn } from '../labels'
 import { NeedsSetup } from '../views/Settings'
 
 const KIND: Record<IllustrationInfo['kind'], [string, string]> = {
@@ -64,7 +65,7 @@ export function Gallery() {
     setCreating(false)
     controller.toast('info', t('开始绘制…', 'Drawing…'))
     const extra = splitAvoid(avoid)
-    await controller.run('image.create', {
+    const job = await controller.run('image.create', {
       root,
       kind,
       ...(target.length > 0 ? { target } : {}),
@@ -73,6 +74,7 @@ export function Gallery() {
       ...(kind === 'custom' && cast.length > 0 ? { characters: cast } : {}),
       ...(extra.length > 0 ? { avoid: extra } : {}),
     })
+    if (sheetsDrawn(job, t).length > 0) controller.toast('info', `${t('画好了', 'The picture is ready')}${sheetsDrawn(job, t)}`)
     setPrompt('')
     setAvoid('')
     images.reload()

@@ -170,7 +170,6 @@ export async function settleWalkOn(project: Project, input: SettleInput): Promis
       ...payload,
       name,
       role: input.role ?? (payload.role === 'cameo' ? 'cameo' : 'minor'),
-      status: 'active',
       ...(payload.tagline === undefined && entry?.note !== undefined ? { tagline: entry.note } : {}),
       ...(first !== undefined ? { firstAppearance: first } : {}),
       ...(last !== undefined ? { lastAppearance: last } : {}),

@@ -37,20 +37,8 @@ const ROLE_LABEL: Record<CharacterCard['role'], [string, string]> = {
   cameo: ['龙套', 'cameo'],
 }
 
-const STATUS_LABEL: Record<CharacterCard['status'], [string, string]> = {
-  planned: ['未登场', 'not yet introduced'],
-  active: ['活跃', 'active'],
-  offstage: ['暂离', 'offstage'],
-  retired: ['已退场', 'retired'],
-  dead: ['已死亡', 'dead'],
-}
-
 export function roleLabel(role: CharacterCard['role'], lang: PromptLanguage): string {
   return ROLE_LABEL[role][lang === 'zh' ? 0 : 1]
-}
-
-export function statusLabel(status: CharacterCard['status'], lang: PromptLanguage): string {
-  return STATUS_LABEL[status][lang === 'zh' ? 0 : 1]
 }
 
 function line(label: string, value: string | undefined, lang: PromptLanguage): string | undefined {
@@ -76,7 +64,7 @@ export function renderManifest(manifest: ProjectManifest, lang: PromptLanguage):
 /** A character card as the writer should read it. `resolveName` maps relationship targets to names. */
 export function renderCharacter(card: CharacterCard, lang: PromptLanguage, options: { brief?: boolean; resolveName?: (ref: string) => string } = {}): string {
   const sep = lang === 'zh' ? ' · ' : ' · '
-  const head = `【${card.name}】${lang === 'zh' ? '（' : ' ('}${join([roleLabel(card.role, lang), card.gender, card.age, statusLabel(card.status, lang)], sep)}${lang === 'zh' ? '）' : ')'}${card.aliases !== undefined && card.aliases.length > 0 ? ` ${L(lang, '又称', 'aka')} ${card.aliases.join('/')}` : ''}`
+  const head = `【${card.name}】${lang === 'zh' ? '（' : ' ('}${join([roleLabel(card.role, lang), card.gender, card.age], sep)}${lang === 'zh' ? '）' : ')'}${card.aliases !== undefined && card.aliases.length > 0 ? ` ${L(lang, '又称', 'aka')} ${card.aliases.join('/')}` : ''}`
   if (options.brief === true) return join([head, card.tagline], lang === 'zh' ? ' ' : ' — ')
   const persona = card.persona
   const relationships = card.relationships?.map((relation) => {

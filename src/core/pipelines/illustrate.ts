@@ -14,7 +14,11 @@
  *                   sheet — front, side and back — and further looks (outfits)
  *                   derived from that sheet. A scene restates the anchor and
  *                   sends the sheet along as a reference image; a place's
- *                   reference art travels the same way.
+ *                   reference art travels the same way. The sheet comes
+ *                   first: whoever has none gets one before their portrait,
+ *                   and whoever comes back in the book gets one before the
+ *                   first scene, panel or cover that shows them — and the
+ *                   picture says which sheets were drawn for it.
  *   an avoid list   per Studio, per book, per character and per call, joined
  *                   and sent with every picture.
  *
@@ -560,6 +564,87 @@ export async function renderImage(core: NovelCore, runtime: ProjectRuntime, inpu
   return info
 }
 
+// ───────────────────────────── the sheet first ─────────────────────────────
+
+/** Parts that carry the story: whoever has one comes back, whatever the chapters so far say. */
+const CARRYING: readonly CharacterCard['role'][] = ['protagonist', 'deuteragonist', 'antagonist', 'supporting']
+
+/**
+ * Who of these comes back in the book: a part that carries it, or anybody the
+ * chapters have — written and digested, or planned in the outline — more than
+ * once. Somebody seen once and gone needs no sheet to stay the same.
+ */
+export async function comingBack(project: ProjectRuntime['project'], cards: readonly CharacterCard[]): Promise<Set<string>> {
+  if (cards.length === 0) return new Set()
+  const seen = new Map((await project.presence()).map(entry => [entry.character, entry.chapters.length]))
+  const outline = await project.outline()
+  const planned = new Map<string, number>()
+  for (const plan of [...outline.volumes.flatMap(volume => volume.chapters), ...(outline.lines ?? []).flatMap(line => line.chapters)]) {
+    for (const id of new Set(plan.characters ?? [])) planned.set(id, (planned.get(id) ?? 0) + 1)
+  }
+  return new Set(cards.filter(card => CARRYING.includes(card.role) || Math.max(seen.get(card.id) ?? 0, planned.get(card.id) ?? 0) >= 2).map(card => card.id))
+}
+
+/** Sheets being drawn right now, by book and character: two pictures that need the same sheet wait for the one drawing of it. */
+const sheetsUnderway = new Map<string, Promise<void>>()
+
+export interface SheetsFirst {
+  /** The same people, as they are now: with the sheets just drawn. */
+  cards: CharacterCard[]
+  /** Whose sheet was drawn for this, by name — said with the picture, never done behind the author's back. */
+  drawn: string[]
+  /** Whose could not be drawn, and why: the picture is then made from what there is of them. */
+  failed: { name: string; error: string }[]
+}
+
+/**
+ * Before somebody is drawn, see that they have a design sheet: the one
+ * picture every later picture of them is held against. Without it a portrait,
+ * a scene and a panel each invent the face anew.
+ * @param who - `everyone`: each of them (a portrait is asked for). `returning`: those who come back in the book ({@link comingBack}).
+ * @returns the people with their sheets, and which sheets this call drew; nothing is drawn where the author turned this off (`image.sheetFirst`).
+ */
+export async function sheetsFirst(core: NovelCore, runtime: ProjectRuntime, people: readonly CharacterCard[], who: 'everyone' | 'returning', task: TaskContext): Promise<SheetsFirst> {
+  const { project } = runtime
+  const out: SheetsFirst = { cards: [...people], drawn: [], failed: [] }
+  if (core.currentSettings().image.sheetFirst === false) return out
+  const lacking = people.filter(card => card.visual?.sheet === undefined)
+  if (lacking.length === 0) return out
+  const back = who === 'everyone' ? undefined : await comingBack(project, lacking)
+  const lang = promptLanguage((await project.manifest()).language)
+  for (const card of lacking) {
+    if (back !== undefined && !back.has(card.id)) continue
+    // Nothing says how they look: there is nothing to draw a sheet from, and the picture is made of what the passage gives.
+    if (looksOf(card).length === 0) continue
+    task.signal?.throwIfAborted()
+    const key = `${project.root}\n${card.id}`
+    let underway = sheetsUnderway.get(key)
+    const mine = underway === undefined
+    if (underway === undefined) {
+      const restore = task.job?.note(L(lang, `先画「${card.name}」的人设图…`, `First the design sheet of ${card.name}…`))
+      underway = illustrate(core, runtime, { kind: 'sheet', target: card.id }, task).then(() => undefined).finally(() => {
+        sheetsUnderway.delete(key)
+        restore?.()
+      })
+      sheetsUnderway.set(key, underway)
+    }
+    try {
+      await underway
+      if (mine) out.drawn.push(card.name)
+    } catch (error) {
+      if (isAbort(error) || task.signal?.aborted === true) throw error
+      core.log(`could not draw the design sheet of ${card.name} first; drawing from what there is`, error)
+      if (mine) out.failed.push({ name: card.name, error: error instanceof Error ? error.message : String(error) })
+    }
+  }
+  // As they are now: with the sheets just drawn, by this call or by one that ran beside it.
+  if (out.drawn.length > 0 || lacking.length > 0) {
+    const fresh = await project.characters()
+    out.cards = people.map(card => fresh.find(candidate => candidate.id === card.id) ?? card)
+  }
+  return out
+}
+
 // ───────────────────────────── the kinds of picture ─────────────────────────────
 
 /** Things a character's own card says must not be drawn on them. */
@@ -569,6 +654,10 @@ export interface IllustrateResult extends IllustrationInfo {
   inserted: boolean
   /** The art direction was written into the book by this call. */
   pinnedStyle?: string
+  /** Whose design sheet was drawn first, for this picture to be held against: they had none. */
+  sheets?: string[]
+  /** Whose sheet could not be drawn first, and why. */
+  sheetsFailed?: { name: string; error: string }[]
 }
 
 export async function illustrate(core: NovelCore, runtime: ProjectRuntime, params: IllustrateParams, task: TaskContext): Promise<IllustrateResult> {
@@ -579,7 +668,23 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
   const comma = lang === 'zh' ? '，' : ', '
   const raw = params.kind === 'custom' && params.raw === true
   const art = raw ? false as const : await artDirectionOf(core, runtime, { pin: true })
-  const done = (info: IllustrationInfo, inserted = false): IllustrateResult => ({ ...info, inserted, ...(art !== false && art.pinned === true ? { pinnedStyle: art.style } : {}) })
+  // The sheets drawn for this picture before it: said with it, and on the job while it runs.
+  const first: Pick<SheetsFirst, 'drawn' | 'failed'> = { drawn: [], failed: [] }
+  const done = (info: IllustrationInfo, inserted = false): IllustrateResult => ({
+    ...info,
+    inserted,
+    ...(art !== false && art.pinned === true ? { pinnedStyle: art.style } : {}),
+    ...(first.drawn.length > 0 ? { sheets: first.drawn } : {}),
+    ...(first.failed.length > 0 ? { sheetsFailed: first.failed } : {}),
+  })
+  /** These people with a sheet each, where they are to have one: drawn now if need be. */
+  const sheeted = async (people: readonly CharacterCard[], who: 'everyone' | 'returning'): Promise<CharacterCard[]> => {
+    const made = await sheetsFirst(core, runtime, people, who, task)
+    first.drawn.push(...made.drawn)
+    first.failed.push(...made.failed)
+    if (made.drawn.length > 0) task.job?.result({ sheets: first.drawn })
+    return made.cards
+  }
   const characters = await project.characters()
   const find = (ref: string): CharacterCard | undefined => characters.find(card => card.id === ref || sameName(card.name, ref) || (card.aliases ?? []).some(alias => sameName(alias, ref)))
   const worn = (card: CharacterCard): CharacterLook | undefined => {
@@ -589,7 +694,7 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
 
   if (params.kind === 'custom') {
     if (params.prompt === undefined || params.prompt.trim().length === 0) throw new ProjectError('novel/invalid', 'a custom illustration needs a prompt')
-    const shown = (params.characters ?? []).map(find).filter((card): card is CharacterCard => card !== undefined)
+    const shown = await sheeted((params.characters ?? []).map(find).filter((card): card is CharacterCard => card !== undefined), 'returning')
     const info = await renderImage(core, runtime, {
       subject: params.prompt,
       kind: 'scene',
@@ -605,8 +710,10 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
   if (params.kind === 'portrait' || params.kind === 'sheet') {
     const found = params.target !== undefined ? await project.findCharacter(params.target) : undefined
     if (found === undefined) throw new ProjectError('novel/not-found', `no character matches "${params.target ?? ''}"`)
-    const card = await withAnchor(core, runtime, found, task)
-    if (looksOf(card).length === 0) throw new ProjectError('novel/invalid', `${card.name} has no appearance yet — describe how they look first (or let novel_bible expand the card)`)
+    const anchored = await withAnchor(core, runtime, found, task)
+    if (looksOf(anchored).length === 0) throw new ProjectError('novel/invalid', `${anchored.name} has no appearance yet — describe how they look first (or let novel_bible expand the card)`)
+    // A portrait is drawn after the sheet, and against it: whoever has no sheet yet gets one first.
+    const card = params.kind === 'portrait' ? (await sheeted([anchored], 'everyone'))[0]! : anchored
 
     if (params.kind === 'portrait') {
       const subject = joinParts([
@@ -617,6 +724,7 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
       ], comma)
       // A portrait drawn after the sheet shows the same person as the sheet.
       const sheet = card.visual?.sheet !== undefined ? [{ path: card.visual.sheet, label: card.name }] : []
+      if (first.drawn.length > 0) task.job?.note(L(lang, '人设图画好了，照着它画立绘…', 'The sheet is drawn; now the portrait, against it…'))
       const info = await renderImage(core, runtime, { subject, kind: 'portrait', target: card.id, name: `portrait-${card.id}`, size: params.size ?? pictureSize(core.currentSettings().image, 'portrait'), art, avoid: [...(params.avoid ?? []), ...negativesOf([card])], references: sheet }, task)
       await project.saveCharacter({ id: card.id, visual: { portrait: info.path } })
       return done(info)
@@ -714,7 +822,9 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
   }
 
   if (params.kind === 'cover') {
-    const { story, tone, leads, places } = await bookSketch(runtime, lang)
+    const sketch = await bookSketch(runtime, lang)
+    const { story, tone, places } = sketch
+    const leads = await sheeted(sketch.leads, 'returning')
     const extraAvoid = [...(params.avoid ?? []), ...negativesOf(leads)]
     const route = await core.route('director', runtime, task)
     const response = await core.llm.complete({
@@ -766,7 +876,8 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
     : params.quote ?? memory?.summary ?? chapter.plan.synopsis ?? clip(text, 800)
   if (passage.trim().length === 0) throw new ProjectError('novel/empty', `chapter ${chapter.index} has nothing to illustrate yet`)
   const present = detectCharacters(passage, characters)
-  const cast = (present.length > 0 ? present : characters.filter(card => chapter.plan.characters?.includes(card.id) === true)).slice(0, 5)
+  // Whoever of them comes back in the book has a sheet before the scene is drawn: the scene is held against it.
+  const cast = await sheeted((present.length > 0 ? present : characters.filter(card => chapter.plan.characters?.includes(card.id) === true)).slice(0, 5), 'returning')
   // Places and things the passage names, as the bible says they look.
   const places = (await project.world()).filter(entry => [entry.name, ...(entry.aliases ?? [])].some(name => name.length >= 2 && passage.includes(name))).slice(0, 6)
   const wardrobe = cast.map(wardrobeOf).filter((line): line is string => line !== undefined)
@@ -833,7 +944,7 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
     await project.saveChapterText(chapter.plan.id, next, { reason: 'before-illustration' })
     inserted = true
   }
-  task.job?.result({ path: info.path })
+  task.job?.result({ path: info.path, ...(first.drawn.length > 0 ? { sheets: first.drawn } : {}) })
   return done(info, inserted)
 }
 

@@ -24,7 +24,7 @@ import { storyboardTask } from '../prompts'
 import { L, promptLanguage } from '../render'
 import { mapLimit, serializer } from '../util/async'
 import { buildAudioScript } from './audio'
-import { artDirectionOf, consistencyFor, looksOf, placeNamed, renderImage, requireImages } from './illustrate'
+import { artDirectionOf, consistencyFor, looksOf, placeNamed, renderImage, requireImages, sheetsFirst } from './illustrate'
 import { pictureSize } from '../../shared/art'
 import { groupOf } from '../../shared/world'
 
@@ -317,6 +317,8 @@ export interface RenderPanelsResult {
   panels: number
   rendered: number
   failed: number
+  /** Whose design sheet was drawn before the panels, for the panels to be held against: they come back in the book and had none. */
+  sheets?: string[]
 }
 
 /** Draw the panels of a chapter's storyboard that have no picture yet. */
@@ -328,10 +330,16 @@ export async function renderPanels(core: NovelCore, runtime: ProjectRuntime, par
   const lang = promptLanguage(manifest.language)
   // The book's art direction as it stands now — not the copy the storyboard was drawn up with.
   const art = await artDirectionOf(core, runtime, { pin: true })
-  const characters = await project.characters()
   const world = await project.world()
   const wanted = params.panels !== undefined ? new Set(params.panels) : undefined
   const todo = board.panels.filter(panel => (wanted === undefined || wanted.has(panel.id)) && (params.force === true || panel.image === undefined))
+  // Whoever comes back in the book has a design sheet before the first panel that shows them: every panel is held against
+  // it, and without it each panel would invent the face anew.
+  const cards = await project.characters()
+  const inPanels = [...new Set(todo.flatMap(panel => panel.characters ?? []))].map(id => cards.find(card => card.id === id)).filter((card): card is CharacterCard => card !== undefined)
+  const first = await sheetsFirst(core, runtime, inPanels, 'returning', task)
+  if (first.drawn.length > 0) task.job?.result({ sheets: first.drawn })
+  const characters = first.drawn.length > 0 ? await project.characters() : cards
   const mostReferences = referencesOf((await core.settings.get()).image.references)
   let rendered = 0
   let failed = 0
@@ -393,7 +401,7 @@ export async function renderPanels(core: NovelCore, runtime: ProjectRuntime, par
     await flush()
   }, task.signal)
   task.job?.result({ chapterId: board.chapterId, rendered, failed })
-  return { chapterId: board.chapterId, panels: board.panels.length, rendered, failed }
+  return { chapterId: board.chapterId, panels: board.panels.length, rendered, failed, ...(first.drawn.length > 0 ? { sheets: first.drawn } : {}) }
 }
 
 /** Change one panel of a chapter's storyboard by hand; a new prompt drops the old picture. */

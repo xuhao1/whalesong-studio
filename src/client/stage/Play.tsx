@@ -46,7 +46,10 @@ function Lobby({ onOpen }: { onOpen: (id: string, fresh?: boolean) => void }) {
   const { busy, run } = useAction()
   const confirm = useConfirm()
   const nameOf = (id: string): string => project.characters.find(card => card.id === id)?.name ?? id
-  const alive = project.characters.filter(card => card.status !== 'dead')
+  // Who can be in it depends on where it sits: somebody who dies in chapter 12 is alive in an interlude set after chapter 5.
+  const anchorIndex = anchor.length > 0 ? project.chapters.find(chapter => chapter.id === anchor)?.index ?? 0 : 0
+  const died = new Map(project.presence.flatMap(entry => (entry.death !== undefined ? [[entry.character, entry.death] as const] : [])))
+  const alive = project.characters.filter(card => (died.get(card.id) ?? Infinity) > anchorIndex)
   const start = (): Promise<unknown> => run(async () => {
     const session = await controller.api.call('play.start', {
       root,

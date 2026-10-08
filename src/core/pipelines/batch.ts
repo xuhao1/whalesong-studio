@@ -17,7 +17,7 @@
  */
 import {
   MAIN_LINE, STAGE_STEPS, TEXT_STEPS,
-  type ArtStep, type BatchKind, type BatchRowView, type BatchStepState, type BatchStepView, type BatchView, type PromptLanguage, type StageStatus, type StageStep,
+  type ArtStep, type BatchKind, type BatchRowView, type CharacterCard, type BatchStepState, type BatchStepView, type BatchView, type PromptLanguage, type StageStatus, type StageStep,
   type StoryboardDensity, type TextStep,
 } from '../../shared/types'
 import { hashText, proseOnly } from '../../shared/text'
@@ -625,22 +625,27 @@ export async function artPlan(core: NovelCore, runtime: ProjectRuntime, params: 
     return found
   }
   const sheetOf = new Map<string, string>()
-  for (const ref of params.sheets ?? []) {
-    const who = await card(ref)
+  const sheet = (who: CharacterCard, redo: boolean): void => {
+    if (sheetOf.has(who.id)) return
     row(who.id, who.name, 'character')
     sheetOf.set(who.id, key(who.id, 'sheet'))
     steps.push({
       target: who.id,
       op: 'sheet',
-      skip: async () => noImages ?? (!force && (await project.findCharacter(who.id))?.visual?.sheet !== undefined ? L(lang, '已有人设图', 'has a design sheet') : undefined),
+      skip: async () => noImages ?? (!redo && (await project.findCharacter(who.id))?.visual?.sheet !== undefined ? L(lang, '已有人设图', 'has a design sheet') : undefined),
       async run(sub) {
         await illustrate(core, runtime, { kind: 'sheet', target: who.id }, sub)
         return undefined
       },
     })
   }
+  for (const ref of params.sheets ?? []) sheet(await card(ref), force)
+  // The sheet comes first: a portrait asked for somebody who has none puts their sheet on the table too, as a step that
+  // is seen — not as something the portrait does on the side.
+  const sheetsToo = core.currentSettings().image.sheetFirst !== false
   for (const ref of params.portraits ?? []) {
     const who = await card(ref)
+    if (sheetsToo && who.visual?.sheet === undefined) sheet(who, false)
     row(who.id, who.name, 'character')
     steps.push({
       target: who.id,

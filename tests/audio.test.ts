@@ -233,7 +233,7 @@ describe('audio drama', () => {
 
   beforeEach(async () => {
     bed = await createTestBed({ settings: { tts: tts as TtsSettings } })
-    await bed.runtime.project.saveCharacter({ name: '白页', aliases: ['零七'], gender: '女', age: '19', role: 'protagonist', status: 'active' })
+    await bed.runtime.project.saveCharacter({ name: '白页', aliases: ['零七'], gender: '女', age: '19', role: 'protagonist' })
   })
   afterEach(async () => { await bed.cleanup() })
 

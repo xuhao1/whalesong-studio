@@ -250,6 +250,34 @@ describe('drawing the panels', () => {
     // A thing that was never drawn has nothing to send.
     expect(labels[3]).toHaveLength(1)
     expect(labels[3]!.join('|')).not.toContain('物品')
+    // Everyone had a sheet: none was drawn, and nothing is said of sheets.
+    expect(done.sheets).toBeUndefined()
+  })
+
+  it('draws the design sheet of whoever comes back in the book before the first panel that shows them — once, whatever the number of panels', async () => {
+    const { project } = bed.runtime
+    const lead = await project.saveCharacter({ name: '沈璃', role: 'protagonist', appearance: '黑发，青衣', visual: { prompt: '青衣的年轻女子' } })
+    // Seen in this one chapter only, with a small part: no sheet is drawn for them.
+    const passer = await project.saveCharacter({ name: '摆渡人', role: 'cameo', appearance: '蓑衣', visual: { prompt: '披蓑衣的老人' } })
+    const chapter = await project.addChapter({ title: '渡口' })
+    await project.saveChapterText(chapter.id, '她把剑放回匣中。')
+    const textHash = hashText(proseOnly(await project.chapterText(chapter.id)))
+    await project.saveAudioScript({ schema: 1, chapterId: chapter.id, textHash, updatedAt: new Date().toISOString(), lines: [line('l1', '她把剑放回匣中。')], cues: [] } as never)
+    const panel = (id: string, extra: Record<string, unknown>) => ({ id, lines: ['l1'], description: '', prompt: '', camera: 'still', ...extra })
+    await project.saveComicBoard({ schema: 1, chapterId: chapter.id, textHash, updatedAt: new Date().toISOString(), style: '', panels: [
+      panel('p1', { description: '她站在渡口', prompt: 'a woman at a ferry', characters: [lead.id] }),
+      panel('p2', { description: '她和摆渡人说话', prompt: 'a woman and a ferryman', characters: [lead.id, passer.id] }),
+      panel('p3', { description: '她上了船', prompt: 'a woman on a boat', characters: [lead.id] }),
+    ] } as never)
+    const done = await renderPanels(bed.core, bed.runtime, { chapter: chapter.id }, { origin: 'user' })
+    expect(done).toMatchObject({ rendered: 3, failed: 0, sheets: ['沈璃'] })
+    // The sheet first, then the three panels — each held against it.
+    expect(images.calls).toHaveLength(4)
+    expect(images.calls[0]!.prompt).toContain('三视图')
+    const sheet = (await project.findCharacter(lead.id))!.visual!.sheet!
+    expect(sheet).toBeDefined()
+    for (const call of images.calls.slice(1)) expect(call.references.map(reference => reference.label)).toEqual(['沈璃'])
+    expect((await project.findCharacter(passer.id))!.visual?.sheet).toBeUndefined()
   })
 })
 

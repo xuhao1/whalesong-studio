@@ -21,7 +21,7 @@
  */
 import type { CharacterCard, ChapterMemory, ContextStrategy, PromptLanguage, WorldEntry } from '../shared/types'
 import { clip, clipTail, estimateTokens, sameName } from '../shared/text'
-import type { LocatedChapter, Project } from './project'
+import { livesFrom, type LocatedChapter, type Project } from './project'
 import {
   L, promptLanguage, renderCharacter, renderManifest, renderMoment, renderPlan, renderThread, renderWorld,
 } from './render'
@@ -247,7 +247,7 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
   let peopleTokens = 0
   const people: string[] = []
   for (const card of ranked) {
-    const full = card.status !== 'dead' && ROLE_RANK[card.role] <= ROLE_RANK.supporting ? renderCharacter(card, lang, { resolveName: nameOf }) : undefined
+    const full = ROLE_RANK[card.role] <= ROLE_RANK.supporting ? renderCharacter(card, lang, { resolveName: nameOf }) : undefined
     const cost = full !== undefined ? estimateTokens(full) : 0
     if (full !== undefined && (peopleTokens + cost <= peopleCap || inFull.size < 2)) {
       people.push(full)
@@ -255,13 +255,12 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
       peopleTokens += cost
     }
   }
-  const lesser = ranked.filter(card => !inFull.has(card.id) && card.status !== 'dead')
-  // The dead are named whatever the scene: the cheapest guard against a resurrection.
-  const dead = ranked.filter(card => card.status === 'dead')
+  // Who is alive and who is gone is no part of this: that depends on the line and on the chapter in hand, and is said
+  // further down, with what belongs to this piece of work.
+  const lesser = ranked.filter(card => !inFull.has(card.id))
   take('people', L(lang, '人物', 'Characters'), [
     ...people,
     ...(lesser.length > 0 ? [`${L(lang, '其他人物（未必出场）：', 'Others (not necessarily present):')}\n${lesser.map(card => renderCharacter(card, lang, { brief: true })).join('\n')}`] : []),
-    ...(dead.length > 0 ? [`${L(lang, '已死亡（可以被提起，不能再以活人身份出场）：', 'Dead (may be mentioned, must not appear alive): ')}${dead.map(card => card.name).join(lang === 'zh' ? '、' : ', ')}`] : []),
   ].join('\n\n'), share(0.4))
 
   // ── the story so far: which chapters travel word for word ──
@@ -411,6 +410,23 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
   }
   take('cast', L(lang, '本章人物此刻的状态', 'Where the people of this chapter stand now'), castBlocks.join('\n\n'), share(0.2))
 
+  // Who is out of the story by now: on this chapter's own line, and as far as the chapters before it — somebody who dies
+  // in chapter 16 is alive to whoever writes chapter 5 again, and alive on a line that parted before. Named whatever the
+  // scene: the cheapest guard against a resurrection.
+  const told = livesFrom(priorMemories, characters)
+  const goneBy = (how: 'death' | 'exit'): string => ranked
+    .flatMap((card) => {
+      const when = told[card.id]?.[how]
+      return when !== undefined ? [`${card.name}${L(lang, `（第${when}章）`, ` (ch. ${when})`)}`] : []
+    })
+    .join(lang === 'zh' ? '、' : ', ')
+  const dead = goneBy('death')
+  const left = goneBy('exit')
+  take('gone', L(lang, '到这里为止，已经不在故事里的人', 'Out of the story by now'), [
+    ...(dead.length > 0 ? [`${L(lang, '已死亡（可以被提起，不能再以活人身份出场）：', 'Dead (may be mentioned, must not appear alive): ')}${dead}`] : []),
+    ...(left.length > 0 ? [`${L(lang, '已离开故事（章纲没有安排，就不要让他们回来）：', 'Gone from the story (not to come back unless the outline brings them): ')}${left}`] : []),
+  ].join('\n'), share(0.06))
+
   // Threads the reader is waiting on.
   const openThreads = outline.threads.filter(thread => thread.status === 'open')
   if (openThreads.length > 0) {
@@ -475,7 +491,7 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
 
   const render = (keys: string[]): string => keys.map(key => sections[key]).filter((section): section is Section => section !== undefined).map(section => `## ${section.title}\n\n${section.body}`).join('\n\n')
   const stable = render(stableKeys)
-  const rest = render(['following', 'followingOutline', 'cast', 'threads', 'lore', 'passages', 'next', 'tail', 'current', 'plan'])
+  const rest = render(['following', 'followingOutline', 'cast', 'gone', 'threads', 'lore', 'passages', 'next', 'tail', 'current', 'plan'])
   const text = [stable, rest].filter(part => part.length > 0).join('\n\n')
   const stableTokens = estimateTokens(stable)
   return {

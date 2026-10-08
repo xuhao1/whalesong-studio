@@ -120,4 +120,44 @@ describe('the story so far', () => {
     expect(review.included.following).toBe(0)
     expect(review.rest).toContain('下文梗概')
   })
+
+  it('says who is out of the story as of the chapter in hand, on that chapter\'s own line — and nothing of it in what repeats', async () => {
+    const { project, index } = bed.runtime
+    const lead = await project.saveCharacter({ name: '沈蘅', role: 'protagonist', personality: '寡言' })
+    const friend = await project.saveCharacter({ name: '阿棠', role: 'supporting', personality: '爱笑' })
+    await project.saveCharacter({ name: '老周', role: 'minor' })
+    const ids: string[] = []
+    for (let n = 1; n <= 4; n++) ids.push((await project.addChapter({ title: `第${n}回`, synopsis: `第 ${n} 回的梗概。` })).id)
+    for (const id of ids.slice(0, 3)) await project.saveChapterText(id, `${id} 的正文，沈蘅在码头。`)
+    const memory = (chapterId: string, characters: { name: string; lifecycle?: 'exit' | 'death' }[]) => ({ schema: 1 as const, chapterId, textHash: 'x', updatedAt: new Date().toISOString(), brief: '', summary: `${chapterId} 的摘要`, facts: [], newEntities: [], threads: [], characters: characters.map(item => ({ character: item.name, ...item })) })
+    await project.saveMemory(memory(ids[0]!, [{ name: '沈蘅' }, { name: '阿棠' }, { name: '老周' }]))
+    await project.saveMemory(memory(ids[1]!, [{ name: '沈蘅' }, { name: '老周', lifecycle: 'exit' }]))
+    await project.saveMemory(memory(ids[2]!, [{ name: '沈蘅' }, { name: '阿棠', lifecycle: 'death' }]))
+    const pack = async (id: string) => await packContext(project, index, { purpose: 'draft', chapter: (await project.findChapter(id))!, textBudget: 100_000, sideBudget: 20_000, tailChars: 200 })
+
+    // Writing the fourth chapter: she died in the third, he left in the second.
+    const fourth = await pack(ids[3]!)
+    expect(fourth.rest).toContain('已死亡（可以被提起，不能再以活人身份出场）：阿棠（第3章）')
+    expect(fourth.rest).toContain('已离开故事（章纲没有安排，就不要让他们回来）：老周（第2章）')
+    // Writing the third again: her death is in the chapter itself — not something that has happened before it.
+    const third = await pack(ids[2]!)
+    expect(third.rest).toContain('老周（第2章）')
+    expect(third.rest).not.toContain('已死亡')
+    // Writing the second again: nobody is gone yet.
+    expect((await pack(ids[1]!)).rest).not.toContain('已经不在故事里的人')
+    // Her card travels whole whatever the chapter, with no word on it for where the book has got to: what repeats, repeats.
+    for (const made of [fourth, third]) {
+      expect(made.stable).toContain('【阿棠】（配角）')
+      expect(made.stable).toContain('爱笑')
+      expect(made.stable).not.toContain('已死亡')
+    }
+    // A line that parts after the first chapter: on it she is alive, and he never left.
+    const line = await project.addLine({ title: '她没有上船', from: ids[0]! })
+    const side = await project.addChapter({ title: '另一个早晨' }, { line: line.id })
+    await project.saveChapterText(side.id, '另一个早晨的正文。')
+    await project.saveMemory(memory(side.id, [{ name: '阿棠' }]))
+    const next = await project.addChapter({ title: '再往后' }, { line: line.id })
+    expect((await pack(next.id)).rest).not.toContain('已经不在故事里的人')
+    expect(lead.id).not.toBe(friend.id)
+  })
 })

@@ -40,7 +40,6 @@ export interface CastResult {
 }
 
 const ROLES: CharacterCard['role'][] = ['protagonist', 'deuteragonist', 'antagonist', 'supporting', 'minor', 'cameo']
-const STATUSES: CharacterCard['status'][] = ['planned', 'active', 'offstage', 'retired', 'dead']
 /**
  * How many people one request is asked to write whole cards for, and how many a line each.
  * Not a ceiling on the cast — there are as many rounds as it takes — but the size of one hand-in: the first live run asked
@@ -190,7 +189,6 @@ export async function mergeCast(core: NovelCore, runtime: ProjectRuntime, task: 
       // Cards first, other names after: a name can only become the alias of somebody who has a card by then.
       for (const { item, name, sighting } of answered.filter(entry => entry.sameAs === undefined)) {
         const role = asText(item.role) as CharacterCard['role'] | undefined
-        const status = asText(item.status) as CharacterCard['status'] | undefined
         const aliases = asList(item.aliases).filter(alias => !sameName(alias, name) && !sameName(alias, sighting.name))
         const relationships = asArray(item.relationships).map(asRecord).map((relation) => {
           const other = asText(relation.target)
@@ -212,7 +210,6 @@ export async function mergeCast(core: NovelCore, runtime: ProjectRuntime, task: 
           ...(before !== undefined ? { id: before.id } : {}),
           name,
           role: role !== undefined && ROLES.includes(role) ? role : round.full ? 'supporting' : 'minor',
-          status: status !== undefined && STATUSES.includes(status) ? status : before?.status ?? 'active',
           ...(aliases.length + other.length + (before?.aliases?.length ?? 0) > 0 ? { aliases: [...new Set([...(before?.aliases ?? []), ...other, ...aliases])].filter(alias => !sameName(alias, name)) } : {}),
           ...(relationships.length > 0 ? { relationships } : {}),
           ...texts,
@@ -330,8 +327,6 @@ export async function relinkMemories(runtime: ProjectRuntime): Promise<void> {
     const firstAppearance = first.get(card.id)
     const lastAppearance = last.get(card.id)
     if (firstAppearance === undefined || lastAppearance === undefined) continue
-    if (card.firstAppearance !== firstAppearance || card.lastAppearance !== lastAppearance || card.status === 'planned') {
-      await project.saveCharacter({ id: card.id, firstAppearance, lastAppearance, ...(card.status === 'planned' ? { status: 'active' as const } : {}) })
-    }
+    if (card.firstAppearance !== firstAppearance || card.lastAppearance !== lastAppearance) await project.saveCharacter({ id: card.id, firstAppearance, lastAppearance })
   }
 }

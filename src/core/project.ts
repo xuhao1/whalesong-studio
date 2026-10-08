@@ -442,13 +442,15 @@ export class Project {
       const visual = isPlainRecord(data.visual) && Array.isArray((data.visual as { looks?: unknown }).looks)
         ? { visual: { ...data.visual, looks: reconcileLooks((data.visual as { looks: unknown }).looks) } as CharacterCard['visual'] }
         : {}
+      // A card once carried one word for where its character stood in the book (`status`). Where somebody stands is
+      // read off the digests, line by line and chapter by chapter (`lives`); the word is not read, and not written again.
+      const { status: _label, ...kept } = data as typeof data & { status?: unknown }
       return {
-        ...data,
+        ...kept,
         ...visual,
         id: typeof data.id === 'string' && data.id.length > 0 ? data.id : id,
         name: typeof data.name === 'string' && data.name.length > 0 ? data.name : id,
         role: data.role ?? 'supporting',
-        status: data.status ?? 'planned',
         ...(body.length > 0 ? { notes: body } : {}),
       }
     })
@@ -468,14 +470,16 @@ export class Project {
    * Create or update a character. Fields absent from `input` keep their value;
    * a field set to `null` or an empty string is cleared.
    */
-  async saveCharacter(input: Partial<CharacterCard> & { name?: string }): Promise<CharacterCard> {
+  async saveCharacter(given: Partial<CharacterCard> & { name?: string }): Promise<CharacterCard> {
+    // Whoever still sends the one-word label of older versions (a page not reloaded yet, a suggestion made before) is not refused: it is left out.
+    const { status: _label, ...input } = given as Partial<CharacterCard> & { name?: string; status?: unknown }
     return await this.mutex.run('characters', async () => {
       const existing = input.id !== undefined ? await this.findCharacter(input.id) : input.name !== undefined ? await this.findCharacter(input.name) : undefined
       if (existing === undefined && (input.name === undefined || input.name.trim().length === 0)) {
         throw new ProjectError('novel/invalid', 'a new character needs a name')
       }
       const id = existing?.id ?? await this.uniqueId('characters', input.name!, 'character')
-      const merged = mergeCard<CharacterCard>(existing ?? { id, name: input.name!.trim(), role: 'supporting', status: 'planned' }, input)
+      const merged = mergeCard<CharacterCard>(existing ?? { id, name: input.name!.trim(), role: 'supporting' }, input)
       merged.id = id
       merged.updatedAt = new Date().toISOString()
       // A look that is saved again is still the same look: it keeps its id and the sheet drawn for it.
@@ -1388,7 +1392,8 @@ export class Project {
   // ───────────── suggestions, proposals, reviews ─────────────
 
   async suggestions(): Promise<Suggestion[]> {
-    return (await this.readState<Suggestion[]>('suggestions.json')) ?? []
+    // "Mark as dead?" asked to change a word on a card that cards no longer have: the digest it came from says it by itself.
+    return ((await this.readState<Suggestion[]>('suggestions.json')) ?? []).filter(item => (item.kind as string) !== 'character-status')
   }
 
   async addSuggestions(items: Omit<Suggestion, 'id' | 'createdAt'>[]): Promise<void> {
@@ -1646,23 +1651,9 @@ export class Project {
    */
   async lives(line?: string): Promise<{ chapters: { id: string; index: number; title: string; digested: boolean }[]; lives: Record<string, Life> }> {
     const path = await this.chapters(line)
-    const characters = await this.characters()
-    const byCharacter = new Map<string, { chapter: string; index: number; moment: CharacterMoment }[]>()
-    const digested = new Set<string>()
-    for (const { chapter, memory } of await this.memories(path)) {
-      digested.add(chapter.plan.id)
-      const here = new Set<string>()
-      for (const moment of memory.characters) {
-        const card = characters.find(candidate => candidate.id === moment.character) ?? characters.find(candidate => sameName(candidate.name, moment.name) || candidate.aliases?.some(alias => sameName(alias, moment.name)) === true)
-        // One note per character and chapter: a digest that names somebody twice (by name and by an alias) says one thing.
-        if (card === undefined || here.has(card.id)) continue
-        here.add(card.id)
-        byCharacter.set(card.id, [...(byCharacter.get(card.id) ?? []), { chapter: chapter.plan.id, index: chapter.index, moment }])
-      }
-    }
-    const lives: Record<string, Life> = {}
-    for (const [id, moments] of byCharacter) lives[id] = lifeOf(moments)
-    return { chapters: path.map(chapter => ({ id: chapter.plan.id, index: chapter.index, title: chapter.plan.title, digested: digested.has(chapter.plan.id) })), lives }
+    const memories = await this.memories(path)
+    const digested = new Set(memories.map(entry => entry.chapter.plan.id))
+    return { chapters: path.map(chapter => ({ id: chapter.plan.id, index: chapter.index, title: chapter.plan.title, digested: digested.has(chapter.plan.id) })), lives: livesFrom(memories, await this.characters()) }
   }
 
   /**
@@ -1804,11 +1795,13 @@ export class Project {
         byCharacter.set(card.id, list)
       }
     }
-    const presence = characters.map((card) => {
+    const told = livesFrom(memories, characters)
+    const presence = characters.map((card): CastPresence => {
       const chapters = byCharacter.get(card.id) ?? []
       const last = chapters.at(-1)
       const absentFor = last === undefined ? digested.length : digested.length - 1 - digested.indexOf(last)
-      return { character: card.id, chapters, absentFor }
+      const life = told[card.id]
+      return { character: card.id, chapters, absentFor, ...(life?.death !== undefined ? { death: life.death } : {}), ...(life?.exit !== undefined ? { exit: life.exit } : {}) }
     })
     // Coming back is what makes a part: three chapters in a long book, two in a short one.
     const least = digested.length > 12 ? 3 : 2
@@ -1964,6 +1957,28 @@ function stripUndefined<T extends object>(value: T): T {
   const out: Record<string, unknown> = {}
   for (const [key, entry] of Object.entries(value)) if (entry !== undefined) out[key] = entry
   return out as T
+}
+
+/**
+ * Everyone's life as a run of digests tells it: the chapters of one line of
+ * the plot, or of that line as far as some chapter — what is handed in is all
+ * that has happened.
+ */
+export function livesFrom(memories: readonly { chapter: LocatedChapter; memory: ChapterMemory }[], characters: readonly CharacterCard[]): Record<string, Life> {
+  const byCharacter = new Map<string, { chapter: string; index: number; moment: CharacterMoment }[]>()
+  for (const { chapter, memory } of memories) {
+    const here = new Set<string>()
+    for (const moment of memory.characters) {
+      const card = characters.find(candidate => candidate.id === moment.character) ?? characters.find(candidate => sameName(candidate.name, moment.name) || candidate.aliases?.some(alias => sameName(alias, moment.name)) === true)
+      // One note per character and chapter: a digest that names somebody twice (by name and by an alias) says one thing.
+      if (card === undefined || here.has(card.id)) continue
+      here.add(card.id)
+      byCharacter.set(card.id, [...(byCharacter.get(card.id) ?? []), { chapter: chapter.plan.id, index: chapter.index, moment }])
+    }
+  }
+  const lives: Record<string, Life> = {}
+  for (const [id, moments] of byCharacter) lives[id] = lifeOf(moments)
+  return lives
 }
 
 /**

@@ -73,9 +73,6 @@ export interface ProjectManifest {
 
 export type CharacterRole = 'protagonist' | 'deuteragonist' | 'antagonist' | 'supporting' | 'minor' | 'cameo'
 
-/** Where a character is in their life on the page. Drives ensemble-cast scheduling. */
-export type CharacterStatus = 'planned' | 'active' | 'offstage' | 'retired' | 'dead'
-
 export interface CharacterRelationship {
   /** Character id, or a free name when the other party has no card yet. */
   target: string
@@ -168,7 +165,6 @@ export interface CharacterCard {
   name: string
   aliases?: string[]
   role: CharacterRole
-  status: CharacterStatus
   /** One-line identity: who they are in the story. */
   tagline?: string
   gender?: string
@@ -554,7 +550,7 @@ export function analysisSteps(schema: number | undefined): AnalyzeStep[] {
 export interface Suggestion {
   id: string
   /** `bible-edit`: a field of a character card or a world entry should read otherwise — found while a problem was being traced through the book. */
-  kind: 'new-character' | 'new-world' | 'character-status' | 'new-thread' | 'thread-status' | 'bible-edit'
+  kind: 'new-character' | 'new-world' | 'new-thread' | 'thread-status' | 'bible-edit'
   title: string
   detail: string
   /** Chapter that triggered it. */
@@ -782,6 +778,12 @@ export interface ImageSettings {
    * take more hold more faces steady.
    */
   references?: number
+  /**
+   * Draw somebody's design sheet before any picture that shows them, where they have none — always before a portrait,
+   * and before a scene, a panel or a cover for whoever comes back in the book. Unset: yes. `false`: pictures are drawn
+   * from what there is.
+   */
+  sheetFirst?: boolean
 }
 
 /** Reference images per picture when the author has set no number of their own, and the most that can be set. */
@@ -1510,6 +1512,12 @@ export interface CastPresence {
   chapters: string[]
   /** Chapters since the last appearance (0 = in the latest digested chapter). */
   absentFor: number
+  /**
+   * On the main line, as the digests have it: the chapter (1-based place) they die in, or leave the story for good —
+   * when that is the last word on them. Along another line it may be otherwise (`Project.lives`).
+   */
+  death?: number
+  exit?: number
 }
 
 /**

@@ -1237,10 +1237,6 @@
 .nv-dot.is-drafted { background: var(--nv-warn); }
 .nv-dot.is-revised { background: var(--nv-violet); }
 .nv-dot.is-final { background: var(--nv-success); }
-.nv-dot.is-status-active { background: var(--nv-success); }
-.nv-dot.is-status-planned { background: var(--nv-brand-text); }
-.nv-dot.is-status-offstage { background: var(--nv-warn); }
-.nv-dot.is-status-dead { background: var(--nv-error); }
 
 .nv-avatar {
   flex: none;
@@ -2551,41 +2547,6 @@ button.nv-stat:hover {
 
 .nv-advice li.is-red { border-left-color: var(--nv-error); }
 .nv-advice li.is-amber { border-left-color: var(--nv-warn); }
-
-.nv-board {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(170px, 1fr));
-  gap: 10px;
-  overflow-x: auto;
-}
-
-.nv-board-column {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-height: 120px;
-  padding: 8px;
-  border: 1px solid var(--nv-border);
-  border-radius: var(--nv-radius);
-  background: var(--nv-surface);
-}
-
-.nv-board-column > header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 2px 2px 4px;
-}
-
-.nv-board-card {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 4px 6px 8px;
-  border: 1px solid var(--nv-border);
-  border-radius: var(--nv-radius-s);
-  background: var(--nv-bg);
-}
 
 .nv-presence {
   overflow: auto;
@@ -5403,13 +5364,25 @@ button.nv-stat:hover {
   font-size: 26px;
 }
 
-.nv-photo-status {
+/* How the line looked at lets somebody go — a death, a leaving — in the corner of their portrait. */
+.nv-photo-end {
   position: absolute;
   top: 6px;
   right: 6px;
-  width: 8px;
-  height: 8px;
-  box-shadow: 0 0 0 2px var(--nv-bg);
+  max-width: calc(100% - 12px);
+  padding: 1px 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--nv-bg) 86%, transparent);
+  color: var(--nv-text-2);
+  font-size: 10.5px;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nv-photo-end.is-dead {
+  color: var(--nv-error);
 }
 
 .nv-photo-name,
@@ -5433,41 +5406,6 @@ button.nv-stat:hover {
 
 .nv-split.has-photos {
   grid-template-columns: minmax(240px, 340px) minmax(0, 1fr);
-}
-
-.nv-board-open {
-  display: flex;
-  flex: 1;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  text-align: left;
-  cursor: pointer;
-}
-
-.nv-board-open:hover .nv-list-title {
-  color: var(--nv-brand-text);
-  text-decoration: underline;
-}
-
-.nv-presence-name {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-}
-
-.nv-presence-name:hover {
-  color: var(--nv-brand-text);
-  text-decoration: underline;
 }
 
 .nv-walkons {
@@ -8037,9 +7975,8 @@ blockquote.nv-issue-quote {
   border-left-color: var(--nv-error);
 }
 
-/* The people page: which line of the plot, and the board at a chapter of it. */
-.nv-cast-line,
-.nv-cast-moment {
+/* The people page: which line of the plot the lives are read along. */
+.nv-cast-line {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -8052,9 +7989,114 @@ blockquote.nv-issue-quote {
   max-width: 260px;
 }
 
-.nv-cast-slider {
-  flex: 1 1 220px;
-  max-width: 520px;
+/* The notes on the ensemble: one line with a way to put it out of sight, and the mark that brings them back. */
+.nv-advice-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.nv-advice-bar > .nv-advice-line {
+  flex: 1;
+  min-width: 0;
+}
+
+.nv-cast-tabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.nv-cast-tabs > .nv-tabs {
+  flex: 1;
+  min-width: 0;
+}
+
+.nv-advice-mark {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, var(--nv-warn) 35%, var(--nv-border));
+  border-radius: 999px;
+  background: transparent;
+  color: var(--nv-text-3);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.nv-advice-mark:hover {
+  background: color-mix(in srgb, var(--nv-warn) 9%, transparent);
+  color: var(--nv-text);
+}
+
+/* ── Everyone's life in one table: a row a person, a column a chapter of the line ── */
+.nv-lives-note {
+  margin: 0;
+  padding: 8px 12px 0;
+}
+
+.nv-lives tbody th {
+  display: table-cell;
+  padding: 2px 12px 2px 4px;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.nv-lives-who {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 260px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nv-lives-who:hover .nv-list-title {
+  color: var(--nv-brand-text);
+  text-decoration: underline;
+}
+
+.nv-lives-who .nv-list-meta {
+  overflow: hidden;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nv-lives-who .nv-list-meta.is-dead {
+  color: var(--nv-error);
+}
+
+.nv-lives td.is-on {
+  cursor: pointer;
+}
+
+.nv-lives td.is-enter,
+.nv-lives td.is-return,
+.nv-legend-cell.is-enter {
+  background: var(--nv-ok, #2e9e5b);
+}
+
+.nv-lives td.is-exit,
+.nv-legend-cell.is-exit {
+  background: var(--nv-warn);
+}
+
+.nv-lives td.is-death,
+.nv-legend-cell.is-death {
+  background: var(--nv-error);
+}
+
+.nv-lives td.is-unread,
+.nv-legend-cell.is-unread {
+  background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--nv-text) 9%, transparent) 0 2px, transparent 2px 4px);
 }
 
 /* ── The script as a reader has it: set in the reader's own type ── */

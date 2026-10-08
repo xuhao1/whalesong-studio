@@ -182,21 +182,28 @@ describe('lines of the plot', () => {
   it('keeps what happens on another line out of the book\'s own record', async () => {
     const { project } = bed.runtime
     const main = await book(bed, 2)
-    const card = await project.saveCharacter({ name: '沈璃', role: 'protagonist', status: 'active' })
+    const card = await project.saveCharacter({ name: '沈璃', role: 'protagonist' })
     const line = await project.addLine({ title: '她死在渡口', from: main[0]! })
     const chapter = await project.addChapter({ title: '渡口' }, { line: line.id })
     await project.saveChapterText(chapter.id, '沈璃倒在渡口的石阶上，再也没有起来。')
     bed.llm.responder = () => JSON.stringify({ brief: '沈璃死于渡口', summary: '沈璃在渡口被杀。', characters: [{ name: '沈璃', role: '被杀', stateAfter: '已死', lifecycle: 'death' }], facts: [], newEntities: [{ name: '摆渡人', kind: 'character', description: '渡口的老人' }], threads: [{ title: '渡口的血', action: 'plant' }] })
     const memory = await digestChapter(bed.core, bed.runtime, chapter.id, { origin: 'user' })
     expect(memory?.summary).toContain('渡口')
-    // Dead on that line, not in the book: no suggestion to mark her dead, no thread planted on the main line.
+    // Dead on that line, not in the book: her life on the main line knows nothing of it, and no thread is planted there.
     const suggestions = await project.suggestions()
     expect(suggestions.map(item => item.kind)).toEqual(['new-character'])
     expect((await project.outline()).threads).toHaveLength(0)
     expect((await project.findCharacter(card.id))!.lastAppearance).toBeUndefined()
-    // Made the main line, what happened there is what happened: its memory is folded in then.
+    expect((await project.lives()).lives[card.id]).toBeUndefined()
+    expect((await project.lives(line.id)).lives[card.id]).toMatchObject({ death: 2 })
+    expect((await project.presence()).find(entry => entry.character === card.id)?.death).toBeUndefined()
+    // Made the main line, what happened there is what happened: its memory is folded in then — and her death is read
+    // off its digest like any other; nobody is asked to confirm a label, and none is written on her card.
     await applyOutlineOps(bed.runtime, [{ op: 'promote-line', line: line.id }])
-    expect((await project.suggestions()).map(item => item.kind)).toContain('character-status')
+    expect((await project.suggestions()).map(item => item.kind)).toEqual(['new-character'])
+    expect((await project.lives()).lives[card.id]).toMatchObject({ death: 2 })
+    expect((await project.presence()).find(entry => entry.character === card.id)?.death).toBe(2)
+    expect((await project.findCharacter(card.id)) as unknown as Record<string, unknown>).not.toHaveProperty('status')
     expect((await project.outline()).threads.map(thread => thread.title)).toEqual(['渡口的血'])
   })
 

@@ -32,6 +32,7 @@ import { ScriptPage } from '../reader/script'
 import { Film, place, Theater, WatchChoice, type ChapterFilm } from '../reader/theater'
 import { chapterJob } from '../Batch'
 import { Icon } from '../icons'
+import { sheetsDrawn } from '../labels'
 import { IssueCard, issueMarks } from '../Issues'
 import { AudioDesk, ScriptTable, type ScriptView } from '../stage/Audio'
 import {
@@ -554,10 +555,10 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
                 if (!controller.need('image')) return undefined
                 const chosen = picked.text
                 return controller.guard(async () => {
-                  await controller.run('image.create', { root, kind: 'scene', target: chapter.id, quote: chosen, insert: true })
+                  const job = await controller.run('image.create', { root, kind: 'scene', target: chapter.id, quote: chosen, insert: true })
                   setPicked(undefined)
                   doc.reload()
-                  controller.toast('success', t('插图已放进正文', 'The illustration is in the chapter'))
+                  controller.toast('success', `${t('插图已放进正文', 'The illustration is in the chapter')}${sheetsDrawn(job, t)}`)
                 })
               }}>{t('配图', 'Illustrate')}</Button>
             </div>

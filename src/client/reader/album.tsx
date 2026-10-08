@@ -19,10 +19,10 @@
  */
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from 'react'
 import { albumEmpty, entryImageAt, entryStateAt, standingAt, worldFront, type Album, type AlbumAt, type AlbumCounts, type AlbumEntry, type AlbumEvent, type AlbumPerson, type EntryState } from '../../shared/album'
-import type { LifeEvent } from '../../shared/life'
+import type { LifeEvent, LifeStanding } from '../../shared/life'
 import { layoutSpots, spotKey, type ScenePoint } from '../../shared/scene'
 import { neighbours, STANDINGS, tiesAt, trail, type Standing, type Tie, type TieEnd } from '../../shared/ties'
-import { MAIN_LINE, type CharacterRole, type CharacterStatus } from '../../shared/types'
+import { MAIN_LINE, type CharacterRole } from '../../shared/types'
 import type { WorldGroup } from '../../shared/world'
 import { Icon, type IconName } from '../icons'
 import type { Translate } from './parts'
@@ -61,7 +61,7 @@ const CASTS: { key: string; roles: CharacterRole[]; label: [string, string] }[] 
   { key: 'rest', roles: ['minor', 'cameo'], label: ['次要人物与龙套', 'Minor parts and walk-ons'] },
 ]
 
-const LIFE_LABEL: Record<CharacterStatus, [string, string]> = {
+const LIFE_LABEL: Record<LifeStanding, [string, string]> = {
   planned: ['还没登场', 'not on yet'],
   active: ['在场', 'present'],
   offstage: ['暂离', 'away'],
@@ -241,7 +241,7 @@ export function AlbumView({ t, album, media, at, go, onRead, onEdit, worldTools,
     const thing = entries.get(end.id)
     return person !== undefined ? (person.portrait ?? person.sheet) !== undefined : thing !== undefined && imageOf(thing) !== undefined
   }
-  const standing = (person: AlbumPerson): CharacterStatus | undefined => standingAt(album, person.id, moment)
+  const standing = (person: AlbumPerson): LifeStanding | undefined => standingAt(album, person.id, moment)
   /** How a place, a house or a thing stands at the chapter looked at; unsaid when the story is looked at whenever. */
   const stateOf = (item: AlbumEntry): EntryState => (moment !== undefined ? entryStateAt(item, moment) : 'there')
   /** The picture of a place, a house or a thing as the story stands at the chapter looked at. */
@@ -658,7 +658,7 @@ interface SceneMark {
   name: string
   /** Somebody's picture; a place or a house has a pin. */
   face?: ReactNode
-  how?: CharacterStatus
+  how?: LifeStanding
 }
 
 /**

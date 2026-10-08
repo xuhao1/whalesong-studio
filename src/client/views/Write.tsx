@@ -17,7 +17,7 @@ import { BatchMatrix, chapterJob, TextBatchDialog, useBatchJob } from '../Batch'
 import { DiffView, ProposalCard } from '../components/ProposalCard'
 import { Icon } from '../icons'
 import { jobKindLabel, jobPulse } from '../Studio'
-import { CHAPTER_STATUS, CHAPTER_STATUS_TONE, ISSUE_TYPE, SEVERITY, SEVERITY_TONE } from '../labels'
+import { CHAPTER_STATUS, CHAPTER_STATUS_TONE, ISSUE_TYPE, SEVERITY, SEVERITY_TONE, sheetsDrawn } from '../labels'
 import { Derive } from './Outline'
 import {
   Button, Chip, cx, Empty, Menu, Modal, Progress, Select, Spinner, Tabs, TextInput, ThoughtButton, ThoughtPanel, useAction, useConfirm, useJobStream, useJobTail, useLoad, useProject,
@@ -405,7 +405,8 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
     return controller.guard(async () => {
       if (!(await settle())) return undefined
       controller.toast('info', t('正在为这段文字配图，完成后会插入到这段之后。', 'Illustrating this passage; the picture is inserted after it when ready.'))
-      await controller.run('image.create', { root, kind: 'scene', target: chapter.id, quote, insert: true })
+      const job = await controller.run('image.create', { root, kind: 'scene', target: chapter.id, quote, insert: true })
+      if (sheetsDrawn(job, t).length > 0) controller.toast('info', `${t('插图已放进正文', 'The illustration is in the chapter')}${sheetsDrawn(job, t)}`)
     })
   }
   const quoteSelection = (): void => {

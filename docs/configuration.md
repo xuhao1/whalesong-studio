@@ -248,6 +248,7 @@ Settings files saved by earlier versions carry budgets nobody chose (48,000, lat
 | `image.resolution` | how fine pictures are drawn: `720p`, `1080p`, `2k` or `4k` — as many pixels as a screen of that name, in each picture's own shape. Unset: each kind of picture at its usual size |
 | `image.aspects` | the shape of each kind of picture — `cover`, `portrait`, `sheet`, `location`, `scene`, `panel` — as an aspect (`1:1`, `3:4`, `4:3`, `16:9`, `9:16`, `3:2`, `2:3`) or exact pixels (`1600x900`). Unset: a cover stands (2:3), a stage lies (16:9), a portrait is square, a design sheet 3:2 |
 | `image.negativePrompt` | what no picture of any book may show; each book adds its own list |
+| `image.sheetFirst` | `false`: do not draw a missing design sheet before a picture that shows somebody. Unset: the sheet comes first (see *One look per book*) |
 | `image.apiKeyRef` | read the key from this variable instead of the saved one |
 
 How sizes travel: OpenRouter gets the nearest aspect ratio and a resolution tier, which every model there understands; GPT Image models on an OpenAI endpoint get the nearest of their three classic sizes; other models get the size as written; a subscription gets the framing in words, because its endpoint takes a prompt and nothing else.
@@ -256,7 +257,9 @@ Generated images are downloaded into the book (`assets/images/`), so a book neve
 
 ### A character's life
 
-A card's *lifecycle* (planned, active, offstage, retired, dead) is a label the author sets. Beside it, a person's page shows their **life on the page**, which nobody sets: it is read off the chapter digests along a line of the plot — the chapters they are in, where they come on, return, leave or die, and what each digest noted of them. *Tell it in a paragraph* has continuity write that life out (kept as `life` on the card, and the author's to edit). On *People → Lifecycle*, *As the story stood* moves the whole board to a chapter of the line. A book with more than one line of the plot offers the line to read along; a chapter that was not digested is a chapter nothing is known of, and is shown as such.
+A card carries no status — no *active*, *offstage* or *dead*. (Cards written by earlier versions have a `status:` line in their front matter; it is no longer read, and is left out the next time the card is saved.) Where somebody is in the book is their **life on the page**, which nobody sets: it is read off the chapter digests along a line of the plot — the chapters they are in, where they come on, return, leave or die, and what each digest noted of them. A person's page says it in a line under their name and shows it chapter by chapter; *Tell it in a paragraph* has continuity write that life out (kept as `life` on the card, and the author's to edit). *People → Lives* is everyone's life in one table: a row a person, a column a chapter of the line — on the page, coming on or back, leaving, dying, planned by the outline, planned but missing. A book with more than one line of the plot offers the line to read along; a chapter that was not digested is a chapter nothing is known of, and is shown as such. A death or a leaving that is missing or wrong is the digest's to put right: digest the chapter again.
+
+The notes on the ensemble above the page (*Scheduling notes*) are one line by default; they unfold, and *Hide* puts them out of the way — a small mark at the end of the tabs brings them back. The choice is kept on the device.
 
 ### The world along a line of the plot
 
@@ -319,6 +322,8 @@ Nothing reaches an image model that the author cannot read and change. A prompt 
 - **Place art** — reference art of a world entry (`visualImage`), sent along with pictures set there.
 
 Reference images travel with the request where the model takes them: Bailian's multimodal generation, OpenRouter's image endpoint, GPT Image through the edits endpoint, and a ChatGPT subscription through Codex Connect or the CLI. At most three go with one picture — faces first, then the place.
+
+**The sheet comes first.** A portrait asked for somebody who has no design sheet draws the sheet first and the portrait against it. A scene, a panel of the motion comic and a cover do the same for whoever of the people they show comes back in the book — a part that carries it (lead, second lead, antagonist, supporting), or anybody in two chapters or more, written or planned; somebody seen once and gone gets none. Each such sheet is one more image call; the job says so while it runs (*First the design sheet of …*) and the picture says so when it is done, and a batch of portraits shows the sheets as steps of their own. Two pictures that need the same sheet at the same time wait for one drawing of it. `image.sheetFirst = false` (Settings → Images) turns it off: pictures are then drawn from what there is.
 
 A good order for a new book: write the art direction and the avoid list, make a design sheet for each main character, add looks and place art where the story needs them, then illustrate.
 

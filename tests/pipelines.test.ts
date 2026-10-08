@@ -196,13 +196,13 @@ describe('pipelines', () => {
     const memory = await digestChapter(bed.core, bed.runtime, plan.id, { origin: 'user' })
     expect(memory?.characters[0]).toMatchObject({ character: '沈璃', quote: '剑在，人在。' })
     const card = await project.findCharacter('沈璃')
-    expect(card).toMatchObject({ status: 'active', firstAppearance: plan.id, lastAppearance: plan.id })
+    expect(card).toMatchObject({ firstAppearance: plan.id, lastAppearance: plan.id })
     const outline = await project.outline()
     expect(outline.threads[0]).toMatchObject({ title: '断剑的来历', auto: true, planted: [plan.id] })
     const suggestions = await project.suggestions()
     expect(suggestions.map(item => item.kind).sort()).toEqual(['new-character', 'new-world'])
     await acceptSuggestion(bed.runtime, suggestions.find(item => item.kind === 'new-character')!.id)
-    expect((await project.findCharacter('顾七'))?.status).toBe('active')
+    expect((await project.findCharacter('顾七'))?.role).toBe('minor')
     expect((await project.chapterInfos())[0]!.digested).toBe(true)
     // Unchanged text is not digested twice.
     const calls = bed.llm.requests.length

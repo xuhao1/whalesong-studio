@@ -43,8 +43,8 @@ describe('the cast of a book', () => {
   it('gives everybody a card as full as their part is large, and one person one card', async () => {
     const { project } = bed.runtime
     // A card somebody worked on; a card the Studio made from a suggestion and nobody touched; and suggestions still waiting.
-    await project.saveCharacter({ name: '贾母', role: 'supporting', status: 'active', personality: '慈而有威，一言定家事' })
-    await project.saveCharacter({ name: '凤姐', role: 'minor', status: 'active', tagline: '管家的少奶奶' })
+    await project.saveCharacter({ name: '贾母', role: 'supporting', personality: '慈而有威，一言定家事' })
+    await project.saveCharacter({ name: '凤姐', role: 'minor', tagline: '管家的少奶奶' })
     await project.addSuggestions([
       { kind: 'new-character', title: '新人物：贾宝玉', detail: '衔玉而生', payload: { name: '贾宝玉' } },
       { kind: 'new-character', title: '新人物：智能儿', detail: '小尼姑', payload: { name: '智能儿' } },
@@ -54,7 +54,7 @@ describe('the cast of a book', () => {
     expect((await project.state()).uncarded).toEqual({ count: 3, names: ['贾宝玉', '林黛玉', '王熙凤'] })
 
     // A card the Studio made for a name that is in fact somebody else's — and has no chapter of its own for a round to ask about.
-    await project.saveCharacter({ name: '平姑娘', role: 'minor', status: 'active', tagline: '凤姐房里的丫头' })
+    await project.saveCharacter({ name: '平姑娘', role: 'minor', tagline: '凤姐房里的丫头' })
     const asked: { full: boolean; names: string[]; known: string }[] = []
     const aliasAsked: string[] = []
     bed.llm.responder = (request) => {
@@ -118,7 +118,7 @@ describe('the cast of a book', () => {
 
   it('fills in a card nobody worked on when the person turns out to matter', async () => {
     const { project } = bed.runtime
-    await project.saveCharacter({ name: '林黛玉', role: 'minor', status: 'active', tagline: '林如海之女' })
+    await project.saveCharacter({ name: '林黛玉', role: 'minor', tagline: '林如海之女' })
     bed.llm.responder = request => JSON.stringify({ characters: request.prompt.includes('一张人物卡')
       ? [{ listed: '林黛玉', name: '林黛玉', role: 'deuteragonist', personality: '敏而多思', tagline: '寄居贾府的孤女' }]
       : [] })

@@ -208,8 +208,8 @@ export async function fillPlans(runtime: ProjectRuntime, only?: readonly string[
 }
 
 /**
- * Fold a fresh memory into the bible: lifecycle fields, thread positions and
- * suggestions. What happens on another line of the plot is that line's: who
+ * Fold a fresh memory into the bible: where each character is first and last
+ * seen, thread positions and suggestions. What happens on another line of the plot is that line's: who
  * dies there is not dead in the book, and a thread paid off there is still
  * open on the main line — so of such a chapter only the new people and things
  * it names are put forward. A line made the main one has its chapters folded
@@ -229,26 +229,9 @@ async function applyMemory(runtime: ProjectRuntime, chapter: LocatedChapter, mem
     const patch: Record<string, unknown> = {}
     if (card.firstAppearance === undefined || indexOf(card.firstAppearance) > chapter.index || indexOf(card.firstAppearance) === 0) patch.firstAppearance = chapter.plan.id
     if (card.lastAppearance === undefined || indexOf(card.lastAppearance) <= chapter.index) patch.lastAppearance = chapter.plan.id
-    if (card.status === 'planned' || ((card.status === 'offstage' || card.status === 'retired') && moment.lifecycle !== 'exit' && moment.lifecycle !== 'death')) patch.status = 'active'
+    // That somebody comes on, leaves or dies here is in the digest itself, and is read from there along whichever line
+    // is looked at (`Project.lives`): nothing is written on the card about it, and nobody is asked to confirm a label.
     if (Object.keys(patch).length > 0) await project.saveCharacter({ id: card.id, ...patch })
-    // Leaving the stage or dying changes the cast for good; a human or the orchestrator confirms it.
-    if (moment.lifecycle === 'death' && card.status !== 'dead') {
-      suggestions.push({
-        kind: 'character-status',
-        title: zh ? `${card.name}：标记为已死亡？` : `${card.name}: mark as dead?`,
-        detail: moment.stateAfter ?? moment.role ?? '',
-        chapterId: chapter.plan.id,
-        payload: { character: card.id, status: 'dead' },
-      })
-    } else if (moment.lifecycle === 'exit' && card.status !== 'offstage' && card.status !== 'retired' && card.status !== 'dead') {
-      suggestions.push({
-        kind: 'character-status',
-        title: zh ? `${card.name}：标记为暂离？` : `${card.name}: mark as offstage?`,
-        detail: moment.stateAfter ?? moment.role ?? '',
-        chapterId: chapter.plan.id,
-        payload: { character: card.id, status: 'offstage' },
-      })
-    }
   }
 
   const world = await project.world()
@@ -260,7 +243,7 @@ async function applyMemory(runtime: ProjectRuntime, chapter: LocatedChapter, mem
         title: zh ? `新人物：${entity.name}` : `New character: ${entity.name}`,
         detail: entity.description,
         chapterId: chapter.plan.id,
-        payload: { name: entity.name, tagline: entity.description, status: 'active', role: 'minor', firstAppearance: chapter.plan.id, lastAppearance: chapter.plan.id },
+        payload: { name: entity.name, tagline: entity.description, role: 'minor', firstAppearance: chapter.plan.id, lastAppearance: chapter.plan.id },
       })
     } else {
       if (world.some(entry => sameName(entry.name, entity.name) || entry.aliases?.some(alias => sameName(alias, entity.name)) === true)) continue

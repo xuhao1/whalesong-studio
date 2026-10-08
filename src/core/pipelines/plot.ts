@@ -475,7 +475,6 @@ export async function buildFoundation(core: NovelCore, runtime: ProjectRuntime, 
     await project.saveCharacter({
       name,
       role: role !== undefined && ROLES.includes(role) ? role : 'supporting',
-      status: 'planned',
       ...pickText(item, ['gender', 'age', 'tagline', 'personality', 'motivation', 'flaw', 'arc', 'voice', 'appearance', 'background']),
     } as Partial<CharacterCard> & { name: string })
     characterCount += 1

@@ -1102,6 +1102,13 @@ function ImageSection({ value, keys, onChange, t, advanced }: { value: ImageSett
             <TextInput inputMode="numeric" value={value.references !== undefined ? String(value.references) : ''} placeholder={String(REFERENCES_DEFAULT)} onChange={(event) => { const count = number(event.target.value); const { references: _old, ...rest } = value; onChange(count !== undefined && count >= 0 ? { ...rest, references: Math.min(REFERENCES_MAX, Math.round(count)) } : rest) }} />
           </Field>
         ) : null}
+        {value.provider !== 'none' ? (
+          // Shown outright, not only among the fine print: it decides how many pictures a click draws.
+          <label className="nv-check">
+            <input type="checkbox" checked={value.sheetFirst !== false} onChange={(event) => { const { sheetFirst: _old, ...rest } = value; onChange(event.target.checked ? rest : { ...rest, sheetFirst: false }) }} />
+            <span>{t('画人之前先补人设图：画立绘时这个人还没有人设图，就先画人设图、再照着它画；插图、分镜画面、封面里多次出场的人也一样（各多一次绘图调用，画完会说明）。不勾：有什么就照什么画。', 'The design sheet first: a portrait of somebody without a sheet draws the sheet first and the portrait against it; so do illustrations, panels and covers for whoever comes back in the book (one more image call each, named when done). Unticked: pictures are drawn from what there is.')}</span>
+          </label>
+        ) : null}
         {value.provider === 'openai' || value.provider === 'openrouter' ? (
           <Field label={t('质量', 'Quality')}>
             <Select value={value.quality ?? ''} options={[{ value: '', label: t('模型默认', 'Model default') }, { value: 'low', label: t('低（快、省）', 'Low (fast, cheap)') }, { value: 'medium', label: t('中', 'Medium') }, { value: 'high', label: t('高', 'High') }]} onChange={(quality) => { onChange(without(value, 'quality', quality !== '' ? quality : undefined)) }} />

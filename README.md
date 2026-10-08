@@ -31,7 +31,7 @@ The showrunner never writes manuscript prose itself: it calls `novel_write` with
 
 **A story bible with people in it.** Character cards carry more than a biography: a structured persona (traits with intensity, values in priority order, speech habits, lines they would never cross, behaviour under pressure), relationships, a lifecycle status, a visual description and a voice. World entries are ranked — core canon always travels with the context, detail is fetched when relevant.
 
-**Ensemble tracking.** Every character has a lifecycle (planned → active → offstage → retired / dead). Digest notices entrances, exits and deaths in the prose and proposes the status changes. The **People** page holds everything about the book's people in one place — everyone's card, with their portrait large beside who they are, and with it the lifecycle board, a presence grid (written, planned, planned-but-missing) and the relationship graph — and warns about characters who vanished, plans that cast the dead, and leads without an arc.
+**Ensemble tracking.** No card carries a label like *active* or *dead*: a book is not one straight road, and one word does not tell a life. Everyone has a **life on the page** — the chapter they come on in, the chapters they are in, where they leave or die — read off the chapter digests along one line of the plot, and another life along another (dead on this line, somebody is alive on the one that parted earlier). The **People** page holds everything about the book's people in one place — everyone's card, with their portrait large beside who they are, the table of all their lives (on the page, coming on, leaving, dying, planned, planned-but-missing) and the relationship graph — and notes characters who vanished, plans that cast the dead, and leads without an arc (notes that fold to a line, or out of sight).
 
 **Memory that scales with the book.** After a chapter is written, the analyst extracts a summary, hard facts, each character's state at the end, new entities and thread movements. Every ten chapters roll up into an arc summary. A context pack is then built per call as **an outline of what came before plus a window of the text itself**: the whole chapters nearest to this one verbatim (half of the model's context window by default, whole chapters only), one line per chapter for everything older, and passages retrieved by keyword and, optionally, by embedding — which is the whole manuscript while it fits. Rewriting a chapter in the middle of the book, **the chapters already written after it are given too**, and the chapter must lead into them. The request is laid out for the provider's prefix cache: writing the next chapter, hundreds of thousands of tokens of earlier text gain one chapter at the end and the rest is read from the cache — how much is recorded with the usage.
 
@@ -205,7 +205,7 @@ my-novel/
 ├── novel.json                 title, premise, language, targets, active style
 ├── outline.json               volumes → chapters → beats, plot threads, and the plot lines beside the main one
 ├── bible/
-│   ├── characters/<name>.md   front matter (persona, lifecycle, looks, voice) + notes
+│   ├── characters/<name>.md   front matter (persona, life, looks, voice) + notes
 │   ├── world/<name>.md        ranked world entries
 │   └── styles/<name>.md       style profiles
 ├── manuscript/ch001.md …      the prose, one chapter per file
@@ -219,7 +219,7 @@ Details: [docs/project-format.md](./docs/project-format.md).
 
 ## Design and internals
 
-[docs/design.md](./docs/design.md) explains the reasoning behind the split of roles, the working modes, the memory layers, the context packer, the ensemble lifecycle and the stage pipelines ([中文](./docs/design.zh.md)).
+[docs/design.md](./docs/design.md) explains the reasoning behind the split of roles, the working modes, the memory layers, the context packer, the lives of an ensemble and the stage pipelines ([中文](./docs/design.zh.md)).
 
 The package is one npm module with three entry points: a Host half (project store, pipelines, jobs, the Studio's API), an agent half mounted inside the preset (tools, prompt, command), and a browser half (the Studio). See [CONTRIBUTING.md](./CONTRIBUTING.md) for the layout, the dev server and the tests.
 

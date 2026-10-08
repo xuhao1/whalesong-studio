@@ -28,7 +28,7 @@ export function stageTools(service: NovelService): ToolDefinition[] {
       description: [
         'Generate an image with the configured image model and store it in the project.',
         '- kind=sheet: a character\'s design sheet — the same person from the front, the side and the back (`target` = character). It is the reference image every later picture of them is drawn against, so make it first. With `look` it draws one of their looks (outfits) instead, derived from the main sheet so it stays the same person; a look that does not exist yet is created from `prompt` (what the outfit is).',
-        '- kind=portrait: a bust portrait (`target` = character), used for avatars and the interlude stage.',
+        '- kind=portrait: a bust portrait (`target` = character), used for avatars and the interlude stage. The sheet comes first by itself: somebody who has no design sheet gets one drawn before their portrait, and whoever comes back in the book (a part that carries it, or in two chapters or more) gets one before the first scene, panel or cover that shows them — one more image call each, named in the result. The author can turn this off (novel_settings image.sheetFirst=false).',
         '- kind=scene: an illustration for a chapter (`target` = chapter). Quote the passage to illustrate in `quote`; insert=true embeds the picture in the chapter after that passage. The characters present are found in the passage; their sheets and the place\'s reference art go along as reference images. `looks` says what someone wears ({"name": "look"}) when the passage does not make it obvious.',
         '- kind=location / kind=item with `event`: the place or the thing as it is from one turn of its course on — just built, changed, in ruins, gone. The director writes what is there to be seen once it has happened (from its usual look and that chapter), and that is drawn without people: a change or a decline against its design art, a beginning or an end from the words alone. Kept with that turn; the viewer shows it when the story is looked at from that chapter on.',
         '- kind=location: reference art for a world entry (`target` = entry); scenes set there are drawn against it.   - kind=item: design art of a key object (`target` = a world entry that is a thing): the object alone, whole, on a plain ground; pictures that show it are drawn against it.   - kind=cover: a cover for the book.   - kind=custom: `prompt` is the whole picture; `characters` lists who is in it so their sheets go along; raw=true sends the prompt exactly as written.',
@@ -74,6 +74,9 @@ export function stageTools(service: NovelService): ToolDefinition[] {
           parts?.style !== undefined ? `Art direction (${parts.styleSource === 'book' ? 'the book\'s own' : parts.styleSource === 'studio' ? 'the Studio-wide one' : 'the built-in starting point'}): ${parts.style}` : 'Art direction: none (sent as written).',
           `Kept out: ${parts?.avoid !== undefined && parts.avoid.length > 0 ? parts.avoid.join(', ') : 'nothing — the book has no avoid list (novel_settings action=book fields.artAvoid)'}`,
           `Reference images sent: ${parts?.references !== undefined && parts.references.length > 0 ? parts.references.map(reference => reference.label).join(', ') : 'none'}`,
+          // Never done behind the author's back: a sheet drawn for this picture is said with it.
+          ...(result.sheets !== undefined ? [`Drawn first, because they had none: the design sheet of ${result.sheets.join(', ')} — one more image call each. Every later picture of them is held against it. Tell the author.`] : []),
+          ...(result.sheetsFailed !== undefined ? [`Could not be drawn first: the design sheet of ${result.sheetsFailed.map(item => `${item.name} (${brief(item.error, 120)})`).join(', ')} — this picture was made from what there is of them.`] : []),
           ...(result.pinnedStyle !== undefined ? ['This book had no art direction of its own, so the one above was written into it (novel.json → artStyle). Tell the author, and change it with novel_settings action=book fields.artStyle if it is not the look they want.'] : []),
         ]
         return { text: lines.join('\n'), data: toJson(result) }
@@ -231,7 +234,7 @@ export function stageTools(service: NovelService): ToolDefinition[] {
           }
         }
         const result = await env.job('comic', 'draw panels', chapter, async task => await renderPanels(env.core, runtime, { chapter, ...(args.force !== undefined ? { force: args.force } : {}) }, task))
-        return { text: `Panels for ${result.chapterId}: ${result.rendered} drawn, ${result.failed} failed, ${result.panels} in total.`, data: toJson(result) }
+        return { text: `Panels for ${result.chapterId}: ${result.rendered} drawn, ${result.failed} failed, ${result.panels} in total.${result.sheets !== undefined ? ` Drawn first, because they come back in the book and had none: the design sheet of ${result.sheets.join(', ')} — tell the author.` : ''}`, data: toJson(result) }
       },
     }),
 

@@ -215,7 +215,7 @@ describe('the reader for other devices', () => {
   it('lets a device edit the text and play interludes once the author made the book changeable', async () => {
     const { project } = bed.runtime
     const { id } = await project.manifest()
-    const card = await project.saveCharacter({ name: '白页', role: 'protagonist', status: 'active' })
+    const card = await project.saveCharacter({ name: '白页', role: 'protagonist' })
     await bed.core.settings.update({ share: { enabled: true, port, books: [project.root], edit: [project.root] } })
     await share.apply()
     port = (await share.status()).port ?? port

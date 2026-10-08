@@ -84,7 +84,7 @@ describe('a sealed book', () => {
     bed = await createTestBed({ title: '白页遗骸' })
     const { project } = bed.runtime
     await project.updateManifest({ logline: '一个誓书全白的少女被拍卖。', author: '某人' })
-    await project.saveCharacter({ name: '白页', aliases: ['零七'], role: 'protagonist', status: 'active', appearance: '领口内侧绣着编号' })
+    await project.saveCharacter({ name: '白页', aliases: ['零七'], role: 'protagonist', appearance: '领口内侧绣着编号' })
     const plan = await project.addChapter({ title: '拍卖厅' })
     await project.saveChapterText(plan.id, '星灯港的拍卖厅是用一根旧神的肋骨撑起来的。\n“零七。”\n“在。”')
     await project.saveChapterText(plan.id, '星灯港的拍卖厅是用一根旧神的肋骨撑起来的。\n“零七。”\n“在。”\n白页没有回答。')

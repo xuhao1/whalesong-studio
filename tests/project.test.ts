@@ -39,6 +39,24 @@ describe('project store', () => {
     expect(await project.characters()).toHaveLength(0)
   })
 
+  it('keeps no word on a card for where its character stands in the book: one left by an older version is not read, and not written again', async () => {
+    const { project } = bed.runtime
+    const card = await project.saveCharacter({ name: '阿棠', role: 'supporting', personality: '爱笑' })
+    const path = join(project.root, 'bible/characters/阿棠.md')
+    // A card as older versions wrote it, with the label in its front matter.
+    await writeFile(path, (await readFile(path, 'utf8')).replace('role: supporting', 'role: supporting\nstatus: dead'))
+    expect(await readFile(path, 'utf8')).toContain('status: dead')
+    const fresh = await Project.open(project.root)
+    const read = (await fresh!.findCharacter(card.id))!
+    expect(read).toMatchObject({ name: '阿棠', role: 'supporting', personality: '爱笑' })
+    expect(read as unknown as Record<string, unknown>).not.toHaveProperty('status')
+    // Whoever still sends one — a page not reloaded yet, a suggestion made before — is not refused: it is left out.
+    const saved = await fresh!.saveCharacter({ id: card.id, age: '19', status: 'active' } as never)
+    expect(saved as unknown as Record<string, unknown>).not.toHaveProperty('status')
+    expect(await readFile(path, 'utf8')).not.toContain('status:')
+    expect(await readFile(path, 'utf8')).toContain('age:')
+  })
+
   it('picks up cards edited by hand', async () => {
     const { project } = bed.runtime
     await project.saveWorld({ name: '青冥山', category: 'location', summary: '北境群山' })

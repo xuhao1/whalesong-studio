@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 /** A character's life read off the chapter digests, along one line of the plot. */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { lifeOf, spanText, statusAt } from '../src/shared/life'
+import { lifeLine, lifeOf, lifeUntil, spanText, statusAt } from '../src/shared/life'
 import type { ChapterMemory, CharacterMoment } from '../src/shared/types'
 import { createTestBed, type TestBed } from './support/harness'
 
@@ -31,6 +31,36 @@ describe('a life on the page', () => {
     expect(statusAt(back, 3)).toBe('dead')
     expect(statusAt(back, 9)).toBe('active')
     expect(lifeOf([])).toEqual({ events: [], spans: [] })
+  })
+
+  it('is told as far as a chapter: what comes after has not happened to whoever writes that chapter', () => {
+    const life = lifeOf([moment(5), moment(6), moment(8), moment(20), moment(77, { lifecycle: 'exit' }), moment(78, { lifecycle: 'death' })])
+    // Whoever writes chapter 7 again knows of chapters 5 and 6, and of no death.
+    const early = lifeUntil(life, 6)
+    expect(early).toMatchObject({ first: 5, last: 6 })
+    expect(early.death).toBeUndefined()
+    expect(spanText(early.spans)).toEqual(['5–6'])
+    // A stretch is cut where the chapter cuts it; a leaving is the last word until the death is.
+    expect(spanText(lifeUntil(life, 7).spans)).toEqual(['5–7'])
+    expect(lifeUntil(life, 77)).toMatchObject({ exit: 77 })
+    expect(lifeUntil(life, 77).death).toBeUndefined()
+    expect(lifeUntil(life, 78)).toMatchObject({ death: 78 })
+    expect(lifeUntil(life, 78).exit).toBeUndefined()
+    expect(lifeUntil(life, 4)).toEqual({ events: [], spans: [] })
+  })
+
+  it('is said in one line of words: where they come on, the stretches they are in, how it ends', () => {
+    const dies = lifeOf([moment(9), moment(10), moment(11), moment(12, { lifecycle: 'death' })])
+    expect(lifeLine(dies, true)).toBe('第 9 章登场 · 第 12 章死亡')
+    expect(lifeLine(dies, false)).toBe('comes on in chapter 9 · dies in chapter 12')
+    // More than one stretch is worth naming; one is what the ends already say.
+    const comesBack = lifeOf([5, 6, 8, 19, 20].map(index => moment(index)))
+    expect(lifeLine(comesBack, true)).toBe('第 5 章登场 · 在场：第 5–8、19–20 章 · 最近一次在第 20 章')
+    expect(lifeLine(lifeOf([moment(3), moment(30, { lifecycle: 'exit' })]), true)).toBe('第 3 章登场 · 在场：第 3、30 章 · 第 30 章离开')
+    expect(lifeLine(lifeOf([moment(3)]), true)).toBe('第 3 章登场')
+    // Nobody the digests name: nothing to say — and never a word for "where the book has got to".
+    expect(lifeLine(lifeOf([]), true)).toBeUndefined()
+    expect(lifeLine(undefined, true)).toBeUndefined()
   })
 })
 

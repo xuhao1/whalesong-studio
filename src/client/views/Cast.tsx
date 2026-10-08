@@ -1,24 +1,24 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 /**
- * The people of a book, on one page: everyone's card, where each of them is
- * in their life on the page, who has been away too long, who is planned
- * where, how they are tied together — and those the text names who have no
- * card. One filter above says who the page is about.
+ * The people of a book, on one page: everyone's card, everyone's life chapter
+ * by chapter along a line of the plot, how they are tied together — and those
+ * the text names who have no card. One filter above says who the page is
+ * about; the notes on the ensemble sit above it all, as large as the author
+ * wants them: whole, one line, or out of the way.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { layoutAround, layoutGraph, RELATION_KINDS, relationKind, type GraphNode, type Point, type RelationKind } from '../../shared/relations'
-import type { CharacterCard, CharacterStatus, WalkOn } from '../../shared/types'
+import type { ChapterInfo, ChapterPlan, CharacterCard, WalkOn } from '../../shared/types'
 import { Icon } from '../icons'
 import type { CastTab } from '../store'
 import {
-  Button, Chip, cx, Empty, Menu, SectionTitle, Select, Spinner, Tabs, useAction, useKept, useLoad, useProject, useQuote, useSnapshot, useStudio, useT, useMediaUrl,
+  Button, Chip, cx, Empty, Menu, SectionTitle, Select, Spinner, Tabs, useKept, useLoad, useProject, useQuote, useSnapshot, useStudio, useT, useMediaUrl,
 } from '../ui'
 import { byWeight, CastFilterBar, MAIN_ROLES, matchesCast, sortCast, useCastFilter } from '../CharacterPicker'
-import { CardPhoto, CharacterCards, ROLE_LABELS, STATUS_LABELS, STATUS_TONES, type Lives } from './Characters'
-import { statusAt, type Life } from '../../shared/life'
+import { CardPhoto, CharacterCards, LIFE_MARK, ROLE_LABELS, type Lives } from './Characters'
+import { lifeLine, LIFE_AWAY, type Life } from '../../shared/life'
 import { MAIN_LINE } from '../../shared/types'
 
-const STATUSES: CharacterStatus[] = ['planned', 'active', 'offstage', 'retired', 'dead']
 /** How many notes are shown before the rest fold away: what is said first is what matters most. */
 const ADVICE_SHOWN = 6
 
@@ -26,8 +26,19 @@ interface Advice {
   tone: 'red' | 'amber' | 'blue'
   text: string
   character?: string
-  /** Something that settles the note at once. */
-  action?: { label: string; run: () => void }
+}
+
+/** How much room the notes on the ensemble take: all of them, one line, or none — a small mark by the tabs brings them back. */
+type NotesMode = 'open' | 'line' | 'hidden'
+const NOTES_KEY = 'novel-studio:cast-notes'
+
+function storedNotes(): NotesMode {
+  try {
+    const raw = localStorage.getItem(NOTES_KEY)
+    return raw === 'open' || raw === 'hidden' ? raw : 'line'
+  } catch {
+    return 'line'
+  }
 }
 
 export function CastView() {
@@ -37,14 +48,17 @@ export function CastView() {
   const { project, root } = useProject()
   const tab: CastTab = useSnapshot(snapshot => snapshot.castTab) ?? 'cards'
   const setTab = (next: CastTab): void => { controller.setCastTab(next) }
-  const { run } = useAction()
   const cards = useMemo(() => [...project.characters].sort(byWeight), [project.characters])
-  // The board, the presence table and the ties are about the people chosen here; the notes above them weigh everybody.
+  // The cards, the table of lives and the ties are about the people chosen here; the notes above them weigh everybody.
   const [filter, setFilter] = useCastFilter('cast', project.characters)
   const chapterIndex = useMemo(() => new Map([...project.chapters, ...(project.lines ?? []).flatMap(line => line.chapters)].map(chapter => [chapter.id, chapter.index])), [project.chapters, project.lines])
   const shown = useMemo(() => sortCast(cards.filter(card => matchesCast(card, filter)), filter.sort, chapterIndex, locale), [cards, filter, chapterIndex, locale])
   const [allAdvice, setAllAdvice] = useState(false)
-  const [adviceOpen, setAdviceOpen] = useState(false)
+  const [notes, setNotesMode] = useState<NotesMode>(storedNotes)
+  const setNotes = (next: NotesMode): void => {
+    setNotesMode(next)
+    try { localStorage.setItem(NOTES_KEY, next) } catch { /* private windows keep it for this visit only */ }
+  }
   // A life is read along one line of the plot: the main one, or one that parted from it.
   const plotLines = project.outline.lines ?? []
   const [wantedLine, setLine] = useKept<string>('cast.line', MAIN_LINE)
@@ -61,86 +75,44 @@ export function CastView() {
     return { ...data, ...(named !== undefined ? { line: { id: named.id, title: named.title } } : {}) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [read.data, line])
-  // The board as the labels on the cards have it — or as the story stood at a chapter of the line.
-  const [moment, setMoment] = useState<number | undefined>()
-  // How far the digests reach along the line: nothing is known of the story past the last chapter that was digested.
-  const lastIndex = lives?.chapters.filter(chapter => chapter.digested).at(-1)?.index ?? 0
-  const undigested = (lives?.chapters.length ?? 0) - (lives?.chapters.filter(chapter => chapter.digested).length ?? 0)
-  const NO_LIFE: Life = { events: [], spans: [] }
-  const standing = (card: CharacterCard): CharacterStatus => (moment !== undefined && lives !== undefined ? statusAt(lives.lives[card.id] ?? NO_LIFE, moment) : card.status)
   const presence = useMemo(() => new Map(project.presence.map(entry => [entry.character, entry])), [project.presence])
   const plans = useMemo(() => project.outline.volumes.flatMap(volume => volume.chapters), [project.outline])
   const info = useMemo(() => new Map(project.chapters.map(chapter => [chapter.id, chapter])), [project.chapters])
 
-  const rest = (ids: string[]): void => {
-    void run(async () => {
-      for (const id of ids) await controller.api.call('character.save', { root, card: { id, status: 'offstage' } })
-      controller.toast('success', t(`${ids.length} 个人物改成了"暂离"`, `${ids.length} characters are marked offstage`))
-    })
-  }
+  // What the main line's plan and its digests say that the author may want to see to. Nothing here is about a word on a
+  // card: who is dead, gone or away is what the digests tell.
   const advice = useMemo((): Advice[] => {
     const urgent: Advice[] = []
     const away: Advice[] = []
-    const notes: Advice[] = []
-    const quiet: CharacterCard[] = []
+    const lacking: Advice[] = []
     const unwritten = plans.filter(plan => info.get(plan.id)?.hasText !== true)
     for (const card of cards) {
       const seen = presence.get(card.id)
+      const gone = seen?.death ?? seen?.exit
       const planned = unwritten.filter(plan => plan.characters?.includes(card.id) === true)
-      const main = MAIN_ROLES.includes(card.role)
       // A plan that puts the dead on stage is wrong whoever they are.
-      if ((card.status === 'dead' || card.status === 'retired') && planned.length > 0) {
-        urgent.push({ tone: 'red', character: card.id, text: t(`${card.name}已${card.status === 'dead' ? '死亡' : '退场'}，但后面的章纲（第 ${planned.map(plan => info.get(plan.id)?.index).join('、')} 章）还安排了出场。`, `${card.name} is ${card.status}, yet planned chapters (${planned.map(plan => info.get(plan.id)?.index).join(', ')}) still cast them.`) })
+      const after = gone === undefined ? [] : planned.filter(plan => (info.get(plan.id)?.index ?? 0) > gone)
+      if (gone !== undefined && after.length > 0) {
+        urgent.push({ tone: 'red', character: card.id, text: t(`${card.name}在第 ${gone} 章已经${seen?.death !== undefined ? '死亡' : '离开故事'}，但后面的章纲（第 ${after.map(plan => info.get(plan.id)?.index).join('、')} 章）还安排了出场。`, `${card.name} ${seen?.death !== undefined ? 'dies' : 'leaves the story'} in chapter ${gone}, yet planned chapters (${after.map(plan => info.get(plan.id)?.index).join(', ')}) still cast them.`) })
       }
-      if (card.status === 'active' && seen !== undefined && seen.chapters.length > 0 && seen.absentFor >= 5 && planned.length === 0) {
-        // Somebody with a part who has gone missing is a question; a face in the crowd that is not seen again is how books are.
-        if (main) away.push({ tone: 'amber', character: card.id, text: t(`${card.name}已 ${seen.absentFor} 章没有出场，后面的章纲里也没有安排。让他回来，或者把状态改为"暂离"。`, `${card.name} has been away for ${seen.absentFor} chapters and no planned chapter brings them back. Bring them back, or mark them offstage.`) })
-        else quiet.push(card)
-      }
-      if (card.status === 'planned' && seen !== undefined && seen.chapters.length > 0 && main) {
-        notes.push({ tone: 'blue', character: card.id, text: t(`${card.name}已经在正文中登场，状态还是"未登场"。`, `${card.name} already appears on the page but is still marked planned.`) })
+      // Somebody with a part who has gone missing is a question; a face in the crowd that is not seen again is how books are.
+      if (gone === undefined && seen !== undefined && seen.chapters.length > 0 && seen.absentFor >= LIFE_AWAY && planned.length === 0 && MAIN_ROLES.includes(card.role)) {
+        away.push({ tone: 'amber', character: card.id, text: t(`${card.name}已 ${seen.absentFor} 章没有出场，后面的章纲里也没有安排。安排回来，或者在正文里交代去向。`, `${card.name} has been away for ${seen.absentFor} chapters and no planned chapter brings them back. Bring them back, or let the text say where they went.`) })
       }
       if ((card.role === 'protagonist' || card.role === 'deuteragonist' || card.role === 'antagonist') && (card.motivation === undefined || card.arc === undefined)) {
-        notes.push({ tone: 'blue', character: card.id, text: t(`${card.name}是主要人物，但还缺少${card.motivation === undefined ? '动机' : ''}${card.motivation === undefined && card.arc === undefined ? '和' : ''}${card.arc === undefined ? '弧光' : ''}。`, `${card.name} is a lead but has no ${[card.motivation === undefined ? 'motivation' : '', card.arc === undefined ? 'arc' : ''].filter(Boolean).join(' or ')} yet.`) })
+        lacking.push({ tone: 'blue', character: card.id, text: t(`${card.name}是主要人物，但还缺少${card.motivation === undefined ? '动机' : ''}${card.motivation === undefined && card.arc === undefined ? '和' : ''}${card.arc === undefined ? '弧光' : ''}。`, `${card.name} is a lead but has no ${[card.motivation === undefined ? 'motivation' : '', card.arc === undefined ? 'arc' : ''].filter(Boolean).join(' or ')} yet.`) })
       }
     }
-    // A label that the text has overtaken: dead or gone on the page and not on the card, or the other way round.
-    const gone = (status: CharacterStatus): boolean => status === 'dead' || status === 'retired'
-    const stale = lives === undefined || line !== MAIN_LINE ? [] : cards.flatMap((card) => {
-      const life = lives.lives[card.id]
-      if (life === undefined || life.events.length === 0) return []
-      const now = statusAt(life, lastIndex)
-      return gone(now) !== gone(card.status) || (gone(now) && now !== card.status) ? [{ card, now, at: life.death ?? life.exit ?? life.last }] : []
-    })
-    if (stale.length > 0) {
-      const names = stale.slice(0, 4).map(item => `${item.card.name}（${t(`第 ${item.at} 章${item.now === 'dead' ? '死亡' : item.now === 'retired' ? '离开' : '又出场了'}`, `ch. ${item.at}: ${item.now === 'dead' ? 'dies' : item.now === 'retired' ? 'leaves' : 'is back'}`)}）`).join(t('、', ', '))
-      urgent.push({
-        tone: 'amber',
-        text: t(`${stale.length} 个人物卡上的生命周期标签和正文对不上：${names}${stale.length > 4 ? ' 等' : ''}。标签是手填的，履历是从各章收录读出来的。`, `The lifecycle label on ${stale.length} cards does not match the text: ${names}${stale.length > 4 ? '…' : ''}. A label is set by hand; a life is read off the chapter digests.`),
-        action: { label: t(`按正文更新这 ${stale.length} 个标签`, `Set these ${stale.length} labels from the text`), run: () => {
-          void run(async () => {
-            for (const item of stale) await controller.api.call('character.save', { root, card: { id: item.card.id, status: item.now } })
-            controller.toast('success', t(`${stale.length} 个标签已按正文更新`, `${stale.length} labels set from the text`))
-          })
-        } },
-      })
-    }
     const list = [...urgent, ...away]
-    // How many the reader has to hold at once is about those with a part.
-    const active = cards.filter(card => card.status === 'active' && MAIN_ROLES.includes(card.role))
-    if (active.length > 14) list.push({ tone: 'amber', text: t(`同时活跃的主要人物和配角有 ${active.length} 个。读者很难同时记住这么多人——考虑让一部分暂离，分批登场。`, `${active.length} leads and supporting characters are active at once. Readers struggle to hold that many — rest some and bring them on in shifts.`) })
-    list.push(...notes)
-    if (quiet.length > 0) {
-      const names = quiet.slice(0, 4).map(card => card.name).join(t('、', ', '))
-      list.push({
-        tone: 'blue',
-        text: t(`另有 ${quiet.length} 个次要人物和龙套（${names}${quiet.length > 4 ? ' 等' : ''}）五章以上没有再出场。小人物来了又走是常事，不必逐个处理；想让"活跃"一栏只留真正在场的人，可以把他们一起改为"暂离"。`, `${quiet.length} minor characters and cameos (${names}${quiet.length > 4 ? ' and others' : ''}) have not been seen for five chapters or more. Small parts come and go, and none of them needs seeing to; to keep the "active" column for those who are in fact around, they can all be marked offstage together.`),
-        action: { label: t(`${quiet.length} 人改为暂离`, `Mark ${quiet.length} offstage`), run: () => { rest(quiet.map(card => card.id)) } },
-      })
-    }
+    // How many the reader has to hold at once is about those with a part who are on the page these chapters.
+    const around = cards.filter((card) => {
+      const seen = presence.get(card.id)
+      return MAIN_ROLES.includes(card.role) && seen !== undefined && seen.chapters.length > 0 && seen.death === undefined && seen.exit === undefined && seen.absentFor < LIFE_AWAY
+    })
+    if (around.length > 14) list.push({ tone: 'amber', text: t(`最近几章里同时在场的主要人物和配角有 ${around.length} 个。读者很难同时记住这么多人——考虑让一部分先退到幕后，分批登场。`, `${around.length} leads and supporting characters are on the page in the latest chapters. Readers struggle to hold that many — let some step back and bring them on in shifts.`) })
+    list.push(...lacking)
     return list
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cards, presence, plans, info, t, lives, line, lastIndex])
+  }, [cards, presence, plans, info, t])
 
   // A book with nobody in it yet: the cards, where the first one is made — and the walk-ons, where people the text names wait for one.
   if (cards.length === 0) {
@@ -155,31 +127,38 @@ export function CastView() {
     )
   }
 
-  const setStatus = (card: CharacterCard, status: CharacterStatus): void => {
-    void run(async () => { await controller.api.call('character.save', { root, card: { id: card.id, status } }) })
-  }
+  const hide = (
+    <Button size="sm" variant="ghost" icon="x" onClick={() => { setNotes('hidden') }} title={t('隐藏调度提醒：页签那一行的右边留一个小标记，点它再打开', 'Put the notes out of the way: a small mark at the end of the tabs brings them back')}>{t('隐藏', 'Hide')}</Button>
+  )
 
   return (
     <div className="nv-page nv-cast">
-      {advice.length > 0 && tab === 'cards' && !adviceOpen ? (
-        // Beside the cards the notes are one line: they are about the ensemble, and a card is being read or written here.
-        <button type="button" className="nv-advice-line" onClick={() => { setAdviceOpen(true) }} title={t('展开调度提醒', 'Unfold the scheduling notes')}>
-          <Icon name="alert" size={13} />
-          <span>{t(`调度提醒 ${advice.length} 条`, `${advice.length} scheduling notes`)}</span>
-          <span className="nv-muted">{advice[0]!.text}</span>
-          <Icon name="chevronDown" size={12} />
-        </button>
+      {advice.length > 0 && notes === 'line' ? (
+        // One line by default: the notes are about the ensemble, and whatever is below is being read or written.
+        <div className="nv-advice-bar">
+          <button type="button" className="nv-advice-line" onClick={() => { setNotes('open') }} title={t('展开调度提醒', 'Unfold the scheduling notes')}>
+            <Icon name="alert" size={13} />
+            <span>{t(`调度提醒 ${advice.length} 条`, `${advice.length} scheduling notes`)}</span>
+            <span className="nv-muted">{advice[0]!.text}</span>
+            <Icon name="chevronDown" size={12} />
+          </button>
+          {hide}
+        </div>
       ) : null}
-      {advice.length > 0 && (tab !== 'cards' || adviceOpen) ? (
+      {advice.length > 0 && notes === 'open' ? (
         <section className="nv-card">
-          <SectionTitle actions={quote !== undefined ? (
-            <Button size="sm" icon="quote" onClick={() => { quote(t(`请看一下群像调度的这些问题，给出调整方案：\n${advice.slice(0, 20).map(item => `- ${item.text}`).join('\n')}\n`, `Please look at these ensemble problems and propose how to fix them:\n${advice.slice(0, 20).map(item => `- ${item.text}`).join('\n')}\n`)) }}>{t('交给总编', 'Hand to the showrunner')}</Button>
-          ) : tab === 'cards' ? <Button size="sm" variant="ghost" icon="chevronUp" onClick={() => { setAdviceOpen(false) }}>{t('收起', 'Fold')}</Button> : undefined}>{t('调度提醒', 'Scheduling notes')}</SectionTitle>
+          <SectionTitle actions={(
+            <>
+              {quote !== undefined ? <Button size="sm" icon="quote" onClick={() => { quote(t(`请看一下群像调度的这些问题，给出调整方案：\n${advice.slice(0, 20).map(item => `- ${item.text}`).join('\n')}\n`, `Please look at these ensemble problems and propose how to fix them:\n${advice.slice(0, 20).map(item => `- ${item.text}`).join('\n')}\n`)) }}>{t('交给总编', 'Hand to the showrunner')}</Button> : null}
+              <Button size="sm" variant="ghost" icon="chevronUp" onClick={() => { setNotes('line') }} title={t('收成一行', 'Fold to one line')}>{t('收起', 'Fold')}</Button>
+              {hide}
+            </>
+          )}>{t('调度提醒', 'Scheduling notes')}</SectionTitle>
           <ul className="nv-advice">
             {(allAdvice ? advice : advice.slice(0, ADVICE_SHOWN)).map((item, index) => (
               <li key={index} className={`is-${item.tone}`}>
                 <span>{item.text}</span>
-                {item.action !== undefined ? <Button size="sm" onClick={item.action.run}>{item.action.label}</Button> : null}
+                {item.character !== undefined ? <Button size="sm" variant="ghost" onClick={() => { controller.openCharacter(item.character!) }}>{t('打开人物卡', 'Open the card')}</Button> : null}
               </li>
             ))}
           </ul>
@@ -191,114 +170,130 @@ export function CastView() {
         </section>
       ) : null}
 
-      <Tabs value={tab} onChange={setTab} tabs={[
-        { value: 'cards', label: t('人物卡', 'Cards'), icon: 'users', badge: cards.length },
-        { value: 'board', label: t('生命周期', 'Lifecycle'), icon: 'layers' },
-        { value: 'presence', label: t('出场分布', 'Presence'), icon: 'list' },
-        { value: 'relations', label: t('关系', 'Relationships'), icon: 'link' },
-        { value: 'walkons', label: t('龙套', 'Walk-ons'), icon: 'users' },
-      ]} />
+      <div className="nv-cast-tabs">
+        <Tabs value={tab} onChange={setTab} tabs={[
+          { value: 'cards', label: t('人物卡', 'Cards'), icon: 'users', badge: cards.length },
+          { value: 'lives', label: t('履历表', 'Lives'), icon: 'list' },
+          { value: 'relations', label: t('关系', 'Relationships'), icon: 'link' },
+          { value: 'walkons', label: t('龙套', 'Walk-ons'), icon: 'users' },
+        ]} />
+        {advice.length > 0 && notes === 'hidden' ? (
+          <button type="button" className="nv-advice-mark" onClick={() => { setNotes('open') }} title={t(`调度提醒 ${advice.length} 条（已隐藏）——点一下打开`, `${advice.length} scheduling notes (hidden) — click to show them`)}>
+            <Icon name="alert" size={12} /><span>{advice.length}</span>
+          </button>
+        ) : null}
+      </div>
 
       {tab !== 'walkons' ? <CastFilterBar cards={cards} value={filter} onChange={setFilter} /> : null}
 
-      {(tab === 'cards' || tab === 'board') && plotLines.length > 0 ? (
+      {(tab === 'cards' || tab === 'lives') && plotLines.length > 0 ? (
         <div className="nv-cast-line">
           <span className="nv-muted nv-small">{t('世界线', 'Line of the plot')}</span>
-          <Select value={line} options={[{ value: MAIN_LINE, label: `★ ${t('主线', 'Main line')}` }, ...plotLines.map(candidate => ({ value: candidate.id, label: `${candidate.shelved === true ? '⏸ ' : ''}${candidate.title}` }))]} onChange={(value) => { setLine(value); setMoment(undefined) }} />
-          <span className="nv-muted nv-small">{t('履历和"第几章时"都沿着这条线算：同一个人在这条线上死了，在另一条线上可以还活着。', 'A life, and where the story stood at a chapter, are read along this line: dead on one, somebody can be alive on another.')}</span>
+          <Select value={line} options={[{ value: MAIN_LINE, label: `★ ${t('主线', 'Main line')}` }, ...plotLines.map(candidate => ({ value: candidate.id, label: `${candidate.shelved === true ? '⏸ ' : ''}${candidate.title}` }))]} onChange={setLine} />
+          <span className="nv-muted nv-small">{t('履历沿着这条线读：同一个人在这条线上死了，在另一条线上可以还活着。', 'A life is read along this line: dead on one, somebody can be alive on another.')}</span>
         </div>
       ) : null}
 
       {tab === 'cards' ? <CharacterCards shown={shown} grouped={(filter.sort ?? 'weight') === 'weight'} searching={filter.query.trim().length > 0} lives={lives} /> : null}
 
-      {tab === 'board' && lives !== undefined && lastIndex > 0 ? (
-        <div className="nv-cast-moment">
-          <div className="nv-seg" role="group">
-            <button type="button" className={cx(moment === undefined && 'is-active')} onClick={() => { setMoment(undefined) }} title={t('人物卡上手填的生命周期标签', 'The lifecycle label set on each card')}>{t('卡上的标签', 'Labels on the cards')}</button>
-            <button type="button" className={cx(moment !== undefined && 'is-active')} onClick={() => { setMoment(moment ?? lastIndex) }} title={t('从各章收录读出来：故事进行到某一章时，谁还没登场、谁在场、谁暂离、谁离开了、谁死了', 'Read off the chapter digests: at a chapter of the story, who is not on yet, who is present, away, gone, dead')}>{t('按故事进度', 'As the story stood')}</button>
-          </div>
-          {moment !== undefined ? (
-            <>
-              <input className="nv-range nv-cast-slider" type="range" min={1} max={lastIndex} step={1} value={moment} onChange={(event) => { setMoment(Number(event.target.value)) }} aria-label={t('故事进行到第几章', 'How far the story has come')} />
-              <strong>{t(`第 ${moment} 章`, `Chapter ${moment}`)}</strong>
-              <span className="nv-muted nv-small">{lives.chapters.find(chapter => chapter.index === moment)?.title ?? ''}</span>
-            </>
-          ) : null}
-          {moment !== undefined && undigested > 0 ? <span className="nv-muted nv-small">{t(`（这条线收录到第 ${lastIndex} 章，还有 ${undigested} 章没有收录：没收录的章节里发生了什么，这里不知道）`, `(this line is digested up to chapter ${lastIndex}; ${undigested} chapters are not: what happens in those is not known here)`)}</span> : null}
-        </div>
-      ) : null}
-
-      {tab === 'board' ? (
-        <div className="nv-board">
-          {STATUSES.map(status => (
-            <section key={status} className="nv-board-column">
-              <header><Chip tone={STATUS_TONES[status]}>{t(...STATUS_LABELS[status])}</Chip><span className="nv-muted nv-small">{shown.filter(card => standing(card) === status).length}</span></header>
-              {shown.filter(card => standing(card) === status).map((card) => {
-                const seen = presence.get(card.id)
-                return (
-                  <article key={card.id} className="nv-board-card">
-                    <button type="button" className="nv-board-open" onClick={() => { controller.openCharacter(card.id) }} title={t(`打开「${card.name}」的人物卡`, `Open the card of ${card.name}`)}>
-                      <CardPhoto card={card} className="nv-avatar" />
-                      <span className="nv-person-text">
-                        <span className="nv-list-title">{card.name}</span>
-                        <span className="nv-list-meta">{t(...ROLE_LABELS[card.role])}{seen !== undefined && seen.chapters.length > 0 ? ` · ${t(`${seen.chapters.length} 章`, `${seen.chapters.length} ch.`)}${seen.absentFor > 0 ? t(`，离场 ${seen.absentFor}`, `, away ${seen.absentFor}`) : ''}` : ''}</span>
-                      </span>
-                    </button>
-                    <Menu icon="more" align="end" items={[
-                      { label: t('打开人物卡', 'Open the card'), icon: 'users', onSelect: () => { controller.openCharacter(card.id) } },
-                      'separator',
-                      ...STATUSES.filter(item => item !== status).map(item => ({ label: `→ ${t(...STATUS_LABELS[item])}`, onSelect: () => { setStatus(card, item) } })),
-                    ]} />
-                  </article>
-                )
-              })}
-            </section>
-          ))}
-        </div>
-      ) : null}
-
-      {tab === 'presence' ? (
-        plans.length === 0 ? <Empty icon="list" title={t('还没有章节', 'No chapters yet')} /> : (
-          <div className="nv-presence">
-            <table>
-              <thead>
-                <tr>
-                  <th />
-                  {plans.map((plan) => {
-                    const chapter = info.get(plan.id)
-                    return <th key={plan.id} title={plan.title}><button type="button" onClick={() => { controller.setView(chapter?.hasText === true ? 'read' : 'outline', plan.id) }}>{chapter?.index ?? ''}</button></th>
-                  })}
-                </tr>
-              </thead>
-              <tbody>
-                {shown.map((card) => {
-                  const seen = new Set(presence.get(card.id)?.chapters ?? [])
-                  return (
-                    <tr key={card.id}>
-                      <th><button type="button" className="nv-presence-name" onClick={() => { controller.openCharacter(card.id) }} title={t('打开人物卡', 'Open the card')}><span className={cx('nv-dot', `is-status-${card.status}`)} />{card.name}</button></th>
-                      {plans.map((plan) => {
-                        const written = info.get(plan.id)?.hasText === true
-                        const on = seen.has(plan.id)
-                        const planned = plan.characters?.includes(card.id) === true
-                        return <td key={plan.id} className={cx(on && 'is-on', !on && planned && (written ? 'is-missed' : 'is-planned'), plan.pov === card.id && 'is-pov')} title={`${card.name} · ${plan.title}${on ? '' : planned ? (written ? t('（章纲安排了，正文没有出场）', ' (planned but absent from the text)') : t('（计划出场）', ' (planned)')) : ''}`} />
-                      })}
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-            <p className="nv-muted nv-small nv-legend">
-              <span className="nv-legend-cell is-on" />{t('已出场', 'On the page')}
-              <span className="nv-legend-cell is-planned" />{t('计划出场', 'Planned')}
-              <span className="nv-legend-cell is-missed" />{t('计划了但没出场', 'Planned but absent')}
-              <span className="nv-legend-cell is-on is-pov" />{t('视角人物', 'Point of view')}
-            </p>
-          </div>
-        )
+      {tab === 'lives' ? (
+        lives !== undefined ? <LifeTable shown={shown} lives={lives} />
+          : <div className="nv-center">{read.error !== undefined ? <p className="nv-muted">{t('这个版本的工坊后台还读不出履历——点顶上的"重启"就有了。', 'This Studio service cannot read lives yet — restart it from the banner above.')}</p> : <Spinner />}</div>
       ) : null}
 
       {tab === 'relations' ? <Relations cards={shown} /> : null}
       {tab === 'walkons' ? <WalkOns cards={cards} /> : null}
+    </div>
+  )
+}
+
+/**
+ * Everyone's life in one table, along one line of the plot: a row a person, a
+ * column a chapter of the line. A filled cell is a chapter they are in — green
+ * where they come on or come back, amber where they leave, red where they die
+ * —, a pale one a chapter the outline casts them in; under each name their
+ * life in a line of words. Nothing in it is a state somebody "is in": it is
+ * what happened where, and on another line it reads otherwise.
+ */
+function LifeTable({ shown, lives }: { shown: CharacterCard[]; lives: Lives }) {
+  const { controller } = useStudio()
+  const t = useT()
+  const { project } = useProject()
+  // What the outline plans for each chapter of the line, and whether it is written: the line's own chapters and those it shares.
+  const planOf = useMemo(() => new Map<string, ChapterPlan>([...project.outline.volumes.flatMap(volume => volume.chapters), ...(project.outline.lines ?? []).flatMap(line => line.chapters)].map(plan => [plan.id, plan])), [project.outline])
+  const infoOf = useMemo(() => new Map<string, ChapterInfo>([...project.chapters, ...(project.lines ?? []).flatMap(line => line.chapters)].map(chapter => [chapter.id, chapter])), [project.chapters, project.lines])
+  const digested = lives.chapters.filter(chapter => chapter.digested).length
+  if (lives.chapters.length === 0) return <Empty icon="list" title={t('这条线上还没有章节', 'No chapters on this line yet')} />
+  const NOBODY: Life = { events: [], spans: [] }
+  return (
+    <div className="nv-presence nv-lives">
+      {digested < lives.chapters.length ? (
+        <p className="nv-muted nv-small nv-lives-note">{digested === 0
+          ? t('这条线上还没有收录过的章节：履历是从各章的收录里读出来的——在总览页点"收录"。', 'No chapter of this line is digested yet: a life is read off the chapter digests — digest them from the overview.')
+          : t(`这条线已收录 ${digested} / ${lives.chapters.length} 章：没收录的章节里发生了什么，这里不知道。`, `${digested} of this line's ${lives.chapters.length} chapters are digested: what happens in the others is not known here.`)}</p>
+      ) : null}
+      <table>
+        <thead>
+          <tr>
+            <th />
+            {lives.chapters.map(chapter => (
+              <th key={chapter.id} title={chapter.title}><button type="button" onClick={() => { controller.setView(infoOf.get(chapter.id)?.hasText === true ? 'read' : 'outline', chapter.id) }}>{chapter.index}</button></th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {shown.map((card) => {
+            const life = lives.lives[card.id] ?? NOBODY
+            const at = new Map(life.events.map(event => [event.index, event]))
+            const told = lifeLine(life, true) !== undefined ? t(lifeLine(life, true)!, lifeLine(life, false)!) : digested > 0 ? t('收录过的章节里没有他', 'in no digested chapter') : ''
+            return (
+              <tr key={card.id}>
+                <th>
+                  <button type="button" className="nv-lives-who" onClick={() => { controller.openCharacter(card.id) }} title={[t(`打开「${card.name}」的人物卡`, `Open the card of ${card.name}`), card.life].filter(Boolean).join('\n\n')}>
+                    <CardPhoto card={card} className="nv-avatar" />
+                    <span className="nv-person-text">
+                      <span className="nv-list-title">{card.name}<span className="nv-muted nv-small"> {t(...ROLE_LABELS[card.role])}</span></span>
+                      <span className={cx('nv-list-meta', life.death !== undefined && 'is-dead')}>{told}</span>
+                    </span>
+                  </button>
+                </th>
+                {lives.chapters.map((chapter) => {
+                  const event = at.get(chapter.index)
+                  const plan = planOf.get(chapter.id)
+                  const written = infoOf.get(chapter.id)?.hasText === true
+                  const planned = plan?.characters?.includes(card.id) === true
+                  const state = event !== undefined ? cx('is-on', event.kind !== 'seen' && `is-${event.kind}`)
+                    // Cast by the outline and not in the chapter: still to come while it is unwritten, missing once its digest is there.
+                    : planned ? (written && chapter.digested ? 'is-missed' : 'is-planned')
+                      : written && !chapter.digested ? 'is-unread' : undefined
+                  const mark = event !== undefined && event.kind !== 'seen' ? `${t(...LIFE_MARK[event.kind])}${event.what !== undefined ? t('：', ': ') : ''}` : ''
+                  const says = event !== undefined ? ` — ${mark}${event.what ?? (mark.length === 0 ? t('在场', 'present') : '')}`
+                    : planned ? (written && chapter.digested ? t('（章纲安排了，正文没有出场）', ' (planned but absent from the text)') : t('（计划出场）', ' (planned)'))
+                      : written && !chapter.digested ? t('（这一章还没有收录）', ' (not digested yet)') : ''
+                  return (
+                    <td
+                      key={chapter.id}
+                      className={cx(state, plan?.pov === card.id && 'is-pov')}
+                      title={`${card.name} · ${t(`第 ${chapter.index} 章`, `Ch. ${chapter.index}`)} ${chapter.title}${says}`}
+                      {...(event !== undefined ? { onClick: () => { controller.setView('read', chapter.id) } } : {})}
+                    />
+                  )
+                })}
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+      <p className="nv-muted nv-small nv-legend">
+        <span className="nv-legend-cell is-on" />{t('在场', 'On the page')}
+        <span className="nv-legend-cell is-on is-enter" />{t('登场 / 回归', 'Comes on / returns')}
+        <span className="nv-legend-cell is-on is-exit" />{t('离开', 'Leaves')}
+        <span className="nv-legend-cell is-on is-death" />{t('死亡', 'Dies')}
+        <span className="nv-legend-cell is-planned" />{t('计划出场', 'Planned')}
+        <span className="nv-legend-cell is-missed" />{t('计划了但没出场', 'Planned but absent')}
+        <span className="nv-legend-cell is-on is-pov" />{t('视角人物', 'Point of view')}
+        <span className="nv-legend-cell is-unread" />{t('还没收录', 'Not digested')}
+      </p>
     </div>
   )
 }

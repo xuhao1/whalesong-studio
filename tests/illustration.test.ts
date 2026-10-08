@@ -96,7 +96,11 @@ describe('art direction', () => {
     const card = await bed.runtime.project.saveCharacter({ name: '沈砚', appearance: '高瘦，黑发盘在脑后', visual: { prompt: 'lean woman, black hair coiled at the nape', negative: 'halo' } })
     const info = await illustrate(bed.core, bed.runtime, { kind: 'custom', prompt: '她站在门口', characters: [card.id], avoid: ['彩绘玻璃', '水印'] }, task)
     expect(info.parts?.avoid).toEqual(['文字', '水印', '十字架', '哥特式教堂', '彩绘玻璃', 'halo'])
-    for (const word of ['十字架', '哥特式教堂', '彩绘玻璃', 'halo']) expect(images.calls[0]!.prompt).toContain(word)
+    for (const word of ['十字架', '哥特式教堂', '彩绘玻璃', 'halo']) expect(images.calls.at(-1)!.prompt).toContain(word)
+    // She had no design sheet: it was drawn first — with the lists that hold for every picture of her — and the picture says so.
+    expect(info.sheets).toEqual(['沈砚'])
+    expect(images.calls).toHaveLength(2)
+    for (const word of ['十字架', '哥特式教堂', 'halo']) expect(images.calls[0]!.prompt).toContain(word)
   })
 
   it('sends a raw prompt exactly as written', async () => {
@@ -130,7 +134,7 @@ describe('visual anchors', () => {
   })
 
   it('falls back to the words of the card when no anchor exists', () => {
-    expect(looksOf({ id: 'c', name: '甲', role: 'minor', status: 'active', appearance: '短发', gender: '女', age: '三十' })).toBe('短发，女，三十')
+    expect(looksOf({ id: 'c', name: '甲', role: 'minor', appearance: '短发', gender: '女', age: '三十' })).toBe('短发，女，三十')
   })
 })
 
@@ -404,8 +408,80 @@ describe('design sheets and looks', () => {
     expect(cover.parts?.subject).toContain('红衣少年回头望向倚竹而立的素衣少女')
     expect(cover.parts?.subject).toContain('竖幅构图')
     expect(cover.parts?.subject).not.toContain('一个大家族的盛极而衰')
-    expect(cover.parts?.references).toEqual([{ path: sheet.path, label: '贾宝玉' }])
-    expect(images.calls.at(-1)!.references).toHaveLength(1)
+    // The other lead had no sheet: hers was drawn before the cover, and the cover is held against both.
+    const hers = (await project.findCharacter('林黛玉'))!.visual!.sheet!
+    expect(cover.sheets).toEqual(['林黛玉'])
+    expect(cover.parts?.references).toEqual([{ path: sheet.path, label: '贾宝玉' }, { path: hers, label: '林黛玉' }])
+    expect(images.calls.at(-1)!.references).toHaveLength(2)
+    expect((await project.findCharacter('周瑞家的'))!.visual?.sheet).toBeUndefined()
+  })
+
+  it('draws the design sheet first: before a portrait always, before a scene for whoever comes back in the book', async () => {
+    const { bed, images } = await studio()
+    const { project } = bed.runtime
+    const sheets = (): number => images.calls.filter(call => call.prompt.includes('三视图')).length
+    // A portrait of somebody without a sheet: the sheet first, the portrait against it — and the result names it.
+    const lead = await project.saveCharacter({ name: '沈砚', role: 'minor', appearance: '高瘦', visual: { prompt: 'lean woman, black hair' } })
+    const portrait = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: lead.id }, task)
+    const made = (await project.findCharacter(lead.id))!
+    expect(portrait.sheets).toEqual(['沈砚'])
+    expect(images.calls.map(call => call.prompt.includes('三视图'))).toEqual([true, false])
+    expect(made.visual?.sheet).toBeDefined()
+    expect(portrait.parts?.references).toEqual([{ path: made.visual!.sheet!, label: '沈砚' }])
+    // Drawn again, there is a sheet: nothing is drawn but the portrait, and nothing is said of sheets.
+    const again = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: lead.id }, task)
+    expect(again.sheets).toBeUndefined()
+    expect(sheets()).toBe(1)
+
+    // A scene: whoever comes back in the book — a part that carries it, or in two chapters or more — gets a sheet before
+    // it; somebody seen once does not.
+    const friend = await project.saveCharacter({ name: '阿棠', role: 'supporting', appearance: '圆脸，爱笑', visual: { prompt: 'round-faced girl' } })
+    const twice = await project.saveCharacter({ name: '老周', role: 'cameo', appearance: '驼背的船夫', visual: { prompt: 'stooped boatman' } })
+    const once = await project.saveCharacter({ name: '卖花人', role: 'cameo', appearance: '挎着竹篮', visual: { prompt: 'flower seller with a basket' } })
+    const first = await project.addChapter({ title: '码头' })
+    const second = await project.addChapter({ title: '渡船', characters: [twice.id] })
+    await project.saveChapterText(first.id, '阿棠在码头等船，老周把船靠了岸，卖花人从她身边走过。')
+    await project.saveChapterText(second.id, '老周摇着橹。')
+    const memory = (chapterId: string, names: string[]) => ({ schema: 1 as const, chapterId, textHash: 'x', updatedAt: '', brief: '', summary: '码头上的早晨', facts: [], newEntities: [], threads: [], characters: names.map(name => ({ character: name, name })) })
+    await project.saveMemory(memory(first.id, ['阿棠', '老周', '卖花人']))
+    await project.saveMemory(memory(second.id, ['老周']))
+    bed.llm.responder = () => '码头上，圆脸的姑娘望着靠岸的船'
+    const scene = await illustrate(bed.core, bed.runtime, { kind: 'scene', target: first.id, quote: '阿棠在码头等船，老周把船靠了岸，卖花人从她身边走过。' }, task)
+    expect([...(scene.sheets ?? [])].sort()).toEqual(['老周', '阿棠'].sort())
+    expect((await project.findCharacter(friend.id))!.visual?.sheet).toBeDefined()
+    expect((await project.findCharacter(twice.id))!.visual?.sheet).toBeDefined()
+    expect((await project.findCharacter(once.id))!.visual?.sheet).toBeUndefined()
+    expect(sheets()).toBe(3)
+    // The scene is held against the sheets just drawn.
+    expect(scene.parts?.references?.map(reference => reference.label).sort()).toEqual(['老周', '阿棠'].sort())
+  })
+
+  it('draws a sheet once when two pictures need it at the same time, and none where the author turned it off', async () => {
+    const { bed, images } = await studio()
+    const { project } = bed.runtime
+    const card = await project.saveCharacter({ name: '沈砚', role: 'protagonist', appearance: '高瘦', visual: { prompt: 'lean woman, black hair' } })
+    const chapter = await project.addChapter({ title: '守灵' })
+    await project.saveChapterText(chapter.id, '沈砚在棺前站了很久。')
+    bed.llm.responder = () => '一个高瘦的女人站在棺前'
+    const [one, two] = await Promise.all([
+      illustrate(bed.core, bed.runtime, { kind: 'scene', target: chapter.id }, task),
+      illustrate(bed.core, bed.runtime, { kind: 'scene', target: chapter.id }, task),
+    ])
+    expect(images.calls.filter(call => call.prompt.includes('三视图'))).toHaveLength(1)
+    expect(images.calls).toHaveLength(3)
+    // Whichever of the two drew it says so; both are held against it.
+    expect([...(one.sheets ?? []), ...(two.sheets ?? [])]).toEqual(['沈砚'])
+    const sheet = (await project.findCharacter(card.id))!.visual!.sheet!
+    for (const scene of [one, two]) expect(scene.parts?.references).toEqual([{ path: sheet, label: '沈砚' }])
+
+    // Turned off: a portrait is drawn from what there is, and no sheet with it.
+    await bed.core.settings.update({ image: { ...bed.core.currentSettings().image, sheetFirst: false } })
+    const other = await project.saveCharacter({ name: '阿棠', role: 'supporting', appearance: '圆脸', visual: { prompt: 'round-faced girl' } })
+    const before = images.calls.length
+    const portrait = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: other.id }, task)
+    expect(portrait.sheets).toBeUndefined()
+    expect(images.calls).toHaveLength(before + 1)
+    expect((await project.findCharacter(other.id))!.visual?.sheet).toBeUndefined()
   })
 
   it('draws a portrait after the sheet as the same person', async () => {

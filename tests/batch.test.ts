@@ -270,6 +270,32 @@ describe('batches of real work', () => {
       expect(images.calls).toHaveLength(5)
     })
 
+    it('puts the sheet on the table when a portrait is asked for somebody who has none', async () => {
+      const { project } = bed.runtime
+      const kept = await project.writeAsset('images/sheet-kept.png', new Uint8Array([1]))
+      const bare = await project.saveCharacter({ name: '沈璃', role: 'protagonist', appearance: '黑发，青衣', visual: { prompt: '黑发青衣的年轻女子' } })
+      const drawn = await project.saveCharacter({ name: '顾七', role: 'supporting', appearance: '黑衣，斗笠', visual: { prompt: '戴斗笠的黑衣人', sheet: kept } })
+      // Only portraits were asked for: the one without a sheet gets a sheet step of its own, seen in the table.
+      const laid = await artPlan(bed.core, bed.runtime, { portraits: [bare.id, drawn.id] })
+      expect(laid.columns).toEqual(['sheet', 'portrait'])
+      expect(laid.steps.filter(step => step.op === 'sheet').map(step => step.target)).toEqual([bare.id])
+      const result = await runBatch(laid, { origin: 'user' }, 'zh')
+      expect(result.failed).toEqual([])
+      expect(result.done).toBe(3)
+      // Her sheet before her portrait, and the portrait against it; no sheet drawn twice.
+      const subjects = images.calls.map(call => call.prompt)
+      expect(subjects.filter(prompt => prompt.includes('人物设定图'))).toHaveLength(1)
+      const sheetAt = subjects.findIndex(prompt => prompt.includes('人物设定图'))
+      const hers = subjects.findIndex(prompt => prompt.includes('人物立绘') && prompt.includes('黑发青衣'))
+      expect(hers).toBeGreaterThan(sheetAt)
+      expect(images.calls[hers]!.references).toHaveLength(1)
+      expect((await project.findCharacter(bare.id))!.visual?.sheet).toBeDefined()
+      // Turned off by the author: portraits only, as asked.
+      await bed.core.settings.update({ image: { ...bed.core.currentSettings().image, sheetFirst: false } })
+      const other = await project.saveCharacter({ name: '摆渡人', role: 'minor', appearance: '蓑衣', visual: { prompt: '披蓑衣的老人' } })
+      expect((await artPlan(bed.core, bed.runtime, { portraits: [other.id] })).columns).toEqual(['portrait'])
+    })
+
     it('draws the things that matter beside the places, each the object alone', async () => {
       const { project } = bed.runtime
       const place = await project.saveWorld({ name: '青冥山', category: 'location', summary: '北境雪山' })

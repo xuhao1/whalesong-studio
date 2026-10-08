@@ -6,13 +6,14 @@
  *
  *   CharacterCards   the list and the page of whoever is chosen in it
  *   CardPhoto        somebody's face for a list
- *   ROLE_LABELS…     how parts and stages of a life are called
+ *   ROLE_LABELS…     how parts are called, and where somebody stands at a chapter of a line
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { VoiceOption } from '../../shared/rpc'
-import type { CharacterCard, CharacterLook, CharacterRole, CharacterStatus } from '../../shared/types'
-import { spanText, type Life, type LifeEvent } from '../../shared/life'
+import type { CharacterCard, CharacterLook, CharacterRole } from '../../shared/types'
+import { lifeLine, spanText, type Life, type LifeEvent, type LifeStanding } from '../../shared/life'
 import { lines, options, useAssist } from '../forms'
+import { sheetsDrawn } from '../labels'
 import { TiesBlock } from '../Ties'
 import { Icon } from '../icons'
 import {
@@ -29,15 +30,19 @@ export const ROLE_LABELS: Record<CharacterRole, [string, string]> = {
   cameo: ['龙套', 'Cameo'],
 }
 
-export const STATUS_LABELS: Record<CharacterStatus, [string, string]> = {
-  planned: ['未登场', 'Planned'],
-  active: ['活跃', 'Active'],
-  offstage: ['暂离', 'Offstage'],
-  retired: ['已退场', 'Retired'],
-  dead: ['已死亡', 'Dead'],
+/**
+ * How it is called where somebody stands at one chapter of one line of the
+ * plot — read off their life there, never a word kept on their card.
+ */
+export const STANDING_LABELS: Record<LifeStanding, [string, string]> = {
+  planned: ['未登场', 'Not on yet'],
+  active: ['在场', 'On the page'],
+  offstage: ['暂离', 'Away'],
+  retired: ['已离开', 'Gone'],
+  dead: ['已故', 'Dead'],
 }
 
-export const STATUS_TONES: Record<CharacterStatus, 'neutral' | 'green' | 'amber' | 'blue' | 'red'> = {
+export const STANDING_TONES: Record<LifeStanding, 'neutral' | 'green' | 'amber' | 'blue' | 'red'> = {
   planned: 'blue',
   active: 'green',
   offstage: 'amber',
@@ -119,7 +124,7 @@ export function CharacterCards({ shown, grouped, searching, lives }: { shown: Ch
   const { busy, run } = useAction()
   const confirm = useConfirm()
   const create = (): Promise<unknown> => run(async () => {
-    const created = await controller.api.call('character.save', { root, card: { name: name.trim(), role: 'supporting', status: 'planned' } })
+    const created = await controller.api.call('character.save', { root, card: { name: name.trim(), role: 'supporting' } })
     setSelected(created.id)
     setCreating(false)
     setName('')
@@ -129,7 +134,9 @@ export function CharacterCards({ shown, grouped, searching, lives }: { shown: Ch
   const drawAll = (): void => {
     if (!controller.need('image')) return
     const todo = faceless.map(item => item.id)
-    confirm.ask(t(`要为列表里还没有定妆照的 ${todo.length} 个人物各画一张吗？每张调用一次绘图模型，一张一张画，随时可以在底部停下。（只画现在筛出来的这些人；想少画就先在上面筛一下。）`, `Draw a portrait for each of the ${todo.length} characters listed here without one? One image-model call each, one after another; stop any time from the bar below. (Only the people the filter shows: narrow it first to draw fewer.)`), () => {
+    // The sheet comes first: whoever has none gets one before their portrait — said here, where the calls are counted.
+    const sheetless = settings?.settings.image.sheetFirst === false ? 0 : faceless.filter(item => item.visual?.sheet === undefined).length
+    confirm.ask(t(`要为列表里还没有定妆照的 ${todo.length} 个人物各画一张吗？每张调用一次绘图模型，一张一张画，随时可以在底部停下。${sheetless > 0 ? `其中 ${sheetless} 人还没有人设图：会先画人设图、再照着它画立绘（各多一次调用）。` : ''}（只画现在筛出来的这些人；想少画就先在上面筛一下。）`, `Draw a portrait for each of the ${todo.length} characters listed here without one? One image-model call each, one after another; stop any time from the bar below. ${sheetless > 0 ? `${sheetless} of them have no design sheet yet: the sheet is drawn first and the portrait against it (one more call each). ` : ''}(Only the people the filter shows: narrow it first to draw fewer.)`), () => {
       void controller.guard(async () => {
         setBatch({ done: 0, total: todo.length })
         try {
@@ -149,11 +156,20 @@ export function CharacterCards({ shown, grouped, searching, lives }: { shown: Ch
   const groups = grouped
     ? GROUPS.map(group => ({ ...group, cards: listed.filter(item => group.roles.includes(item.role)) })).filter(group => group.cards.length > 0)
     : [{ key: 'all' as const, roles: [] as CharacterRole[], label: ['', ''] as [string, string], cards: listed }].filter(group => group.cards.length > 0)
+  // How the line looked at lets somebody go, where it does: a death or a leaving, with its chapter. Nothing for everyone else —
+  // being in the story is no news, and where the book has got to is no property of a person.
+  const end = (item: CharacterCard): { dead: boolean; text: string } | undefined => {
+    const life = lives?.lives[item.id]
+    if (life?.death !== undefined) return { dead: true, text: t(`第 ${life.death} 章死亡`, `dies in ch. ${life.death}`) }
+    if (life?.exit !== undefined) return { dead: false, text: t(`第 ${life.exit} 章离开`, `leaves in ch. ${life.exit}`) }
+    return undefined
+  }
+  const onLine = lives?.line !== undefined ? t(`（${lives.line.title}）`, ` (${lives.line.title})`) : ''
   const row = (item: CharacterCard): ReactNode => (mode === 'photos' ? (
     <li key={item.id}>
-      <button type="button" className={cx('nv-photo-card', item.id === selected && 'is-active')} onClick={() => { setSelected(item.id) }} title={item.tagline}>
+      <button type="button" className={cx('nv-photo-card', item.id === selected && 'is-active')} onClick={() => { setSelected(item.id) }} title={[item.tagline, end(item) !== undefined ? `${end(item)!.text}${onLine}` : undefined].filter(Boolean).join('\n')}>
         <CardPhoto card={item} />
-        <span className={cx('nv-dot nv-photo-status', `is-status-${item.status}`)} title={t(...STATUS_LABELS[item.status])} />
+        {end(item) !== undefined ? <span className={cx('nv-photo-end', end(item)!.dead && 'is-dead')}>{end(item)!.text}</span> : null}
         <span className="nv-photo-name">{item.name}</span>
         <span className="nv-photo-meta">{t(...ROLE_LABELS[item.role])}</span>
       </button>
@@ -166,7 +182,7 @@ export function CharacterCards({ shown, grouped, searching, lives }: { shown: Ch
           <span className="nv-list-title">{item.name}</span>
           <span className="nv-list-meta">{t(...ROLE_LABELS[item.role])}{item.tagline !== undefined ? ` · ${item.tagline}` : ''}</span>
         </span>
-        <Chip tone={STATUS_TONES[item.status]}>{t(...STATUS_LABELS[item.status])}</Chip>
+        {end(item) !== undefined ? <Chip tone={end(item)!.dead ? 'red' : 'neutral'} title={`${end(item)!.text}${onLine}`}>{end(item)!.text}</Chip> : null}
       </button>
     </li>
   ))
@@ -217,7 +233,8 @@ export function CharacterCards({ shown, grouped, searching, lives }: { shown: Ch
   )
 }
 
-const LIFE_MARK: Record<LifeEvent['kind'], [string, string]> = { enter: ['登场', 'comes on'], seen: ['', ''], return: ['回归', 'returns'], exit: ['离开', 'leaves'], death: ['死亡', 'dies'] }
+/** What a chapter is to a life, where it is more than one they are in. */
+export const LIFE_MARK: Record<LifeEvent['kind'], [string, string]> = { enter: ['登场', 'comes on'], seen: ['', ''], return: ['回归', 'returns'], exit: ['离开', 'leaves'], death: ['死亡', 'dies'] }
 
 /**
  * Somebody's life on the page: a strip of the line's chapters with the ones
@@ -329,6 +346,7 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
     controller.toast('success', t('已保存', 'Saved'))
   })
   const presence = project.presence.find(entry => entry.character === card.id)
+  const told = lives?.lives[card.id]?.first !== undefined ? lives.lives[card.id] : undefined
   const voices: VoiceOption[] = settings?.voices ?? []
   const voiceProfile = draft.voiceProfile ?? {}
   // Work on this card that is still running — also when it was started before this screen was opened.
@@ -353,8 +371,8 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
   const draw = (kind: 'sheet' | 'portrait', done: string, look?: string): Promise<unknown> | undefined => {
     if (!controller.need('image')) return undefined
     return controller.guard(async () => {
-      await controller.run('image.create', { root, kind, target: card.id, ...(look !== undefined ? { look } : {}) })
-      controller.toast('success', done)
+      const job = await controller.run('image.create', { root, kind, target: card.id, ...(look !== undefined ? { look } : {}) })
+      controller.toast('success', `${done}${sheetsDrawn(job, t)}`)
     })
   }
 
@@ -394,23 +412,25 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
           </div>
         ) : null}
         <div className="nv-person-draw">
-          <Button size="sm" variant={draft.visual?.portrait === undefined ? 'primary' : 'outline'} icon="image" disabled={dirty || (drawing !== undefined && !portraitBusy)} busy={portraitBusy} pending={t('正在画立绘…', 'Drawing the portrait…')} onClick={() => draw('portrait', t('立绘已生成', 'Portrait ready'))} title={dirty ? t('先保存当前修改', 'Save your edits first') : t('半身定妆照：列表、群像和这一页用的那张脸', 'A half-length portrait: the face the lists and this page use')}>{draft.visual?.portrait !== undefined ? t('重画立绘', 'Redraw portrait') : t('画立绘', 'Draw portrait')}</Button>
+          <Button size="sm" variant={draft.visual?.portrait === undefined ? 'primary' : 'outline'} icon="image" disabled={dirty || (drawing !== undefined && !portraitBusy)} busy={portraitBusy} pending={t('正在画立绘…', 'Drawing the portrait…')} onClick={() => draw('portrait', t('立绘已生成', 'Portrait ready'))} title={dirty ? t('先保存当前修改', 'Save your edits first') : draft.visual?.sheet === undefined ? t('半身定妆照：列表、群像和这一页用的那张脸。还没有人设图，会先画人设图、再照着它画立绘', 'A half-length portrait: the face the lists and this page use. There is no design sheet yet: it is drawn first, and the portrait against it') : t('半身定妆照：列表、群像和这一页用的那张脸（照着人设图画）', 'A half-length portrait: the face the lists and this page use (drawn against the design sheet)')}>{draft.visual?.portrait !== undefined ? t('重画立绘', 'Redraw portrait') : t('画立绘', 'Draw portrait')}</Button>
           <Button size="sm" variant="outline" icon="users" disabled={dirty || (drawing !== undefined && !sheetBusy)} busy={sheetBusy} pending={t('正在画人设图（约一两分钟）…', 'Drawing the sheet (a minute or two)…')} onClick={() => draw('sheet', t('人设图已生成', 'Design sheet ready'))} title={dirty ? t('先保存当前修改', 'Save your edits first') : t('正面、侧面、背面三视图：之后每张有此人的图都以它为参考，长相才一致', 'Front, side and back: every later picture of them is drawn with it as reference, which is what keeps the face the same')}>{draft.visual?.sheet !== undefined ? t('重画人设图', 'Redraw sheet') : t('生成人设图', 'Design sheet')}</Button>
         </div>
-        {draft.visual?.sheet === undefined ? <p className="nv-muted nv-small">{t('先生成人设图：它是之后所有图里这个人长相一致的依据。', 'Start with the design sheet: it is what keeps this face the same in every later picture.')}</p> : null}
+        {draft.visual?.sheet === undefined ? <p className="nv-muted nv-small">{t('人设图是之后所有图里这个人长相一致的依据：画立绘、插图、分镜画面之前，没有的会先画它。', 'The design sheet is what keeps this face the same in every later picture: before a portrait, an illustration or a panel is drawn, one that is missing is drawn first.')}</p> : null}
       </aside>
 
       <div className="nv-editor-form nv-person-main">
       <header className="nv-detail-head nv-person-head">
         <div className="nv-person-title">
-          <h2>{draft.name}<Chip tone="neutral">{t(...ROLE_LABELS[draft.role])}</Chip><Chip tone={STATUS_TONES[draft.status]}>{t(...STATUS_LABELS[draft.status])}</Chip></h2>
+          <h2>{draft.name}<Chip tone="neutral">{t(...ROLE_LABELS[draft.role])}</Chip></h2>
           {draft.tagline !== undefined && draft.tagline.length > 0 ? <p className="nv-person-tagline">{draft.tagline}</p> : null}
           <span className="nv-muted nv-small">
-            {presence !== undefined && presence.chapters.length > 0
-              ? presence.absentFor > 0 ? t(`出场 ${presence.chapters.length} 章，最近一次在 ${presence.absentFor} 章前`, `In ${presence.chapters.length} chapters; last seen ${presence.absentFor} chapters ago`) : t(`出场 ${presence.chapters.length} 章，最近一章还在场`, `In ${presence.chapters.length} chapters, the latest among them`)
-              : t('尚未在正文中出场', 'Not on the page yet')}
+            {/* Where they are in the book is their life, along the line looked at — told in full just below. */}
+            {told !== undefined
+              ? `${t(lifeLine(told, true) ?? '', lifeLine(told, false) ?? '')}${lives?.line !== undefined ? t(`（${lives.line.title}）`, ` (${lives.line.title})`) : ''}`
+              : lives !== undefined ? t('尚未在正文中出场', 'Not on the page yet')
+                : presence !== undefined && presence.chapters.length > 0 ? t(`出场 ${presence.chapters.length} 章`, `In ${presence.chapters.length} chapters`) : t('尚未在正文中出场', 'Not on the page yet')}
             {' · '}
-            <button type="button" className="nv-link" onClick={() => { controller.openCast('presence') }}>{t('出场分布', 'Presence')}</button>
+            <button type="button" className="nv-link" onClick={() => { controller.openCast('lives') }} title={t('所有人的履历排在一张表里：谁在哪几章在场，在哪里登场、离开、死亡', 'Everyone\'s life in one table: who is in which chapters, where they come on, leave, die')}>{t('履历表', 'Life table')}</button>
             {' · '}
             <button type="button" className="nv-link" onClick={() => { controller.openCast('relations') }}>{t('关系图', 'Relationships')}</button>
             {' · '}<button type="button" className="nv-link" onClick={() => { controller.openExplore({ type: 'character', id: card.id }) }} title={t('观看：他在"观看 → 人物"里的样子——读者看到的那一页', 'View: their page in the viewer\'s People — what a reader is shown')}>{t('观看', 'View')}</button>
@@ -436,7 +456,6 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
         <Field label={t('姓名', 'Name')}><TextInput value={draft.name} onChange={(event) => { set('name', event.target.value) }} /></Field>
         <Field label={t('别名 / 称呼', 'Aliases')} hint={t('用顿号或逗号分隔', 'Comma separated')}><TextInput value={(draft.aliases ?? []).join('、')} onChange={(event) => { set('aliases', event.target.value.split(/[、,，]+/).map(item => item.trim()).filter(Boolean)) }} /></Field>
         <Field label={t('定位', 'Role')}><Select value={draft.role} options={options(ROLE_LABELS, t)} onChange={(value) => { set('role', value) }} /></Field>
-        <Field label={t('生命周期', 'Lifecycle')}><Select value={draft.status} options={options(STATUS_LABELS, t)} onChange={(value) => { set('status', value) }} /></Field>
         <Field label={t('性别', 'Gender')}><TextInput {...text('gender')} /></Field>
         <Field label={t('年龄', 'Age')}><TextInput {...text('age')} /></Field>
       </div>

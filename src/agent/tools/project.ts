@@ -16,7 +16,7 @@ export function projectTools(service: NovelService): ToolDefinition[] {
   return [
     novelTool(service, {
       name: 'novel_status',
-      description: 'Show where the book in play stands: premise, outline with per-chapter status and length, cast with lifecycle, open plot threads, pending proposals and suggestions, the recommended next step, and the other books in reach. Call it first in a session and whenever you need to re-orient. Pass `project` to move this session — and the Studio beside the conversation — onto another book.',
+      description: 'Show where the book in play stands: premise, outline with per-chapter status and length, cast with where each of them is in the book (chapters on the page; a death or a leaving with its chapter), open plot threads, pending proposals and suggestions, the recommended next step, and the other books in reach. Call it first in a session and whenever you need to re-orient. Pass `project` to move this session — and the Studio beside the conversation — onto another book.',
       book: false,
       parameters: {
         project: { type: 'string', description: 'A book to move this session onto: its title or its path. The Studio follows, and later calls act on it.' },

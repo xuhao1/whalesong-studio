@@ -17,7 +17,7 @@ describe('exact edits', () => {
   beforeEach(async () => {
     bed = await createTestBed()
     const { project } = bed.runtime
-    await project.saveCharacter({ name: '白页', aliases: ['零七'], role: 'protagonist', status: 'active' })
+    await project.saveCharacter({ name: '白页', aliases: ['零七'], role: 'protagonist' })
     chapter = (await project.addChapter({ title: '拍卖厅' })).id
     await project.saveChapterText(chapter, TEXT, { snapshot: false })
     await project.saveChapterText((await project.addChapter({ title: '舷梯' })).id, '续页号的舷梯十七级。', { snapshot: false })
@@ -167,7 +167,7 @@ describe('people without a card', () => {
 
   it('gathers them from memory, suggestions, scripts and the voice sheet, and settles them', async () => {
     const { project } = bed.runtime
-    const lead = await project.saveCharacter({ name: '白页·零七', aliases: ['零七'], role: 'protagonist', status: 'active' })
+    const lead = await project.saveCharacter({ name: '白页·零七', aliases: ['零七'], role: 'protagonist' })
     const one = (await project.addChapter({ title: '一' })).id
     const two = (await project.addChapter({ title: '二' })).id
     await project.saveChapterText(one, '一。', { snapshot: false })
@@ -193,7 +193,7 @@ describe('people without a card', () => {
     expect(found[1]).toMatchObject({ near: lead.id, lines: 1 })
     // A card of their own: the voice they had goes with them, and so do their lines.
     const carded = await settleWalkOn(project, { name: '拍卖师', action: 'card', role: 'minor' })
-    expect(carded.card).toMatchObject({ name: '拍卖师', role: 'minor', status: 'active', tagline: '主持拍卖', firstAppearance: one, lastAppearance: two })
+    expect(carded.card).toMatchObject({ name: '拍卖师', role: 'minor', tagline: '主持拍卖', firstAppearance: one, lastAppearance: two })
     expect(carded.lines).toBe(2)
     const sheet = (await project.voiceCast())!
     expect(sheet.extras).toEqual({})

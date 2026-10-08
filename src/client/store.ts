@@ -25,7 +25,8 @@ export interface ViewerAt {
   side?: string
 }
 
-export type CastTab = 'cards' | 'board' | 'presence' | 'relations' | 'walkons'
+/** `lives`: everyone's life chapter by chapter — what the lifecycle board and the presence grid were, in one table. */
+export type CastTab = 'cards' | 'lives' | 'relations' | 'walkons'
 
 /** A request to the Host that changes or makes something and has not answered yet. */
 export interface Activity {
@@ -158,7 +159,9 @@ interface Place {
 
 const VIEWS: readonly StudioView[] = ['home', 'bible', 'outline', 'write', 'read', 'cast', 'review', 'stage', 'settings', 'usage']
 const STAGE_TABS: readonly StageTab[] = ['audio', 'comic', 'play', 'gallery', 'production']
-const CAST_TABS: readonly CastTab[] = ['cards', 'board', 'presence', 'relations', 'walkons']
+const CAST_TABS: readonly CastTab[] = ['cards', 'lives', 'relations', 'walkons']
+/** A place kept from before the two were one table still opens it. */
+const castTabOf = (value: unknown): CastTab | undefined => (value === 'board' || value === 'presence' ? 'lives' : CAST_TABS.includes(value as CastTab) ? value as CastTab : undefined)
 
 /** A kept place in the viewer, when what was kept is one. */
 function viewerAt(value: unknown): ViewerAt | undefined {
@@ -184,7 +187,7 @@ function readPlace(key: string): Place | undefined {
       ...(chapterId !== undefined ? { chapterId } : {}),
       ...(STAGE_TABS.includes(data.stageTab as StageTab) ? { stageTab: data.stageTab as StageTab } : {}),
       ...(data.readMode === 'read' || data.readMode === 'listen' || data.readMode === 'watch' ? { readMode: data.readMode } : {}),
-      ...(CAST_TABS.includes(data.castTab as CastTab) ? { castTab: data.castTab as CastTab } : {}),
+      ...(castTabOf(data.castTab) !== undefined ? { castTab: castTabOf(data.castTab)! } : {}),
       ...(viewerAt(data.album) !== undefined ? { album: viewerAt(data.album)! } : {}),
     }
   } catch {

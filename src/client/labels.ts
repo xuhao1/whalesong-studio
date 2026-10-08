@@ -72,7 +72,6 @@ export const SEVERITY_TONE: Record<IssueSeverity, Tone> = { high: 'red', medium:
 export const SUGGESTION_KIND: Record<Suggestion['kind'], Label> = {
   'new-character': ['新人物', 'New character'],
   'new-world': ['新设定', 'New world entry'],
-  'character-status': ['人物状态', 'Character status'],
   'new-thread': ['新线索', 'New thread'],
   'thread-status': ['线索状态', 'Thread status'],
   'bible-edit': ['修改设定', 'Bible change'],
@@ -297,4 +296,15 @@ export function jobTarget(job: Pick<JobInfo, 'target'>, project: Pick<ProjectSta
   const chapter = project?.chapters.find(item => item.id === ref)
   if (chapter !== undefined) return zh ? `第 ${chapter.index} 章《${chapter.title}》` : `chapter ${chapter.index}, "${chapter.title}"`
   return project?.characters.find(item => item.id === ref)?.name ?? project?.world.find(item => item.id === ref)?.name ?? (/^(play_|job_)/.test(ref) ? undefined : ref)
+}
+
+/**
+ * What a picture's job says of the design sheets it drew first — for the
+ * note that says the picture is done: a sheet drawn for it is never drawn
+ * behind the author's back.
+ * @returns an empty string where none was drawn.
+ */
+export function sheetsDrawn(job: { result?: Record<string, unknown> } | undefined, t: (zh: string, en: string) => string): string {
+  const names = Array.isArray(job?.result?.sheets) ? job.result.sheets.filter((name): name is string => typeof name === 'string') : []
+  return names.length > 0 ? t(`（先画了${names.map(name => `「${name}」`).join('、')}的人设图）`, ` (first drew the design sheet of ${names.join(', ')})`) : ''
 }

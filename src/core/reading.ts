@@ -7,7 +7,8 @@
  */
 import type { ProjectRuntime } from './core'
 import { ProjectError } from './project'
-import { L, promptLanguage, renderCharacter, renderPlan, renderStyle, renderThread, renderWorld, roleLabel, statusLabel } from './render'
+import { L, promptLanguage, renderCharacter, renderPlan, renderStyle, renderThread, renderWorld, roleLabel } from './render'
+import { lifeLine } from '../shared/life'
 import { clip } from '../shared/text'
 import type { SearchSource } from '../shared/types'
 
@@ -89,16 +90,20 @@ export async function readBook(runtime: ProjectRuntime, request: ReadRequest, to
       if (given === undefined) {
         // The cast at a glance: who there is to ask about.
         if (characters.length === 0) return { text: 'No characters on file yet.', data: [] }
+        // Where each of them is in the book is their life along the main line, as the digests tell it — not a label.
+        const told = (await project.lives()).lives
+        const life = (id: string): string => lifeLine(told[id], lang === 'zh') ?? L(lang, '正文里还没有出场', 'not on the page yet')
         return {
-          text: characters.map(card => `- ${card.name} [${card.id}; ${roleLabel(card.role, lang)}; ${statusLabel(card.status, lang)}]${card.tagline !== undefined ? ` — ${flat(card.tagline, 120)}` : ''}`).join('\n'),
-          data: characters.map(card => ({ id: card.id, name: card.name, role: card.role, status: card.status })),
+          text: characters.map(card => `- ${card.name} [${card.id}; ${roleLabel(card.role, lang)}; ${life(card.id)}]${card.tagline !== undefined ? ` — ${flat(card.tagline, 120)}` : ''}`).join('\n'),
+          data: characters.map(card => ({ id: card.id, name: card.name, role: card.role, ...(told[card.id]?.first !== undefined ? { first: told[card.id]!.first, last: told[card.id]!.last } : {}), ...(told[card.id]?.death !== undefined ? { death: told[card.id]!.death } : {}), ...(told[card.id]?.exit !== undefined ? { exit: told[card.id]!.exit } : {}) })),
         }
       }
       const card = await project.findCharacter(given)
       if (card === undefined) throw new ProjectError('novel/not-found', `no character matches "${request.ref}" — ${tools.read} what=character without \`ref\` lists the cast`)
       const presence = (await project.presence()).find(entry => entry.character === card.id)
+      const life = lifeLine((await project.lives()).lives[card.id], lang === 'zh')
       return {
-        text: `${renderCharacter(card, lang, { resolveName: nameOf })}\n\n[id ${card.id}${presence !== undefined ? `; appears in ${presence.chapters.length} chapters${presence.chapters.length > 0 ? `, last ${presence.absentFor} chapters ago` : ''}` : ''}${card.voiceProfile?.voice !== undefined ? `; voice ${card.voiceProfile.voice}` : ''}${card.visual?.portrait !== undefined ? '; has portrait' : ''}]`,
+        text: `${renderCharacter(card, lang, { resolveName: nameOf })}${life !== undefined ? `\n${L(lang, '履历（主线）', 'Life on the page (main line)')}${lang === 'zh' ? '：' : ': '}${life}` : ''}${card.life !== undefined ? `\n${card.life}` : ''}\n\n[id ${card.id}${presence !== undefined ? `; appears in ${presence.chapters.length} chapters${presence.chapters.length > 0 ? `, last ${presence.absentFor} chapters ago` : ''}` : ''}${card.voiceProfile?.voice !== undefined ? `; voice ${card.voiceProfile.voice}` : ''}${card.visual?.portrait !== undefined ? '; has portrait' : ''}]`,
         data: card,
       }
     }
