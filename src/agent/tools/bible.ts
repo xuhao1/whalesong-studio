@@ -9,12 +9,12 @@ import { deriveLook, deriveVisual } from '../../core/pipelines/illustrate'
 import { promptLanguage, renderCharacter, renderWorld } from '../../core/render'
 import type { NovelService } from '../../host/service'
 import { TIE_ENDS, TIE_KINDS, type Tie, type TieEnd, type TieKind } from '../../shared/ties'
-import { WORLD_EVENT_KINDS, type CharacterCard, type StyleProfile, type WorldEntry, type WorldEvent } from '../../shared/types'
+import { WORLD_EVENT_KINDS, withTurnPictures, type CharacterCard, type StyleProfile, type WorldEntry, type WorldEvent } from '../../shared/types'
 import { groupOf } from '../../shared/world'
 import { brief, novelTool, toJson } from './shared'
 
 const CHARACTER_FIELDS = 'name, aliases[], role (protagonist|deuteragonist|antagonist|supporting|minor|cameo), status (planned|active|offstage|retired|dead), tagline, gender, age, appearance, personality, background, motivation, flaw, arc, voice, abilities, secrets, persona {traits[{name,level 1-5}], values[], speech[], taboos[], underPressure}, relationships[{target, kind, note}], tags[], visual {prompt (the visual anchor: concrete, drawable phrases for an image model — build, face, hair, clothing, signature items; English works best), negative (what must not be drawn on them), looks[{name, prompt (what the outfit changes), when (when it is worn)}] — looks are added or updated by name and the others stay; {name, remove: true} takes one away; their design sheets are drawn with novel_illustrate kind=sheet look=…}, voiceProfile {voice, instructions, designPrompt}, notes'
-const WORLD_FIELDS = 'name, aliases[], category (setting|location|faction|system|item|history|culture|rule|term|other — location, faction and item are a place, a house or organization, a thing, each with a page of its own; everything else is an idea of the world), importance (1 core canon always in context | 2 normal | 3 detail — how its text travels with requests, not how much it matters), weight (core|major|minor|once — how much of the story it carries; leave it out and it is counted from the chapters that name it), summary, body (Markdown), related[], tags[], visualPrompt (how it looks, for its design art), events[{chapter (id or number), kind (begin|change|decline|end), what}] — its course over the story: built, changed hands, fallen to ruin, destroyed; the list given replaces the one there'
+const WORLD_FIELDS = 'name, aliases[], category (setting|location|faction|system|item|history|culture|rule|term|other — location, faction and item are a place, a house or organization, a thing, each with a page of its own; everything else is an idea of the world), importance (1 core canon always in context | 2 normal | 3 detail — how its text travels with requests, not how much it matters), weight (core|major|minor|once — how much of the story it carries; leave it out and it is counted from the chapters that name it), summary, body (Markdown), related[], tags[], visualPrompt (how it looks, for its design art), events[{chapter (id or number), kind (begin|change|decline|end), what}] — its course over the story: built, changed hands, fallen to ruin, destroyed; the list given replaces the one there (a turn kept keeps the picture drawn of it — novel_illustrate with event draws one)'
 /** How a tie reads between its two ends, for the book's record. */
 const TIE_WORDS: Record<TieKind, [string, string]> = {
   within: ['位于', 'is in'],
@@ -207,7 +207,8 @@ export function bibleTools(service: NovelService): ToolDefinition[] {
                 if (chapter === undefined) throw new ProjectError('novel/invalid', 'each of fields.events names the chapter it happens in')
                 course.push({ chapter, kind, what })
               }
-              fields.events = course
+              // The list replaces the words; a turn kept keeps the picture drawn of it — nobody means to throw a picture away by rewording.
+              fields.events = withTurnPictures(course, existing?.events)
             }
             const entry = await project.saveWorld({ ...(fields as Partial<WorldEntry>), ...(existing !== undefined ? { id: existing.id } : {}) })
             return { text: `${existing !== undefined ? 'Updated' : 'Created'} world entry "${entry.name}" (${entry.id}).\n\n${brief(renderWorld(entry, lang), 600)}`, data: toJson(entry) }

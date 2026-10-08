@@ -1591,13 +1591,49 @@ export class Project {
     await this.updateState<IllustrationInfo[]>(['illustrations.json'], [], current => [...current, info])
   }
 
-  async removeIllustration(id: string): Promise<void> {
+  /**
+   * Take a picture out of the gallery: its record, its file — and off whoever
+   * held it up as theirs: a portrait, a design sheet, a look's sheet, the design
+   * art of a place or a thing, the picture of a turn of its course. Left pointing
+   * at a file that is gone, each of those shows a broken picture. Where the text
+   * itself shows it, it stays written there: prose is the author's. (A cover that
+   * is gone is no cover: `cover()`.)
+   * @returns whose picture it was, by name; empty when it was nobody's.
+   */
+  async removeIllustration(id: string): Promise<string[]> {
     let path: string | undefined
     await this.updateState<IllustrationInfo[]>(['illustrations.json'], [], (current) => {
       path = current.find(item => item.id === id)?.path
       return current.filter(item => item.id !== id)
     })
-    if (path !== undefined) await this.remove(this.path(path))
+    if (path === undefined) return []
+    const gone: string = path
+    await this.remove(this.path(gone))
+    const held: string[] = []
+    for (const card of await this.characters()) {
+      const visual = card.visual
+      const looks = visual?.looks ?? []
+      const dressed = looks.some(look => look.sheet === gone)
+      if (visual === undefined || (visual.portrait !== gone && visual.sheet !== gone && !dressed)) continue
+      await this.saveCharacter({ id: card.id, visual: {
+        ...(visual.portrait === gone ? { portrait: '' } : {}),
+        ...(visual.sheet === gone ? { sheet: '' } : {}),
+        ...(dressed ? { looks: looks.map(look => (look.sheet === gone ? { ...look, sheet: '' } : look)) } : {}),
+      } })
+      held.push(card.name)
+    }
+    for (const entry of await this.world()) {
+      const turns = entry.events ?? []
+      const turned = turns.some(turn => turn.image === gone)
+      if (entry.visualImage !== gone && !turned) continue
+      await this.saveWorld({
+        id: entry.id,
+        ...(entry.visualImage === gone ? { visualImage: '' } : {}),
+        ...(turned ? { events: turns.map(({ image, ...turn }) => (image === undefined || image === gone ? turn : { ...turn, image })) } : {}),
+      })
+      held.push(entry.name)
+    }
+    return held
   }
 
   // ───────────── aggregate ─────────────

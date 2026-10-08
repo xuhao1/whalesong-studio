@@ -484,9 +484,10 @@ export function studioTools(service: NovelService) {
             if (images.length === 0) return { text: 'No illustrations yet.' }
             return { text: images.map(image => `- ${image.id}: ${image.kind}${image.target !== undefined ? ` of ${image.target}` : ''} — ${image.path}`).join('\n'), data: toJson(images.map(image => ({ id: image.id, kind: image.kind, path: image.path }))) }
           }
-          case 'delete_image':
-            await project.removeIllustration(need(args.id, 'id'))
-            return { text: `Illustration ${args.id} removed.` }
+          case 'delete_image': {
+            const released = await project.removeIllustration(need(args.id, 'id'))
+            return { text: `Illustration ${args.id} removed.${released.length > 0 ? ` It was the picture of ${released.join(', ')}: taken off there too, so nothing points at a file that is gone.` : ''} Where chapter text shows it, the text is as it was.` }
+          }
           case 'rewind_interlude': {
             const session = await rewindPlay(runtime, need(args.session, 'session'))
             return { text: `Took back the last turn of "${session.title}"; ${session.turns.length} turn(s) remain.` }

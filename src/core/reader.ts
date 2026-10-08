@@ -453,7 +453,7 @@ export async function readAlbum(runtime: ProjectRuntime, options: { all?: boolea
     const related = (entry.related ?? []).filter(id => known.has(id))
     // Its course, by the chapters of the line: what happens in a chapter a reader does not have is the author's plan.
     const course = (entry.events ?? [])
-      .map(event => ({ index: order.get(event.chapter), chapter: event.chapter, kind: event.kind, what: event.what }))
+      .map(event => ({ index: order.get(event.chapter), chapter: event.chapter, kind: event.kind, what: event.what, ...(typeof event.image === 'string' && event.image.length > 0 ? { image: event.image } : {}) }))
       .filter((event): event is AlbumEvent => event.index !== undefined && (all || event.index <= latest) && WORLD_EVENT_KINDS.includes(event.kind) && typeof event.what === 'string')
       .sort((left, right) => left.index - right.index)
     // Pins of what is shown, and well-formed: a mark of somebody the text has not come to says they will be there.
@@ -493,7 +493,11 @@ export function albumMedia(album: Pick<Album, 'people' | 'world'>): string[] {
     if (person.sheet !== undefined) paths.push(person.sheet)
     for (const look of person.looks ?? []) paths.push(look.sheet)
   }
-  for (const entry of album.world) if (entry.image !== undefined) paths.push(entry.image)
+  for (const entry of album.world) {
+    if (entry.image !== undefined) paths.push(entry.image)
+    // And how it looks at the turns of its course.
+    for (const event of entry.events ?? []) if (event.image !== undefined) paths.push(event.image)
+  }
   return paths
 }
 

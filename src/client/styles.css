@@ -8535,6 +8535,55 @@ blockquote.nv-issue-quote {
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
 }
 
+/* In the album: the picture of a turn of its course, beside what happened. */
+.nv-album-event-art {
+  display: inline-block;
+  width: 72px;
+  height: 44px;
+  margin-left: 10px;
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid var(--nv-border);
+  border-radius: 6px;
+  background: var(--nv-surface-2);
+  vertical-align: middle;
+  cursor: zoom-in;
+}
+
+.nv-album-event-art img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* A turn of a place's course, with the picture of how it looks from then on. */
+.nv-course-picture {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+}
+
+.nv-course-thumb {
+  flex: none;
+  width: 44px;
+  height: 30px;
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid var(--nv-border);
+  border-radius: 5px;
+  background: var(--nv-surface-2);
+  cursor: pointer;
+}
+
+.nv-course-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 /* What each has come to know along a line of the plot. */
 .nv-worldline-knows {
   flex-wrap: wrap;
@@ -9841,7 +9890,7 @@ button.nv-album-chapter:hover {
 
 .nv-course-row {
   display: grid;
-  grid-template-columns: minmax(120px, 1fr) 96px minmax(0, 2fr) auto;
+  grid-template-columns: minmax(120px, 1fr) 96px minmax(0, 2fr) auto auto;
   gap: 6px;
   align-items: center;
 }

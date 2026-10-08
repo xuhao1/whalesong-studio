@@ -1015,6 +1015,71 @@ Rules:
 }
 
 /** Distill a character's prose appearance into an anchor an image model can draw the same way every time. */
+/** What a turn of a course asks a picture to show, by its kind. */
+const TURN_ASKS: Record<'begin' | 'change' | 'decline' | 'end', [string, string]> = {
+  begin: ['它刚有的时候——正在兴建、刚刚落成，还是刚造出来：照正文写到的那个阶段写', 'when it first comes to be — being built, just finished, newly made: the stage the text has it at'],
+  change: ['变动之后——换了主人、名字、用途或形制以后，眼睛看得出的不同', 'after the change — what the eye can tell is different once it has another owner, name, use or shape'],
+  decline: ['衰败之后——冷清、失修、荒芜到了什么地步', 'in decline — how empty, unkept and overgrown it has become'],
+  end: ['终结之后——毁成了什么样，还剩下什么', 'after its end — what the ruin is like, and what is left'],
+}
+
+/**
+ * How a place or a thing looks from one turn of its course on: the paragraph
+ * the picture of that turn is drawn from. The same place as its design art,
+ * changed by what happened — and only by that.
+ * @param base.usual - how it usually looks: what its design art was drawn from.
+ * @param base.turn - what happened, and at which chapter.
+ * @param base.passages - where that chapter names it, a few lines each.
+ */
+export function turnLookTask(base: Base & { kind: 'place' | 'thing'; name: string; usual: string; turn: { index?: number; kind: 'begin' | 'change' | 'decline' | 'end'; what: string }; passages: string; avoid?: string[] }): string {
+  const avoid = (base.avoid ?? []).join(base.lang === 'zh' ? '、' : ', ')
+  const place = base.kind === 'place'
+  const ask = L(base.lang, ...TURN_ASKS[base.turn.kind])
+  return L(base.lang, `《${base.title}》里的「${base.name}」在故事里出了一件事。请写一段"这件事过后它看上去是什么样"：要照这段话给它画一张"这时的样子"，读者把时间拖到这里，看到的就是这张。
+
+## 它平常的样子（它的设定图就是照这段画的）
+${base.usual}
+
+## 发生在它身上的事
+${base.turn.index !== undefined ? `第 ${base.turn.index} 章：` : ''}${base.turn.what}
+
+## 这一章里写到它的地方
+${base.passages.length > 0 ? base.passages : '（这一章里没有找到直接写它的句子——需要的话自己去查原文。）'}
+
+## 这本书的画面里不能出现
+${avoid.length > 0 ? avoid : '（无特别限制）'}
+
+要求：
+1. 用这本书的语言写，80–160 字，一段话，不分条。
+2. 写的是同一${place ? '个地方' : '件东西'}：${place ? '格局、建筑、材质' : '形状、材质、纹饰'}这些没有变的，照"平常的样子"写；变了的，写成变过之后的样子。要写的是：${ask}。
+3. 以正文为准：正文写了的照着写；正文没写的可以补全，但要与这件事、与这本书的时代和地域相称。
+4. 只写这件事过后留在眼前的景象，画面里一个人也没有：不写人物（工匠、仆役、路人也不写），不写谁做了什么、事情的经过；不写气味、声音、寓意这类画不出来的东西；不写画风、镜头、光线效果、画质。
+5. 不要用只有读过这本书才懂的名字来代替描述。
+
+只输出 JSON：{"look": ""}`, `Something happens to "${base.name}" in "${base.title}". Write a paragraph of what it looks like once that has happened: a picture of it "as it is then" is drawn from this paragraph, and it is what a reader sees with the story's time moved here.
+
+## How it usually looks (its design art was drawn from this)
+${base.usual}
+
+## What happens to it
+${base.turn.index !== undefined ? `Chapter ${base.turn.index}: ` : ''}${base.turn.what}
+
+## Where that chapter names it
+${base.passages.length > 0 ? base.passages : '(No sentence of the chapter was found that speaks of it — read the text yourself where you need to.)'}
+
+## Must not appear in this book's pictures
+${avoid.length > 0 ? avoid : '(nothing in particular)'}
+
+Rules:
+1. In the language of the book, 50–110 words, one paragraph, no list.
+2. It is the same ${place ? 'place' : 'thing'}: what has not changed — ${place ? 'its layout, its buildings, its materials' : 'its shape, its material, its ornament'} — say as "how it usually looks" has it; what has changed, say as it is after the change. What is wanted: ${ask}.
+3. The text is law: what it says, say as it says it; what it leaves open may be filled in, in keeping with what happened and with the book's time and region.
+4. Only what is there to be seen once it has happened, with nobody in the picture: no people (no workmen, servants or passers-by either), nothing of who did what or how it went; nothing that cannot be drawn (smell, sound, meaning); no words about art style, camera, lighting effects or image quality.
+5. Do not put a name only a reader of the book understands in place of a description.
+
+Output JSON only: {"look": ""}`)
+}
+
 /**
  * The look of a place or a thing, written down from what the book says of it:
  * what its design art is drawn from, and every picture that shows it after.

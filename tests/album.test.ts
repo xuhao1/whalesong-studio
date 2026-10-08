@@ -6,11 +6,11 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { publishSite } from '../src/core/pipelines/site'
 import { bookAnswer, listSides, readAlbum, readSide, ReaderRefused } from '../src/core/reader'
-import { albumCounts, cutAlbum, entryStateAt, standingAt, worldFront, type AlbumEntry } from '../src/shared/album'
+import { albumCounts, cutAlbum, entryImageAt, entryStateAt, standingAt, worldFront, type AlbumEntry } from '../src/shared/album'
 import { layoutSpots, SCENE_BAND, SCENE_SPOTS } from '../src/shared/scene'
 import type { Tie } from '../src/shared/ties'
 import { hashText, proseOnly } from '../src/shared/text'
-import type { ChapterMemory, CharacterMoment } from '../src/shared/types'
+import { withTurnPictures, type ChapterMemory, type CharacterMoment } from '../src/shared/types'
 import { createTestBed, type TestBed } from './support/harness'
 
 describe('the album of a book', () => {
@@ -155,6 +155,61 @@ describe('the album of a book', () => {
     await project.saveWorld({ id: ids.court, events: [{ chapter: 'ch002', kind: 'begin', what: '同一件事的另一种说法' }, { chapter: 'ch003', kind: 'change', what: '改了匾额' }] })
     const merged = await project.mergeWorld(ids.garden, [ids.court])
     expect(merged.entry.events!.map(event => `${event.chapter}:${event.kind}`).sort()).toEqual(['ch002:begin', 'ch003:change', 'ch003:decline', 'ch004:end', 'nowhere:change'].sort())
+  })
+
+  it('shows a place as it is at the chapter looked at, where a turn of its course has a picture of its own', async () => {
+    const { project } = bed.runtime
+    const usual = (await project.findWorld(ids.garden))!.visualImage!
+    const ruin = await project.writeAsset('images/place-大观园-ch003-decline.png', new Uint8Array([5]))
+    await project.saveWorld({ id: ids.garden, events: [
+      { chapter: 'ch002', kind: 'begin', what: '为省亲建成' },
+      { chapter: 'ch003', kind: 'decline', what: '抄检之后一天天冷清', image: ruin },
+    ] })
+    const album = await readAlbum(bed.runtime)
+    const garden = album.world.find(entry => entry.id === ids.garden)!
+    expect(garden.events).toEqual([{ index: 2, chapter: 'ch002', kind: 'begin', what: '为省亲建成' }, { index: 3, chapter: 'ch003', kind: 'decline', what: '抄检之后一天天冷清', image: ruin }])
+    // Before the turn it is as it usually is; from the turn on, as the turn's picture has it; looked at whenever, its design art.
+    expect([1, 2, 3, 9].map(at => entryImageAt(garden, at))).toEqual([usual, usual, ruin, ruin])
+    expect(entryImageAt(garden, undefined)).toBe(usual)
+    // A later turn without a picture leaves it as it was drawn: in ruins, it stays in ruins when its gate is locked, and when it is gone.
+    const fallen: Pick<AlbumEntry, 'image' | 'events'> = { image: 'usual.png', events: [{ index: 2, chapter: 'b', kind: 'decline', what: '', image: 'ruin.png' }, { index: 3, chapter: 'c', kind: 'change', what: '' }, { index: 4, chapter: 'd', kind: 'end', what: '' }, { index: 6, chapter: 'f', kind: 'begin', what: '' }] }
+    expect([1, 2, 3, 4, 5].map(at => entryImageAt(fallen, at))).toEqual(['usual.png', 'ruin.png', 'ruin.png', 'ruin.png', 'ruin.png'])
+    // Built anew, it is as it usually is again.
+    expect(entryImageAt(fallen, 6)).toBe('usual.png')
+    // A picture of it coming to be holds until the next thing happens to it: the scaffolding is not there for good.
+    const built: Pick<AlbumEntry, 'image' | 'events'> = { image: 'usual.png', events: [{ index: 2, chapter: 'b', kind: 'begin', what: '', image: 'scaffold.png' }, { index: 3, chapter: 'c', kind: 'change', what: '' }] }
+    expect([1, 2, 3].map(at => entryImageAt(built, at))).toEqual(['usual.png', 'scaffold.png', 'usual.png'])
+    // With no design art, the pictures of its turns are all there is: none before the first, the earliest whenever, and no going back to what was never drawn.
+    const bare: Pick<AlbumEntry, 'image' | 'events'> = { events: [{ index: 2, chapter: 'b', kind: 'begin', what: '', image: 'a.png' }, { index: 3, chapter: 'c', kind: 'change', what: '' }, { index: 4, chapter: 'd', kind: 'end', what: '', image: 'z.png' }] }
+    expect([1, 2, 3, 4].map(at => entryImageAt(bare, at))).toEqual([undefined, 'a.png', 'a.png', 'z.png'])
+    expect(entryImageAt(bare, undefined)).toBe('a.png')
+    expect(entryImageAt({}, 3)).toBeUndefined()
+    // A course reworded keeps the pictures of the turns it keeps — the same turn by chapter and kind; one given anew is as given.
+    expect(withTurnPictures(
+      [{ chapter: 'ch003', kind: 'decline', what: '抄检之后人去楼空' }, { chapter: 'ch003', kind: 'change', what: '园门上了锁' }, { chapter: 'ch002', kind: 'begin', what: '落成', image: 'new.png' }],
+      [{ chapter: 'ch002', kind: 'begin', what: '为省亲建成', image: 'old.png' }, { chapter: 'ch003', kind: 'decline', what: '一天天冷清', image: ruin }],
+    )).toEqual([{ chapter: 'ch003', kind: 'decline', what: '抄检之后人去楼空', image: ruin }, { chapter: 'ch003', kind: 'change', what: '园门上了锁' }, { chapter: 'ch002', kind: 'begin', what: '落成', image: 'new.png' }])
+    expect(withTurnPictures([{ chapter: 'ch001', kind: 'begin', what: 'x' }], undefined)).toEqual([{ chapter: 'ch001', kind: 'begin', what: 'x' }])
+
+    const out = await mkdtemp(join(tmpdir(), 'novel-album-turns-'))
+    try {
+      const id = (await project.manifest()).id
+      const reader = new TextEncoder().encode('/* the reader */')
+      const names = async (): Promise<string[]> => {
+        const record = JSON.parse(await readFile(join(out, 'site.json'), 'utf8')) as { files: Record<string, string> }
+        return Object.keys(record.files).filter(path => path.startsWith('media/') && path.includes('place-')).map(path => path.split('/').at(-1)!.replace(/-[0-9a-f]{6,}(?=\.png$)/, '')).sort()
+      }
+      // A site carries the pictures of the turns it tells of —
+      await publishSite(bed.core, bed.runtime, { out, reader })
+      expect(await names()).toEqual(['place-大观园-ch003-decline.png', 'place-大观园.png'])
+      expect((await readFile(join(out, 'media', id, ...ruin.split('/')))).byteLength).toBe(1)
+      // — and of no turn after the last chapter published: that has not happened yet.
+      await publishSite(bed.core, bed.runtime, { out, reader, chapters: ['ch001', 'ch002'] })
+      expect(await names()).toEqual(['place-大观园.png'])
+      expect(await readFile(join(out, 'data', id, 'album.json'), 'utf8')).not.toContain('decline')
+    } finally {
+      await rm(out, { recursive: true, force: true })
+    }
   })
 
   it('carries where the author pinned the marks of a scene — of what is shown, and no others', async () => {

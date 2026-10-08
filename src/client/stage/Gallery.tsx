@@ -114,7 +114,20 @@ export function Gallery() {
             {project.cover === open.path
               ? <Chip tone="green">{t('这是封面', 'This is the cover')}</Chip>
               : <Button icon="book" pending={t('正在设为封面…', 'Setting the cover…')} onClick={() => controller.guard(async () => { await controller.api.call('project.update', { root, patch: { cover: open.path } }); await controller.refreshProject(); controller.toast('success', t('已设为这本书的封面', 'This is the book\'s cover now')) })}>{t('设为封面', 'Make it the cover')}</Button>}
-            <Button variant="ghost" icon="trash" onClick={() => { confirm.ask(t('删除这张图片的记录？（正文里引用它的地方不会自动移除）', 'Delete this picture from the gallery? (References in the text are not removed.)'), () => { void run(async () => { await controller.api.call('image.delete', { root, id: open.id }); setOpen(undefined); images.reload() }) }) }}>{t('删除', 'Delete')}</Button>
+            <Button variant="ghost" icon="trash" onClick={() => {
+              confirm.ask(t('删除这张图片？它是谁的立绘、人设图、设定图或"这时的样子"，会一并从那里取下；正文里插着它的地方不会自动移除。', 'Delete this picture? Where it is somebody\'s portrait or design sheet, a place\'s art or the picture of a turn of its course, it is taken off there too; where the text shows it, the text is not changed.'), () => {
+                void run(async () => {
+                  const done = await controller.api.call('image.delete', { root, id: open.id })
+                  setOpen(undefined)
+                  images.reload()
+                  const released = done.released ?? []
+                  if (released.length > 0) {
+                    await controller.refreshProject()
+                    controller.toast('info', t(`已删除。它原来是 ${released.join('、')} 的图，已从那里取下。`, `Deleted. It was the picture of ${released.join(', ')}: taken off there.`))
+                  }
+                })
+              })
+            }}>{t('删除', 'Delete')}</Button>
           </>
         )}>
           <ProjectImage className="nv-gallery-full" path={open.path} alt={open.prompt} />

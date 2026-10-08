@@ -713,12 +713,13 @@ export function createHandlers(service: NovelService): Handlers {
     // ── illustration ──
     'image.create': async ({ root, ...params }) => {
       const runtime = await open(root)
-      return job(runtime, 'illustrate', `illustrate ${params.kind}`, params.target, async task => await illustrate(core, runtime, params, task))
+      // A picture of one turn of a place's course says so: the page that asked marks that turn as being drawn.
+      return job(runtime, 'illustrate', `illustrate ${params.kind}${params.event !== undefined ? ` at ${params.event}` : ''}`, params.target, async task => await illustrate(core, runtime, params, task))
     },
     'image.list': async ({ root }) => ({ images: (await (await open(root)).project.illustrations()).reverse() }),
     'image.delete': async ({ root, id }) => {
-      await (await open(root)).project.removeIllustration(id)
-      return { ok: true }
+      const released = await (await open(root)).project.removeIllustration(id)
+      return { ok: true, released }
     },
 
     // ── audio drama ──

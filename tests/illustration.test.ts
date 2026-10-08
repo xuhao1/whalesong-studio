@@ -274,6 +274,111 @@ describe('design sheets and looks', () => {
     expect(images.calls.length).toBeGreaterThanOrEqual(4)
   })
 
+  it('draws a place or a thing as it is at one turn of its course: as the director writes it is then, against its design art, and kept with the turn', async () => {
+    const { bed, images } = await studio()
+    const { project } = bed.runtime
+    const built = await project.addChapter({ title: '落成' })
+    const raided = await project.addChapter({ title: '抄检' })
+    await project.saveChapterText(raided.id, '抄检过后，园子里的人一天比一天少。\n\n宝玉再进大观园，只见怡红院的海棠枯了半边，阶下的草没人拔，已经长到了膝盖。')
+    const garden = await project.saveWorld({
+      name: '大观园', category: 'location', visualPrompt: '粉墙黛瓦的园子，水绕着亭台',
+      events: [{ chapter: built.id, kind: 'begin', what: '贾琏会同清客审察地方，各行匠役齐集，起造省亲别院' }, { chapter: raided.id, kind: 'decline', what: '抄检之后人去楼空' }, { chapter: raided.id, kind: 'change', what: '园门上了锁' }],
+    })
+    // What happened is told as a story — who did what. The director writes what is there to be seen, and that is what is drawn.
+    bed.llm.responder = () => JSON.stringify({ look: '园子还只是工地：粉墙才砌到半人高，亭台只立起木架，水道刚挖出土槽，石料木料成堆。' })
+    const first = await illustrate(bed.core, bed.runtime, { kind: 'location', target: garden.id, event: `${built.id}:begin` }, task)
+    expect(first.parts?.subject).toContain('场景设定图，无人物')
+    expect(first.parts?.subject).toContain('亭台只立起木架')
+    expect(first.parts?.subject).not.toContain('贾琏')
+    // Nothing of its own yet: the turn is drawn from the words alone.
+    expect(images.calls.at(-1)!.references).toEqual([])
+    const design = await illustrate(bed.core, bed.runtime, { kind: 'location', target: garden.id }, task)
+    expect(design.parts?.subject).toContain('粉墙黛瓦的园子，水绕着亭台')
+    // With its design art there, a decline or a change is the same sight altered: the art goes along, as to where and what and not as to its state.
+    bed.llm.responder = () => JSON.stringify({ look: '同一座粉墙黛瓦的园子，亭台仍在，只是阶前荒草没膝，海棠枯了半边，窗纸破了，水面浮着落叶。' })
+    const ruin = await illustrate(bed.core, bed.runtime, { kind: 'location', target: garden.id, event: `${raided.id}:decline` }, task)
+    expect(ruin.parts?.subject).toContain('阶前荒草没膝')
+    expect(ruin.parts?.references).toEqual([{ path: design.path, label: '「大观园」平常的样子' }])
+    expect(images.calls.at(-1)!.references).toHaveLength(1)
+    expect(ruin.prompt).toContain('它此刻的状态以本描述为准')
+    expect(ruin.prompt).not.toContain('必须与各自的参考图一致')
+    // People are kept out of it: what happened is told with the people it happened through, the picture is of the place.
+    expect(ruin.parts?.avoid).toContain('人物')
+    // The director was handed how it usually looks, what happened and at which chapter, what a decline asks to be shown, and where that chapter names it.
+    const asked = bed.llm.requests.at(-1)!.prompt
+    expect(asked).toContain('粉墙黛瓦的园子，水绕着亭台')
+    expect(asked).toContain('第 2 章：抄检之后人去楼空')
+    expect(asked).toContain('冷清、失修、荒芜到了什么地步')
+    expect(asked).toContain('阶下的草没人拔')
+    expect(new Set([first.path, design.path, ruin.path]).size).toBe(3)
+    const saved = (await project.findWorld(garden.id))!
+    // The design art and the look it was drawn from are what they were; each picture is with its turn, and the turn nobody drew has none.
+    expect(saved.visualImage).toBe(design.path)
+    expect(saved.visualPrompt).toBe('粉墙黛瓦的园子，水绕着亭台')
+    expect(saved.events).toEqual([
+      { chapter: built.id, kind: 'begin', what: '贾琏会同清客审察地方，各行匠役齐集，起造省亲别院', image: first.path },
+      { chapter: raided.id, kind: 'decline', what: '抄检之后人去楼空', image: ruin.path },
+      { chapter: raided.id, kind: 'change', what: '园门上了锁' },
+    ])
+    // A chapter alone — by its number — is the first turn written in it; drawn again, the turn has the new picture.
+    const again = await illustrate(bed.core, bed.runtime, { kind: 'location', target: garden.id, event: '2' }, task)
+    expect((await project.findWorld(garden.id))!.events![1]!.image).toBe(again.path)
+    // What is only coming to be is another sight altogether: before the design art an image model draws the finished place — so it is drawn from the words alone.
+    const anew = await illustrate(bed.core, bed.runtime, { kind: 'location', target: garden.id, event: `${built.id}:begin` }, task)
+    expect(images.calls.at(-1)!.references).toEqual([])
+    expect(anew.parts?.references).toBeUndefined()
+    // A thing has its turns the same way. Where the director cannot be had, a picture is still drawn — from how it usually looks and the turn's own words.
+    const mirror = await project.saveWorld({ name: '风月宝鉴', category: 'item', visualPrompt: '一面带柄的铜镜', events: [{ chapter: raided.id, kind: 'end', what: '镜面碎裂' }] })
+    bed.llm.responder = () => { throw new Error('the director is not answering') }
+    const broken = await illustrate(bed.core, bed.runtime, { kind: 'item', target: mirror.id, event: `${raided.id}:end` }, task)
+    expect(broken.parts?.subject).toContain('一面带柄的铜镜，这是它终结之后的样子：镜面碎裂')
+    const kept = (await project.findWorld(mirror.id))!
+    expect(kept.visualImage).toBeUndefined()
+    expect(kept.events).toEqual([{ chapter: raided.id, kind: 'end', what: '镜面碎裂', image: broken.path }])
+    // A turn nobody wrote down is not made up: the caller is told to write it first, and nobody is asked and nothing drawn.
+    const drawn = images.calls.length
+    const requests = bed.llm.requests.length
+    await expect(illustrate(bed.core, bed.runtime, { kind: 'location', target: garden.id, event: `${built.id}:end` }, task)).rejects.toThrow(/has nothing at/)
+    await expect(illustrate(bed.core, bed.runtime, { kind: 'item', target: mirror.id, event: '1' }, task)).rejects.toThrow(/write the turn down first/)
+    expect(images.calls.length).toBe(drawn)
+    expect(bed.llm.requests.length).toBe(requests)
+  })
+
+  it('takes a deleted picture off whoever held it up as theirs, and says whose it was', async () => {
+    const { bed } = await studio()
+    const { project } = bed.runtime
+    const card = await project.saveCharacter({ name: '沈砚', appearance: '高瘦', visual: { prompt: 'lean woman, black hair', looks: [{ id: 'mourning', name: '丧服', prompt: 'black mourning robe' }] } })
+    const sheet = await illustrate(bed.core, bed.runtime, { kind: 'sheet', target: card.id }, task)
+    const look = await illustrate(bed.core, bed.runtime, { kind: 'sheet', target: card.id, look: '丧服' }, task)
+    const portrait = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id }, task)
+    const chapter = await project.addChapter({ title: '塌' })
+    const place = await project.saveWorld({ name: '咏礼庭', category: 'location', visualPrompt: '低矮的夯土圆厅', events: [{ chapter: chapter.id, kind: 'decline', what: '塌了半边' }] })
+    const art = await illustrate(bed.core, bed.runtime, { kind: 'location', target: place.id }, task)
+    bed.llm.responder = () => JSON.stringify({ look: '夯土圆厅塌了半边，天井的光照在碎土上' })
+    const turn = await illustrate(bed.core, bed.runtime, { kind: 'location', target: place.id, event: chapter.id }, task)
+    expect(await project.illustrations()).toHaveLength(5)
+
+    // A look's sheet: the look stays, without it; the person's own sheet and portrait are theirs still.
+    expect(await project.removeIllustration(look.id)).toEqual(['沈砚'])
+    const dressed = (await project.findCharacter(card.id))!
+    expect(dressed.visual?.looks).toEqual([{ id: 'mourning', name: '丧服', prompt: 'black mourning robe' }])
+    expect(dressed.visual?.sheet).toBe(sheet.path)
+    expect(dressed.visual?.portrait).toBe(portrait.path)
+    expect(await project.removeIllustration(portrait.id)).toEqual(['沈砚'])
+    expect((await project.findCharacter(card.id))!.visual?.portrait).toBeUndefined()
+    // The picture of a turn: the turn stays as it was written, the design art is untouched.
+    expect(await project.removeIllustration(turn.id)).toEqual(['咏礼庭'])
+    const standing = (await project.findWorld(place.id))!
+    expect(standing.events).toEqual([{ chapter: chapter.id, kind: 'decline', what: '塌了半边' }])
+    expect(standing.visualImage).toBe(art.path)
+    expect(await project.removeIllustration(art.id)).toEqual(['咏礼庭'])
+    expect((await project.findWorld(place.id))!.visualImage).toBeUndefined()
+    // The files are gone with their records; a picture nobody has is nobody's.
+    await expect(readFile(join(bed.runtime.project.root, ...turn.path.split('/')))).rejects.toThrow()
+    expect(await project.removeIllustration('img_nothing')).toEqual([])
+    expect((await project.illustrations()).map(item => item.id)).toEqual([sheet.id])
+  })
+
   it('composes a cover from what the book is — its story, its tone, its leads — not from its title', async () => {
     const { bed, images } = await studio()
     const { project } = bed.runtime

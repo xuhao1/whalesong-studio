@@ -21,7 +21,7 @@
  * Every picture records what its prompt was assembled from.
  */
 import { mergeAvoid, pictureSize, resolveArtStyle, splitAvoid, type ArtSource } from '../../shared/art'
-import type { CharacterCard, CharacterLook, IllustrationInfo, IllustrationParts, PromptLanguage, WorldEntry } from '../../shared/types'
+import type { CharacterCard, CharacterLook, IllustrationInfo, IllustrationParts, PromptLanguage, WorldEntry, WorldEvent } from '../../shared/types'
 import { referencesOf } from '../../shared/types'
 import { clip, fuzzyFind, hashText, newId, sameName, slugify } from '../../shared/text'
 import { groupOf } from '../../shared/world'
@@ -32,7 +32,7 @@ import { assign } from '../crew'
 import { extensionOf, type ImageProvider, type ImageReference } from '../media/image'
 import { ProviderError } from '../media/http'
 import { ProjectError } from '../project'
-import { artDirectionTask, coverPromptTask, illustrationPromptTask, lookTask, visualAnchorTask } from '../prompts'
+import { artDirectionTask, coverPromptTask, illustrationPromptTask, lookTask, turnLookTask, visualAnchorTask } from '../prompts'
 import { L, promptLanguage, renderCharacter, renderWorld } from '../render'
 import { isAbort } from '../util/async'
 
@@ -59,6 +59,12 @@ export interface IllustrateParams {
   avoid?: string[]
   /** Custom: send the prompt exactly as written — no art direction, no avoid list. */
   raw?: boolean
+  /**
+   * Location, item: draw it as it is from one turn of its course on — built, changed, in ruins — and keep the picture
+   * with that turn, not as its design art. Named by the turn's chapter (id or number), or `<chapter>:<kind>` where a
+   * chapter has several.
+   */
+  event?: string
 }
 
 export async function requireImages(core: NovelCore, runtime?: ProjectRuntime): Promise<ImageProvider> {
@@ -356,6 +362,121 @@ async function withLook(core: NovelCore, runtime: ProjectRuntime, entry: WorldEn
   }
 }
 
+/** How a turn of a place's or a thing's course is put to an image model: what it is like from then on. */
+const TURN_WORDS: Record<WorldEvent['kind'], [string, string]> = {
+  begin: ['这是它刚成形时的样子', 'as it is when it has just come to be'],
+  change: ['这是它变动之后的样子', 'as it is after it changed'],
+  decline: ['这是它衰败之后的样子，不再是全盛时的光景', 'as it is in decline, no longer what it was at its height'],
+  end: ['这是它终结之后的样子', 'as it is after its end'],
+}
+
+const turnSubject = (turn: WorldEvent, lang: PromptLanguage): string => `${L(lang, ...TURN_WORDS[turn.kind])}${L(lang, '：', ': ')}${turn.what}`
+
+/**
+ * What a picture of a turn is drawn against. A change or a decline is the same
+ * sight altered, and the design art goes along — as to where and what, not as
+ * to the state it is in: sent with the usual "must match its reference", an
+ * image model hands the design art back as it is. What is only coming to be,
+ * and what is left after the end, is another sight altogether: with the design
+ * art before it, an image model draws the finished place with a little rubble
+ * on the ground. Those are drawn from the director's words alone.
+ */
+function turnAgainst(entry: WorldEntry, turn: WorldEvent | undefined, lang: PromptLanguage): Pick<RenderInput, 'references' | 'referenceNote'> {
+  if (turn === undefined || entry.visualImage === undefined || turn.kind === 'begin' || turn.kind === 'end') return {}
+  return {
+    references: [{ path: entry.visualImage, label: L(lang, `「${entry.name}」平常的样子`, `"${entry.name}" as it usually is`) }],
+    referenceNote: L(lang,
+      '这是同一处在另一个时候：它在哪里、朝向和主要部分的布局照参考图；它此刻的状态以本描述为准——描述与参考图不一样的地方，一律照描述画（改了的照改过的画，荒废、失修的不要画成完好的）。',
+      'This is the same place at another time: where it lies, how it faces and how its main parts are laid out follow the reference; the state it is in follows this description — wherever the description and the reference differ, draw the description (what has changed, as it is after the change; what is run down or unkept is not drawn whole).'),
+  }
+}
+
+/**
+ * The turn of an entry's course a picture is asked for.
+ * @param ref - `<chapter>:<kind>`, or the chapter alone (its id, its number): the first turn in that chapter.
+ * @throws ProjectError `novel/not-found` when the entry's course has no such turn.
+ */
+async function turnOf(project: ProjectRuntime['project'], entry: WorldEntry, ref: string): Promise<WorldEvent> {
+  const [named, kind] = ref.includes(':') ? [ref.slice(0, ref.lastIndexOf(':')), ref.slice(ref.lastIndexOf(':') + 1)] : [ref, undefined]
+  const chapter = (await project.findChapter(named.trim()))?.plan.id ?? named.trim()
+  const turn = (entry.events ?? []).find(event => event.chapter === chapter && (kind === undefined || event.kind === kind))
+  if (turn === undefined) throw new ProjectError('novel/not-found', `the course of "${entry.name}" has nothing at "${ref}" — write the turn down first (what happens to it, and in which chapter)`)
+  return turn
+}
+
+/** Keep a picture with the turn of the course it shows; the entry's design art stays what it was. */
+async function keepTurnPicture(project: ProjectRuntime['project'], entry: WorldEntry, turn: WorldEvent, path: string): Promise<void> {
+  const current = (await project.findWorld(entry.id))?.events ?? entry.events ?? []
+  await project.saveWorld({ id: entry.id, events: current.map(event => (event.chapter === turn.chapter && event.kind === turn.kind ? { ...event, image: path } : event)) })
+}
+
+/**
+ * What a place or a thing looks like from one turn of its course on, for the
+ * picture of that turn. What happened is told as a story — who did what —
+ * and an image model draws that as written: people, and the place as it ever
+ * was. So the director writes what is there to be seen once it has happened,
+ * from how the place usually looks and what that chapter says of it. Where no
+ * model can write it, the usual look and the turn's own words stand in.
+ */
+async function turnLook(core: NovelCore, runtime: ProjectRuntime, entry: WorldEntry, turn: WorldEvent, task: TaskContext): Promise<string> {
+  const { project } = runtime
+  const manifest = await project.manifest()
+  const lang = promptLanguage(manifest.language)
+  const comma = L(lang, '，', ', ')
+  const usual = entry.visualPrompt !== undefined && entry.visualPrompt.trim().length > 0 ? entry.visualPrompt.trim() : `${entry.name}${comma}${entry.summary ?? clip(entry.body ?? '', 200, '')}`
+  const plain = joinParts([usual, turnSubject(turn, lang)], comma)
+  try {
+    const art = await artDirectionOf(core, runtime)
+    const chapter = await project.findChapter(turn.chapter)
+    // Where the chapter it happens in names it: the sentences around each mention, as far as the room goes.
+    const names = [entry.name, ...(entry.aliases ?? [])].map(name => name.trim()).filter(name => name.length >= 2)
+    const passages: string[] = []
+    const text = chapter !== undefined && names.length > 0 ? await project.chapterText(chapter.plan.id).catch(() => '') : ''
+    if (text.length > 0) {
+      let room = LOOK_PASSAGES
+      let from = 0
+      while (room > 0) {
+        const hits = names.map(name => text.indexOf(name, from)).filter(at => at >= 0)
+        if (hits.length === 0) break
+        const at = Math.min(...hits)
+        const excerpt = text.slice(Math.max(0, at - 160), Math.min(text.length, at + 320)).replace(/\s+/g, ' ').trim()
+        passages.push(`……${excerpt}……`)
+        room -= excerpt.length
+        from = at + 320
+      }
+    }
+    const { value } = await assign(core, runtime, task, {
+      role: 'director',
+      label: L(lang, `定这时的样子 · ${entry.name}`, `Look then · ${entry.name}`),
+      tool: 'set_look',
+      maxSteps: 10,
+      what: L(lang, '这个地方（或这件东西）在这件事之后长什么样：一段给画面用的描述', 'what this place (or thing) looks like once this has happened: a paragraph for its picture'),
+      prompt: turnLookTask({
+        lang,
+        language: manifest.language,
+        title: manifest.title,
+        kind: groupOf(entry.category) === 'items' ? 'thing' : 'place',
+        name: entry.name,
+        usual,
+        turn: { ...(chapter !== undefined ? { index: chapter.index } : {}), kind: turn.kind, what: turn.what },
+        passages: passages.join('\n'),
+        avoid: art.avoid,
+      }),
+      temperature: 0.3,
+      validate: (raw) => {
+        const record = asRecord(raw)
+        if (asText(record.look) === undefined) throw new Error('"look" is empty')
+        return record
+      },
+    })
+    return asText(value.look)!
+  } catch (error) {
+    if (isAbort(error) || task.signal?.aborted === true) throw error
+    core.log(`could not write down how ${entry.name} looks at ${turn.chapter}; drawing from the turn's own words`, error)
+    return plain
+  }
+}
+
 // ───────────────────────────── one picture ─────────────────────────────
 
 export interface RenderInput {
@@ -373,6 +494,8 @@ export interface RenderInput {
   avoid?: string[]
   /** Reference pictures, in the order the prompt numbers them. */
   references?: { path: string; label: string }[]
+  /** What the references are for, where it is not "whoever and whatever they show must match": said after their list, in its place. */
+  referenceNote?: string
 }
 
 /** Trailing punctuation of one part would otherwise sit against the next part's label. */
@@ -398,8 +521,8 @@ export async function renderImage(core: NovelCore, runtime: ProjectRuntime, inpu
     }
   }
   const referenceLine = references.length === 0 ? undefined : zh
-    ? `参考图：${references.map((reference, index) => `第${index + 1}张是${reference.label}`).join('；')}。画面里出现的这些人物和场所必须与各自的参考图一致（脸、发型、体型、服装、结构与材质）；构图、动作与光线以本描述为准。`
-    : `Reference images: ${references.map((reference, index) => `#${index + 1} shows ${reference.label}`).join('; ')}. Whoever and whatever they show must match their reference (face, hair, build, clothing, structure and materials); composition, action and light follow this description.`
+    ? `参考图：${references.map((reference, index) => `第${index + 1}张是${reference.label}`).join('；')}。${input.referenceNote ?? '画面里出现的这些人物和场所必须与各自的参考图一致（脸、发型、体型、服装、结构与材质）；构图、动作与光线以本描述为准。'}`
+    : `Reference images: ${references.map((reference, index) => `#${index + 1} shows ${reference.label}`).join('; ')}. ${input.referenceNote ?? 'Whoever and whatever they show must match their reference (face, hair, build, clothing, structure and materials); composition, action and light follow this description.'}`
   const art = input.art === false ? undefined : input.art
   const styleLine = art !== undefined ? `${zh ? '画风：' : 'Style: '}${tidy(art.style)}` : undefined
   const avoid = art !== undefined || (input.avoid?.length ?? 0) > 0 ? mergeAvoid(art?.avoid, input.avoid) : []
@@ -539,14 +662,27 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
     if (found === undefined) throw new ProjectError('novel/not-found', `no world entry matches "${params.target ?? ''}"`)
     // What it looks like is written down first, from the book: then it is drawn, and drawn the same again.
     const entry = await withLook(core, runtime, found, task)
+    const turn = params.event !== undefined ? await turnOf(project, entry, params.event) : undefined
     const subject = joinParts([
       L(lang, '场景设定图，无人物，远景，交代空间结构、材质与光线', 'environment design art, no people, wide shot showing layout, materials and light'),
-      entry.visualPrompt ?? `${entry.name}${comma}${entry.summary ?? clip(entry.body ?? '', 200, '')}`,
+      // At a turn of its course: as the director writes it is then — the same place, changed by what happened.
+      turn !== undefined ? await turnLook(core, runtime, entry, turn, task) : entry.visualPrompt ?? `${entry.name}${comma}${entry.summary ?? clip(entry.body ?? '', 200, '')}`,
       params.prompt,
     ], comma)
-    const info = await renderImage(core, runtime, { subject, kind: 'location', target: entry.id, name: `location-${entry.id}`, size: params.size ?? pictureSize(core.currentSettings().image, 'location'), art, ...(params.avoid !== undefined ? { avoid: params.avoid } : {}) }, task)
-    // The place's reference art: scenes set here send it along.
-    await project.saveWorld({ id: entry.id, visualImage: info.path })
+    const info = await renderImage(core, runtime, {
+      subject,
+      kind: 'location',
+      target: entry.id,
+      name: `location-${entry.id}${turn !== undefined ? `-${turn.chapter}-${turn.kind}` : ''}`,
+      size: params.size ?? pictureSize(core.currentSettings().image, 'location'),
+      art,
+      // What happened is told with the people it happened through; the picture is of the place.
+      ...(turn !== undefined ? { avoid: [...(params.avoid ?? []), L(lang, '人物', 'people')] } : params.avoid !== undefined ? { avoid: params.avoid } : {}),
+      ...turnAgainst(entry, turn, lang),
+    }, task)
+    // The place's reference art: scenes set here send it along. A picture of one turn of its course is that turn's.
+    if (turn !== undefined) await keepTurnPicture(project, entry, turn, info.path)
+    else await project.saveWorld({ id: entry.id, visualImage: info.path })
     return done(info)
   }
 
@@ -554,15 +690,26 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
     const found = params.target !== undefined ? await project.findWorld(params.target) : undefined
     if (found === undefined) throw new ProjectError('novel/not-found', `no world entry matches "${params.target ?? ''}"`)
     const entry = await withLook(core, runtime, found, task)
+    const turn = params.event !== undefined ? await turnOf(project, entry, params.event) : undefined
     // A thing is drawn as a thing: alone, whole, close enough to read what it is made of and what is written or carved on it.
     const subject = joinParts([
       L(lang, '关键物品设定图：只画这一件物品，完整入画，居中，干净的浅色素底；看得清形状、材质、纹饰与大小的感觉；没有人物，没有手，画面里不出现任何文字说明', 'design art of one key object: the object alone, whole and centred on a clean pale ground; its shape, material, ornament and sense of size readable; no people, no hands, no lettering'),
-      entry.visualPrompt ?? `${entry.name}${comma}${entry.summary ?? clip(entry.body ?? '', 200, '')}`,
+      turn !== undefined ? await turnLook(core, runtime, entry, turn, task) : entry.visualPrompt ?? `${entry.name}${comma}${entry.summary ?? clip(entry.body ?? '', 200, '')}`,
       params.prompt,
     ], comma)
-    const info = await renderImage(core, runtime, { subject, kind: 'item', target: entry.id, name: `item-${entry.id}`, size: params.size ?? pictureSize(core.currentSettings().image, 'item'), art, ...(params.avoid !== undefined ? { avoid: params.avoid } : {}) }, task)
+    const info = await renderImage(core, runtime, {
+      subject,
+      kind: 'item',
+      target: entry.id,
+      name: `item-${entry.id}${turn !== undefined ? `-${turn.chapter}-${turn.kind}` : ''}`,
+      size: params.size ?? pictureSize(core.currentSettings().image, 'item'),
+      art,
+      ...(params.avoid !== undefined ? { avoid: params.avoid } : {}),
+      ...turnAgainst(entry, turn, lang),
+    }, task)
     // The thing's reference art: pictures that show it send this along, so that it is the same thing every time.
-    await project.saveWorld({ id: entry.id, visualImage: info.path })
+    if (turn !== undefined) await keepTurnPicture(project, entry, turn, info.path)
+    else await project.saveWorld({ id: entry.id, visualImage: info.path })
     return done(info)
   }
 

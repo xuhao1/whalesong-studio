@@ -30,6 +30,7 @@ export function stageTools(service: NovelService): ToolDefinition[] {
         '- kind=sheet: a character\'s design sheet — the same person from the front, the side and the back (`target` = character). It is the reference image every later picture of them is drawn against, so make it first. With `look` it draws one of their looks (outfits) instead, derived from the main sheet so it stays the same person; a look that does not exist yet is created from `prompt` (what the outfit is).',
         '- kind=portrait: a bust portrait (`target` = character), used for avatars and the interlude stage.',
         '- kind=scene: an illustration for a chapter (`target` = chapter). Quote the passage to illustrate in `quote`; insert=true embeds the picture in the chapter after that passage. The characters present are found in the passage; their sheets and the place\'s reference art go along as reference images. `looks` says what someone wears ({"name": "look"}) when the passage does not make it obvious.',
+        '- kind=location / kind=item with `event`: the place or the thing as it is from one turn of its course on — just built, changed, in ruins, gone. The director writes what is there to be seen once it has happened (from its usual look and that chapter), and that is drawn without people: a change or a decline against its design art, a beginning or an end from the words alone. Kept with that turn; the viewer shows it when the story is looked at from that chapter on.',
         '- kind=location: reference art for a world entry (`target` = entry); scenes set there are drawn against it.   - kind=item: design art of a key object (`target` = a world entry that is a thing): the object alone, whole, on a plain ground; pictures that show it are drawn against it.   - kind=cover: a cover for the book.   - kind=custom: `prompt` is the whole picture; `characters` lists who is in it so their sheets go along; raw=true sends the prompt exactly as written.',
         '`prompt` adds direction for the other kinds. Every picture gets the book\'s art direction and its avoid list (see novel_settings action=show; change them with action=book fields.artStyle / fields.artAvoid), each character\'s visual anchor (novel_bible fields.visual, or action=derive_visual) and what their card says must not be drawn; `avoid` adds more for this one picture. The result says what the prompt was assembled from.',
         'An image model draws the commonest real-world version of a loaded word: write what a thing looks like in this story (material, shape, wear), not what it is called.',
@@ -47,6 +48,7 @@ export function stageTools(service: NovelService): ToolDefinition[] {
         raw: { type: 'boolean', description: 'custom: send `prompt` exactly as written — no art direction, no avoid list.' },
         size: { type: 'string', description: 'WIDTHxHEIGHT, e.g. 1280x720.' },
         insert: { type: 'boolean', description: 'scene: embed the image in the chapter text.' },
+        event: { type: 'string', description: 'location/item: draw it as it is from one turn of its course on (built, changed, in ruins) — the chapter of that turn (id or number), or `<chapter>:<kind>` where a chapter has several. The picture is kept with the turn and shown in the viewer when the story is looked at from that chapter; the design art stays. The turn must be on the entry first (novel_bible action=save kind=world fields.events).' },
       },
       async run(args, env) {
         const runtime = await env.project()
@@ -62,6 +64,7 @@ export function stageTools(service: NovelService): ToolDefinition[] {
           ...(args.raw !== undefined ? { raw: args.raw } : {}),
           ...(args.size !== undefined ? { size: args.size } : {}),
           ...(args.insert !== undefined ? { insert: args.insert } : {}),
+          ...(typeof args.event === 'string' && args.event.trim().length > 0 ? { event: args.event.trim() } : {}),
         }
         const result = await env.job('illustrate', `illustrate ${args.kind}`, args.target, async task => await illustrate(env.core, runtime, params, task))
         const parts = result.parts

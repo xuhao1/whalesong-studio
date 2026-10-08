@@ -18,7 +18,7 @@
  * tools on the first page of the world.
  */
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from 'react'
-import { albumEmpty, entryStateAt, standingAt, worldFront, type Album, type AlbumAt, type AlbumCounts, type AlbumEntry, type AlbumEvent, type AlbumPerson, type EntryState } from '../../shared/album'
+import { albumEmpty, entryImageAt, entryStateAt, standingAt, worldFront, type Album, type AlbumAt, type AlbumCounts, type AlbumEntry, type AlbumEvent, type AlbumPerson, type EntryState } from '../../shared/album'
 import type { LifeEvent } from '../../shared/life'
 import { layoutSpots, spotKey, type ScenePoint } from '../../shared/scene'
 import { neighbours, STANDINGS, tiesAt, trail, type Standing, type Tie, type TieEnd } from '../../shared/ties'
@@ -228,11 +228,14 @@ export function AlbumView({ t, album, media, at, go, onRead, onEdit, worldTools,
   const nameOf = (end: TieEnd): string => (end.type === 'character' ? people.get(end.id)?.name : entries.get(end.id)?.name) ?? end.id
   const pictured = (end: TieEnd): boolean => {
     const person = end.type === 'character' ? people.get(end.id) : undefined
-    return person !== undefined ? (person.portrait ?? person.sheet) !== undefined : entries.get(end.id)?.image !== undefined
+    const thing = entries.get(end.id)
+    return person !== undefined ? (person.portrait ?? person.sheet) !== undefined : thing !== undefined && imageOf(thing) !== undefined
   }
   const standing = (person: AlbumPerson): CharacterStatus | undefined => standingAt(album, person.id, moment)
   /** How a place, a house or a thing stands at the chapter looked at; unsaid when the story is looked at whenever. */
   const stateOf = (item: AlbumEntry): EntryState => (moment !== undefined ? entryStateAt(item, moment) : 'there')
+  /** The picture of a place, a house or a thing as the story stands at the chapter looked at. */
+  const imageOf = (item: AlbumEntry): string | undefined => entryImageAt(item, moment)
   /** Whether something is there to be met at the chapter looked at: a place not built yet is not. */
   const there = (end: TieEnd): boolean => {
     const item = end.type === 'world' ? entries.get(end.id) : undefined
@@ -274,7 +277,7 @@ export function AlbumView({ t, album, media, at, go, onRead, onEdit, worldTools,
     }
     return (
       <button key={id} type="button" className={classes} onClick={() => { open(end) }} title={tie?.note}>
-        {person !== undefined ? <Face person={person} media={media} className="nv-explore-tile-art" /> : <img className="nv-explore-tile-art" alt="" loading="lazy" src={media(entry!.image!)} />}
+        {person !== undefined ? <Face person={person} media={media} className="nv-explore-tile-art" /> : <img className="nv-explore-tile-art" alt="" loading="lazy" src={media(imageOf(entry!)!)} />}
         <span className="nv-explore-tile-name">{nameOf(end)}</span>
         {meta.length > 0 ? <span className="nv-explore-tile-meta">{meta}</span> : null}
       </button>
@@ -396,12 +399,19 @@ export function AlbumView({ t, album, media, at, go, onRead, onEdit, worldTools,
     const shownChapters = more.chapters === true ? named : named.slice(0, 24)
     // What stands in the place is marked on its picture: the places in it and the houses seated there first, then whoever lives there or belongs to it.
     const marks: TieEnd[] = []
-    if (entry.image !== undefined && (entry.group === 'places' || entry.group === 'factions')) {
+    // As the story stands at the chapter looked at: a place in ruins by then is shown in ruins, where a picture of that was drawn.
+    const picture = imageOf(entry)
+    if (picture !== undefined && (entry.group === 'places' || entry.group === 'factions')) {
       for (const how of ['children', 'seated', 'residents', 'members'] as const) {
         for (const item of around[how] ?? []) if (there(item.end) && !marks.some(mark => mark.type === item.end.type && mark.id === item.end.id)) marks.push(item.end)
       }
     }
     const scene = marks.length > 0
+    // Marks pinned by hand were put on its usual picture, and a picture of a change or a decline is that sight altered.
+    // One of its beginning or of its end is another sight: there the marks are laid out afresh, and nothing is pinned.
+    const turned = picture !== entry.image ? (entry.events ?? []).find(event => event.image === picture) : undefined
+    const same = turned === undefined || turned.kind === 'change' || turned.kind === 'decline'
+    const { spots: _pinned, ...unpinned } = entry
     const state = entryStateAt(entry, moment)
     const course = (entry.events ?? []).filter(event => moment === undefined || event.index <= moment)
     const plate = (
@@ -423,22 +433,22 @@ export function AlbumView({ t, album, media, at, go, onRead, onEdit, worldTools,
           <Scene
             key={entry.id}
             t={t}
-            entry={entry}
-            src={media(entry.image!)}
+            entry={same ? entry : unpinned}
+            src={media(picture!)}
             marks={marks.map((mark) => {
               const who = mark.type === 'character' ? people.get(mark.id) : undefined
               const how = who !== undefined ? standing(who) : undefined
               return { end: mark, name: nameOf(mark), ...(who !== undefined ? { face: <Face person={who} media={media} className="nv-scene-spot-face" /> } : {}), ...(how !== undefined ? { how } : {}) }
             })}
             open={open}
-            onZoom={() => { setZoom(entry.image) }}
-            onPin={onPin}
+            onZoom={() => { setZoom(picture) }}
+            onPin={same ? onPin : undefined}
           >
             {plate}
           </Scene>
         ) : (
-          <section className={cx('nv-explore-hero', entry.image === undefined && 'is-bare', entry.group === 'items' && 'is-thing')}>
-            {entry.image !== undefined ? <button type="button" className="nv-album-hero-open" onClick={() => { setZoom(entry.image) }} title={t('看大图', 'See it large')}><img className="nv-explore-hero-art" alt="" src={media(entry.image)} /></button> : null}
+          <section className={cx('nv-explore-hero', picture === undefined && 'is-bare', entry.group === 'items' && 'is-thing')}>
+            {picture !== undefined ? <button type="button" className="nv-album-hero-open" onClick={() => { setZoom(picture) }} title={t('看大图', 'See it large')}><img className="nv-explore-hero-art" alt="" src={media(picture)} /></button> : null}
             {plate}
           </section>
         )}
@@ -462,7 +472,10 @@ export function AlbumView({ t, album, media, at, go, onRead, onEdit, worldTools,
                       ? <button type="button" className="nv-album-event-at" onClick={() => { onRead(chapter.id) }} title={chapter.title}>{t(`第 ${event.index} 章`, `Ch. ${event.index}`)}</button>
                       : <span className="nv-album-event-at">{t(`第 ${event.index} 章`, `Ch. ${event.index}`)}</span>}
                     <span className="nv-album-event-kind">{t(...COURSE_LABEL[event.kind])}</span>
-                    <span className="nv-album-event-what">{event.what}</span>
+                    <span className="nv-album-event-what">
+                      {event.what}
+                      {event.image !== undefined ? <button type="button" className="nv-album-event-art" onClick={() => { setZoom(event.image) }} title={t('它这时的样子', 'How it looks then')}><img alt="" loading="lazy" src={media(event.image)} /></button> : null}
+                    </span>
                   </li>
                 )
               })}

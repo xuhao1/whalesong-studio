@@ -214,9 +214,25 @@ export interface WorldEvent {
   kind: 'begin' | 'change' | 'decline' | 'end'
   /** What happened, in a few words. */
   what: string
+  /** A picture of the place or the thing as it is from this on — built, changed, in ruins: what the viewer shows when the story is looked at from here. */
+  image?: string
 }
 
 export const WORLD_EVENT_KINDS: readonly WorldEvent['kind'][] = ['begin', 'change', 'decline', 'end']
+
+/**
+ * A course written anew, with the pictures of the turns it keeps. A turn is the
+ * same turn by its chapter and its kind: reworded, it is still drawn as it was.
+ * For whoever rewrites a course in words alone; a list that means to take a
+ * picture away is saved as it is.
+ */
+export function withTurnPictures(course: readonly WorldEvent[], before: readonly WorldEvent[] | undefined): WorldEvent[] {
+  return course.map((turn) => {
+    if (turn.image !== undefined) return turn
+    const drawn = before?.find(other => other.chapter === turn.chapter && other.kind === turn.kind)?.image
+    return drawn !== undefined ? { ...turn, image: drawn } : turn
+  })
+}
 
 export type WorldCategory =
   | 'setting' | 'location' | 'faction' | 'system' | 'item' | 'history' | 'culture' | 'rule' | 'term' | 'other'

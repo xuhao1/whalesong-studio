@@ -74,6 +74,35 @@ export interface AlbumEvent {
   chapter: string
   kind: 'begin' | 'change' | 'decline' | 'end'
   what: string
+  /** A picture of it as it is from this on, as a path of the book's own files. */
+  image?: string
+}
+
+/**
+ * The picture of a place, a house or a thing as the story stands at a chapter.
+ *
+ * A turn of its course that has a picture shows it from then on: turns that
+ * come after without one leave it as it was drawn — a garden in ruins stays in
+ * ruins when its gate is locked. Two things put its design art back, the thing
+ * as it usually is: it begins again (rebuilt, founded anew), and anything at
+ * all happening after a picture of its *beginning* — that one shows it coming
+ * to be, which lasts until the next thing happens to it.
+ *
+ * Looked at whenever, it is its design art — the thing as such, not as it
+ * ends; with none drawn, the earliest picture there is of it.
+ * @param at - the chapter's place in reading order; `undefined` for "whenever".
+ */
+export function entryImageAt(entry: Pick<AlbumEntry, 'image' | 'events'>, at: number | undefined): string | undefined {
+  const turns = entry.events ?? []
+  if (at === undefined) return entry.image ?? turns.find(turn => turn.image !== undefined)?.image
+  const so = turns.filter(turn => turn.index <= at)
+  let from = -1
+  so.forEach((turn, index) => { if (turn.image !== undefined) from = index })
+  if (from < 0) return entry.image
+  const drawn = so[from]!
+  const since = so.slice(from + 1)
+  const usual = since.some(turn => turn.kind === 'begin') || (drawn.kind === 'begin' && since.length > 0)
+  return usual ? entry.image ?? drawn.image : drawn.image
 }
 
 /** How a place, a house or a thing stands at a chapter: not there yet, there, in decline, no more. */

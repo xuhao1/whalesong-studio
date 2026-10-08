@@ -231,7 +231,10 @@ const COURSE_KINDS: Record<WorldEvent['kind'], [string, string]> = {
  * writes these down when it works the ties out; here they are put right by
  * hand. They go with the entry's other fields: nothing is kept until *Save*.
  */
-function CourseBlock({ events, onChange }: { events: WorldEvent[]; onChange: (events: WorldEvent[]) => void }) {
+/**
+ * @param picture - what stands at the end of a turn's row: its picture, and the way to have one drawn.
+ */
+function CourseBlock({ events, onChange, picture }: { events: WorldEvent[]; onChange: (events: WorldEvent[]) => void; picture?: (event: WorldEvent, change: (patch: Partial<WorldEvent>) => void) => ReactNode }) {
   const t = useT()
   const { project } = useProject()
   const chapters = useMemo(() => [...project.chapters, ...(project.lines ?? []).flatMap(line => line.chapters)], [project.chapters, project.lines])
@@ -250,6 +253,7 @@ function CourseBlock({ events, onChange }: { events: WorldEvent[]; onChange: (ev
           <Select value={event.chapter} options={chapters.map(chapter => ({ value: chapter.id, label: `${chapter.index}. ${chapter.title}` }))} onChange={(value) => { change(at, { chapter: value }) }} />
           <Select value={event.kind} options={options(COURSE_KINDS, t)} onChange={(value) => { change(at, { kind: value }) }} />
           <TextInput value={event.what} placeholder={t('发生了什么', 'What happened')} onChange={(input) => { change(at, { what: input.target.value }) }} />
+          {picture?.(event, (patch) => { change(at, patch) })}
           <Button size="sm" variant="ghost" icon="x" onClick={() => { onChange(sorted.filter((_item, index) => index !== at)) }} title={t('去掉这一件', 'Take this one away')} />
         </div>
       ))}
@@ -271,6 +275,8 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
   const [dirty, setDirty] = useState(false)
   const [direction, setDirection] = useState('')
   const [viewing, setViewing] = useState(false)
+  // Which picture is open large: its design art, or how it looks at one turn of its course.
+  const [shown, setShown] = useState<string | undefined>()
   const [merging, setMerging] = useState(false)
   const { busy, run } = useAction()
   const assist = useAssist()
@@ -288,19 +294,26 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
   const group = groupOf(draft.category)
   // What can be drawn of it: a place as somewhere to stand, a thing as the thing itself.
   const picture: 'location' | 'item' | undefined = draft.category === 'location' || draft.category === 'setting' ? 'location' : draft.category === 'item' ? 'item' : undefined
-  const drawing = useRunningJob(job => job.kind === 'illustrate' && job.target === entry.id) !== undefined
+  const drawingJob = useRunningJob(job => job.kind === 'illustrate' && job.target === entry.id)
+  const drawing = drawingJob !== undefined
+  // Which turn of its course is being drawn, when it is one: the job says so in its title.
+  const turning = drawingJob?.title.includes(' at ') === true ? drawingJob.title.slice(drawingJob.title.indexOf(' at ') + 4) : undefined
   // The director writing down how it looks: said on the button that asked, and while a drawing has it done first.
   const looking = useRunningJob(job => job.kind === 'bible' && job.target === entry.id && job.title.startsWith('look ')) !== undefined
   const draw = (): Promise<unknown> | undefined => (!controller.need('image') ? undefined : controller.guard(async () => {
     await controller.run('image.create', { root, kind: picture ?? 'location', target: entry.id })
     controller.toast('success', picture === 'item' ? t('物品设定图已生成', 'Object art ready') : t('场景设定图已生成', 'Place art ready'))
   }))
+  const drawTurn = (event: WorldEvent): Promise<unknown> | undefined => (!controller.need('image') ? undefined : controller.guard(async () => {
+    await controller.run('image.create', { root, kind: picture ?? 'location', target: entry.id, event: `${event.chapter}:${event.kind}` })
+    controller.toast('success', t('它这时的样子画好了', 'Drawn as it is then'))
+  }))
   const index = useMemo(() => new Map([...project.chapters, ...(project.lines ?? []).flatMap(line => line.chapters)].map(chapter => [chapter.id, chapter.index])), [project.chapters, project.lines])
   const where = seen.map(id => index.get(id)).filter((value): value is number => value !== undefined)
   return (
     <div className="nv-editor-form">
       {picture !== undefined && draft.visualImage !== undefined ? (
-        <button type="button" className={cx('nv-entry-picture', picture === 'item' && 'is-item')} onClick={() => { setViewing(true) }} title={t('点开看大图', 'Open it large')}>
+        <button type="button" className={cx('nv-entry-picture', picture === 'item' && 'is-item')} onClick={() => { setShown(undefined); setViewing(true) }} title={t('点开看大图', 'Open it large')}>
           <ProjectImage path={draft.visualImage} alt={draft.name} />
         </button>
       ) : null}
@@ -322,7 +335,32 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
         </div>
       </header>
       {group !== 'ideas' ? <TiesBlock of={{ type: 'world', id: entry.id }} /> : null}
-      {group !== 'ideas' ? <CourseBlock events={draft.events ?? []} onChange={(events) => { set('events', events) }} /> : null}
+      {group !== 'ideas' ? (
+        <CourseBlock
+          events={draft.events ?? []}
+          onChange={(events) => { set('events', events) }}
+          {...(picture !== undefined ? { picture: (event: WorldEvent, change: (patch: Partial<WorldEvent>) => void) => (
+            <span className="nv-course-picture">
+              {event.image !== undefined ? (
+                <>
+                  <button type="button" className="nv-course-thumb" onClick={() => { setShown(event.image); setViewing(true) }} title={t('这时的样子——点开看大图', 'How it looks then — open it large')}><ProjectImage path={event.image} alt="" /></button>
+                  <Button size="sm" variant="ghost" icon="x" onClick={() => { change({ image: undefined } as Partial<WorldEvent>) }} title={t('不要这张图了（保存后生效；图本身还在"演出 → 插图"里）', 'Take the picture off this turn (on saving; the picture itself stays under Stage → Illustrations)')} />
+                </>
+              ) : null}
+              <Button
+                size="sm"
+                variant="ghost"
+                icon="image"
+                disabled={dirty || drawing || event.what.trim().length === 0}
+                busy={turning === `${event.chapter}:${event.kind}`}
+                pending={t('正在画…', 'Drawing…')}
+                onClick={() => drawTurn(event)}
+                title={dirty ? t('先保存当前修改', 'Save your edits first') : event.what.trim().length === 0 ? t('先写上发生了什么', 'Say what happened first') : t('画它这时的样子：导演先照这一章的正文，把"这件事过后它看上去什么样"写成画面，再画（变动、衰败是照着平常的设定图改；刚开始、终结是另画一张）。"观看 → 世界"里把时间轴拖到这一章之后，显示的就是这张——直到后面又有一件画了图的事。（"开始"的图只管到下一件事之前；重建之后回到平常的设定图。）', 'Draw it as it is from this on: the director first writes, from this chapter\'s text, what it looks like once this has happened, and that is drawn (a change or a decline against its design art; a beginning or an end as a picture of its own). In the viewer\'s World, with the slider at or past this chapter, this is the picture shown — until a later turn has one of its own. (A picture of its beginning holds until the next thing happens to it; built anew, it is back to its design art.)')}
+              >{event.image !== undefined ? t('重画', 'Redraw') : t('画这时的样子', 'Draw it then')}</Button>
+            </span>
+          ) } : {})}
+        />
+      ) : null}
       <div className="nv-assist">
         <TextInput value={direction} placeholder={t('让 AI 完善这条设定（规则、代价、限制、与情节的关联）', 'Let AI develop this entry (rules, costs, limits, ties to the plot)')} onChange={(event) => { setDirection(event.target.value) }} />
         <Button icon="sparkles" busy={assist.running} pending={t('AI 正在补全…', 'Completing…')} disabled={dirty} onClick={() => { assist.start(async (onText) => { await controller.run('world.expand', { root, id: entry.id, ...(direction.trim().length > 0 ? { direction: direction.trim() } : {}) }, onText) }) }}>{t('AI 补全', 'Expand')}</Button>
@@ -377,7 +415,7 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
             >
               {(draft.visualPrompt ?? '').trim().length > 0 ? t('让导演重写', 'Have the director rewrite') : t('让导演照正文写', 'Have the director write it')}
             </Button>
-            <Button size="sm" icon="image" disabled={dirty || drawing} busy={drawing} pending={picture === 'item' ? t('正在画物品设定图…', 'Drawing the object…') : t('正在画场景设定图…', 'Drawing the place…')} onClick={draw} title={dirty ? t('先保存当前修改', 'Save your edits first') : undefined}>
+            <Button size="sm" icon="image" disabled={dirty || drawing} busy={drawing && turning === undefined} pending={picture === 'item' ? t('正在画物品设定图…', 'Drawing the object…') : t('正在画场景设定图…', 'Drawing the place…')} onClick={draw} title={dirty ? t('先保存当前修改', 'Save your edits first') : undefined}>
               {draft.visualImage !== undefined ? t('重画设定图', 'Redraw') : picture === 'item' ? t('画物品设定图', 'Draw the object') : t('画场景设定图', 'Draw the place')}
             </Button>
           </div>
@@ -387,7 +425,12 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
         ? <p className="nv-muted nv-small">{picture === 'item' ? t('这件东西在正文里只出现一次：不必专门给它画设定图，除非你想留一张。', 'This thing is in the text once: it needs no design art, unless you want one kept.') : t('这个地方在正文里只路过一次：不必专门给它画设定图，除非你想留一张。', 'This place is passed once in the text: it needs no design art, unless you want one kept.')}</p>
         : null}
       {merging ? <MergeDialog entry={entry} onClose={() => { setMerging(false) }} /> : null}
-      {viewing && draft.visualImage !== undefined ? (
+      {viewing && shown !== undefined ? (
+        <Modal wide title={draft.name} onClose={() => { setViewing(false) }}>
+          <ProjectImage className="nv-person-large" path={shown} alt={draft.name} />
+          <p className="nv-muted nv-small">{t('它在轨迹里这一件事之后的样子。"观看 → 世界"里把时间轴拖到这一章之后，显示的就是这张；"不分时间"看的时候仍是它平常的设定图。', 'How it looks from this turn of its course on. In the viewer\'s World, with the slider at or past this chapter, this is the picture shown; looked at "whenever", it is still its design art.')}</p>
+        </Modal>
+      ) : viewing && draft.visualImage !== undefined ? (
         <Modal wide title={draft.name} onClose={() => { setViewing(false) }}>
           <ProjectImage className="nv-person-large" path={draft.visualImage} alt={draft.name} />
           <p className="nv-muted nv-small">{picture === 'item' ? t('物品设定图。画到这件东西的图会把它当参考图，所以每次都是同一件东西。', 'Object art. Pictures that show the thing are drawn with it as a reference, so it is the same thing every time.') : t('场景设定图。发生在这里的画面会把它当参考图。', 'Place art. Pictures set here are drawn with it as a reference image.')}</p>
