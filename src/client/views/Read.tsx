@@ -28,7 +28,7 @@ import { AlbumView, ViewerTabs } from '../reader/album'
 import { PlayTranscript, SideList, type SideRef } from '../reader/sides'
 import { ListenBar, ModeSwitch, ReaderPage, ReaderSettings, usePlayerOptions, useReaderPrefs } from '../reader/parts'
 import { chapterFigures, ScriptPage } from '../reader/script'
-import { place, secondsOf, Theater, useCurrentPanel } from '../reader/theater'
+import { Film, place, secondsOf, Theater, useCurrentPanel, WatchChoice, type ChapterFilm } from '../reader/theater'
 import { chapterJob } from '../Batch'
 import { Icon } from '../icons'
 import { IssueCard, issueMarks } from '../Issues'
@@ -252,6 +252,11 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
   const panels = useMemo(() => comic.data?.board?.panels ?? [], [comic.data])
   const drawn = panels.filter(panel => panel.image !== undefined).length
   const placed = useMemo(() => place(panels, lines), [panels, lines])
+  // And the chapter's finished video, where post-production cut one: watched here too, made under Stage.
+  const cut = useLoad(async signal => chapter !== undefined ? await controller.api.call('video.status', { root, chapter: chapter.id }, signal).then(status => status.video, () => undefined) : undefined, [root, chapter?.id, project.revision])
+  const video = cut.data
+  const film: ChapterFilm | undefined = useMemo(() => (video !== undefined ? { src: mediaUrl(video.path, video.createdAt), ...(video.subtitles?.path !== undefined ? { subtitles: mediaUrl(video.subtitles.path, video.createdAt) } : {}), ...(video.subtitles?.burned === true ? { burned: true } : {}), language: project.manifest.language.slice(0, 2) } : undefined), [video, mediaUrl, project.manifest.language])
+  const filming = film !== undefined && (options.film !== false || placed.length === 0)
   const { player, state } = useLinePlayer(lines, cues, mediaUrl, options, () => {
     const next = written[position + 1]
     if (!autoNext || next === undefined) return
@@ -392,8 +397,8 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
           t={t}
           pages
           // The way to watch shows where the chapter has pictures — and stays while it is the way in use, so that it can be left.
-          extra={drawn > 0 || watching ? (
-            <button type="button" role="tab" aria-selected={watching} className={cx('nv-mode', watching && 'is-active')} onClick={() => { controller.setReadMode('watch') }} title={t('看：有声漫——画面跟着配音走', 'Watch: the motion comic — the pictures follow the voices')}>
+          extra={drawn > 0 || film !== undefined || watching ? (
+            <button type="button" role="tab" aria-selected={watching} className={cx('nv-mode', watching && 'is-active')} onClick={() => { controller.setReadMode('watch') }} title={t('看：成片视频，或有声漫——画面跟着配音走', 'Watch: the finished video, or the motion comic — pictures following the voices')}>
               <Icon name="film" size={14} />
               <span>{t('看', 'Watch')}</span>
             </button>
@@ -449,10 +454,25 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
       ) : null}
       {watching ? (
         <div className="nv-reader-scroll nv-reader-watch" ref={scroller}>
-          {placed.length > 0 ? (
+          {filming ? (
+            <>
+              <Film t={t} film={film} cors onPlay={() => { player.pause() }} />
+              <div className="nv-reader-watch-head">
+                <h1 className="nv-reader-watch-title">{chapter.title}</h1>
+                {placed.length > 0 ? <WatchChoice t={t} film onChange={(value) => { updateOptions({ film: value }) }} /> : null}
+              </div>
+              <p className="nv-muted nv-small">
+                {t('这是后期剪好的成片。', 'This is the video post-production cut. ')}
+                <button type="button" className="nv-link" onClick={() => { controller.navigate({ view: 'stage', tab: 'comic', chapter: chapter.id }) }}>{t('重剪、下载或删除在"演出 → 有声漫"的成片一栏', 'Cutting it again, downloading or deleting it is under Stage → Motion comic, in the video card')}</button>
+              </p>
+            </>
+          ) : placed.length > 0 ? (
             <>
               <Theater t={t} player={player} state={state} lines={lines} cues={cues} current={current} media={path => mediaUrl(path)} options={options} speakerOf={line => project.characters.find(card => card.id === line.speaker)?.name ?? line.speakerName} />
-              <h1 className="nv-reader-watch-title">{chapter.title}</h1>
+              <div className="nv-reader-watch-head">
+                <h1 className="nv-reader-watch-title">{chapter.title}</h1>
+                {film !== undefined ? <WatchChoice t={t} film={false} onChange={(value) => { player.pause(); updateOptions({ film: value }) }} /> : null}
+              </div>
               {lines.every(line => line.audio === undefined) ? <p className="nv-muted nv-small">{t('这一章还没有配音：画面会按阅读速度配着字幕走。', 'This chapter has no voice yet: the panels pass at reading pace, with subtitles.')}</p> : null}
               {drawn < panels.length ? <p className="nv-muted nv-small">{t(`${panels.length} 格分镜里还有 ${panels.length - drawn} 格没有画面。`, `${panels.length - drawn} of ${panels.length} panels have no picture yet.`)}</p> : null}
             </>

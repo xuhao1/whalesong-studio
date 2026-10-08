@@ -31,7 +31,8 @@ import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import type { SoundPress } from '../media/press'
 import { ProjectError } from '../project'
 import { albumCounts, albumEmpty, type AlbumCounts } from '../../shared/album'
-import { albumMedia, describeBook, listChapters, listSides, readAlbum, readChapter, readSide, sideMedia, type SharedChapter, type SharedChapterData } from '../reader'
+import { albumMedia, describeBook, listChapters, listLines, listSides, readAlbum, readChapter, readSide, sideMedia, type SharedChapter, type SharedChapterData } from '../reader'
+import { MAIN_LINE } from '../../shared/types'
 
 export interface SiteParams {
   /** The folder to publish into; made when it is not there. */
@@ -42,10 +43,14 @@ export interface SiteParams {
   listen?: boolean
   /** Leave the motion comic out. */
   watch?: boolean
+  /** Leave the finished videos out: they are by far the largest files a chapter has. */
+  video?: boolean
   /** Leave the people and the world out: no album of settings. */
   album?: boolean
   /** Leave the side stories — interludes the author kept — out. */
   sides?: boolean
+  /** Publish the main line only: none of the other ways the story goes. (A part of the book — `chapters` — is of the main line anyway.) */
+  lines?: boolean
   /** The reader's script (`lib/reader.js`), which the Host knows where to find. */
   reader: Uint8Array
   /** Where the published page says it was made with, and by whom: a link under the contents. */
@@ -117,6 +122,10 @@ export interface SiteResult {
   album?: AlbumCounts
   /** Side stories the site has. */
   sides: number
+  /** Chapters whose finished video the site carries; absent when it carries none. */
+  videos?: number
+  /** Lines of the plot beside the main one the site carries, and how many chapters of their own they have; absent when it carries none. */
+  lines?: { lines: number; chapters: number }
   /** Files the site consists of, and their size together. */
   files: number
   bytes: number
@@ -178,6 +187,7 @@ function mediaOf(chapter: SharedChapterData): string[] {
   for (const line of chapter.script?.lines ?? []) if (line.audio !== undefined) paths.push(line.audio)
   for (const cue of chapter.script?.cues ?? []) if (cue.audio !== undefined) paths.push(cue.audio)
   for (const panel of chapter.board?.panels ?? []) if (panel.image !== undefined) paths.push(panel.image)
+  if (chapter.video !== undefined) paths.push(chapter.video.path, ...(chapter.video.subtitles !== undefined ? [chapter.video.subtitles] : []))
   return paths
 }
 
@@ -202,8 +212,11 @@ export async function publishSite(core: NovelCore, runtime: ProjectRuntime, para
   const settings = await core.settings.get()
   const book = await describeBook(runtime, 'read')
   const wanted = params.chapters !== undefined && params.chapters.length > 0 ? new Set(params.chapters) : undefined
-  const listed = (await listChapters(runtime)).filter(chapter => wanted === undefined || wanted.has(chapter.id))
+  const trunk = await listChapters(runtime)
+  const listed = trunk.filter(chapter => wanted === undefined || wanted.has(chapter.id))
   if (listed.length === 0) throw new ProjectError('novel/empty', 'no chapter has text to publish')
+  // The other ways the story goes, with the chapters only they have — for the whole book: a part of it is a part of the main line.
+  const ways = params.lines !== false && wanted === undefined ? await listLines(runtime, trunk) : undefined
 
   let previous: SiteRecord | undefined
   try {
@@ -237,26 +250,35 @@ export async function publishSite(core: NovelCore, runtime: ProjectRuntime, para
   // What the reader will ask for is gathered first and written last: where a sound ends up decides the name it is asked for by.
   const answers: { path: string; data: unknown }[] = []
   const chapters: SharedChapter[] = []
-  const total = listed.length * 2 + 2
+  const count = listed.length + (ways?.chapters.length ?? 0)
+  const total = count * 2 + 2
   let done = 0
-  for (const ref of listed) {
+  for (const ref of [...listed, ...(ways?.chapters ?? [])]) {
     task?.signal?.throwIfAborted()
     const full = await readChapter(runtime, ref.id, settings.tts)
     if (full === undefined) continue
-    const { script, board, ...rest } = full
+    const { script, board, video, ...rest } = full
     const chapter: SharedChapterData = {
       ...rest,
       ...(params.listen !== false && script !== undefined ? { script } : {}),
       ...(params.watch !== false && board !== undefined ? { board } : {}),
+      ...(params.video !== false && video !== undefined ? { video } : {}),
     }
     for (const path of mediaOf(chapter)) media.add(path)
-    chapters.push({ ...ref, ...(params.listen === false ? { lines: 0, voiced: 0 } : {}), ...(params.watch === false ? { panels: 0, drawn: 0 } : {}) })
+    const { video: filmed, ...listed } = ref
+    chapters.push({ ...listed, ...(params.listen === false ? { lines: 0, voiced: 0 } : {}), ...(params.watch === false ? { panels: 0, drawn: 0 } : {}), ...(filmed === true && chapter.video !== undefined ? { video: true } : {}) })
+    if (chapter.video !== undefined) result.videos = (result.videos ?? 0) + 1
     answers.push({ path: `data/${id}/chapters/${ref.id}.json`, data: chapter })
     task?.job?.progress(++done, total, ref.title)
   }
-  const shown = { ...book, chapters: chapters.length, words: chapters.reduce((sum, chapter) => sum + chapter.words, 0) }
+  // The book is as long as its main line: what another way adds is counted with that way.
+  const mainly = chapters.filter(chapter => chapter.line === undefined)
+  const shown = { ...book, chapters: mainly.length, words: mainly.reduce((sum, chapter) => sum + chapter.words, 0) }
+  // A way none of whose own chapters could be read is no way to offer.
+  const kept = ways?.lines.filter(line => line.id === MAIN_LINE || chapters.some(chapter => chapter.line === line.id)) ?? []
+  if (kept.length > 1) result.lines = { lines: kept.length - 1, chapters: chapters.length - mainly.length }
   // The people and the world, as the story stands in what is published: a book published a part at a time tells nothing of what comes after.
-  const album = params.album !== false ? await readAlbum(runtime, wanted !== undefined ? { upTo: Math.max(...chapters.map(chapter => chapter.index)) } : {}) : undefined
+  const album = params.album !== false ? await readAlbum(runtime, wanted !== undefined ? { upTo: Math.max(...mainly.map(chapter => chapter.index)) } : {}) : undefined
   const counts = album !== undefined ? albumCounts(album) : undefined
   if (album !== undefined && !albumEmpty(counts)) {
     // Told by the chapters that are published, and no others.
@@ -278,7 +300,7 @@ export async function publishSite(core: NovelCore, runtime: ProjectRuntime, para
     if (result.sides > 0) answers.push({ path: `data/${id}/sides.json`, data: { sides } })
   }
   answers.push({ path: 'data/books.json', data: { books: [shown] } })
-  answers.push({ path: `data/${id}/book.json`, data: { book: shown, chapters, ...(result.album !== undefined ? { album: result.album } : {}), ...(result.sides > 0 ? { sides: result.sides } : {}) } })
+  answers.push({ path: `data/${id}/book.json`, data: { book: shown, chapters, ...(kept.length > 1 ? { lines: kept } : {}), ...(result.album !== undefined ? { album: result.album } : {}), ...(result.sides > 0 ? { sides: result.sides } : {}) } })
 
   // The book's own files, by the addresses the reader asks for them under — read through the book's key when it is sealed.
   const { press } = params
@@ -327,7 +349,7 @@ export async function publishSite(core: NovelCore, runtime: ProjectRuntime, para
       task?.signal?.throwIfAborted()
       await carry(paths[next++]!)
       carried += 1
-      if (carried % 8 === 0 || carried === paths.length) task?.job?.progress(listed.length + Math.round((carried / paths.length) * listed.length), total, `${press !== undefined ? '♪ ' : ''}${carried} / ${paths.length}`)
+      if (carried % 8 === 0 || carried === paths.length) task?.job?.progress(count + Math.round((carried / paths.length) * count), total, `${press !== undefined ? '♪ ' : ''}${carried} / ${paths.length}`)
     }
   }
   // Pressing is the work of another program, several at once; plain copying goes one file after another.

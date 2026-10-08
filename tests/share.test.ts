@@ -286,6 +286,35 @@ describe('the reader for other devices', () => {
     expect(JSON.stringify(chapter)).not.toContain('只给声音模型')
   })
 
+  it('serves a chapter\'s finished video and its words — and nothing from the bench it was cut on', async () => {
+    const { project } = bed.runtime
+    const { id } = await project.manifest()
+    const film = await project.writeAsset(`video/${chapterId}.mp4`, new Uint8Array(4096).fill(7))
+    const words = await project.writeAsset(`video/${chapterId}.vtt`, new TextEncoder().encode('WEBVTT\n\n00:00.000 --> 00:01.000\n零七。\n'))
+    await project.writeAsset(`video/work/${chapterId}/clips/p001.mp4`, new Uint8Array(64))
+    await project.writeAsset(`video/work/${chapterId}/cut.sh`, new TextEncoder().encode('ffmpeg …'))
+    await project.writeState(['video', `${chapterId}.json`], { schema: 1, chapterId, path: film, duration: 81, width: 1920, height: 1080, size: 4096, createdAt: '2026-01-02T03:04:05.000Z', note: '后期自己的说明', subtitles: { path: words, burned: false } })
+    const base = await turnOn()
+    const listed = await (await fetch(`${base}/api/books/${id}`)).json() as { chapters: { video?: boolean }[] }
+    expect(listed.chapters[0]!.video).toBe(true)
+    const chapter = await (await fetch(`${base}/api/books/${id}/chapters/${chapterId}`)).json() as { video?: Record<string, unknown> }
+    expect(chapter.video).toEqual({ path: `assets/video/${chapterId}.mp4`, duration: 81, width: 1920, height: 1080, subtitles: `assets/video/${chapterId}.vtt`, version: '2026-01-02T03:04:05.000Z' })
+    expect(JSON.stringify(chapter)).not.toContain('后期自己的说明')
+    // A player asks for a video a piece at a time.
+    const part = await fetch(`${base}/media/${id}/assets/video/${chapterId}.mp4`, { headers: { range: 'bytes=1000-1999' } })
+    expect(part.status).toBe(206)
+    expect(part.headers.get('content-type')).toBe('video/mp4')
+    expect(part.headers.get('content-range')).toBe('bytes 1000-1999/4096')
+    expect((await part.arrayBuffer()).byteLength).toBe(1000)
+    const track = await fetch(`${base}/media/${id}/assets/video/${chapterId}.vtt`)
+    expect(track.status).toBe(200)
+    expect(track.headers.get('content-type')).toContain('text/vtt')
+    expect(await track.text()).toContain('零七。')
+    // The bench: clips, scripts, whatever lies there — not a reader's business, whatever kind of file it is.
+    expect((await fetch(`${base}/media/${id}/assets/video/work/${chapterId}/clips/p001.mp4`)).status).toBe(404)
+    expect((await fetch(`${base}/media/${id}/assets/video/work/${chapterId}/cut.sh`)).status).toBe(404)
+  })
+
   it('asks every device for the password of a sealed book once, and remembers the device', async () => {
     const { project } = bed.runtime
     const root = project.root

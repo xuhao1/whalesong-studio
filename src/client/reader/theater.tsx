@@ -147,3 +147,41 @@ export function Theater({ t, player, state, lines, cues, current, media, options
     </div>
   )
 }
+
+/** A chapter's finished video as the watch face plays it: the file and, where its words are not in the picture, their track. */
+export interface ChapterFilm {
+  src: string
+  /** Its lines, as WebVTT. */
+  subtitles?: string | undefined
+  /** The words are in the picture already: the track is there to be switched on, and is off until then. */
+  burned?: boolean | undefined
+  /** The language of its words, for the track. */
+  language?: string | undefined
+}
+
+/**
+ * The finished video of a chapter — the cut post-production made, as a file.
+ * It is played by the browser's own player: that one goes full screen on
+ * every phone, goes on with the screen locked where a system lets it, and
+ * shows a track of subtitles.
+ * @param cors - the file comes from another origin than the page (the Studio's own media address): a track is only read then when asked for this way.
+ */
+export function Film({ t, film, cors, onPlay }: { t: Translate; film: ChapterFilm; cors?: boolean | undefined; onPlay?: (() => void) | undefined }) {
+  return (
+    <div className="nv-theater nv-film">
+      <video key={film.src} className="nv-film-video" controls playsInline preload="metadata" {...(cors === true ? { crossOrigin: 'anonymous' as const } : {})} src={film.src} onPlay={onPlay}>
+        {film.subtitles !== undefined ? <track kind="subtitles" default={film.burned !== true} {...(film.language !== undefined ? { srcLang: film.language } : {})} label={t('字幕', 'Subtitles')} src={film.subtitles} /> : null}
+      </video>
+    </div>
+  )
+}
+
+/** Where a chapter has both: the cut post-production made of it, or the comic the page plays as it goes. */
+export function WatchChoice({ t, film, onChange }: { t: Translate; film: boolean; onChange: (film: boolean) => void }) {
+  return (
+    <div className="nv-seg nv-watch-choice" role="group" aria-label={t('看成片还是有声漫', 'The video or the motion comic')}>
+      <button type="button" className={cx(film && 'is-active')} aria-pressed={film} onClick={() => { onChange(true) }} title={t('成片：后期剪好的视频', 'The video post-production cut')}>{t('成片', 'Video')}</button>
+      <button type="button" className={cx(!film && 'is-active')} aria-pressed={!film} onClick={() => { onChange(false) }} title={t('有声漫：画面跟着配音走，边放边拼', 'The motion comic: pictures following the voices, put together as it plays')}>{t('有声漫', 'Motion comic')}</button>
+    </div>
+  )
+}

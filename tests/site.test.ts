@@ -246,6 +246,43 @@ describe('a book as a site', () => {
     await expect(publishSite(bed.core, bed.runtime, { out, reader: READER, press: halted }, { origin: 'user', signal: stop.signal })).rejects.toThrow()
   })
 
+  it('carries a chapter\'s finished video and its words — unless told to leave the videos out', async () => {
+    const { project } = bed.runtime
+    const id = (await project.manifest()).id
+    const film = await project.writeAsset('video/ch001.mp4', new Uint8Array(200).fill(4))
+    const words = await project.writeAsset('video/ch001.vtt', new TextEncoder().encode('WEBVTT\n\n00:00.000 --> 00:02.000\n她回到旧居。\n'))
+    // What post-production left on its bench while cutting is nobody's to read.
+    await project.writeAsset('video/work/ch001/clips/p001.mp4', new Uint8Array(50))
+    await project.writeState(['video', 'ch001.json'], { schema: 1, chapterId: 'ch001', path: film, duration: 12.5, width: 1920, height: 1080, size: 200, createdAt: '2026-01-02T03:04:05.000Z', note: 'a note that is the author\'s', subtitles: { path: words, burned: true } })
+    const result = await publishSite(bed.core, bed.runtime, { out, reader: READER })
+    expect(result.videos).toBe(1)
+    expect((await tree(out)).filter(path => path.includes('/video/'))).toEqual([`media/${id}/assets/video/ch001.mp4`, `media/${id}/assets/video/ch001.vtt`])
+    expect(await readFile(join(out, 'media', id, 'assets', 'video', 'ch001.mp4'))).toEqual(Buffer.from(new Uint8Array(200).fill(4)))
+    const chapter = JSON.parse(await readFile(join(out, 'data', id, 'chapters', 'ch001.json'), 'utf8'))
+    // The file, its shape, its words and whether they are in the picture — and nothing of how it was cut.
+    expect(chapter.video).toEqual({ path: 'assets/video/ch001.mp4', duration: 12.5, width: 1920, height: 1080, subtitles: 'assets/video/ch001.vtt', burned: true, version: '2026-01-02T03:04:05.000Z' })
+    expect(chapter).toEqual(await bookAnswer(bed.core, bed.runtime, 'read', { method: 'GET', path: ['chapters', 'ch001'], by: 'test' }))
+    const book = JSON.parse(await readFile(join(out, 'data', id, 'book.json'), 'utf8'))
+    expect(book).toEqual(await bookAnswer(bed.core, bed.runtime, 'read', { method: 'GET', path: [], by: 'test' }))
+    expect(book.chapters.map((item: { video?: boolean }) => item.video)).toEqual([true, undefined])
+    // Sound is pressed; a video is carried as it is.
+    const press: SoundPress = { ext: 'm4a', key: 'fake/1', press: async () => Uint8Array.from([1]) }
+    await publishSite(bed.core, bed.runtime, { out, reader: READER, press })
+    expect((await tree(out)).filter(path => path.includes('/video/'))).toHaveLength(2)
+
+    // Left out: no file, and the reader is told of none — the motion comic is still there to watch.
+    const without = await publishSite(bed.core, bed.runtime, { out, reader: READER, video: false })
+    expect(without.videos).toBeUndefined()
+    expect((await tree(out)).filter(path => path.includes('/video/'))).toEqual([])
+    const plain = JSON.parse(await readFile(join(out, 'data', id, 'chapters', 'ch001.json'), 'utf8'))
+    expect(plain.video).toBeUndefined()
+    expect(plain.board.panels).toHaveLength(2)
+    expect(JSON.parse(await readFile(join(out, 'data', id, 'book.json'), 'utf8')).chapters[0].video).toBeUndefined()
+    // A record whose file is gone is no video.
+    await project.removeAsset('video/ch001.mp4')
+    expect((await publishSite(bed.core, bed.runtime, { out, reader: READER })).videos).toBeUndefined()
+  })
+
   it('goes into the folder its author names, else one beside the book — never a name that is no folder', () => {
     expect(siteFolder('/books/雨夜', '雨夜', undefined)).toBe('/books/雨夜-site')
     expect(siteFolder('/books/雨夜', 'a/b:c?', '')).toBe('/books/abc-site')

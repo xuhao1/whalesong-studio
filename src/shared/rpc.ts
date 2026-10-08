@@ -206,6 +206,10 @@ export interface SitePlan {
   album?: AlbumCounts
   /** Interludes kept as side stories. */
   sides?: number
+  /** Chapters that have a finished video, and what the files weigh together. Absent from a Host that publishes none. */
+  videos?: { chapters: number; bytes: number }
+  /** The other ways the story goes that a reader may take — lines beside the main one, not put aside, with a written chapter of their own: their names, and how many chapters only they have. */
+  lines?: { titles: string[]; chapters: number }
   /** The folder holds a site published before, of this book or another. */
   previous?: { publishedAt: string; files: number; sameBook: boolean }
   /** The folder exists and holds something that is not a site published from here. */
@@ -221,6 +225,10 @@ export interface SiteDone {
   album?: AlbumCounts
   /** Side stories the site has; absent from a Host that publishes none. */
   sides?: number
+  /** Chapters whose finished video the site carries. */
+  videos?: number
+  /** Lines of the plot beside the main one the site carries, and the chapters only they have. */
+  lines?: { lines: number; chapters: number }
   files: number
   bytes: number
   written: number
@@ -552,6 +560,10 @@ export interface NovelRpc {
     watch?: boolean
     album?: boolean
     sides?: boolean
+    /** `false` leaves the finished videos out: the motion comic still plays, and the site is much smaller. */
+    video?: boolean
+    /** `false` publishes the main line only. (With `chapters` or `upto` — a part of the book — it is the main line anyway.) */
+    lines?: boolean
     /** How the site opens for a visitor who has set nothing: the publisher's own reading settings, as their browser keeps them. */
     defaults?: { prefs?: object; options?: object }
     /** `false` publishes voices and sound as they lie in the book (WAV); otherwise they go out as AAC, a quarter the size, when this computer has ffmpeg. */

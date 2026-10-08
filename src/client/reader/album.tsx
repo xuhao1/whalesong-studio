@@ -131,6 +131,11 @@ export interface AlbumProps {
    * Given, a scene can be arranged; left out, it is as it was arranged.
    */
   onPin?: ((entry: string, key: string | undefined, at: ScenePoint | undefined) => void) | undefined
+  /**
+   * A reader's: the chapter they last read, by its place in reading order. Given, the slider offers
+   * "as far as I have read" — the people and the world with nothing of what comes after.
+   */
+  readTo?: number | undefined
 }
 
 /** The halves of the viewer: the text, the people, the world, and the side stories the author kept. */
@@ -204,7 +209,7 @@ function Face({ person, media, className }: { person: AlbumPerson; media: (path:
  * @param at - where it stands: one of its two halves, or the page of one thing.
  * @param go - how it goes elsewhere; whoever shows the album keeps where it is.
  */
-export function AlbumView({ t, album, media, at, go, onRead, onEdit, worldTools, onPin }: AlbumProps) {
+export function AlbumView({ t, album, media, at, go, onRead, onEdit, worldTools, onPin, readTo }: AlbumProps) {
   const [moment, setMoment] = useState<number | undefined>()
   const [zoom, setZoom] = useState<string | undefined>()
   const [more, setMore] = useState<Record<string, boolean>>({})
@@ -294,6 +299,7 @@ export function AlbumView({ t, album, media, at, go, onRead, onEdit, worldTools,
       <div className="nv-seg" role="group">
         <button type="button" className={cx(moment === undefined && 'is-active')} onClick={() => { setMoment(undefined) }}>{t('不分时间', 'Whenever')}</button>
         <button type="button" className={cx(moment !== undefined && 'is-active')} onClick={() => { setMoment(moment ?? last) }}>{t('故事进行到…', 'As the story stood at…')}</button>
+        {readTo !== undefined && readTo >= first && readTo < last ? <button type="button" className={cx(moment === readTo && 'is-mine')} onClick={() => { setMoment(readTo) }} title={t('只看到我读到的地方：之后才登场的人、才发生的事都不显示', 'Only as far as I have read: nobody who comes on later, nothing that happens later')}>{t(`我读到的第 ${readTo} 章`, `Where I am: ch. ${readTo}`)}</button> : null}
       </div>
       {moment !== undefined ? (
         <>
@@ -317,14 +323,70 @@ export function AlbumView({ t, album, media, at, go, onRead, onEdit, worldTools,
       : <span key={index} className="nv-album-chapter is-still">{index}</span>
   }
 
-  // ── somebody's page ──
+  // What a kind of thing has to show at the chapter looked at: a place nothing has come to yet is not there.
+  const tied = new Set(ties.flatMap(tie => [tie.from, tie.to]).filter(end => end.type === 'world').map(end => end.id))
+  const seenBy = (candidate: AlbumEntry): boolean => moment === undefined || candidate.group === 'ideas' || ((candidate.chapters.some(index => index <= moment) || tied.has(candidate.id)) && stateOf(candidate) !== 'before')
+  const of = (group: WorldGroup): AlbumEntry[] => album.world.filter(candidate => candidate.group === group && seenBy(candidate))
+
+  // An album is leafed through: from a page to the one before and the one after it, in the order its kind is laid out by.
   const person = at.end?.type === 'character' ? people.get(at.end.id) : undefined
+  const entry = at.end?.type === 'world' ? entries.get(at.end.id) : undefined
+  // …which is the order of the first pages: part by part or weight by weight, and within each, whoever has a picture first.
+  const drawnFirst = <T,>(list: readonly T[], drawn: (item: T) => boolean): T[] => [...list.filter(drawn), ...list.filter(item => !drawn(item))]
+  const leaves: TieEnd[] = person !== undefined
+    ? CASTS.flatMap(cast => drawnFirst(album.people.filter(candidate => cast.roles.includes(candidate.role) && (moment === undefined || standing(candidate) !== 'planned' || candidate.id === person.id)), candidate => (candidate.portrait ?? candidate.sheet) !== undefined)).map(candidate => ({ type: 'character' as const, id: candidate.id }))
+    : entry !== undefined
+      ? (() => {
+          const kind = album.world.filter(candidate => candidate.group === entry.group && (seenBy(candidate) || candidate.id === entry.id))
+          const front = worldFront(kind, ties)
+          const tiers = entry.group === 'ideas' ? [kind] : [...front.heavy.map(tier => tier.list), front.rest]
+          return tiers.flatMap(tier => drawnFirst(tier, candidate => candidate.image !== undefined)).map(candidate => ({ type: 'world' as const, id: candidate.id }))
+        })()
+      : []
+  const leaf = leaves.findIndex(end => end.id === at.end?.id)
+  const before = leaf > 0 ? leaves[leaf - 1] : undefined
+  const after = leaf >= 0 ? leaves[leaf + 1] : undefined
+  const turn = useRef<{ before?: TieEnd | undefined; after?: TieEnd | undefined; open: (end: TieEnd) => void }>({ open })
+  turn.current = { before, after, open }
+  useEffect(() => {
+    // The arrow keys turn the page — unless they are being used for something: typing, a slider, a dialog, a picture opened large.
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+      const target = event.target instanceof HTMLElement ? event.target : undefined
+      if (target !== undefined && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) || target.closest('[role="dialog"]') !== null)) return
+      const to = event.key === 'ArrowLeft' ? turn.current.before : event.key === 'ArrowRight' ? turn.current.after : undefined
+      if (to === undefined || top.current === null || top.current.offsetParent === null) return
+      event.preventDefault()
+      turn.current.open(to)
+    }
+    document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('keydown', onKey) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  const pager = before !== undefined || after !== undefined ? (
+    <nav className="nv-album-pager" aria-label={t('翻页', 'Turn the page')}>
+      {before !== undefined ? (
+        <button type="button" className="nv-album-turn is-before" onClick={() => { open(before) }}>
+          <Icon name="chevronLeft" size={16} />
+          <span><small>{t('上一页', 'Before')}</small><strong>{nameOf(before)}</strong></span>
+        </button>
+      ) : <span />}
+      <span className="nv-album-pager-at">{leaf + 1} / {leaves.length}</span>
+      {after !== undefined ? (
+        <button type="button" className="nv-album-turn is-after" onClick={() => { open(after) }}>
+          <span><small>{t('下一页', 'After')}</small><strong>{nameOf(after)}</strong></span>
+          <Icon name="chevronRight" size={16} />
+        </button>
+      ) : <span />}
+    </nav>
+  ) : null
+
+  // ── somebody's page ──
   if (person !== undefined) {
-    return <PersonPage key={person.id} person={person} t={t} album={album} media={media} moment={moment} time={time} rows={rows} ties={ties} go={go} setZoom={setZoom} lightbox={lightbox} top={top} onEdit={onEdit} onRead={onRead} byIndex={byIndex} first={first} last={last} people={people} />
+    return <PersonPage key={person.id} person={person} t={t} album={album} media={media} moment={moment} time={time} rows={rows} ties={ties} go={go} setZoom={setZoom} lightbox={lightbox} top={top} onEdit={onEdit} onRead={onRead} byIndex={byIndex} first={first} last={last} people={people} pager={pager} />
   }
 
   // ── the page of a place, a house, a thing, an idea ──
-  const entry = at.end?.type === 'world' ? entries.get(at.end.id) : undefined
   if (entry !== undefined) {
     const end: TieEnd = { type: 'world', id: entry.id }
     const around = neighbours(ties, end)
@@ -351,7 +413,7 @@ export function AlbumView({ t, album, media, at, go, onRead, onEdit, worldTools,
       </div>
     )
     return (
-      <div className="nv-explore nv-album" ref={top}>
+      <div key={key} className="nv-explore nv-album is-page" ref={top}>
         <nav className="nv-explore-trail">
           <button type="button" className="nv-link" onClick={() => { go({ section: 'world' }) }}>{t('这个世界', 'This world')}</button>
           {up.map(id => <span key={id}><Icon name="chevronRight" size={11} /><button type="button" className="nv-link" onClick={() => { open({ type: 'world', id }) }}>{nameOf({ type: 'world', id })}</button></span>)}
@@ -417,6 +479,7 @@ export function AlbumView({ t, album, media, at, go, onRead, onEdit, worldTools,
         ))}
         {related.length > 0 ? <div><h3>{t('相关', 'Goes with')}</h3>{worldRows(related)}</div> : null}
         {entry.group !== 'ideas' && STANDINGS.every(how => (around[how]?.length ?? 0) === 0) ? <p className="nv-muted">{moment !== undefined ? t('故事进行到这一章时，它周围还没有什么。', 'At this chapter of the story, nothing stands around it yet.') : t('它周围还没有记下什么。', 'Nothing is written down around it yet.')}</p> : null}
+        {pager}
         {lightbox}
       </div>
     )
@@ -427,7 +490,7 @@ export function AlbumView({ t, album, media, at, go, onRead, onEdit, worldTools,
     // At a chapter of the story, whoever has not come on yet is not there to be met.
     const there = album.people.filter(candidate => moment === undefined || standing(candidate) !== 'planned')
     return (
-      <div className="nv-explore nv-album" ref={top}>
+      <div key={key} className="nv-explore nv-album" ref={top}>
         <header className="nv-explore-top">
           <div>
             <h2>{t('人物', 'People')}</h2>
@@ -474,9 +537,6 @@ export function AlbumView({ t, album, media, at, go, onRead, onEdit, worldTools,
   // ── the world ──
   // Laid out by how much of the story a thing carries, wherever it lies: the garden half the book happens in is met on the first
   // page, though on the map it is a part of a house that is a part of a city. What is in what is told on each thing's own page.
-  const tied = new Set(ties.flatMap(tie => [tie.from, tie.to]).filter(end => end.type === 'world').map(end => end.id))
-  const seenBy = (candidate: AlbumEntry): boolean => moment === undefined || candidate.group === 'ideas' || ((candidate.chapters.some(index => index <= moment) || tied.has(candidate.id)) && stateOf(candidate) !== 'before')
-  const of = (group: WorldGroup): AlbumEntry[] => album.world.filter(candidate => candidate.group === group && seenBy(candidate))
   /** Something on the first page, with where it lies said on it: what a place is in, where a house has its seat. */
   const placed = (candidate: AlbumEntry): { end: TieEnd; note: string } => {
     const end: TieEnd = { type: 'world', id: candidate.id }
@@ -530,7 +590,7 @@ export function AlbumView({ t, album, media, at, go, onRead, onEdit, worldTools,
   const ideas = of('ideas')
   const nothing = album.world.length === 0
   return (
-    <div className="nv-explore nv-album" ref={top}>
+    <div key={key} className="nv-explore nv-album" ref={top}>
       <header className="nv-explore-top">
         <div>
           <h2>{t('这个世界', 'This world')}</h2>
@@ -688,10 +748,12 @@ interface PersonPageProps {
   first: number
   last: number
   people: Map<string, AlbumPerson>
+  /** The way to the page before and the page after. */
+  pager: ReactNode
 }
 
 /** Somebody's page: their picture large, who they are, what they go through, and who and what stands around them. */
-function PersonPage({ person, t, album, media, moment, time, rows, ties, go, setZoom, lightbox, top, onEdit, onRead, byIndex, first, last, people }: PersonPageProps) {
+function PersonPage({ person, t, album, media, moment, time, rows, ties, go, setZoom, lightbox, top, onEdit, onRead, byIndex, first, last, people, pager }: PersonPageProps) {
   const pictures = useMemo(() => [
     ...(person.portrait !== undefined ? [{ key: 'portrait', label: t('立绘', 'Portrait'), path: person.portrait, sheet: false }] : []),
     ...(person.sheet !== undefined ? [{ key: 'sheet', label: t('人设图', 'Design sheet'), path: person.sheet, sheet: true }] : []),
@@ -718,7 +780,7 @@ function PersonPage({ person, t, album, media, moment, time, rows, ties, go, set
     { label: ['能力', 'What they can do'], text: person.abilities },
   ]
   return (
-    <div className="nv-explore nv-album" ref={top}>
+    <div className="nv-explore nv-album is-page" ref={top}>
       <nav className="nv-explore-trail">
         <button type="button" className="nv-link" onClick={() => { go({ section: 'people' }) }}>{t('人物', 'People')}</button>
         <span><Icon name="chevronRight" size={11} /><strong>{person.name}</strong></span>
@@ -801,6 +863,7 @@ function PersonPage({ person, t, album, media, moment, time, rows, ties, go, set
           {rows(around[standing]!)}
         </div>
       ))}
+      {pager}
       {lightbox}
     </div>
   )

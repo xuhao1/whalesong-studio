@@ -26,6 +26,8 @@ export interface PlayerOptions {
   ambienceOn: boolean
   /** A chapter that ran out goes on to the next. Left out: it does. A wish of the listener's, kept with the rest; the player itself ends where the chapter does. */
   autoNext?: boolean
+  /** Where a chapter has a finished video and a motion comic: `false` watches the comic. Left out: the video. */
+  film?: boolean
 }
 
 type MediaUrl = (path: string, version?: string | number) => string

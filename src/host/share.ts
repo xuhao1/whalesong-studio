@@ -63,6 +63,9 @@ const MIME: Record<string, string> = {
   '.mp3': 'audio/mpeg',
   '.m4a': 'audio/mp4',
   '.ogg': 'audio/ogg',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.vtt': 'text/vtt; charset=utf-8',
 }
 
 /** What the reader page may load: itself, and nothing from anywhere else. */
@@ -485,8 +488,9 @@ export class ShareServer {
       return
     }
     const type = MIME[extname(parts.at(-1)!).toLowerCase()]
-    // Pictures and audio only: nothing else under assets is a reader's business.
-    if (type === undefined) {
+    // Pictures, sound, and a chapter's finished video with its words: nothing else under assets is a reader's business —
+    // least of all what post-production left on its workbench while cutting.
+    if (type === undefined || (parts[1] === 'video' && parts[2] === 'work')) {
       missing()
       return
     }

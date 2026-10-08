@@ -194,6 +194,106 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* ── a story that goes more than one way: the lines to read along ── */
+
+.nr-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 720px;
+  margin: 0 auto 14px;
+}
+
+.nr-lines > p {
+  margin: 0;
+}
+
+.nr-lines-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.nr-line {
+  display: flex;
+  flex: 1 1 200px;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 48px;
+  padding: 8px 12px;
+  border: 1px solid var(--nv-border);
+  border-radius: 12px;
+  background: var(--nv-bg);
+  color: var(--nv-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nr-line span {
+  color: var(--nv-text-3);
+  font-size: 12px;
+}
+
+.nr-line.is-active {
+  border-color: var(--nv-brand);
+  background: color-mix(in srgb, var(--nv-brand) 8%, var(--nv-bg));
+}
+
+.nr-line-premise {
+  margin: 0;
+  color: var(--nv-text-2);
+  font-size: 13.5px;
+}
+
+.nr-chapter.is-branch .nr-chapter-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.nr-chapter.is-branch .nr-chapter-title svg {
+  flex: none;
+  color: var(--nv-brand-text);
+}
+
+/* Where the story parts, at the end of a chapter: the other ways on. */
+.nr-ways {
+  display: flex;
+  flex: 1 1 100%;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  max-width: 520px;
+  margin: 8px auto 0;
+}
+
+.nr-way {
+  justify-content: flex-start;
+  height: auto;
+  min-height: 48px;
+  padding: 8px 12px;
+  text-align: left;
+  white-space: normal;
+}
+
+.nr-way > span {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.nr-way em {
+  color: var(--nv-text-2);
+  font-style: normal;
+}
+
+.nr-way small {
+  color: var(--nv-text-3);
+  font-size: 12px;
+}
+
 /* ── a chapter ── */
 
 .nr-bar {

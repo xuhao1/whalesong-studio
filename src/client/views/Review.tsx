@@ -178,6 +178,21 @@ function Issues() {
               <span className="nv-list-side">
                 {chapter.openIssues === undefined ? <Chip>{t('未审', 'Not reviewed')}</Chip> : chapter.openIssues === 0 ? <Chip tone="green">{t('无待办', 'Clear')}</Chip> : <Chip tone="amber">{t(`${chapter.openIssues} 个问题`, `${chapter.openIssues} open`)}</Chip>}
                 <Button size="sm" variant="ghost" busy={reviewing.has(chapter.id)} disabled={batch !== undefined} onClick={() => controller.guard(async () => { await controller.api.call('ai.review', { root, chapter: chapter.id }); await controller.refreshJobs() })}>{chapter.openIssues === undefined ? t('审校', 'Review') : t('重审', 'Again')}</Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  icon="eye"
+                  onClick={() => {
+                    // Looked at from the review: with what the review found marked in the text.
+                    try {
+                      localStorage.setItem('novel-studio:annotate', '1')
+                    } catch {
+                      // The notes can still be switched on there.
+                    }
+                    controller.setView('read', chapter.id)
+                  }}
+                  title={t('观看：在"观看"里读这一章，审校出的问题标在正文上', 'View: read the chapter in the viewer, with what the review found marked in the text')}
+                />
                 <Button size="sm" variant="ghost" icon="arrowRight" onClick={() => { controller.setView('write', chapter.id) }} title={t('打开这一章', 'Open the chapter')} />
               </span>
             </div>

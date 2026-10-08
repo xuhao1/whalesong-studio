@@ -157,6 +157,10 @@ function PublishSite() {
   const [watch, setWatch] = useState(true)
   const [album, setAlbum] = useState(true)
   const [sides, setSides] = useState(true)
+  // The finished videos: what a chapter has that weighs most, so what they come to is said beside the choice.
+  const [video, setVideo] = useState(true)
+  // The other ways the story goes: with the book unless the author keeps to the main line.
+  const [lines, setLines] = useState(true)
   // A book published a part at a time: as far as one chapter; everything written when none is chosen.
   const [upto, setUpto] = useState('')
   const [mine, setMine] = useState(true)
@@ -172,7 +176,7 @@ function PublishSite() {
   const data = plan.data
   const publish = (): Promise<unknown> => run(async () => {
     setDone(undefined)
-    const finished = await controller.run('site.publish', { root, ...(out.trim().length > 0 ? { out: out.trim() } : {}), listen, watch, album, sides, ...(press ? {} : { press: false }), ...(part !== undefined ? { upto: part.id } : {}), ...(mine ? { defaults: readerSettings() } : {}), ...(sealedOk ? { sealedOk: true } : {}) })
+    const finished = await controller.run('site.publish', { root, ...(out.trim().length > 0 ? { out: out.trim() } : {}), listen, watch, album, sides, ...(video ? {} : { video: false }), ...(lines ? {} : { lines: false }), ...(press ? {} : { press: false }), ...(part !== undefined ? { upto: part.id } : {}), ...(mine ? { defaults: readerSettings() } : {}), ...(sealedOk ? { sealedOk: true } : {}) })
     const output = finished.result?.output as SiteDone | undefined
     if (output !== undefined) setDone(output)
   })
@@ -186,7 +190,7 @@ function PublishSite() {
   return (
     <div className="nv-share nv-site">
       <p>
-        {t(`把《${project.manifest.title}》做成一个文件夹：里面是和手机上一模一样的页面，加上这本书的正文、配音、有声漫、插图，和人物与世界的画册。把这个文件夹放到任何能放静态网页的地方（GitHub Pages、Cloudflare Pages、对象存储、自己的服务器……），别人打开网址就能读、听、看——不需要 DSH，也不需要这台电脑开着。`, `Turn "${project.manifest.title}" into a folder: the same pages a phone gets, with the book's text, voices, motion comic and pictures, and the album of its people and its world. Put the folder anywhere static pages are served (GitHub Pages, Cloudflare Pages, a bucket, your own server…) and whoever opens the address can read, listen and watch — without DSH, and without this computer.`)}
+        {t(`把《${project.manifest.title}》做成一个文件夹：里面是和手机上一模一样的页面，加上这本书的正文、配音、有声漫、成片视频、插图，和人物与世界的画册。把这个文件夹放到任何能放静态网页的地方（GitHub Pages、Cloudflare Pages、对象存储、自己的服务器……），别人打开网址就能读、听、看——不需要 DSH，也不需要这台电脑开着。`, `Turn "${project.manifest.title}" into a folder: the same pages a phone gets, with the book's text, voices, motion comic, finished videos and pictures, and the album of its people and its world. Put the folder anywhere static pages are served (GitHub Pages, Cloudflare Pages, a bucket, your own server…) and whoever opens the address can read, listen and watch — without DSH, and without this computer.`)}
       </p>
       <ul className="nv-share-facts">
         <li>{t(`会发布：有正文的 ${data.chapters} 章${data.voiced > 0 ? `，其中 ${data.voiced} 章有配音` : ''}${data.drawn > 0 ? `，${data.drawn} 章有有声漫` : ''}。`, `Published: the ${data.chapters} chapters with text${data.voiced > 0 ? `, ${data.voiced} of them voiced` : ''}${data.drawn > 0 ? `, ${data.drawn} with a motion comic` : ''}.`)}</li>
@@ -213,6 +217,15 @@ function PublishSite() {
           </label>
         ) : null}
         <label className="nv-check"><input type="checkbox" checked={watch} disabled={data.drawn === 0} onChange={(event) => { setWatch(event.target.checked) }} /><span>{t('带上有声漫（分镜画面）', 'With the motion comic (its panels)')}{data.drawn === 0 ? t('——这本书还没有画过分镜', ' — no panel is drawn yet') : ''}</span></label>
+        {data.videos !== undefined ? (
+          <label className="nv-check">
+            <input type="checkbox" checked={video} onChange={(event) => { setVideo(event.target.checked) }} />
+            <span>
+              {t(`带上成片视频（${data.videos.chapters} 章剪好的视频，共 ${megabytes(data.videos.bytes)}）`, `With the finished videos (${data.videos.chapters} chapters cut, ${megabytes(data.videos.bytes)} in all)`)}
+              <em className="nv-muted nv-small">{t(' 读者在"看"里看到的就是它；同一章还有有声漫时可以切换。视频是一本书里最大的文件——不带的话，"看"里仍然有有声漫。', ' It is what a reader watches; where a chapter has a motion comic too, they can change between the two. Videos are the largest files a book has — left out, the motion comic still plays.')}</em>
+            </span>
+          </label>
+        ) : null}
         <label className="nv-check">
           <input type="checkbox" checked={album && data.album !== undefined} disabled={data.album === undefined} onChange={(event) => { setAlbum(event.target.checked) }} />
           <span>
@@ -224,6 +237,17 @@ function PublishSite() {
             <em className="nv-muted nv-small">{t(' 每个人带：称呼、一句话身份、外貌、性格、来历、能力、履历、立绘和人设图、和谁是什么关系。动机、缺陷、人物弧光、秘密、备注、怎么画怎么配音——这些只在您的编辑页里，不带出去。地点和物品带：名字、概括、正文、设定图。', ' Of each person: names, who they are in a line, how they look, how they are, where they come from, what they can do, what they go through, portrait and design sheets, who they are to others. What they want and lack, the change planned for them, their secrets, your notes, how they are drawn and voiced — these stay on your editing pages. Of places and things: name, summary, what is written of them, design art.')}</em>
           </span>
         </label>
+        {data.lines !== undefined ? (
+          <label className="nv-check">
+            <input type="checkbox" checked={lines && part === undefined} disabled={part !== undefined} onChange={(event) => { setLines(event.target.checked) }} />
+            <span>
+              {t(`带上其他剧情线（${data.lines.titles.length} 条：${data.lines.titles.slice(0, 4).join('、')}${data.lines.titles.length > 4 ? ' 等' : ''}；它们自己的 ${data.lines.chapters} 章）`, `With the other lines of the plot (${data.lines.titles.length}: ${data.lines.titles.slice(0, 4).join(', ')}${data.lines.titles.length > 4 ? '…' : ''}; ${data.lines.chapters} chapters of their own)`)}
+              <em className="nv-muted nv-small">{part !== undefined
+                ? t(' 只发布到某一章时发布的是主线的一段，不带别的线。', ' A book published as far as one chapter is a part of the main line, without the others.')
+                : t(' 读者在目录里选一条线读；读到故事分开的那一章，章末会给出另外的走法。搁置的线、还没有正文的线不带。不勾就只发布主线。', ' A reader chooses a line on the contents page, and is shown the other ways on at the end of the chapter where the story parts. Lines put aside, and lines with nothing written, do not go. Unticked, only the main line is published.')}</em>
+            </span>
+          </label>
+        ) : null}
         {(data.sides ?? 0) > 0 ? (
           <label className="nv-check">
             <input type="checkbox" checked={sides} onChange={(event) => { setSides(event.target.checked) }} />
@@ -260,7 +284,7 @@ function PublishSite() {
       {done !== undefined ? (
         <div className="nv-note is-ok nv-site-done" role="status">
           <strong>{t('发布好了。', 'Published.')}</strong>
-          <span>{t(`${done.chapters} 章${(done.sides ?? 0) > 0 ? `，${done.sides} 场番外` : ''}${done.album !== undefined ? `，画册里 ${done.album.people} 位人物、${done.album.places + done.album.factions + done.album.items + done.album.ideas} 条设定` : ''}，${formatCount(done.files, locale)} 个文件，共 ${megabytes(done.bytes)}；这一次写了 ${formatCount(done.written, locale)} 个${done.removed > 0 ? `，清掉上次留下而这次没有的 ${done.removed} 个` : ''}。`, `${done.chapters} chapters${(done.sides ?? 0) > 0 ? `, ${done.sides} side stories` : ''}${done.album !== undefined ? `, an album of ${done.album.people} people and ${done.album.places + done.album.factions + done.album.items + done.album.ideas} entries` : ''}, ${formatCount(done.files, locale)} files, ${megabytes(done.bytes)} in all; ${formatCount(done.written, locale)} written this time${done.removed > 0 ? `, ${done.removed} left from last time removed` : ''}.`)}</span>
+          <span>{t(`${done.chapters} 章${(done.sides ?? 0) > 0 ? `，${done.sides} 场番外` : ''}${(done.videos ?? 0) > 0 ? `，${done.videos} 章成片视频` : ''}${done.lines !== undefined ? `，另外 ${done.lines.lines} 条剧情线（它们自己的 ${done.lines.chapters} 章）` : ''}${done.album !== undefined ? `，画册里 ${done.album.people} 位人物、${done.album.places + done.album.factions + done.album.items + done.album.ideas} 条设定` : ''}，${formatCount(done.files, locale)} 个文件，共 ${megabytes(done.bytes)}；这一次写了 ${formatCount(done.written, locale)} 个${done.removed > 0 ? `，清掉上次留下而这次没有的 ${done.removed} 个` : ''}。`, `${done.chapters} chapters${(done.sides ?? 0) > 0 ? `, ${done.sides} side stories` : ''}${(done.videos ?? 0) > 0 ? `, ${done.videos} finished videos` : ''}${done.lines !== undefined ? `, ${done.lines.lines} other lines of the plot (${done.lines.chapters} chapters of their own)` : ''}${done.album !== undefined ? `, an album of ${done.album.people} people and ${done.album.places + done.album.factions + done.album.items + done.album.ideas} entries` : ''}, ${formatCount(done.files, locale)} files, ${megabytes(done.bytes)} in all; ${formatCount(done.written, locale)} written this time${done.removed > 0 ? `, ${done.removed} left from last time removed` : ''}.`)}</span>
           {done.sound !== undefined ? (
             <span>
               {t(`配音和声音：${formatCount(done.sound.files, locale)} 个文件压缩成了 AAC，${megabytes(done.sound.from)} → ${megabytes(done.sound.to)}。`, `Voices and sound: ${formatCount(done.sound.files, locale)} files went out as AAC, ${megabytes(done.sound.from)} → ${megabytes(done.sound.to)}.`)}
@@ -272,7 +296,7 @@ function PublishSite() {
           <div className="nv-row-wrap">
             <Button size="sm" icon="copy" onClick={() => controller.guard(async () => { await navigator.clipboard.writeText(done.dir); controller.toast('success', t('路径已复制', 'Path copied')) })}>{t('复制路径', 'Copy the path')}</Button>
           </div>
-          <span className="nv-muted nv-small">{t('想先在这台电脑上看一眼：在这个文件夹里开一个本地的静态服务器（比如 `npx serve` 或 `python3 -m http.server`），用浏览器打开它给的地址。直接双击 index.html 不行——浏览器不让本地文件读旁边的数据。', 'To look at it on this computer first: start a local static server in the folder (`npx serve`, `python3 -m http.server`) and open the address it gives. Opening index.html by double-click does not work — a browser does not let a local file read the data beside it.')}</span>
+          <span className="nv-muted nv-small">{t('想先在这台电脑上看一眼：在这个文件夹里开一个本地的静态服务器（比如 `npx serve`），用浏览器打开它给的地址。直接双击 index.html 不行——浏览器不让本地文件读旁边的数据。（`python3 -m http.server` 也能看，但它不让播放器跳着取文件：视频拖不动进度，iPhone 上放不了声音和视频。正式的网站托管都没有这个问题。）', 'To look at it on this computer first: start a local static server in the folder (`npx serve`) and open the address it gives. Opening index.html by double-click does not work — a browser does not let a local file read the data beside it. (`python3 -m http.server` shows it too, but does not let a player fetch a file in pieces: a video cannot be scrubbed, and an iPhone plays neither sound nor video from it. No real host has that problem.)')}</span>
           {done.missing.length > 0 ? <span className="nv-small">{t(`有 ${done.missing.length} 个图片或声音文件书里提到了、磁盘上却没有，已跳过：${done.missing.slice(0, 3).join('、')}${done.missing.length > 3 ? ' 等' : ''}`, `${done.missing.length} pictures or sounds the book names are not on disk and were left out: ${done.missing.slice(0, 3).join(', ')}${done.missing.length > 3 ? '…' : ''}`)}</span> : null}
         </div>
       ) : null}

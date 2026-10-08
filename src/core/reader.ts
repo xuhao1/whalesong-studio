@@ -17,9 +17,11 @@
 import type { NovelCore, ProjectRuntime } from './core'
 import { playable } from './pipelines/audio'
 import { playTurn, rewindPlay, startPlay } from './pipelines/play'
+import { chapterVideo, chapterVideoWithSubtitles } from './pipelines/video'
 import { albumCounts, albumEmpty, cutAlbum, type Album, type AlbumCounts, type AlbumEntry, type AlbumEvent, type AlbumPerson } from '../shared/album'
+import type { ReaderLine } from '../shared/reader'
 import { hashText, proseOnly, sameName } from '../shared/text'
-import { castOrder, WORLD_EVENT_KINDS, type AudioCue, type AudioLine, type ComicPanel, type PlaySession, type TtsSettings } from '../shared/types'
+import { castOrder, MAIN_LINE, WORLD_EVENT_KINDS, type AudioCue, type AudioLine, type ChapterInfo, type ComicPanel, type PlaySession, type TtsSettings } from '../shared/types'
 import { groupOf, WORLD_GROUPS, worldOrder, worldWeight } from '../shared/world'
 
 /** A request that is not answered: the status an HTTP server would give it, and a word for the reader's page to tell cases apart. */
@@ -51,7 +53,14 @@ export interface SharedChapter {
   /** Panels of its motion comic, and how many of them are drawn. */
   panels: number
   drawn: number
+  /** It has a finished video: the cut post-production made of it. */
+  video?: boolean
+  /** The line of the plot it belongs to, when that is not the main one; `index` is then its place along that line. */
+  line?: string
 }
+
+/** A line of the plot as a reader takes it (`shared/reader.ts`, where a page reads along it). */
+export type SharedLine = ReaderLine
 
 export interface SharedBook {
   id: string
@@ -77,8 +86,26 @@ export interface SharedChapterData {
   text: string
   script?: { lines: AudioLine[]; cues: AudioCue[] }
   board?: { panels: Pick<ComicPanel, 'id' | 'lines' | 'begin' | 'end' | 'description' | 'camera' | 'image'>[] }
+  /** Its finished video, when post-production cut one. */
+  video?: SharedVideo
   /** The script was made from an earlier text. */
   stale: boolean
+}
+
+/**
+ * A chapter's finished video as it is played: the file, its shape, and its
+ * lines as a WebVTT file a web player can show (it shows nothing of a track
+ * inside an MP4) — `burned` when the words are in the picture already, so
+ * that they are not shown twice. `version` changes when the chapter is cut again.
+ */
+export interface SharedVideo {
+  path: string
+  duration: number
+  width: number
+  height: number
+  subtitles?: string
+  burned?: boolean
+  version: string
 }
 
 export type SharedPlay = Pick<PlaySession, 'id' | 'title' | 'player' | 'cast' | 'situation' | 'location' | 'turns' | 'outcome' | 'updatedAt'>
@@ -99,7 +126,10 @@ export async function bookAnswer(core: NovelCore, runtime: ProjectRuntime, mode:
   if (rest.length === 0 && reading) {
     const album = albumCounts(await readAlbum(runtime))
     const sides = (await listSides(runtime)).length
-    return { book: await describeBook(runtime, mode), chapters: await listChapters(runtime), ...(albumEmpty(album) ? {} : { album }), ...(sides > 0 ? { sides } : {}) }
+    const chapters = await listChapters(runtime)
+    // Where the book goes more than one way: the ways, and the chapters only the other ways have.
+    const ways = await listLines(runtime, chapters)
+    return { book: await describeBook(runtime, mode), chapters: [...chapters, ...(ways?.chapters ?? [])], ...(ways !== undefined ? { lines: ways.lines } : {}), ...(albumEmpty(album) ? {} : { album }), ...(sides > 0 ? { sides } : {}) }
   }
   if (section === 'album' && rest.length === 1 && reading) return await readAlbum(runtime)
   if (section === 'chapters' && rest.length === 2) {
@@ -184,24 +214,61 @@ export async function describeBook(runtime: ProjectRuntime, mode: 'read' | 'edit
 
 /** The chapters of a book that can be read, in reading order, with what each offers to hear and to watch. */
 export async function listChapters(runtime: ProjectRuntime): Promise<SharedChapter[]> {
-  const { project } = runtime
   const chapters: SharedChapter[] = []
-  for (const chapter of await project.chapterInfos()) {
-    if (!chapter.hasText) continue
-    const script = await project.audioScript(chapter.id)
-    const board = await project.comicBoard(chapter.id)
-    chapters.push({
-      id: chapter.id,
-      index: chapter.index,
-      title: chapter.title,
-      words: chapter.words,
-      lines: script?.lines.length ?? 0,
-      voiced: script?.lines.filter(line => line.audio !== undefined).length ?? 0,
-      panels: board?.panels.length ?? 0,
-      drawn: board?.panels.filter(panel => panel.image !== undefined).length ?? 0,
-    })
-  }
+  for (const chapter of await runtime.project.chapterInfos()) if (chapter.hasText) chapters.push(await listed(runtime, chapter))
   return chapters
+}
+
+/** A chapter as the reader lists it. */
+async function listed(runtime: ProjectRuntime, chapter: ChapterInfo): Promise<SharedChapter> {
+  const { project } = runtime
+  const script = await project.audioScript(chapter.id)
+  const board = await project.comicBoard(chapter.id)
+  return {
+    id: chapter.id,
+    index: chapter.index,
+    title: chapter.title,
+    words: chapter.words,
+    lines: script?.lines.length ?? 0,
+    voiced: script?.lines.filter(line => line.audio !== undefined).length ?? 0,
+    panels: board?.panels.length ?? 0,
+    drawn: board?.panels.filter(panel => panel.image !== undefined).length ?? 0,
+    ...(await chapterVideo(runtime, chapter.id) !== undefined ? { video: true } : {}),
+  }
+}
+
+/**
+ * The lines of the plot a reader may take, where the book goes more than one
+ * way: the main line and every other that is not put aside and has a written
+ * chapter of its own — with those chapters, which a list of the main line's
+ * does not have.
+ * @returns nothing for a book that is read one way only.
+ */
+export async function listLines(runtime: ProjectRuntime, main?: SharedChapter[]): Promise<{ lines: SharedLine[]; chapters: SharedChapter[] } | undefined> {
+  const { project } = runtime
+  const outline = await project.lines()
+  if (outline.length === 0) return undefined
+  const trunk = main ?? await listChapters(runtime)
+  const lines: SharedLine[] = [{ id: MAIN_LINE, title: '', path: trunk.map(chapter => chapter.id), own: trunk.length }]
+  const chapters: SharedChapter[] = []
+  for (const line of outline) {
+    // Put aside by the author: kept in the book, not offered to whoever reads it.
+    if (line.shelved === true) continue
+    const path = (await project.chapterInfos(line.id)).filter(chapter => chapter.hasText)
+    const own = path.filter(chapter => chapter.line === line.id)
+    if (own.length === 0) continue
+    lines.push({
+      id: line.id,
+      title: line.title,
+      ...(line.premise !== undefined && line.premise.length > 0 ? { premise: line.premise } : {}),
+      ...(line.from !== undefined ? { from: line.from } : {}),
+      ...(line.choice !== undefined && line.choice.length > 0 ? { choice: line.choice } : {}),
+      path: path.map(chapter => chapter.id),
+      own: own.length,
+    })
+    for (const chapter of own) chapters.push({ ...await listed(runtime, chapter), line: line.id })
+  }
+  return lines.length > 1 ? { lines, chapters } : undefined
 }
 
 /** A chapter for the reader: its text, its audio script and its storyboard, without anything only the author needs. */
@@ -216,6 +283,7 @@ export async function readChapter(runtime: ProjectRuntime, id: string, tts: Pick
   // As it will play: lines left unspoken say so.
   const script = stored !== undefined ? playable(stored, tts) : undefined
   const board = await project.comicBoard(id)
+  const video = await chapterVideoWithSubtitles(runtime, id)
   return {
     id,
     index: located.index,
@@ -258,6 +326,17 @@ export async function readChapter(runtime: ProjectRuntime, id: string, tts: Pick
           ...(panel.end !== undefined ? { end: panel.end } : {}),
           ...(panel.image !== undefined ? { image: panel.image } : {}),
         })),
+      },
+    } : {}),
+    ...(video !== undefined ? {
+      video: {
+        path: video.path,
+        duration: video.duration,
+        width: video.width,
+        height: video.height,
+        ...(video.subtitles?.path !== undefined ? { subtitles: video.subtitles.path } : {}),
+        ...(video.subtitles?.burned === true ? { burned: true } : {}),
+        version: video.createdAt,
       },
     } : {}),
     stale: stored !== undefined && stored.textHash !== hashText(proseOnly(text)),

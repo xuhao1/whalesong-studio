@@ -5,7 +5,13 @@ import { applyOutlineOps } from '../src/core/pipelines/outline'
 import { novelizePlay, startPlay } from '../src/core/pipelines/play'
 import { deriveChapters } from '../src/core/pipelines/plot'
 import { writeChapter } from '../src/core/pipelines/write'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { publishSite } from '../src/core/pipelines/site'
+import { bookAnswer, listLines } from '../src/core/reader'
 import { waysOn } from '../src/shared/lines'
+import { readAlong, type ReaderLine } from '../src/shared/reader'
 import { MAIN_LINE } from '../src/shared/types'
 import { createTestBed, type TestBed } from './support/harness'
 
@@ -284,5 +290,106 @@ describe('the order the cast is listed in', () => {
     expect(castOrder(cards, presence, ['c1', 'c2', 'c3', 'c4']).map(card => card.id)).toEqual(['lead', 'foe', 'aunt', 'maid', 'late', 'walk'])
     // With nothing known of who is where, parts of one weight keep the order they came in.
     expect(castOrder(cards).map(card => card.id)).toEqual(['lead', 'foe', 'maid', 'aunt', 'late', 'walk'])
+  })
+})
+
+describe('a story that goes more than one way, to whoever reads it', () => {
+  const chapter = (id: string, line?: string): { id: string; line?: string } => ({ id, ...(line !== undefined ? { line } : {}) })
+  const main: ReaderLine = { id: 'main', title: '', path: ['c1', 'c2', 'c3', 'c4'], own: 4 }
+  const letter: ReaderLine = { id: 'ln_a', title: '她把信寄了出去', from: 'c2', choice: '把信投进邮筒', path: ['c1', 'c2', 'a1', 'a2'], own: 2 }
+  // A line that parts from the other line, one chapter into it.
+  const reply: ReaderLine = { id: 'ln_b', title: '回信来了', from: 'a1', path: ['c1', 'c2', 'a1', 'b1'], own: 1 }
+  const every = [chapter('c1'), chapter('c2'), chapter('c3'), chapter('c4'), chapter('a1', 'ln_a'), chapter('a2', 'ln_a'), chapter('b1', 'ln_b')]
+  const ids = (list: readonly { id: string }[]): string[] => list.map(item => item.id)
+
+  it('is read along the line chosen, and says at each chapter how else it goes on', () => {
+    // One way only: the chapters are what is read, and nothing parts anywhere.
+    expect(readAlong(every.slice(0, 4), undefined, 'main', 'c2')).toMatchObject({ line: undefined, ways: [] })
+    expect(ids(readAlong(every.slice(0, 4), [main], 'ln_a', undefined).chapters)).toEqual(['c1', 'c2', 'c3', 'c4'])
+
+    const lines = [main, letter, reply]
+    // Along the main line: its own chapters; where another line leaves, that line is a way on, in the words of its choice.
+    const onMain = readAlong(every, lines, 'main', 'c2')
+    expect(onMain.line?.id).toBe('main')
+    expect(ids(onMain.chapters)).toEqual(['c1', 'c2', 'c3', 'c4'])
+    // The third line goes on with the same chapter as the second: one way on, not two.
+    expect(onMain.ways.map(way => [way.line.id, way.next.id, way.leaves])).toEqual([['ln_a', 'a1', true]])
+    expect(readAlong(every, lines, 'main', 'c1').ways).toEqual([])
+    expect(readAlong(every, lines, 'main', 'c3').ways).toEqual([])
+
+    // Along the other line: what came before it parts, then its own. Where it left, the main line goes on without it — a way on too, and no choice of this line's.
+    const onLetter = readAlong(every, lines, 'ln_a', 'c2')
+    expect(ids(onLetter.chapters)).toEqual(['c1', 'c2', 'a1', 'a2'])
+    expect(onLetter.ways.map(way => [way.line.id, way.next.id, way.leaves])).toEqual([['main', 'c3', false]])
+    expect(readAlong(every, lines, 'ln_a', 'a1').ways.map(way => [way.line.id, way.next.id, way.leaves])).toEqual([['ln_b', 'b1', true]])
+
+    // A chapter the chosen line does not go through is read along its own line: a link into another line keeps its way on.
+    const linked = readAlong(every, lines, 'main', 'a2')
+    expect(linked.line?.id).toBe('ln_a')
+    expect(ids(linked.chapters)).toEqual(['c1', 'c2', 'a1', 'a2'])
+    expect(readAlong(every, lines, 'ln_a', 'c4').line?.id).toBe('main')
+    // A line chosen once and no longer offered: the main line. A chapter nobody has: the line stays as chosen.
+    expect(readAlong(every, lines, 'ln_gone', undefined).line?.id).toBe('main')
+    expect(readAlong(every, lines, 'ln_a', 'nowhere')).toMatchObject({ line: { id: 'ln_a' }, ways: [] })
+  })
+
+  describe('as the book gives it', () => {
+    let bed: TestBed
+    beforeEach(async () => { bed = await createTestBed() })
+    afterEach(async () => { await bed.cleanup() })
+
+    it('offers the lines that are not put aside and have something written, with the chapters only they have', async () => {
+      const { project } = bed.runtime
+      const [c1, c2, c3] = await book(bed, 4, 3)
+      // One way only: nothing to choose between.
+      expect(await listLines(bed.runtime)).toBeUndefined()
+      const letter = await project.addLine({ title: '她把信寄了出去', from: c2!, choice: '把信投进邮筒', premise: '信寄出去了，一切都不一样。' })
+      const a1 = await project.addChapter({ title: '另一个早晨' }, { line: letter.id })
+      const a2 = await project.addChapter({ title: '还没写的' }, { line: letter.id })
+      // Planned and not written: no way to offer yet.
+      expect(await listLines(bed.runtime)).toBeUndefined()
+      await project.saveChapterText(a1.id, '另一个早晨的正文。')
+      const shelved = await project.addLine({ title: '搁置的线', from: c1!, shelved: true })
+      const s1 = await project.addChapter({ title: '搁置的章' }, { line: shelved.id })
+      await project.saveChapterText(s1.id, '搁置的正文。')
+      const empty = await project.addLine({ title: '只有章纲的线', from: c3! })
+      await project.addChapter({ title: '空章' }, { line: empty.id })
+
+      const ways = (await listLines(bed.runtime))!
+      expect(ways.lines).toEqual([
+        { id: MAIN_LINE, title: '', path: [c1, c2, c3], own: 3 },
+        { id: letter.id, title: '她把信寄了出去', premise: '信寄出去了，一切都不一样。', from: c2, choice: '把信投进邮筒', path: [c1, c2, a1.id], own: 1 },
+      ])
+      expect(ways.chapters).toEqual([expect.objectContaining({ id: a1.id, title: '另一个早晨', line: letter.id, index: 3 })])
+      // What a device is answered with: every chapter there is to read, and the lines to read them along.
+      const answer = await bookAnswer(bed.core, bed.runtime, 'read', { method: 'GET', path: [], by: 'test' }) as { book: { chapters: number }; chapters: { id: string; line?: string }[]; lines?: ReaderLine[] }
+      expect(answer.chapters.map(item => [item.id, item.line])).toEqual([[c1, undefined], [c2, undefined], [c3, undefined], [a1.id, letter.id]])
+      expect(answer.lines).toEqual(ways.lines)
+      // The book is as long as its main line.
+      expect(answer.book.chapters).toBe(3)
+      const read = await bookAnswer(bed.core, bed.runtime, 'read', { method: 'GET', path: ['chapters', a1.id], by: 'test' }) as { id: string; index: number; text: string }
+      expect(read).toMatchObject({ id: a1.id, index: 3, text: '另一个早晨的正文。' })
+      expect(a2.id).not.toBe(a1.id)
+
+      // A site of the book has them too — unless it keeps to the main line, or is a part of the book.
+      const out = await mkdtemp(join(tmpdir(), 'novel-lines-'))
+      try {
+        const id = (await project.manifest()).id
+        const done = await publishSite(bed.core, bed.runtime, { out, reader: new TextEncoder().encode('/* reader */') })
+        expect(done).toMatchObject({ chapters: 3, lines: { lines: 1, chapters: 1 } })
+        const site = JSON.parse(await readFile(join(out, 'data', id, 'book.json'), 'utf8'))
+        expect(site).toEqual(answer)
+        expect(JSON.parse(await readFile(join(out, 'data', id, 'chapters', `${a1.id}.json`), 'utf8'))).toEqual(read)
+        const plain = await publishSite(bed.core, bed.runtime, { out, reader: new TextEncoder().encode('/* reader */'), lines: false })
+        expect(plain.lines).toBeUndefined()
+        expect(plain.removed).toBe(1)
+        const mainOnly = JSON.parse(await readFile(join(out, 'data', id, 'book.json'), 'utf8'))
+        expect(mainOnly.lines).toBeUndefined()
+        expect(mainOnly.chapters.map((item: { id: string }) => item.id)).toEqual([c1, c2, c3])
+        expect((await publishSite(bed.core, bed.runtime, { out, reader: new TextEncoder().encode('/* reader */'), chapters: [c1!, c2!] })).lines).toBeUndefined()
+      } finally {
+        await rm(out, { recursive: true, force: true })
+      }
+    })
   })
 })

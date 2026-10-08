@@ -7774,6 +7774,41 @@ blockquote.nv-issue-quote {
   gap: 6px;
 }
 
+/* ── Watching: a chapter's finished video, beside the motion comic ── */
+.nv-film {
+  background: #000;
+}
+
+.nv-film-video {
+  display: block;
+  width: 100%;
+  max-height: min(78vh, 100%);
+  aspect-ratio: 16 / 9;
+  background: #000;
+  object-fit: contain;
+}
+
+/* The words of a cut, where the player shows them: read at arm's length on a phone as well as across a desk. */
+.nv-film-video::cue {
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: clamp(14px, 2.4vw, 24px);
+  line-height: 1.5;
+}
+
+.nv-reader-watch-head,
+.nr-watch-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
+.nv-watch-choice {
+  flex: none;
+}
+
 /* Sound cannot be compressed on this computer: said where the choice is, not after the fact. */
 .nv-site-press-missing {
   font-style: normal;
@@ -8462,6 +8497,101 @@ blockquote.nv-issue-quote {
 
 .nv-explore-grid.is-drawn {
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+}
+
+/* A page of the album arrives: softly, and not at all for whoever asked for less motion. */
+@keyframes nv-album-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+.nv-album {
+  animation: nv-album-in 0.26s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nv-album {
+    animation: none;
+  }
+}
+
+/* Leafing through: the page before, the page after. */
+.nv-album-pager {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--nv-border);
+}
+
+.nv-album-pager-at {
+  color: var(--nv-text-3);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.nv-album-turn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 48px;
+  padding: 6px 10px;
+  border: 1px solid var(--nv-border);
+  border-radius: 12px;
+  background: var(--nv-bg);
+  color: var(--nv-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.14s ease, transform 0.14s ease;
+}
+
+.nv-album-turn:hover {
+  border-color: var(--nv-brand);
+}
+
+.nv-album-turn.is-before:hover {
+  transform: translateX(-2px);
+}
+
+.nv-album-turn.is-after:hover {
+  transform: translateX(2px);
+}
+
+.nv-album-turn.is-after {
+  justify-content: flex-end;
+  justify-self: end;
+  text-align: right;
+}
+
+.nv-album-turn > span {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.nv-album-turn small {
+  color: var(--nv-text-3);
+  font-size: 11px;
+}
+
+.nv-album-turn strong {
+  overflow: hidden;
+  font-family: var(--nv-prose-font);
+  font-size: 14.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* "As far as I have read", where it is the chapter being looked at. */
+.nv-seg button.is-mine {
+  color: var(--nv-brand-text);
+  font-weight: 600;
 }
 
 /* The first page of the world: each kind by how much of the story a thing carries, the heart of it first and large. */

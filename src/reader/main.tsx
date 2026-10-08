@@ -21,10 +21,11 @@ import { AlbumView, ViewerTabs, type ViewerHalf } from '../client/reader/album'
 import { PlayTranscript, SideList, type SidePlay, type SideRef } from '../client/reader/sides'
 import { ListenBar, ModeSwitch, ReaderPage, ReaderSettings, setReaderDefaults, usePlayerOptions, useReaderPrefs, type ReadMode, type Translate } from '../client/reader/parts'
 import { chapterFigures, ScriptPage } from '../client/reader/script'
-import { place, secondsOf, Theater, useCurrentPanel, type TheaterPanel } from '../client/reader/theater'
+import { Film, place, secondsOf, Theater, useCurrentPanel, WatchChoice, type ChapterFilm, type TheaterPanel } from '../client/reader/theater'
 import { useLinePlayer } from '../client/stage/player'
 import studioStyles from '../client/styles.css'
 import { albumEmpty, type Album, type AlbumAt, type AlbumCounts } from '../shared/album'
+import { readAlong, type ReaderLine, type ReaderWay } from '../shared/reader'
 import type { AudioCue, AudioLine, PlayTurn } from '../shared/types'
 import ownStyles from './reader.css'
 
@@ -52,7 +53,16 @@ interface ChapterRef {
   voiced: number
   panels?: number
   drawn?: number
+  /** It has a finished video. */
+  video?: boolean
+  /** The line of the plot it belongs to, when that is not the main one. */
+  line?: string
 }
+
+type Line = ReaderLine
+type Way = ReaderWay<ChapterRef>
+
+const MAIN = 'main'
 
 interface ChapterData {
   id: string
@@ -61,6 +71,8 @@ interface ChapterData {
   text: string
   script?: { lines: AudioLine[]; cues: AudioCue[] }
   board?: { panels: TheaterPanel[] }
+  /** Its finished video; absent from a Host or a site that carries none. */
+  video?: { path: string; subtitles?: string; burned?: boolean; version: string }
   stale: boolean
 }
 
@@ -294,9 +306,33 @@ function Shelf({ t }: { t: Translate }) {
   )
 }
 
+/** The line of the plot a book is read along on this device, where it goes more than one way. */
+function useLine(book: string): [string, (line: string) => void] {
+  const key = `novel-reader:line:${book}`
+  const [line, setLine] = useState<string>(() => {
+    try {
+      return localStorage.getItem(key) ?? MAIN
+    } catch {
+      return MAIN
+    }
+  })
+  const choose = useCallback((next: string): void => {
+    setLine(next)
+    try {
+      localStorage.setItem(key, next)
+    } catch {
+      // Chosen for this visit only.
+    }
+  }, [key])
+  return [line, choose]
+}
+
 function BookScreen({ id, place, t }: { id: string; place: Place; t: Translate }) {
-  const detail = useLoad(signal => get<{ book: Book; chapters: ChapterRef[]; album?: AlbumCounts; sides?: number }>(`api/books/${encodeURIComponent(id)}`, signal), [id])
-  const chapters = useMemo(() => detail.data?.chapters ?? [], [detail.data])
+  const detail = useLoad(signal => get<{ book: Book; chapters: ChapterRef[]; lines?: Line[]; album?: AlbumCounts; sides?: number }>(`api/books/${encodeURIComponent(id)}`, signal), [id])
+  const every = useMemo(() => detail.data?.chapters ?? [], [detail.data])
+  const [chosen, chooseLine] = useLine(id)
+  // Along the line being read: a book that goes one way has only that one.
+  const { line, chapters, ways } = useMemo(() => readAlong(every, detail.data?.lines, chosen, place.chapter), [every, detail.data, chosen, place.chapter])
   // Sealed, and this device has not been let in: the password first.
   if (detail.error === 'locked') return <Unlock id={id} title={shelfTitles.get(id)} t={t} onOpen={detail.reload} />
   if (detail.error !== undefined) return <Problem error={detail.error} t={t} onRetry={detail.reload} />
@@ -309,12 +345,12 @@ function BookScreen({ id, place, t }: { id: string; place: Place; t: Translate }
   }
   const sides = detail.data.sides ?? 0
   // The people and the world: where the book has any, and whoever serves it gives them.
-  if (place.album !== undefined && !albumEmpty(detail.data.album)) return <AlbumScreen book={book} chapters={chapters} counts={detail.data.album} sides={sides} at={place.album} t={t} />
+  if (place.album !== undefined && !albumEmpty(detail.data.album)) return <AlbumScreen book={book} chapters={every} counts={detail.data.album} sides={sides} at={place.album} t={t} />
   // The side stories the author kept: to be read, by whoever reads the book.
   if (place.side !== undefined && sides > 0) return <SidesScreen key={String(place.side)} book={book} counts={detail.data.album} sides={sides} side={typeof place.side === 'string' ? place.side : undefined} t={t} />
   const chapter = chapters.find(candidate => candidate.id === place.chapter)
-  if (chapter === undefined) return <Contents book={book} chapters={chapters} counts={detail.data.album} sides={sides} t={t} />
-  return <Chapter book={book} chapters={chapters} chapter={chapter} t={t} />
+  if (chapter === undefined) return <Contents book={book} chapters={chapters} counts={detail.data.album} sides={sides} lines={detail.data.lines} line={line} onLine={chooseLine} t={t} />
+  return <Chapter book={book} chapters={chapters} chapter={chapter} ways={ways} onLine={chooseLine} t={t} />
 }
 
 /** The halves of a book to change between, as this page goes to them. */
@@ -379,6 +415,7 @@ function AlbumScreen({ book, chapters, counts, sides, at, t }: { book: Book; cha
                 at={at}
                 go={(next) => { go({ book: book.id, album: next }) }}
                 onRead={(chapter) => { if (chapters.some(candidate => candidate.id === chapter)) go({ book: book.id, chapter }) }}
+                readTo={album.data.chapters.find(chapter => chapter.id === remembered(book.id).chapter)?.index}
               />
             )}
       </div>
@@ -386,7 +423,7 @@ function AlbumScreen({ book, chapters, counts, sides, at, t }: { book: Book; cha
   )
 }
 
-function Contents({ book, chapters, counts, sides, t }: { book: Book; chapters: ChapterRef[]; counts: AlbumCounts | undefined; sides: number; t: Translate }) {
+function Contents({ book, chapters, counts, sides, lines, line, onLine, t }: { book: Book; chapters: ChapterRef[]; counts: AlbumCounts | undefined; sides: number; lines?: Line[] | undefined; line?: Line | undefined; onLine: (line: string) => void; t: Translate }) {
   const last = remembered(book.id).chapter
   const resume = chapters.find(chapter => chapter.id === last)
   const credit = useMemo(siteCredit, [])
@@ -423,13 +460,30 @@ function Contents({ book, chapters, counts, sides, t }: { book: Book; chapters: 
           </div>
         </div>
         {albumEmpty(counts) && sides === 0 ? null : <div className="nr-book-tabs"><BookTabs book={book} value="text" counts={counts} sides={sides} t={t} /></div>}
+        {lines !== undefined && line !== undefined ? (
+          <div className="nr-lines">
+            <p className="nv-muted nv-small">{t('这个故事不止一种走法。选一条线读：', 'This story goes more than one way. Choose a line to read: ')}</p>
+            <div className="nr-lines-row" role="radiogroup" aria-label={t('剧情线', 'Line of the plot')}>
+              {lines.map((item) => {
+                const from = item.from !== undefined ? chapters.find(chapter => chapter.id === item.from) ?? undefined : undefined
+                return (
+                  <button key={item.id} type="button" role="radio" aria-checked={item.id === line.id} className={cx('nr-line', item.id === line.id && 'is-active')} onClick={() => { onLine(item.id) }}>
+                    <strong>{item.id === MAIN ? t('主线', 'The main line') : item.title}</strong>
+                    <span>{item.id === MAIN ? t(`${item.path.length} 章`, `${item.path.length} chapters`) : t(`${item.from !== undefined ? '从中途分出' : '另一种开头'} · 自己的 ${item.own} 章`, `${item.from !== undefined ? 'parts on the way' : 'another beginning'} · ${item.own} chapters of its own`)}{from !== undefined && item.id === line.id ? t(`（第 ${from.index} 章之后）`, ` (after chapter ${from.index})`) : ''}</span>
+                  </button>
+                )
+              })}
+            </div>
+            {line.premise !== undefined ? <p className="nr-line-premise">{line.premise}</p> : null}
+          </div>
+        ) : null}
         <ol className="nr-chapters">
           {chapters.map(chapter => (
             <li key={chapter.id}>
-              <button type="button" className={cx('nr-chapter', chapter.id === last && 'is-last')} onClick={() => { go({ book: book.id, chapter: chapter.id }) }}>
+              <button type="button" className={cx('nr-chapter', chapter.id === last && 'is-last', chapter.line !== undefined && 'is-branch')} onClick={() => { go({ book: book.id, chapter: chapter.id }) }}>
                 <span className="nr-chapter-index">{chapter.index}</span>
-                <span className="nr-chapter-title">{chapter.title}</span>
-                {(chapter.drawn ?? 0) > 0 ? <span className="nr-chapter-audio" title={t('有有声漫', 'Has a motion comic')}><Icon name="film" size={13} /></span> : null}
+                <span className="nr-chapter-title">{chapter.line !== undefined ? <Icon name="branch" size={12} /> : null}{chapter.title}</span>
+                {(chapter.drawn ?? 0) > 0 || chapter.video === true ? <span className="nr-chapter-audio" title={chapter.video === true ? t('有成片视频', 'Has a finished video') : t('有有声漫', 'Has a motion comic')}><Icon name="film" size={13} /></span> : null}
                 {chapter.voiced > 0 ? <span className="nr-chapter-audio" title={t('有配音', 'Has a voice')}><Icon name="headphones" size={13} /></span> : null}
                 <span className="nr-chapter-words">{chapter.words.toLocaleString()}</span>
               </button>
@@ -443,7 +497,7 @@ function Contents({ book, chapters, counts, sides, t }: { book: Book; chapters: 
   )
 }
 
-function Chapter({ book, chapters, chapter, t }: { book: Book; chapters: ChapterRef[]; chapter: ChapterRef; t: Translate }) {
+function Chapter({ book, chapters, chapter, ways, onLine, t }: { book: Book; chapters: ChapterRef[]; chapter: ChapterRef; ways: Way[]; onLine: (line: string) => void; t: Translate }) {
   const data = useLoad(signal => get<ChapterData>(`api/books/${encodeURIComponent(book.id)}/chapters/${encodeURIComponent(chapter.id)}`, signal), [book.id, chapter.id])
   const [prefs, updatePrefs] = useReaderPrefs()
   const [options, updateOptions] = usePlayerOptions()
@@ -471,9 +525,13 @@ function Chapter({ book, chapters, chapter, t }: { book: Book; chapters: Chapter
   const panels = useMemo(() => data.data?.board?.panels ?? [], [data.data])
   const placed = useMemo(() => place(panels, lines), [panels, lines])
   const url = useCallback((path: string, version?: string | number) => media(book.id, path, version), [book.id])
-  // A chapter without a comic is read instead of watched, one without a script has only its prose; the wish is kept for the next one.
+  // What there is to watch: the video post-production cut, the comic the page plays, or both — then the one the watcher last chose.
+  const video = data.data?.video
+  const film: ChapterFilm | undefined = useMemo(() => (video !== undefined ? { src: url(video.path, video.version), ...(video.subtitles !== undefined ? { subtitles: url(video.subtitles, video.version) } : {}), ...(video.burned === true ? { burned: true } : {}), language: book.language.slice(0, 2) } : undefined), [video, url, book.language])
+  const filming = film !== undefined && (options.film !== false || placed.length === 0)
+  // A chapter with nothing to watch is read instead, one without a script has only its prose; the wish is kept for the next one.
   const mode: ViewMode = data.data === undefined ? wanted
-    : wanted === 'watch' && placed.length === 0 ? 'read'
+    : wanted === 'watch' && placed.length === 0 && film === undefined ? 'read'
       : wanted === 'listen' && script === undefined ? 'read' : wanted
   const { player, state } = useLinePlayer(lines, cues, url, options, () => {
     if (!autoNext || next === undefined) return
@@ -566,6 +624,21 @@ function Chapter({ book, chapters, chapter, t }: { book: Book; chapters: Chapter
       {next !== undefined
         ? <button type="button" className="nv-btn nv-btn-primary" onClick={() => { go({ book: book.id, chapter: next.id }) }}><span>{t('下一章：', 'Next: ')}{next.title}</span><Icon name="chevronRight" size={15} /></button>
         : <span className="nv-muted">{t('—— 已读到最新一章 ——', '— you have reached the latest chapter —')}</span>}
+      {ways.length > 0 ? (
+        <div className="nr-ways">
+          <span className="nv-muted nv-small">{t('故事在这里分开，也可以这样走：', 'The story parts here. It also goes: ')}</span>
+          {ways.map(way => (
+            <button key={way.line.id} type="button" className="nv-btn nv-btn-outline nr-way" onClick={() => { onLine(way.line.id); go({ book: book.id, chapter: way.next.id }) }}>
+              <Icon name="branch" size={14} />
+              <span>
+                <strong>{way.line.id === MAIN ? t('主线', 'The main line') : way.line.title}</strong>
+                {way.leaves && way.line.choice !== undefined ? <em>{way.line.choice}</em> : null}
+                <small>{t('接着读：', 'Goes on with: ')}{way.next.title}</small>
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : null}
     </div>
   )
 
@@ -580,7 +653,7 @@ function Chapter({ book, chapters, chapter, t }: { book: Book; chapters: Chapter
             onChange={chooseMode}
             t={t}
             pages
-            extra={placed.length > 0 ? (
+            extra={placed.length > 0 || film !== undefined ? (
               <button type="button" role="tab" aria-selected={mode === 'watch'} className={cx('nv-mode', mode === 'watch' && 'is-active')} onClick={() => { chooseMode('watch') }}>
                 <Icon name="film" size={14} />
                 <span>{t('看', 'Watch')}</span>
@@ -605,9 +678,12 @@ function Chapter({ book, chapters, chapter, t }: { book: Book; chapters: Chapter
         </div>
       ) : mode === 'watch' ? (
         <div className="nv-reader-scroll nr-watch" ref={scroller}>
-          <Theater t={t} player={player} state={state} lines={lines} cues={cues} current={current} media={path => url(path)} options={options} />
-          <h1 className="nr-watch-title">{chapter.title}</h1>
-          {voiced === 0 ? <p className="nv-muted nv-small">{t('这一章还没有配音：画面会按阅读速度配着字幕走。', 'This chapter has no voice yet: the panels pass at reading pace, with subtitles.')}</p> : null}
+          {filming ? <Film t={t} film={film} onPlay={() => { player.pause() }} /> : <Theater t={t} player={player} state={state} lines={lines} cues={cues} current={current} media={path => url(path)} options={options} />}
+          <div className="nr-watch-head">
+            <h1 className="nr-watch-title">{chapter.title}</h1>
+            {film !== undefined && placed.length > 0 ? <WatchChoice t={t} film={filming} onChange={(value) => { player.pause(); updateOptions({ film: value }) }} /> : null}
+          </div>
+          {!filming && voiced === 0 ? <p className="nv-muted nv-small">{t('这一章还没有配音：画面会按阅读速度配着字幕走。', 'This chapter has no voice yet: the panels pass at reading pace, with subtitles.')}</p> : null}
           {turn}
         </div>
       ) : mode === 'listen' && script !== undefined ? (

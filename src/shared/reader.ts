@@ -160,3 +160,64 @@ export function subtitleOf(text: string, fraction: number): string {
   }
   return groups.at(-1)!
 }
+
+/** A line of the plot as a reader takes it: its name, where it parts and what choosing it means, and what is read along it. */
+export interface ReaderLine {
+  /** `main` for the main line. */
+  id: string
+  /** Empty for the main line: a page names that one in its own words. */
+  title: string
+  premise?: string
+  /** The chapter it leaves after, and what is decided there to go this way. */
+  from?: string
+  choice?: string
+  /** Ids of the chapters read along it that have text, in order. */
+  path: string[]
+  /** How many of them are its own. */
+  own: number
+}
+
+/** Another way the story goes on after a chapter: the line, and the chapter it goes on with. */
+export interface ReaderWay<C> {
+  line: ReaderLine
+  next: C
+  /** The line leaves right here: taking it is a choice, in its own words. */
+  leaves: boolean
+}
+
+/**
+ * What is read along a line of the plot, and where the story parts after a chapter.
+ *
+ * A book that goes one way has no lines to choose between: its chapters are
+ * what is read. Where it goes several ways, a reader reads along the line
+ * they chose — and a chapter that line does not go through is read along its
+ * own, so that a link into another line does not lose the way on.
+ * @param every - every chapter the book has to read, of whichever line (`line` absent for the main one).
+ * @param lines - the lines a reader may take; absent or one for a book that goes one way.
+ * @param chosen - the line chosen on the device.
+ * @param at - the chapter being read, if one is.
+ */
+export function readAlong<C extends { id: string; line?: string }>(every: readonly C[], lines: readonly ReaderLine[] | undefined, chosen: string, at: string | undefined): { line: ReaderLine | undefined; chapters: C[]; ways: ReaderWay<C>[] } {
+  if (lines === undefined || lines.length < 2) return { line: undefined, chapters: every.filter(chapter => chapter.line === undefined), ways: [] }
+  const known = new Map(every.map(chapter => [chapter.id, chapter]))
+  const pathOf = (line: ReaderLine): C[] => line.path.map(id => known.get(id)).filter((chapter): chapter is C => chapter !== undefined)
+  const wanted = lines.find(line => line.id === chosen) ?? lines[0]!
+  const home = at !== undefined && known.has(at) && !wanted.path.includes(at) ? lines.find(line => line.id === (known.get(at)?.line ?? 'main')) ?? lines.find(line => line.path.includes(at)) : undefined
+  const line = home ?? wanted
+  const chapters = pathOf(line)
+  const ways: ReaderWay<C>[] = []
+  const here = at !== undefined ? chapters.findIndex(chapter => chapter.id === at) : -1
+  if (here >= 0) {
+    const onward = chapters[here + 1]
+    for (const other of lines) {
+      if (other.id === line.id) continue
+      const path = pathOf(other)
+      const there = path.findIndex(chapter => chapter.id === at)
+      const next = there >= 0 ? path[there + 1] : undefined
+      // The same next chapter is the same way on, whichever line it is counted to.
+      if (next === undefined || next.id === onward?.id || ways.some(way => way.next.id === next.id)) continue
+      ways.push({ line: other, next, leaves: other.from === at })
+    }
+  }
+  return { line, chapters, ways }
+}

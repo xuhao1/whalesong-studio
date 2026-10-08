@@ -487,6 +487,7 @@ function ChapterPlanEditor({ plan, index, plans }: { plan: ChapterPlan; index: n
               { label: t('删除章节', 'Delete chapter'), icon: 'trash', danger: true, onSelect: () => { confirm.ask(t(`删除第 ${index} 章「${plan.title}」？它会收进这一页最下面的“最近删除的章节”，随时可以恢复。`, `Delete chapter ${index}, "${plan.title}"? It goes to "Recently removed" at the bottom of this page and can be put back at any time.`), () => { void run(async () => { await apply([{ op: 'remove-chapter', chapter: plan.id }]) }) }) } },
             ]}
           />
+          {chapter?.hasText === true ? <Button variant="ghost" icon="eye" onClick={() => { controller.setView('read', plan.id) }} title={t('观看：这一章在读者那里的样子', 'View: this chapter as a reader has it')}>{t('观看', 'View')}</Button> : null}
           <Button icon={chapter?.hasText === true ? 'pen' : 'feather'} onClick={() => { controller.setView('write', plan.id) }}>{chapter?.hasText === true ? t('打开正文', 'Open text') : t('去写这一章', 'Write it')}</Button>
           <Button variant="primary" busy={busy} disabled={!dirty} onClick={save}>{t('保存', 'Save')}</Button>
         </div>

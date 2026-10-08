@@ -23,7 +23,7 @@ import { digestPending, fillPlans } from '../core/pipelines/digest'
 import { exportBook, missingImages } from '../core/pipelines/export'
 import { findSoundPress } from '../core/media/press'
 import { publishSite, siteChaptersUpTo, siteDefaults, siteFolder } from '../core/pipelines/site'
-import { listChapters, listSides, readAlbum, readSide } from '../core/reader'
+import { listChapters, listLines, listSides, readAlbum, readSide } from '../core/reader'
 import { albumCounts, albumEmpty } from '../shared/album'
 import { deriveArtDirection, deriveVisual, illustrate } from '../core/pipelines/illustrate'
 import { analyzeBook, importManuscript, readBookFile } from '../core/pipelines/import'
@@ -44,7 +44,7 @@ import { sleep } from '../core/util/async'
 import type { ContextView, CrewView, FindMatch, ModelKind, NovelRpc, RpcMethod, RpcParams, RpcResult, SettingsView, SitePlan } from '../shared/rpc'
 import { PROJECT_HOMEPAGE, type SetupPart } from '../shared/services'
 import { hashText, proseOnly } from '../shared/text'
-import { ANALYZE_STEPS, CREW_ROLES, STAGE_STEPS, STORYBOARD_DENSITIES, TEXT_STEPS, type JobKind, type NovelSettings, type StageStep, type TextRole, type TextStep, type WorkMode } from '../shared/types'
+import { ANALYZE_STEPS, CREW_ROLES, MAIN_LINE, STAGE_STEPS, STORYBOARD_DENSITIES, TEXT_STEPS, type JobKind, type NovelSettings, type StageStep, type TextRole, type TextStep, type WorkMode } from '../shared/types'
 import { recommendedView, settleRecommended } from './recommended'
 import type { NovelService } from './service'
 
@@ -880,8 +880,12 @@ export function createHandlers(service: NovelService): Handlers {
         occupied = (await readdir(target).catch(() => [] as string[])).some(name => !name.startsWith('.'))
       }
       const album = albumCounts(await readAlbum(runtime))
+      // What the finished videos weigh is on their records: nothing is opened to say it.
+      const films = (await Promise.all(chapters.filter(chapter => chapter.video === true).map(chapter => chapterVideo(runtime, chapter.id)))).filter(video => video !== undefined)
       return {
         out: target,
+        ...(films.length > 0 ? { videos: { chapters: films.length, bytes: films.reduce((sum, video) => sum + video.size, 0) } } : {}),
+        ...await listLines(runtime, chapters).then(ways => (ways !== undefined ? { lines: { titles: ways.lines.filter(line => line.id !== MAIN_LINE).map(line => line.title), chapters: ways.chapters.length } } : {})),
         sealed: await readStub(runtime.project.root) !== undefined,
         chapters: chapters.length,
         voiced: chapters.filter(chapter => chapter.voiced > 0).length,
@@ -900,7 +904,7 @@ export function createHandlers(service: NovelService): Handlers {
       const play = typeof id === 'string' && id.length > 0 ? await readSide(runtime, id) : undefined
       return { sides: await listSides(runtime), ...(play !== undefined ? { play } : {}) }
     },
-    'site.publish': async ({ root, out, chapters, upto, listen, watch, album, sides, defaults, press, sealedOk }) => {
+    'site.publish': async ({ root, out, chapters, upto, listen, watch, album, sides, video, lines, defaults, press, sealedOk }) => {
       const runtime = await open(root)
       const manifest = await runtime.project.manifest()
       // A sealed book lies on disk as ciphertext and nothing else; a site of it is the book in the open. Only on the author's word.
@@ -923,6 +927,8 @@ export function createHandlers(service: NovelService): Handlers {
         ...(watch === false ? { watch: false } : {}),
         ...(album === false ? { album: false } : {}),
         ...(sides === false ? { sides: false } : {}),
+        ...(video === false ? { video: false } : {}),
+        ...(lines === false ? { lines: false } : {}),
         // The site says what it was made with, in the book's own language.
         credit: { name: manifest.language.toLowerCase().startsWith('zh') ? '小说工坊' : 'Novel Studio', url: PROJECT_HOMEPAGE },
       }, task), ...(press !== false && soundPress === undefined ? { unpressed: true } : {}) }))
