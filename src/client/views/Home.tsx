@@ -70,7 +70,7 @@ async function readTextFile(file: File): Promise<string> {
 }
 
 /** A file's bytes as base64, for formats the Host unpacks (EPUB, Word). */
-function readBase64(file: File): Promise<string> {
+export function readBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.onerror = () => { reject(reader.error ?? new Error('could not read the file')) }

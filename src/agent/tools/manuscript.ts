@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { digestPending } from '../../core/pipelines/digest'
 import { correctMemory, editChapter, type EditAction, type MemoryPatch } from '../../core/pipelines/edit'
-import { analyzeBook, importManuscript, readBookFile } from '../../core/pipelines/import'
+import { analyzeBook, importManuscript, readBookFile, importLine } from '../../core/pipelines/import'
 import { reviewChapter } from '../../core/pipelines/review'
 import { acceptProposal, rejectProposal, fixIssues, reviseBook, reviseChapter, reviseSpan } from '../../core/pipelines/revise'
 import { writeChapter } from '../../core/pipelines/write'
@@ -282,11 +282,14 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
       name: 'novel_import',
       description: [
         'Import an existing book into the project, so it can be continued, revised or staged: an editor agent reads the text and finds its real chapters and volumes (headings written any way, a table of contents, site navigation left by a web page — it sorts them out and reports what it did), then the book is analysed — every chapter digested, the people the chapters name given their cards (the leads whole cards, those who come back a line, other names of the same person folded together, whoever passes once left a walk-on), the world entries collected, chapter synopses, a logline and a premise written, the style learned from the text. Give `path` (a .txt, .md, .epub or .docx file inside the workspace; UTF-8, UTF-16 and GB18030 are detected) or the text itself. A long book takes a long time.',
+        '- action=line: import a manuscript (`path` or `text`) as another line of this book\'s plot, named `title` — for stories that are different from the first chapter on and share the world (a series set in one world). The line begins where the story begins and joins nothing; its chapters are digested, and what they share with the book is recognised by name.',
         '- action=analyze: run the analysis on the book as it stands, without importing anything. Without `steps` it goes on where an analysis that was cut short stopped (novel_status says when one was); with `steps` (digest, cast, world, ties, outline, style, art) it runs those passes again — each adds to what is there and leaves alone what the author worked on. Use it when chapters were digested since the cast was made, when a lead has no card, when an import ended early.',
       ].join('\n'),
       mutating: true,
       parameters: {
-        action: { type: 'string', enum: ['import', 'analyze'], description: 'import (default), or analyze for the analysis alone on a book that has its chapters.' },
+        action: { type: 'string', enum: ['import', 'analyze', 'line'], description: 'import (default); analyze for the analysis alone on a book that has its chapters; line to import a manuscript as another line of this book\'s plot — a story different from its first chapter, in the same world (same bible, same people where they are the same).' },
+        title: { type: 'string', description: 'line: what the line is called (left out: the manuscript\'s own title).' },
+        premise: { type: 'string', description: 'line: what the line tells, in a sentence.' },
         path: { type: 'string', description: 'File inside the session workspace.' },
         text: { type: 'string', description: 'The manuscript text, when it is not in a file.' },
         analyze: { type: 'boolean', description: 'import: false only splits into chapters and skips the analysis passes (default true).' },
@@ -302,6 +305,29 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
             text: `Analysed (${result.steps.join(', ') || 'nothing was left to do'}): ${result.digested} chapters digested, ${result.characters} character cards made or filled in, ${result.merged} names folded into somebody's card as aliases, ${result.walkOns} people of one chapter left as walk-ons, ${result.worldEntries} world entries${result.ties !== undefined ? `, ${result.ties.added} ties written down between people, places, houses and things (${result.ties.total} in all) and ${result.ties.events} things noted that happen to them` : ''}${result.style !== undefined ? `, style "${result.style}" learned` : ''}.${result.failed.length > 0 ? `\nDid not come about, and can be run again: ${result.failed.map(item => `${item.step} (${item.error})`).join('; ')}` : ''}${state.analysis !== undefined ? `\nStill to do: ${state.analysis.pending.join(', ')}.` : ''}${state.uncarded !== undefined ? `\nStill without a card though they come back: ${state.uncarded.names.join(', ')}${state.uncarded.count > state.uncarded.names.length ? ` and ${state.uncarded.count - state.uncarded.names.length} more` : ''}.` : ''}`,
             data: toJson(result),
             record: { summary: [`分析全书（${result.steps.join('、')}）：人物卡 ${result.characters} 张，并为别名 ${result.merged} 个，设定 ${result.worldEntries} 条`, `Read the book (${result.steps.join(', ')}): ${result.characters} cards, ${result.merged} aliases, ${result.worldEntries} world entries`] },
+          }
+        }
+        if (args.action === 'line') {
+          let manuscript = args.text ?? ''
+          let named = args.title?.trim() ?? ''
+          if (args.path !== undefined && args.path.trim().length > 0) {
+            let file: string
+            try {
+              file = containedPath(env.workspace, args.path)
+            } catch {
+              throw new ProjectError('novel/invalid', 'the file must be inside the session workspace — copy it there first')
+            }
+            const book = readBookFile(file, await readFile(file))
+            manuscript = book.text
+            if (named.length === 0) named = book.title ?? args.path.replace(/^.*[\\/]/, '').replace(/\.[^.]+$/, '')
+          }
+          if (manuscript.trim().length === 0) throw new ProjectError('novel/invalid', 'action=line needs the manuscript: `path` or `text`')
+          if (named.length === 0) throw new ProjectError('novel/invalid', 'action=line needs a `title` for the line')
+          const result = await env.job('import', 'import line', undefined, async task => await importLine(env.core, runtime, { text: manuscript, title: named, ...(args.premise !== undefined ? { premise: args.premise } : {}) }, task))
+          return {
+            text: `Imported "${result.line.title}" as another line of the plot (${result.line.id}): ${result.chapters} chapters, ${result.words} words, beginning where the story begins and joining nothing. ${result.digested} of them digested${result.failed.length > 0 ? `, ${result.failed.length} could not be (${result.failed.slice(0, 3).map(item => `${item.chapter}: ${brief(item.error, 80)}`).join('; ')})` : ''}. People and places it shares with the book were recognised by name; whoever and whatever is new waits among the suggestions (novel_status). Lives, stages and signature scenes are read along a line: pass the line where a tool takes one. Tell the author what came in.`,
+            data: toJson(result),
+            record: { summary: [`导入了另一条故事线「${result.line.title}」：${result.chapters} 章`, `Imported another story line, "${result.line.title}": ${result.chapters} chapters`] },
           }
         }
         let text = args.text ?? ''

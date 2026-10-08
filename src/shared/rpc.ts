@@ -472,6 +472,11 @@ export interface NovelRpc {
   'ai.analyze': { params: { root: string; steps?: AnalyzeStep[] }; result: JobStarted }
   /** Have the director settle the look of the book's pictures from the book itself; `direction` is what the author wants of it. The look is written into the book (`novel.json`: `artStyle`, `artAvoid`). */
   'ai.artDirection': { params: { root: string; direction?: string }; result: JobStarted }
+  /**
+   * Import a manuscript as another line of this book's plot: a story different from its first chapter, in the same
+   * world. The line begins where the story begins; its chapters are digested unless `digest` is false. A job.
+   */
+  'line.import': { params: { root: string; title?: string; premise?: string; text?: string; file?: { name: string; data: string }; digest?: boolean }; result: JobStarted }
   'ai.import': { params: { root: string; text?: string; /** A book file to read on the Host (EPUB); `data` is base64. */ file?: { name: string; data: string }; analyze?: boolean }; result: JobStarted }
   'ai.foundation': { params: { root: string; idea: string }; result: JobStarted }
   'ai.index': { params: { root: string }; result: JobStarted }

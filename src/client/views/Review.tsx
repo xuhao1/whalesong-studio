@@ -8,7 +8,7 @@ import { useState, type ReactNode } from 'react'
 import { clip } from '../../shared/text'
 import type { IssueSeverity, Proposal, TextStep } from '../../shared/types'
 import { ProposalCard } from '../components/ProposalCard'
-import { SEVERITY, SUGGESTION_KIND } from '../labels'
+import { SEVERITY, SEVERITY_TONE, SUGGESTION_KIND } from '../labels'
 import { IssueBatchBar, IssueCard } from '../Issues'
 import { Icon } from '../icons'
 import { BatchMatrix, batchOf, useBatchJob } from '../Batch'
@@ -220,7 +220,7 @@ function useIssueBoard() {
       </div>
     )
   }
-  return { toolbar, cards, shownIn: (chapterId: string): number => of(chapterId).length, pickedIn: (chapterId: string): number => of(chapterId).filter(item => picked.has(item.key)).length, severities: (chapterId: string): string => of(chapterId).map(item => t(...SEVERITY[item.issue.severity])).join(t('、', ', ')) }
+  return { toolbar, cards, shownIn: (chapterId: string): number => of(chapterId).length, pickedIn: (chapterId: string): number => of(chapterId).filter(item => picked.has(item.key)).length, counts: (chapterId: string): { severity: IssueSeverity; count: number }[] => (['high', 'medium', 'low'] as const).map(severity => ({ severity, count: of(chapterId).filter(item => item.issue.severity === severity).length })).filter(item => item.count > 0) }
 }
 
 function Issues() {
@@ -265,11 +265,11 @@ function Issues() {
                 <Icon name={unfolded.includes(chapter.id) && board.shownIn(chapter.id) > 0 ? 'chevronDown' : 'chevronRight'} size={14} />
                 <span className="nv-list-index">{chapter.index}</span>
                 <span className="nv-list-title">{chapter.title}</span>
-                {board.shownIn(chapter.id) > 0 ? <span className="nv-muted nv-small">{board.severities(chapter.id)}</span> : null}
+                {board.counts(chapter.id).map(item => <Chip key={item.severity} tone={SEVERITY_TONE[item.severity]}>{t(`${item.count} ${SEVERITY[item.severity][0]}`, `${item.count} ${SEVERITY[item.severity][1].toLowerCase()}`)}</Chip>)}
                 {board.pickedIn(chapter.id) > 0 ? <Chip tone="blue">{t(`已选 ${board.pickedIn(chapter.id)}`, `${board.pickedIn(chapter.id)} ticked`)}</Chip> : null}
               </button>
               <span className="nv-list-side">
-                {chapter.openIssues === undefined ? <Chip>{t('未审', 'Not reviewed')}</Chip> : chapter.openIssues === 0 ? <Chip tone="green">{t('无待办', 'Clear')}</Chip> : <Chip tone="amber">{t(`${chapter.openIssues} 个问题`, `${chapter.openIssues} open`)}</Chip>}
+                {chapter.openIssues === undefined ? <Chip>{t('未审', 'Not reviewed')}</Chip> : chapter.openIssues === 0 ? <Chip tone="green">{t('无待办', 'Clear')}</Chip> : board.counts(chapter.id).length > 0 ? null : <Chip tone="amber">{t(`${chapter.openIssues} 个问题`, `${chapter.openIssues} open`)}</Chip>}
                 <Button size="sm" variant="ghost" busy={reviewing.has(chapter.id)} disabled={batch !== undefined} onClick={() => controller.guard(async () => { await controller.api.call('ai.review', { root, chapter: chapter.id }); await controller.refreshJobs() })}>{chapter.openIssues === undefined ? t('审校', 'Review') : t('重审', 'Again')}</Button>
                 <Button
                   size="sm"

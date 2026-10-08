@@ -27,7 +27,7 @@ import { publishSite, siteChaptersUpTo, siteDefaults, siteFolder } from '../core
 import { listChapters, listLines, listSides, readAlbum, readPosition, readSide, savePosition } from '../core/reader'
 import { albumCounts, albumEmpty } from '../shared/album'
 import { deriveArtDirection, deriveLook, deriveScenes, deriveVisual, illustrate } from '../core/pipelines/illustrate'
-import { analyzeBook, importManuscript, readBookFile } from '../core/pipelines/import'
+import { analyzeBook, importManuscript, readBookFile, importLine } from '../core/pipelines/import'
 import { applyOutlineOps, type OutlineOp } from '../core/pipelines/outline'
 import {
   ensurePortrait, novelizePlay, paintPlayScene, playTurn, rewindPlay, setPlayOutcome, startPlay, voicePlayLine,
@@ -607,6 +607,24 @@ export function createHandlers(service: NovelService): Handlers {
     'ai.artDirection': async ({ root, direction }) => {
       const runtime = await open(root)
       return job(runtime, 'bible', 'art direction', undefined, async task => await deriveArtDirection(core, runtime, typeof direction === 'string' && direction.trim().length > 0 ? { direction: direction.trim() } : {}, task))
+    },
+    'line.import': async ({ root, title, premise, text, file, digest }) => {
+      const runtime = await open(root)
+      let manuscript = typeof text === 'string' ? text : ''
+      let named = typeof title === 'string' ? title.trim() : ''
+      if (file !== undefined) {
+        try {
+          const book = readBookFile(requireString(file.name, 'file.name'), Buffer.from(requireString(file.data, 'file.data'), 'base64'))
+          manuscript = book.text
+          // A line nobody named is called what its file calls itself.
+          if (named.length === 0) named = book.title ?? file.name.replace(/\.[^.]+$/, '')
+        } catch (error) {
+          throw new ProjectError('novel/invalid', error instanceof Error ? error.message : String(error))
+        }
+      }
+      if (manuscript.trim().length === 0) throw new ProjectError('novel/bad-request', 'there is no text to import')
+      if (named.length === 0) throw new ProjectError('novel/bad-request', 'the line needs a name')
+      return job(runtime, 'import', 'import line', undefined, async task => await importLine(core, runtime, { text: manuscript, title: named, ...(typeof premise === 'string' && premise.trim().length > 0 ? { premise } : {}), ...(digest === false ? { digest: false } : {}) }, task))
     },
     'ai.import': async ({ root, text, file, analyze }) => {
       const runtime = await open(root)

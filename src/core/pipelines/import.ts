@@ -37,6 +37,55 @@ export { decodeText, readBookFile } from '../util/bookfile'
 
 export { splitChapters, type SplitChapter } from './structure'
 
+export interface ImportLineResult {
+  line: { id: string; title: string }
+  chapters: number
+  words: number
+  /** How many of them were digested, and which could not be. */
+  digested: number
+  failed: { chapter: string; error: string }[]
+}
+
+/**
+ * Import a manuscript as another line of the plot of a book that is already
+ * there: a story that is different from its first chapter and shares the
+ * world — the same bible, the same people where they are the same, the same
+ * places. The line begins where the story begins and joins nothing; its
+ * chapters are digested like any others, so whoever and whatever is new in
+ * them comes up as suggestions, and lives, stages and signature scenes are
+ * read along it as along any line.
+ * @param params.digest - digest its chapters once they are in. Default true.
+ */
+export async function importLine(core: NovelCore, runtime: ProjectRuntime, params: { text: string; title: string; premise?: string; digest?: boolean }, task: TaskContext): Promise<ImportLineResult> {
+  const { project } = runtime
+  const lang = promptLanguage((await project.manifest()).language)
+  task.job?.progress(0, 3, L(lang, '编辑正在查看书稿、找出章节', 'an editor is reading the manuscript for its chapters'))
+  const structure = await findStructure(core, runtime, params.text, task)
+  if (structure.chapters.length === 0) throw new ProjectError('novel/empty', L(lang, '这份文本里没有可导入的内容。', 'the text holds nothing to import'))
+  task.job?.progress(1, 3, L(lang, `拆分为 ${structure.chapters.length} 章，放进新的一条线`, `splitting into ${structure.chapters.length} chapters on a line of their own`))
+  const line = await project.addLine({ title: params.title.trim(), ...(params.premise !== undefined && params.premise.trim().length > 0 ? { premise: params.premise.trim() } : {}), origin: 'author' })
+  const created: string[] = []
+  let words = 0
+  for (const chapter of structure.chapters) {
+    const plan = await project.addChapter({ title: chapter.title, status: 'drafted' }, { line: line.id })
+    await project.saveChapterText(plan.id, chapter.text, { snapshot: false, status: 'drafted' })
+    created.push(plan.id)
+    words += countWords(chapter.text)
+  }
+  // (What the author does on the page themselves is not put on the record of what others did.)
+  if (task.origin !== 'user') await project.addActivity({ by: 'agent', tool: 'import', summary: L(lang, `导入了另一条故事线「${line.title}」：${created.length} 章`, `Imported another story line, "${line.title}": ${created.length} chapters`) })
+  let digested = 0
+  let failed: ImportLineResult['failed'] = []
+  if (params.digest !== false) {
+    task.job?.progress(2, 3, L(lang, `场记收录这条线的 ${created.length} 章`, `the scribe is digesting the line's ${created.length} chapters`))
+    const done = await digestPending(core, runtime, task, { chapters: created })
+    digested = done.digested.length
+    failed = done.failed.map(item => ({ chapter: item.chapter, error: item.error }))
+  }
+  task.job?.result({ line: line.id, chapters: created.length })
+  return { line: { id: line.id, title: line.title }, chapters: created.length, words, digested, failed }
+}
+
 export interface ImportParams {
   text: string
   /** Run the analysis passes after splitting. Default true. */

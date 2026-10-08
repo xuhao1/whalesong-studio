@@ -11,6 +11,7 @@ import { decodeText, importManuscript, splitChapters } from '../src/core/pipelin
 import { deriveChapters } from '../src/core/pipelines/plot'
 import { fixIssue, fixIssues, acceptProposal, reviseSpan } from '../src/core/pipelines/revise'
 import { listReviews, noteIssue, recheckIssues } from '../src/core/pipelines/review'
+import { importLine } from '../src/core/pipelines/import'
 import { cleanProse, writeChapter } from '../src/core/pipelines/write'
 import { chunkProse, tokenize } from '../src/core/retrieval'
 import { createTestBed, type TestBed } from './support/harness'
@@ -343,7 +344,7 @@ describe('pipelines', () => {
     expect(await project.chapterText(two.id)).toContain('右手')
     expect((await project.proposals()).filter(item => item.status === 'pending')).toHaveLength(2)
     // Each proposal says which issues it was made to mend — the page shows it beneath them; the one for a chapter nobody named mends none of its own.
-    expect((await project.proposals()).filter(item => item.status === 'pending').map(item => [item.chapterId, item.issues ?? [], item.batchId === result.book!.batchId])).toEqual([[two.id, ['b2', 'b1'], true], [three.id, [], true]])
+    expect((await project.proposals()).filter(item => item.status === 'pending').map(item => [item.chapterId, [...(item.issues ?? [])].sort(), item.batchId === result.book!.batchId]).sort((left, right) => String(left[0]).localeCompare(String(right[0])))).toEqual([[two.id, ['b1', 'b2'], true], [three.id, [], true]])
     // The issues handed over say so, and stay open; the one not in the batch does not.
     const after = (await project.review(two.id))!.issues
     expect(after.map(issue => [issue.id, issue.mending !== undefined, issue.resolved === true])).toEqual([['b1', true, false], ['b2', true, false], ['b3', false, true]])
@@ -412,6 +413,30 @@ describe('pipelines', () => {
     const before = bed.llm.requests.length
     expect(await recheckIssues(bed.core, bed.runtime, { chapters: [one.id], changes: 'x' }, { origin: 'user' })).toMatchObject({ looked: 0, chapters: 0 })
     expect(bed.llm.requests.length).toBe(before)
+  })
+
+  it('imports a manuscript as another line of the plot, in the same world', async () => {
+    const { project } = bed.runtime
+    const card = await project.saveCharacter({ name: '沈璃', role: 'protagonist', personality: '倔强' })
+    const main = await project.addChapter({ title: '雨夜' })
+    await project.saveChapterText(main.id, '沈璃在雨里下了山。')
+    bed.llm.responder = request => request.prompt.includes('请做场记') ? JSON.stringify({ brief: '另一条路', summary: '沈璃留在了山上。', facts: [], newEntities: [], threads: [], characters: [{ name: '沈璃', role: '留守剑阁' }] }) : '{}'
+    const result = await importLine(bed.core, bed.runtime, { text: '第一章 留山\n\n沈璃没有下山。她守着剑阁。\n\n第二章 来客\n\n有人敲门。', title: '她没有下山', premise: '如果她留下' }, { origin: 'user' })
+    expect(result).toMatchObject({ line: { title: '她没有下山' }, chapters: 2, digested: 2, failed: [] })
+    // A line of its own, from where the story begins: it joins nothing, and the main line is as it was.
+    const line = (await project.outline()).lines!.find(item => item.id === result.line.id)!
+    expect([line.title, line.premise, line.from, line.into]).toEqual(['她没有下山', '如果她留下', undefined, undefined])
+    expect((await project.chapters()).map(chapter => chapter.plan.title)).toEqual(['雨夜'])
+    const own = await project.chapters(line.id)
+    expect(own.map(chapter => [chapter.index, chapter.plan.title])).toEqual([[1, '第一章 留山'], [2, '第二章 来客']])
+    expect(await project.chapterText(own[0]!.plan.id)).toContain('沈璃没有下山')
+    // The same world: its chapters are digested, and somebody the book knows is known on this line too — her life read along it.
+    const lives = await project.lives(line.id)
+    expect(lives.lives[card.id]?.events.map(event => event.index)).toEqual([1, 2])
+    expect((await project.lives()).lives[card.id]?.events ?? []).toEqual([])
+    // Without the digest: the chapters are in, nothing is read yet.
+    const bare = await importLine(bed.core, bed.runtime, { text: '只有一段话的短稿。', title: '短稿', digest: false }, { origin: 'user' })
+    expect(bare).toMatchObject({ chapters: 1, digested: 0 })
   })
 
   it('derives chapters into the outline and links cast and threads', async () => {

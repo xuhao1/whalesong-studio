@@ -17,6 +17,7 @@ import {
   Button, Chip, cx, Field, Modal, Select, TextArea, TextInput, useAction, useConfirm, useProject, useStudio, useT, type Translate,
 } from '../ui'
 import { Derive } from './Outline'
+import { readBase64 } from './Home'
 import { LineWorldPanel } from './Worldline'
 
 const STEP_X = 76
@@ -124,6 +125,7 @@ function bend(fromX: number, fromY: number, toX: number, toY: number): string {
 }
 
 export function PlotGraph() {
+  const [importing, setImporting] = useState(false)
   const { controller } = useStudio()
   const t = useT()
   const { project, root } = useProject()
@@ -159,6 +161,7 @@ export function PlotGraph() {
 
   return (
     <div className="nv-plot">
+      {importing ? <ImportLine onClose={() => { setImporting(false) }} /> : null}
       <section className="nv-card nv-plot-head">
         <div className="nv-audio-summary">
           <strong>{t('剧情图', 'The plot, as a graph')}</strong>
@@ -166,6 +169,7 @@ export function PlotGraph() {
             ? t('故事现在只有一条线。点任意一章，可以从那里另开一条线，或重写这之后的大纲。', 'The story has one line. Click any chapter to open another line from it, or to plot what follows anew.')
             : t(`主线之外有 ${lines.length} 条线。实心的站是写了正文的章节。`, `${lines.length} line(s) beside the main one. A filled stop is a written chapter.`)}</span>
           <span className="nv-spacer" />
+          <Button size="sm" variant="ghost" icon="upload" onClick={() => { setImporting(true) }} title={t('把一份写好的稿子导入成这本书里的另一条线，共用人物和设定', 'Import a finished manuscript as another line of this book, sharing its people and its world')}>{t('导入另一条故事线', 'Import another story line')}</Button>
           <Button size="sm" icon="branch" onClick={() => { setEditing('new') }}>{t('开一条新线', 'Open a line')}</Button>
         </div>
       </section>
@@ -354,3 +358,41 @@ function JoinDialog({ line, graph, labelOf, onClose, onSave }: { line: PlotLine;
   )
 }
 
+
+/** Import a manuscript as another line of this book: a story different from its first chapter, in the same world. */
+function ImportLine({ onClose }: { onClose: () => void }) {
+  const { controller } = useStudio()
+  const t = useT()
+  const { root } = useProject()
+  const [title, setTitle] = useState('')
+  const [premise, setPremise] = useState('')
+  const [file, setFile] = useState<{ name: string; data: string } | undefined>()
+  const [digest, setDigest] = useState(true)
+  const { busy, run } = useAction()
+  const start = (): Promise<unknown> => run(async () => {
+    await controller.api.call('line.import', { root, ...(title.trim().length > 0 ? { title: title.trim() } : {}), ...(premise.trim().length > 0 ? { premise: premise.trim() } : {}), file: file!, ...(digest ? {} : { digest: false }) })
+    await controller.refreshJobs()
+    controller.toast('info', t('正在导入这条线，进度在底部的任务条里。', 'Importing the line; progress is in the task bar below.'))
+    onClose()
+  })
+  return (
+    <Modal title={t('导入另一条故事线', 'Import another story line')} onClose={onClose} footer={(
+      <>
+        <Button variant="ghost" onClick={onClose}>{t('取消', 'Cancel')}</Button>
+        <Button variant="primary" icon="upload" disabled={file === undefined} busy={busy} onClick={start}>{t('导入', 'Import')}</Button>
+      </>
+    )}>
+      <p className="nv-muted nv-small">{t('从头就不一样的另一个故事，和这本书共用人物、地点和设定。', 'Another story, different from its first chapter, sharing this book\'s people, places and bible.')}</p>
+      <Field label={t('书稿', 'Manuscript')} hint={t('.txt / .md / .epub / .docx', '.txt / .md / .epub / .docx')}>
+        <input type="file" accept=".txt,.md,.markdown,.epub,.docx" onChange={(event) => {
+          const picked = event.target.files?.[0]
+          if (picked === undefined) return
+          void readBase64(picked).then((data) => { setFile({ name: picked.name, data }) }, () => { controller.toast('error', t('没能读这个文件', 'Could not read the file')) })
+        }} />
+      </Field>
+      <Field label={t('这条线的名字', 'Name of the line')} hint={t('不填就用书稿自己的名字', 'Left empty, the manuscript\'s own')}><TextInput value={title} onChange={(event) => { setTitle(event.target.value) }} /></Field>
+      <Field label={t('这条线讲的是什么', 'What the line tells')}><TextInput value={premise} onChange={(event) => { setPremise(event.target.value) }} /></Field>
+      <label className="nv-check"><input type="checkbox" checked={digest} onChange={(event) => { setDigest(event.target.checked) }} /><span>{t('导入后逐章收录', 'Digest its chapters once they are in')}</span></label>
+    </Modal>
+  )
+}
