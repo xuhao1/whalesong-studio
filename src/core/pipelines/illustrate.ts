@@ -28,6 +28,11 @@
  *   an avoid list   per Studio, per book, per character and per call, joined
  *                   and sent with every picture.
  *
+ * A portrait with nothing asked of it shows the person in the moment a reader
+ * remembers them by: the director picks that moment from the book, it is kept
+ * on the card (`visual.scene`) where the author reads and rewrites it, and
+ * every later portrait asked for nothing is drawn from it.
+ *
  * Every picture records what its prompt was assembled from, part by part,
  * which pictures went along with it, and what reached the image service word
  * for word — so that a look nobody asked for can be traced to where it came from.
@@ -44,7 +49,7 @@ import { assign } from '../crew'
 import { extensionOf, type ImageProvider, type ImageReference } from '../media/image'
 import { ProviderError } from '../media/http'
 import { ProjectError } from '../project'
-import { artDirectionTask, coverPromptTask, illustrationPromptTask, lookNotesTask, lookTask, turnLookTask, visualAnchorTask } from '../prompts'
+import { artDirectionTask, coverPromptTask, illustrationPromptTask, lookNotesTask, lookTask, portraitSceneTask, turnLookTask, visualAnchorTask } from '../prompts'
 import { L, promptLanguage, renderCharacter, renderWorld } from '../render'
 import { isAbort } from '../util/async'
 
@@ -80,6 +85,12 @@ export interface IllustrateParams {
   raw?: boolean
   /** `false`: this once, draw from what there is — no design sheet is drawn first for whoever lacks one (the author was asked, and said so). */
   sheetFirst?: boolean
+  /**
+   * Portrait: plain — facing the viewer on a plain ground — and not in their signature scene. What a portrait is where
+   * the author turned scenes off (`image.portraitScene`), and what the interlude stage asks for: a figure to stand
+   * before a backdrop of its own.
+   */
+  plain?: boolean
   /**
    * Location, item: draw it as it is from one turn of its course on — built, changed, in ruins — and keep the picture
    * with that turn, not as its design art. Named by the turn's chapter (id or number), or `<chapter>:<kind>` where a
@@ -354,6 +365,67 @@ export async function sortNotes(core: NovelCore, runtime: ProjectRuntime, card: 
     if (isAbort(error) || task.signal?.aborted === true) throw error
     core.log(`could not sort the author's notes on ${card.name}; they direct this picture only`, error)
     return { card, sorted: { kept: [], once: [notes], unused: [], picture: notes, unsorted: true } }
+  } finally {
+    restore?.()
+  }
+}
+
+/**
+ * Have the director pick the moment of the book somebody's portrait shows —
+ * the scene a reader remembers them by — and keep it on their card
+ * (`visual.scene`). The director is an agent with the book to look in: it is
+ * handed what the chapter digests noted of the person as leads, and reads the
+ * text where it needs to; which moment it is, is the director's to say.
+ * @param params.direction - what the author wants of the moment ("the one by the river"); it decides.
+ * @returns the scene, empty where the book has no such moment yet — then nothing is kept, and `why` says so.
+ */
+export async function derivePortraitScene(core: NovelCore, runtime: ProjectRuntime, params: { character: string; direction?: string }, task: TaskContext): Promise<{ card: CharacterCard; scene: string; why?: string }> {
+  const { project } = runtime
+  const card = await project.findCharacter(params.character)
+  if (card === undefined) throw new ProjectError('novel/not-found', `no character matches "${params.character}"`)
+  const manifest = await project.manifest()
+  const lang = promptLanguage(manifest.language)
+  const art = await artDirectionOf(core, runtime)
+  // What the digests noted of them along the main line, chapter by chapter: where to look, not what to draw.
+  const { chapters, lives } = await project.lives()
+  const titles = new Map(chapters.map(chapter => [chapter.id, chapter.title]))
+  const record = (lives[card.id]?.events ?? []).filter(event => event.index >= 1).map(event => [
+    L(lang, `第 ${event.index} 章《${titles.get(event.chapter) ?? ''}》`, `Chapter ${event.index}, "${titles.get(event.chapter) ?? ''}"`),
+    event.what !== undefined ? L(lang, `：${event.what}`, `: ${event.what}`) : '',
+    event.where !== undefined ? L(lang, `（${event.where}）`, ` (${event.where})`) : '',
+  ].join('')).join('\n')
+  const undigested = chapters.filter(chapter => !chapter.digested).length
+  const restore = task.job?.note(L(lang, `导演在书里挑「${card.name}」的名场面…`, `The director is picking the signature scene of ${card.name} from the book…`))
+  try {
+    const { value } = await assign(core, runtime, task, {
+      role: 'director',
+      label: L(lang, `名场面 · ${card.name}`, `Signature scene · ${card.name}`),
+      tool: 'set_portrait_scene',
+      // The digests' notes come with the task; the moment itself is read in the text — a search, a passage or two — then the result.
+      maxSteps: 14,
+      what: L(lang, '这个人物的名场面：立绘照它来画的那一幕', 'this character\'s signature scene: the moment their portrait is drawn from'),
+      prompt: portraitSceneTask({
+        lang,
+        language: manifest.language,
+        title: manifest.title,
+        name: card.name,
+        card: renderCharacter({ ...card, secrets: undefined, notes: undefined } as CharacterCard, lang),
+        ...(card.visual?.prompt !== undefined && card.visual.prompt.length > 0 ? { anchor: card.visual.prompt } : {}),
+        record: [record, undigested > 0 ? L(lang, `（这条线上还有 ${undigested} 章有正文但没有收录，上面没有它们的记载。）`, `(${undigested} more chapters of this line are not digested: nothing above is of them.)`) : ''].filter(part => part.length > 0).join('\n'),
+        ...(card.visual?.scene !== undefined && card.visual.scene.trim().length > 0 ? { current: card.visual.scene.trim() } : {}),
+        ...(params.direction !== undefined && params.direction.trim().length > 0 ? { direction: params.direction.trim() } : {}),
+        avoid: art.avoid,
+        artStyle: art.style,
+      }),
+      temperature: 0.4,
+      validate: raw => asRecord(raw),
+    })
+    const scene = asText(value.scene) ?? ''
+    const why = asText(value.why)
+    if (scene.length === 0) return { card, scene, ...(why !== undefined ? { why } : {}) }
+    const saved = await project.saveCharacter({ id: card.id, visual: { scene } })
+    await project.addActivity({ by: 'crew', role: 'director', tool: 'art', summary: L(lang, `给「${card.name}」的立绘挑了名场面：${clip(scene, 60)}`, `Picked the scene ${card.name}'s portrait shows: ${clip(scene, 80)}`) })
+    return { card: saved, scene, ...(why !== undefined ? { why } : {}) }
   } finally {
     restore?.()
   }
@@ -815,6 +887,12 @@ export interface IllustrateResult extends IllustrationInfo {
   sheetsFailed?: { name: string; error: string }[]
   /** How the author's loose notes were sorted: into the person's look, into this picture, or nowhere. */
   sorted?: SortedNotes
+  /**
+   * A portrait asked for nothing: the moment of the book it shows. `picked`: the director picked it for this picture
+   * (it is on the card now); otherwise it was on the card. `none`: the director was asked and found no such moment in
+   * the book yet — the portrait is plain, and this is why.
+   */
+  scene?: { text: string; picked?: boolean } | { none: string }
 }
 
 export async function illustrate(core: NovelCore, runtime: ProjectRuntime, params: IllustrateParams, task: TaskContext): Promise<IllustrateResult> {
@@ -834,9 +912,12 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
     ...(first.drawn.length > 0 ? { sheets: first.drawn } : {}),
     ...(first.failed.length > 0 ? { sheetsFailed: first.failed } : {}),
     ...(sorted !== undefined ? { sorted } : {}),
+    ...(shown !== undefined ? { scene: shown } : {}),
   })
   // What became of the ideas the author jotted down for this picture.
   let sorted: SortedNotes | undefined
+  // The moment of the book a portrait asked for nothing shows.
+  let shown: IllustrateResult['scene']
   /** These people with a sheet each, where they are to have one: drawn now if need be. */
   const sheeted = async (people: readonly CharacterCard[], who: 'everyone' | 'returning'): Promise<CharacterCard[]> => {
     if (params.sheetFirst === false) return [...people]
@@ -883,22 +964,61 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
       task.job?.result({ sorted })
       direction = [params.prompt, made.sorted.picture].filter((part): part is string => part !== undefined && part.trim().length > 0).join(comma) || undefined
     }
-    const anchored = await withAnchor(core, runtime, noted, task)
+    let anchored = await withAnchor(core, runtime, noted, task)
     if (looksOf(anchored).length === 0) throw new ProjectError('novel/invalid', `${anchored.name} has no appearance yet — describe how they look first (or let novel_bible expand the card)`)
+    // A portrait asked for nothing shows the person in the moment a reader remembers them by. Which moment that is, is
+    // on their card; where it is not, the director picks it from the book — an agent's choice, not a rule's — and it is
+    // kept there. Something asked of this picture takes its place; so does `plain`, and the author's setting.
+    let scene: string | undefined
+    if (params.kind === 'portrait' && direction === undefined && params.plain !== true && core.currentSettings().image.portraitScene !== false) {
+      scene = anchored.visual?.scene?.trim()
+      if (scene !== undefined && scene.length > 0) shown = { text: scene }
+      // A book with nothing written yet has no moment to pick: nobody is asked.
+      else if ((await project.chapterInfos()).some(chapter => chapter.hasText)) {
+        scene = undefined
+        try {
+          const picked = await derivePortraitScene(core, runtime, { character: anchored.id }, task)
+          anchored = picked.card
+          if (picked.scene.length > 0) {
+            scene = picked.scene
+            shown = { text: scene, picked: true }
+          } else {
+            shown = { none: picked.why ?? L(lang, '书里还没有找到算得上名场面的一幕', 'the book has no moment yet that stands for them') }
+          }
+        } catch (error) {
+          if (isAbort(error) || task.signal?.aborted === true) throw error
+          core.log(`could not pick the scene ${anchored.name}'s portrait shows; drawing a plain portrait`, error)
+          shown = { none: L(lang, `导演没能挑出来（${error instanceof Error ? clip(error.message, 80) : '没有回答'}）`, `the director could not pick one (${error instanceof Error ? clip(error.message, 100) : 'no answer'})`) }
+        }
+      } else scene = undefined
+      // Said with the job while the picture is still being drawn: which moment it is to show.
+      if (shown !== undefined) task.job?.result({ scene: shown })
+    }
     // A portrait is drawn after the sheet, and against it: whoever has no sheet yet gets one first.
     const card = params.kind === 'portrait' ? (await sheeted([anchored], 'everyone'))[0]! : anchored
 
     if (params.kind === 'portrait') {
-      const composed = compose([
-        // Asked for nothing in particular, a portrait faces the viewer on a plain ground; a direction of its own — a snowy
-        // night, a look over the shoulder — takes the place of both.
-        piece('frame', direction !== undefined ? L(lang, '人物立绘，半身像', 'character portrait, waist-up') : L(lang, '人物立绘，半身像，面向镜头，纯净的浅色背景', 'character portrait, waist-up, facing the viewer, plain light background')),
-        piece('look', looksOf(card), lookFrom(card)),
-        piece('expression', card.personality !== undefined ? L(lang, `神态体现：${clip(card.personality, 60, '')}`, `expression showing: ${clip(card.personality, 80, '')}`) : undefined),
-        piece('ask', direction),
-      ], comma)
-      // A portrait drawn after the sheet shows the same person as the sheet.
+      const composed = scene !== undefined && scene.length > 0
+        ? compose([
+            // In their scene the person is still what the picture is of — it is also their face in every list.
+            piece('frame', L(lang, '人物立绘：人物是画面的主体，半身到七分身，脸在画面上半部、看得清', 'character portrait: the person is the subject, waist-up to three-quarter length, the face in the upper half and clearly seen')),
+            piece('look', looksOf(card), lookFrom(card)),
+            piece('scene', scene),
+          ], comma)
+        : compose([
+            // Asked for nothing in particular, a portrait faces the viewer on a plain ground; a direction of its own — a snowy
+            // night, a look over the shoulder — takes the place of both.
+            piece('frame', direction !== undefined ? L(lang, '人物立绘，半身像', 'character portrait, waist-up') : L(lang, '人物立绘，半身像，面向镜头，纯净的浅色背景', 'character portrait, waist-up, facing the viewer, plain light background')),
+            piece('look', looksOf(card), lookFrom(card)),
+            piece('expression', card.personality !== undefined ? L(lang, `神态体现：${clip(card.personality, 60, '')}`, `expression showing: ${clip(card.personality, 80, '')}`) : undefined),
+            piece('ask', direction),
+          ], comma)
+      // A portrait drawn after the sheet shows the same person as the sheet; in their scene, the place it names is the
+      // place as its design art has it.
       const sheet = card.visual?.sheet !== undefined ? [{ path: card.visual.sheet, label: card.name }] : []
+      const told = scene ?? ''
+      const place = told.length === 0 ? undefined : (await project.world()).find(entry => entry.visualImage !== undefined && entry.category !== 'item' && [entry.name, ...(entry.aliases ?? [])].some(name => name.length >= 2 && told.includes(name)))
+      if (place?.visualImage !== undefined) sheet.push({ path: place.visualImage, label: L(lang, `场所「${place.name}」`, `the place "${place.name}"`) })
       if (first.drawn.length > 0) task.job?.note(L(lang, '人设图画好了，照着它画立绘…', 'The sheet is drawn; now the portrait, against it…'))
       const info = await renderImage(core, runtime, { ...composed, kind: 'portrait', target: card.id, name: `portrait-${card.id}`, size: params.size ?? pictureSize(core.currentSettings().image, 'portrait'), art, avoid: [...(params.avoid ?? []), ...negativesOf([card])], references: sheet }, task)
       await project.saveCharacter({ id: card.id, visual: { portrait: info.path } })

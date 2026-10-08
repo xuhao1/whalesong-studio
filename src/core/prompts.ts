@@ -1198,6 +1198,71 @@ Output JSON only: {"prompt": "", "negative": ""}`)
 }
 
 /**
+ * The moment of the book somebody's portrait shows: the scene a reader
+ * remembers them by, picked from the book and written as a picture.
+ * @param base.record - what the chapter digests noted of them, chapter by chapter: leads to follow into the text, not the text.
+ * @param base.anchor - how they look, as every picture of them restates it: not to be written again.
+ * @param base.current - the scene kept so far, when another is asked for.
+ */
+export function portraitSceneTask(base: Base & { name: string; card: string; anchor?: string; record: string; current?: string; direction?: string; avoid?: string[]; artStyle?: string }): string {
+  const avoid = (base.avoid ?? []).join(base.lang === 'zh' ? '、' : ', ')
+  const styled = (base.artStyle?.trim() ?? '').length > 0
+  return L(base.lang, `请为《${bare(base.title)}》里的「${base.name}」挑一个"名场面"：读过这本书的人一想到这个人，就会想起的那一幕。这个人的立绘就照这一幕来画。
+
+## 人物
+${base.card}
+
+## 这个人的样子（立绘里会原样带上，不必复述）
+${base.anchor !== undefined && base.anchor.length > 0 ? base.anchor : '（还没有写下来）'}
+
+## 各章的收录里对这个人的记载
+${base.record.length > 0 ? base.record : '（还没有哪一章的收录记到这个人——到原文里去找。）'}
+${base.current !== undefined && base.current.length > 0 ? `\n## 现在定的那一幕（作者要换一个）\n${base.current}\n` : ''}${base.direction !== undefined && base.direction.length > 0 ? `\n## 作者的要求（以它为准）\n${base.direction}\n` : ''}${artSection(base.lang, base.artStyle)}
+## 这本书的画面里不能出现
+${avoid.length > 0 ? avoid : '（无特别限制）'}
+
+要求：
+1. 只从这本书里挑：正文里真写了的一幕。上面的记载是各章收录时记下的，只是线索，而且可能只收录了一部分章节——没收录的章节里也可能有；定下来的那一幕，要照原文那一段来写。书里还没有哪一幕算得上（这个人还没怎么出场），就如实说没有：scene 留空，不要编。
+2. 挑最属于这个人的那一幕：换一个人就不成立；一眼认得出——在哪里、在做什么、手里拿着什么。书里公认的名场面优先于只是出场多的地方。
+3. 这是立绘，是这个人的门面——挂在人物页和列表里，读者在画册里也看得到：
+   - 画面里只有这个人。那一幕里还有别人的，只写这个人自己那一刻的样子，别人一个字不写；离了别人就不成立的一幕（搂抱、厮打、对饮、对谈），换一幕。
+   - 不挑亲热、裸露、施暴、受刑、病危和死状这类场面，再有名也换一幕：挑这个人最好认、也拿得出手的样子。
+   - 写一个定格的瞬间，不是一段经过：不写对话，不写先后发生的几件事。
+4. scene：用这本书的语言写成一段，60–140 字。先用几个字点明是哪一幕、在第几章（如"葬花（第 27 章）："），再写画面：时间与地点、这个人在做什么、姿态与神情、手里和身边的东西、光线与气氛。人物是画面的主体，半身到七分身，脸看得清。
+5. 长相和平常的衣着不要重写（会另行带上）；只有这一幕里原文写明换了的穿戴才写。${styled ? '画风里对年代、形制有规定的（发式、服饰、建筑、器物属于哪个朝代、哪种式样），画面里这些东西照它写；原文的写法与它不一样时以画风为准。' : ''}
+6. 只写眼睛看得见的；只有读过这本书才懂的名字，写成它实际的样子；"不能出现"的东西不要写。不写画风、镜头、画质。
+7. why：一句话告诉作者为什么是这一幕。
+
+只输出 JSON：{"scene": "", "why": ""}`, `Pick the "signature scene" of ${base.name} in "${bare(base.title)}": the moment somebody who has read the book thinks of when they think of this person. Their portrait is drawn from it.
+
+## Character
+${base.card}
+
+## How they look (restated as is in the portrait; do not write it again)
+${base.anchor !== undefined && base.anchor.length > 0 ? base.anchor : '(not written down yet)'}
+
+## What the chapter digests noted of them
+${base.record.length > 0 ? base.record : '(No chapter digest names them yet — look in the text.)'}
+${base.current !== undefined && base.current.length > 0 ? `\n## The scene kept so far (the author wants another)\n${base.current}\n` : ''}${base.direction !== undefined && base.direction.length > 0 ? `\n## The author asks (this decides)\n${base.direction}\n` : ''}${artSection(base.lang, base.artStyle)}
+## Must not appear in this book's pictures
+${avoid.length > 0 ? avoid : '(nothing in particular)'}
+
+Rules:
+1. From this book only: a moment the text really has. The notes above were taken as chapters were digested — leads, and possibly of some chapters only; chapters not digested may have one too. The moment settled on is written as that passage of the text has it. Where the book has no such moment yet (they have hardly been on the page), say so: leave scene empty, invent nothing.
+2. The moment that is most this person's own: it would not hold with anybody else in it; it is told at a glance — where, doing what, holding what. A moment the book is known by comes before a place they are merely often in.
+3. It is a portrait — how this person is presented: on their page, in every list, and to readers in the book's album:
+   - Only this person is in the picture. Where others are in the moment, write this person as they are in that instant and not a word of the others; a moment that does not hold without somebody else (an embrace, a fight, a toast, a talk) gives way to another.
+   - No moment of intimacy, nudity, violence done or suffered, torture, the sickbed or death, however well known: another moment is picked — the one they are best known by that can be shown to anyone.
+   - One instant held still, not a course of events: no dialogue, no one thing after another.
+4. scene: one paragraph in the language of the book, 40–100 words. First, in a few words, which moment it is and in which chapter (as in "Burying the flowers (chapter 27):"), then the picture: time and place, what they are doing, bearing and expression, what is in their hands and around them, light and mood. The person is the subject, waist-up to three-quarter length, the face clearly seen.
+5. Their face and usual clothing are not written again (they are added separately); only what the text says they wear differently in this moment.${styled ? ' Where the art direction fixes a period or a form (which dynasty or fashion hair, dress, buildings and objects belong to), these are written in that form; where the text says otherwise, the art direction holds.' : ''}
+6. Only what the eye can see; a name only a reader of the book understands is written as what it looks like; nothing from "must not appear". No words about art style, camera or image quality.
+7. why: one sentence telling the author why this moment.
+
+Output JSON only: {"scene": "", "why": ""}`)
+}
+
+/**
  * Sort an author's loose notes on a character's picture: what is of the person
  * goes into how they look from now on, what is of this one picture directs
  * this picture and nothing else.

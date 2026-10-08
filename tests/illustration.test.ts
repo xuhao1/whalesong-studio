@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { pictureRecord } from '../src/agent/tools/studio'
 import { sheetsAhead } from '../src/core/pipelines/comic'
-import { artDirectionOf, deriveArtDirection, deriveLook, deriveVisual, illustrate, looksOf } from '../src/core/pipelines/illustrate'
+import { artDirectionOf, deriveArtDirection, deriveLook, derivePortraitScene, deriveVisual, illustrate, looksOf } from '../src/core/pipelines/illustrate'
 import { reconcileLooks, upsertLooks } from '../src/core/project'
 import { DEFAULT_SETTINGS } from '../src/core/settings'
 import { DEFAULT_ART_STYLE, mergeAvoid, resolveArtStyle, splitAvoid } from '../src/shared/art'
@@ -742,6 +742,93 @@ describe('design sheets and looks', () => {
     expect(await names([{ kind: 'scene', target: chapter.id, quote }])).toEqual(['沈砚'])
     await bed.core.settings.update({ image: { ...bed.core.currentSettings().image, sheetFirst: false } })
     expect(await names([{ kind: 'scene', target: chapter.id, quote }, { kind: 'portrait', target: once.id }])).toEqual([])
+  })
+
+  it('draws a portrait asked for nothing in the person\'s signature scene, which the director picks from the book', async () => {
+    const { bed, images } = await studio()
+    const { project } = bed.runtime
+    const SCENE = '葬花（第 2 章）：暮春，沁芳闸旁，她肩荷花锄，锄上挂着纱囊，手执花帚，落花满地，侧身垂目。'
+    const card = await project.saveCharacter({ name: '黛玉', role: 'protagonist', appearance: '两弯似蹙非蹙罥烟眉', personality: '敏感', visual: { prompt: 'slight girl of twelve, fine arched brows' } })
+    const sheet = await illustrate(bed.core, bed.runtime, { kind: 'sheet', target: card.id }, task)
+    const gate = await project.saveWorld({ name: '沁芳闸', category: 'location', visualPrompt: '石闸，水边桃树' })
+    const art = await illustrate(bed.core, bed.runtime, { kind: 'location', target: gate.id }, task)
+    const asked = (): string => bed!.llm.requests.at(-1)!.prompt
+    const sceneAsks = (): number => bed!.llm.requests.filter(request => request.prompt.includes('名场面')).length
+
+    // A book with nothing written has no moment to pick: nobody is asked, and the portrait is the plain one.
+    const blank = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id }, task)
+    expect(sceneAsks()).toBe(0)
+    expect(blank.scene).toBeUndefined()
+    expect(blank.parts?.pieces?.map(piece => piece.of)).toEqual(['frame', 'look', 'expression'])
+    expect(blank.prompt).toContain('面向镜头，纯净的浅色背景')
+
+    // With a text to pick from, the director is handed what the digests noted of them — leads into the text — and how
+    // they look, and picks the moment.
+    const first = await project.addChapter({ title: '入府' })
+    const second = await project.addChapter({ title: '葬花' })
+    await project.saveChapterText(first.id, '黛玉进了荣府。')
+    await project.saveChapterText(second.id, '黛玉在沁芳闸旁，肩上担着花锄，锄上挂着纱囊，手内拿着花帚。')
+    await project.saveMemory({ schema: 1, chapterId: second.id, textHash: 'x', updatedAt: '', brief: '', summary: '葬花', facts: [], newEntities: [], threads: [], characters: [{ character: card.id, name: '黛玉', role: '在沁芳闸葬花', location: '沁芳闸' }] })
+    bed.llm.responder = () => JSON.stringify({ scene: SCENE, why: '全书里只有她做这件事' })
+    const portrait = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id }, task)
+    const task1 = bed.llm.requests.find(request => request.prompt.includes('名场面'))!.prompt
+    for (const part of ['「黛玉」', 'slight girl of twelve, fine arched brows', '第 2 章《葬花》：在沁芳闸葬花（沁芳闸）', '还有 1 章有正文但没有收录', '只从这本书里挑', '不要编', '画面里只有这个人', '不挑亲热、裸露、施暴、受刑、病危和死状这类场面', '写一个定格的瞬间，不是一段经过']) expect(task1, part).toContain(part)
+    // The moment is kept on the card, where the author reads it and rewrites it; the result says it was picked just now.
+    expect((await project.findCharacter(card.id))!.visual?.scene).toBe(SCENE)
+    expect(portrait.scene).toEqual({ text: SCENE, picked: true })
+    // The portrait: the person is still what the picture is of; their look as the anchor has it; then the moment. No
+    // "facing the viewer, plain ground", and no expression read off their temperament beside a moment that has its own.
+    expect(portrait.parts?.pieces?.map(piece => piece.of)).toEqual(['frame', 'look', 'scene'])
+    expect(portrait.parts?.pieces?.[0]?.text).toContain('人物是画面的主体')
+    expect(portrait.parts?.pieces?.[2]?.text).toBe(SCENE.replace(/。$/, ''))
+    expect(portrait.prompt).not.toContain('面向镜头')
+    expect(portrait.prompt).not.toContain('神态体现')
+    // Held against the sheet, and — the moment names a place that has design art — against the place.
+    expect(portrait.parts?.references).toEqual([{ path: sheet.path, label: '黛玉' }, { path: art.path, label: '场所「沁芳闸」' }])
+    expect(images.calls.at(-1)!.references).toHaveLength(2)
+
+    // Drawn again: the moment on the card is what is drawn; the director is not asked a second time.
+    const asks = sceneAsks()
+    const again = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id }, task)
+    expect(sceneAsks()).toBe(asks)
+    expect(again.scene).toEqual({ text: SCENE })
+    expect(again.prompt).toContain('肩荷花锄')
+    // The author rewrites it on the card: that is what the next portrait shows.
+    await project.saveCharacter({ id: card.id, visual: { scene: '共读西厢（第 1 章）：桃花树下，石上摊开一卷书。' } })
+    expect((await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id }, task)).prompt).toContain('石上摊开一卷书')
+
+    // Something asked of this one picture takes the moment's place — a direction, or ideas jotted down —, and so does
+    // `plain`: the figure the interlude stage stands before a backdrop of its own.
+    const snowy = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id, prompt: '雪夜，回头看' }, task)
+    expect(snowy.scene).toBeUndefined()
+    expect(snowy.prompt).not.toContain('共读西厢')
+    const plain = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id, plain: true }, task)
+    expect(plain.scene).toBeUndefined()
+    expect(plain.prompt).toContain('面向镜头，纯净的浅色背景')
+    // …and the author's setting: portraits are plain, whatever the card keeps.
+    await bed.core.settings.update({ image: { ...bed.core.currentSettings().image, portraitScene: false } })
+    expect((await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id }, task)).prompt).toContain('面向镜头，纯净的浅色背景')
+    await bed.core.settings.update({ image: { ...bed.core.currentSettings().image, portraitScene: true } })
+
+    // Picked anew on request, with what the author wants of it; the scene kept so far goes along as the one to replace.
+    bed.llm.responder = () => JSON.stringify({ scene: '焚稿（第 2 章）：病榻前，火盆里烧着诗稿。', why: '作者要的' })
+    const anew = await derivePortraitScene(bed.core, bed.runtime, { character: card.id, direction: '要焚稿那一幕' }, task)
+    expect(asked()).toContain('## 现在定的那一幕（作者要换一个）\n共读西厢')
+    expect(asked()).toContain('## 作者的要求（以它为准）\n要焚稿那一幕')
+    expect(anew.card.visual?.scene).toBe('焚稿（第 2 章）：病榻前，火盆里烧着诗稿。')
+
+    // Somebody the book has no moment for: the director says so, nothing is kept, the portrait is plain — and says why.
+    const walkOn = await project.saveCharacter({ name: '卖花人', role: 'cameo', appearance: '挎着竹篮', visual: { prompt: 'flower seller with a basket' } })
+    bed.llm.responder = () => JSON.stringify({ scene: '', why: '只在第 1 章路过一次' })
+    const theirs = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: walkOn.id, sheetFirst: false }, task)
+    expect(theirs.scene).toEqual({ none: '只在第 1 章路过一次' })
+    expect((await project.findCharacter(walkOn.id))!.visual?.scene).toBeUndefined()
+    expect(theirs.prompt).toContain('面向镜头，纯净的浅色背景')
+    // No model to ask: the portrait is still drawn, plain, and the reason is the failure.
+    bed.llm.responder = () => { throw new Error('no model') }
+    const failed = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: walkOn.id, sheetFirst: false }, task)
+    expect(failed.scene).toMatchObject({ none: expect.stringContaining('导演没能挑出来') })
+    expect(failed.prompt).toContain('面向镜头，纯净的浅色背景')
   })
 
   it('draws a portrait after the sheet as the same person', async () => {

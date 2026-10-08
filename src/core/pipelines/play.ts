@@ -318,8 +318,9 @@ export async function ensurePortrait(core: NovelCore, runtime: ProjectRuntime, r
   const card = await project.findCharacter(ref)
   if (card === undefined) throw new ProjectError('novel/not-found', `no character matches "${ref}"`)
   if (card.visual?.portrait !== undefined && await project.has(card.visual.portrait)) return { path: card.visual.portrait }
-  // The same portrait the gallery draws: anchor, sheet reference, the book's art direction and avoid list.
-  const info = await illustrate(core, runtime, { kind: 'portrait', target: card.id }, task)
+  // The same portrait the gallery draws — anchor, sheet reference, the book's art direction and avoid list — but plain:
+  // on the stage it is a figure standing before a backdrop of its own, and a turn of the play does not wait for a scene to be picked.
+  const info = await illustrate(core, runtime, { kind: 'portrait', target: card.id, plain: true }, task)
   return { path: info.path }
 }
 

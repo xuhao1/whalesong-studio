@@ -129,6 +129,13 @@ export interface CharacterVisual {
   looks?: CharacterLook[]
   /** Project-relative path of the bust portrait (avatars, the interlude stage); the reference when there is no sheet. */
   portrait?: string
+  /**
+   * The moment of the book their portrait shows — the scene a reader remembers them by — in the language of the book:
+   * which moment it is, then the picture (where, what they are doing, what they hold, the light). The director picks
+   * it from the book the first time a portrait is drawn with nothing asked of it; the author can rewrite it, or have
+   * it picked anew. Left out: a portrait asked for nothing is plain — facing the viewer, on a plain ground.
+   */
+  scene?: string
   /** Emotion → sprite path, used by the interlude (visual-novel) stage. */
   sprites?: Record<string, string>
 }
@@ -802,6 +809,12 @@ export interface ImageSettings {
    * from what there is.
    */
   sheetFirst?: boolean
+  /**
+   * A portrait asked for with nothing said of it shows the person in their signature scene, which the director picks
+   * from the book and keeps on the card (`visual.scene`). Unset: yes. `false`: such a portrait is plain — facing the
+   * viewer, on a plain ground.
+   */
+  portraitScene?: boolean
 }
 
 /** How an author's loose notes on a picture of somebody were sorted. */
@@ -1490,9 +1503,9 @@ export interface IllustrationPiece {
    * What the words are of. `frame`: what kind of picture it is and how it is laid out. `look`: how the person, the
    * place or the thing looks. `outfit`: the look (outfit) worn, where it is not the main one. `expression`: what the
    * face is to show. `ask`: what was asked of this one picture and of no other. `composed`: a description the director
-   * wrote for it, from the book.
+   * wrote for it, from the book. `scene`: the moment of the book a portrait shows, as kept on the person's card.
    */
-  of: 'frame' | 'look' | 'outfit' | 'expression' | 'ask' | 'composed'
+  of: 'frame' | 'look' | 'outfit' | 'expression' | 'ask' | 'composed' | 'scene'
   text: string
   /** `look` only — where the words were taken from: what is written for an image model (a visual anchor, a place's look), or, lacking that, the prose of the card. */
   from?: 'anchor' | 'card'

@@ -304,6 +304,24 @@ export function jobTarget(job: Pick<JobInfo, 'target'>, project: Pick<ProjectSta
  * behind the author's back.
  * @returns an empty string where none was drawn.
  */
+/**
+ * Which moment of the book a portrait shows, as its job says: the director's pick or what the card had — or that the
+ * director found none, and the portrait is plain.
+ */
+export interface PortraitScene {
+  text?: string
+  picked?: boolean
+  none?: string
+}
+
+export function sceneOf(job: { result?: Record<string, unknown> } | undefined): PortraitScene | undefined {
+  const scene = job?.result?.scene
+  if (typeof scene !== 'object' || scene === null) return undefined
+  const { text, picked, none } = scene as { text?: unknown; picked?: unknown; none?: unknown }
+  if (typeof text === 'string' && text.length > 0) return { text, ...(picked === true ? { picked: true } : {}) }
+  return typeof none === 'string' ? { none } : undefined
+}
+
 export function sheetsDrawn(job: { result?: Record<string, unknown> } | undefined, t: (zh: string, en: string) => string): string {
   const names = Array.isArray(job?.result?.sheets) ? job.result.sheets.filter((name): name is string => typeof name === 'string') : []
   return names.length > 0 ? t(`（先画了${names.map(name => `「${name}」`).join('、')}的人设图）`, ` (first drew the design sheet of ${names.join(', ')})`) : ''

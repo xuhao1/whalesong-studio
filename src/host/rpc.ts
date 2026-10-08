@@ -25,7 +25,7 @@ import { findPicturePress, findSoundPress } from '../core/media/press'
 import { publishSite, siteChaptersUpTo, siteDefaults, siteFolder } from '../core/pipelines/site'
 import { listChapters, listLines, listSides, readAlbum, readPosition, readSide, savePosition } from '../core/reader'
 import { albumCounts, albumEmpty } from '../shared/album'
-import { deriveArtDirection, deriveLook, deriveVisual, illustrate } from '../core/pipelines/illustrate'
+import { deriveArtDirection, deriveLook, derivePortraitScene, deriveVisual, illustrate } from '../core/pipelines/illustrate'
 import { analyzeBook, importManuscript, readBookFile } from '../core/pipelines/import'
 import { applyOutlineOps, type OutlineOp } from '../core/pipelines/outline'
 import {
@@ -367,6 +367,10 @@ export function createHandlers(service: NovelService): Handlers {
     'character.visual': async ({ root, id, direction }) => {
       const runtime = await open(root)
       return job(runtime, 'bible', `visual anchor ${id}`, id, async task => await deriveVisual(core, runtime, { character: id, ...(direction !== undefined && direction.length > 0 ? { direction } : {}) }, task))
+    },
+    'character.scene': async ({ root, id, direction }) => {
+      const runtime = await open(root)
+      return job(runtime, 'bible', `portrait scene ${id}`, id, async task => await derivePortraitScene(core, runtime, { character: id, ...(direction !== undefined && direction.length > 0 ? { direction } : {}) }, task))
     },
     'world.save': async ({ root, entry }) => await (await open(root)).project.saveWorld(entry),
     'world.merge': async ({ root, keep, fold }) => {

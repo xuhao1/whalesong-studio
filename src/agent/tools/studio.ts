@@ -33,6 +33,7 @@ const PIECE_NAMES: Record<IllustrationPiece['of'], string> = {
   expression: 'expression',
   ask: 'asked of this one picture',
   composed: 'composed by the director',
+  scene: 'the moment of the book the portrait shows (kept on the card as visual.scene)',
 }
 
 /** Everything on record of how one picture was made, in the order its prompt was sent. */

@@ -1109,6 +1109,12 @@ function ImageSection({ value, keys, onChange, t, advanced }: { value: ImageSett
             <span>{t('画人之前先补人设图：画立绘时这个人还没有人设图，就先画人设图、再照着它画；插图、分镜画面、封面里多次出场的人也一样（各多一次绘图调用，画完会说明）。不勾：有什么就照什么画。', 'The design sheet first: a portrait of somebody without a sheet draws the sheet first and the portrait against it; so do illustrations, panels and covers for whoever comes back in the book (one more image call each, named when done). Unticked: pictures are drawn from what there is.')}</span>
           </label>
         ) : null}
+        {value.provider !== 'none' ? (
+          <label className="nv-check">
+            <input type="checkbox" checked={value.portraitScene !== false} onChange={(event) => { const { portraitScene: _old, ...rest } = value; onChange(event.target.checked ? rest : { ...rest, portraitScene: false }) }} />
+            <span>{t('立绘照名场面画：画立绘时没写想法，就画这个人的名场面（比如黛玉葬花）——导演从书里挑，记在人物卡的"形象"里，可以改、可以重挑（每人第一次多一次导演的调用）。不勾：素底、面向镜头的定妆照。', 'Portraits in their scene: a portrait asked for nothing shows the person in their signature scene — the director picks it from the book and keeps it under "Looks" on the card, where it can be rewritten or picked anew (one more director run per person, the first time). Unticked: plain portraits, facing the viewer on a plain ground.')}</span>
+          </label>
+        ) : null}
         {value.provider === 'openai' || value.provider === 'openrouter' ? (
           <Field label={t('质量', 'Quality')}>
             <Select value={value.quality ?? ''} options={[{ value: '', label: t('模型默认', 'Model default') }, { value: 'low', label: t('低（快、省）', 'Low (fast, cheap)') }, { value: 'medium', label: t('中', 'Medium') }, { value: 'high', label: t('高', 'High') }]} onChange={(quality) => { onChange(without(value, 'quality', quality !== '' ? quality : undefined)) }} />
