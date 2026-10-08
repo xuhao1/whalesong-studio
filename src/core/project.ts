@@ -1641,6 +1641,30 @@ export class Project {
     return found
   }
 
+  /**
+   * Settle a proposal that a later one took in — a mending that went on from it: it waits no longer by itself.
+   * @param by - the proposal that stands for it now.
+   */
+  async supersedeProposal(id: string, by: string): Promise<void> {
+    await this.updateState<Proposal[]>(['proposals.json'], [], current => current.map(item => (item.id === id && item.status === 'pending' ? { ...item, status: 'rejected' as const, supersededBy: by } : item)))
+  }
+
+  /**
+   * The proposals a later one took in wait by themselves again: the one that stood for them was turned down, and what
+   * they changed was not what the author turned down.
+   * @returns how many came back.
+   */
+  async restoreSuperseded(by: string): Promise<number> {
+    let back = 0
+    await this.updateState<Proposal[]>(['proposals.json'], [], current => current.map((item) => {
+      if (item.supersededBy !== by || item.status !== 'rejected') return item
+      back += 1
+      const { supersededBy: _gone, ...rest } = item
+      return { ...rest, status: 'pending' as const }
+    }))
+    return back
+  }
+
   async review(chapterId: string): Promise<ChapterReview | undefined> {
     return await this.readState<ChapterReview>('reviews', `${chapterId}.json`)
   }

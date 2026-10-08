@@ -16,7 +16,7 @@ import { fuzzyFind } from '../shared/text'
 import { ISSUE_TYPE, SEVERITY, SEVERITY_TONE } from './labels'
 import { ProposalCard } from './components/ProposalCard'
 import { useState, type ReactNode } from 'react'
-import { Button, Chip, cx, TextArea, TextInput, useAction, useKept, useProject, useRunningJob, useStudio, useT } from './ui'
+import { Button, Chip, cx, Menu, TextArea, TextInput, useAction, useKept, useProject, useRunningJob, useShared, useSnapshot, useStudio, useT } from './ui'
 
 export interface IssueMark {
   id: string
@@ -53,6 +53,32 @@ export function issueMarks(text: string, review: ChapterReview | undefined): { m
   return { marks: kept, loose }
 }
 
+/** How a mending asked for while others are under way is taken: after them, going on from what they change — or at once, by itself. */
+export type MendOrder = 'queue' | 'apart'
+
+/** The order mendings are asked for in: one choice for every button on screen. In line unless the author says otherwise — the surer way. */
+export function useMendOrder(): [MendOrder, (order: MendOrder) => void] {
+  return useShared<MendOrder>('mend.order', 'queue')
+}
+
+/** The small triangle beside the buttons that mend: in line, or apart. */
+export function MendOrderMenu() {
+  const t = useT()
+  const [order, setOrder] = useMendOrder()
+  return (
+    <Menu icon="chevronDown" variant="ghost" size="sm" align="end" label={order === 'queue' ? t('排队', 'In line') : t('分别', 'Apart')} items={[
+      { label: t(`${order === 'queue' ? '✓ ' : ''}排队：等前面的修复做完，接着它们改`, `${order === 'queue' ? '✓ ' : ''}In line: after the mendings under way, going on from them`), onSelect: () => { setOrder('queue') } },
+      { label: t(`${order === 'apart' ? '✓ ' : ''}分别：马上开始，各改各的`, `${order === 'apart' ? '✓ ' : ''}Apart: at once, each by itself`), onSelect: () => { setOrder('apart') } },
+    ]} />
+  )
+}
+
+/** How many mendings of this book are under way or waiting their turn. */
+export function useMendings(): number {
+  const { root } = useProject()
+  return useSnapshot(snapshot => snapshot.jobs.filter(job => job.status === 'running' && job.kind === 'revise' && job.project === root).length)
+}
+
 /** Under which name what the author is typing about an issue is kept on this screen. */
 export const issueNoteKey = (chapterId: string, issueId: string): string => `issue.note.${chapterId}.${issueId}`
 
@@ -78,11 +104,13 @@ export function IssueCard({ chapterId, issue, onLocate, onChanged, before, after
   const { project, root } = useProject()
   const [note, setNote] = useKept(issueNoteKey(chapterId, issue.id), issue.note ?? '')
   // What was made to mend this issue and waits to be accepted: shown beneath it, settled here.
-  const mends = project.proposals.filter(proposal => proposal.status === 'pending' && (proposal.issues?.includes(issue.id) === true || (issue.mending !== undefined && proposal.batchId === issue.mending)))
+  const mends = project.proposals.filter(proposal => proposal.status === 'pending' && (proposal.issues?.includes(issue.id) === true || (issue.mending !== undefined && (proposal.batchId === issue.mending || proposal.batches?.includes(issue.mending) === true))))
   const mendsHere = mends.filter(proposal => proposal.chapterId === chapterId)
   const mendsElsewhere = mends.filter(proposal => proposal.chapterId !== chapterId)
   const [asked, setAsked] = useState(false)
   const revising = useRunningJob(job => job.kind === 'revise') !== undefined
+  const under = useMendings()
+  const [order] = useMendOrder()
   // What the author says of an issue is kept with it: it goes along when the issue is mended in a batch, and to the showrunner.
   const keep = (): void => {
     if (note.trim() === (issue.note ?? '')) return
@@ -94,11 +122,13 @@ export function IssueCard({ chapterId, issue, onLocate, onChanged, before, after
   const settle = useAction()
   const fix = (scope: 'passage' | 'book') => async (): Promise<void> => {
     if (before !== undefined && !(await before())) return
-    await controller.api.call('ai.fixIssue', { root, chapter: chapterId, issue: issue.id, scope, ...(note.trim().length > 0 ? { note: note.trim() } : {}) })
+    await controller.api.call('ai.fixIssue', { root, chapter: chapterId, issue: issue.id, scope, order, ...(note.trim().length > 0 ? { note: note.trim() } : {}) })
     await controller.refreshJobs()
-    controller.toast('info', scope === 'book'
-      ? t('策划正在查这个问题牵涉的范围；改好之后，对比会出现在这条问题下面。', 'The planner is tracing how far this reaches; the changes will show beneath this issue.')
-      : t('改好之后，对比会出现在这条问题下面。', 'The rewrite will show beneath this issue.'))
+    controller.toast('info', under > 0 && order === 'queue'
+      ? t(`排在前面 ${under} 个修复后面，接着它们改；改好之后，对比会出现在这条问题下面。`, `In line behind ${under} mending(s), going on from them; the changes will show beneath this issue.`)
+      : scope === 'book'
+        ? t('策划正在查这个问题牵涉的范围；改好之后，对比会出现在这条问题下面。', 'The planner is tracing how far this reaches; the changes will show beneath this issue.')
+        : t('改好之后，对比会出现在这条问题下面。', 'The rewrite will show beneath this issue.'))
     setAsked(true)
     after?.(scope)
   }
@@ -139,6 +169,7 @@ export function IssueCard({ chapterId, issue, onLocate, onChanged, before, after
             <Button size="sm" icon="layers" busy={everywhere.busy} pending={t('正在开始…', 'Starting…')} onClick={() => everywhere.run(fix('book'))} title={t('让策划查清牵涉的章节和设定，一起改', 'The planner traces the chapters and the bible it reaches, and mends them together')}>
               {t('全局修复', 'Mend it everywhere')}
             </Button>
+            {under > 0 ? <MendOrderMenu /> : null}
           </>
         ) : null}
         <Button
@@ -184,11 +215,14 @@ export function IssueBatchBar({ chosen, before, onStarted, children }: { chosen:
   const t = useT()
   const { root } = useProject()
   const [say, setSay] = useKept('review.say', '')
-  const mending = useRunningJob(job => job.kind === 'revise' && job.title === 'revise book') !== undefined
+  // Other mendings do not stand in the way: this batch waits for them, or runs beside them, as the author chose.
+  const under = useMendings()
+  const [order] = useMendOrder()
   const start = (): Promise<unknown> => controller.guard(async () => {
     if (before !== undefined && !(await before())) return
     await controller.api.call('ai.fixIssues', {
       root,
+      order,
       issues: chosen.map((item) => {
         // What is being typed on this screen is what is meant, also where it has not reached the book yet.
         const note = String(controller.kept.get(issueNoteKey(item.chapterId, item.issue.id)) ?? item.issue.note ?? '').trim()
@@ -197,14 +231,20 @@ export function IssueBatchBar({ chosen, before, onStarted, children }: { chosen:
       ...(say.trim().length > 0 ? { note: say.trim() } : {}),
     })
     await controller.refreshJobs()
-    controller.toast('info', t(`策划正在把这 ${chosen.length} 个问题放在一起看；改好之后，对比会出现在各条问题下面。`, `The planner is reading these ${chosen.length} side by side; the changes will show beneath the issues.`))
+    controller.toast('info', under > 0 && order === 'queue'
+      ? t(`这 ${chosen.length} 个问题排在前面 ${under} 个修复后面，接着它们改。`, `These ${chosen.length} are in line behind ${under} mending(s), and go on from them.`)
+      : t(`策划正在把这 ${chosen.length} 个问题放在一起看；改好之后，对比会出现在各条问题下面。`, `The planner is reading these ${chosen.length} side by side; the changes will show beneath the issues.`))
     onStarted?.()
   })
   return (
     <div className="nv-assist nv-issue-batch">
       {children}
       <TextInput value={say} placeholder={t('对这一批的要求', 'What to ask of this batch')} onChange={(event) => { setSay(event.target.value) }} />
-      <Button size="sm" variant="primary" icon="layers" disabled={chosen.length === 0} busy={mending} pending={t('策划在修…', 'Mending…')} onClick={start}>{t(`一起修选中的 ${chosen.length} 个`, `Mend the ${chosen.length} chosen together`)}</Button>
+      <div className="nv-split-btn">
+        <Button size="sm" variant="primary" icon="layers" disabled={chosen.length === 0} onClick={start}>{t(`一起修选中的 ${chosen.length} 个`, `Mend the ${chosen.length} chosen together`)}</Button>
+        <MendOrderMenu />
+      </div>
+      {under > 0 ? <span className="nv-muted nv-small">{order === 'queue' ? t(`${under} 个修复在做，新的排在后面`, `${under} mending(s) under way; a new one waits its turn`) : t(`${under} 个修复在做，新的同时开始`, `${under} mending(s) under way; a new one starts beside them`)}</span> : null}
     </div>
   )
 }

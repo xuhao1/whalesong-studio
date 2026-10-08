@@ -9,7 +9,7 @@ import { clip } from '../../shared/text'
 import { MAIN_LINE, type ChapterInfo, type IssueSeverity, type Proposal, type TextStep } from '../../shared/types'
 import { ProposalCard } from '../components/ProposalCard'
 import { SEVERITY, SEVERITY_TONE, SUGGESTION_KIND } from '../labels'
-import { IssueBatchBar, IssueCard } from '../Issues'
+import { IssueBatchBar, IssueCard, MendOrderMenu, useMendOrder } from '../Issues'
 import { Icon } from '../icons'
 import { BatchMatrix, batchOf, useBatchJob } from '../Batch'
 import {
@@ -187,7 +187,7 @@ function useIssueBoard() {
   const [from, setFrom] = useKept<IssueSeverity>('review.from', 'high')
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const confirm = useConfirm()
-  const mending = useRunningJob(job => job.kind === 'revise' && job.title === 'revise book') !== undefined
+  const [order] = useMendOrder()
   const checking = useRunningJob(job => job.kind === 'review' && job.title === 'recheck issues') !== undefined
   const open = (listed.data?.reviews ?? []).flatMap(review => review.issues.filter(issue => issue.resolved !== true).map(issue => ({ review, issue, key: `${review.chapterId}/${issue.id}` })))
   const shown = open.filter(item => GRAVITY[item.issue.severity] >= GRAVITY[level])
@@ -222,10 +222,10 @@ function useIssueBoard() {
           await controller.refreshJobs()
         })}>{t('核对', 'Check again')}</Button>
         <Select value={from} onChange={setFrom} options={levels('全部', 'All')} />
-        <Button size="sm" icon="wand" disabled={mending || grave.length === 0} onClick={() => {
+        <Button size="sm" icon="wand" disabled={grave.length === 0} onClick={() => {
           confirm.ask(t(`把 ${grave.length} 个问题交给策划一起修？改动会作为提案等你确认。`, `Hand ${grave.length} issue(s) to the planner to mend together? The changes wait as proposals.`), () => {
             void controller.guard(async () => {
-              await controller.api.call('ai.fixIssues', { root, atLeast: from })
+              await controller.api.call('ai.fixIssues', { root, atLeast: from, order })
               await controller.refreshJobs()
               controller.toast('info', t(`策划正在把这 ${grave.length} 个问题放在一起看，改动会作为提案等你确认。`, `The planner is reading these ${grave.length} side by side; the changes will wait as proposals.`))
             })
@@ -354,12 +354,13 @@ function BookRevision({ onStarted }: { onStarted: () => void }) {
   const known = new Map([...project.chapters, ...(project.lines ?? []).flatMap(candidate => candidate.chapters)].map(info => [info.id, info]))
   const path = line === MAIN_LINE ? project.chapters : (project.lines?.find(candidate => candidate.id === line)?.path ?? []).map(id => known.get(id)).filter((info): info is ChapterInfo => info !== undefined)
   const written = path.filter(chapter => chapter.hasText)
-  const running = jobs.find(job => job.status === 'running' && job.kind === 'revise' && job.title === 'revise book')
+  const underWay = jobs.filter(job => job.status === 'running' && job.kind === 'revise' && job.project === root && job.title === 'revise book')
+  const [order] = useMendOrder()
 
   const start = (): void => {
     setSummary(undefined)
     void controller.guard(async () => {
-      const info = await controller.run('ai.reviseBook', { root, instruction: instruction.trim(), ...(line !== MAIN_LINE ? { line } : {}), ...(scope === 'pick' && picked.size > 0 ? { chapters: [...picked].filter(id => written.some(chapter => chapter.id === id)) } : {}) })
+      const info = await controller.run('ai.reviseBook', { root, instruction: instruction.trim(), order, ...(line !== MAIN_LINE ? { line } : {}), ...(scope === 'pick' && picked.size > 0 ? { chapters: [...picked].filter(id => written.some(chapter => chapter.id === id)) } : {}) })
       const output = info.result?.output as { note?: string; untouched?: number; results?: unknown[]; failed?: unknown[] } | undefined
       setSummary({ ...(output?.note !== undefined ? { note: output.note } : {}), changed: output?.results?.length ?? 0, untouched: output?.untouched ?? 0, failed: output?.failed?.length ?? 0 })
       if ((output?.results?.length ?? 0) > 0) onStarted()
@@ -416,7 +417,7 @@ function BookRevision({ onStarted }: { onStarted: () => void }) {
             {written.map(chapter => <Chip key={chapter.id} tone={picked.has(chapter.id) ? 'blue' : 'neutral'} active={picked.has(chapter.id)} onClick={() => { setPicked((previous) => { const next = new Set(previous); if (next.has(chapter.id)) next.delete(chapter.id); else next.add(chapter.id); return next }) }}>{chapter.index}. {chapter.title}</Chip>)}
           </div>
         ) : null}
-        {running !== undefined ? <JobBar job={running} /> : null}
+        {underWay.map(job => <JobBar key={job.id} job={job} />)}
         {summary !== undefined ? (
           <p className={cx('nv-note', summary.failed > 0 && 'is-warn')}>
             {t(`改了 ${summary.changed} 章，${summary.untouched} 章判断为不受影响${summary.failed > 0 ? `，${summary.failed} 章失败` : ''}。`, `${summary.changed} chapters changed, ${summary.untouched} judged unaffected${summary.failed > 0 ? `, ${summary.failed} failed` : ''}.`)}
@@ -424,7 +425,10 @@ function BookRevision({ onStarted }: { onStarted: () => void }) {
           </p>
         ) : null}
         <div className="nv-form-actions">
-          <Button variant="primary" icon="wand" busy={running !== undefined} disabled={instruction.trim().length === 0 || written.length === 0 || (scope === 'pick' && picked.size === 0)} onClick={start}>{t('开始修订', 'Start the revision')}</Button>
+          <div className="nv-split-btn">
+            <Button variant="primary" icon="wand" disabled={instruction.trim().length === 0 || written.length === 0 || (scope === 'pick' && picked.size === 0)} onClick={start}>{t('开始修订', 'Start the revision')}</Button>
+            <MendOrderMenu />
+          </div>
         </div>
       </section>
     </div>

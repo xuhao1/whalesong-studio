@@ -72,6 +72,8 @@ export interface PackOptions {
   tailChars: number
   /** Include the focus chapter's own text (continue, revise, review). */
   includeChapterText?: boolean
+  /** With `includeChapterText`: the chapter as the task has it, where that is not how the manuscript has it yet. */
+  chapterText?: string
   signal?: AbortSignal
 }
 
@@ -345,7 +347,8 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
   const stableKeys = ['project', 'world', 'people', 'earlier', 'story']
 
   // ── what belongs to this piece of work ──
-  const currentText = current !== undefined && options.includeChapterText === true ? await textOf(current) : ''
+  // (A revision that goes on from changes still waiting reads the chapter as it would stand with them in.)
+  const currentText = current !== undefined && options.includeChapterText === true ? options.chapterText ?? await textOf(current) : ''
   const previous = written.at(-1)
   const previousText = previous !== undefined ? await textOf(previous) : ''
 

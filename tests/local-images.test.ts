@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createImageProvider } from '../src/core/media/image'
-import { comfyCatalog, comfyLastWorkflow, comfyTakeWorkflow, comfyWorkflows, editorToApi, fillWorkflow, stopLocalWorkers, workflowImages, workflowTemplate } from '../src/core/media/local'
+import { comfyCatalog, comfyLastWorkflow, comfySampling, comfyTakeWorkflow, comfyWorkflows, editorToApi, fillWorkflow, stopLocalWorkers, workflowImages, workflowTemplate } from '../src/core/media/local'
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3])
 const keys = { get: async () => undefined } as never
@@ -195,7 +195,7 @@ describe('ComfyUI', () => {
     expect(seen.uploads).toBe(0)
     expect(result.referencesUsed).toBe(0)
     // What went to the model, word for word.
-    expect(result.sent).toEqual({ prompt: '少女，三视图', negative: '辫子', size: '1280x720' })
+    expect(result.sent).toEqual({ prompt: '少女，三视图', negative: '辫子', size: '1280x720', sampling: { steps: 12, guidance: 7, sampler: 'euler', scheduler: 'normal', from: 'builtin' } })
     // No checkpoint named: the first the server has.
     await createImageProvider({ provider: 'comfyui', baseURL: base }, keys)!.generate({ prompt: 'x' })
     expect((seen.prompts.at(-1) as Record<string, { inputs: Record<string, unknown> }>)[4]!.inputs.ckpt_name).toBe('first.safetensors')
@@ -236,6 +236,37 @@ describe('ComfyUI', () => {
       await expect(createImageProvider({ provider: 'comfyui', baseURL: base }, keys)!.generate({ prompt: 'x' })).rejects.toThrow('has no checkpoint, and 2 diffusion models (noct.safetensors, video.safetensors)')
     } finally {
       seen.checkpoints = ['first.safetensors', 'second.safetensors']
+    }
+  })
+
+  it('samples a graph built here as the server last ran that model, unless the settings say', async () => {
+    const parts = { provider: 'comfyui' as const, baseURL: base, model: 'noct.safetensors', textEncoder: 'enc-8b.safetensors', vae: 'image-vae.safetensors', encoderType: 'qwen_image' }
+    const sampler = (): Record<string, unknown> => (seen.prompts.at(-1) as Record<string, { inputs: Record<string, unknown> }>)[4]!.inputs
+    // Nothing set, and the server has never run it: the figures for a model of its kind — not a checkpoint's 7, which burns it.
+    const plain = await createImageProvider(parts, keys)!.generate({ prompt: '一座桥' })
+    expect(sampler()).toMatchObject({ steps: 25, cfg: 3.5, sampler_name: 'euler', scheduler: 'simple' })
+    expect(plain.sent?.sampling).toEqual({ steps: 25, guidance: 3.5, sampler: 'euler', scheduler: 'simple', from: 'builtin' })
+    seen.runs = {
+      // The author's own run of the model — and a newer one of another model, and the Studio's own guess, which do not count before it.
+      mine: { prompt: [5, 'mine', { ...RUN, 6: { ...RUN[6], inputs: { ...RUN[6].inputs, steps: 30, cfg: 2.5, sampler_name: 'dpmpp_2m', scheduler: 'sgm_uniform' } } }], outputs: { 8: { images: [{ filename: 'cat.png' }] } }, status: { status_str: 'success' } },
+      other: { prompt: [6, 'other', { ...RUN, 1: { class_type: 'UNETLoader', inputs: { unet_name: 'video.safetensors' } }, 6: { ...RUN[6], inputs: { ...RUN[6].inputs, cfg: 9 } } }], outputs: { 8: { images: [{ filename: 'v.png' }] } }, status: { status_str: 'success' } },
+      studio: { prompt: [7, 'studio', { ...RUN, 6: { ...RUN[6], inputs: { ...RUN[6].inputs, cfg: 7 } }, 8: { class_type: 'SaveImage', inputs: { images: ['7', 0], filename_prefix: 'novel-studio' } } }], outputs: { 8: { images: [{ filename: 'novel-studio_1.png' }] } }, status: { status_str: 'success' } },
+    }
+    try {
+      expect(await comfySampling(base, 'noct.safetensors')).toEqual({ steps: 30, cfg: 2.5, sampler: 'dpmpp_2m', scheduler: 'sgm_uniform' })
+      expect(await comfySampling(base, 'second.safetensors')).toBeUndefined()
+      const found = await createImageProvider(parts, keys)!.generate({ prompt: '一座桥' })
+      expect(sampler()).toMatchObject({ steps: 30, cfg: 2.5, sampler_name: 'dpmpp_2m', scheduler: 'sgm_uniform' })
+      expect(found.sent?.sampling).toEqual({ steps: 30, guidance: 2.5, sampler: 'dpmpp_2m', scheduler: 'sgm_uniform', from: 'server' })
+      // What the settings say holds over it — figure by figure.
+      const half = await createImageProvider({ ...parts, guidance: 4 }, keys)!.generate({ prompt: '一座桥' })
+      expect(sampler()).toMatchObject({ steps: 30, cfg: 4 })
+      expect(half.sent?.sampling?.from).toBe('server')
+      const set = await createImageProvider({ ...parts, guidance: 4, steps: 10 }, keys)!.generate({ prompt: '一座桥' })
+      expect(sampler()).toMatchObject({ steps: 10, cfg: 4, sampler_name: 'dpmpp_2m' })
+      expect(set.sent?.sampling?.from).toBe('settings')
+    } finally {
+      seen.runs = {}
     }
   })
 

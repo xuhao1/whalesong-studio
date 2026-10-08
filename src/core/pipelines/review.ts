@@ -193,13 +193,15 @@ const pendingRechecks = new Map<string, { timer: ReturnType<typeof setTimeout>; 
  * background, a moment later, so that a batch accepted in one go is one look.
  * Nothing is asked where nothing is open.
  */
-export function scheduleRecheck(core: NovelCore, runtime: ProjectRuntime, accepted: { chapterId: string; batchId?: string; change: string }, task: Pick<TaskContext, 'origin' | 'agentRoute'>): void {
+export function scheduleRecheck(core: NovelCore, runtime: ProjectRuntime, accepted: { chapterId: string; batchId?: string; batches?: readonly string[]; change: string }, task: Pick<TaskContext, 'origin' | 'agentRoute'>): void {
   if (core.currentSettings().recheckIssues === false) return
   const root = runtime.project.root
   const waiting = pendingRechecks.get(root) ?? { timer: undefined as unknown as ReturnType<typeof setTimeout>, chapters: new Set<string>(), batches: new Set<string>(), changes: [] }
   if (waiting.timer !== undefined) clearTimeout(waiting.timer)
   waiting.chapters.add(accepted.chapterId)
   if (accepted.batchId !== undefined) waiting.batches.add(accepted.batchId)
+  // (A change made on top of others stands for their batches too.)
+  for (const batch of accepted.batches ?? []) waiting.batches.add(batch)
   waiting.changes.push(accepted.change)
   waiting.timer = setTimeout(() => {
     pendingRechecks.delete(root)

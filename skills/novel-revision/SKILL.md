@@ -18,6 +18,8 @@ Revision has one rule: change what was asked and nothing else. The tools enforce
 | the whole manuscript | `novel_revise scope=book` | One instruction ("rename X to Y and adjust the passages around it"). Triage decides which chapters it touches; each comes back as a proposal. |
 | several things a review found, together | `novel_revise scope=issues` | `issues` names them as `<chapter>:<issue id>` (or `severity=high` takes every open issue that grave or graver); `instruction` is what the author says of the batch, and what they said of single issues is kept with those. One planner reads them side by side, each chapter is rewritten once — also chapters nobody named, where they tell of the same facts — and every change waits as a proposal. Use it rather than mending issue by issue whenever two of them touch the same fact, person or stretch of time. |
 
+`scope=book` and `scope=issues` take `order`. Mendings do not lock each other out — the author may have one running from the Studio while you start another. `queue` (the default) waits for the ones under way and goes on from the changes they leave waiting: a chapter with a change waiting is rewritten as it would read with that accepted, and the new proposal stands for the earlier ones, so the author has one to accept (turned down, the earlier ones come back). `apart` starts at once on the text as it stands: use it when the author asks for speed and the mendings have nothing to do with each other — another line of the plot, a far part of the story.
+
 When the author can see the Studio, a passage is usually faster for them to select there. Offer it.
 
 ## Write the instruction like an editor

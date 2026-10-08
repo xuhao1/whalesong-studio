@@ -34,7 +34,7 @@ import {
 } from '../core/pipelines/play'
 import { buildFoundation, deriveBeats, deriveChapters, whatIf } from '../core/pipelines/plot'
 import { clearReview, listReviews, noteIssue, recheckIssues, resolveIssue, reviewChapter } from '../core/pipelines/review'
-import { fixIssue, fixIssues, acceptProposal, rejectProposal, reviseBook, reviseChapter, reviseSpan } from '../core/pipelines/revise'
+import { fixIssue, fixIssues, acceptProposal, rejectProposal, reviseBook, reviseChapter, reviseSpan, mendInTurn } from '../core/pipelines/revise'
 import { writeChapter } from '../core/pipelines/write'
 import { ProjectError } from '../core/project'
 import { siftCast } from '../core/pipelines/cast'
@@ -556,31 +556,33 @@ export function createHandlers(service: NovelService): Handlers {
         return rest
       })
     },
-    'ai.fixIssue': async ({ root, chapter, issue, note, scope }) => {
+    'ai.fixIssue': async ({ root, chapter, issue, note, scope, order }) => {
       const runtime = await open(root)
       const located = await runtime.project.findChapter(requireString(chapter, 'chapter'))
       if (located === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${chapter}"`)
       const wide = scope === 'book'
       // Named as the kind of revision it is, so that it reads as one wherever jobs are listed.
-      return job(runtime, 'revise', wide ? 'revise book' : 'revise passage', wide ? undefined : located.plan.id, async task => await fixIssue(core, runtime, {
+      return job(runtime, 'revise', wide ? 'revise book' : 'revise passage', wide ? undefined : located.plan.id, async task => await mendInTurn(runtime, order === 'queue' ? 'queue' : 'apart', task, async onto => await fixIssue(core, runtime, {
         chapter: located.plan.id,
         issue: requireString(issue, 'issue'),
         scope: wide ? 'book' : 'passage',
         ...(typeof note === 'string' && note.trim().length > 0 ? { note: note.trim() } : {}),
-      }, task))
+        ...(onto ? { onto: true } : {}),
+      }, task)))
     },
-    'ai.fixIssues': async ({ root, issues, atLeast, chapters, note }) => {
+    'ai.fixIssues': async ({ root, issues, atLeast, chapters, note, order }) => {
       const runtime = await open(root)
       const named = Array.isArray(issues) ? issues.filter(item => typeof item?.chapter === 'string' && typeof item?.issue === 'string').map(item => ({ chapter: item.chapter, issue: item.issue, ...(typeof item.note === 'string' && item.note.trim().length > 0 ? { note: item.note.trim() } : {}) })) : []
       if (named.length === 0 && atLeast === undefined) throw new ProjectError('novel/invalid', 'name the issues to mend, or the severity to mend from')
-      return job(runtime, 'revise', 'revise book', undefined, async task => await fixIssues(core, runtime, {
+      return job(runtime, 'revise', 'revise book', undefined, async task => await mendInTurn(runtime, order === 'queue' ? 'queue' : 'apart', task, async onto => await fixIssues(core, runtime, {
+        ...(onto ? { onto: true } : {}),
         ...(named.length > 0 ? { issues: named } : { atLeast: atLeast === 'low' || atLeast === 'medium' ? atLeast : 'high', ...(Array.isArray(chapters) && chapters.length > 0 ? { chapters: chapters.filter((item): item is string => typeof item === 'string') } : {}) }),
         ...(typeof note === 'string' && note.trim().length > 0 ? { note: note.trim() } : {}),
-      }, task))
+      }, task)))
     },
-    'ai.reviseBook': async ({ root, instruction, chapters, line }) => {
+    'ai.reviseBook': async ({ root, instruction, chapters, line, order }) => {
       const runtime = await open(root)
-      return job(runtime, 'revise', 'revise book', undefined, async task => await reviseBook(core, runtime, { instruction: requireString(instruction, 'instruction'), ...(chapters !== undefined ? { chapters } : {}), ...(line !== undefined ? { line } : {}) }, task))
+      return job(runtime, 'revise', 'revise book', undefined, async task => await mendInTurn(runtime, order === 'queue' ? 'queue' : 'apart', task, async onto => await reviseBook(core, runtime, { instruction: requireString(instruction, 'instruction'), ...(chapters !== undefined ? { chapters } : {}), ...(line !== undefined ? { line } : {}), ...(onto ? { onto: true } : {}) }, task)))
     },
     'ai.digest': async ({ root, chapters, force }) => {
       const runtime = await open(root)

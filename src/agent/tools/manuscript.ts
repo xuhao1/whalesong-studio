@@ -6,7 +6,7 @@ import { digestPending } from '../../core/pipelines/digest'
 import { correctMemory, editChapter, type EditAction, type MemoryPatch } from '../../core/pipelines/edit'
 import { analyzeBook, importManuscript, readBookFile, importLine } from '../../core/pipelines/import'
 import { reviewChapter } from '../../core/pipelines/review'
-import { acceptProposal, rejectProposal, fixIssues, reviseBook, reviseChapter, reviseSpan } from '../../core/pipelines/revise'
+import { acceptProposal, rejectProposal, fixIssues, mendInTurn, reviseBook, reviseChapter, reviseSpan } from '../../core/pipelines/revise'
 import { writeChapter } from '../../core/pipelines/write'
 import { ProjectError } from '../../core/project'
 import { containedPath } from '../../core/util/fs'
@@ -69,7 +69,8 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
         '- scope=chapter: rewrite one whole chapter to `instruction`.',
         '- scope=book: apply one instruction across the book ("rename the city to …", "make her colder until chapter 8"). Triage decides which chapters it touches (or pass `chapters`); each becomes a proposal for the author to review unless apply=true.',
         '- scope=issues: mend what reviews found, together — also across chapters. Name them in `issues` as `<chapter>:<issue id>` (ids are in a chapter\'s review: novel_review, novel_read what=review), or pass `severity` (high | medium | low) to take every open issue that grave or graver, in `chapters` if given. `instruction` is what the author says of the whole batch (optional); what they said of single issues is kept with those and goes along. One planner reads them side by side and settles which chapters change and how — also chapters nobody named, where they tell of the same facts — and each chapter is rewritten once, so one fact is mended one way throughout. Every change waits as a proposal; changes to the bible wait as suggestions.',
-        '- scope=accept / scope=reject: settle a pending proposal by `proposal` id.',
+        '- scope=accept / scope=reject: settle a pending proposal by `proposal` id. Rejecting one that was made on top of earlier waiting changes brings those back to wait by themselves.',
+        'book / issues, `order`: mendings do not lock each other out. `queue` (the default) waits for the mendings already under way and goes on from the changes they leave waiting — a chapter with a change waiting is rewritten as it would read with that accepted, and the new proposal stands for the earlier ones (one to accept); use it when what is mended hangs together. `apart` starts at once on the text as it stands — for mendings that have nothing to do with each other (another line of the plot, a far part of the story), which are quicker side by side.',
         'Every applied change snapshots the previous text first. Passage and chapter revisions apply directly unless the author turned on review of agent revisions; pass apply=false to always leave a proposal.',
       ].join('\n'),
       mutating: args => args.scope !== 'reject',
@@ -83,9 +84,11 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
         chapters: listParameter('book: restrict to these chapters.'),
         proposal: { type: 'string', description: 'accept/reject: the proposal id.' },
         apply: { type: 'boolean', description: 'Apply immediately (true) or leave a proposal (false).' },
+        order: { type: 'string', enum: ['queue', 'apart'], description: 'book/issues: after the mendings under way and on top of their changes (queue, default), or at once by itself (apart).' },
       },
       async run(args, env) {
         const runtime = await env.project()
+        const order = args.order === 'apart' ? 'apart' as const : 'queue' as const
         if (args.scope === 'accept' || args.scope === 'reject') {
           if (args.proposal === undefined) throw new ProjectError('novel/invalid', 'pass the proposal id in `proposal`')
           if (args.scope === 'accept') {
@@ -103,10 +106,11 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
           })
           if (named.length === 0 && args.severity === undefined) throw new ProjectError('novel/invalid', 'scope=issues needs `issues` (each <chapter>:<issue id>) or `severity`')
           const severity = args.severity === 'low' || args.severity === 'medium' ? args.severity : 'high'
-          const result = await env.job('revise', 'revise book', undefined, async task => await fixIssues(env.core, runtime, {
+          const result = await env.job('revise', 'revise book', undefined, async task => await mendInTurn(runtime, order, task, async onto => await fixIssues(env.core, runtime, {
             ...(named.length > 0 ? { issues: named } : { atLeast: severity, ...((listOf(args.chapters)?.length ?? 0) > 0 ? { chapters: listOf(args.chapters)! } : {}) }),
             ...(args.instruction !== undefined && args.instruction.trim().length > 0 ? { note: args.instruction.trim() } : {}),
-          }, task))
+            ...(onto ? { onto: true } : {}),
+          }, task)))
           if (result.book === undefined) return { text: 'No open issue matches: nothing was handed over. Review the chapters first (novel_review), or name the issues.', record: false }
           const lines = result.book.results.map(item => `- chapter ${item.index} "${item.title}": ${item.wordsBefore} → ${item.wordsAfter} words, proposal ${item.proposalId ?? ''} — ${brief(item.reason, 120)}`)
           return {
@@ -117,11 +121,12 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
         if (args.instruction === undefined || args.instruction.trim().length === 0) throw new ProjectError('novel/invalid', '`instruction` is required')
         const instruction = args.instruction
         if (args.scope === 'book') {
-          const result = await env.job('revise', 'revise book', undefined, async task => await reviseBook(env.core, runtime, {
+          const result = await env.job('revise', 'revise book', undefined, async task => await mendInTurn(runtime, order, task, async onto => await reviseBook(env.core, runtime, {
             instruction,
             ...((listOf(args.chapters)?.length ?? 0) > 0 ? { chapters: listOf(args.chapters)! } : {}),
             ...(args.apply !== undefined ? { apply: args.apply } : {}),
-          }, task))
+            ...(onto ? { onto: true } : {}),
+          }, task)))
           const lines = result.results.map(item => `- chapter ${item.index} "${item.title}": ${item.wordsBefore} → ${item.wordsAfter} words${item.applied ? ', applied' : `, proposal ${item.proposalId ?? ''}`} — ${brief(item.reason, 120)}`)
           return {
             text: `${result.results.length} chapters rewritten, ${result.untouched} judged untouched${result.failed.length > 0 ? `, ${result.failed.length} failed` : ''}.${result.note !== undefined ? `\n${result.note}` : ''}\n${lines.join('\n')}${result.failed.map(item => `\n✗ ${item.chapterId}: ${item.error}`).join('')}${result.results.some(item => !item.applied) ? '\nThe proposals wait for the author in Novel Studio → Review (or settle them with scope=accept/reject).' : ''}`,

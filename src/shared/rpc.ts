@@ -464,8 +464,9 @@ export interface NovelRpc {
   'ai.reviseSpan': { params: { root: string; chapter: string; start: number; end: number; quote?: string; instruction: string }; result: JobStarted }
   'ai.reviseChapter': { params: { root: string; chapter: string; instruction: string }; result: JobStarted }
   /** Mend what a review found: at the place it quotes (`passage`), or wherever it reaches (`book` — the planner traces it through the chapters and the bible). `note` is what the author wants done about it. Changes come back as proposals. */
-  'ai.fixIssue': { params: { root: string; chapter: string; issue: string; note?: string; scope: 'passage' | 'book' }; result: JobStarted }
-  'ai.reviseBook': { params: { root: string; instruction: string; chapters?: string[]; /** The line of the plot the revision is of, when it is not the main one. */ line?: string }; result: JobStarted }
+  /** `order` — `queue`: after the mendings already asked for, going on from what they leave waiting; `apart` (as before it could be said): at once, on the text as it stands. */
+  'ai.fixIssue': { params: { root: string; chapter: string; issue: string; note?: string; scope: 'passage' | 'book'; order?: 'queue' | 'apart' }; result: JobStarted }
+  'ai.reviseBook': { params: { root: string; instruction: string; chapters?: string[]; /** The line of the plot the revision is of, when it is not the main one. */ line?: string; order?: 'queue' | 'apart' }; result: JobStarted }
   'ai.digest': { params: { root: string; chapters?: string[]; force?: boolean }; result: JobStarted }
   'ai.review': { params: { root: string; chapter: string; focus?: string }; result: JobStarted }
   /**
@@ -506,7 +507,7 @@ export interface NovelRpc {
    * rewritten once. `issues` names them (with what the author says of each); or `atLeast` takes every open issue that
    * grave or graver. Every change waits as a proposal. A job.
    */
-  'ai.fixIssues': { params: { root: string; issues?: { chapter: string; issue: string; note?: string }[]; atLeast?: IssueSeverity; chapters?: string[]; note?: string }; result: JobStarted }
+  'ai.fixIssues': { params: { root: string; issues?: { chapter: string; issue: string; note?: string }[]; atLeast?: IssueSeverity; chapters?: string[]; note?: string; order?: 'queue' | 'apart' }; result: JobStarted }
 
   // ── batches: the same work for many chapters, characters or places, as one job ──
   /** Where the stage production of each written chapter stands, and what each step lacks to run at all. */

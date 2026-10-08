@@ -1241,8 +1241,8 @@ function ImageSection({ value, keys, onChange, t, advanced }: { value: ImageSett
         ) : null}
         {local ? (
           <>
-            <Field label={t('步数', 'Steps')} hint={value.provider === 'comfyui' ? t('留空：25', 'Empty: 25') : t('留空用模型自己的', 'Empty: the pipeline\'s own')}><TextInput inputMode="numeric" {...figure('steps')} /></Field>
-            <Field label={t('引导强度（CFG）', 'Guidance (CFG)')} hint={value.provider === 'comfyui' ? t('留空：7', 'Empty: 7') : t('留空用模型自己的', 'Empty: the pipeline\'s own')}><TextInput inputMode="decimal" {...figure('guidance')} /></Field>
+            <Field label={t('步数', 'Steps')} hint={value.provider === 'comfyui' ? t('内置流程用；留空：照服务器上这个模型上次跑的，没有就 25', 'For the built-in graph; empty: as the server last ran this model, else 25') : t('留空用模型自己的', 'Empty: the pipeline\'s own')}><TextInput inputMode="numeric" {...figure('steps')} /></Field>
+            <Field label={t('引导强度（CFG）', 'Guidance (CFG)')} hint={value.provider === 'comfyui' ? t('内置流程用；留空：照服务器上这个模型上次跑的，没有就 checkpoint 7、扩散模型 3.5', 'For the built-in graph; empty: as the server last ran this model, else 7 for a checkpoint and 3.5 for a diffusion model') : t('留空用模型自己的', 'Empty: the pipeline\'s own')}><TextInput inputMode="decimal" {...figure('guidance')} /></Field>
           </>
         ) : null}
         {value.provider !== 'none' && value.provider !== 'codex' && !local ? (

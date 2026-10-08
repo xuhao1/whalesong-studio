@@ -625,6 +625,25 @@ export function useKept<T>(key: string, initial: T): [T, (value: T | ((previous:
   return [value, set]
 }
 
+const sharedListeners = new Set<() => void>()
+
+/**
+ * A choice kept for as long as the Studio is open and shared by everything on screen that reads it: changed in one
+ * place — on one of thirty cards — it is changed on all of them at once.
+ */
+export function useShared<T>(key: string, initial: T): [T, (value: T) => void] {
+  const { controller } = useStudio()
+  const value = useSyncExternalStore(
+    (listener) => { sharedListeners.add(listener); return () => { sharedListeners.delete(listener) } },
+    () => (controller.kept.has(key) ? controller.kept.get(key) as T : initial),
+  )
+  const set = useCallback((next: T) => {
+    controller.kept.set(key, next)
+    for (const listener of [...sharedListeners]) listener()
+  }, [controller, key])
+  return [value, set]
+}
+
 /** Debounce a changing value. */
 export function useDebounced<T>(value: T, delay: number): T {
   const [debounced, setDebounced] = useState(value)

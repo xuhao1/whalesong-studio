@@ -19,7 +19,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { ComfyCatalog, ImageSettings } from '../../shared/types'
+import type { ComfyCatalog, IllustrationSent, ImageSettings } from '../../shared/types'
 import { ProviderError, trimBase } from './http'
 import type { ImageProvider, ImageReference, ImageRequest, ImageResult } from './image'
 
@@ -71,13 +71,13 @@ export function workflowImages(graph: unknown): number {
 }
 
 /** The graph for a plain checkpoint: text in, one picture out. */
-function checkpointGraph(model: string): Graph {
+function checkpointGraph(model: string, sampler = 'euler', scheduler = 'normal'): Graph {
   return {
     4: { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: model } },
     5: { class_type: 'EmptyLatentImage', inputs: { width: '%width%', height: '%height%', batch_size: 1 } },
     6: { class_type: 'CLIPTextEncode', inputs: { text: '%prompt%', clip: ['4', 1] } },
     7: { class_type: 'CLIPTextEncode', inputs: { text: '%negative_prompt%', clip: ['4', 1] } },
-    3: { class_type: 'KSampler', inputs: { seed: '%seed%', steps: '%steps%', cfg: '%scale%', sampler_name: 'euler', scheduler: 'normal', denoise: 1, model: ['4', 0], positive: ['6', 0], negative: ['7', 0], latent_image: ['5', 0] } },
+    3: { class_type: 'KSampler', inputs: { seed: '%seed%', steps: '%steps%', cfg: '%scale%', sampler_name: sampler, scheduler, denoise: 1, model: ['4', 0], positive: ['6', 0], negative: ['7', 0], latent_image: ['5', 0] } },
     8: { class_type: 'VAEDecode', inputs: { samples: ['3', 0], vae: ['4', 2] } },
     9: { class_type: 'SaveImage', inputs: { filename_prefix: 'novel-studio', images: ['8', 0] } },
   }
@@ -87,7 +87,7 @@ function checkpointGraph(model: string): Graph {
  * The graph for a diffusion model that comes alone — the server's `diffusion_models` —, loaded beside a text encoder
  * and a VAE: text in, one picture out.
  */
-function partsGraph(model: string, encoder: string, type: string, vae: string): Graph {
+function partsGraph(model: string, encoder: string, type: string, vae: string, sampler = 'euler', scheduler = 'simple'): Graph {
   return {
     1: { class_type: 'UNETLoader', inputs: { unet_name: model, weight_dtype: 'default' } },
     2: { class_type: 'CLIPLoader', inputs: { clip_name: encoder, type } },
@@ -95,13 +95,42 @@ function partsGraph(model: string, encoder: string, type: string, vae: string): 
     5: { class_type: 'EmptyLatentImage', inputs: { width: '%width%', height: '%height%', batch_size: 1 } },
     6: { class_type: 'CLIPTextEncode', inputs: { text: '%prompt%', clip: ['2', 0] } },
     7: { class_type: 'CLIPTextEncode', inputs: { text: '%negative_prompt%', clip: ['2', 0] } },
-    4: { class_type: 'KSampler', inputs: { seed: '%seed%', steps: '%steps%', cfg: '%scale%', sampler_name: 'euler', scheduler: 'simple', denoise: 1, model: ['1', 0], positive: ['6', 0], negative: ['7', 0], latent_image: ['5', 0] } },
+    4: { class_type: 'KSampler', inputs: { seed: '%seed%', steps: '%steps%', cfg: '%scale%', sampler_name: sampler, scheduler, denoise: 1, model: ['1', 0], positive: ['6', 0], negative: ['7', 0], latent_image: ['5', 0] } },
     8: { class_type: 'VAEDecode', inputs: { samples: ['4', 0], vae: ['3', 0] } },
     9: { class_type: 'SaveImage', inputs: { filename_prefix: 'novel-studio', images: ['8', 0] } },
   }
 }
 
 const trimmedBase = (baseURL: string | undefined): string => trimBase(baseURL?.trim() || COMFY_DEFAULT)
+
+/** Guidance where nothing says otherwise: what a classic checkpoint is sampled with — and a diffusion model that comes alone, which is of the newer kind and burns at that. */
+const GUIDANCE = { checkpoint: 7, alone: 3.5 }
+
+/**
+ * How the server itself last sampled with a model: the steps, the guidance, the sampler and the scheduler of its
+ * latest run that loaded it and made a picture. A model is drawn well at the figures it was made for, and those
+ * differ from one to the next by more than a default can cover — guidance 7 suits a Stable Diffusion checkpoint
+ * and leaves a newer model's picture harsh and flat. Whoever runs the server found them already.
+ */
+export async function comfySampling(baseURL: string | undefined, model: string, signal?: AbortSignal): Promise<{ steps?: number; cfg?: number; sampler?: string; scheduler?: string } | undefined> {
+  const answered = await fetch(`${trimmedBase(baseURL)}/history?max_items=48`, { signal: signal ?? AbortSignal.timeout(15_000) }).catch(() => undefined)
+  if (answered === undefined || !answered.ok) return undefined
+  type Run = { prompt?: [number, string, unknown, ...unknown[]]; outputs?: Record<string, { images?: unknown[] }>; status?: { status_str?: string } }
+  const runs = Object.values(await answered.json().catch(() => ({})) as Record<string, Run>)
+    .filter(run => run.status?.status_str !== 'error' && Object.values(run.outputs ?? {}).some(output => (output.images?.length ?? 0) > 0))
+    .sort((left, right) => (right.prompt?.[0] ?? 0) - (left.prompt?.[0] ?? 0))
+  // The author's own runs before the Studio's: its own say only what it guessed.
+  const own = (graph: Graph): boolean => Object.values(graph).some(node => node.class_type === 'SaveImage' && node.inputs?.filename_prefix === 'novel-studio')
+  const graphs = runs.map(run => run.prompt?.[2]).filter((graph): graph is Graph => graph !== null && typeof graph === 'object')
+  for (const graph of [...graphs.filter(graph => !own(graph)), ...graphs.filter(own)]) {
+    if (!Object.values(graph).some(node => Object.values(node.inputs ?? {}).includes(model))) continue
+    const sampler = Object.values(graph).find(node => Array.isArray(node.inputs?.positive) && Array.isArray(node.inputs?.negative))
+    if (sampler?.inputs === undefined) continue
+    const { steps, cfg, sampler_name: name, scheduler } = sampler.inputs
+    return { ...(typeof steps === 'number' ? { steps } : {}), ...(typeof cfg === 'number' ? { cfg } : {}), ...(typeof name === 'string' ? { sampler: name } : {}), ...(typeof scheduler === 'string' ? { scheduler } : {}) }
+  }
+  return undefined
+}
 
 /** What one of a loader node's inputs can be set to, as the server lists it: the files it has, or the kinds it knows. */
 async function loaderChoices(base: string, node: string, input: string, signal: AbortSignal | undefined): Promise<string[]> {
@@ -436,6 +465,22 @@ export class ComfyImages implements ImageProvider {
     const source = withImages ? this.settings.editWorkflow! : this.settings.workflow
     let graph: unknown
     let model = this.model
+    // A graph built here is sampled as the settings say; where they say nothing, as the server last sampled with this model; else at the usual figures for its kind.
+    let sampling: NonNullable<IllustrationSent['sampling']> | undefined
+    const sampled = async (alone: boolean): Promise<NonNullable<IllustrationSent['sampling']>> => {
+      const set = { steps: this.settings.steps, guidance: this.settings.guidance }
+      // (The server is asked also where both figures are set: the sampler and the scheduler are the model's as much as they are.)
+      const found = await comfySampling(this.base, model, request.signal).catch(() => undefined)
+      const took = (set.steps === undefined && found?.steps !== undefined) || (set.guidance === undefined && found?.cfg !== undefined)
+      sampling = {
+        steps: set.steps ?? found?.steps ?? 25,
+        guidance: set.guidance ?? found?.cfg ?? (alone ? GUIDANCE.alone : GUIDANCE.checkpoint),
+        sampler: found?.sampler ?? 'euler',
+        scheduler: found?.scheduler ?? (alone ? 'simple' : 'normal'),
+        from: took ? 'server' : set.steps !== undefined && set.guidance !== undefined ? 'settings' : 'builtin',
+      }
+      return sampling
+    }
     if (source !== undefined && source.trim().length > 0) graph = await readWorkflow(source)
     else {
       // No workflow named: a small graph built here, for what the model named is — a whole checkpoint, or a diffusion
@@ -451,8 +496,10 @@ export class ComfyImages implements ImageProvider {
       const checkpoints = await choices('CheckpointLoaderSimple', 'ckpt_name')
       // No model named: the first checkpoint the server has.
       if (model.length === 0 && checkpoints.length > 0) model = checkpoints[0]!
-      if (checkpoints.includes(model)) graph = checkpointGraph(model)
-      else {
+      if (checkpoints.includes(model)) {
+        const how = await sampled(false)
+        graph = checkpointGraph(model, how.sampler, how.scheduler)
+      } else {
         const diffusion = await choices('UNETLoader', 'unet_name')
         if (model.length === 0 && diffusion.length === 1) model = diffusion[0]!
         if (model.length === 0) {
@@ -463,7 +510,8 @@ export class ComfyImages implements ImageProvider {
         if (!diffusion.includes(model)) {
           // Not a name the server lists (or it lists nothing, being older): taken for a checkpoint, as it always was.
           if (diffusion.length > 0 || checkpoints.length > 0) throw new ProviderError(`ComfyUI at ${this.base} has no model "${model}" — it has: ${[...checkpoints, ...diffusion].slice(0, 8).join(', ')}`)
-          graph = checkpointGraph(model)
+          const how = await sampled(false)
+          graph = checkpointGraph(model, how.sampler, how.scheduler)
         } else {
           const [encoders, types, vaes] = await Promise.all([choices('CLIPLoader', 'clip_name'), choices('CLIPLoader', 'type'), choices('VAELoader', 'vae_name').then(list => list.filter(isFile))])
           const encoder = this.settings.textEncoder?.trim() || (encoders.length === 1 ? encoders[0]! : '')
@@ -471,7 +519,8 @@ export class ComfyImages implements ImageProvider {
           const type = this.settings.encoderType?.trim() || (types.length === 1 ? types[0]! : '')
           const missing = [encoder.length === 0 ? `a text encoder (${encoders.slice(0, 4).join(', ') || 'the server lists none'})` : '', vae.length === 0 ? `a VAE (${vaes.slice(0, 4).join(', ') || 'the server lists none'})` : '', type.length === 0 ? 'the kind the encoder is loaded as' : ''].filter(part => part.length > 0)
           if (missing.length > 0) throw new ProviderError(`"${model}" is a diffusion model that comes alone: it is loaded beside a text encoder and a VAE, and the server leaves a choice — name ${missing.join(', ')} under Settings → Images, or use the workflow of the server's last run there`)
-          graph = partsGraph(model, encoder, type, vae)
+          const how = await sampled(true)
+          graph = partsGraph(model, encoder, type, vae, how.sampler, how.scheduler)
         }
       }
     }
@@ -495,8 +544,8 @@ export class ComfyImages implements ImageProvider {
       width,
       height,
       seed,
-      steps: this.settings.steps ?? 25,
-      scale: this.settings.guidance ?? 7,
+      steps: sampling?.steps ?? this.settings.steps ?? 25,
+      scale: sampling?.guidance ?? this.settings.guidance ?? GUIDANCE.checkpoint,
       model,
     }
     // A workflow with more places than there are pictures shows the last one again rather than fail on an empty loader.
@@ -535,7 +584,7 @@ export class ComfyImages implements ImageProvider {
       data: new Uint8Array(await fetched.arrayBuffer()),
       mime: mimeOf(picture.filename, fetched.headers.get('content-type')),
       referencesUsed: names.length,
-      sent: { prompt: request.prompt, ...(negative.length > 0 ? { negative } : {}), size: `${width}x${height}` },
+      sent: { prompt: request.prompt, ...(negative.length > 0 ? { negative } : {}), size: `${width}x${height}`, ...(sampling !== undefined ? { sampling } : {}) },
     }
   }
 }

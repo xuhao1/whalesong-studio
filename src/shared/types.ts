@@ -684,6 +684,15 @@ export interface Proposal {
   batchId?: string
   /** The review issues it was made to mend, by id: it is shown beneath them, to be accepted or rejected there. */
   issues?: string[]
+  /**
+   * Made on top of changes that were still waiting — a mending that goes on from the ones before it: the proposals it
+   * took in and stands for now (accepting it accepts them), and the batches those belonged to, so that an issue handed
+   * over with one of them still finds what mends it.
+   */
+  supersedes?: string[]
+  batches?: string[]
+  /** Taken into a later proposal that goes on from it: settled by that one. */
+  supersededBy?: string
   createdBy: 'agent' | 'user'
   createdAt: Timestamp
 }
@@ -1655,6 +1664,12 @@ export interface IllustrationSent {
   negative?: string
   /** The size or shape asked for, in the service's own terms. */
   size?: string
+  /**
+   * How it was sampled, where the Studio built the graph itself (a model on a ComfyUI server, no workflow named), and
+   * where the steps and the guidance came from: the `settings`, the `server`'s own last run of that model, or the
+   * `builtin` figures for a model of its kind.
+   */
+  sampling?: { steps: number; guidance: number; sampler: string; scheduler: string; from: 'settings' | 'server' | 'builtin' }
 }
 
 export interface IllustrationInfo {

@@ -221,6 +221,7 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
       </header>
       <p className="nv-picture-made nv-small">
         <span>{image.model ?? t('（没记下模型）', '(model not recorded)')}{service !== undefined ? ` · ${t(...service)}` : ''}</span>
+        {sent?.sampling !== undefined ? <span>{t(`${sent.sampling.steps} 步 · 引导 ${sent.sampling.guidance} · ${sent.sampling.sampler}/${sent.sampling.scheduler}`, `${sent.sampling.steps} steps · guidance ${sent.sampling.guidance} · ${sent.sampling.sampler}/${sent.sampling.scheduler}`)}{sent.sampling.from === 'server' ? t('（照服务器上这个模型上次跑的）', ' (as the server last ran this model)') : sent.sampling.from === 'builtin' ? t('（内置的默认值）', ' (the built-in figures)') : ''}</span> : null}
         {image.size !== undefined ? <span>{t(`要的尺寸 ${image.size}`, `asked for ${image.size}`)}{sent?.size !== undefined && sent.size.replace('*', 'x') !== image.size ? t(`（发给接口的是 ${sent.size}）`, ` (the service was sent ${sent.size})`) : ''}</span> : sent?.size !== undefined ? <span>{t(`发给接口的尺寸 ${sent.size}`, `the service was sent ${sent.size}`)}</span> : null}
         {natural !== undefined ? <span>{t(`画出来 ${natural.width}×${natural.height}`, `drawn at ${natural.width}×${natural.height}`)}</span> : null}
       </p>

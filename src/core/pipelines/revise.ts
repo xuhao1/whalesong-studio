@@ -35,6 +35,8 @@ export interface ReviseSpanParams {
   apply?: boolean
   /** The review issues this mends: the proposal says so. */
   issues?: string[]
+  /** Go on from the changes that still wait for this chapter; see `ReviseChapterParams.onto`. */
+  onto?: boolean
 }
 
 export interface ReviseChapterParams {
@@ -44,6 +46,12 @@ export interface ReviseChapterParams {
   batchId?: string
   /** The review issues this mends: the proposal says so. */
   issues?: string[]
+  /**
+   * Go on from the changes that still wait for this chapter: the writer reads the chapter as it would stand with them
+   * accepted, and the proposal made stands for them too — one change to look at and accept, in place of the ones it
+   * took in. How a mending that follows another keeps to what the first one settled.
+   */
+  onto?: boolean
 }
 
 export interface ReviseResult {
@@ -74,6 +82,61 @@ async function requireChapter(runtime: ProjectRuntime, ref: string): Promise<{ c
   return { chapter, text }
 }
 
+/**
+ * The chapter as it would read with what waits for it accepted, oldest first: a whole-chapter change where nothing was
+ * taken in before it, a passage where it is still found. What could not be taken in is left waiting by itself.
+ */
+async function onPending(runtime: ProjectRuntime, chapterId: string, text: string): Promise<{ text: string; used: Proposal[] }> {
+  const waiting = (await runtime.project.proposals()).filter(proposal => proposal.status === 'pending' && proposal.chapterId === chapterId).sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+  let out = text
+  const used: Proposal[] = []
+  for (const proposal of waiting) {
+    if (proposal.kind === 'chapter') {
+      if (out !== text || proposal.before !== text) continue
+      out = proposal.after
+    } else {
+      const range = fuzzyFind(out, proposal.before)
+      if (range === undefined) continue
+      out = out.slice(0, range.start) + proposal.after + out.slice(range.end)
+    }
+    used.push(proposal)
+  }
+  return { text: out, used }
+}
+
+/**
+ * What a proposal made on top of others carries of them — the issues and batches they were for, and whom it stands
+ * for now — read once the rewrite is back: the author may have settled one of them while the writer worked.
+ * @returns `carried`: the fields for the new proposal; `settle`: the proposals it takes the place of.
+ */
+async function takenIn(runtime: ProjectRuntime, used: readonly Proposal[], issues: readonly string[] | undefined, lang: 'zh' | 'en'): Promise<{ carried: Partial<Proposal>; settle: Proposal[] }> {
+  if (used.length === 0) return { carried: issues !== undefined && issues.length > 0 ? { issues: [...issues] } : {}, settle: [] }
+  const now = new Map((await runtime.project.proposals()).map(proposal => [proposal.id, proposal.status]))
+  const settle = used.filter(proposal => now.get(proposal.id) === 'pending')
+  const dropped = used.filter(proposal => now.get(proposal.id) === 'rejected').length
+  const all = [...new Set([...used.flatMap(proposal => proposal.issues ?? []), ...(issues ?? [])])]
+  const batches = [...new Set(used.flatMap(proposal => [...(proposal.batchId !== undefined ? [proposal.batchId] : []), ...(proposal.batches ?? [])]))]
+  const says = [
+    ...(settle.length > 0 ? [L(lang, `接着还没采纳的 ${settle.length} 处修改改的：采纳这一条就包含它们；放弃它，那 ${settle.length} 处回来单独等你确认。`, `Made on top of ${settle.length} change(s) that were still waiting: accepting this one accepts them; turned down, they come back to wait by themselves.`)] : []),
+    // (Nothing is taken back behind the author: what they turned down meanwhile is named, and this proposal is theirs to turn down too.)
+    ...(dropped > 0 ? [L(lang, `写的时候它依据的修改里有 ${dropped} 处被你放弃了，这一条里仍然带着——不要的话放弃这一条，重新修。`, `${dropped} of the change(s) it was written on top of were turned down meanwhile and are still in it — turn this one down and mend again if they are not wanted.`)] : []),
+  ]
+  return {
+    carried: {
+      ...(all.length > 0 ? { issues: all } : {}),
+      ...(settle.length > 0 ? { supersedes: [...settle.flatMap(proposal => proposal.supersedes ?? []), ...settle.map(proposal => proposal.id)] } : {}),
+      ...(batches.length > 0 ? { batches } : {}),
+      ...(says.length > 0 ? { rationale: says.join(lang === 'zh' ? '' : ' ') } : {}),
+    },
+    settle,
+  }
+}
+
+/** The proposals a later one took in are settled by it: they wait no longer by themselves. */
+async function settleTakenIn(runtime: ProjectRuntime, used: readonly Proposal[], by: string): Promise<void> {
+  for (const proposal of used) await runtime.project.supersedeProposal(proposal.id, by)
+}
+
 /** Find a quoted passage; with a position hint, the occurrence nearest to it wins. */
 function locateQuote(text: string, quote: string, near?: number): { start: number; end: number } | undefined {
   if (near !== undefined) {
@@ -88,7 +151,13 @@ function locateQuote(text: string, quote: string, near?: number): { start: numbe
 
 export async function reviseSpan(core: NovelCore, runtime: ProjectRuntime, params: ReviseSpanParams, task: TaskContext): Promise<ReviseResult> {
   const { project } = runtime
-  const { chapter, text } = await requireChapter(runtime, params.chapter)
+  const found = await requireChapter(runtime, params.chapter)
+  const { chapter } = found
+  const apply = shouldApply(core, task, params.apply, false)
+  // Going on from what waits: the passage is looked for, and rewritten, in the chapter as it would stand with that in.
+  // (Not where the change is applied outright: that is made to the text as it stands, and accepts nothing for the author.)
+  const based = params.onto === true && !apply ? await onPending(runtime, chapter.plan.id, found.text) : { text: found.text, used: [] as Proposal[] }
+  const text = based.text
   task.job?.result({ chapterId: chapter.plan.id })
   let range: { start: number; end: number } | undefined
   if (params.quote !== undefined && params.quote.trim().length > 0) {
@@ -132,7 +201,6 @@ export async function reviseSpan(core: NovelCore, runtime: ProjectRuntime, param
   const trailing = /\s*$/.exec(passage)?.[0] ?? ''
   after = `${leading}${after}${trailing}`
 
-  const apply = shouldApply(core, task, params.apply, false)
   const result: ReviseResult = {
     chapterId: chapter.plan.id,
     title: chapter.plan.title,
@@ -147,8 +215,17 @@ export async function reviseSpan(core: NovelCore, runtime: ProjectRuntime, param
   if (apply) {
     await project.saveChapterText(chapter.plan.id, text.slice(0, range.start) + after + text.slice(range.end), { reason: 'before-revise' })
     scheduleDigest(core, runtime, chapter.plan.id, task)
-  } else {
+  } else if (based.used.length === 0 || (based.used.every(proposal => proposal.kind === 'span') && found.text.includes(passage))) {
+    // A change of its own — also when it was written knowing the ones that wait: the passage is as the book has it,
+    // and none of them rewrites the chapter, so each is accepted or turned down by itself.
     const proposal = await project.addProposal({ chapterId: chapter.plan.id, kind: 'span', instruction: params.instruction, before: passage, after, createdBy: task.origin, ...(params.issues !== undefined && params.issues.length > 0 ? { issues: params.issues } : {}) })
+    result.proposalId = proposal.id
+  } else {
+    // The passage is one a waiting change made, or stands in a chapter rewritten whole: one proposal for the chapter
+    // with all of them and this one in.
+    const taken = await takenIn(runtime, based.used, params.issues, lang)
+    const proposal = await project.addProposal({ chapterId: chapter.plan.id, kind: 'chapter', instruction: params.instruction, before: found.text, after: text.slice(0, range.start) + after + text.slice(range.end), createdBy: task.origin, ...taken.carried })
+    await settleTakenIn(runtime, taken.settle, proposal.id)
     result.proposalId = proposal.id
   }
   task.job?.result({ chapterId: chapter.plan.id, ...(result.proposalId !== undefined ? { proposalId: result.proposalId } : {}) })
@@ -158,6 +235,9 @@ export async function reviseSpan(core: NovelCore, runtime: ProjectRuntime, param
 export async function reviseChapter(core: NovelCore, runtime: ProjectRuntime, params: ReviseChapterParams, task: TaskContext): Promise<ReviseResult> {
   const { project } = runtime
   const { chapter, text } = await requireChapter(runtime, params.chapter)
+  const apply = shouldApply(core, task, params.apply, false)
+  // (Applied outright, the rewrite is of the text as it stands: nothing that waits is accepted on the author's behalf.)
+  const based = params.onto === true && !apply ? await onPending(runtime, chapter.plan.id, text) : { text, used: [] as Proposal[] }
   task.job?.result({ chapterId: chapter.plan.id })
   const manifest = await project.manifest()
   const lang = promptLanguage(manifest.language)
@@ -167,10 +247,11 @@ export async function reviseChapter(core: NovelCore, runtime: ProjectRuntime, pa
     chapter,
     brief: params.instruction,
     includeChapterText: true,
+    ...(based.used.length > 0 ? { chapterText: based.text } : {}),
     ...(task.signal !== undefined ? { signal: task.signal } : {}),
   })
   const base = { lang, language: manifest.language, title: manifest.title }
-  const words = countWords(text)
+  const words = countWords(based.text)
   const response = await core.llm.complete({
     route,
     system: reviseChapterSystem({ ...base, style: renderStyle(await project.activeStyle(), lang) }),
@@ -183,7 +264,6 @@ export async function reviseChapter(core: NovelCore, runtime: ProjectRuntime, pa
   if (response.finish === 'max-tokens' && countWords(after) < words * 0.8) {
     throw new ProjectError('novel/truncated', 'the revision was cut off at the output limit — clear or raise "max output tokens" on the writer role in Novel Studio → Settings (a model that reasons spends its reasoning out of the same allowance), or revise the chapter in smaller passages')
   }
-  const apply = shouldApply(core, task, params.apply, false)
   const result: ReviseResult = {
     chapterId: chapter.plan.id,
     title: chapter.plan.title,
@@ -199,6 +279,7 @@ export async function reviseChapter(core: NovelCore, runtime: ProjectRuntime, pa
     await project.saveChapterText(chapter.plan.id, after, { reason: 'before-revise', status: chapter.plan.status === 'final' ? 'final' : 'revised' })
     scheduleDigest(core, runtime, chapter.plan.id, task)
   } else {
+    const taken = await takenIn(runtime, based.used, params.issues, lang)
     const proposal = await project.addProposal({
       chapterId: chapter.plan.id,
       kind: 'chapter',
@@ -207,8 +288,9 @@ export async function reviseChapter(core: NovelCore, runtime: ProjectRuntime, pa
       after,
       createdBy: task.origin,
       ...(params.batchId !== undefined ? { batchId: params.batchId } : {}),
-      ...(params.issues !== undefined && params.issues.length > 0 ? { issues: params.issues } : {}),
+      ...taken.carried,
     })
+    await settleTakenIn(runtime, taken.settle, proposal.id)
     result.proposalId = proposal.id
   }
   task.job?.result({ chapterId: chapter.plan.id, ...(result.proposalId !== undefined ? { proposalId: result.proposalId } : {}) })
@@ -230,6 +312,8 @@ export interface ReviseBookParams {
   issuesOf?: (chapterId: string) => string[]
   /** The line of the plot the revision is of, by id, when it is not the main one: its chapters are the ones looked at, numbered along it. */
   line?: string
+  /** Go on from the changes that still wait: every chapter is rewritten as `ReviseChapterParams.onto` says, and the planner is told which chapters have some. */
+  onto?: boolean
 }
 
 export interface ReviseBookResult {
@@ -264,10 +348,13 @@ export async function reviseBook(core: NovelCore, runtime: ProjectRuntime, param
   } else {
     task.job?.progress(0, 1, L(lang, '判断哪些章节需要修改', 'deciding which chapters change'))
     const lines: string[] = []
+    // Going on from what waits: the planner is told which chapters have a change waiting, and what it was for.
+    const waiting = params.onto === true ? (await project.proposals()).filter(proposal => proposal.status === 'pending') : []
     for (const info of infos) {
       const memory = await project.memory(info.id)
       const text = memory?.summary ?? clip(await project.chapterText(info.id), 300)
-      lines.push(`${info.index}. ${info.title}\n${text}`)
+      const pending = waiting.filter(proposal => proposal.chapterId === info.id)
+      lines.push(`${info.index}. ${info.title}\n${text}${pending.length > 0 ? `\n${L(lang, `（这一章已有 ${pending.length} 处还没采纳的修改，这次会接着它们改：${clip(pending.map(proposal => proposal.instruction.replace(/\s+/g, ' ')).join('；'), 240)}）`, `(${pending.length} change(s) to this chapter still wait, and this revision goes on from them: ${clip(pending.map(proposal => proposal.instruction.replace(/\s+/g, ' ')).join('; '), 300)})`)}` : ''}`)
     }
     const { value } = await assign(core, runtime, task, {
       role: 'architect',
@@ -303,7 +390,7 @@ export async function reviseBook(core: NovelCore, runtime: ProjectRuntime, param
         : target.reason === params.instruction ? params.instruction : `${params.instruction}\n\n${L(lang, '具体到本章', 'For this chapter specifically')}${lang === 'zh' ? '：' : ': '}${target.reason}`
       // Per-chapter streams would interleave in one job buffer, so the batch reports progress only.
       const inner: TaskContext = { origin: task.origin, ...(task.signal !== undefined ? { signal: task.signal } : {}), ...(task.agentRoute !== undefined ? { agentRoute: task.agentRoute } : {}) }
-      const result = await reviseChapter(core, runtime, { chapter: target.id, instruction, apply, batchId, ...(params.issuesOf !== undefined ? { issues: params.issuesOf(target.id) } : {}) }, inner)
+      const result = await reviseChapter(core, runtime, { chapter: target.id, instruction, apply, batchId, ...(params.onto === true ? { onto: true } : {}), ...(params.issuesOf !== undefined ? { issues: params.issuesOf(target.id) } : {}) }, inner)
       results.push({
         chapterId: result.chapterId,
         title: result.title,
@@ -374,6 +461,8 @@ export interface FixIssueParams {
    * `book`: wherever the problem reaches — the planner traces it through the chapters and the bible.
    */
   scope: 'passage' | 'book'
+  /** Go on from the changes that still wait (`ReviseChapterParams.onto`): a mending that follows others. */
+  onto?: boolean
 }
 
 export interface FixIssueResult {
@@ -419,18 +508,20 @@ export async function fixIssue(core: NovelCore, runtime: ProjectRuntime, params:
   const lang = promptLanguage((await project.manifest()).language)
   const where = { index: chapter.index, title: chapter.plan.title }
   if (params.scope === 'book') {
-    const book = await reviseBook(core, runtime, { instruction: issueInstruction(lang, where, issue, params.note, true), bible: true, issuesOf: chapterId => (chapterId === chapter.plan.id ? [issue.id] : []) }, task)
+    const book = await reviseBook(core, runtime, { instruction: issueInstruction(lang, where, issue, params.note, true), bible: true, ...(chapter.line !== undefined ? { line: chapter.line } : {}), ...(params.onto === true ? { onto: true } : {}), issuesOf: chapterId => (chapterId === chapter.plan.id ? [issue.id] : []) }, task)
     // Handed over: the issue says with which batch of proposals, and they are shown beneath it.
     const current = await project.review(chapter.plan.id)
     if (current !== undefined) await project.saveReview({ ...current, issues: current.issues.map(item => item.id === issue.id ? { ...item, mending: book.batchId } : item) })
     return { scope: 'book', book }
   }
   const instruction = issueInstruction(lang, where, issue, params.note, false)
-  const text = await project.chapterText(chapter.plan.id)
+  const onto = params.onto === true ? { onto: true } : {}
+  // (Going on from what waits, the quote is looked for in the chapter as it would stand with that in.)
+  const text = params.onto === true ? (await onPending(runtime, chapter.plan.id, await project.chapterText(chapter.plan.id))).text : await project.chapterText(chapter.plan.id)
   const range = issue.quote !== undefined ? fuzzyFind(text, issue.quote.trim()) : undefined
   // A problem that quotes nothing — pacing, a missing beat — or whose quote has since been rewritten is the chapter's.
-  if (range === undefined) return { scope: 'chapter', passage: await reviseChapter(core, runtime, { chapter: chapter.plan.id, instruction, issues: [issue.id] }, task) }
-  return { scope: 'passage', passage: await reviseSpan(core, runtime, { chapter: chapter.plan.id, start: range.start, end: range.end, quote: text.slice(range.start, range.end), instruction, issues: [issue.id] }, task) }
+  if (range === undefined) return { scope: 'chapter', passage: await reviseChapter(core, runtime, { chapter: chapter.plan.id, instruction, issues: [issue.id], ...onto }, task) }
+  return { scope: 'passage', passage: await reviseSpan(core, runtime, { chapter: chapter.plan.id, start: range.start, end: range.end, quote: text.slice(range.start, range.end), instruction, issues: [issue.id], ...onto }, task) }
 }
 
 export interface FixIssuesParams {
@@ -442,6 +533,8 @@ export interface FixIssuesParams {
   chapters?: string[]
   /** What the author says of the whole batch. */
   note?: string
+  /** Go on from the changes that still wait (`ReviseChapterParams.onto`): a batch that follows others. */
+  onto?: boolean
 }
 
 export interface FixIssuesResult {
@@ -538,6 +631,7 @@ async function fixOnLine(core: NovelCore, runtime: ProjectRuntime, params: FixIs
     instruction,
     bible: true,
     ...(line !== MAIN_LINE ? { line } : {}),
+    ...(params.onto === true ? { onto: true } : {}),
     issuesOf: chapterId => (byChapter.get(chapterId) ?? []).map(item => item.issue.id),
     // The writer of one chapter mends what is that chapter's — in full — and knows what else is being mended, to agree with it.
     brief: (chapterId, reason) => {
@@ -561,6 +655,47 @@ async function fixOnLine(core: NovelCore, runtime: ProjectRuntime, params: FixIs
     await project.saveReview({ ...review, issues: review.issues.map(issue => ids.has(issue.id) ? { ...issue, mending: book.batchId } : issue) })
   }
   return { issues: found.length, chapters: byChapter.size, book }
+}
+
+const mendings = new Map<string, Set<Promise<void>>>()
+
+/**
+ * Run a piece of mending in its turn. Mendings of a book need not wait for each other — two that have nothing to do
+ * with one another, on different lines of the plot or far apart in the story, are quicker side by side. One that is
+ * to keep to what the others settle waits for every mending of the book asked for before it, and then goes on from
+ * what they left waiting (`onto`).
+ * @param order - `queue`: after the mendings already asked for, on top of their changes. `apart`: at once, on the text as it stands.
+ * @param run - the work; told whether it goes on from what waits.
+ */
+export async function mendInTurn<T>(runtime: ProjectRuntime, order: 'queue' | 'apart', task: TaskContext, run: (onto: boolean) => Promise<T>): Promise<T> {
+  const root = runtime.project.root
+  const asked = mendings.get(root) ?? new Set<Promise<void>>()
+  mendings.set(root, asked)
+  const before = [...asked]
+  let done!: () => void
+  const mine = new Promise<void>((resolve) => { done = resolve })
+  asked.add(mine)
+  try {
+    if (order === 'queue' && before.length > 0) {
+      const lang = promptLanguage((await runtime.project.manifest()).language)
+      const restore = task.job?.note(L(lang, `排队中：前面还有 ${before.length} 个修复任务，做完接着它们改`, `In line: ${before.length} mending(s) before this one; it goes on from them`))
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const stop = (): void => { reject(task.signal?.reason instanceof Error ? task.signal.reason : new Error('aborted')) }
+          if (task.signal?.aborted === true) { stop(); return }
+          task.signal?.addEventListener('abort', stop, { once: true })
+          void Promise.all(before).then(() => { task.signal?.removeEventListener('abort', stop); resolve() })
+        })
+      } finally {
+        restore?.()
+      }
+    }
+    return await run(order === 'queue')
+  } finally {
+    done()
+    asked.delete(mine)
+    if (asked.size === 0) mendings.delete(root)
+  }
 }
 
 /** Apply a pending proposal to the manuscript. */
@@ -589,6 +724,7 @@ export async function acceptProposal(core: NovelCore, runtime: ProjectRuntime, i
   scheduleRecheck(core, runtime, {
     chapterId: proposal.chapterId,
     ...(proposal.batchId !== undefined ? { batchId: proposal.batchId } : {}),
+    ...(proposal.batches !== undefined ? { batches: proposal.batches } : {}),
     change: L(lang,
       `第 ${where?.index ?? '?'} 章${proposal.kind === 'span' ? `改了一处：\n原文：${clip(proposal.before, 400)}\n改成：${clip(proposal.after, 400)}` : '整章重写过'}\n为的是：${clip(proposal.instruction, 600)}`,
       `Chapter ${where?.index ?? '?'}${proposal.kind === 'span' ? ` — one passage changed:\nwas: ${clip(proposal.before, 500)}\nnow: ${clip(proposal.after, 500)}` : ' was rewritten whole'}\nfor: ${clip(proposal.instruction, 800)}`),
@@ -596,6 +732,12 @@ export async function acceptProposal(core: NovelCore, runtime: ProjectRuntime, i
   return updated
 }
 
+/**
+ * Turn a pending proposal down. One made on top of others stood for them: turned down, they wait by themselves again —
+ * what the author said no to is the last mending, not the ones before it.
+ */
 export async function rejectProposal(runtime: ProjectRuntime, id: string): Promise<Proposal | undefined> {
-  return await runtime.project.setProposalStatus(id, 'rejected')
+  const rejected = await runtime.project.setProposalStatus(id, 'rejected')
+  if (rejected?.supersedes !== undefined && rejected.supersedes.length > 0) await runtime.project.restoreSuperseded(id)
+  return rejected
 }

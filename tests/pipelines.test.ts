@@ -11,7 +11,7 @@ import { decodeText, importManuscript, splitChapters } from '../src/core/pipelin
 import { siftCast, siftDue } from '../src/core/pipelines/cast'
 import { listWalkOns } from '../src/core/walkons'
 import { deriveChapters } from '../src/core/pipelines/plot'
-import { fixIssue, fixIssues, acceptProposal, reviseSpan } from '../src/core/pipelines/revise'
+import { fixIssue, fixIssues, acceptProposal, rejectProposal, mendInTurn, reviseSpan } from '../src/core/pipelines/revise'
 import { listReviews, noteIssue, recheckIssues } from '../src/core/pipelines/review'
 import { importLine } from '../src/core/pipelines/import'
 import { cleanProse, writeChapter } from '../src/core/pipelines/write'
@@ -274,6 +274,98 @@ describe('pipelines', () => {
     expect(whole.scope).toBe('chapter')
     expect(whole.passage!.proposalId).toBeDefined()
     await expect(fixIssue(bed.core, bed.runtime, { chapter: plan.id, issue: 'nope', scope: 'passage' }, { origin: 'user' })).rejects.toThrow('no review issue')
+  })
+
+  it('a mending that follows another goes on from the change still waiting, and stands for it', async () => {
+    const { project } = bed.runtime
+    const plan = await project.addChapter({ title: '雨夜' })
+    const original = '她推开门。屋里很黑。\n\n“有人吗？”她问。右手握着剑。'
+    await project.saveChapterText(plan.id, original)
+    await project.saveReview({
+      chapterId: plan.id, textHash: 'x', createdAt: '', verdict: '',
+      issues: [
+        { id: 'i1', severity: 'high', type: 'continuity', quote: '右手握着剑。', explanation: '第一章写她是左撇子。' },
+        { id: 'i2', severity: 'medium', type: 'style', quote: '屋里很黑。', explanation: '太平。' },
+        { id: 'i3', severity: 'low', type: 'pacing', explanation: '这一章收得太快。' },
+      ],
+    })
+    const pending = async (): Promise<string[]> => (await project.proposals()).filter(item => item.status === 'pending').map(item => item.id)
+    bed.llm.responder = () => '左手握着剑。'
+    const first = (await fixIssue(bed.core, bed.runtime, { chapter: plan.id, issue: 'i1', scope: 'passage' }, { origin: 'user' })).passage!.proposalId!
+
+    // Another passage, in its turn: written knowing the change that waits, and still a change of its own.
+    bed.llm.responder = () => '屋里黑得像一口井。'
+    const second = (await fixIssue(bed.core, bed.runtime, { chapter: plan.id, issue: 'i2', scope: 'passage', onto: true }, { origin: 'user' })).passage!.proposalId!
+    expect(bed.llm.requests.at(-1)!.prompt).toContain('左手握着剑。')
+    expect((await project.proposals()).find(item => item.id === second)).toMatchObject({ kind: 'span', before: '屋里很黑。', after: '屋里黑得像一口井。', issues: ['i2'] })
+    expect(await pending()).toEqual([first, second])
+
+    // A passage that a waiting change made: one proposal for the chapter with all of it in, standing for the two.
+    bed.llm.responder = () => '左手死死握着剑。'
+    const third = (await reviseSpan(bed.core, bed.runtime, { chapter: plan.id, quote: '左手握着剑。', instruction: '握得更紧', onto: true }, { origin: 'user' })).proposalId!
+    const stacked = (await project.proposals()).find(item => item.id === third)!
+    expect(stacked).toMatchObject({ kind: 'chapter', status: 'pending', before: original, after: '她推开门。屋里黑得像一口井。\n\n“有人吗？”她问。左手死死握着剑。', supersedes: [first, second] })
+    expect(stacked.issues?.sort()).toEqual(['i1', 'i2'])
+    expect(stacked.rationale).toContain('2 处')
+    expect((await project.proposals()).find(item => item.id === first)).toMatchObject({ status: 'rejected', supersededBy: third })
+    expect(await pending()).toEqual([third])
+    // The text itself has not moved.
+    expect(await project.chapterText(plan.id)).toBe(original)
+    // (Not in its turn, the same passage is not there to be found: the book still has the right hand.)
+    await expect(reviseSpan(bed.core, bed.runtime, { chapter: plan.id, quote: '左手握着剑。', instruction: '握得更紧' }, { origin: 'user' })).rejects.toThrow('not found')
+
+    // A whole-chapter mending in its turn: the writer reads the chapter with every waiting change in.
+    bed.llm.responder = () => '她推开门。屋里黑得像一口井。\n\n“有人吗？”她问。左手死死握着剑，站了很久。'
+    const fourth = (await fixIssue(bed.core, bed.runtime, { chapter: plan.id, issue: 'i3', scope: 'passage', onto: true }, { origin: 'user' })).passage!.proposalId!
+    const asked = bed.llm.requests.at(-1)!.prompt
+    expect(asked).toContain('屋里黑得像一口井。')
+    expect(asked).toContain('左手死死握着剑。')
+    expect(asked).not.toContain('右手握着剑')
+    const last = (await project.proposals()).find(item => item.id === fourth)!
+    expect(last).toMatchObject({ kind: 'chapter', before: original, supersedes: [first, second, third] })
+    expect(last.issues?.sort()).toEqual(['i1', 'i2', 'i3'])
+    expect(await pending()).toEqual([fourth])
+
+    // Turned down, the one before it comes back to wait: what was said no to is the last mending only.
+    await rejectProposal(bed.runtime, fourth)
+    expect(await pending()).toEqual([third])
+    // Applied outright, a change is made to the text as it stands and accepts nothing on the author's behalf.
+    bed.llm.responder = () => '她一把推开门。'
+    const direct = await reviseSpan(bed.core, bed.runtime, { chapter: plan.id, quote: '她推开门。', instruction: '更急', onto: true, apply: true }, { origin: 'user' })
+    expect(direct.applied).toBe(true)
+    expect(await project.chapterText(plan.id)).toBe(original.replace('她推开门。', '她一把推开门。'))
+    expect(await pending()).toEqual([third])
+    // Accepted, everything it stands for is in the text.
+    await acceptProposal(bed.core, bed.runtime, third, { origin: 'user' })
+    expect(await project.chapterText(plan.id)).toBe(stacked.after)
+    expect(await pending()).toEqual([])
+  })
+
+  it('mendings take their turn when asked to, and run side by side when not', async () => {
+    const order: string[] = []
+    let release!: () => void
+    const held = new Promise<void>((resolve) => { release = resolve })
+    const first = mendInTurn(bed.runtime, 'queue', { origin: 'user' }, async (onto) => {
+      // (The first of a line goes on from whatever waits already: there is nothing before it to wait for.)
+      order.push(`first starts${onto ? ' onto' : ''}`)
+      await held
+      order.push('first ends')
+    })
+    const apart = mendInTurn(bed.runtime, 'apart', { origin: 'user' }, async (onto) => { order.push(`apart runs${onto ? ' onto' : ''}`) })
+    const queued = mendInTurn(bed.runtime, 'queue', { origin: 'user' }, async (onto) => { order.push(`queued runs${onto ? ' onto' : ''}`) })
+    const stopped = new AbortController()
+    const given = mendInTurn(bed.runtime, 'queue', { origin: 'user', signal: stopped.signal }, async () => { order.push('never') })
+    await apart
+    expect(order).toEqual(['first starts onto', 'apart runs'])
+    // One that is stopped while it waits leaves the line without holding up the rest.
+    stopped.abort(new Error('stopped'))
+    await expect(given).rejects.toThrow('stopped')
+    release()
+    await Promise.all([first, queued])
+    expect(order).toEqual(['first starts onto', 'apart runs', 'first ends', 'queued runs onto'])
+    // Nothing is left of the line: the next one starts at once.
+    await mendInTurn(bed.runtime, 'queue', { origin: 'user' }, async () => { order.push('next') })
+    expect(order.at(-1)).toBe('next')
   })
 
   it('mends a problem wherever it reaches: the chapters it touches, and the bible', async () => {
