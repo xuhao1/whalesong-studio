@@ -657,6 +657,8 @@ export interface Proposal {
   after: string
   /** Groups proposals created by one global revision. */
   batchId?: string
+  /** The review issues it was made to mend, by id: it is shown beneath them, to be accepted or rejected there. */
+  issues?: string[]
   createdBy: 'agent' | 'user'
   createdAt: Timestamp
 }

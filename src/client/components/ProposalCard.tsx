@@ -20,7 +20,8 @@ export function DiffView({ before, after, whole }: { before: string; after: stri
   )
 }
 
-export function ProposalCard({ proposal, showChapter, onSettled }: { proposal: Proposal; showChapter?: boolean; onSettled?: (accepted: boolean) => void }) {
+/** @param bare - beneath the issue it mends: what it was asked is the issue above, and is not said again. */
+export function ProposalCard({ proposal, showChapter, onSettled, bare }: { proposal: Proposal; showChapter?: boolean; onSettled?: (accepted: boolean) => void; bare?: boolean }) {
   const { controller } = useStudio()
   const t = useT()
   const { project, root } = useProject()
@@ -42,7 +43,7 @@ export function ProposalCard({ proposal, showChapter, onSettled }: { proposal: P
         ) : null}
         <span className="nv-muted nv-small">{proposal.createdBy === 'agent' ? t('总编提出', 'by the agent') : t('你发起', 'yours')} · {delta >= 0 ? '+' : ''}{delta}{t(' 字', ' words')}</span>
       </header>
-      <p className="nv-proposal-instruction">{proposal.instruction}</p>
+      {bare === true ? null : <p className="nv-proposal-instruction">{proposal.instruction}</p>}
       {proposal.rationale !== undefined ? <p className="nv-muted nv-small">{proposal.rationale}</p> : null}
       <DiffView before={proposal.before} after={proposal.after} whole={whole} />
       <footer className="nv-proposal-foot">

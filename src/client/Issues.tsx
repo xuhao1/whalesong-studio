@@ -14,6 +14,7 @@
 import type { ChapterReview, ReviewIssue } from '../shared/types'
 import { fuzzyFind } from '../shared/text'
 import { ISSUE_TYPE, SEVERITY, SEVERITY_TONE } from './labels'
+import { ProposalCard } from './components/ProposalCard'
 import { useState, type ReactNode } from 'react'
 import { Button, Chip, cx, TextArea, TextInput, useAction, useKept, useProject, useRunningJob, useStudio, useT } from './ui'
 
@@ -74,8 +75,14 @@ export function IssueCard({ chapterId, issue, onLocate, onChanged, before, after
 }) {
   const { controller } = useStudio()
   const t = useT()
-  const { root } = useProject()
+  const { project, root } = useProject()
   const [note, setNote] = useKept(issueNoteKey(chapterId, issue.id), issue.note ?? '')
+  // What was made to mend this issue and waits to be accepted: shown beneath it, settled here.
+  const mends = project.proposals.filter(proposal => proposal.status === 'pending' && (proposal.issues?.includes(issue.id) === true || (issue.mending !== undefined && proposal.batchId === issue.mending)))
+  const mendsHere = mends.filter(proposal => proposal.chapterId === chapterId)
+  const mendsElsewhere = mends.filter(proposal => proposal.chapterId !== chapterId)
+  const [asked, setAsked] = useState(false)
+  const revising = useRunningJob(job => job.kind === 'revise') !== undefined
   // What the author says of an issue is kept with it: it goes along when the issue is mended in a batch, and to the showrunner.
   const keep = (): void => {
     if (note.trim() === (issue.note ?? '')) return
@@ -90,8 +97,9 @@ export function IssueCard({ chapterId, issue, onLocate, onChanged, before, after
     await controller.api.call('ai.fixIssue', { root, chapter: chapterId, issue: issue.id, scope, ...(note.trim().length > 0 ? { note: note.trim() } : {}) })
     await controller.refreshJobs()
     controller.toast('info', scope === 'book'
-      ? t('策划正在查这个问题牵涉的范围，改动会作为提案等你确认。', 'The planner is tracing how far this reaches; the changes will wait as proposals.')
-      : t('改好之后会作为一条提案等你确认。', 'The rewrite will wait for you as a proposal.'))
+      ? t('策划正在查这个问题牵涉的范围；改好之后，对比会出现在这条问题下面。', 'The planner is tracing how far this reaches; the changes will show beneath this issue.')
+      : t('改好之后，对比会出现在这条问题下面。', 'The rewrite will show beneath this issue.'))
+    setAsked(true)
     after?.(scope)
   }
   const open = issue.resolved !== true
@@ -146,6 +154,16 @@ export function IssueCard({ chapterId, issue, onLocate, onChanged, before, after
           {open ? t('标为已处理', 'Mark as settled') : t('重新打开', 'Reopen')}
         </Button>
       </footer>
+      {asked && revising && mends.length === 0 ? <p className="nv-muted nv-small">{t('正在改…', 'Being mended…')}</p> : null}
+      {mendsHere.map(proposal => (proposal.issues?.length ?? 0) > 1
+        ? <details key={proposal.id} className="nv-issue-mend"><summary>{t(`这一章的修改（同时修 ${proposal.issues!.length} 个问题）`, `This chapter's change (mends ${proposal.issues!.length} issues)`)}</summary><ProposalCard bare proposal={proposal} onSettled={() => { onChanged?.() }} /></details>
+        : <ProposalCard key={proposal.id} bare proposal={proposal} onSettled={() => { onChanged?.() }} />)}
+      {mendsElsewhere.length > 0 ? (
+        <details className="nv-issue-mend">
+          <summary>{t(`这次修复还改了别的 ${mendsElsewhere.length} 章`, `This mending also changed ${mendsElsewhere.length} other chapter(s)`)}</summary>
+          {mendsElsewhere.map(proposal => <ProposalCard key={proposal.id} bare proposal={proposal} showChapter onSettled={() => { onChanged?.() }} />)}
+        </details>
+      ) : null}
     </article>
   )
 }
@@ -179,7 +197,7 @@ export function IssueBatchBar({ chosen, before, onStarted, children }: { chosen:
       ...(say.trim().length > 0 ? { note: say.trim() } : {}),
     })
     await controller.refreshJobs()
-    controller.toast('info', t(`策划正在把这 ${chosen.length} 个问题放在一起看，改动会作为提案等你确认。`, `The planner is reading these ${chosen.length} side by side; the changes will wait as proposals.`))
+    controller.toast('info', t(`策划正在把这 ${chosen.length} 个问题放在一起看；改好之后，对比会出现在各条问题下面。`, `The planner is reading these ${chosen.length} side by side; the changes will show beneath the issues.`))
     onStarted?.()
   })
   return (

@@ -33,6 +33,8 @@ export interface ReviseSpanParams {
   instruction: string
   /** Apply immediately instead of creating a proposal. */
   apply?: boolean
+  /** The review issues this mends: the proposal says so. */
+  issues?: string[]
 }
 
 export interface ReviseChapterParams {
@@ -40,6 +42,8 @@ export interface ReviseChapterParams {
   instruction: string
   apply?: boolean
   batchId?: string
+  /** The review issues this mends: the proposal says so. */
+  issues?: string[]
 }
 
 export interface ReviseResult {
@@ -144,7 +148,7 @@ export async function reviseSpan(core: NovelCore, runtime: ProjectRuntime, param
     await project.saveChapterText(chapter.plan.id, text.slice(0, range.start) + after + text.slice(range.end), { reason: 'before-revise' })
     scheduleDigest(core, runtime, chapter.plan.id, task)
   } else {
-    const proposal = await project.addProposal({ chapterId: chapter.plan.id, kind: 'span', instruction: params.instruction, before: passage, after, createdBy: task.origin })
+    const proposal = await project.addProposal({ chapterId: chapter.plan.id, kind: 'span', instruction: params.instruction, before: passage, after, createdBy: task.origin, ...(params.issues !== undefined && params.issues.length > 0 ? { issues: params.issues } : {}) })
     result.proposalId = proposal.id
   }
   task.job?.result({ chapterId: chapter.plan.id, ...(result.proposalId !== undefined ? { proposalId: result.proposalId } : {}) })
@@ -203,6 +207,7 @@ export async function reviseChapter(core: NovelCore, runtime: ProjectRuntime, pa
       after,
       createdBy: task.origin,
       ...(params.batchId !== undefined ? { batchId: params.batchId } : {}),
+      ...(params.issues !== undefined && params.issues.length > 0 ? { issues: params.issues } : {}),
     })
     result.proposalId = proposal.id
   }
@@ -221,6 +226,8 @@ export interface ReviseBookParams {
   bible?: boolean
   /** What the writer of one chapter is told, in place of the instruction with the planner's reason for that chapter appended. */
   brief?: (chapterId: string, reason: string) => string
+  /** The review issues a chapter's rewrite mends, for its proposal to say so. */
+  issuesOf?: (chapterId: string) => string[]
 }
 
 export interface ReviseBookResult {
@@ -291,7 +298,7 @@ export async function reviseBook(core: NovelCore, runtime: ProjectRuntime, param
         : target.reason === params.instruction ? params.instruction : `${params.instruction}\n\n${L(lang, '具体到本章', 'For this chapter specifically')}${lang === 'zh' ? '：' : ': '}${target.reason}`
       // Per-chapter streams would interleave in one job buffer, so the batch reports progress only.
       const inner: TaskContext = { origin: task.origin, ...(task.signal !== undefined ? { signal: task.signal } : {}), ...(task.agentRoute !== undefined ? { agentRoute: task.agentRoute } : {}) }
-      const result = await reviseChapter(core, runtime, { chapter: target.id, instruction, apply, batchId }, inner)
+      const result = await reviseChapter(core, runtime, { chapter: target.id, instruction, apply, batchId, ...(params.issuesOf !== undefined ? { issues: params.issuesOf(target.id) } : {}) }, inner)
       results.push({
         chapterId: result.chapterId,
         title: result.title,
@@ -407,15 +414,18 @@ export async function fixIssue(core: NovelCore, runtime: ProjectRuntime, params:
   const lang = promptLanguage((await project.manifest()).language)
   const where = { index: chapter.index, title: chapter.plan.title }
   if (params.scope === 'book') {
-    const book = await reviseBook(core, runtime, { instruction: issueInstruction(lang, where, issue, params.note, true), bible: true }, task)
+    const book = await reviseBook(core, runtime, { instruction: issueInstruction(lang, where, issue, params.note, true), bible: true, issuesOf: chapterId => (chapterId === chapter.plan.id ? [issue.id] : []) }, task)
+    // Handed over: the issue says with which batch of proposals, and they are shown beneath it.
+    const current = await project.review(chapter.plan.id)
+    if (current !== undefined) await project.saveReview({ ...current, issues: current.issues.map(item => item.id === issue.id ? { ...item, mending: book.batchId } : item) })
     return { scope: 'book', book }
   }
   const instruction = issueInstruction(lang, where, issue, params.note, false)
   const text = await project.chapterText(chapter.plan.id)
   const range = issue.quote !== undefined ? fuzzyFind(text, issue.quote.trim()) : undefined
   // A problem that quotes nothing — pacing, a missing beat — or whose quote has since been rewritten is the chapter's.
-  if (range === undefined) return { scope: 'chapter', passage: await reviseChapter(core, runtime, { chapter: chapter.plan.id, instruction }, task) }
-  return { scope: 'passage', passage: await reviseSpan(core, runtime, { chapter: chapter.plan.id, start: range.start, end: range.end, quote: text.slice(range.start, range.end), instruction }, task) }
+  if (range === undefined) return { scope: 'chapter', passage: await reviseChapter(core, runtime, { chapter: chapter.plan.id, instruction, issues: [issue.id] }, task) }
+  return { scope: 'passage', passage: await reviseSpan(core, runtime, { chapter: chapter.plan.id, start: range.start, end: range.end, quote: text.slice(range.start, range.end), instruction, issues: [issue.id] }, task) }
 }
 
 export interface FixIssuesParams {
@@ -500,6 +510,7 @@ export async function fixIssues(core: NovelCore, runtime: ProjectRuntime, params
   const book = await reviseBook(core, runtime, {
     instruction,
     bible: true,
+    issuesOf: chapterId => (byChapter.get(chapterId) ?? []).map(item => item.issue.id),
     // The writer of one chapter mends what is that chapter's — in full — and knows what else is being mended, to agree with it.
     brief: (chapterId, reason) => {
       const mine = byChapter.get(chapterId)

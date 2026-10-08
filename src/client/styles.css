@@ -2346,6 +2346,18 @@ button.nv-stat:hover {
   margin: 0 2px 0 0;
 }
 
+/* What was made to mend an issue, beneath it: accepted or rejected there. */
+.nv-issue > .nv-proposal,
+.nv-issue-mend > .nv-proposal {
+  margin-top: 4px;
+}
+
+.nv-issue-mend > summary {
+  cursor: pointer;
+  font-size: 12.5px;
+  color: var(--nv-text-2);
+}
+
 .nv-issue.is-resolved {
   opacity: 0.5;
 }

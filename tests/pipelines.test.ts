@@ -342,6 +342,8 @@ describe('pipelines', () => {
     for (const part of ['策划对这一章的安排：解缆绳也改成左手', '这一批同时在修的问题', '第 2 章：第一章写她是左撇子']) expect(third, part).toContain(part)
     expect(await project.chapterText(two.id)).toContain('右手')
     expect((await project.proposals()).filter(item => item.status === 'pending')).toHaveLength(2)
+    // Each proposal says which issues it was made to mend — the page shows it beneath them; the one for a chapter nobody named mends none of its own.
+    expect((await project.proposals()).filter(item => item.status === 'pending').map(item => [item.chapterId, item.issues ?? [], item.batchId === result.book!.batchId])).toEqual([[two.id, ['b2', 'b1'], true], [three.id, [], true]])
     // The issues handed over say so, and stay open; the one not in the batch does not.
     const after = (await project.review(two.id))!.issues
     expect(after.map(issue => [issue.id, issue.mending !== undefined, issue.resolved === true])).toEqual([['b1', true, false], ['b2', true, false], ['b3', false, true]])
