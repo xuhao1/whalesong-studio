@@ -7,7 +7,7 @@
  * served; the data is what `core/reader.ts` answers them with, saved under
  * the names the reader looks for when it finds itself on a site
  * (`data/books.json`, `data/<book>/book.json`, `data/<book>/chapters/<id>.json`,
- * `data/<book>/album.json`, `data/<book>/sides.json`, `data/<book>/sides/<id>.json`);
+ * `data/<book>/album.json`, `data/<book>/album/<line>.json`, `data/<book>/sides.json`, `data/<book>/sides/<id>.json`);
  * the pictures and the sound are the book's own files, under the same
  * addresses (`media/<book>/assets/…`). So a published book looks and plays
  * exactly as it does on the author's phone — and nothing but what a reader is
@@ -286,6 +286,13 @@ export async function publishSite(core: NovelCore, runtime: ProjectRuntime, para
     answers.push({ path: `data/${id}/album.json`, data: { ...album, chapters: album.chapters.filter(chapter => published.has(chapter.id)) } })
     for (const path of albumMedia(album)) media.add(path)
     result.album = counts!
+    // And along every other way through the story the site offers: who is met on it, what stands, what has happened.
+    for (const line of kept) {
+      if (line.id === MAIN_LINE) continue
+      const along = await readAlbum(runtime, { line: line.id })
+      answers.push({ path: `data/${id}/album/${line.id}.json`, data: { ...along, chapters: along.chapters.filter(chapter => published.has(chapter.id)) } })
+      for (const path of albumMedia(along)) media.add(path)
+    }
   }
   // Side stories, whole: they stand beside the book, so a part of the book published takes all of them or none.
   if (params.sides !== false) {

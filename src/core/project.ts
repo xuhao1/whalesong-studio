@@ -1738,12 +1738,16 @@ export class Project {
     }
   }
 
-  private seenAt: { revision: number; value: WorldPresence[] } | undefined
+  private seenAt: { revision: number; lines: Map<string, WorldPresence[]> } | undefined
 
-  /** Where each entry of the bible is named, and how many chapters there are to name it in. */
-  async worldPresence(): Promise<{ presence: WorldPresence[]; written: number }> {
-    const chapters = await this.chapterInfos()
-    return { presence: await this.worldSeen(await this.world(), chapters), written: chapters.filter(chapter => chapter.hasText).length }
+  /**
+   * Where each entry of the bible is named, and how many chapters there are to name it in.
+   * @param line - a line other than the main one: as read along it.
+   */
+  async worldPresence(line?: string): Promise<{ presence: WorldPresence[]; written: number }> {
+    const along = line !== undefined && line !== MAIN_LINE ? line : undefined
+    const chapters = await this.chapterInfos(along)
+    return { presence: await this.worldSeen(await this.world(), chapters, along), written: chapters.filter(chapter => chapter.hasText).length }
   }
 
   /**
@@ -1751,15 +1755,18 @@ export class Project {
    * its name or another of its names, and where a digest wrote a place down.
    * Read once per state of the book — the whole manuscript is gone through.
    */
-  private async worldSeen(world: readonly WorldEntry[], chapters: readonly ChapterInfo[]): Promise<WorldPresence[]> {
-    if (this.seenAt?.revision === this.revisionValue) return this.seenAt.value
+  private async worldSeen(world: readonly WorldEntry[], chapters: readonly ChapterInfo[], line?: string): Promise<WorldPresence[]> {
     const revision = this.revisionValue
+    if (this.seenAt?.revision !== revision) this.seenAt = { revision, lines: new Map() }
+    const kept = this.seenAt.lines.get(line ?? MAIN_LINE)
+    if (kept !== undefined) return kept
     const written = chapters.filter(chapter => chapter.hasText)
     const texts = await Promise.all(written.map(async chapter => ({ id: chapter.id, text: await this.chapterText(chapter.id) })))
     const noted = new Map<string, readonly string[]>()
-    for (const { chapter, memory } of await this.memories()) if (memory.locations !== undefined) noted.set(chapter.plan.id, memory.locations)
+    for (const { chapter, memory } of await this.memories(line !== undefined ? await this.chapters(line) : undefined)) if (memory.locations !== undefined) noted.set(chapter.plan.id, memory.locations)
     const value = worldPresence(world, texts, noted)
-    this.seenAt = { revision, value }
+    // Kept for the state of the book it was read from: something may have been written while the manuscript was gone through.
+    if (this.seenAt.revision === revision) this.seenAt.lines.set(line ?? MAIN_LINE, value)
     return value
   }
 
@@ -1823,6 +1830,7 @@ export class Project {
       this.suggestions(), this.proposals(), this.castFacts(), this.cover(), this.activity(20), this.analysisPending(), this.removedChapters(),
     ])
     const presence = cast.presence
+    const graph = await this.graphPlaces()
     const lines: PlotLineInfo[] = []
     for (const line of outline.lines ?? []) {
       const path = await this.chapterInfos(line.id)
@@ -1861,7 +1869,37 @@ export class Project {
       ...(removed.length > 0 ? { removed } : {}),
       worldPresence: await this.worldSeen(world, chapters),
       ties: await this.ties(),
+      ...(Object.keys(graph).length > 0 ? { graph } : {}),
     }
+  }
+
+  /**
+   * Where the author moved people to on the picture of who is what to whom
+   * (`.novel/graph.json`): theirs alone, so nothing of the book's record.
+   * Whoever has no card any more is left out.
+   */
+  async graphPlaces(): Promise<Record<string, { x: number; y: number }>> {
+    const kept = (await this.readState<Record<string, { x: number; y: number }>>('graph.json')) ?? {}
+    const cards = new Set((await this.characters()).map(card => card.id))
+    return Object.fromEntries(Object.entries(kept).filter(([id, at]) => cards.has(id) && Number.isFinite(at?.x) && Number.isFinite(at?.y)))
+  }
+
+  /**
+   * Put somebody at a spot of that picture, or let them stand where the layout
+   * puts them again (no `at`), or let everybody (no `id`).
+   * @throws ProjectError `novel/not-found` for somebody without a card; `novel/invalid` for a spot that is no spot.
+   */
+  async placeInGraph(id?: string, at?: { x: number; y: number }): Promise<Record<string, { x: number; y: number }>> {
+    const card = id !== undefined ? await this.findCharacter(id) : undefined
+    if (id !== undefined && card === undefined) throw new ProjectError('novel/not-found', `no character matches "${id}"`)
+    if (at !== undefined && !(Number.isFinite(at.x) && Number.isFinite(at.y))) throw new ProjectError('novel/invalid', 'a place on the picture is {x, y}, two numbers')
+    await this.updateState<Record<string, { x: number; y: number }>>(['graph.json'], {}, (current) => {
+      if (card === undefined) return {}
+      const { [card.id]: _was, ...others } = current
+      // Kept to a tenth of a unit: nobody places a mark finer than that, and the file stays readable.
+      return at !== undefined ? { ...others, [card.id]: { x: Math.round(at.x * 10) / 10, y: Math.round(at.y * 10) / 10 } } : others
+    })
+    return await this.graphPlaces()
   }
 
   // ───────────── activity ─────────────

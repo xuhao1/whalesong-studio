@@ -16,6 +16,7 @@
  */
 import type { NovelCore, ProjectRuntime } from './core'
 import { playable } from './pipelines/audio'
+import { ProjectError } from './project'
 import { playTurn, rewindPlay, startPlay } from './pipelines/play'
 import { chapterVideo, chapterVideoWithSubtitles } from './pipelines/video'
 import { albumCounts, albumEmpty, cutAlbum, type Album, type AlbumCounts, type AlbumEntry, type AlbumEvent, type AlbumPerson } from '../shared/album'
@@ -136,6 +137,12 @@ export async function bookAnswer(core: NovelCore, runtime: ProjectRuntime, mode:
   // A reader's place is theirs to leave, whatever else they may do with the book: it changes nothing of it.
   if (section === 'position' && rest.length === 1 && method === 'POST') return { position: await savePosition(runtime, body.chapter, request.by) }
   if (section === 'album' && rest.length === 1 && reading) return await readAlbum(runtime)
+  // The album along another way through the story: one of the ways a reader is offered, and no other.
+  if (section === 'album' && rest.length === 2 && reading) {
+    const way = (await listLines(runtime))?.lines.find(line => line.id === rest[1] && line.id !== MAIN_LINE)
+    if (way === undefined) throw new ReaderRefused(404, 'not found')
+    return await readAlbum(runtime, { line: way.id })
+  }
   if (section === 'chapters' && rest.length === 2) {
     if (reading) {
       const chapter = await readChapter(runtime, rest[1]!, (await core.settings.get()).tts)
@@ -388,20 +395,30 @@ export async function readChapter(runtime: ProjectRuntime, id: string, tts: Pick
  * in. The author's own viewer asks for all of it.
  * @param options.all - also who and what the text has not come to yet, and the notes on the ties.
  * @param options.upTo - as the story stood at this chapter (its place in reading order): for a book published a part at a time.
+ * @param options.line - along a line of the plot other than the main one: the same book where the story went another way — who is met on that way, what stands, what has happened.
+ * @throws ProjectError `novel/not-found` when the book has no such line.
  */
-export async function readAlbum(runtime: ProjectRuntime, options: { all?: boolean; upTo?: number } = {}): Promise<Album> {
+export async function readAlbum(runtime: ProjectRuntime, options: { all?: boolean; upTo?: number; line?: string } = {}): Promise<Album> {
   const { project } = runtime
-  const infos = await project.chapterInfos()
+  const along = options.line !== undefined && options.line !== MAIN_LINE ? (await project.lines()).find(line => line.id === options.line) : undefined
+  if (options.line !== undefined && options.line !== MAIN_LINE && along === undefined) throw new ProjectError('novel/not-found', `no line of the plot matches "${options.line}"`)
+  const infos = await project.chapterInfos(along?.id)
   const readable = infos.filter(chapter => chapter.hasText)
   const order = new Map(infos.map(chapter => [chapter.id, chapter.index]))
   const latest = readable.at(-1)?.index ?? 0
-  const [cards, entries, told, seen, cast, allTies] = await Promise.all([project.characters(), project.world(), project.lives(), project.worldPresence(), project.presence(), project.ties()])
+  const [cards, entries, told, seen, cast, allTies] = await Promise.all([project.characters(), project.world(), project.lives(along?.id), project.worldPresence(along?.id), project.presence(), project.ties()])
   const all = options.all === true
   const lives = told.lives
   const anyLife = Object.keys(lives).length > 0
 
+  // Chapters the book has that are not read on this line: what begins in one of them happens on another way through the story.
+  const outline = await project.outline()
+  const elsewhere = new Set([...outline.volumes.flatMap(volume => volume.chapters), ...(outline.lines ?? []).flatMap(line => line.chapters)].map(chapter => chapter.id).filter(id => !order.has(id)))
+
   // Ties that have begun in what there is to read; one said to end later is told as holding.
+  // A tie that begins on another way through the story does not hold on this one; one that ends there goes on holding here.
   const ties = allTies
+    .filter(tie => tie.since === undefined || !elsewhere.has(tie.since))
     .filter(tie => all || tie.since === undefined || (order.get(tie.since) ?? 0) <= latest)
     .map(tie => ({
       id: tie.id,
@@ -409,7 +426,7 @@ export async function readAlbum(runtime: ProjectRuntime, options: { all?: boolea
       from: tie.from,
       to: tie.to,
       ...(tie.since !== undefined ? { since: tie.since } : {}),
-      ...(tie.until !== undefined && (all || (order.get(tie.until) ?? Infinity) <= latest) ? { until: tie.until } : {}),
+      ...(tie.until !== undefined && !elsewhere.has(tie.until) && (all || (order.get(tie.until) ?? Infinity) <= latest) ? { until: tie.until } : {}),
       ...(all && tie.note !== undefined ? { note: tie.note } : {}),
     }))
   const tied = new Set(ties.flatMap(tie => [tie.from, tie.to]).filter(end => end.type === 'world').map(end => end.id))
@@ -481,6 +498,7 @@ export async function readAlbum(runtime: ProjectRuntime, options: { all?: boolea
     ties: ties.filter(tie => (tie.from.type === 'character' ? here.has(tie.from.id) : known.has(tie.from.id)) && (tie.to.type === 'character' ? here.has(tie.to.id) : known.has(tie.to.id))),
     chapters: readable.map(chapter => ({ id: chapter.id, index: chapter.index, title: chapter.title })),
     lives: Object.fromEntries(Object.entries(lives).filter(([id]) => here.has(id))),
+    ...(along !== undefined ? { line: { id: along.id, title: along.title } } : {}),
   }
   return options.upTo !== undefined ? cutAlbum(album, options.upTo) : album
 }

@@ -152,7 +152,9 @@ lastAppearance: ch002
 Free-form notes in Markdown.
 ```
 
-**World entry** (`bible/world/<id>.md`): front matter `id`, `name`, `aliases`, `category` (`setting`, `location`, `faction`, `system`, `item`, `history`, `culture`, `rule`, `term`, `other`), `importance` (`1` core — always in context; `2` normal — when relevant; `3` detail — on demand), `summary`, `related`, `tags`, `visualPrompt` (what the place or thing actually looks like, for pictures), `visualImage` (its reference art, sent along with pictures set there); the body is the entry.
+**World entry** (`bible/world/<id>.md`): front matter `id`, `name`, `aliases`, `category` (`setting`, `location`, `faction`, `system`, `item`, `history`, `culture`, `rule`, `term`, `other`), `importance` (`1` core — always in context; `2` normal — when relevant; `3` detail — on demand), `summary`, `related`, `tags`, `visualPrompt` (what the place or thing actually looks like, for pictures), `visualImage` (its reference art, sent along with pictures set there), `weight` (`core`, `major`, `minor`, `once` — how much of the story it carries; absent: counted from the chapters that name it), `events` (its course: a list of `{chapter, kind, what, image?}` with `kind` one of `begin`, `change`, `decline`, `end`, and `image` the picture of it as it is from that turn on), `spots` (where the author pinned the marks of its scene: `"world:<id>"` or `"character:<id>"` to `{x, y}`, each 0–1 from the left and the top of its picture); the body is the entry.
+
+`bible/relations.json` holds the ties of the book's world — what is in what, who belongs where, lives where, holds what — each `{id, kind, from, to, since?, until?, note?}` with `kind` one of `within`, `seat`, `member`, `resides`, `holds`, the ends `{type: "world" | "character", id}`, and `since` / `until` chapter ids.
 
 `visual.prompt` is written for an image model, not for a reader: concrete phrases for what can be seen, restated as is in every picture of the character. Looks are matched by name: one written by hand needs only `name` and `prompt`, and gets its `id` when the card is next read; a look that is saved again keeps the sheet drawn for it.
 
@@ -186,6 +188,8 @@ Word counts, audio scripts and exports ignore image lines.
 | `play/<id>.json` | interludes with every turn |
 | `video/<chapter>.json` | the record of the chapter's video: its path under `assets/video/`, length, size, what post-production said about its cut, and what it was cut from |
 | `illustrations.json` | the gallery index. Each picture keeps the prompt exactly as sent and the `parts` it was assembled from: `subject`, `style` with `styleSource` (`book`, `studio` or `default`), the `avoid` list, and the `references` (path and label of each reference image) |
+| `reading.json` | where the book was last read, on whichever device: `{chapter, at, by}` — what the next device picks up. Written without touching the book's revision |
+| `graph.json` | where the author moved people to on the picture of who is what to whom: a person's id to `{x, y}` in the units of its layout; whoever is not in it stands where the layout puts them |
 | `index/` | the search index and embedding cache — rebuildable, safe to delete |
 
 `.novel/` is safe to commit except `index/`, which is better ignored. Deleting `.novel/memory` loses nothing that cannot be recomputed with a digest; deleting `versions/` loses your undo history.

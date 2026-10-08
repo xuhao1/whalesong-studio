@@ -392,6 +392,11 @@ export interface NovelRpc {
    * or let it be laid out by itself again (no `at`); without a `key`, every mark of the picture is let go.
    */
   'world.pin': { params: { root: string; id: string; key?: string; at?: { x: number; y: number } }; result: WorldEntry }
+  /**
+   * Put somebody at a spot of the picture of who is what to whom (in the units of its layout), let them stand where
+   * the layout puts them again (no `at`), or let everybody (no `id`). Kept with the book; nothing of its record.
+   */
+  'graph.place': { params: { root: string; id?: string; at?: { x: number; y: number } }; result: { graph: Record<string, { x: number; y: number }> } }
   'world.delete': { params: { root: string; id: string }; result: { deleted: boolean } }
   /** Add a tie between two things of the book's world, or say again one that is there (its chapters, its note). Ends by id or by name. */
   'tie.save': { params: { root: string; tie: Omit<Tie, 'id'> & { id?: string } }; result: Tie }
@@ -576,7 +581,8 @@ export interface NovelRpc {
   /** Where the book was last read, on whichever device; with `chapter`, leave the Studio's own place there. Nothing when nobody left one. */
   'reader.position': { params: { root: string; chapter?: string }; result: { position?: { chapter: string; at: string; by: string } } }
   /** The people and the world of a book as its viewer shows them — to the author: also who and what the text has not come to yet. */
-  'reader.album': { params: { root: string }; result: Album }
+  /** `line`: the album along a line of the plot other than the main one — a Host from before that answers with the main line's. */
+  'reader.album': { params: { root: string; line?: string }; result: Album }
   /** The interludes kept as side stories, as the viewer lists them; with `id`, one of them as it is read. */
   'reader.sides': { params: { root: string; id?: string }; result: { sides: { id: string; title: string; turns: number; situation?: string }[]; play?: Pick<PlaySession, 'id' | 'title' | 'situation' | 'location' | 'turns'> } }
 

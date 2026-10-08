@@ -212,6 +212,77 @@ describe('the album of a book', () => {
     }
   })
 
+  it('is told along another way through the story: who is met on it, what stands, what has happened — as that line has them', async () => {
+    const { project } = bed.runtime
+    // After chapter 2 the story also goes another way: Qingwen is not driven out, the garden burns.
+    const line = await project.addLine({ title: '晴雯没有被撵', from: 'ch002', choice: '王夫人没有进园' })
+    const stays = await project.addChapter({ title: '补裘' }, { line: line.id })
+    await project.saveChapterText(stays.id, '晴雯在怡红院里补雀金裘。夜里大观园走了水，烧去半边。甄宝玉来了。')
+    const digest: ChapterMemory = { schema: 1, chapterId: stays.id, textHash: hashText(proseOnly(await project.chapterText(stays.id))), updatedAt: new Date().toISOString(), brief: '', summary: '', facts: [], newEntities: [], threads: [], characters: [
+      { character: ids.qingwen, name: '晴雯', role: '补裘' },
+      { character: ids.later, name: '甄宝玉', role: '来访', lifecycle: 'enter' },
+    ] }
+    await project.saveMemory(digest)
+    await project.saveWorld({ id: ids.garden, events: [{ chapter: 'ch002', kind: 'begin', what: '为省亲建成' }, { chapter: 'ch003', kind: 'decline', what: '抄检之后冷清' }, { chapter: stays.id, kind: 'end', what: '走水烧去半边' }] })
+    await project.saveTie({ kind: 'resides', from: { type: 'character', id: ids.later }, to: { type: 'world', id: ids.court }, since: stays.id })
+
+    const main = await readAlbum(bed.runtime)
+    const along = await readAlbum(bed.runtime, { line: line.id })
+    expect(main.line).toBeUndefined()
+    expect(along.line).toEqual({ id: line.id, title: '晴雯没有被撵' })
+    // Its time is its own chapters: what comes before the parting, then its own.
+    expect(main.chapters.map(chapter => chapter.id)).toEqual(['ch001', 'ch002', 'ch003'])
+    expect(along.chapters.map(chapter => chapter.id)).toEqual(['ch001', 'ch002', stays.id])
+    // On the main line she dies in chapter 3; on this one she lives, and somebody the main line has not come to is met.
+    expect(main.lives[ids.qingwen]?.death).toBe(3)
+    expect(along.lives[ids.qingwen]?.death).toBeUndefined()
+    expect(along.lives[ids.qingwen]?.last).toBe(3)
+    expect(main.people.map(person => person.name)).not.toContain('甄宝玉')
+    expect(along.people.map(person => person.name)).toContain('甄宝玉')
+    // The garden's course: declined on the one, burnt on the other — each line tells its own turns and none of the other's.
+    const garden = (album: typeof main): AlbumEntry => album.world.find(entry => entry.id === ids.garden)!
+    expect(garden(main).events!.map(event => event.kind)).toEqual(['begin', 'decline'])
+    expect(garden(along).events!.map(event => `${event.index}:${event.kind}`)).toEqual(['2:begin', '3:end'])
+    expect(entryStateAt(garden(main), 3)).toBe('declined')
+    expect(entryStateAt(garden(along), 3)).toBe('gone')
+    // A tie that begins on one way does not hold on the other; one that ends on the other way goes on holding here.
+    const lodging = (album: typeof main, who: string): (typeof main.ties)[number] | undefined => album.ties.find(tie => tie.kind === 'resides' && tie.from.id === who)
+    expect(lodging(main, ids.later)).toBeUndefined()
+    expect(lodging(along, ids.later)).toMatchObject({ since: stays.id })
+    expect(lodging(main, ids.qingwen)?.until).toBe('ch003')
+    expect(lodging(along, ids.qingwen)).toBeDefined()
+    expect(lodging(along, ids.qingwen)?.until).toBeUndefined()
+    // The author's album of the main line keeps what is planned on it, and nothing that happens only on the other way.
+    const planned = await readAlbum(bed.runtime, { all: true })
+    expect(planned.ties.some(tie => tie.since === 'ch004')).toBe(true)
+    expect(planned.ties.some(tie => tie.since === stays.id)).toBe(false)
+    // A line the book does not have is said.
+    await expect(readAlbum(bed.runtime, { line: 'ln_nothing' })).rejects.toThrow(/no line of the plot/)
+
+    // Other devices are answered the album of a way they are offered, and of no other.
+    expect(await bookAnswer(bed.core, bed.runtime, 'read', { method: 'GET', path: ['album', line.id], by: 'test' })).toEqual(along)
+    await expect(bookAnswer(bed.core, bed.runtime, 'read', { method: 'GET', path: ['album', 'ln_nothing'], by: 'test' })).rejects.toThrow(ReaderRefused)
+    await expect(bookAnswer(bed.core, bed.runtime, 'read', { method: 'GET', path: ['album', 'main'], by: 'test' })).rejects.toThrow(ReaderRefused)
+    await project.updateLine(line.id, { shelved: true })
+    await expect(bookAnswer(bed.core, bed.runtime, 'read', { method: 'GET', path: ['album', line.id], by: 'test' })).rejects.toThrow(ReaderRefused)
+    await project.updateLine(line.id, { shelved: false })
+
+    // A site carries the album of each way it offers, and leaves it out with the ways.
+    const out = await mkdtemp(join(tmpdir(), 'novel-album-lines-'))
+    try {
+      const id = (await project.manifest()).id
+      const reader = new TextEncoder().encode('/* the reader */')
+      await publishSite(bed.core, bed.runtime, { out, reader })
+      expect(JSON.parse(await readFile(join(out, 'data', id, 'album', `${line.id}.json`), 'utf8'))).toEqual(along)
+      expect(JSON.parse(await readFile(join(out, 'data', id, 'album.json'), 'utf8'))).toEqual(main)
+      await publishSite(bed.core, bed.runtime, { out, reader, lines: false })
+      await expect(readFile(join(out, 'data', id, 'album', `${line.id}.json`), 'utf8')).rejects.toThrow()
+      expect(JSON.parse(await readFile(join(out, 'data', id, 'album.json'), 'utf8'))).toEqual(main)
+    } finally {
+      await rm(out, { recursive: true, force: true })
+    }
+  })
+
   it('carries where the author pinned the marks of a scene — of what is shown, and no others', async () => {
     const { project } = bed.runtime
     // What the Studio's `world.pin` saves: one mark at a time, the others kept.

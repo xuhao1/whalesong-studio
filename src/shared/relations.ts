@@ -113,12 +113,20 @@ function seeded(id: string, salt: number): number {
  * are drawn gently to the middle — and then kept from standing on one another
  * or on one another's names.
  * @param nodes - in the order of their weight in the story, heaviest first.
+ * @param placed - where the author put somebody by hand: they stand there, whatever the forces say; everybody else stands as if nobody had been moved.
  */
-export function layoutGraph(nodes: readonly GraphNode[], edges: readonly GraphEdge[]): Layout {
-  if (nodes.length <= 8) {
-    const at = ring(nodes)
-    return { at, box: boxOf(at, nodes) }
+export function layoutGraph(nodes: readonly GraphNode[], edges: readonly GraphEdge[], placed?: Readonly<Record<string, Point>>): Layout {
+  const at = settle(nodes, edges)
+  for (const node of nodes) {
+    const spot = placed?.[node.id]
+    if (spot !== undefined && Number.isFinite(spot.x) && Number.isFinite(spot.y)) at.set(node.id, { x: spot.x, y: spot.y })
   }
+  return { at, box: boxOf(at, nodes) }
+}
+
+/** Where the layout itself puts everyone. */
+function settle(nodes: readonly GraphNode[], edges: readonly GraphEdge[]): Map<string, Point> {
+  if (nodes.length <= 8) return ring(nodes)
   const count = nodes.length
   const index = new Map(nodes.map((node, position) => [node.id, position]))
   const x = new Float64Array(count)
@@ -218,7 +226,7 @@ export function layoutGraph(nodes: readonly GraphNode[], edges: readonly GraphEd
   }
   const at = new Map<string, Point>()
   nodes.forEach((node, position) => { at.set(node.id, { x: x[position]!, y: y[position]! }) })
-  return { at, box: boxOf(at, nodes) }
+  return at
 }
 
 /**

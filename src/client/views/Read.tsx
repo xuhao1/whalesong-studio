@@ -101,7 +101,14 @@ function AlbumPage({ at, counts, sides }: { at: AlbumAt; counts: AlbumCounts; si
   const t = useT()
   const { project, root } = useProject()
   const mediaUrl = useMediaUrl()
-  const album = useLoad(async signal => await controller.api.call('reader.album', { root }, signal), [root, project.revision])
+  // Where the story goes more than one way, the album is of one of them: the main line, or a line that has a chapter written.
+  const [way, setWay] = useState<string>(MAIN_LINE)
+  const ways = useMemo(() => [
+    { id: MAIN_LINE, title: '' },
+    ...(project.outline.lines ?? []).filter(line => project.lines?.find(info => info.id === line.id)?.chapters.some(chapter => chapter.hasText) === true).map(line => ({ id: line.id, title: line.title })),
+  ], [project.outline.lines, project.lines])
+  const along = ways.some(item => item.id === way) ? way : MAIN_LINE
+  const album = useLoad(async signal => await controller.api.call('reader.album', { root, ...(along !== MAIN_LINE ? { line: along } : {}) }, signal), [root, project.revision, along])
   const ties = useDeriveTies()
   const [sharing, setSharing] = useState(false)
   // The other side of the page that is open: where this person, this place, is edited.
@@ -132,6 +139,8 @@ function AlbumPage({ at, counts, sides }: { at: AlbumAt; counts: AlbumCounts; si
             at={at}
             go={(next) => { controller.setAlbum(next) }}
             onRead={(chapter) => { controller.openReader('read', chapter) }}
+            ways={ways}
+            onWay={setWay}
             // Arranging a scene is the author's: a mark dropped on a place's picture is pinned there for every reader.
             onPin={(entry, key, spot) => { void controller.guard(async () => { await controller.api.call('world.pin', { root, id: entry, ...(key !== undefined ? { key } : {}), ...(spot !== undefined ? { at: spot } : {}) }); await controller.refreshProject() }) }}
             worldTools={(

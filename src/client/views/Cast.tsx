@@ -6,7 +6,7 @@
  * card. One filter above says who the page is about.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { layoutAround, layoutGraph, RELATION_KINDS, relationKind, type GraphNode, type RelationKind } from '../../shared/relations'
+import { layoutAround, layoutGraph, RELATION_KINDS, relationKind, type GraphNode, type Point, type RelationKind } from '../../shared/relations'
 import type { CharacterCard, CharacterStatus, WalkOn } from '../../shared/types'
 import { Icon } from '../icons'
 import type { CastTab } from '../store'
@@ -327,8 +327,28 @@ interface Box { x: number; y: number; width: number; height: number }
 function Relations({ cards }: { cards: CharacterCard[] }) {
   const { controller } = useStudio()
   const t = useT()
+  const { project, root } = useProject()
   const mediaUrl = useMediaUrl()
   const [focus, setFocus] = useState<string | undefined>()
+  // Where the author moved people to on the whole picture: kept with the book, and on the picture at once — before the book has answered.
+  const [places, setPlaces] = useState<Record<string, Point>>(project.graph ?? {})
+  useEffect(() => { setPlaces(project.graph ?? {}) }, [project.graph])
+  // Somebody being moved: who, and where the pointer has them now.
+  const [held, setHeld] = useState<{ id: string; at: Point } | undefined>()
+  const grab = useRef<{ id: string; x: number; y: number; dx: number; dy: number; moved: boolean } | undefined>(undefined)
+  // The click that ends a move is no click on the person.
+  const dropped = useRef(false)
+  const place = (id: string | undefined, at: Point | undefined): void => {
+    setPlaces((current) => {
+      if (id === undefined) return {}
+      const { [id]: _was, ...others } = current
+      return at !== undefined ? { ...others, [id]: at } : others
+    })
+    void controller.guard(async () => {
+      await controller.api.call('graph.place', { root, ...(id !== undefined ? { id } : {}), ...(at !== undefined ? { at } : {}) })
+      await controller.refreshProject()
+    })
+  }
   const edges = useMemo(() => {
     const byId = new Map(cards.map(card => [card.id, card]))
     const list: { from: string; to: string; word: string; kind: RelationKind; note?: string }[] = []
@@ -343,14 +363,15 @@ function Relations({ cards }: { cards: CharacterCard[] }) {
   const linked = useMemo(() => cards.filter(card => edges.some(edge => edge.from === card.id || edge.to === card.id)).sort(byWeight), [cards, edges])
   const nodes = useMemo((): GraphNode[] => linked.map(card => ({ id: card.id, radius: MARK[card.role], label: card.name.length })), [linked])
   const centred = focus !== undefined && linked.some(card => card.id === focus) ? focus : undefined
-  const layout = useMemo(() => (centred !== undefined ? layoutAround(centred, nodes, edges) : { ...layoutGraph(nodes, edges), ring: undefined }), [centred, nodes, edges])
+  const layout = useMemo(() => (centred !== undefined ? layoutAround(centred, nodes, edges) : { ...layoutGraph(nodes, edges, places), ring: undefined }), [centred, nodes, edges, places])
 
   // ── moving about on the picture: what is shown of it, changed by the wheel, by dragging, by the buttons ──
   const [view, setView] = useState<Box | undefined>()
   const frame = useRef<SVGSVGElement>(null)
   const drag = useRef<{ x: number; y: number; view: Box } | undefined>(undefined)
-  // Another layout is another picture: it is shown whole.
-  useEffect(() => { setView(undefined) }, [layout])
+  // Another picture — around somebody else, of other people — is shown whole; one person moved on it leaves what is looked at as it is.
+  const picture = `${centred ?? ''}|${nodes.map(node => node.id).join(',')}`
+  useEffect(() => { setView(undefined) }, [picture])
   const shown = view ?? layout.box
   const zoom = (factor: number, about?: { x: number; y: number }): void => {
     const centre = about ?? { x: shown.x + shown.width / 2, y: shown.y + shown.height / 2 }
@@ -365,6 +386,9 @@ function Relations({ cards }: { cards: CharacterCard[] }) {
     const unit = Math.max(shown.width / rect.width, shown.height / rect.height)
     return { x: shown.x + shown.width / 2 + (event.clientX - rect.left - rect.width / 2) * unit, y: shown.y + shown.height / 2 + (event.clientY - rect.top - rect.height / 2) * unit }
   }
+
+  // Where somebody stands on the picture: in the hand that moves them, else where the layout has them.
+  const spot = (id: string): Point | undefined => (held?.id === id ? held.at : layout.at.get(id))
 
   if (edges.length === 0) return <Empty icon="link" title={t('还没有人物关系', 'No relationships yet')}>{t('在人物卡的"关系"里添加；从稿件导入或收录章节时也会自动归并。', 'Add them under Relationships on a character card; importing a manuscript or digesting chapters fills them in too.')}</Empty>
   const nameOf = (id: string): string => cards.find(card => card.id === id)?.name ?? id
@@ -398,8 +422,8 @@ function Relations({ cards }: { cards: CharacterCard[] }) {
           onPointerCancel={() => { drag.current = undefined }}
         >
           {edges.map((edge, index) => {
-            const from = layout.at.get(edge.from)
-            const to = layout.at.get(edge.to)
+            const from = spot(edge.from)
+            const to = spot(edge.to)
             if (from === undefined || to === undefined) return null
             const near = centred === undefined || touches(edge, centred)
             return (
@@ -411,16 +435,79 @@ function Relations({ cards }: { cards: CharacterCard[] }) {
             )
           })}
           {linked.map((card) => {
-            const position = layout.at.get(card.id)
+            const position = spot(card.id)
             if (position === undefined) return null
             const far = layout.ring?.get(card.id) === 2
+            const pinned = centred === undefined && places[card.id] !== undefined
             return (
-              <g key={card.id} className={cx('nv-graph-node', `is-${card.role}`, far && 'is-far', centred === card.id && 'is-focus')} transform={`translate(${position.x} ${position.y})`} onClick={() => { setFocus(centred === card.id ? undefined : card.id) }}>
-                <title>{t(`${card.name}：点一下以这个人为中心`, `${card.name}: click to put them in the middle`)}</title>
+              <g
+                key={card.id}
+                className={cx('nv-graph-node', `is-${card.role}`, far && 'is-far', centred === card.id && 'is-focus', pinned && 'is-placed', held?.id === card.id && 'is-held')}
+                transform={`translate(${position.x} ${position.y})`}
+                onClick={() => {
+                  if (dropped.current) {
+                    dropped.current = false
+                    return
+                  }
+                  setFocus(centred === card.id ? undefined : card.id)
+                }}
+                // On the whole picture a person can be taken hold of and put elsewhere; around somebody, everyone has their place on a ring.
+                onPointerDown={(event) => {
+                  const point = centred === undefined && event.button === 0 ? pointOf(event) : undefined
+                  if (point === undefined) return
+                  grab.current = { id: card.id, x: event.clientX, y: event.clientY, dx: position.x - point.x, dy: position.y - point.y, moved: false }
+                  try {
+                    event.currentTarget.setPointerCapture(event.pointerId)
+                  } catch {
+                    // A pointer that cannot be held: its moves still arrive while it is over the mark.
+                  }
+                }}
+                onPointerMove={(event) => {
+                  const from = grab.current
+                  if (from === undefined || from.id !== card.id) return
+                  // A hand is never quite still: a few pixels are still a click.
+                  if (!from.moved && Math.hypot(event.clientX - from.x, event.clientY - from.y) < 4) return
+                  const point = pointOf(event)
+                  if (point === undefined) return
+                  from.moved = true
+                  setHeld({ id: card.id, at: { x: point.x + from.dx, y: point.y + from.dy } })
+                }}
+                onPointerUp={() => {
+                  const from = grab.current
+                  grab.current = undefined
+                  if (from === undefined || !from.moved) return
+                  // The click that follows the release is this move's end, not a click on the person; and where none follows, the next one is theirs.
+                  dropped.current = true
+                  setTimeout(() => { dropped.current = false }, 0)
+                  if (held?.id === card.id) place(card.id, held.at)
+                  setHeld(undefined)
+                }}
+                onPointerCancel={() => {
+                  grab.current = undefined
+                  setHeld(undefined)
+                }}
+              >
+                <title>{centred === undefined ? t(`${card.name}：点一下以这个人为中心；拖动把他挪到别处`, `${card.name}: click to put them in the middle; drag to move them elsewhere`) : t(`${card.name}：点一下以这个人为中心`, `${card.name}: click to put them in the middle`)}</title>
                 <circle r={MARK[card.role]} />
                 {/* Whoever has a face shows it: the mark is their portrait, in a ring of their part's colour. */}
                 {card.visual?.portrait !== undefined ? <image className="nv-graph-face" href={mediaUrl(card.visual.portrait)} x={-MARK[card.role]} y={-MARK[card.role]} width={MARK[card.role] * 2} height={MARK[card.role] * 2} preserveAspectRatio="xMidYMin slice" /> : null}
                 <text y={MARK[card.role] + 14} textAnchor="middle">{card.name}</text>
+                {/* Put there by hand: a small mark says so, and takes them back to where the layout has them. */}
+                {pinned && held === undefined ? (
+                  <g
+                    className="nv-graph-unpin"
+                    transform={`translate(${MARK[card.role] * 0.78} ${-MARK[card.role] * 0.78})`}
+                    onPointerDown={(event) => { event.stopPropagation() }}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      place(card.id, undefined)
+                    }}
+                  >
+                    <title>{t(`「${card.name}」是你挪到这里的——点这里让他回到自动排布的位置`, `You put ${card.name} here — click to let them stand where the layout has them`)}</title>
+                    <circle r={5.5} />
+                    <path d="M-2.2 -2.2 L2.2 2.2 M2.2 -2.2 L-2.2 2.2" />
+                  </g>
+                ) : null}
               </g>
             )
           })}
@@ -429,12 +516,13 @@ function Relations({ cards }: { cards: CharacterCard[] }) {
           <Button size="sm" variant="ghost" onClick={() => { zoom(1 / 1.3) }} title={t('放大（也可以滚轮）', 'Enlarge (the wheel does it too)')}>＋</Button>
           <Button size="sm" variant="ghost" onClick={() => { zoom(1.3) }} title={t('缩小', 'Reduce')}>－</Button>
           <Button size="sm" variant="ghost" disabled={view === undefined} onClick={() => { setView(undefined) }} title={t('回到整张图', 'Back to the whole picture')}>{t('全图', 'Whole')}</Button>
+          {centred === undefined && Object.keys(places).length > 0 ? <Button size="sm" variant="ghost" onClick={() => { place(undefined, undefined) }} title={t(`你挪动过 ${Object.keys(places).length} 个人的位置：都放回自动排布`, `You moved ${Object.keys(places).length}: let all of them stand where the layout has them`)}>{t('自动排布', 'Lay out again')}</Button> : null}
         </div>
         <p className="nv-muted nv-small nv-graph-legend">
           {kinds.map(kind => <span key={kind} className={cx('nv-graph-key', `is-${kind}`)}><i />{t(...KIND_LABELS[kind])}</span>)}
           <span className="nv-graph-hint">{centred !== undefined
             ? t(`以「${nameOf(centred)}」为中心：内圈是和他直接有关系的人，按关系的种类排在一起；外圈是这些人各自牵出的人。`, `Around ${nameOf(centred)}: the inner ring is who they are bound to, each kind of bond together; beyond are those the ring leads to.`)
-            : t('关系近的人站得近。点一个人，以他为中心重排；拖动空白处移动，滚轮缩放。', 'People bound to one another stand close. Click someone to arrange the picture around them; drag the empty part to move, the wheel to enlarge.')}</span>
+            : t('关系近的人站得近。点一个人，以他为中心重排；拖动一个人把他挪到别处（记在这本书里）；拖动空白处移动，滚轮缩放。', 'People bound to one another stand close. Click someone to arrange the picture around them; drag someone to move them elsewhere (kept with the book); drag the empty part to move, the wheel to enlarge.')}</span>
         </p>
       </div>
       <ul className="nv-relation-list">

@@ -1602,6 +1602,8 @@ export interface ProjectState {
   worldPresence?: { entry: string; chapters: string[] }[]
   /** How the things of the book's world stand to each other: what is in what, who belongs where, lives where, holds what. Absent on a Host from before there were ties. */
   ties?: Tie[]
+  /** Where the author moved people to on the picture of who is what to whom, by their id, in the units of its layout; whoever is not here stands where the layout puts them. */
+  graph?: Record<string, { x: number; y: number }>
 }
 
 /**

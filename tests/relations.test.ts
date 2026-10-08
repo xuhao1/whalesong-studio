@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 /** Where the people of a book stand on the picture of their relations. */
 import { describe, expect, it } from 'vitest'
+import { ProjectError } from '../src/core/project'
 import { layoutAround, layoutGraph, relationKind, type GraphEdge, type GraphNode } from '../src/shared/relations'
+import { createTestBed } from './support/harness'
 
 const person = (id: string, radius = 8): GraphNode => ({ id, radius, label: id.length })
 
@@ -75,6 +77,23 @@ describe('the picture of who is what to whom', () => {
     }
   })
 
+  it('stands whoever the author moved where they were put, and everybody else as if nobody had been moved', () => {
+    const { nodes, edges } = households()
+    const plain = layoutGraph(nodes, edges)
+    const far = { x: plain.box.x + plain.box.width + 300, y: plain.box.y - 200 }
+    const moved = layoutGraph(nodes, edges, { 贾3: far, nobody: { x: 1, y: 1 }, 王2: { x: Number.NaN, y: 0 } })
+    expect(moved.at.get('贾3')).toEqual(far)
+    // The others are where the layout has them — a hand on one person does not shake the picture — and a spot that is no spot is none.
+    for (const node of nodes) if (node.id !== '贾3') expect(moved.at.get(node.id)).toEqual(plain.at.get(node.id))
+    expect(moved.at.has('nobody')).toBe(false)
+    // The box takes in whoever was put outside it, so that the whole picture shows them.
+    expect(moved.box.x + moved.box.width).toBeGreaterThan(far.x)
+    expect(moved.box.y).toBeLessThan(far.y)
+    // A handful on a ring can be moved as well.
+    const few = ['a', 'b', 'c'].map(id => person(id))
+    expect(layoutGraph(few, [], { b: { x: 500, y: 0 } }).at.get('b')).toEqual({ x: 500, y: 0 })
+  })
+
   it('stands everyone around the person looked at: theirs in a ring by the kind of bond, the rest beyond or left out', () => {
     const nodes = ['宝玉', '贾母', '贾政', '王夫人', '黛玉', '宝钗', '袭人', '晴雯', '林如海', '薛蟠', '路人'].map(id => person(id))
     const edges: GraphEdge[] = [
@@ -106,3 +125,39 @@ describe('the picture of who is what to whom', () => {
     expect(distance(layout, '林如海', '黛玉')).toBeLessThan(distance(layout, '林如海', '袭人'))
   })
 })
+
+describe('where the author moved people to on that picture', () => {
+  it('is kept with the book, by person, and let go one by one or all at once', async () => {
+    const bed = await createTestBed()
+    try {
+      const { project } = bed.runtime
+      const one = await project.saveCharacter({ name: '沈砚' })
+      const other = await project.saveCharacter({ name: '周既白', aliases: ['既白'] })
+      expect((await project.state()).graph).toBeUndefined()
+      const revision = (await project.state()).revision
+      // By id or by a name; to a tenth of a unit.
+      expect(await project.placeInGraph(one.id, { x: 120.44, y: -36.06 })).toEqual({ [one.id]: { x: 120.4, y: -36.1 } })
+      expect(await project.placeInGraph('既白', { x: 0, y: 5 })).toEqual({ [one.id]: { x: 120.4, y: -36.1 }, [other.id]: { x: 0, y: 5 } })
+      const state = await project.state()
+      expect(state.graph).toEqual({ [one.id]: { x: 120.4, y: -36.1 }, [other.id]: { x: 0, y: 5 } })
+      // Whoever shows the book hears of it.
+      expect(state.revision).toBeGreaterThan(revision)
+      // Put somewhere else, they are there and nowhere else.
+      expect((await project.placeInGraph(one.id, { x: 1, y: 2 }))[one.id]).toEqual({ x: 1, y: 2 })
+      // Somebody nobody knows, and a spot that is no spot, are said.
+      await expect(project.placeInGraph('没有这个人', { x: 0, y: 0 })).rejects.toThrow(ProjectError)
+      await expect(project.placeInGraph(one.id, { x: Number.NaN, y: 0 })).rejects.toThrow(/two numbers/)
+      // Whoever has no card any more is not on the picture.
+      await project.deleteCharacter(other.id)
+      expect(await project.graphPlaces()).toEqual({ [one.id]: { x: 1, y: 2 } })
+      // Let go: one, then everybody.
+      expect(await project.placeInGraph(one.id)).toEqual({})
+      await project.placeInGraph(one.id, { x: 3, y: 4 })
+      expect(await project.placeInGraph()).toEqual({})
+      expect((await project.state()).graph).toBeUndefined()
+    } finally {
+      await bed.cleanup()
+    }
+  })
+})
+

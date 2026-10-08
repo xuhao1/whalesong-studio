@@ -372,6 +372,7 @@ export function createHandlers(service: NovelService): Handlers {
       const runtime = await open(root)
       return job(runtime, 'bible', 'tidy world', undefined, async task => await tidyWorld(core, runtime, task))
     },
+    'graph.place': async ({ root, id, at }) => ({ graph: await (await open(root)).project.placeInGraph(id, at) }),
     'world.pin': async ({ root, id, key, at }) => {
       const fraction = (value: unknown): number => Math.min(1, Math.max(0, typeof value === 'number' && Number.isFinite(value) ? Math.round(value * 1000) / 1000 : 0.5))
       if (key !== undefined && !/^(world|character):.{1,120}$/.test(key)) throw new ProjectError('novel/invalid', 'a mark is named by world:<id> or character:<id>')
@@ -908,7 +909,7 @@ export function createHandlers(service: NovelService): Handlers {
       const position = typeof chapter === 'string' && chapter.length > 0 ? await savePosition(runtime, chapter, 'Studio').catch(() => undefined) : await readPosition(runtime)
       return position !== undefined ? { position } : {}
     },
-    'reader.album': async ({ root }) => await readAlbum(await open(root), { all: true }),
+    'reader.album': async ({ root, line }) => await readAlbum(await open(root), { all: true, ...(line !== undefined ? { line } : {}) }),
     'reader.sides': async ({ root, id }) => {
       const runtime = await open(root)
       const play = typeof id === 'string' && id.length > 0 ? await readSide(runtime, id) : undefined

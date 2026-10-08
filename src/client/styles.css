@@ -2792,6 +2792,44 @@ button.nv-stat:hover {
   stroke: var(--nv-text);
 }
 
+/* Being moved by hand: above the others, and plainly in the hand. */
+.nv-graph-node.is-held {
+  cursor: grabbing;
+}
+
+.nv-graph-node.is-held > circle {
+  stroke: var(--nv-text);
+  stroke-width: 3;
+}
+
+/* Put there by hand: the small mark that lets them go again. */
+.nv-graph-unpin {
+  cursor: pointer;
+  opacity: 0.55;
+}
+
+.nv-graph-unpin circle,
+.nv-graph-node.is-protagonist .nv-graph-unpin circle,
+.nv-graph-node.is-deuteragonist .nv-graph-unpin circle,
+.nv-graph-node.is-antagonist .nv-graph-unpin circle,
+.nv-graph-node.is-supporting .nv-graph-unpin circle {
+  fill: var(--nv-surface);
+  stroke: var(--nv-text-3);
+  stroke-width: 1;
+}
+
+.nv-graph-unpin path {
+  fill: none;
+  stroke: var(--nv-text-2);
+  stroke-width: 1.2;
+  stroke-linecap: round;
+}
+
+.nv-graph-node:hover .nv-graph-unpin,
+.nv-graph-unpin:hover {
+  opacity: 1;
+}
+
 .nv-graph-legend {
   display: flex;
   flex-wrap: wrap;
@@ -8405,6 +8443,38 @@ blockquote.nv-issue-quote {
 .nv-explore-time .nv-range {
   flex: 1 1 200px;
   max-width: 460px;
+}
+
+/* Whose world the album shows, where the story goes more than one way. */
+.nv-album-way {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0 4px 0 9px;
+  border: 1px solid var(--nv-border);
+  border-radius: 999px;
+  background: var(--nv-surface);
+  color: var(--nv-text-2);
+}
+
+.nv-album-way select {
+  max-width: 220px;
+  min-width: 0;
+  padding: 4px 4px 4px 0;
+  border: 0;
+  background: transparent;
+  color: var(--nv-text);
+  font: inherit;
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.nv-album-way select:focus-visible {
+  outline: 2px solid var(--nv-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 .nv-explore-grid {

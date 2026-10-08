@@ -128,10 +128,12 @@ export interface Album {
   /** Group by group, the heaviest first within each. */
   world: AlbumEntry[]
   ties: Tie[]
-  /** The chapters the story's time is told by, in reading order: those there is text of, along the main line. */
+  /** The chapters the story's time is told by, in reading order: those there is text of, along the line the album is of. */
   chapters: { id: string; index: number; title: string }[]
   /** Everyone's life along that line, by their id; nobody the digests did not note. */
   lives: Record<string, Life>
+  /** The line of the plot it is the album of, where that is not the main one: who is met, what stands and what has happened are as that line has them. */
+  line?: { id: string; title: string }
 }
 
 /** How much an album holds, kind by kind. */

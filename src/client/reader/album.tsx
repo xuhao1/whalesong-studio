@@ -22,7 +22,7 @@ import { albumEmpty, entryImageAt, entryStateAt, standingAt, worldFront, type Al
 import type { LifeEvent } from '../../shared/life'
 import { layoutSpots, spotKey, type ScenePoint } from '../../shared/scene'
 import { neighbours, STANDINGS, tiesAt, trail, type Standing, type Tie, type TieEnd } from '../../shared/ties'
-import type { CharacterRole, CharacterStatus } from '../../shared/types'
+import { MAIN_LINE, type CharacterRole, type CharacterStatus } from '../../shared/types'
 import type { WorldGroup } from '../../shared/world'
 import { Icon, type IconName } from '../icons'
 import type { Translate } from './parts'
@@ -136,6 +136,13 @@ export interface AlbumProps {
    * "as far as I have read" — the people and the world with nothing of what comes after.
    */
   readTo?: number | undefined
+  /**
+   * The ways through the story the album can be of, where the book goes more than one way: the main line first.
+   * Given with `onWay`, the bar that tells the time also tells whose world this is, and changes it — who is met,
+   * who has died, what has been built are as that line has them.
+   */
+  ways?: readonly { id: string; title: string }[] | undefined
+  onWay?: ((line: string) => void) | undefined
 }
 
 /** The halves of the viewer: the text, the people, the world, and the side stories the author kept. */
@@ -209,8 +216,11 @@ function Face({ person, media, className }: { person: AlbumPerson; media: (path:
  * @param at - where it stands: one of its two halves, or the page of one thing.
  * @param go - how it goes elsewhere; whoever shows the album keeps where it is.
  */
-export function AlbumView({ t, album, media, at, go, onRead, onEdit, worldTools, onPin, readTo }: AlbumProps) {
+export function AlbumView({ t, album, media, at, go, onRead, onEdit, worldTools, onPin, readTo, ways, onWay }: AlbumProps) {
   const [moment, setMoment] = useState<number | undefined>()
+  // Another way through the story counts its chapters by itself: a chapter looked at on one is not that chapter on another.
+  const along = album.line?.id ?? MAIN_LINE
+  useEffect(() => { setMoment(undefined) }, [along])
   const [zoom, setZoom] = useState<string | undefined>()
   const [more, setMore] = useState<Record<string, boolean>>({})
   const top = useRef<HTMLDivElement>(null)
@@ -297,14 +307,23 @@ export function AlbumView({ t, album, media, at, go, onRead, onEdit, worldTools,
   }
   const worldRows = (list: readonly AlbumEntry[]): ReactNode => rows(list.map(entry => ({ end: { type: 'world' as const, id: entry.id } })))
 
-  const time = last > first ? (
+  const way = ways !== undefined && ways.length > 1 && onWay !== undefined ? (
+    <label className="nv-album-way" title={t('这本书的故事不止一种走法。选一条线，看这条线上的人物和世界：谁登场了、谁死了、什么地方建起来了，都按这条线算。', 'This book goes more than one way. Choose a line to see its people and its world: who has come on, who has died, what has been built — as that line has it.')}>
+      <Icon name="branch" size={13} />
+      <select value={along} onChange={(event) => { onWay(event.target.value) }} aria-label={t('看哪一条线上的人物和世界', 'The line whose people and world are shown')}>
+        {ways.map(item => <option key={item.id} value={item.id}>{item.id === MAIN_LINE ? t('★ 主线', '★ Main line') : item.title}</option>)}
+      </select>
+    </label>
+  ) : null
+  const time = last > first || way !== null ? (
     <div className="nv-explore-time">
-      <div className="nv-seg" role="group">
+      {way}
+      {last > first ? <div className="nv-seg" role="group">
         <button type="button" className={cx(moment === undefined && 'is-active')} onClick={() => { setMoment(undefined) }}>{t('不分时间', 'Whenever')}</button>
         <button type="button" className={cx(moment !== undefined && 'is-active')} onClick={() => { setMoment(moment ?? last) }}>{t('故事进行到…', 'As the story stood at…')}</button>
         {readTo !== undefined && readTo >= first && readTo < last ? <button type="button" className={cx(moment === readTo && 'is-mine')} onClick={() => { setMoment(readTo) }} title={t('只看到我读到的地方：之后才登场的人、才发生的事都不显示', 'Only as far as I have read: nobody who comes on later, nothing that happens later')}>{t(`我读到的第 ${readTo} 章`, `Where I am: ch. ${readTo}`)}</button> : null}
-      </div>
-      {moment !== undefined ? (
+      </div> : null}
+      {moment !== undefined && last > first ? (
         <>
           <input className="nv-range" type="range" min={first} max={last} step={1} value={moment} onChange={(event) => { setMoment(Number(event.target.value)) }} aria-label={t('故事进行到第几章', 'How far the story has come')} />
           <strong>{t(`第 ${moment} 章`, `Chapter ${moment}`)}</strong>

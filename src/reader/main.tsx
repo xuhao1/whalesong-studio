@@ -348,7 +348,7 @@ function BookScreen({ id, place, t }: { id: string; place: Place; t: Translate }
   }
   const sides = detail.data.sides ?? 0
   // The people and the world: where the book has any, and whoever serves it gives them.
-  if (place.album !== undefined && !albumEmpty(detail.data.album)) return <AlbumScreen book={book} chapters={every} counts={detail.data.album} sides={sides} at={place.album} t={t} />
+  if (place.album !== undefined && !albumEmpty(detail.data.album)) return <AlbumScreen book={book} chapters={every} counts={detail.data.album} sides={sides} at={place.album} lines={detail.data.lines} line={line?.id ?? MAIN} onLine={chooseLine} t={t} />
   // The side stories the author kept: to be read, by whoever reads the book.
   if (place.side !== undefined && sides > 0) return <SidesScreen key={String(place.side)} book={book} counts={detail.data.album} sides={sides} side={typeof place.side === 'string' ? place.side : undefined} t={t} />
   const chapter = chapters.find(candidate => candidate.id === place.chapter)
@@ -399,8 +399,20 @@ function SidesScreen({ book, counts, sides, side, t }: { book: Book; counts: Alb
 }
 
 /** The book's people and its world: the album, with the way back to the text. */
-function AlbumScreen({ book, chapters, counts, sides, at, t }: { book: Book; chapters: ChapterRef[]; counts: AlbumCounts | undefined; sides: number; at: AlbumAt; t: Translate }) {
-  const album = useLoad(signal => get<Album>(`api/books/${encodeURIComponent(book.id)}/album`, signal), [book.id])
+function AlbumScreen({ book, chapters, counts, sides, at, lines, line, onLine, t }: { book: Book; chapters: ChapterRef[]; counts: AlbumCounts | undefined; sides: number; at: AlbumAt; lines: Line[] | undefined; line: string; onLine: (line: string) => void; t: Translate }) {
+  // Of the line being read, where the book goes more than one way: who is met and what has happened are as that line has them.
+  const album = useLoad(async (signal) => {
+    const base = `api/books/${encodeURIComponent(book.id)}/album`
+    if (line !== MAIN) {
+      try {
+        return await get<Album>(`${base}/${encodeURIComponent(line)}`, signal)
+      } catch (error) {
+        // Whoever serves the book may know the main line's album only (a Host from before lines had their own): that one, then.
+        if (signal.aborted) throw error
+      }
+    }
+    return await get<Album>(base, signal)
+  }, [book.id, line])
   const url = useCallback((path: string) => media(book.id, path), [book.id])
   const section = at.end?.type === 'character' ? 'people' : at.end?.type === 'world' ? 'world' : at.section
   useEffect(() => {
@@ -425,6 +437,8 @@ function AlbumScreen({ book, chapters, counts, sides, at, t }: { book: Book; cha
                 go={(next) => { go({ book: book.id, album: next }) }}
                 onRead={(chapter) => { if (chapters.some(candidate => candidate.id === chapter)) go({ book: book.id, chapter }) }}
                 readTo={album.data.chapters.find(chapter => chapter.id === remembered(book.id).chapter)?.index}
+                ways={lines}
+                onWay={onLine}
               />
             )}
       </div>
