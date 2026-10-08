@@ -3170,6 +3170,8 @@ button.nv-stat:hover {
 
 .nv-theater {
   display: flex;
+  /* Where it stands in a column that scrolls, it keeps its height: on a low screen the page scrolls, the picture is not squeezed flat. */
+  flex: none;
   flex-direction: column;
   overflow: hidden;
   border: 1px solid var(--nv-border);
@@ -3186,8 +3188,9 @@ button.nv-stat:hover {
 .nv-theater-screen {
   position: relative;
   aspect-ratio: 16 / 9;
-  width: 100%;
-  max-height: 68vh;
+  /* As wide as there is room, and no taller than most of the window: on a wide, low screen the picture keeps its shape and stands in the middle — it is not cut to a strip. */
+  width: min(100%, calc(68vh * 16 / 9));
+  flex: none;
   margin: 0 auto;
   overflow: hidden;
   background: #0a0a0c;
@@ -3196,6 +3199,7 @@ button.nv-stat:hover {
 
 .nv-theater:fullscreen .nv-theater-screen {
   flex: 1;
+  width: 100%;
   max-height: none;
 }
 
@@ -6195,6 +6199,32 @@ button.nv-stat:hover {
   background: color-mix(in srgb, var(--nv-text-3) 5%, transparent);
 }
 
+/* A step an agent works on: the cell is the way to that agent. */
+.nv-batch-cell.has-run {
+  padding: 0;
+}
+
+.nv-batch-open {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  min-height: 28px;
+  padding: 4px 8px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline dotted color-mix(in srgb, currentColor 45%, transparent);
+  text-underline-offset: 3px;
+}
+
+.nv-batch-open:hover {
+  background: color-mix(in srgb, var(--nv-brand) 12%, transparent);
+}
+
 .nv-batch-cell.is-dim,
 .nv-batch-table th.is-dim {
   opacity: 0.42;
@@ -8497,6 +8527,38 @@ blockquote.nv-issue-quote {
 
 .nv-explore-grid.is-drawn {
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+}
+
+/* What each has come to know along a line of the plot. */
+.nv-worldline-knows {
+  flex-wrap: wrap;
+}
+
+.nv-worldline-known {
+  display: flex;
+  flex: 1 1 100%;
+  flex-direction: column;
+  gap: 4px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12.5px;
+}
+
+.nv-worldline-known li {
+  display: grid;
+  grid-template-columns: minmax(4em, max-content) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.nv-worldline-known li span {
+  color: var(--nv-text-2);
+}
+
+.nv-worldline-learned {
+  display: block;
+  margin-top: 3px;
+  color: var(--nv-text-2);
 }
 
 /* A page of the album arrives: softly, and not at all for whoever asked for less motion. */

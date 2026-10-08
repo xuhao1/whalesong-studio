@@ -183,11 +183,24 @@ describe('the cast of a book', () => {
     bed.llm.responder = () => { asked += 1; return '{}' }
     expect((await analyzeBook(bed.core, bed.runtime, {}, { origin: 'user' })).steps).toEqual([])
     expect(asked).toBe(0)
+    // The same for one from before the ties were worked out as a pass of the analysis: it had six passes, and did them.
+    await project.writeState(['analysis.json'], { schema: 2, startedAt: '2026-10-08T00:00:00.000Z', done: ['digest', 'cast', 'world', 'outline', 'style', 'art'] })
+    expect((await project.state()).analysis).toBeUndefined()
+    expect((await analyzeBook(bed.core, bed.runtime, {}, { origin: 'user' })).steps).toEqual([])
+    // …and one of them cut short is told what it has left of its own six, not a seventh.
+    await project.writeState(['analysis.json'], { schema: 2, startedAt: '2026-10-08T00:00:00.000Z', done: ['digest', 'cast', 'world'] })
+    expect((await project.state()).analysis).toEqual({ pending: ['outline', 'style', 'art'] })
+    await project.writeState(['analysis.json'], { schema: 1, startedAt: '2026-10-07T00:00:00.000Z', done: ['digest', 'cast', 'world', 'outline', 'style'] })
+    expect(asked).toBe(0)
     // A new analysis has the pass; a book whose author has given it a look keeps that look.
     await project.updateManifest({ artStyle: '水墨，留白' })
     bed.llm.responder = request => request.prompt.includes('所有画面共用的画风') ? JSON.stringify({ style: '厚涂' }) : JSON.stringify({ characters: [], entries: [], logline: 'x', premise: 'y', volumes: [] })
     const fresh = await analyzeBook(bed.core, bed.runtime, { fresh: true, style: false }, { origin: 'user' })
     expect(fresh.steps).toContain('art')
+    // A new analysis works the ties out too, after the world and before the outline; a book with no places, houses or things has nothing to tie, and that is no pass left undone.
+    expect(fresh.steps).toEqual(['digest', 'cast', 'world', 'ties', 'outline', 'art'])
+    expect(fresh.failed.map(failure => failure.step)).not.toContain('ties')
+    expect((await project.state()).analysis).toBeUndefined()
     expect(fresh.art).toBeUndefined()
     expect((await project.manifest()).artStyle).toBe('水墨，留白')
     // Asked for by name, the director settles it anew.

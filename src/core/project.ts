@@ -18,7 +18,7 @@
 import { watch, type FSWatcher } from 'node:fs'
 import { basename, join } from 'node:path'
 import {
-  ANALYZE_STEPS, type AnalyzeStep,
+  analysisSteps, type AnalyzeStep,
   castOrder, chapterBudgetOf, MAIN_LINE,
   type ActivityEntry, type BookShows, type CharacterLook, type CharacterMoment, type ShowCount,
   type AudioScript, type CastPresence, type ChapterInfo, type ChapterMemory, type ChapterPlan, type ChapterReview, type ChapterStatus, type CharacterCard,
@@ -1643,6 +1643,18 @@ export class Project {
     // As far as the line is known: the last chapter of it there is a digest of. Counted to the end of a line whose later
     // chapters nobody has read yet, everyone would be "away".
     const end = Math.max(0, ...memories.map(entry => entry.chapter.index))
+    // What each came to know, chapter by chapter, as the digests noted it.
+    const learned = new Map<string, NonNullable<LinePerson['learned']>>()
+    for (const { chapter, memory } of memories) {
+      for (const moment of memory.characters) {
+        if (moment.learned === undefined || moment.learned.length === 0) continue
+        const card = cards.find(candidate => candidate.id === moment.character) ?? cards.find(candidate => sameName(candidate.name, moment.name) || candidate.aliases?.some(alias => sameName(alias, moment.name)) === true)
+        if (card === undefined) continue
+        const known = learned.get(card.id) ?? []
+        for (const what of moment.learned) if (what.trim().length > 0 && !known.some(item => item.what === what.trim())) known.push({ index: chapter.index, chapter: chapter.plan.id, what: what.trim() })
+        learned.set(card.id, known)
+      }
+    }
     const people: LinePerson[] = []
     for (const card of castOrder(cards, await this.presence(), infos.map(chapter => chapter.id))) {
       const life = told.lives[card.id]
@@ -1662,6 +1674,7 @@ export class Project {
         ...(last.where !== undefined ? { where: last.where } : {}),
         ...(last.state !== undefined ? { state: last.state } : {}),
         chapters: life.events.length,
+        ...(learned.has(card.id) ? { learned: learned.get(card.id)! } : {}),
       })
     }
     const threads = new Map<string, LineThread>()
@@ -1764,8 +1777,8 @@ export class Project {
   async analysisPending(): Promise<AnalyzeStep[]> {
     const note = await this.readState<{ schema?: number; done?: AnalyzeStep[] }>('analysis.json')
     if (note === undefined) return []
-    // An analysis from before the art pass existed never had it to do.
-    return ANALYZE_STEPS.filter(step => note.done?.includes(step) !== true && (step !== 'art' || (note.schema ?? 1) >= 2))
+    // An analysis from before a pass existed never had it to do.
+    return analysisSteps(note.schema).filter(step => note.done?.includes(step) !== true)
   }
 
   async state(): Promise<ProjectState> {

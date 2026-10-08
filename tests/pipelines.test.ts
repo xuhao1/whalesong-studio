@@ -357,11 +357,16 @@ describe('pipelines', () => {
       if (request.prompt.includes('一句话摘要')) return JSON.stringify({ logline: '少女携断剑下山。', premise: '……', genre: '武侠', volumes: [{ title: '全书', from: 1, to: 3 }] })
       if (request.prompt.includes('文体学者')) return JSON.stringify({ name: 'x', pov: 'third-limited', tone: '冷峻', rules: ['短句'], avoid: ['抒情'] })
       if (request.prompt.includes('所有画面共用的画风')) return JSON.stringify({ style: '冷色水墨，枯笔，雨雾', avoid: ['现代建筑'], why: '武侠，夜雨。' })
+      // How the things of the world stand to each other: who lives where, from which chapter.
+      if (request.prompt.includes('"ties"')) return JSON.stringify({ ties: [{ kind: 'resides', from: '沈璃', to: '青冥剑阁', since: 1 }], events: [{ name: '青冥剑阁', chapter: 1, kind: 'decline', what: '已是废阁' }] })
       return 'ok'
     }
     const result = await importManuscript(bed.core, bed.runtime, { text }, { origin: 'user' })
-    expect(result).toMatchObject({ chapters: 3, volumes: 2, characters: 1, worldEntries: 1, digested: 3 })
+    expect(result).toMatchObject({ chapters: 3, volumes: 2, characters: 1, worldEntries: 1, digested: 3, ties: { added: 1, total: 1, events: 1 } })
     expect(result.failed).toEqual([])
+    // A book that arrives written can be walked: its people stand in its places from the first look.
+    expect((await project.ties()).map(tie => `${tie.kind}:${tie.from.id}>${tie.to.id}:${tie.since ?? ''}`)).toEqual([`resides:${(await project.findCharacter('沈璃'))!.id}>${(await project.findWorld('青冥剑阁'))!.id}:ch001`])
+    expect((await project.findWorld('青冥剑阁'))!.events).toEqual([{ chapter: 'ch001', kind: 'decline', what: '已是废阁' }])
     // A book that arrives written has a look of its own once it has been read.
     expect(await project.manifest()).toMatchObject({ artStyle: '冷色水墨，枯笔，雨雾', artAvoid: ['现代建筑'] })
     const outline = await project.outline()

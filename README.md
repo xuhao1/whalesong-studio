@@ -49,7 +49,7 @@ The showrunner never writes manuscript prose itself: it calls `novel_write` with
 
 Revisions arrive as **proposals** with a diff; you accept or reject. Every applied change snapshots the previous text, and any version can be compared and restored.
 
-**One-click import.** Hand it an existing manuscript (`.txt` / `.md`, UTF-8 or GBK). An editor agent finds its real chapters — reading the text, working out how the headings are written, removing what a web page left in it — then the Studio digests them, merges the cast into character cards, collects the world entries, rebuilds the outline with threads, and learns the style.
+**One-click import.** Hand it an existing manuscript (`.txt` / `.md`, UTF-8 or GBK). An editor agent finds its real chapters — reading the text, working out how the headings are written, removing what a web page left in it — then the Studio digests them, merges the cast into character cards, collects the world entries, works out how they stand to each other (what place is in what, who lives where and belongs to which house, what happens to the places over the story), rebuilds the outline with threads, learns the style, and settles the look of the book's pictures.
 
 **To read, and to listen — one page.** A reader with real typography, embedded illustrations, themes, and a selection toolbar — "edit here", "illustrate this", "discuss with the showrunner". A switch at the top turns the same page from **Read** to **Listen**: the prose stays, the sentence being spoken is lit in it, any sentence is a place to start from, and one chapter follows another. The author also gets the production desk of the audio version above the page.
 

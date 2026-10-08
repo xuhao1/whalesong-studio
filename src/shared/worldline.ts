@@ -8,7 +8,7 @@
  * who has come on and how they stand at its end, which threads were planted
  * and which paid off — and nothing of it is stored.
  *
- *   LineWorld      the people and the threads as they stand at the end of a line
+ *   LineWorld      the people and the threads as they stand at the end of a line, and what each has come to know along it
  *   compareLines   where two lines part, and what is different between them after that
  */
 import type { CharacterRole, CharacterStatus } from './types'
@@ -31,6 +31,8 @@ export interface LinePerson {
   state?: string
   /** How many chapters of the line they are in. */
   chapters: number
+  /** What they came to know along the line, as the digests noted it, in reading order: the chapter's place and its id, and what. */
+  learned?: { index: number; chapter: string; what: string }[]
 }
 
 /** A thread of the plot as a line leaves it. */
@@ -72,6 +74,11 @@ export interface PersonDifference {
   kind: 'fate' | 'only' | 'course'
   left?: LinePerson
   right?: LinePerson
+  /**
+   * What they came to know after the lines part, on each: what one of them knows that the other self never learns.
+   * Absent where neither line tells of anything learned after the parting.
+   */
+  knows?: { left: string[]; right: string[] }
 }
 
 export interface ThreadDifference {
@@ -123,7 +130,13 @@ export function compareLines(left: LineWorld, right: LineWorld): LineComparison 
   for (const here of left.people) {
     seen.add(here.id)
     const there = rightPeople.get(here.id)
-    const base = { id: here.id, name: here.name, role: here.role }
+    // What each came to know in the chapters only their line has: before the parting they learned the same things.
+    const since = (person: LinePerson, other: LineWorld): string[] => {
+      const theirs = new Set(other.path.map(chapter => chapter.id))
+      return (person.learned ?? []).filter(item => !theirs.has(item.chapter)).map(item => item.what)
+    }
+    const told = there !== undefined ? { left: since(here, right), right: since(there, left) } : undefined
+    const base = { id: here.id, name: here.name, role: here.role, ...(told !== undefined && told.left.length + told.right.length > 0 ? { knows: told } : {}) }
     if (there === undefined) people.push({ ...base, kind: 'only', left: here })
     else if (fateOf(here.status) !== fateOf(there.status)) people.push({ ...base, kind: 'fate', left: here, right: there })
     else if (here.lastChapter !== there.lastChapter || here.chapters !== there.chapters) people.push({ ...base, kind: 'course', left: here, right: there })

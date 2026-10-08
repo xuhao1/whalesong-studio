@@ -112,7 +112,9 @@ export async function runBatch(plan: BatchPlan, task: TaskContext, lang: PromptL
     task.job?.result({ batch: view() })
   }
   const settle = (id: string, state: BatchStepState, note?: string): void => {
-    views.set(id, { state, ...(note !== undefined && note.length > 0 ? { note: note.length > 240 ? `${note.slice(0, 240)}…` : note } : {}) })
+    // Whoever worked on it stays named: a step that is over can still be opened and read.
+    const run = views.get(id)?.run
+    views.set(id, { state, ...(note !== undefined && note.length > 0 ? { note: note.length > 240 ? `${note.slice(0, 240)}…` : note } : {}), ...(run !== undefined ? { run: { ...run, running: false } } : {}) })
     settled += 1
     if (state === 'failed' || state === 'blocked') failed += 1
     if (state === 'done') done += 1
@@ -144,7 +146,11 @@ export async function runBatch(plan: BatchPlan, task: TaskContext, lang: PromptL
         if (step.stream === true && typeof value.chapterId === 'string') parent.result({ chapterId: value.chapterId })
       },
       think: (delta) => { parent.think(delta) },
-      crew: (run) => { parent.crew(run) },
+      crew: (run) => {
+        parent.crew(run)
+        // The run is this step's own: with many agents at work in one batch, each cell leads to its own.
+        if (run.session !== undefined) patch({ run: { role: run.role, session: run.session, ...(run.parent !== undefined ? { parent: run.parent } : {}), ...(run.running === true ? { running: true } : {}) } })
+      },
       note: (label) => {
         const before = views.get(id)!.progress
         patch({ progress: { done: before?.done ?? 0, total: before?.total ?? 0, label } })

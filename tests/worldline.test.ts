@@ -46,6 +46,14 @@ describe('two lines of the plot, held against each other', () => {
     // Somebody both lines leave as they found them is no difference.
     expect(compared.alike).toEqual({ people: 1, threads: 1 })
     expect(compared.threads.map(item => `${item.kind}:${item.key}`)).toEqual(['state:letter', 'only:main-thread', 'only:side-thread'])
+    // What somebody came to know after the parting is told for each line; what they learned before it is the same on both.
+    const told = compareLines(
+      world('main', ['c1', 'c2', 'c3'], [person('lead', { learned: [{ index: 1, chapter: 'c1', what: '父亲还活着' }, { index: 3, chapter: 'c3', what: '信是假的' }] })]),
+      world('side', ['c1', 'c2', 's1'], [person('lead', { lastChapter: 's1', learned: [{ index: 1, chapter: 'c1', what: '父亲还活着' }, { index: 3, chapter: 's1', what: '寄信人是谁' }] })]),
+    )
+    expect(told.people).toEqual([expect.objectContaining({ id: 'lead', kind: 'course', knows: { left: ['信是假的'], right: ['寄信人是谁'] } })])
+    // Nothing learned after the parting on either: nothing is said of it.
+    expect(compared.people.every(item => item.knows === undefined)).toBe(true)
     // A line held against itself differs in nothing; two that share no first page part before it.
     expect(compareLines(main, main)).toMatchObject({ shared: 4, people: [], threads: [], own: { left: { chapters: 0 }, right: { chapters: 0 } } })
     expect(compareLines(main, world('other', ['x1'], [])).parts).toBeUndefined()
@@ -66,8 +74,8 @@ describe('the world as a line leaves it', () => {
     for (const id of ['ch001', 'ch002', 'ch003']) await project.saveChapterText(id, `${id} 的正文。`)
     const memory = (chapterId: string, characters: Partial<CharacterMoment>[], threads: ThreadTouch[] = []): ChapterMemory => ({ schema: 1, chapterId, textHash: 'x', updatedAt: new Date().toISOString(), brief: '', summary: '', facts: [], newEntities: [], threads, characters: characters.map(item => ({ character: item.name!, name: item.name!, ...item })) })
     await project.saveMemory(memory('ch001', [{ name: '沈蘅' }, { name: '阿棠', location: '码头' }], [{ title: '三封信', action: 'plant' }, { title: '欠下的船钱', action: 'plant' }]))
-    await project.saveMemory(memory('ch002', [{ name: '沈蘅', stateAfter: '发着烧' }], [{ title: '三封信', action: 'advance' }]))
-    await project.saveMemory(memory('ch003', [{ name: '沈蘅', location: '旧书铺' }, { name: '阿棠', lifecycle: 'death' }], [{ title: '三封信', action: 'payoff' }]))
+    await project.saveMemory(memory('ch002', [{ name: '沈蘅', stateAfter: '发着烧', learned: ['信是阿棠代收的', '  '] }], [{ title: '三封信', action: 'advance' }]))
+    await project.saveMemory(memory('ch003', [{ name: '沈蘅', location: '旧书铺', learned: ['信是阿棠代收的', '第三封信没有寄出'] }, { name: '阿棠', lifecycle: 'death' }], [{ title: '三封信', action: 'payoff' }]))
     const main = await project.lineWorld()
     expect(main.line).toBe('main')
     expect(main.path.map(chapter => [chapter.index, chapter.hasText])).toEqual([[1, true], [2, true], [3, true]])
@@ -75,13 +83,16 @@ describe('the world as a line leaves it', () => {
     expect(main.people.map(item => [item.name, item.status, item.first, item.last, item.chapters])).toEqual([['沈蘅', 'active', 1, 3, 3], ['阿棠', 'dead', 1, 3, 2]])
     expect(main.people[0]).toMatchObject({ where: '旧书铺', lastChapter: 'ch003' })
     expect(main.people[1]!.death).toBe(3)
+    // What she came to know, once each, where the digests first noted it; somebody who learned nothing has no such list.
+    expect(main.people[0]!.learned).toEqual([{ index: 2, chapter: 'ch002', what: '信是阿棠代收的' }, { index: 3, chapter: 'ch003', what: '第三封信没有寄出' }])
+    expect(main.people[1]!.learned).toBeUndefined()
     expect(main.threads.map(item => [item.title, item.state, item.planted, item.last, item.touches])).toEqual([['三封信', 'paid', 1, 3, 3], ['欠下的船钱', 'open', 1, 1, 1]])
 
     // Another line, leaving after the second chapter: she is alive on it, and the letters are still unanswered.
     const line = await project.addLine({ title: '她把信寄了出去', from: 'ch002' })
     const side = await project.addChapter({ title: '另一个早晨' }, { line: line.id })
     await project.saveChapterText(side.id, '另一个早晨的正文。')
-    await project.saveMemory(memory(side.id, [{ name: '阿棠', role: '在码头等船', location: '码头' }], [{ title: '欠下的船钱', action: 'payoff' }, { title: '新的来信', action: 'plant' }]))
+    await project.saveMemory(memory(side.id, [{ name: '阿棠', role: '在码头等船', location: '码头', learned: ['信已经寄出去了'] }], [{ title: '欠下的船钱', action: 'payoff' }, { title: '新的来信', action: 'plant' }]))
     const other = await project.lineWorld(line.id)
     expect(other).toMatchObject({ line: line.id, title: '她把信寄了出去' })
     expect(other.path.map(chapter => chapter.id)).toEqual(['ch001', 'ch002', side.id])
@@ -92,6 +103,8 @@ describe('the world as a line leaves it', () => {
     expect(compared.parts).toMatchObject({ id: 'ch002', index: 2 })
     expect(compared.own).toEqual({ left: { chapters: 1, written: 1 }, right: { chapters: 1, written: 1 } })
     expect(compared.people.map(item => `${item.kind}:${item.name}`)).toEqual(['fate:阿棠', 'course:沈蘅'])
+    // After the parting: on the main line she learns of the third letter; on the other, the girl who lives learns the letter went out.
+    expect(compared.people.map(item => item.knows)).toEqual([{ left: [], right: ['信已经寄出去了'] }, { left: ['第三封信没有寄出'], right: [] }])
     expect(compared.threads.map(item => `${item.kind}:${item.title}`)).toEqual(['state:三封信', 'state:欠下的船钱', 'only:新的来信'])
     // A line nobody knows is said to be none, not read as the main one.
     await expect(project.lineWorld('没有这条线')).rejects.toThrow(/no plot line/)

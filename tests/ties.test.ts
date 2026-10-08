@@ -2,6 +2,7 @@
 /** The ties between the things of a book's world, and walking by them. */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { deriveTies } from '../src/core/pipelines/bible'
+import { analyzeBook } from '../src/core/pipelines/import'
 import { containment, neighbours, tiesAt, trail, type Tie } from '../src/shared/ties'
 import { createTestBed, type TestBed } from './support/harness'
 
@@ -169,5 +170,24 @@ describe('a book keeps its ties', () => {
     // Asked again with nothing new to say, nothing is added.
     bed.llm.responder = () => JSON.stringify({ ties: [{ kind: 'holds', from: '贾宝玉', to: '通灵宝玉' }] })
     expect(await deriveTies(bed.core, bed.runtime, {}, { origin: 'user' })).toMatchObject({ added: 0, changed: 1, removed: 0, total: 7 })
+  })
+
+  it('is worked out as a pass of reading a book in, so that an imported world can be walked without being asked for', async () => {
+    const { project } = bed.runtime
+    await project.addChapter({ title: '一' })
+    await project.saveChapterText('ch001', '怡红院在大观园里。')
+    await project.saveWorld({ name: '大观园', category: 'location' })
+    await project.saveWorld({ name: '怡红院', category: 'location' })
+    bed.llm.responder = () => JSON.stringify({ ties: [{ kind: 'within', from: '怡红院', to: '大观园' }], events: [{ name: '大观园', chapter: 1, kind: 'begin', what: '为省亲建成' }] })
+    const result = await analyzeBook(bed.core, bed.runtime, { steps: ['ties'] }, { origin: 'user' })
+    expect(result.steps).toEqual(['ties'])
+    expect(result.ties).toEqual({ added: 1, total: 1, events: 1 })
+    expect(result.failed).toEqual([])
+    expect((await project.ties()).map(item => `${item.kind}:${item.from.id}>${item.to.id}`)).toEqual(['within:怡红院>大观园'])
+    // A planner that does not answer leaves the pass to be done again, and says so.
+    bed.llm.responder = () => { throw new Error('the planner is not answering') }
+    const failed = await analyzeBook(bed.core, bed.runtime, { fresh: true, steps: ['ties'] }, { origin: 'user' })
+    expect(failed.failed.map(failure => failure.step)).toEqual(['ties'])
+    expect((await project.state()).analysis?.pending).toContain('ties')
   })
 })

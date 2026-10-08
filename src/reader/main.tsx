@@ -434,7 +434,7 @@ function Contents({ book, chapters, counts, sides, lines, line, onLine, t }: { b
           <button type="button" className="nv-btn nv-btn-ghost nv-btn-sm" onClick={() => { go({}) }}><Icon name="chevronLeft" size={15} /><span>{t('书架', 'Shelf')}</span></button>
         </header>
       )}
-      <div className="nr-book">
+      <div className="nr-book nr-book-contents">
         <div className="nr-book-head">
           {book.cover !== undefined ? <img className="nr-book-cover" alt="" src={media(book.id, book.cover)} /> : null}
           <div className="nr-book-text">

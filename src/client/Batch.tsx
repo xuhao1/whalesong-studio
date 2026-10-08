@@ -26,7 +26,7 @@ import {
 import { Icon } from './icons'
 import { BATCH_STEP, DENSITY, STAGE_STEP_HINT } from './labels'
 import {
-  Button, Chip, cx, Field, Modal, Progress, Select, Spinner, TextArea, TextInput, useAction, useLoad, useProject, useSnapshot, useStudio, useT, type Translate,
+  Button, Chip, crewLabel, cx, Field, Modal, Progress, Select, Spinner, TextArea, TextInput, useAction, useLoad, useProject, useSnapshot, useStudio, useT, type Translate,
   SectionTitle,
 } from './ui'
 import { CharacterPicker, defaultCastFilter, matchesCast, useCastFilter } from './CharacterPicker'
@@ -121,11 +121,12 @@ export function GateNotes({ kinds }: { kinds?: GateKind[] }) {
 }
 
 function StepCell({ step, t }: { step: BatchStepView | undefined; t: Translate }) {
+  const { host } = useStudio()
   if (step === undefined) return <td className="nv-batch-cell is-absent" />
   const progress = step.progress
   const title = step.note ?? progress?.label
-  return (
-    <td className={cx('nv-batch-cell', `is-${step.state}`)} title={title}>
+  const mark = (
+    <>
       {step.state === 'running' ? (
         <span className="nv-batch-running"><Spinner size={11} />{progress !== undefined && progress.total > 0 ? <span>{progress.done}/{progress.total}</span> : null}</span>
       ) : step.state === 'done' ? <Icon name="check" size={13} />
@@ -134,8 +135,27 @@ function StepCell({ step, t }: { step: BatchStepView | undefined; t: Translate }
             : step.state === 'blocked' ? <span className="nv-batch-mark">⊘</span>
               : <span className="nv-batch-dot" aria-label={t('等待中', 'waiting')} />}
       {step.state === 'done' && step.note !== undefined ? <span className="nv-batch-note">{step.note}</span> : null}
-    </td>
+    </>
   )
+  // A step an agent works on leads to that agent — this one's, not whichever of the batch's agents started last.
+  const run = step.run
+  if (run?.session !== undefined && run.parent !== undefined && host.openRun !== undefined) {
+    const { session, parent } = run
+    const who = crewLabel(run.role, t)
+    return (
+      <td className={cx('nv-batch-cell', `is-${step.state}`, 'has-run')}>
+        <button
+          type="button"
+          className="nv-batch-open"
+          onClick={() => { host.openRun!({ session, parent }) }}
+          title={`${run.running === true ? t(`打开正在做这一格的${who}：它是对话的一个子智能体，每一步都看得到`, `Open the ${who} working on this step: a subagent of the conversation, every step of it in view`) : t(`打开${who}做这一格的记录`, `Open the record of the ${who}'s run on this step`)}${title !== undefined ? `\n${title}` : ''}`}
+        >
+          {mark}
+        </button>
+      </td>
+    )
+  }
+  return <td className={cx('nv-batch-cell', `is-${step.state}`)} title={title}>{mark}</td>
 }
 
 /**

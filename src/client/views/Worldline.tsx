@@ -26,6 +26,12 @@ function standing(person: LinePerson | undefined, t: Translate): string {
   return [end, person.where, person.state].filter((part): part is string => part !== undefined && part.length > 0).join(t(' · ', ' · '))
 }
 
+/** What somebody came to know after two lines part, on one of them: a few of the things, and how many more. */
+function known(items: readonly string[] | undefined, t: Translate): string | undefined {
+  if (items === undefined || items.length === 0) return undefined
+  return `${items.slice(0, 3).join(t('；', '; '))}${items.length > 3 ? t(` 等 ${items.length} 件`, ` and ${items.length - 3} more`) : ''}`
+}
+
 function threadState(thread: LineThread | undefined, t: Translate): string {
   if (thread === undefined) return t('这条线上没有这条线索', 'Not on this line')
   return thread.state === 'paid' ? t(`第 ${thread.last} 章回收`, `paid off in chapter ${thread.last}`) : t(`还悬着（最后提到：第 ${thread.last} 章）`, `still open (last touched in chapter ${thread.last})`)
@@ -43,6 +49,7 @@ export function LineWorldPanel({ line, names }: { line: string; names: { id: str
   const [against, setAgainst] = useKept<string>(`worldline.against.${line}`, '')
   const [courses, setCourses] = useState(false)
   const [everyone, setEveryone] = useState(false)
+  const [knowing, setKnowing] = useState(false)
   const own = useLoad<LineWorld>(async signal => await controller.api.call('line.world', { root, ...(line !== MAIN_LINE ? { line } : {}) }, signal), [root, line, project.revision])
   const other = against.length > 0 && against !== line && names.some(item => item.id === against) ? against : ''
   const theirs = useLoad<LineWorld | undefined>(async signal => (other.length > 0 ? await controller.api.call('line.world', { root, ...(other !== MAIN_LINE ? { line: other } : {}) }, signal) : undefined), [root, other, project.revision])
@@ -63,7 +70,10 @@ export function LineWorldPanel({ line, names }: { line: string; names: { id: str
   const open_ = world.threads.filter(thread => thread.state === 'open')
   const fates = compared?.people.filter(item => item.kind === 'fate') ?? []
   const only = compared?.people.filter(item => item.kind === 'only') ?? []
-  const course = compared?.people.filter(item => item.kind === 'course') ?? []
+  // The same end by another road: those of them who came to know other things on the way are worth a row of their own.
+  const wiser = compared?.people.filter(item => item.kind === 'course' && item.knows !== undefined) ?? []
+  const course = compared?.people.filter(item => item.kind === 'course' && item.knows === undefined) ?? []
+  const informed = world.people.filter(person => (person.learned?.length ?? 0) > 0)
   return (
     <div className="nv-worldline">
       <div className="nv-worldline-head">
@@ -82,7 +92,7 @@ export function LineWorldPanel({ line, names }: { line: string; names: { id: str
               <div key={status} className="nv-worldline-standing">
                 <Chip tone={STATUS_TONES[status]}>{t(...STATUS_LABELS[status])} {list.length}</Chip>
                 <span className="nv-worldline-names">
-                  {list.slice(0, status === 'active' ? 12 : 24).map(person => <button key={person.id} type="button" className="nv-link" onClick={() => { open(person.id, line) }} title={standing(person, t)}>{person.name}</button>)}
+                  {list.slice(0, status === 'active' ? 12 : 24).map(person => <button key={person.id} type="button" className="nv-link" onClick={() => { open(person.id, line) }} title={`${standing(person, t)}${(person.learned?.length ?? 0) > 0 ? t(`\n知道了：${person.learned!.slice(-3).map(item => item.what).join('；')}`, `\nHas learned: ${person.learned!.slice(-3).map(item => item.what).join('; ')}`) : ''}`}>{person.name}</button>)}
                   {list.length > (status === 'active' ? 12 : 24) ? <span className="nv-muted">{t(` 等 ${list.length} 人`, ` and ${list.length - (status === 'active' ? 12 : 24)} more`)}</span> : null}
                 </span>
               </div>
@@ -95,6 +105,24 @@ export function LineWorldPanel({ line, names }: { line: string; names: { id: str
                 {t(`已回收 ${world.threads.length - open_.length}，还悬着 ${open_.length}`, `${world.threads.length - open_.length} paid off, ${open_.length} open`)}
                 {open_.length > 0 ? t(`：${open_.slice(0, 6).map(thread => thread.title).join('、')}${open_.length > 6 ? ' 等' : ''}`, `: ${open_.slice(0, 6).map(thread => thread.title).join(', ')}${open_.length > 6 ? '…' : ''}`) : ''}
               </span>
+            </div>
+          ) : null}
+          {informed.length > 0 ? (
+            <div className="nv-worldline-standing nv-worldline-knows">
+              <Chip tone="blue">{t(`知道了什么 ${informed.length} 人`, `What they know: ${informed.length}`)}</Chip>
+              <span className="nv-worldline-names nv-small">
+                <button type="button" className="nv-link" onClick={() => { setKnowing(!knowing) }}>{knowing ? t('收起', 'Fold') : t('沿这条线，各人先后得知的事（来自各章的收录）', 'What each has come to know along this line, as the digests noted it')}</button>
+              </span>
+              {knowing ? (
+                <ul className="nv-worldline-known">
+                  {informed.map(person => (
+                    <li key={person.id}>
+                      <button type="button" className="nv-link" onClick={() => { open(person.id, line) }}>{person.name}</button>
+                      <span>{person.learned!.map(item => t(`第 ${item.index} 章：${item.what}`, `ch. ${item.index}: ${item.what}`)).join(t('；', '; '))}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -115,15 +143,23 @@ export function LineWorldPanel({ line, names }: { line: string; names: { id: str
             {t(`「${nameOf(line)}」自己走 ${compared.own.left.chapters} 章（已写 ${compared.own.left.written}），「${nameOf(other)}」自己走 ${compared.own.right.chapters} 章（已写 ${compared.own.right.written}）。`, `"${nameOf(line)}" goes ${compared.own.left.chapters} chapters of its own (${compared.own.left.written} written), "${nameOf(other)}" ${compared.own.right.chapters} (${compared.own.right.written} written).`)}
             {compared.people.length + compared.threads.length === 0 ? t(' 收录里读不出两条线上的人和线索有什么不同。', ' Nothing in the digests tells the people or the threads of the two apart.') : ''}
           </p>
-          {fates.length + only.length > 0 ? (
+          {fates.length + only.length + wiser.length > 0 ? (
             <table className="nv-worldline-table">
               <thead><tr><th>{t('谁', 'Who')}</th><th>{nameOf(line)}</th><th>{nameOf(other)}</th></tr></thead>
               <tbody>
-                {[...fates, ...(everyone ? only : only.slice(0, 6))].map(item => (
+                {[...fates, ...wiser, ...(everyone ? only : only.slice(0, 6))].map(item => (
                   <tr key={item.id} className={cx(item.kind === 'fate' && 'is-fate')}>
-                    <th><button type="button" className="nv-link" onClick={() => { open(item.id, item.left !== undefined ? line : other) }}>{item.name}</button><span className="nv-muted nv-small"> {item.kind === 'fate' ? t('命运不同', 'another fate') : t('只在一条线上', 'on one line only')}</span></th>
-                    <td>{item.left !== undefined ? <Chip tone={STATUS_TONES[item.left.status]}>{t(...STATUS_LABELS[item.left.status])}</Chip> : null} <span className="nv-small">{standing(item.left, t)}</span></td>
-                    <td>{item.right !== undefined ? <Chip tone={STATUS_TONES[item.right.status]}>{t(...STATUS_LABELS[item.right.status])}</Chip> : null} <span className="nv-small">{standing(item.right, t)}</span></td>
+                    <th><button type="button" className="nv-link" onClick={() => { open(item.id, item.left !== undefined ? line : other) }}>{item.name}</button><span className="nv-muted nv-small"> {item.kind === 'fate' ? t('命运不同', 'another fate') : item.kind === 'course' ? t('知道的不一样', 'knows other things') : t('只在一条线上', 'on one line only')}</span></th>
+                    {(['left', 'right'] as const).map((side) => {
+                      const here = item[side]
+                      const learned = known(item.knows?.[side], t)
+                      return (
+                        <td key={side}>
+                          {here !== undefined ? <Chip tone={STATUS_TONES[here.status]}>{t(...STATUS_LABELS[here.status])}</Chip> : null} <span className="nv-small">{standing(here, t)}</span>
+                          {learned !== undefined ? <span className="nv-small nv-worldline-learned" title={item.knows![side].join('\n')}>{t('分开之后得知：', 'Learned after the parting: ')}{learned}</span> : null}
+                        </td>
+                      )
+                    })}
                   </tr>
                 ))}
               </tbody>

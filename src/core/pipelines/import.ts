@@ -16,7 +16,7 @@
  *   style     a style profile is learned from the text itself
  */
 import type { StyleProfile, WorldCategory, WorldEntry } from '../../shared/types'
-import { ANALYZE_STEPS, type AnalyzeStep } from '../../shared/types'
+import { ANALYZE_STEPS, analysisSteps, type AnalyzeStep } from '../../shared/types'
 import { clip, countWords, sameName } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { asArray, asList, asRecord, asText } from '../llm'
@@ -24,7 +24,7 @@ import { assign } from '../crew'
 import { ProjectError } from '../project'
 import { architectSystem, volumesTask, worldMergeTask } from '../prompts'
 import { L, promptLanguage } from '../render'
-import { extractStyle } from './bible'
+import { deriveTies, extractStyle } from './bible'
 import { mergeCast } from './cast'
 import { digestPending, updateArcs } from './digest'
 import { pickText } from './plot'
@@ -52,6 +52,8 @@ export interface ImportResult {
   digested: number
   failed: { step: string; error: string }[]
   style?: string
+  /** Ties written down between the people, places, houses and things of the book, and things noted that happen to them. */
+  ties?: { added: number; total: number; events: number }
   /** How the chapters were found: by the editor agent or by rule, and what there is to say about it. */
   structure: { by: 'agent' | 'rules'; bySize: boolean; note?: string; steps?: number }
 }
@@ -64,7 +66,8 @@ export async function importManuscript(core: NovelCore, runtime: ProjectRuntime,
   const lang = promptLanguage(manifest.language)
   const zh = lang === 'zh'
   const failed: ImportResult['failed'] = []
-  const steps = params.analyze === false ? 2 : 8
+  // Finding the chapters, writing them down, and every pass of the analysis.
+  const steps = params.analyze === false ? 2 : 2 + ANALYZE_STEPS.length
   let step = 0
   const advance = (label: string): void => { task.job?.progress(step++, steps, label) }
 
@@ -135,6 +138,7 @@ export async function importManuscript(core: NovelCore, runtime: ProjectRuntime,
   result.worldEntries = analysis.worldEntries
   if (analysis.volumes !== undefined) result.volumes = analysis.volumes
   if (analysis.style !== undefined) result.style = analysis.style
+  if (analysis.ties !== undefined) result.ties = analysis.ties
   failed.push(...analysis.failed)
   task.job?.progress(steps, steps)
   task.job?.result({ chapters: result.chapters })
@@ -145,8 +149,8 @@ export async function importManuscript(core: NovelCore, runtime: ProjectRuntime,
 
 /** What is kept of an analysis that was started, so that one cut short is taken up where it stopped. */
 interface AnalysisNote {
-  /** 2: the analysis includes settling the look of the book's pictures (`art`). */
-  schema: 1 | 2
+  /** 2: the analysis includes settling the look of the book's pictures (`art`). 3: and working out how the things of its world stand to each other (`ties`). */
+  schema: 1 | 2 | 3
   startedAt: string
   /** The book came with no volumes of its own into an empty outline: the planner may divide it. */
   divide?: boolean
@@ -179,6 +183,8 @@ export interface AnalyzeResult {
   worldEntries: number
   volumes?: number
   style?: string
+  /** Ties written down between the people, places, houses and things of the book, and things noted that happen to them. */
+  ties?: { added: number; total: number; events: number }
   /** The look settled for the book's pictures. */
   art?: string
   failed: { step: string; error: string }[]
@@ -197,11 +203,11 @@ export async function analyzeBook(core: NovelCore, runtime: ProjectRuntime, para
   const lang = promptLanguage(manifest.language)
   const failed: AnalyzeResult['failed'] = []
   const before = params.fresh === true ? undefined : await project.readState<AnalysisNote>(NOTE)
-  // An analysis that was started before the art pass existed is finished as it was begun; a new one has it.
-  const note: AnalysisNote = { schema: before?.schema ?? 2, startedAt: before?.startedAt ?? new Date().toISOString(), done: before?.done ?? [], ...(params.divide ?? before?.divide ?? false ? { divide: true } : {}) }
+  // An analysis that was started before a pass existed is finished as it was begun; a new one has them all.
+  const note: AnalysisNote = { schema: before?.schema ?? 3, startedAt: before?.startedAt ?? new Date().toISOString(), done: before?.done ?? [], ...(params.divide ?? before?.divide ?? false ? { divide: true } : {}) }
   const wanted = params.steps !== undefined && params.steps.length > 0
     ? ANALYZE_STEPS.filter(step => params.steps!.includes(step))
-    : ANALYZE_STEPS.filter(step => !note.done.includes(step) && (step !== 'art' || note.schema >= 2))
+    : analysisSteps(note.schema).filter(step => !note.done.includes(step))
   // A style nobody wants learned is not something left undone.
   if (params.style === false && !note.done.includes('style')) note.done.push('style')
   const steps = (params.style === false ? wanted.filter(step => step !== 'style') : wanted)
@@ -321,6 +327,25 @@ export async function analyzeBook(core: NovelCore, runtime: ProjectRuntime, para
     }
     await finished('world', ok)
   }
+
+  // ── how the things of the world stand to each other, and what happens to them ──
+  if (steps.includes('ties')) {
+    within(0, L(lang, '理清地点、家族、人物之间的关系', 'working out how the world stands'))
+    let ok = true
+    try {
+      const ties = await deriveTies(core, runtime, {}, task)
+      result.ties = { added: ties.added, total: ties.total, events: ties.events }
+    } catch (error) {
+      if (task.signal?.aborted === true) throw error
+      // A book with no places, houses or things has nothing to tie: that is no pass left undone.
+      if (!(error instanceof ProjectError && error.code === 'novel/empty')) {
+        ok = false
+        failed.push({ step: 'ties', error: error instanceof Error ? error.message : String(error) })
+      }
+    }
+    await finished('ties', ok)
+  }
+  task.signal?.throwIfAborted()
 
   // ── outline: synopses, volumes, premise ──
   if (steps.includes('outline')) {

@@ -517,9 +517,23 @@ export interface ChapterMemory {
 
 /** A suggestion produced by analysis that waits for a human or the orchestrator to accept. */
 /** The passes that read an imported book and write down what it says; see `analyzeBook`. */
-export type AnalyzeStep = 'digest' | 'cast' | 'world' | 'outline' | 'style' | 'art'
-/** In the order they run. `art` — the look of the book's pictures — came later than the others: an analysis started before it existed is whole without it. */
-export const ANALYZE_STEPS: readonly AnalyzeStep[] = ['digest', 'cast', 'world', 'outline', 'style', 'art']
+export type AnalyzeStep = 'digest' | 'cast' | 'world' | 'ties' | 'outline' | 'style' | 'art'
+/**
+ * In the order they run. Two came later than the others, and an analysis
+ * started before one of them existed is whole without it: `art` — the look of
+ * the book's pictures — and `ties` — how its people, places, houses and
+ * things stand to each other, and what happens to the places over the story.
+ */
+export const ANALYZE_STEPS: readonly AnalyzeStep[] = ['digest', 'cast', 'world', 'ties', 'outline', 'style', 'art']
+
+/**
+ * The passes an analysis has to do, by the form of the note it left when it
+ * was started: 1 — the first five; 2 — with `art`; 3 — with `ties`.
+ */
+export function analysisSteps(schema: number | undefined): AnalyzeStep[] {
+  const form = schema ?? 1
+  return ANALYZE_STEPS.filter(step => (step !== 'art' || form >= 2) && (step !== 'ties' || form >= 3))
+}
 
 export interface Suggestion {
   id: string
@@ -1119,6 +1133,12 @@ export interface BatchStepView {
   progress?: { done: number; total: number; label?: string }
   /** While it runs: what the step itself reports (which lines are in the booth, …). */
   detail?: Record<string, unknown>
+  /**
+   * The role that works (or worked) on this step as an agent, and where its
+   * run is recorded: a step can be opened and watched by itself, whichever of
+   * the batch's many agents it is. Absent for a step no agent did.
+   */
+  run?: Pick<CrewRun, 'role' | 'session' | 'parent' | 'running'>
 }
 
 export interface BatchRowView {

@@ -185,6 +185,9 @@ export function AudioDesk({ chapter, view, job, player, onBody, onChanged }: {
     entry.count += 1
     speakers.set(key, entry)
   }
+  // Whoever carries the story first, as everywhere people are listed; a voice with no card of its own after them, the more lines the earlier.
+  const weightOf = new Map(project.characters.map((card, at) => [card.id, at]))
+  const voices = [...speakers.entries()].sort(([left, one], [right, other]) => (weightOf.get(left) ?? Infinity) - (weightOf.get(right) ?? Infinity) || other.count - one.count)
   const spoken = lines.filter(line => line.kind !== 'narration')
   const unnamed = spoken.filter(line => line.speaker === undefined && line.speakerName === undefined).length
   // Only the button whose work is running says so; the others wait their turn.
@@ -257,7 +260,7 @@ export function AudioDesk({ chapter, view, job, player, onBody, onChanged }: {
       {speakers.size > 0 ? (
         <div className="nv-cast-voices">
           <span className="nv-muted nv-small">{t('声音表', 'Voices')}</span>
-          {[...speakers.entries()].map(([key, speaker]) => (
+          {voices.map(([key, speaker]) => (
             <Chip key={key} tone={speaker.own ? 'green' : speaker.voice !== undefined ? 'blue' : 'neutral'} title={speaker.voice !== undefined ? t(`${speaker.own ? '人物卡上指定的音色' : '这位说话人在有声剧里的声音（按人物卡的声音描述或性别年龄选定，全书沿用）'}：${speaker.voice}`, `${speaker.own ? 'Voice set on the card' : 'This speaker\'s voice in the audio drama (from how their card says they speak, or cast by gender and age; kept for the whole book)'}: ${speaker.voice}`) : t('合成时按性别年龄选角，定下后全书沿用；也可以在人物卡上指定音色或设计专属声线', 'Cast by gender and age at synthesis and kept for the whole book; or set a voice or design one on the character card')}>
               {speaker.name} · {speaker.count}{speaker.voice !== undefined ? ` · ${speaker.voice.startsWith('qwen-tts-vd') ? t('专属声线', 'designed') : speaker.voice.length > 14 ? `${speaker.voice.slice(0, 14)}…` : speaker.voice}` : ''}
             </Chip>

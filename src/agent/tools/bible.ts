@@ -1,18 +1,28 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 /** Tools for the story bible and the outline. */
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
-import { acceptSuggestion, dismissSuggestion, expandCharacter, expandWorld, extractStyle } from '../../core/pipelines/bible'
+import { acceptSuggestion, deriveTies, dismissSuggestion, expandCharacter, expandWorld, extractStyle, tidyWorld } from '../../core/pipelines/bible'
 import { applyOutlineOps, type OutlineOp } from '../../core/pipelines/outline'
 import { buildFoundation, deriveBeats, deriveChapters, whatIf } from '../../core/pipelines/plot'
 import { ProjectError, upsertLooks } from '../../core/project'
 import { deriveVisual } from '../../core/pipelines/illustrate'
 import { promptLanguage, renderCharacter, renderWorld } from '../../core/render'
 import type { NovelService } from '../../host/service'
-import type { CharacterCard, StyleProfile, WorldEntry } from '../../shared/types'
+import { TIE_ENDS, TIE_KINDS, type Tie, type TieEnd, type TieKind } from '../../shared/ties'
+import { WORLD_EVENT_KINDS, type CharacterCard, type StyleProfile, type WorldEntry, type WorldEvent } from '../../shared/types'
 import { brief, novelTool, toJson } from './shared'
 
 const CHARACTER_FIELDS = 'name, aliases[], role (protagonist|deuteragonist|antagonist|supporting|minor|cameo), status (planned|active|offstage|retired|dead), tagline, gender, age, appearance, personality, background, motivation, flaw, arc, voice, abilities, secrets, persona {traits[{name,level 1-5}], values[], speech[], taboos[], underPressure}, relationships[{target, kind, note}], tags[], visual {prompt (the visual anchor: concrete, drawable phrases for an image model — build, face, hair, clothing, signature items; English works best), negative (what must not be drawn on them), looks[{name, prompt (what the outfit changes), when (when it is worn)}] — looks are added or updated by name and the others stay; {name, remove: true} takes one away; their design sheets are drawn with novel_illustrate kind=sheet look=…}, voiceProfile {voice, instructions, designPrompt}, notes'
-const WORLD_FIELDS = 'name, aliases[], category (setting|location|faction|system|item|history|culture|rule|term|other), importance (1 core canon always in context | 2 normal | 3 detail), summary, body (Markdown), related[], tags[], visualPrompt'
+const WORLD_FIELDS = 'name, aliases[], category (setting|location|faction|system|item|history|culture|rule|term|other — location, faction and item are a place, a house or organization, a thing, each with a page of its own; everything else is an idea of the world), importance (1 core canon always in context | 2 normal | 3 detail — how its text travels with requests, not how much it matters), weight (core|major|minor|once — how much of the story it carries; leave it out and it is counted from the chapters that name it), summary, body (Markdown), related[], tags[], visualPrompt (how it looks, for its design art), events[{chapter (id or number), kind (begin|change|decline|end), what}] — its course over the story: built, changed hands, fallen to ruin, destroyed; the list given replaces the one there'
+/** How a tie reads between its two ends, for the book's record. */
+const TIE_WORDS: Record<TieKind, [string, string]> = {
+  within: ['位于', 'is in'],
+  seat: ['坐落在', 'has its seat at'],
+  member: ['属于', 'belongs to'],
+  resides: ['住在', 'lives at'],
+  holds: ['持有', 'holds'],
+}
+
 const STYLE_FIELDS = 'name, pov (first|third-limited|third-omniscient|second|multi), tense (past|present), tone, diction, rhythm, imagery, dialogue, pacing, rules[], avoid[], exemplars[{label,text}], body'
 
 export function bibleTools(service: NovelService): ToolDefinition[] {
@@ -24,6 +34,10 @@ export function bibleTools(service: NovelService): ToolDefinition[] {
         '- action=save creates or updates one entry: pass only the fields that change; an empty string clears a field. `ref` names the entry to update (id, name or alias); omit it to create.',
         '- action=delete removes an entry.',
         '- action=merge (kind=world) makes several entries one — the same place, house or thing written down under different names: `ref` is the entry that stays, `fields.fold` lists the others (ids or names). Their names become its other names, their text is kept under their name in its own, and every tie, scene mark and picture that was theirs is its.',
+        '- action=ties lists how the things of the world stand to each other — what is in what, where a house has its seat, who belongs to which house, lives where, holds what, each with the chapters it holds for — all of them, or those that name `ref`.',
+        '- action=tie writes one down (or says one again, to set its chapters or note): fields {kind: within (a place in a place, a branch in a house) | seat (a house at a place) | member (a character of a house) | resides (a character at a place) | holds (a character holds a thing), from, to (names or ids), since, until (chapter ids or numbers; left out: from the start, for good), note}. action=untie takes one away: `ref` is its id, or fields {kind, from, to}.',
+        '- action=derive_ties has the planner work the ties and the course of places and things out from the bible and the digests (`direction` steers it); ties that are there stay unless it finds them wrong. action=tidy (kind=world) has the planner look over the entries for the same thing written down twice and for entries in the wrong category: it proposes, nothing is changed — act on what you agree with by merge and save, after telling the author.',
+        '- action=pin (kind=world) puts the mark of something that stands in a place onto that place\'s picture, as the viewer shows it: `ref` is the place (or house) whose picture it is, fields {mark: the place, house or character marked, x, y} with x and y from 0 (left, top) to 1 (right, bottom); fields {mark, clear: true} lets that mark be laid out by itself again, fields {clear: true} all of them. Marks are laid out by themselves until pinned.',
         '- action=expand lets the architect model flesh out a character or world entry in agreement with the written text (`direction` steers it).',
         '- action=derive_visual (kind=character) distills the prose appearance of a character into a visual anchor and a negative list for image generation, and stores both on the card (`direction` steers it). Do this — or write fields.visual yourself — before drawing someone: an image model handed the prose of a card invents what the prose leaves open.',
         '- action=learn_style (kind=style) distills a style profile from a sample passage in fields.sample.',
@@ -35,11 +49,11 @@ export function bibleTools(service: NovelService): ToolDefinition[] {
       ].join('\n'),
       mutating: true,
       parameters: {
-        action: { type: 'string', required: true, enum: ['save', 'delete', 'merge', 'expand', 'derive_visual', 'learn_style', 'accept_suggestion', 'dismiss_suggestion'] },
-        kind: { type: 'string', enum: ['character', 'world', 'style'], description: 'Required except for the suggestion actions.' },
+        action: { type: 'string', required: true, enum: ['save', 'delete', 'merge', 'ties', 'tie', 'untie', 'derive_ties', 'tidy', 'pin', 'expand', 'derive_visual', 'learn_style', 'accept_suggestion', 'dismiss_suggestion'] },
+        kind: { type: 'string', enum: ['character', 'world', 'style'], description: 'Required except for the suggestion actions and the actions on ties (ties, tie, untie, derive_ties).' },
         ref: { type: 'string', description: 'Entry id or name; the suggestion id for the suggestion actions.' },
         fields: { type: 'object', additionalProperties: true, description: 'Fields to set (save), or {sample, name} for learn_style.' },
-        direction: { type: 'string', description: 'For expand: what to develop or change.' },
+        direction: { type: 'string', description: 'For expand and derive_ties: what to develop, change or look at.' },
         activate: { type: 'boolean', description: 'For styles: make it the active style.' },
       },
       async run(args, env) {
@@ -56,7 +70,108 @@ export function bibleTools(service: NovelService): ToolDefinition[] {
           const dismissed = await dismissSuggestion(runtime, args.ref)
           return { text: dismissed ? 'Dismissed.' : `No suggestion "${args.ref}".` }
         }
+        // ── how the things of the world stand to each other ──
+        const named = async (end: TieEnd): Promise<string> => (end.type === 'character' ? (await project.findCharacter(end.id))?.name : (await project.findWorld(end.id))?.name) ?? end.id
+        const chapterOf = async (value: unknown): Promise<string | undefined> => {
+          const ref = typeof value === 'number' ? String(value) : typeof value === 'string' ? value.trim() : ''
+          if (ref.length === 0) return undefined
+          const found = await project.findChapter(ref)
+          if (found === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${ref}"`)
+          return found.plan.id
+        }
+        const said = async (tie: Tie): Promise<string> => {
+          const index = async (id: string | undefined): Promise<number | undefined> => (id !== undefined ? (await project.findChapter(id))?.index : undefined)
+          const [since, until] = [await index(tie.since), await index(tie.until)]
+          const span = since !== undefined && until !== undefined ? ` (ch. ${since}–${until})` : since !== undefined ? ` (from ch. ${since})` : until !== undefined ? ` (until ch. ${until})` : ''
+          return `${await named(tie.from)} —${tie.kind}→ ${await named(tie.to)}${span}${tie.note !== undefined ? ` — ${tie.note}` : ''} [${tie.id}]`
+        }
+        const endsOf = (kind: string): { from: TieEnd['type']; to: TieEnd['type'] } => {
+          if (!(TIE_KINDS as readonly string[]).includes(kind)) throw new ProjectError('novel/invalid', `fields.kind is one of ${TIE_KINDS.join(', ')}`)
+          return TIE_ENDS[kind as TieKind]
+        }
+        if (args.action === 'ties') {
+          const all = await project.ties()
+          const about = args.ref !== undefined ? (await project.findCharacter(args.ref))?.id ?? (await project.findWorld(args.ref))?.id : undefined
+          if (args.ref !== undefined && about === undefined) throw new ProjectError('novel/not-found', `nobody and nothing matches "${args.ref}"`)
+          const listed = about !== undefined ? all.filter(tie => tie.from.id === about || tie.to.id === about) : all
+          // Looking is no change: it stays off the book's record.
+          if (listed.length === 0) return { text: about !== undefined ? `Nothing is written down of how "${args.ref}" stands to anything.` : 'No ties are written down yet. action=derive_ties has the planner work them out; action=tie writes one.', record: false }
+          const lines = await Promise.all(listed.map(said))
+          return { text: `${listed.length} ties${about !== undefined ? ` name "${args.ref}"` : ''}:\n${lines.join('\n')}`, data: toJson(listed), record: false }
+        }
+        if (args.action === 'tie') {
+          const kind = typeof fields.kind === 'string' ? fields.kind : ''
+          const ends = endsOf(kind)
+          if (typeof fields.from !== 'string' || typeof fields.to !== 'string') throw new ProjectError('novel/invalid', 'fields.from and fields.to name what the tie connects')
+          const [since, until] = [await chapterOf(fields.since), await chapterOf(fields.until)]
+          const tie = await project.saveTie({ kind: kind as TieKind, from: { type: ends.from, id: fields.from }, to: { type: ends.to, id: fields.to }, ...(since !== undefined ? { since } : {}), ...(until !== undefined ? { until } : {}), ...(typeof fields.note === 'string' ? { note: fields.note } : {}) })
+          const [who, where] = [await named(tie.from), await named(tie.to)]
+          return { text: `Written down: ${await said(tie)}`, data: toJson(tie), record: { summary: [`记下关系：${who} ${TIE_WORDS[tie.kind][0]} ${where}`, `Wrote down a tie: ${who} ${TIE_WORDS[tie.kind][1]} ${where}`] } }
+        }
+        if (args.action === 'untie') {
+          let id = args.ref
+          if (id === undefined) {
+            const kind = typeof fields.kind === 'string' ? fields.kind : ''
+            const ends = endsOf(kind)
+            const resolve = async (type: TieEnd['type'], ref: unknown): Promise<string | undefined> => (typeof ref !== 'string' ? undefined : type === 'character' ? (await project.findCharacter(ref))?.id : (await project.findWorld(ref))?.id)
+            const [from, to] = [await resolve(ends.from, fields.from), await resolve(ends.to, fields.to)]
+            id = (await project.ties()).find(tie => tie.kind === kind && tie.from.id === from && tie.to.id === to)?.id
+            if (id === undefined) return { text: 'No such tie is written down.', record: false }
+          }
+          const gone = (await project.ties()).find(tie => tie.id === id)
+          const removed = await project.removeTie(id)
+          if (!removed || gone === undefined) return { text: `No tie "${id}".`, record: false }
+          const [who, where] = [await named(gone.from), await named(gone.to)]
+          return { text: `Taken away: ${who} —${gone.kind}→ ${where} (${id}).`, record: { summary: [`去掉关系：${who} ${TIE_WORDS[gone.kind][0]} ${where}`, `Took a tie away: ${who} ${TIE_WORDS[gone.kind][1]} ${where}`] } }
+        }
+        if (args.action === 'derive_ties') {
+          const done = await env.job('bible', 'ties', undefined, async task => await deriveTies(env.core, runtime, typeof args.direction === 'string' && args.direction.trim().length > 0 ? { direction: args.direction.trim() } : {}, task))
+          return {
+            text: `The planner worked the ties out: ${done.added} written down, ${done.changed} changed, ${done.removed} taken away, ${done.total} in all; ${done.events} things noted that happen to a place, a house or a thing.${done.created.length > 0 ? ` Entries the ties needed and the bible lacked were made: ${done.created.join(', ')}.` : ''}${done.skipped.length > 0 ? ` Could not be written down: ${done.skipped.slice(0, 6).join('; ')}${done.skipped.length > 6 ? '…' : ''}.` : ''} Look them over with action=ties — the planner is not always right about what is in what.`,
+            data: toJson(done),
+          }
+        }
+        if (args.action === 'tidy') {
+          const found = await env.job('bible', 'tidy world', undefined, async task => await tidyWorld(env.core, runtime, task))
+          const same = found.same.map(item => `- the same thing: keep "${item.keep.name}", fold in ${item.others.map(other => `"${other.name}"`).join(', ')}${item.why !== undefined ? ` — ${item.why}` : ''}`)
+          const kinds = found.kinds.map(item => `- "${item.name}": ${item.from} → ${item.to}${item.why !== undefined ? ` — ${item.why}` : ''}`)
+          return {
+            text: same.length + kinds.length === 0
+              ? `The planner looked over ${found.entries} entries and proposes nothing.`
+              : `The planner looked over ${found.entries} entries and proposes (nothing is changed yet — it is not always right; tell the author, then merge with action=merge and move with action=save fields.category):\n${[...same, ...kinds].join('\n')}`,
+            data: toJson(found),
+            // A proposal changes nothing.
+            record: false,
+          }
+        }
         if (args.kind === undefined) throw new ProjectError('novel/invalid', '`kind` is required: character, world or style')
+
+        if (args.action === 'pin') {
+          if (args.kind !== 'world' || args.ref === undefined) throw new ProjectError('novel/invalid', 'pin is for a place or a house (kind=world): `ref` names the one whose picture it is')
+          const place = await project.findWorld(args.ref)
+          if (place === undefined) throw new ProjectError('novel/not-found', `no world entry matches "${args.ref}"`)
+          if (fields.mark === undefined) {
+            if (fields.clear !== true) throw new ProjectError('novel/invalid', 'fields.mark names what is marked; fields {clear: true} alone lets every mark of the picture go')
+            await project.saveWorld({ id: place.id, spots: null } as never)
+            return { text: `Every mark on the picture of "${place.name}" is laid out by itself again.`, record: { summary: [`《${place.name}》画面上的按钮全部恢复自动排布`, `Let every mark on the picture of "${place.name}" be laid out by itself`] } }
+          }
+          const mark = typeof fields.mark === 'string' ? fields.mark : ''
+          const who = await project.findCharacter(mark)
+          const what = who === undefined ? await project.findWorld(mark) : undefined
+          if (who === undefined && what === undefined) throw new ProjectError('novel/not-found', `nobody and nothing matches "${mark}"`)
+          const key = who !== undefined ? `character:${who.id}` : `world:${what!.id}`
+          const name = who?.name ?? what!.name
+          if (fields.clear === true) {
+            await project.saveWorld({ id: place.id, spots: { [key]: null } } as never)
+            return { text: `The mark of "${name}" on the picture of "${place.name}" is laid out by itself again.`, record: { summary: [`《${place.name}》画面上「${name}」的按钮恢复自动排布`, `Let the mark of "${name}" on the picture of "${place.name}" be laid out by itself`] } }
+          }
+          const fraction = (value: unknown): number | undefined => (typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1 ? Math.round(value * 1000) / 1000 : undefined)
+          const [x, y] = [fraction(fields.x), fraction(fields.y)]
+          if (x === undefined || y === undefined) throw new ProjectError('novel/invalid', 'fields.x and fields.y say where on the picture, each from 0 (left, top) to 1 (right, bottom)')
+          const stands = (await project.ties()).some(tie => tie.to.id === place.id && tie.from.id === (who?.id ?? what!.id))
+          await project.saveWorld({ id: place.id, spots: { [key]: { x, y } } } as never)
+          return { record: { summary: [`在《${place.name}》的画面上摆了「${name}」的位置`, `Pinned the mark of "${name}" on the picture of "${place.name}"`] }, text: `Pinned the mark of "${name}" at ${x}, ${y} of the picture of "${place.name}".${place.visualImage === undefined ? ' The place has no design art yet: the mark shows once it has (novel_illustrate kind=scene).' : ''}${stands ? '' : ` Nothing says "${name}" stands in "${place.name}" — a mark shows only for what is tied to the place (action=tie).`}` }
+        }
 
         if (args.action === 'save') {
           // `ref` selects the entry; a new entry takes its name from fields.name.
@@ -79,6 +194,19 @@ export function bibleTools(service: NovelService): ToolDefinition[] {
           if (args.kind === 'world') {
             const existing = args.ref !== undefined ? await project.findWorld(args.ref) : undefined
             if (args.ref !== undefined && existing === undefined && fields.name === undefined) fields.name = args.ref
+            // Its course is told by the book's own chapters: a number or a title is put right, a chapter nobody has is said.
+            if (Array.isArray(fields.events)) {
+              const course: WorldEvent[] = []
+              for (const item of fields.events as Record<string, unknown>[]) {
+                const kind = WORLD_EVENT_KINDS.find(candidate => candidate === item?.kind)
+                const what = typeof item?.what === 'string' ? item.what.trim() : ''
+                if (kind === undefined || what.length === 0) throw new ProjectError('novel/invalid', `each of fields.events is {chapter, kind (${WORLD_EVENT_KINDS.join('|')}), what}`)
+                const chapter = await chapterOf(item.chapter)
+                if (chapter === undefined) throw new ProjectError('novel/invalid', 'each of fields.events names the chapter it happens in')
+                course.push({ chapter, kind, what })
+              }
+              fields.events = course
+            }
             const entry = await project.saveWorld({ ...(fields as Partial<WorldEntry>), ...(existing !== undefined ? { id: existing.id } : {}) })
             return { text: `${existing !== undefined ? 'Updated' : 'Created'} world entry "${entry.name}" (${entry.id}).\n\n${brief(renderWorld(entry, lang), 600)}`, data: toJson(entry) }
           }

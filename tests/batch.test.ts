@@ -114,6 +114,45 @@ describe('batches', () => {
     expect(stopped).toBe(true)
     expect(jobs.get(started.id)!.status).toBe('cancelled')
   })
+
+  it('names on every step the agent that works on it, so that each can be opened by itself', async () => {
+    const jobs = new JobManager()
+    let release: () => void = () => {}
+    const held = new Promise<void>((resolve) => { release = resolve })
+    const started = jobs.start({ kind: 'batch', title: 'text batch', project: '/book', origin: 'user' }, async (job) => {
+      const steps: BatchStep[] = ['a', 'b', 'c'].map(target => ({
+        target,
+        op: 'digest',
+        async run(task) {
+          // The third is a plain call: no agent, nothing to open.
+          if (target !== 'c') task.job?.crew({ role: 'analyst', label: `digest ${target}`, by: 'agent', running: true, session: `session-${target}`, parent: 'conversation' })
+          await held
+          if (target !== 'c') task.job?.crew({ role: 'analyst', label: `digest ${target}`, by: 'agent', steps: 4, session: `session-${target}`, parent: 'conversation' })
+          return 'done'
+        },
+      }))
+      return await runBatch(plan(steps, { digest: 3 }), { origin: 'user', signal: job.signal, job }, 'en')
+    })
+    await tick(10)
+    const running = jobs.get(started.id)!.result!.batch as BatchView
+    // Three steps at once, two agents: each cell leads to its own — not to whichever started last.
+    expect(running.rows.map(row => row.steps.digest!.run)).toEqual([
+      { role: 'analyst', session: 'session-a', parent: 'conversation', running: true },
+      { role: 'analyst', session: 'session-b', parent: 'conversation', running: true },
+      undefined,
+    ])
+    // The job still lists them all, as before.
+    expect(jobs.get(started.id)!.crew!.map(run => run.session)).toEqual(['session-a', 'session-b'])
+    release()
+    await started.done
+    // Over, a step still says who did it: the record of the run can be read afterwards.
+    const settled = jobs.get(started.id)!.result!.batch as BatchView
+    expect(settled.rows.map(row => [row.steps.digest!.state, row.steps.digest!.run])).toEqual([
+      ['done', { role: 'analyst', session: 'session-a', parent: 'conversation', running: false }],
+      ['done', { role: 'analyst', session: 'session-b', parent: 'conversation', running: false }],
+      ['done', undefined],
+    ])
+  })
 })
 
 describe('batches of real work', () => {
