@@ -43,6 +43,8 @@ export interface SearchOptions {
   beforeChapter?: number
   /** Skip content bound to these chapters. */
   excludeChapters?: string[]
+  /** Keep only what this lets through — asked before anything is ranked, so what is left out takes no place among the hits. `ref` is a chapter's id for the manuscript, memories and outlines, a card's or an entry's for the bible. */
+  within?: (source: SearchSource, ref: string) => boolean
   signal?: AbortSignal
 }
 
@@ -304,6 +306,7 @@ export class RetrievalIndex {
       if (options.sources !== undefined && !options.sources.includes(doc.source)) return false
       if (options.beforeChapter !== undefined && doc.chapterIndex !== undefined && doc.chapterIndex >= options.beforeChapter) return false
       if (options.excludeChapters !== undefined && doc.chapterIndex !== undefined && options.excludeChapters.includes(doc.ref)) return false
+      if (options.within !== undefined && !options.within(doc.source, doc.ref)) return false
       return true
     })
     if (pool.length === 0 || query.trim().length === 0) return []

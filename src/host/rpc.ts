@@ -562,9 +562,9 @@ export function createHandlers(service: NovelService): Handlers {
         ...(typeof note === 'string' && note.trim().length > 0 ? { note: note.trim() } : {}),
       }, task))
     },
-    'ai.reviseBook': async ({ root, instruction, chapters }) => {
+    'ai.reviseBook': async ({ root, instruction, chapters, line }) => {
       const runtime = await open(root)
-      return job(runtime, 'revise', 'revise book', undefined, async task => await reviseBook(core, runtime, { instruction: requireString(instruction, 'instruction'), ...(chapters !== undefined ? { chapters } : {}) }, task))
+      return job(runtime, 'revise', 'revise book', undefined, async task => await reviseBook(core, runtime, { instruction: requireString(instruction, 'instruction'), ...(chapters !== undefined ? { chapters } : {}), ...(line !== undefined ? { line } : {}) }, task))
     },
     'ai.digest': async ({ root, chapters, force }) => {
       const runtime = await open(root)

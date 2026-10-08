@@ -9,6 +9,7 @@
 import type {
   ChapterMemory, ChapterPlan, CharacterCard, CharacterMoment, EntityCandidate, FactKind, MemoryFact, Outline, Suggestion, ThreadTouch,
 } from '../../shared/types'
+import { MAIN_LINE } from '../../shared/types'
 import { hashText, sameName } from '../../shared/text'
 import type { ArcSummary } from '../context'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
@@ -44,6 +45,7 @@ export async function digestChapter(core: NovelCore, runtime: ProjectRuntime, re
   const { value } = await assign(core, runtime, task, {
     role: 'analyst',
     label: `${chapterLabel(chapter, lang === 'zh')} · ${L(lang, '收录记忆', 'memory')}`,
+    line: chapter.line ?? MAIN_LINE,
     tool: 'record_memory',
     // The material is all in the task: a few looks at the book at most, then the result.
     maxSteps: 12,

@@ -760,6 +760,7 @@ export async function produceVideo(core: NovelCore, runtime: ProjectRuntime, par
   const done = await delegate(core, runtime, task, {
     role: 'producer',
     label: L(lang, `第${materials.chapter.index}章 · 成片`, `Ch. ${materials.chapter.index} · video`),
+    line: await runtime.project.lineOf(materials.chapter.id),
     task: brief(materials, manifestPath, zh, params.direction, wantSubtitles, left),
     tools,
     handIn: 'video_submit',

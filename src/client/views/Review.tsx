@@ -4,9 +4,9 @@
  * found while digesting, review issues per chapter, and book-wide revisions
  * (including carrying a changed setting or character through the manuscript).
  */
-import { useState, type ReactNode } from 'react'
+import { Fragment, useState, type ReactNode } from 'react'
 import { clip } from '../../shared/text'
-import type { IssueSeverity, Proposal, TextStep } from '../../shared/types'
+import { MAIN_LINE, type ChapterInfo, type IssueSeverity, type Proposal, type TextStep } from '../../shared/types'
 import { ProposalCard } from '../components/ProposalCard'
 import { SEVERITY, SEVERITY_TONE, SUGGESTION_KIND } from '../labels'
 import { IssueBatchBar, IssueCard } from '../Issues'
@@ -231,7 +231,12 @@ function Issues() {
   const board = useIssueBoard()
   // Which chapters are unfolded to show their issues: a book's issues are read chapter by chapter, not as one long page.
   const [unfolded, setUnfolded] = useKept<string[]>('review.unfolded', [])
-  const written = project.chapters.filter(chapter => chapter.hasText)
+  // Line by line: the main one, then what each other line of the plot has of its own — every line counts its own chapters.
+  const groups = [
+    { id: MAIN_LINE, title: t('主线', 'Main line'), chapters: project.chapters.filter(chapter => chapter.hasText) },
+    ...(project.lines ?? []).map(line => ({ id: line.id, title: project.outline.lines?.find(candidate => candidate.id === line.id)?.title ?? line.id, chapters: line.chapters.filter(chapter => chapter.hasText) })),
+  ].filter(group => group.chapters.length > 0)
+  const written = groups.flatMap(group => group.chapters)
   const pending = written.filter(chapter => chapter.openIssues === undefined)
   const undigested = written.filter(chapter => !chapter.digested)
   // One batch: the chapters are reviewed side by side, as many at once as the settings allow.
@@ -245,6 +250,41 @@ function Issues() {
     await controller.api.call('batch.text', { root, steps, chapters })
     await controller.refreshJobs()
   })
+  /** One chapter of the page: what was found in it, counted by how grave, and unfolded on a click. */
+  const row = (chapter: ChapterInfo): ReactNode => (
+    <li key={chapter.id}>
+      <div className="nv-list-row is-static">
+        <button type="button" className="nv-issue-fold" disabled={board.shownIn(chapter.id) === 0} aria-expanded={unfolded.includes(chapter.id)} onClick={() => { setUnfolded(unfolded.includes(chapter.id) ? unfolded.filter(id => id !== chapter.id) : [...unfolded, chapter.id]) }}>
+          <Icon name={unfolded.includes(chapter.id) && board.shownIn(chapter.id) > 0 ? 'chevronDown' : 'chevronRight'} size={14} />
+          <span className="nv-list-index">{chapter.index}</span>
+          <span className="nv-list-title">{chapter.title}</span>
+          {board.counts(chapter.id).map(item => <Chip key={item.severity} tone={SEVERITY_TONE[item.severity]}>{t(`${item.count} ${SEVERITY[item.severity][0]}`, `${item.count} ${SEVERITY[item.severity][1].toLowerCase()}`)}</Chip>)}
+          {board.pickedIn(chapter.id) > 0 ? <Chip tone="blue">{t(`已选 ${board.pickedIn(chapter.id)}`, `${board.pickedIn(chapter.id)} ticked`)}</Chip> : null}
+        </button>
+        <span className="nv-list-side">
+          {chapter.openIssues === undefined ? <Chip>{t('未审', 'Not reviewed')}</Chip> : chapter.openIssues === 0 ? <Chip tone="green">{t('无待办', 'Clear')}</Chip> : board.counts(chapter.id).length > 0 ? null : <Chip tone="amber">{t(`${chapter.openIssues} 个问题`, `${chapter.openIssues} open`)}</Chip>}
+          <Button size="sm" variant="ghost" busy={reviewing.has(chapter.id)} disabled={batch !== undefined} onClick={() => controller.guard(async () => { await controller.api.call('ai.review', { root, chapter: chapter.id }); await controller.refreshJobs() })}>{chapter.openIssues === undefined ? t('审校', 'Review') : t('重审', 'Again')}</Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            icon="eye"
+            onClick={() => {
+              // Looked at from the review: with what the review found marked in the text.
+              try {
+                localStorage.setItem('novel-studio:annotate', '1')
+              } catch {
+                // The notes can still be switched on there.
+              }
+              controller.setView('read', chapter.id)
+            }}
+            title={t('观看：在"观看"里读这一章，审校出的问题标在正文上', 'View: read the chapter in the viewer, with what the review found marked in the text')}
+          />
+          <Button size="sm" variant="ghost" icon="arrowRight" onClick={() => { controller.setView('write', chapter.id) }} title={t('打开这一章', 'Open the chapter')} />
+        </span>
+      </div>
+      {unfolded.includes(chapter.id) ? board.cards(chapter.id) : null}
+    </li>
+  )
   if (written.length === 0) return <Empty icon="alert" title={t('还没有可审校的正文', 'No prose to review yet')} />
   return (
     <div className="nv-issues">
@@ -258,39 +298,11 @@ function Issues() {
       {batchJob !== undefined && (batch !== undefined || batchJob.status !== 'done' || (batchOf(batchJob)?.failed ?? 0) > 0) ? <div className="nv-card"><BatchMatrix job={batchJob} compact /></div> : null}
       {board.toolbar}
       <ul className="nv-list nv-card">
-        {written.map(chapter => (
-          <li key={chapter.id}>
-            <div className="nv-list-row is-static">
-              <button type="button" className="nv-issue-fold" disabled={board.shownIn(chapter.id) === 0} aria-expanded={unfolded.includes(chapter.id)} onClick={() => { setUnfolded(unfolded.includes(chapter.id) ? unfolded.filter(id => id !== chapter.id) : [...unfolded, chapter.id]) }}>
-                <Icon name={unfolded.includes(chapter.id) && board.shownIn(chapter.id) > 0 ? 'chevronDown' : 'chevronRight'} size={14} />
-                <span className="nv-list-index">{chapter.index}</span>
-                <span className="nv-list-title">{chapter.title}</span>
-                {board.counts(chapter.id).map(item => <Chip key={item.severity} tone={SEVERITY_TONE[item.severity]}>{t(`${item.count} ${SEVERITY[item.severity][0]}`, `${item.count} ${SEVERITY[item.severity][1].toLowerCase()}`)}</Chip>)}
-                {board.pickedIn(chapter.id) > 0 ? <Chip tone="blue">{t(`已选 ${board.pickedIn(chapter.id)}`, `${board.pickedIn(chapter.id)} ticked`)}</Chip> : null}
-              </button>
-              <span className="nv-list-side">
-                {chapter.openIssues === undefined ? <Chip>{t('未审', 'Not reviewed')}</Chip> : chapter.openIssues === 0 ? <Chip tone="green">{t('无待办', 'Clear')}</Chip> : board.counts(chapter.id).length > 0 ? null : <Chip tone="amber">{t(`${chapter.openIssues} 个问题`, `${chapter.openIssues} open`)}</Chip>}
-                <Button size="sm" variant="ghost" busy={reviewing.has(chapter.id)} disabled={batch !== undefined} onClick={() => controller.guard(async () => { await controller.api.call('ai.review', { root, chapter: chapter.id }); await controller.refreshJobs() })}>{chapter.openIssues === undefined ? t('审校', 'Review') : t('重审', 'Again')}</Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  icon="eye"
-                  onClick={() => {
-                    // Looked at from the review: with what the review found marked in the text.
-                    try {
-                      localStorage.setItem('novel-studio:annotate', '1')
-                    } catch {
-                      // The notes can still be switched on there.
-                    }
-                    controller.setView('read', chapter.id)
-                  }}
-                  title={t('观看：在"观看"里读这一章，审校出的问题标在正文上', 'View: read the chapter in the viewer, with what the review found marked in the text')}
-                />
-                <Button size="sm" variant="ghost" icon="arrowRight" onClick={() => { controller.setView('write', chapter.id) }} title={t('打开这一章', 'Open the chapter')} />
-              </span>
-            </div>
-            {unfolded.includes(chapter.id) ? board.cards(chapter.id) : null}
-          </li>
+        {groups.map(group => (
+          <Fragment key={group.id}>
+            {groups.length > 1 ? <li className="nv-review-line"><Icon name="branch" size={12} /><span>{group.title}</span><span className="nv-muted nv-small">{t(`${group.chapters.length} 章`, `${group.chapters.length} chapters`)}</span></li> : null}
+            {group.chapters.map(row)}
+          </Fragment>
         ))}
       </ul>
     </div>
@@ -306,13 +318,19 @@ function BookRevision({ onStarted }: { onStarted: () => void }) {
   const [scope, setScope] = useState<'auto' | 'pick'>('auto')
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [summary, setSummary] = useState<{ note?: string; changed: number; untouched: number; failed: number } | undefined>()
-  const written = project.chapters.filter(chapter => chapter.hasText)
+  // A revision is of one line of the plot: its chapters as they are read on it.
+  const others = project.outline.lines ?? []
+  const [wantedLine, setLine] = useState(MAIN_LINE)
+  const line = others.some(candidate => candidate.id === wantedLine) ? wantedLine : MAIN_LINE
+  const known = new Map([...project.chapters, ...(project.lines ?? []).flatMap(candidate => candidate.chapters)].map(info => [info.id, info]))
+  const path = line === MAIN_LINE ? project.chapters : (project.lines?.find(candidate => candidate.id === line)?.path ?? []).map(id => known.get(id)).filter((info): info is ChapterInfo => info !== undefined)
+  const written = path.filter(chapter => chapter.hasText)
   const running = jobs.find(job => job.status === 'running' && job.kind === 'revise' && job.title === 'revise book')
 
   const start = (): void => {
     setSummary(undefined)
     void controller.guard(async () => {
-      const info = await controller.run('ai.reviseBook', { root, instruction: instruction.trim(), ...(scope === 'pick' && picked.size > 0 ? { chapters: [...picked] } : {}) })
+      const info = await controller.run('ai.reviseBook', { root, instruction: instruction.trim(), ...(line !== MAIN_LINE ? { line } : {}), ...(scope === 'pick' && picked.size > 0 ? { chapters: [...picked].filter(id => written.some(chapter => chapter.id === id)) } : {}) })
       const output = info.result?.output as { note?: string; untouched?: number; results?: unknown[]; failed?: unknown[] } | undefined
       setSummary({ ...(output?.note !== undefined ? { note: output.note } : {}), changed: output?.results?.length ?? 0, untouched: output?.untouched ?? 0, failed: output?.failed?.length ?? 0 })
       if ((output?.results?.length ?? 0) > 0) onStarted()
@@ -356,6 +374,11 @@ function BookRevision({ onStarted }: { onStarted: () => void }) {
         <Field label={t('修改要求', 'The instruction')}>
           <TextArea value={instruction} minRows={4} maxRows={14} placeholder={t('例：把所有“灵力”改称“炁”并调整相关描写', 'E.g. call every "spirit power" "qi" and adjust the descriptions around it')} onChange={(event) => { setInstruction(event.target.value) }} />
         </Field>
+        {others.length > 0 ? (
+          <Field label={t('哪条线', 'Which line')}>
+            <Select value={line} options={[{ value: MAIN_LINE, label: t('主线', 'Main line') }, ...others.map(item => ({ value: item.id, label: item.title }))]} onChange={(value) => { setLine(value); setPicked(new Set()) }} />
+          </Field>
+        ) : null}
         <Field label={t('范围', 'Scope')}>
           <Select value={scope} options={[{ value: 'auto', label: t('由策划判断哪些章节需要改', 'Let the planner decide which chapters change') }, { value: 'pick', label: t('只在我选的章节里改', 'Only the chapters I pick') }]} onChange={setScope} />
         </Field>

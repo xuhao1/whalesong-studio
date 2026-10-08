@@ -19,11 +19,11 @@ import { watch, type FSWatcher } from 'node:fs'
 import { basename, join } from 'node:path'
 import {
   analysisSteps, type AnalyzeStep,
-  castOrder, chapterBudgetOf, MAIN_LINE,
+  belongsTo, castOrder, chapterBudgetOf, MAIN_LINE,
   type ActivityEntry, type BookShows, type CharacterLook, type CharacterMoment, type LifeMark, type ShowCount,
   type AudioScript, type CastPresence, type ChapterInfo, type ChapterMemory, type ChapterPlan, type ChapterReview, type ChapterStatus, type CharacterCard,
   type ComicBoard, type IllustrationInfo, type Outline, type PlaySession, type PlotLine, type PlotLineInfo, type PlotLineOrigin, type PlotThread, type ProjectManifest, type ProjectState, type ProjectStats, type Proposal, type RemovedChapter,
-  type StyleProfile, type Suggestion, type VersionInfo, type VoiceCast, type Volume, type WorldEntry,
+  type StyleProfile, type Suggestion, type ThreadTouch, type VersionInfo, type VoiceCast, type Volume, type WorldEntry,
 } from '../shared/types'
 import { lifeOf, statusAt, type Life } from '../shared/life'
 import type { LinePerson, LineThread, LineWorld } from '../shared/worldline'
@@ -69,6 +69,30 @@ export interface LocatedChapter {
   index: number
   /** The line the chapter belongs to, when it is not the main one. */
   line?: string
+}
+
+/** What a line of the plot has of the book: what whoever works on that line reads. See `Project.lineScope`. */
+export interface LineScope {
+  /** The line's id: `main` for the main one. */
+  line: string
+  /** Its name; absent for the main line. */
+  title?: string
+  /** What sets it apart, as the author put it. */
+  premise?: string
+  /** A story of its own from the first page: it parts from no other line, and what the book says its story is — the main line's — is not this one's. */
+  apart: boolean
+  /** The chapters read on it, in order, numbered along it. */
+  path: LocatedChapter[]
+  /** Whether a chapter is read on it. */
+  reads: (chapterId: string) => boolean
+  /** Whether somebody is one of its people: as the author said, else as the chapters have them (`ofLine`). */
+  has: (card: Pick<CharacterCard, 'id' | 'lines'>) => boolean
+  /** Whether something of the world is its to know: all of the world, but for what the author kept to other lines. */
+  knows: (entry: Pick<WorldEntry, 'lines'>) => boolean
+  /** The threads that are its own — planted, taken up or planned on it, or touched by no line yet — and whether each still waits at its end. */
+  threads: { thread: PlotThread; open: boolean }[]
+  /** How many lines the book has beside this one. */
+  others: number
 }
 
 /** Where a new chapter goes. */
@@ -832,14 +856,124 @@ export class Project {
   async seenOn(): Promise<{ lines: { id: string; title: string }[]; people: Record<string, string[]> }> {
     const outline = await this.outline()
     const lines = [{ id: MAIN_LINE, title: '' }, ...(outline.lines ?? []).map(line => ({ id: line.id, title: line.title }))]
+    const { people: where } = await this.whereabouts()
     const people: Record<string, string[]> = {}
     for (const line of lines) {
-      const { lives } = await this.lives(line.id === MAIN_LINE ? undefined : line.id)
-      for (const [id, life] of Object.entries(lives)) {
-        if (life.events.some(event => event.index >= 1)) people[id] = [...(people[id] ?? []), line.id]
-      }
+      const path = new Set(linePath(outline, lineOf(outline, line.id)).map(entry => entry.plan.id))
+      for (const [id, chapters] of where) if ([...chapters].some(chapter => path.has(chapter))) people[id] = [...(people[id] ?? []), line.id]
     }
     return { lines, people }
+  }
+
+  /**
+   * The line somebody's story is read along where nobody says which: the main line if they are of it — said so, or seen
+   * there, or seen nowhere yet — else the first line that has them. A world may hold several stories, and a person of
+   * one of them is read in that one.
+   */
+  async lineOfCharacter(card: Pick<CharacterCard, 'id' | 'lines'>): Promise<string> {
+    const { lines, people } = await this.seenOn()
+    const said = (card.lines ?? []).filter(id => lines.some(line => line.id === id))
+    const theirs = said.length > 0 ? said : people[card.id] ?? []
+    return theirs.length === 0 || theirs.includes(MAIN_LINE) ? MAIN_LINE : theirs[0]!
+  }
+
+  private whereAt: { revision: number; people: Map<string, Set<string>>; threads: Map<string, Map<string, ThreadTouch['action'] | 'plan'>> } | undefined
+
+  /**
+   * In which chapters each character is found — by the chapter's digest, or cast by its plan — and each thread is
+   * touched, on whichever line: read off every chapter once for a state of the book. What says whose a character or a thread is without anybody saying.
+   */
+  private async whereabouts(): Promise<{ people: Map<string, Set<string>>; threads: Map<string, Map<string, ThreadTouch['action'] | 'plan'>> }> {
+    const revision = this.revisionValue
+    if (this.whereAt?.revision === revision) return this.whereAt
+    const [outline, cards] = await Promise.all([this.outline(), this.characters()])
+    const key = (name: string): string => name.normalize('NFKC').replace(/\s+/g, '').toLowerCase()
+    const byName = new Map<string, string>()
+    for (const card of cards) for (const name of [card.name, ...(card.aliases ?? [])]) if (!byName.has(key(name))) byName.set(key(name), card.id)
+    const ids = new Set(cards.map(card => card.id))
+    const people = new Map<string, Set<string>>()
+    const threads = new Map<string, Map<string, ThreadTouch['action'] | 'plan'>>()
+    const seen = (card: string, chapter: string): void => { people.set(card, (people.get(card) ?? new Set()).add(chapter)) }
+    const touched = (thread: string, chapter: string, how: ThreadTouch['action'] | 'plan'): void => { threads.set(thread, (threads.get(thread) ?? new Map()).set(chapter, how)) }
+    const known = new Set<string>()
+    for (const holder of holders(outline)) {
+      for (const plan of holder.chapters) {
+        known.add(plan.id)
+        for (const thread of plan.threads ?? []) touched(thread, plan.id, 'plan')
+        // Cast by a chapter's plan, somebody is that line's before a word of the chapter is written.
+        for (const ref of [plan.pov, ...(plan.characters ?? []), ...(plan.beats ?? []).flatMap(beat => beat.characters ?? [])]) {
+          if (ref === undefined || ref.length === 0) continue
+          const card = ids.has(ref) ? ref : byName.get(key(ref))
+          if (card !== undefined) seen(card, plan.id)
+        }
+        const memory = await this.memory(plan.id)
+        if (memory === undefined) continue
+        for (const moment of memory.characters) {
+          const card = ids.has(moment.character) ? moment.character : byName.get(key(moment.name))
+          if (card !== undefined) seen(card, plan.id)
+        }
+        for (const touch of memory.threads) {
+          const thread = outline.threads.find(candidate => candidate.id === touch.threadId) ?? outline.threads.find(candidate => sameName(candidate.title, touch.title))
+          // What the chapter did to it says more than that its plan named it.
+          if (thread !== undefined) touched(thread.id, plan.id, touch.action)
+        }
+      }
+    }
+    // What the author wrote down of a life at a chapter places them there as well; a mark before the story is of no line.
+    for (const card of cards) for (const mark of card.lifeMarks ?? []) if (mark.chapter !== undefined && known.has(mark.chapter)) seen(card.id, mark.chapter)
+    // Where a thread says itself it was planted, taken up and paid off: the same, for a chapter whose digest no longer names it.
+    for (const thread of outline.threads) {
+      for (const [how, chapters] of [['plant', thread.planted], ['advance', thread.advanced], ['payoff', thread.paid]] as const) {
+        for (const chapter of chapters ?? []) if (known.has(chapter) && threads.get(thread.id)?.has(chapter) !== true) touched(thread.id, chapter, how)
+      }
+    }
+    const value = { revision, people, threads }
+    if (this.revisionValue === revision) this.whereAt = value
+    return value
+  }
+
+  /**
+   * What a line of the plot has of the book — what whoever works on it reads, and nothing of the other lines:
+   * its chapters, its people, what it may know of the world, the threads that are its own.
+   * @param line - the line's id; the main line when left out.
+   * @throws ProjectError `novel/not-found` when no line has that id.
+   */
+  async lineScope(line?: string): Promise<LineScope> {
+    const outline = await this.outline()
+    const home = lineOf(outline, line)
+    const id = home?.id ?? MAIN_LINE
+    const path = located(linePath(outline, home))
+    const on = new Set(path.map(chapter => chapter.plan.id))
+    const where = await this.whereabouts()
+    const has = (card: Pick<CharacterCard, 'id' | 'lines'>): boolean => {
+      if (card.lines !== undefined && card.lines.length > 0) return card.lines.includes(id)
+      const chapters = where.people.get(card.id)
+      return chapters === undefined || chapters.size === 0 || [...chapters].some(chapter => on.has(chapter))
+    }
+    const threads: LineScope['threads'] = []
+    for (const thread of outline.threads) {
+      const touches = where.threads.get(thread.id)
+      const here = path.filter(chapter => touches?.has(chapter.plan.id) === true)
+      // A thread nothing has touched yet is a plan of the author's: every line may take it up.
+      if (touches !== undefined && touches.size > 0 && here.length === 0) continue
+      // Whether the reader still waits: the last word along this very line decides — a thread paid off on another line
+      // is open here. Given up by the author, it is given up everywhere; on the main line their word stands as it is.
+      const done = [...here].reverse().map(chapter => touches!.get(chapter.plan.id)).find(how => how !== 'plan')
+      const open = thread.status === 'dropped' ? false : home === undefined ? thread.status === 'open' : done !== 'payoff'
+      threads.push({ thread, open })
+    }
+    return {
+      line: id,
+      ...(home !== undefined ? { title: home.title } : {}),
+      ...(home?.premise !== undefined ? { premise: home.premise } : {}),
+      apart: home !== undefined && home.from === undefined,
+      path,
+      reads: chapter => on.has(chapter),
+      has,
+      knows: entry => belongsTo(entry, id),
+      threads,
+      others: (outline.lines ?? []).length,
+    }
   }
 
   /** The chapters in the order whoever reaches this one has read them: the line it belongs to, whole. */

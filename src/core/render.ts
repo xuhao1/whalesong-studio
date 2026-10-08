@@ -50,12 +50,17 @@ function join(parts: (string | undefined)[], separator = '\n'): string {
   return parts.filter((part): part is string => part !== undefined && part.length > 0).join(separator)
 }
 
-export function renderManifest(manifest: ProjectManifest, lang: PromptLanguage): string {
+/**
+ * @param story - a line of the plot that is a story of its own from the first page: the book's logline and premise are
+ *   the main line's story, so this line's name and what it is about stand in their place.
+ */
+export function renderManifest(manifest: ProjectManifest, lang: PromptLanguage, story?: { title: string; premise?: string | undefined }): string {
   return join([
     line(L(lang, '书名', 'Title'), manifest.title, lang),
     line(L(lang, '类型', 'Genre'), manifest.genre, lang),
-    line(L(lang, '一句话梗概', 'Logline'), manifest.logline, lang),
-    line(L(lang, '故事核', 'Premise'), manifest.premise, lang),
+    ...(story !== undefined
+      ? [line(L(lang, '这条故事线', 'This line of the plot'), story.title, lang), line(L(lang, '这条线讲的是', 'What this line tells'), story.premise, lang)]
+      : [line(L(lang, '一句话梗概', 'Logline'), manifest.logline, lang), line(L(lang, '故事核', 'Premise'), manifest.premise, lang)]),
     line(L(lang, '主题', 'Themes'), manifest.themes?.join(lang === 'zh' ? '、' : ', '), lang),
     line(L(lang, '作者备注', 'Author notes'), manifest.notes, lang),
   ])

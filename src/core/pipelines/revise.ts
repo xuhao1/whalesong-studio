@@ -9,7 +9,7 @@
  * A revision either applies at once (the old text is snapshotted first) or
  * becomes a proposal that waits for accept/reject in the review panel.
  */
-import type { IssueSeverity, Proposal, ReviewIssue } from '../../shared/types'
+import { MAIN_LINE, type IssueSeverity, type Proposal, type ReviewIssue } from '../../shared/types'
 import { clip, clipTail, countWords, fuzzyFind, newId } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { asArray, asRecord, asText } from '../llm'
@@ -228,6 +228,8 @@ export interface ReviseBookParams {
   brief?: (chapterId: string, reason: string) => string
   /** The review issues a chapter's rewrite mends, for its proposal to say so. */
   issuesOf?: (chapterId: string) => string[]
+  /** The line of the plot the revision is of, by id, when it is not the main one: its chapters are the ones looked at, numbered along it. */
+  line?: string
 }
 
 export interface ReviseBookResult {
@@ -245,7 +247,9 @@ export async function reviseBook(core: NovelCore, runtime: ProjectRuntime, param
   const { project } = runtime
   const manifest = await project.manifest()
   const lang = promptLanguage(manifest.language)
-  const infos = (await project.chapterInfos()).filter(info => info.hasText)
+  // One line of the plot at a time: its chapters as they are read on it, numbered along it.
+  const along = params.line !== undefined && params.line !== MAIN_LINE ? params.line : undefined
+  const infos = (await project.chapterInfos(along)).filter(info => info.hasText)
   if (infos.length === 0) throw new ProjectError('novel/empty', 'no chapter has text yet')
 
   let targets: { id: string; reason: string }[]
@@ -254,7 +258,7 @@ export async function reviseBook(core: NovelCore, runtime: ProjectRuntime, param
   if (params.chapters !== undefined && params.chapters.length > 0) {
     targets = []
     for (const ref of params.chapters) {
-      const chapter = await project.findChapter(ref)
+      const chapter = await project.findChapter(ref, along)
       if (chapter !== undefined && infos.some(info => info.id === chapter.plan.id)) targets.push({ id: chapter.plan.id, reason: params.instruction })
     }
   } else {
@@ -268,6 +272,7 @@ export async function reviseBook(core: NovelCore, runtime: ProjectRuntime, param
     const { value } = await assign(core, runtime, task, {
       role: 'architect',
       label: L(lang, '全书修订 · 划定范围', 'Book-wide revision · scope'),
+      line: along ?? MAIN_LINE,
       tool: 'submit_scope',
       what: L(lang, '哪些章节要改、各自怎么改', 'which chapters change, and how each of them does'),
       system: architectSystem(lang),
@@ -459,30 +464,52 @@ const GRAVITY: Record<string, number> = { high: 3, critical: 3, medium: 2, major
  */
 export async function fixIssues(core: NovelCore, runtime: ProjectRuntime, params: FixIssuesParams, task: TaskContext): Promise<FixIssuesResult> {
   const { project } = runtime
-  const lang = promptLanguage((await project.manifest()).language)
-  type Found = { chapter: { id: string; index: number; title: string }; issue: ReviewIssue; note?: string }
-  const found: Found[] = []
+  // Each chapter by its place on the line it belongs to: a book may hold several lines, and each counts its own.
+  const everywhere = [...await project.chapters()]
+  for (const line of await project.lines()) for (const chapter of await project.chapters(line.id)) if (chapter.line === line.id) everywhere.push(chapter)
+  const placeOf = new Map(everywhere.map(chapter => [chapter.plan.id, chapter]))
+  const all: Found[] = []
   if (params.issues !== undefined && params.issues.length > 0) {
     for (const asked of params.issues) {
-      const chapter = await project.findChapter(asked.chapter)
+      const named = await project.findChapter(asked.chapter)
+      const chapter = named !== undefined ? placeOf.get(named.plan.id) : undefined
       if (chapter === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${asked.chapter}"`)
       const issue = (await project.review(chapter.plan.id))?.issues.find(candidate => candidate.id === asked.issue)
       if (issue === undefined) throw new ProjectError('novel/not-found', `chapter ${chapter.index} has no review issue "${asked.issue}" — run the review again`)
       const note = asked.note?.trim() || issue.note
-      found.push({ chapter: { id: chapter.plan.id, index: chapter.index, title: chapter.plan.title }, issue, ...(note !== undefined && note.length > 0 ? { note } : {}) })
+      all.push({ chapter: { id: chapter.plan.id, index: chapter.index, title: chapter.plan.title }, line: chapter.line ?? MAIN_LINE, issue, ...(note !== undefined && note.length > 0 ? { note } : {}) })
     }
   } else {
     const floor = GRAVITY[params.atLeast ?? 'high'] ?? 3
     const only = params.chapters !== undefined && params.chapters.length > 0 ? new Set((await Promise.all(params.chapters.map(ref => project.findChapter(ref)))).map(chapter => chapter?.plan.id)) : undefined
-    for (const chapter of await project.chapters()) {
+    for (const chapter of everywhere) {
       if (only !== undefined && !only.has(chapter.plan.id)) continue
       for (const issue of (await project.review(chapter.plan.id))?.issues ?? []) {
         if (issue.resolved === true || (GRAVITY[issue.severity] ?? 1) < floor) continue
-        found.push({ chapter: { id: chapter.plan.id, index: chapter.index, title: chapter.plan.title }, issue, ...(issue.note !== undefined ? { note: issue.note } : {}) })
+        all.push({ chapter: { id: chapter.plan.id, index: chapter.index, title: chapter.plan.title }, line: chapter.line ?? MAIN_LINE, issue, ...(issue.note !== undefined ? { note: issue.note } : {}) })
       }
     }
   }
-  if (found.length === 0) return { issues: 0, chapters: 0 }
+  if (all.length === 0) return { issues: 0, chapters: 0 }
+  // A line of the plot is a story of its own: what was found on one is mended on that one, by a planner that reads it
+  // alone. A batch that reaches over several lines is as many pieces of work.
+  const lines = [...new Set(all.map(item => item.line))]
+  let last: FixIssuesResult | undefined
+  let chapters = 0
+  for (const line of lines) {
+    task.signal?.throwIfAborted()
+    last = await fixOnLine(core, runtime, params, all.filter(item => item.line === line), line, task)
+    chapters += last.chapters
+  }
+  return { issues: all.length, chapters, ...(last?.book !== undefined ? { book: last.book } : {}) }
+}
+
+type Found = { chapter: { id: string; index: number; title: string }; line: string; issue: ReviewIssue; note?: string }
+
+/** The issues of one line of the plot, mended together. */
+async function fixOnLine(core: NovelCore, runtime: ProjectRuntime, params: FixIssuesParams, found: Found[], line: string, task: TaskContext): Promise<FixIssuesResult> {
+  const { project } = runtime
+  const lang = promptLanguage((await project.manifest()).language)
   found.sort((left, right) => left.chapter.index - right.chapter.index)
   const said = params.note?.trim() ?? ''
   /** One issue, as whoever mends it reads it. */
@@ -510,6 +537,7 @@ export async function fixIssues(core: NovelCore, runtime: ProjectRuntime, params
   const book = await reviseBook(core, runtime, {
     instruction,
     bible: true,
+    ...(line !== MAIN_LINE ? { line } : {}),
     issuesOf: chapterId => (byChapter.get(chapterId) ?? []).map(item => item.issue.id),
     // The writer of one chapter mends what is that chapter's — in full — and knows what else is being mended, to agree with it.
     brief: (chapterId, reason) => {

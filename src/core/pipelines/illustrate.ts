@@ -41,7 +41,7 @@
  */
 import { lookWords, mergeAvoid, pictureSize, resolveArtStyle, sceneFor, scenesOf, sceneWords, splitAvoid, tidyPart as tidy, type ArtSource } from '../../shared/art'
 import type { CharacterCard, CharacterLook, CharacterStage, IllustrationInfo, IllustrationParts, IllustrationPiece, PromptLanguage, SignatureScene, SortedNotes, WorldEntry, WorldEvent } from '../../shared/types'
-import { referencesOf } from '../../shared/types'
+import { MAIN_LINE, referencesOf } from '../../shared/types'
 import { clip, fuzzyFind, hashText, newId, sameName, slugify } from '../../shared/text'
 import { inStage, looksApart, stageAt } from '../../shared/stages'
 import { groupOf } from '../../shared/world'
@@ -411,8 +411,10 @@ async function sceneBrief(core: NovelCore, runtime: ProjectRuntime, card: Charac
   const manifest = await project.manifest()
   const lang = promptLanguage(manifest.language)
   const art = await artDirectionOf(core, runtime)
-  // What the digests noted of them along the main line, chapter by chapter: where to look, not what to draw.
-  const { chapters, lives } = await project.lives()
+  // What the digests noted of them, chapter by chapter, along the line they are of — in a world of several stories,
+  // their own: where to look, not what to draw.
+  const home = await project.lineOfCharacter(card)
+  const { chapters, lives } = await project.lives(home !== MAIN_LINE ? home : undefined)
   const titles = new Map(chapters.map(chapter => [chapter.id, chapter.title]))
   const record = (lives[card.id]?.events ?? []).filter(event => event.index >= 1).map(event => [
     L(lang, `第 ${event.index} 章《${titles.get(event.chapter) ?? ''}》`, `Chapter ${event.index}, "${titles.get(event.chapter) ?? ''}"`),
@@ -424,6 +426,8 @@ async function sceneBrief(core: NovelCore, runtime: ProjectRuntime, card: Charac
   return {
     lang,
     chapters,
+    /** The line the moments are looked for on: the director reads that one. */
+    line: home,
     base: {
       lang,
       language: manifest.language,
@@ -471,6 +475,7 @@ export async function deriveScenes(core: NovelCore, runtime: ProjectRuntime, par
     const { value } = await assign(core, runtime, task, {
       role: 'director',
       label: L(lang, `名场面 · ${card.name}`, `Signature scenes · ${card.name}`),
+      line: brief.line,
       tool: 'set_signature_scenes',
       // The digests' notes come with the task; each moment is read in the text — a search, a passage or two — then the result.
       maxSteps: 24,
@@ -523,6 +528,7 @@ async function guidedScene(core: NovelCore, runtime: ProjectRuntime, card: Chara
     const { value } = await assign(core, runtime, task, {
       role: 'director',
       label: L(lang, `这张立绘的场面 · ${card.name}`, `This portrait's scene · ${card.name}`),
+      line: brief.line,
       tool: 'set_portrait_scene',
       maxSteps: 14,
       what: L(lang, '这一张立绘画的那一幕', 'the moment this one portrait shows'),

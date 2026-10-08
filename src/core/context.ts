@@ -19,7 +19,6 @@
  * the prefix every time: it holds its first chapter until the chapters no
  * longer fit, then lets go of the oldest quarter at once.
  */
-import { belongsTo } from '../shared/types'
 import { stageAt } from '../shared/stages'
 import type { CharacterCard, ChapterMemory, ContextStrategy, PromptLanguage, WorldEntry } from '../shared/types'
 import { clip, clipTail, estimateTokens, sameName } from '../shared/text'
@@ -194,13 +193,14 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
   const manifest = await project.manifest()
   const lang = promptLanguage(manifest.language)
   const current = options.chapter
-  // The chapters as they are read by whoever reaches this one: its own line of the plot.
-  const path = current !== undefined ? await project.pathOf(current.plan.id) : await project.chapters(options.line)
-  const [everyone, everything, outline] = await Promise.all([project.characters(), project.world(), project.outline()])
-  // A world may hold several stories: who and what belongs to another line of the plot alone is not this chapter's to know.
-  const lineHere = current !== undefined ? await project.lineOf(current.plan.id) : options.line
-  const characters = everyone.filter(card => belongsTo(card, lineHere))
-  const world = everything.filter(entry => belongsTo(entry, lineHere))
+  // A world may hold several stories. Whoever works on one line of the plot reads that line: its chapters as they are
+  // read by whoever reaches this one, its people, its threads — and the world, which they share. Nothing of another
+  // line comes in by itself; what does is named, by the chapter's plan or by whoever gave the task.
+  const scope = await project.lineScope(current !== undefined ? await project.lineOf(current.plan.id) : options.line)
+  const path = scope.path
+  const [everyone, everything] = await Promise.all([project.characters(), project.world()])
+  const characters = everyone.filter(card => scope.has(card))
+  const world = everything.filter(entry => scope.knows(entry))
   const at = current !== undefined ? path.findIndex(chapter => chapter.plan.id === current.plan.id) : -1
   const limit = at >= 0 ? at + 1 : options.canonThrough !== undefined ? options.canonThrough + 1 : undefined
   const before = limit === undefined ? path : path.filter(chapter => chapter.index < limit)
@@ -209,7 +209,7 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
     const chapter = path.find(candidate => candidate.plan.id === id)
     return chapter === undefined ? id : L(lang, `第${chapter.index}章`, `ch. ${chapter.index}`)
   }
-  const nameOf = (ref: string): string => characters.find(card => card.id === ref)?.name ?? ref
+  const nameOf = (ref: string): string => everyone.find(card => card.id === ref)?.name ?? ref
   const heading = (chapter: LocatedChapter): string => `${L(lang, `第${chapter.index}章`, `Chapter ${chapter.index}`)} ${chapter.plan.title}`
 
   let side = options.sideBudget
@@ -241,7 +241,7 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
   if (current !== undefined) take('plan', L(lang, '本章章纲', 'This chapter\'s outline'), planText)
 
   // ── what stays the same from chapter to chapter ──
-  take('project', L(lang, '作品', 'The book'), renderManifest(manifest, lang))
+  take('project', L(lang, '作品', 'The book'), renderManifest(manifest, lang, scope.apart && scope.title !== undefined ? { title: scope.title, premise: scope.premise } : undefined))
 
   const core = world.filter(entry => entry.importance === 1)
   const coreTokens = take('world', L(lang, '世界观核心设定', 'World: core canon'), core.map(entry => renderWorld(entry, lang)).join('\n\n'), share(0.18))
@@ -365,11 +365,14 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
   }
 
   // Who is in this chapter: named by the task and the plan, or found in the text around it.
-  const signals = [options.brief, options.focus, planText, clipTail(currentText, 4000, ''), clipTail(previousText, 1500, '')].filter(Boolean).join('\n')
+  const asked = [options.brief, options.focus, planText].filter(Boolean).join('\n')
+  const signals = [asked, clipTail(currentText, 4000, ''), clipTail(previousText, 1500, '')].filter(Boolean).join('\n')
   const cast = new Map<string, CharacterCard>()
+  const called = (card: CharacterCard, ref: string): boolean => sameName(card.name, ref) || card.aliases?.some(alias => sameName(alias, ref)) === true
   const addCast = (ref: string | undefined): void => {
     if (ref === undefined) return
-    const card = characters.find(candidate => candidate.id === ref) ?? characters.find(candidate => sameName(candidate.name, ref) || candidate.aliases?.some(alias => sameName(alias, ref)) === true)
+    // This line's own first; somebody of another line is wanted here once the plan or the task names them.
+    const card = everyone.find(candidate => candidate.id === ref) ?? characters.find(candidate => called(candidate, ref)) ?? everyone.find(candidate => called(candidate, ref))
     if (card !== undefined) cast.set(card.id, card)
   }
   for (const ref of options.characters ?? []) addCast(ref)
@@ -379,6 +382,10 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
     for (const beat of current.plan.beats ?? []) for (const ref of beat.characters ?? []) addCast(ref)
   }
   for (const card of detectCharacters(signals, characters)) cast.set(card.id, card)
+  // Named in the plan or in the task itself, somebody of another line comes in too — unless one of this line's people answers to that name.
+  for (const card of detectCharacters(asked, everyone.filter(candidate => !scope.has(candidate)))) {
+    if (![card.name, ...(card.aliases ?? [])].some(name => characters.some(own => called(own, name)))) cast.set(card.id, card)
+  }
   // A book with no declared cast for the task still needs its leads in view.
   if (cast.size === 0) for (const card of characters.filter(candidate => candidate.role === 'protagonist' || candidate.role === 'deuteragonist').slice(0, 4)) cast.set(card.id, card)
   const castList = [...cast.values()].sort((left, right) => ROLE_RANK[left.role] - ROLE_RANK[right.role])
@@ -446,7 +453,13 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
   ].join('\n'), share(0.06))
 
   // Threads the reader is waiting on.
-  const openThreads = outline.threads.filter(thread => thread.status === 'open')
+  // This line's own, as they stand at its end: one that was paid off on another line still waits here. The chapters
+  // a thread names are this line's only.
+  const openThreads = scope.threads.filter(entry => entry.open).map(({ thread }) => ({
+    ...thread,
+    ...(thread.planted !== undefined ? { planted: thread.planted.filter(id => scope.reads(id)) } : {}),
+    ...(thread.advanced !== undefined ? { advanced: thread.advanced.filter(id => scope.reads(id)) } : {}),
+  }))
   if (openThreads.length > 0) {
     const mine = new Set(current?.plan.threads ?? [])
     const ordered = [...openThreads.filter(thread => mine.has(thread.id)), ...openThreads.filter(thread => !mine.has(thread.id))]
@@ -459,7 +472,7 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
   let passages = 0
   if (query.trim().length > 0) {
     const named = world.filter(entry => entry.importance !== 1 && [entry.name, ...(entry.aliases ?? [])].some(name => name.length > 1 && query.includes(name)))
-    const hits = await index.search(query, { sources: ['world'], limit: 6, ...(options.signal !== undefined ? { signal: options.signal } : {}) })
+    const hits = await index.search(query, { sources: ['world'], limit: 6, within: (_source, ref) => world.some(entry => entry.id === ref), ...(options.signal !== undefined ? { signal: options.signal } : {}) })
     const picked = new Map<string, WorldEntry>()
     for (const entry of named) picked.set(entry.id, entry)
     for (const hit of hits) {
@@ -477,6 +490,8 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
       const found = await index.search(query, {
         sources: ['manuscript'],
         limit: Math.max(3, Math.floor(cap / 450)) + whole.size,
+        // The chapters of another line take no place among the hits.
+        within: (_source, ref) => onPath.has(ref),
         ...(options.signal !== undefined ? { signal: options.signal } : {}),
       })
       // Only from chapters this line has read and the text above does not already carry; the end of the chapter before travels by itself.

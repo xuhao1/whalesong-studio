@@ -23,8 +23,10 @@ const POVS: NonNullable<StyleProfile['pov']>[] = ['first', 'third-limited', 'thi
 
 /**
  * Outline overview appended to plotting context: what is planned, written or
- * still open — on the main line, or along another line of the plot — and
- * which other ways the story is known to go.
+ * still open on the line the planning is for — the main one, or another line
+ * of the plot — numbered along that line. The book's other lines are other
+ * stories as far as this planning goes, and are not listed: what the author
+ * wants taken from one of them, they say in their direction.
  */
 async function outlineOverview(project: Project, zh: boolean, lineId?: string): Promise<string> {
   const outline = await project.outline()
@@ -46,16 +48,6 @@ async function outlineOverview(project: Project, zh: boolean, lineId?: string): 
     const path = await project.chapters(line.id)
     lines.push(`### ${zh ? `剧情线「${line.title}」` : `The line "${line.title}"`}${line.premise !== undefined ? ` — ${line.premise}` : ''}`)
     for (const chapter of path) lines.push(entry(chapter.plan, chapter.line === line.id ? (zh ? '〔本线〕' : '[this line] ') : ''))
-  }
-  const others = (outline.lines ?? []).filter(other => other.id !== lineId)
-  if (others.length > 0) {
-    const all = await project.chapters()
-    const where = (id: string | undefined): string => {
-      const chapter = id !== undefined ? all.find(candidate => candidate.plan.id === id) : undefined
-      return chapter !== undefined ? (zh ? `第${chapter.index}章之后` : `after chapter ${chapter.index}`) : (zh ? '另一条线上' : 'on another line')
-    }
-    lines.push('', zh ? '### 故事的其它走法（别的剧情线，仅供知晓）' : '### Other ways the story goes (other lines, for your information)')
-    for (const other of others) lines.push(`- ${other.title}${zh ? '：' : ': '}${other.from !== undefined ? where(other.from) : (zh ? '从开头' : 'from the start')}${zh ? '分出' : ''}${other.choice !== undefined ? `${zh ? '，抉择：' : ', the choice: '}${other.choice}` : ''}${other.premise !== undefined ? `${zh ? '；' : '; '}${other.premise}` : ''}${zh ? `（${other.chapters.length} 章）` : ` (${other.chapters.length} chapters)`}`)
   }
   return `## ${zh ? '现有大纲' : 'Outline so far'}\n\n${lines.join('\n')}`
 }
@@ -236,6 +228,8 @@ export async function deriveChapters(core: NovelCore, runtime: ProjectRuntime, p
     const { value } = await assign(core, runtime, task, {
       role: 'architect',
       label: rounds > 1 ? L(lang, `推演后续章节（${round + 1}/${rounds}）`, `Deriving the next chapters (${round + 1}/${rounds})`) : L(lang, '推演后续章节', 'Deriving the next chapters'),
+      // The planner reads the line it plans for, and no other.
+      line: line?.id ?? MAIN_LINE,
       tool: 'submit_chapters',
       what: L(lang, '推演出的章节：标题、梗概、出场人物、节拍', 'the chapters derived: titles, synopses, who appears, beats'),
       system: architectSystem(lang),
@@ -352,6 +346,7 @@ export async function deriveBeats(core: NovelCore, runtime: ProjectRuntime, para
   const { value } = await assign(core, runtime, task, {
     role: 'architect',
     label: L(lang, `第${chapter.index}章 · 节拍`, `Ch. ${chapter.index} · beats`),
+    line: chapter.line ?? MAIN_LINE,
     tool: 'submit_beats',
     what: L(lang, '这一章的节拍', 'the beats of this chapter'),
     system: architectSystem(lang),
@@ -393,6 +388,7 @@ export async function whatIf(core: NovelCore, runtime: ProjectRuntime, params: {
   const { value } = await assign(core, runtime, task, {
     role: 'architect',
     label: L(lang, '假设推演', 'What if'),
+    line: MAIN_LINE,
     tool: 'submit_branches',
     what: L(lang, '几条可能的走向，各自的代价和收获', 'the branches the story could take, with what each costs and gains'),
     system: architectSystem(lang),

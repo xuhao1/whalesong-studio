@@ -23,6 +23,7 @@
  *               browser; effects and music are generated when a sound model is
  *               set up (pipelines/sound.ts), and stay captions when none is.
  */
+import { MAIN_LINE } from '../../shared/types'
 import type { AmbiencePreset, AudioCue, AudioLine, AudioScript, CharacterCard, NovelSettings, SoundKind, TakeIssue, TtsSettings, VoiceCast, VoicePrint } from '../../shared/types'
 import { clip as clipText, hashText, proseOnly, sameName } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
@@ -350,6 +351,7 @@ export async function buildAudioScript(core: NovelCore, runtime: ProjectRuntime,
       const { value } = await assign(core, runtime, task, {
         role: 'director',
         label: L(lang, `第${chapter.index}章 · 有声脚本`, `Ch. ${chapter.index} · audio script`),
+        line: chapter.line ?? MAIN_LINE,
         tool: 'submit_script',
         // The material is all in the task: a few looks at the book at most, then the result.
         maxSteps: 10,

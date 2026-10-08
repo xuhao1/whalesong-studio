@@ -457,7 +457,7 @@ export interface NovelRpc {
   'ai.reviseChapter': { params: { root: string; chapter: string; instruction: string }; result: JobStarted }
   /** Mend what a review found: at the place it quotes (`passage`), or wherever it reaches (`book` — the planner traces it through the chapters and the bible). `note` is what the author wants done about it. Changes come back as proposals. */
   'ai.fixIssue': { params: { root: string; chapter: string; issue: string; note?: string; scope: 'passage' | 'book' }; result: JobStarted }
-  'ai.reviseBook': { params: { root: string; instruction: string; chapters?: string[] }; result: JobStarted }
+  'ai.reviseBook': { params: { root: string; instruction: string; chapters?: string[]; /** The line of the plot the revision is of, when it is not the main one. */ line?: string }; result: JobStarted }
   'ai.digest': { params: { root: string; chapters?: string[]; force?: boolean }; result: JobStarted }
   'ai.review': { params: { root: string; chapter: string; focus?: string }; result: JobStarted }
   /**

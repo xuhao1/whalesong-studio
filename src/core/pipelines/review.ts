@@ -4,7 +4,7 @@
  * and the style profile. Issues anchor to exact quotes so the UI can jump to
  * them and a fix can be requested as a span revision.
  */
-import type { ChapterReview, IssueSeverity, IssueType, ReviewIssue } from '../../shared/types'
+import { MAIN_LINE, type ChapterReview, type IssueSeverity, type IssueType, type ReviewIssue } from '../../shared/types'
 import { fuzzyFind, hashText, newId } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { asArray, asRecord, asText } from '../llm'
@@ -39,6 +39,7 @@ export async function reviewChapter(core: NovelCore, runtime: ProjectRuntime, pa
   const { value } = await assign(core, runtime, task, {
     role: 'analyst',
     label: L(lang, `第${chapter.index}章 · 审校`, `Ch. ${chapter.index} · review`),
+    line: chapter.line ?? MAIN_LINE,
     tool: 'file_review',
     what: L(lang, '这一章的审校意见：总评和逐条问题', 'the review of this chapter: a verdict and the issues, one by one'),
     prompt: reviewTask({ lang, language: manifest.language, title: manifest.title, context: `${pack.text}${styleNote}`, ...(params.focus !== undefined ? { focus: params.focus } : {}) }),
@@ -133,6 +134,7 @@ export async function recheckIssues(core: NovelCore, runtime: ProjectRuntime, pa
       const { value } = await assign(core, runtime, task, {
         role: 'analyst',
         label: L(lang, `第${review.index}章 · 核对审校意见`, `Ch. ${review.index} · issues looked at again`),
+        line: await project.lineOf(review.chapterId),
         tool: 'file_recheck',
         what: L(lang, '这一章还开着的审校意见现在各自怎样了', 'how each of this chapter\'s open issues stands now'),
         prompt: recheckTask({ lang, language: manifest.language, title: manifest.title, chapter: L(lang, `第 ${review.index} 章《${review.title}》`, `chapter ${review.index}, "${review.title}"`), text, issues: listed, changes: params.changes }),

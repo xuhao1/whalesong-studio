@@ -81,15 +81,16 @@ export function projectTools(service: NovelService): ToolDefinition[] {
 
     novelTool(service, {
       name: 'novel_read',
-      description: 'Read one thing from the project in full: a chapter\'s text (paged), a chapter\'s outline, a character card, a world entry, a style profile, a chapter\'s memory (summary, facts, character states), the open threads, a chapter\'s review, or a chapter\'s version list. `ref` accepts ids, names, and chapter numbers ("3", "第3章", "latest").',
+      description: 'Read one thing from the project in full: a chapter\'s text (paged), a chapter\'s outline, a character card, a world entry, a style profile, a chapter\'s memory (summary, facts, character states), the open threads, a chapter\'s review, or a chapter\'s version list. `ref` accepts ids, names, and chapter numbers ("3", "第3章", "latest"). A book may hold several lines of the plot — stories of their own in one world, or ways one story parts: every line counts its own chapters. A chapter number counts along the main line unless `line` names another; the whole outline lists every line.',
       parameters: {
         what: { type: 'string', required: true, enum: READ_KINDS },
         ref: { type: 'string', description: 'Which one. Not needed for threads; optional for style (default: the active style), outline (default: the whole outline), and character and world (default: the list of them).' },
         offset: { type: 'integer', description: 'For chapter text: character offset to start from (default 0).' },
         limit: { type: 'integer', description: 'For chapter text: maximum characters to return (default 6000).' },
+        line: { type: 'string', description: 'A line of the plot, by id or name ("main" for the main one): chapter numbers count along it, and the outline, the cast, the threads and a character\'s life are that line\'s alone. Leave out to count along the main line and to list the whole book.' },
       },
       async run(args, env) {
-        const reading = await readBook(await env.project(), { what: args.what, ref: args.ref, offset: args.offset, limit: args.limit })
+        const reading = await readBook(await env.project(), { what: args.what, ref: args.ref, offset: args.offset, limit: args.limit, line: args.line })
         return { text: reading.text, ...(reading.data !== undefined ? { data: toJson(reading.data) } : {}) }
       },
     }),
@@ -101,9 +102,10 @@ export function projectTools(service: NovelService): ToolDefinition[] {
         query: { type: 'string', required: true },
         sources: listParameter('Restrict to some sources. Default: all.', { enum: SEARCH_SOURCES }),
         limit: { type: 'integer', description: 'Maximum hits (default 8).' },
+        line: { type: 'string', description: 'Search one line of the plot only, by id or name ("main" for the main one): its chapters, its people, and the world. Leave out to search the whole book — every line.' },
       },
       async run(args, env) {
-        const found = await searchBook(await env.project(), { query: args.query, sources: listOf(args.sources), limit: args.limit }, env.signal)
+        const found = await searchBook(await env.project(), { query: args.query, sources: listOf(args.sources), limit: args.limit, line: args.line }, env.signal)
         return { text: found.text, ...(found.data !== undefined ? { data: toJson(found.data) } : {}) }
       },
     }),

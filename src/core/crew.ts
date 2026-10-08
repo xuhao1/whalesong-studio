@@ -226,24 +226,32 @@ export function crewSkills(role: CrewRole): Promise<RoleSkill[]> {
 
 // ───────────────────────────── their tools ─────────────────────────────
 
-/** The tools every role reads the book with. */
-export function bookTools(runtime: ProjectRuntime, signal?: AbortSignal): RoleTool[] {
+/**
+ * The tools every role reads the book with.
+ * @param line - the line of the plot the work is on (`main` for the main one): the tools read that line and nothing of
+ *   the others — its chapters, numbered along it, its people, its threads — and the world. Left out for work that is
+ *   about the whole book: then every line is there to read, each numbered along itself.
+ */
+export function bookTools(runtime: ProjectRuntime, signal?: AbortSignal, line?: string): RoleTool[] {
   const names = { read: 'book_read' }
+  const kept = line !== undefined ? { line } : undefined
+  const whole = kept === undefined
   return [
     {
       name: 'book_read',
-      description: 'Read one thing from the book in full: a chapter\'s text (paged), the outline (whole, or one chapter\'s plan), a character card, a world entry, a style profile, a chapter\'s memory (summary, facts, character states), the open threads, a chapter\'s review, or a chapter\'s version list. `ref` takes ids, names and chapter numbers ("3", "第3章", "latest"). Without `ref`, character and world list what is on file.',
+      description: `Read one thing from the book in full: a chapter's text (paged), the outline (whole, or one chapter's plan), a character card, a world entry, a style profile, a chapter's memory (summary, facts, character states), the open threads, a chapter's review, or a chapter's version list. \`ref\` takes ids, names and chapter numbers ("3", "第3章", "latest"). Without \`ref\`, character and world list what is on file.${whole ? '' : ' This work is on one line of the plot: chapter numbers count along that line, and what is read is that line\'s — the book\'s other lines are no part of this work.'}`,
       parameters: {
         what: { type: 'string', required: true, enum: READ_KINDS },
         ref: { type: 'string', description: 'Which one. Not needed for threads; optional for style (the active one), outline (the whole outline), character and world (the list).' },
         offset: { type: 'integer', description: 'For chapter text: character offset to start from (default 0).' },
         limit: { type: 'integer', description: 'For chapter text: most characters to return (default 6000, at most 40000).' },
+        ...(whole ? { line: { type: 'string' as const, description: 'A line of the plot, by id or name, in a book that has more than one: chapter numbers count along it, and lists are that line\'s. Left out: numbers count along the main line, and the outline lists every line.' } } : {}),
       },
       async run(args) {
         const what = argText(args.what) as typeof READ_KINDS[number] | undefined
         if (what === undefined || !READ_KINDS.includes(what)) throw new Error(`\`what\` is one of ${READ_KINDS.join(', ')}`)
         try {
-          return (await readBook(runtime, { what, ref: argText(args.ref), offset: argInt(args.offset), limit: argInt(args.limit) }, names)).text
+          return (await readBook(runtime, { what, ref: argText(args.ref), offset: argInt(args.offset), limit: argInt(args.limit), ...(whole ? { line: argText(args.line) } : {}) }, names, kept)).text
         } catch (error) {
           if (error instanceof ProjectError) throw new Error(error.message)
           throw error
@@ -252,17 +260,23 @@ export function bookTools(runtime: ProjectRuntime, signal?: AbortSignal): RoleTo
     },
     {
       name: 'book_search',
-      description: 'Search everything the book knows — manuscript passages, character cards, world entries, chapter memories and outlines — by keywords or by meaning. The way to check what the book has already said before you decide anything.',
+      description: `Search everything the book knows — manuscript passages, character cards, world entries, chapter memories and outlines — by keywords or by meaning. The way to check what the book has already said before you decide anything.${whole ? '' : ' What is found is of the line this work is on, and of the world.'}`,
       parameters: {
         query: { type: 'string', required: true },
         sources: { type: 'array', items: { type: 'string', enum: SEARCH_SOURCES }, description: 'Restrict to some sources. Default: all.' },
         limit: { type: 'integer', description: 'Most hits (default 8).' },
+        ...(whole ? { line: { type: 'string' as const, description: 'Search one line of the plot only, by id or name. Left out: the whole book.' } } : {}),
       },
       async run(args) {
         const query = argText(args.query)
         if (query === undefined) throw new Error('`query` is required')
         const sources = argList(typeof args.sources === 'string' ? args.sources.split(/[,，\s]+/) : args.sources).filter((item): item is string => typeof item === 'string')
-        return (await searchBook(runtime, { query, ...(sources.length > 0 ? { sources } : {}), limit: argInt(args.limit) }, signal)).text
+        try {
+          return (await searchBook(runtime, { query, ...(sources.length > 0 ? { sources } : {}), limit: argInt(args.limit), ...(whole ? { line: argText(args.line) } : {}) }, signal, kept)).text
+        } catch (error) {
+          if (error instanceof ProjectError) throw new Error(error.message)
+          throw error
+        }
       },
     },
   ]
@@ -318,6 +332,11 @@ export interface Assignment<T> {
   /** Tools of this piece of work alone, beside the ones every role reads the book with. */
   tools?: RoleTool[]
   maxSteps?: number
+  /**
+   * The line of the plot the work is on, by id (`main` for the main one): what the role reads with its own tools is
+   * that line's, and nothing of the book's other lines. Left out only for work that is about the whole book.
+   */
+  line?: string
 }
 
 export interface Assigned<T> {
@@ -403,7 +422,7 @@ async function assignNow<T>(core: NovelCore, runtime: ProjectRuntime, task: Task
       persona: CREW[work.role].persona[lang === 'zh' ? 0 : 1],
       rules: crewRules(work.role, lang, manifest),
       prompt: `${work.prompt}${handIn(lang, work.tool, declared)}`,
-      tools: [...bookTools(runtime, task.signal), ...(work.tools ?? []), deliver],
+      tools: [...bookTools(runtime, task.signal, work.line), ...(work.tools ?? []), deliver],
       ...(skills.length > 0 ? { skills } : {}),
       inherit: plan.inherit,
       route,
@@ -454,6 +473,8 @@ export interface Delegation {
   /** The tool among them the work is handed in with, when it has one; otherwise the role reports in its last reply. */
   handIn?: string
   maxSteps?: number
+  /** The line of the plot the task is on; see `Assignment.line`. */
+  line?: string
   /** See `RoleTask.budgetNote`. */
   budgetNote?: (budget: { used: number; limit: number; left: number }) => string | undefined
   /** Asked when the agent stops; see `RoleTask.unfinished`. */
@@ -492,7 +513,7 @@ export async function delegate(core: NovelCore, runtime: ProjectRuntime, task: T
       ? crewRules(work.role, lang, manifest)
       : `${crewRules(work.role, lang, manifest)}\n${L(lang, '- 这件活没有专门的交回工具：做完之后，把结果写成你的最后一段回答——结论在前，依据在后，用到的出处列在最后。', '- This task has no tool to hand in with: when you are done, write the result as your last reply — conclusions first, what they rest on after, sources at the end.')}`,
     prompt: work.task,
-    tools: [...bookTools(runtime, task.signal), ...(work.tools ?? [])],
+    tools: [...bookTools(runtime, task.signal, work.line), ...(work.tools ?? [])],
     ...(skills.length > 0 ? { skills } : {}),
     inherit: plan.inherit,
     route,

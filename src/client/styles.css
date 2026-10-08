@@ -6469,6 +6469,23 @@ button.nv-stat:hover {
 
 /* ───────────────────────────── lines of the plot ───────────────────────────── */
 
+/* The review page, line by line: the name of a line of the plot above its chapters. */
+.nv-review-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px 4px;
+  color: var(--nv-text-2);
+  font-size: 12px;
+  font-weight: 600;
+  list-style: none;
+}
+
+.nv-review-line:not(:first-child) {
+  margin-top: 6px;
+  border-top: 1px dashed var(--nv-border-strong);
+}
+
 .nv-lines-divider {
   display: flex;
   align-items: center;

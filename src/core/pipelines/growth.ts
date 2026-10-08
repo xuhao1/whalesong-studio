@@ -12,7 +12,7 @@
  */
 import { stageAt } from '../../shared/stages'
 import { clip, newId } from '../../shared/text'
-import type { CharacterCard, CharacterStage } from '../../shared/types'
+import { MAIN_LINE, type CharacterCard, type CharacterStage } from '../../shared/types'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { assign } from '../crew'
 import { asArray, asRecord, asText } from '../llm'
@@ -33,8 +33,12 @@ export async function deriveGrowth(core: NovelCore, runtime: ProjectRuntime, par
   if (card === undefined) throw new ProjectError('novel/not-found', `no character matches "${params.character}"`)
   const manifest = await project.manifest()
   const lang = promptLanguage(manifest.language)
-  const { chapters, lives } = await project.lives()
-  const plans = new Map((await project.chapters()).map(chapter => [chapter.plan.id, chapter.plan]))
+  // Along the line this person is of: in a world of several stories, theirs is read, counted in its own chapters.
+  const home = await project.lineOfCharacter(card)
+  const along = home !== MAIN_LINE ? home : undefined
+  const lineTitle = along !== undefined ? (await project.findLine(along))?.title : undefined
+  const { chapters, lives } = await project.lives(along)
+  const plans = new Map((await project.chapters(along)).map(chapter => [chapter.plan.id, chapter.plan]))
   const record = (lives[card.id]?.events ?? []).filter(event => event.index >= 1).map(event => [
     L(lang, `第 ${event.index} 章`, `Chapter ${event.index}`),
     event.what !== undefined ? L(lang, `：${event.what}`, `: ${event.what}`) : '',
@@ -47,7 +51,7 @@ export async function deriveGrowth(core: NovelCore, runtime: ProjectRuntime, par
   })
   const undigested = chapters.filter(chapter => !chapter.digested).length
   const span = [
-    L(lang, `主线共 ${chapters.length} 章${undigested > 0 ? `，其中 ${undigested} 章有正文但没有收录` : ''}。`, `The main line has ${chapters.length} chapters${undigested > 0 ? `, ${undigested} of them not digested` : ''}.`),
+    L(lang, `${lineTitle !== undefined ? `剧情线「${lineTitle}」` : '主线'}共 ${chapters.length} 章${undigested > 0 ? `，其中 ${undigested} 章有正文但没有收录` : ''}。`, `${lineTitle !== undefined ? `The line "${lineTitle}"` : 'The main line'} has ${chapters.length} chapters${undigested > 0 ? `, ${undigested} of them not digested` : ''}.`),
     timed.length > 0 ? `${L(lang, '章纲里记的故事时间：', 'Story time as the outline has it:')}\n${timed.join('\n')}` : L(lang, '章纲里没有记故事时间：过了多久，从正文里看。', 'The outline keeps no story time: how much passes is read from the text.'),
   ].join('\n')
   const indexOf = new Map(chapters.map(chapter => [chapter.id, chapter.index]))
@@ -57,6 +61,7 @@ export async function deriveGrowth(core: NovelCore, runtime: ProjectRuntime, par
     const { value } = await assign(core, runtime, task, {
       role: 'architect',
       label: L(lang, `成长 · ${card.name}`, `Growth · ${card.name}`),
+      line: home,
       tool: 'set_growth',
       maxSteps: 24,
       what: L(lang, '这个人物在书里的各个时期：年纪、样子、身份从哪一章起变了', 'the stretches of this character\'s life in the book: where age, look and station turn'),

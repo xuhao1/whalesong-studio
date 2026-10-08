@@ -6,7 +6,7 @@ import { chapterVideoWithSubtitles, produceVideo, removeVideo, videoReadiness } 
 import { ProjectError } from '../../core/project'
 import type { NovelService } from '../../host/service'
 import { FFMPEG_INSTALL } from '../../shared/text'
-import { CREW_ROLES, type CrewRole } from '../../shared/types'
+import { CREW_ROLES, MAIN_LINE, type CrewRole } from '../../shared/types'
 import { novelTool, toJson } from './shared'
 
 export function crewTools(service: NovelService): ToolDefinition[] {
@@ -26,6 +26,7 @@ export function crewTools(service: NovelService): ToolDefinition[] {
         action: { type: 'string', enum: ['ask', 'list'], description: 'ask (default): give a role a task. list: who is on the crew.' },
         role: { type: 'string', enum: CREW_ROLES, description: 'ask: who gets the task.' },
         task: { type: 'string', description: 'ask: the task, complete in itself.' },
+        line: { type: 'string', description: 'ask: the line of the plot the task is on, by id or name ("main" for the main one), in a book that has more than one. The role then reads that line alone — its chapters, numbered along it, its people, its threads — and the world. Leave out only when the task is about the whole book, or the author wants one line held against another: then the role may read every line.' },
       },
       async run(args, env) {
         const runtime = await env.project()
@@ -48,7 +49,11 @@ export function crewTools(service: NovelService): ToolDefinition[] {
         if (args.task === undefined || args.task.trim().length < 8) throw new ProjectError('novel/invalid', 'give the role a `task` that stands on its own: what is wanted, about what, in what form')
         const text = args.task.trim()
         // The job is named by who works; what on is the task's own opening words.
-        const done = await env.job('crew', `crew ${role}`, text.replace(/\s+/g, ' ').slice(0, 48), async task => await delegate(env.core, runtime, task, { role, task: text }))
+        // The line the task is on, where the showrunner says: what the role reads is that line's.
+        const wanted = args.line?.trim()
+        const on = wanted === undefined || wanted.length === 0 ? undefined : wanted === MAIN_LINE || /^(main|主线)$/i.test(wanted) ? MAIN_LINE : (await runtime.project.findLine(wanted))?.id
+        if (wanted !== undefined && wanted.length > 0 && on === undefined) throw new ProjectError('novel/not-found', `no line of the plot matches "${wanted}" — novel_read what=outline lists the lines`)
+        const done = await env.job('crew', `crew ${role}`, text.replace(/\s+/g, ' ').slice(0, 48), async task => await delegate(env.core, runtime, task, { role, task: text, ...(on !== undefined ? { line: on } : {}) }))
         const how = `[${CREW[role].name[1]} agent, ${done.run.steps ?? 0} tool calls${done.stop !== 'completed' ? `, ended: ${done.stop}` : ''}; the run is listed under this conversation]`
         if (done.report.length === 0) return { text: `${how}\nThe ${role} reported nothing${done.stop !== 'completed' ? ` (${done.stop})` : ''}. Its steps are on record in the run; ask again with a narrower task, or do the work with your own tools.` }
         return { text: `${how}\n\n${done.report}`, data: toJson({ role, steps: done.run.steps ?? 0, stop: done.stop, ...(done.run.session !== undefined ? { session: done.run.session } : {}) }) }

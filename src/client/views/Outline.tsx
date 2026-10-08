@@ -34,6 +34,9 @@ export function OutlineView() {
   const [tab, setTab] = useState<'chapters' | 'graph' | 'threads' | 'derive'>('chapters')
   const open = project.outline.threads.filter(thread => thread.status === 'open').length
   const lines = project.outline.lines?.length ?? 0
+  // The line the author is on: the one the chapter in hand belongs to. What is derived goes there unless they say otherwise.
+  const focused = useSnapshot(snapshot => snapshot.chapterId)
+  const home = (project.outline.lines ?? []).find(line => line.chapters.some(plan => plan.id === focused))
   return (
     <div className="nv-page nv-outline">
       <Tabs
@@ -46,7 +49,7 @@ export function OutlineView() {
           { value: 'derive', label: t('推演', 'Derive'), icon: 'sparkles' },
         ]}
       />
-      {tab === 'chapters' ? <Chapters onGraph={() => { setTab('graph') }} /> : tab === 'graph' ? <PlotGraph /> : tab === 'threads' ? <Threads /> : <Derive onApplied={() => { setTab('chapters') }} />}
+      {tab === 'chapters' ? <Chapters onGraph={() => { setTab('graph') }} /> : tab === 'graph' ? <PlotGraph /> : tab === 'threads' ? <Threads /> : <Derive key={home?.id ?? MAIN_LINE} preset={home !== undefined ? { line: home.id, mode: 'append' } : undefined} onApplied={() => { setTab('chapters') }} />}
     </div>
   )
 }

@@ -480,6 +480,17 @@ export function belongsTo(item: { lines?: string[] | undefined }, line: string |
 }
 
 /**
+ * Whether somebody is one of a line's people. Where the author said which lines they belong to, it is as said. Where
+ * nothing is said, they belong where they are seen — to the lines whose chapters have them — and to every line as long
+ * as no chapter has them yet: a card nobody has written into the story is everybody's to use.
+ * @param seen - the lines they are seen on, by id (`main` for the main one), read off the digests.
+ */
+export function ofLine(card: { lines?: string[] | undefined }, line: string | undefined, seen: readonly string[] | undefined): boolean {
+  if (card.lines !== undefined && card.lines.length > 0) return card.lines.includes(line ?? MAIN_LINE)
+  return seen === undefined || seen.length === 0 || seen.includes(line ?? MAIN_LINE)
+}
+
+/**
  * A line of the plot beside the main one: another way the story goes from
  * some chapter on — or the way it went before it was rewritten. The main line
  * is the outline's volumes; other lines leave it (or each other) after a

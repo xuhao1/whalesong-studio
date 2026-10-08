@@ -17,7 +17,7 @@ import {
 import { byWeight, CastFilterBar, MAIN_ROLES, matchesCast, sortCast, useCastFilter } from '../CharacterPicker'
 import { CardPhoto, CharacterCards, LIFE_MARK, ROLE_LABELS, type Lives } from './Characters'
 import { lifeLine, LIFE_AWAY, type Life } from '../../shared/life'
-import { MAIN_LINE } from '../../shared/types'
+import { MAIN_LINE, ofLine } from '../../shared/types'
 
 /** How many notes are shown before the rest fold away: what is said first is what matters most. */
 const ADVICE_SHOWN = 6
@@ -41,6 +41,9 @@ function storedNotes(): NotesMode {
   }
 }
 
+/** The choice of no line in particular, where the people page asks which line. */
+const EVERY_LINE = '*'
+
 export function CastView() {
   const { controller, locale } = useStudio()
   const t = useT()
@@ -52,7 +55,6 @@ export function CastView() {
   // The cards, the table of lives and the ties are about the people chosen here; the notes above them weigh everybody.
   const [filter, setFilter] = useCastFilter('cast', project.characters)
   const chapterIndex = useMemo(() => new Map([...project.chapters, ...(project.lines ?? []).flatMap(line => line.chapters)].map(chapter => [chapter.id, chapter.index])), [project.chapters, project.lines])
-  const shown = useMemo(() => sortCast(cards.filter(card => matchesCast(card, filter)), filter.sort, chapterIndex, locale), [cards, filter, chapterIndex, locale])
   const [allAdvice, setAllAdvice] = useState(false)
   const [notes, setNotesMode] = useState<NotesMode>(storedNotes)
   const setNotes = (next: NotesMode): void => {
@@ -62,7 +64,20 @@ export function CastView() {
   // A life is read along one line of the plot: the main one, or one that parted from it.
   const plotLines = project.outline.lines ?? []
   const [wantedLine, setLine] = useKept<string>('cast.line', MAIN_LINE)
-  const line = plotLines.some(candidate => candidate.id === wantedLine) ? wantedLine : MAIN_LINE
+  // Every line at once is a choice too: then nobody is left out, and lives are read along the main line.
+  const chosen = wantedLine === EVERY_LINE && plotLines.length > 0 ? EVERY_LINE : plotLines.some(candidate => candidate.id === wantedLine) ? wantedLine : MAIN_LINE
+  const line = chosen === EVERY_LINE ? MAIN_LINE : chosen
+  // A world may hold several stories: the people listed are the chosen line's — said so on their card, or seen in its
+  // chapters; somebody no chapter has yet is everybody's. (A Host from before answers with an error: then all are listed.)
+  const seen = useLoad(async signal => (plotLines.length > 0 ? await controller.api.call('lines.seen', { root }, signal).catch(() => undefined) : undefined), [root, project.revision])
+  const lastSeen = useRef<Record<string, string[]> | undefined>(undefined)
+  if (seen.data !== undefined) lastSeen.current = seen.data.people
+  const seenOn = seen.data?.people ?? lastSeen.current
+  const here = useMemo(() => (plotLines.length === 0 || chosen === EVERY_LINE || seenOn === undefined ? cards : cards.filter(card => ofLine(card, chosen, seenOn[card.id]))),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [cards, chosen, seenOn, plotLines.length])
+  const peopleOf = (id: string): number => (seenOn === undefined ? cards.length : cards.filter(card => ofLine(card, id, seenOn[card.id])).length)
+  const shown = useMemo(() => sortCast(here.filter(card => matchesCast(card, filter)), filter.sort, chapterIndex, locale), [here, filter, chapterIndex, locale])
   const read = useLoad(async signal => await controller.api.call('cast.lives', { root, ...(line !== MAIN_LINE ? { line } : {}) }, signal), [root, line, project.revision])
   // Kept while a newer reading is on its way: a page that blinks on every save is no page to write on.
   const lastRead = useRef<{ line: string; data: NonNullable<typeof read.data> } | undefined>(undefined)
@@ -172,7 +187,7 @@ export function CastView() {
 
       <div className="nv-cast-tabs">
         <Tabs value={tab} onChange={setTab} tabs={[
-          { value: 'cards', label: t('人物卡', 'Cards'), icon: 'users', badge: cards.length },
+          { value: 'cards', label: t('人物卡', 'Cards'), icon: 'users', badge: here.length },
           { value: 'lives', label: t('履历表', 'Lives'), icon: 'list' },
           { value: 'relations', label: t('关系', 'Relationships'), icon: 'link' },
           { value: 'walkons', label: t('龙套', 'Walk-ons'), icon: 'users' },
@@ -184,13 +199,17 @@ export function CastView() {
         ) : null}
       </div>
 
-      {tab !== 'walkons' ? <CastFilterBar cards={cards} value={filter} onChange={setFilter} /> : null}
+      {tab !== 'walkons' ? <CastFilterBar cards={here} value={filter} onChange={setFilter} /> : null}
 
-      {(tab === 'cards' || tab === 'lives') && plotLines.length > 0 ? (
+      {tab !== 'walkons' && plotLines.length > 0 ? (
         <div className="nv-cast-line">
           <span className="nv-muted nv-small">{t('世界线', 'Line of the plot')}</span>
-          <Select value={line} options={[{ value: MAIN_LINE, label: `★ ${t('主线', 'Main line')}` }, ...plotLines.map(candidate => ({ value: candidate.id, label: `${candidate.shelved === true ? '⏸ ' : ''}${candidate.title}` }))]} onChange={setLine} />
-          
+          <Select value={chosen} options={[
+            { value: MAIN_LINE, label: `★ ${t('主线', 'Main line')}${t(`（${peopleOf(MAIN_LINE)} 人）`, ` (${peopleOf(MAIN_LINE)})`)}` },
+            ...plotLines.map(candidate => ({ value: candidate.id, label: `${candidate.shelved === true ? '⏸ ' : ''}${candidate.title}${t(`（${peopleOf(candidate.id)} 人）`, ` (${peopleOf(candidate.id)})`)}` })),
+            { value: EVERY_LINE, label: t(`所有线（${cards.length} 人）`, `Every line (${cards.length})`) },
+          ]} onChange={setLine} />
+          {chosen !== EVERY_LINE && here.length < cards.length ? <span className="nv-muted nv-small">{t(`另有 ${cards.length - here.length} 人只在别的线上`, `${cards.length - here.length} more are of other lines only`)}</span> : null}
         </div>
       ) : null}
 

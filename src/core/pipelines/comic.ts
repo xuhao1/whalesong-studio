@@ -14,7 +14,7 @@
  */
 import { castAt } from './growth'
 import type { AudioLine, CameraMove, CharacterCard, ComicBoard, ComicPanel, StoryboardDensity, SheetsAsk } from '../../shared/types'
-import { PANEL_SECONDS, referencesOf, STORYBOARD_DENSITIES } from '../../shared/types'
+import { MAIN_LINE, PANEL_SECONDS, referencesOf, STORYBOARD_DENSITIES } from '../../shared/types'
 import { clip, hashText, newId, sameName } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { asArray, asList, asRecord, asText } from '../llm'
@@ -188,6 +188,7 @@ export async function buildStoryboard(core: NovelCore, runtime: ProjectRuntime, 
       const { value } = await assign(core, runtime, task, {
         role: 'director',
         label: L(lang, `${located !== undefined ? `第${located.index}章 · ` : ''}分镜`, `${located !== undefined ? `Ch. ${located.index} · ` : ''}storyboard`),
+        ...(located !== undefined ? { line: located.line ?? MAIN_LINE } : {}),
         tool: 'submit_storyboard',
         // The material is all in the task: a few looks at the book at most, then the result.
         maxSteps: 12,
