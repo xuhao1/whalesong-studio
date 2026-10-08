@@ -8,7 +8,8 @@
 import type { EndpointCheck, JobStarted, LockView, RpcMethod, RpcParams, SettingsView, WorkspaceInfo } from '../shared/rpc'
 import { parseRecommended, setRecommended } from '../shared/recommended'
 import type { ServiceId, SetupPart } from '../shared/services'
-import type { GateKind, GateState, JobInfo, ProjectState, WorkMode } from '../shared/types'
+import { MAIN_LINE, type GateKind, type GateState, type JobInfo, type ProjectState, type WorkMode } from '../shared/types'
+import { chapterOnLine, knownLine, lineHolding } from '../shared/lines'
 import { isCancelled, messageOf, RpcError, type NovelApi } from './api'
 
 export type StudioView = 'home' | 'bible' | 'outline' | 'write' | 'read' | 'cast' | 'review' | 'stage' | 'settings' | 'setup' | 'usage'
@@ -91,6 +92,12 @@ export interface StudioSnapshot {
   view: StudioView
   /** Chapter in focus across views (editor, reader, stage). */
   chapterId?: string
+  /**
+   * The line of the plot in hand across views: what the outline lists, what is derived, written, read and produced,
+   * whose people are shown — the main line when absent. One for the whole Studio: changed on any page, it is changed
+   * on all of them. It goes with the chapter in focus: a chapter this line does not read takes the Studio to its own.
+   */
+  line?: string
   settings?: SettingsView
   /** Folder a new workspace is created in by default. */
   workspaceHome?: string
@@ -143,6 +150,9 @@ export function noteOlderHost(known = true): void {
 
 /** Under this name and a book's id: the chapter this device read last. */
 const LAST_READ = 'novel-studio:last-read:'
+/** The line of the plot a book was last worked on, kept by this device: where every page of it opens. */
+const LINE_IN_HAND = 'novel-studio:line:'
+
 
 /** Where the author was in a Studio: found again when the Harness swaps the Studio in anew, or the page is loaded again. */
 interface Place {
@@ -336,8 +346,34 @@ export class StudioController {
   }
 
   private set(patch: Partial<StudioSnapshot>): void {
-    this.snapshot = { ...this.snapshot, ...patch }
+    let next = { ...this.snapshot, ...patch }
+    const project = next.project
+    // A chapter come to from anywhere — a link, a search, a job — brings its line with it.
+    if (project !== undefined && patch.chapterId !== undefined && patch.line === undefined) {
+      const line = lineHolding(project, next.line, patch.chapterId)
+      if (line !== knownLine(project, next.line) || next.line === undefined) next = { ...next, line }
+    }
+    if (project !== undefined && next.line !== undefined && (next.line !== this.snapshot.line || project.manifest.id !== this.snapshot.project?.manifest.id)) {
+      try {
+        globalThis.localStorage?.setItem(`${LINE_IN_HAND}${project.manifest.id}`, next.line)
+      } catch {
+        // Without storage a book opens on its main line.
+      }
+    }
+    this.snapshot = next
     this.emit()
+  }
+
+  /**
+   * Take another line of the plot in hand — on every page at once. The chapter in focus stays where the line reads it;
+   * otherwise the line's first chapter still to write, else its last.
+   */
+  setLine(line: string): void {
+    const project = this.snapshot.project
+    if (project === undefined) return
+    const id = knownLine(project, line)
+    const chapterId = chapterOnLine(project, id, this.snapshot.chapterId)
+    this.set({ line: id, ...(chapterId !== undefined ? { chapterId } : {}) })
   }
 
   /** Tell whoever watches, and keep the place for a Studio that is put here anew. */
@@ -499,13 +535,26 @@ export class StudioController {
     }
     this.onShelf = false
     this.revision = project.revision
-    const chapterId = this.snapshot.chapterId !== undefined && [...project.chapters, ...(project.lines ?? []).flatMap(line => line.chapters)].some(chapter => chapter.id === this.snapshot.chapterId)
+    const kept = this.snapshot.chapterId !== undefined && [...project.chapters, ...(project.lines ?? []).flatMap(line => line.chapters)].some(chapter => chapter.id === this.snapshot.chapterId)
       ? this.snapshot.chapterId
-      : (project.chapters.find(chapter => !chapter.hasText) ?? project.chapters.at(-1))?.id
+      : undefined
+    // The line in hand: the Studio's own while it stays on the book; coming to a book, the one it was last worked on
+    // here. A chapter kept in focus decides where it is not read on that line; with none, the line's own chapters are
+    // where the Studio opens.
+    let lineBefore: string | undefined = this.snapshot.project?.manifest.id === project.manifest.id ? this.snapshot.line : undefined
+    if (lineBefore === undefined) {
+      try {
+        lineBefore = globalThis.localStorage?.getItem(`${LINE_IN_HAND}${project.manifest.id}`) ?? undefined
+      } catch {
+        // Without storage: the main line.
+      }
+    }
+    const line = kept !== undefined ? lineHolding(project, lineBefore, kept) : knownLine(project, lineBefore)
+    const chapterId = kept ?? chapterOnLine(project, line, undefined) ?? (project.chapters.find(chapter => !chapter.hasText) ?? project.chapters.at(-1))?.id
     const before = this.snapshot.sessionBook
     const moves = bind && this.sessionId !== undefined && before !== root
     // Claimed before the Host confirms, so the wake-up our own move causes is not mistaken for the showrunner's.
-    this.set({ root, project, status: 'ready', ...(chapterId !== undefined ? { chapterId } : {}), ...(moves ? { sessionBook: root } : {}) })
+    this.set({ root, project, status: 'ready', line, ...(chapterId !== undefined ? { chapterId } : {}), ...(moves ? { sessionBook: root } : {}) })
     // On the Studio's own page: whose conversation the work started here belongs to. Looked up, never made, and not waited for.
     if (this.sessionId === undefined && this.bookSession?.root !== root) {
       void this.api.call('conversation.open', { root, create: false }, this.abort.signal)

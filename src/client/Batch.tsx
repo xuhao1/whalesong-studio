@@ -20,14 +20,14 @@
 import { groupOf, worldWeight } from '../shared/world'
 import { useEffect, useMemo, useState } from 'react'
 import {
-  STAGE_STEPS, STORYBOARD_DENSITIES,
+  MAIN_LINE, STAGE_STEPS, STORYBOARD_DENSITIES,
   type BatchKind, type BatchStepView, type BatchView, type ChapterInfo, type GateKind, type JobInfo, type StageStatus, type StageStep, type StoryboardDensity, type TextStep,
 } from '../shared/types'
 import { Icon } from './icons'
 import { BATCH_STEP, DENSITY, STAGE_STEP_HINT } from './labels'
 import {
   Button, Chip, crewLabel, cx, Field, Modal, Progress, Select, Spinner, TextArea, TextInput, useAction, useLoad, useProject, useSnapshot, useStudio, useT, type Translate,
-  SectionTitle, Menu, useKept,
+  SectionTitle, Menu, useBookLine, useKept,
 } from './ui'
 import { CharacterPicker, defaultCastFilter, matchesCast, useCastFilter } from './CharacterPicker'
 import { useSheetsAsk } from './SheetsAsk'
@@ -279,7 +279,10 @@ export function ProductionBoard({ onOpen }: { onOpen: (chapterId: string) => voi
   const { project, root } = useProject()
   const job = useBatchJob('stage')
   const running = job?.status === 'running'
-  const overview = useLoad(signal => controller.api.call('batch.overview', { root }, signal), [root, project.revision, running])
+  // One line of the plot at a time: the main one, or another line's own chapters (what it shares with the line it parts from is that line's to produce).
+  const plotLines = project.outline.lines ?? []
+  const [line, setLine] = useBookLine()
+  const overview = useLoad(signal => controller.api.call('batch.overview', { root, ...(line !== MAIN_LINE ? { line } : {}) }, signal), [root, line, project.revision, running])
   const { busy, run } = useAction()
   const saved = project.manifest.storyboard
   const [density, setDensity] = useState<StoryboardDensity>(saved?.density ?? 'balanced')
@@ -289,8 +292,21 @@ export function ProductionBoard({ onOpen }: { onOpen: (chapterId: string) => voi
   const [direction, setDirection] = useState('')
   const [subtitles, setSubtitles] = useState(true)
   const [last, setLast] = useState<{ chapters: string[]; steps: StageStep[]; force: boolean } | undefined>()
-  const chapters = overview.data?.chapters ?? []
+  const ownOf = line !== MAIN_LINE ? new Set((project.lines?.find(candidate => candidate.id === line)?.chapters ?? []).map(chapter => chapter.id)) : undefined
+  const chapters = (overview.data?.chapters ?? []).filter(status => ownOf === undefined || ownOf.has(status.id))
+  const shared = (overview.data?.chapters.length ?? 0) - chapters.length
   const missing = overview.data?.missing ?? {}
+  const pickLine = (next: string): void => {
+    setLine(next)
+    // What was ticked was ticked among another line's chapters.
+    setPicked(undefined)
+  }
+  const lineSelect = plotLines.length > 0 ? (
+    <Select value={line} options={[
+      { value: MAIN_LINE, label: `★ ${t('主线', 'Main line')}` },
+      ...plotLines.map(candidate => ({ value: candidate.id, label: `${candidate.shelved === true ? '⏸ ' : ''}${candidate.title}` })),
+    ]} onChange={pickLine} />
+  ) : null
   // Until the author chooses: everything that can run with what is set up, except the video — which is minutes of an agent's work per chapter.
   const chosen = steps ?? new Set(STAGE_STEPS.filter(step => step !== 'video' && missing[step] === undefined))
   const todo = useMemo(() => new Set(chapters.filter(status => STAGE_STEPS.some(step => chosen.has(step) && (force || lacking(status, step, t)))).map(status => status.id)), [chapters, chosen, force, t])
@@ -315,6 +331,7 @@ export function ProductionBoard({ onOpen }: { onOpen: (chapterId: string) => voi
       setLast(params)
       await controller.api.call('batch.stage', {
         root,
+        ...(line !== MAIN_LINE ? { line } : {}),
         chapters: params.chapters,
         steps: params.steps,
         ...(params.force ? { force: true } : {}),
@@ -327,14 +344,15 @@ export function ProductionBoard({ onOpen }: { onOpen: (chapterId: string) => voi
     })
   })
   if (overview.data === undefined) return <div className="nv-center">{overview.error ?? <Spinner />}</div>
-  if (chapters.length === 0) return <div className="nv-card"><p className="nv-muted">{t('还没有写出正文的章节。', 'No chapter has text yet.')}</p></div>
+  if (chapters.length === 0) return <div className="nv-card">{lineSelect !== null ? <div className="nv-audio-summary"><strong>{t('一键制作', 'Produce in one go')}</strong>{lineSelect}</div> : null}<p className="nv-muted">{plotLines.length > 0 ? t('这条线还没有写出正文的章节。', 'No chapter of this line has text yet.') : t('还没有写出正文的章节。', 'No chapter has text yet.')}{shared > 0 ? t(`（它和分出的那条线共有的 ${shared} 章在那条线上做。）`, ` (The ${shared} chapter(s) it shares with the line it parts from are produced on that line.)`) : ''}</p></div>
   const order = STAGE_STEPS.filter(step => chosen.has(step))
   return (
     <div className="nv-production">
       <section className="nv-card">
         <div className="nv-audio-summary">
           <strong>{t('一键制作', 'Produce in one go')}</strong>
-          <span className="nv-muted nv-small">{t('已经做好的不会重做；中途停下，下次接着来。', 'What is done is not done again; stopped midway, it picks up from there.')}</span>
+          {lineSelect}
+          <span className="nv-muted nv-small">{t('已经做好的不会重做；中途停下，下次接着来。', 'What is done is not done again; stopped midway, it picks up from there.')}{shared > 0 ? t(` 这条线和它分出的那条线共有的 ${shared} 章在那条线上做。`, ` The ${shared} chapter(s) this line shares with the one it parts from are produced on that line.`) : ''}</span>
         </div>
         <div className="nv-steps-pick">
           {STAGE_STEPS.map((step) => {

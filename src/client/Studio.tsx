@@ -5,7 +5,7 @@
  * shows the project chrome (title, navigation, mode, jobs, search) and routes
  * to the views.
  */
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { Component, Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { formatCount } from '../shared/text'
 import { WORK_MODES, type JobInfo, type ProjectRef, type ProjectState, type WorkMode } from '../shared/types'
 import type { NovelApi } from './api'
@@ -67,6 +67,42 @@ const MODE_HINTS: Record<WorkMode, [string, string]> = {
   play: ['下场演一段幕间', 'Step into an interlude'],
 }
 
+/**
+ * Puts the Studio's screens up again when a render of them throws.
+ *
+ * The host swaps the Studio's code in place when a new version is released, and renders the screen that is open with
+ * the new code on the old screen's state. A screen whose hooks are not the same in the two versions then throws on
+ * that render ("rendered more hooks than during the previous render") — and the host takes the whole Studio off the
+ * screen: a blank panel where a book was, on every release that touched the page somebody happened to be on. Put up
+ * afresh — the same book, the same page, the place is the controller's and stays — the new code renders.
+ *
+ * Twice in a few seconds at most: an error that comes straight back is the code's own, and is the host's to show.
+ */
+class Remount extends Component<{ children: ReactNode }, { round: number; caught?: unknown }> {
+  override state: { round: number; caught?: unknown } = { round: 0 }
+  private readonly times: number[] = []
+
+  static getDerivedStateFromError(error: unknown): { caught: unknown } {
+    return { caught: error }
+  }
+
+  override componentDidCatch(): void {
+    const now = Date.now()
+    while (this.times.length > 0 && now - this.times[0]! > 5000) this.times.shift()
+    this.times.push(now)
+    if (this.times.length <= 2) this.setState(state => ({ round: state.round + 1, caught: undefined }))
+    else this.forceUpdate()
+  }
+
+  override render(): ReactNode {
+    if (this.state.caught !== undefined) {
+      if (this.times.length > 2) throw this.state.caught
+      return null
+    }
+    return <Fragment key={this.state.round}>{this.props.children}</Fragment>
+  }
+}
+
 export function Studio({ api, locale, host, sessionId, initial, arrival }: StudioProps) {
   // The arrival is read once, as the Studio is put up: it is where the author came from then.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -114,15 +150,17 @@ export function Studio({ api, locale, host, sessionId, initial, arrival }: Studi
     <div ref={rootRef} className={cx('nv-root', host.where === 'page' && 'nv-root-page')} data-novel-studio="">
       <StudioProvider value={value}>
         <OverlayRootProvider value={overlayRoot}>
-          <StaleHostNotice />
-          <NoSwarmNotice />
-          <RecommendedNotice />
-          <Shell />
-          <ActivityDock />
-          <BookNotice />
-          <JobNotice />
-          <NeedsDialog />
-          <Toasts />
+          <Remount>
+            <StaleHostNotice />
+            <NoSwarmNotice />
+            <RecommendedNotice />
+            <Shell />
+            <ActivityDock />
+            <BookNotice />
+            <JobNotice />
+            <NeedsDialog />
+            <Toasts />
+          </Remount>
         </OverlayRootProvider>
       </StudioProvider>
     </div>

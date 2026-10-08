@@ -13,7 +13,7 @@ import { IssueBatchBar, IssueCard } from '../Issues'
 import { Icon } from '../icons'
 import { BatchMatrix, batchOf, useBatchJob } from '../Batch'
 import {
-  Button, Chip, cx, Empty, Field, Progress, SectionTitle, Select, Tabs, TextArea, TextInput, useAction, useConfirm, useKept, useLoad, useProject, useRunningJob, useSnapshot, useStudio, useT,
+  Button, Chip, cx, Empty, Field, Progress, SectionTitle, Select, Tabs, TextArea, TextInput, useAction, useBookLine, useConfirm, useKept, useLoad, useProject, useRunningJob, useSnapshot, useStudio, useT,
 } from '../ui'
 import { JobBar } from '../JobBar'
 
@@ -350,8 +350,7 @@ function BookRevision({ onStarted }: { onStarted: () => void }) {
   const [summary, setSummary] = useState<{ note?: string; changed: number; untouched: number; failed: number } | undefined>()
   // A revision is of one line of the plot: its chapters as they are read on it.
   const others = project.outline.lines ?? []
-  const [wantedLine, setLine] = useState(MAIN_LINE)
-  const line = others.some(candidate => candidate.id === wantedLine) ? wantedLine : MAIN_LINE
+  const [line, setLine] = useBookLine()
   const known = new Map([...project.chapters, ...(project.lines ?? []).flatMap(candidate => candidate.chapters)].map(info => [info.id, info]))
   const path = line === MAIN_LINE ? project.chapters : (project.lines?.find(candidate => candidate.id === line)?.path ?? []).map(id => known.get(id)).filter((info): info is ChapterInfo => info !== undefined)
   const written = path.filter(chapter => chapter.hasText)

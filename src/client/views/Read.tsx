@@ -37,7 +37,7 @@ import { useSheetsAsk } from '../SheetsAsk'
 import { IssueCard, IssueList, issueMarks } from '../Issues'
 import { AudioDesk, ScriptTable, type ScriptView } from '../stage/Audio'
 import {
-  Button, cx, Empty, Select, Spinner, useLoad, useMediaUrl, useProject, useQuote, useSnapshot, useStudio, useT, useLineView, waysOn,
+  Button, cx, Empty, Select, Spinner, useBookLine, useLoad, useMediaUrl, useProject, useQuote, useSnapshot, useStudio, useT, useLineView, waysOn,
 } from '../ui'
 import { ShareDialog } from './Share'
 import { DERIVE_TIES_HINT, TiesReport, useDeriveTies } from '../Ties'
@@ -104,7 +104,8 @@ function AlbumPage({ at, counts, sides }: { at: AlbumAt; counts: AlbumCounts; si
   const { project, root } = useProject()
   const mediaUrl = useMediaUrl()
   // Where the story goes more than one way, the album is of one of them: the main line, or a line that has a chapter written.
-  const [way, setWay] = useState<string>(MAIN_LINE)
+  // The line in hand, as on every page — where it has something written to make an album of.
+  const [way, setWay] = useBookLine()
   const ways = useMemo(() => [
     { id: MAIN_LINE, title: '' },
     ...(project.outline.lines ?? []).filter(line => project.lines?.find(info => info.id === line.id)?.chapters.some(chapter => chapter.hasText) === true).map(line => ({ id: line.id, title: line.title })),

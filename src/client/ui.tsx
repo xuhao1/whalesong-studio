@@ -782,11 +782,26 @@ export function ThoughtButton({ job, label }: { job: JobInfo; label?: boolean })
 export { linePath, waysOn, type WayOn } from '../shared/lines'
 
 /**
- * Which line of the plot a screen shows: the one the author picked, while the
- * chapter in focus is read on it; otherwise that chapter's own.
+ * The line of the plot in hand: one for the whole Studio. Whatever page changes it changes it for every page — the
+ * outline, the people, the writing, the reading, the production — so that somebody at work on a line beside the main
+ * one is on that line wherever they go, and never has to choose it again.
+ * @returns the line's id (`main` for the main one) and the way to take another in hand.
+ */
+export function useBookLine(): [string, (line: string) => void] {
+  const { controller } = useStudio()
+  const project = useSnapshot(snapshot => snapshot.project)
+  const wanted = useSnapshot(snapshot => snapshot.line) ?? MAIN_LINE
+  const line = wanted !== MAIN_LINE && (project?.outline.lines ?? []).some(candidate => candidate.id === wanted) ? wanted : MAIN_LINE
+  const set = useCallback((next: string) => { controller.setLine(next) }, [controller])
+  return [line, set]
+}
+
+/**
+ * Which line of the plot a screen shows: the one in hand, while the chapter in
+ * focus is read on it; otherwise that chapter's own.
  */
 export function useLineView(project: ProjectState, chapterId: string | undefined): { lineId: string; path: ChapterInfo[]; pick: (line: string) => void } {
-  const [picked, setPicked] = useState<string>(MAIN_LINE)
+  const [picked, setPicked] = useBookLine()
   const lines = project.outline.lines ?? []
   const focused = chapterId !== undefined ? [...project.chapters, ...(project.lines ?? []).flatMap(line => line.chapters)].find(candidate => candidate.id === chapterId) : undefined
   const known = lines.some(line => line.id === picked) ? picked : MAIN_LINE

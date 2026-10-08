@@ -12,7 +12,7 @@ import type { ChapterInfo, ChapterPlan, CharacterCard, WalkOn } from '../../shar
 import { Icon } from '../icons'
 import type { CastTab } from '../store'
 import {
-  Button, Chip, cx, Empty, Menu, SectionTitle, Select, Spinner, Tabs, useKept, useLoad, useProject, useQuote, useRunningJob, useSnapshot, useStudio, useT, useMediaUrl,
+  Button, Chip, cx, Empty, Menu, SectionTitle, Select, Spinner, Tabs, useBookLine, useKept, useLoad, useProject, useQuote, useRunningJob, useSnapshot, useStudio, useT, useMediaUrl,
 } from '../ui'
 import { byWeight, CastFilterBar, MAIN_ROLES, matchesCast, sortCast, useCastFilter } from '../CharacterPicker'
 import { CardPhoto, CharacterCards, LIFE_MARK, ROLE_LABELS, type Lives } from './Characters'
@@ -63,10 +63,16 @@ export function CastView() {
   }
   // A life is read along one line of the plot: the main one, or one that parted from it.
   const plotLines = project.outline.lines ?? []
-  const [wantedLine, setLine] = useKept<string>('cast.line', MAIN_LINE)
-  // Every line at once is a choice too: then nobody is left out, and lives are read along the main line.
-  const chosen = wantedLine === EVERY_LINE && plotLines.length > 0 ? EVERY_LINE : plotLines.some(candidate => candidate.id === wantedLine) ? wantedLine : MAIN_LINE
-  const line = chosen === EVERY_LINE ? MAIN_LINE : chosen
+  // The line in hand, as on every page. Every line at once is this page's own choice beside it: then nobody is left
+  // out, and lives are read along the line in hand.
+  const [bookLine, setBookLine] = useBookLine()
+  const [everyone, setEveryone] = useKept<boolean>('cast.everyone', false)
+  const chosen = everyone && plotLines.length > 0 ? EVERY_LINE : bookLine
+  const line = bookLine
+  const setLine = (next: string): void => {
+    setEveryone(next === EVERY_LINE)
+    if (next !== EVERY_LINE) setBookLine(next)
+  }
   // A world may hold several stories: the people listed are the chosen line's — said so on their card, or seen in its
   // chapters; somebody no chapter has yet is everybody's. (A Host from before answers with an error: then all are listed.)
   const seen = useLoad(async signal => (plotLines.length > 0 ? await controller.api.call('lines.seen', { root }, signal).catch(() => undefined) : undefined), [root, project.revision])

@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { publishSite } from '../src/core/pipelines/site'
 import { bookAnswer, listLines } from '../src/core/reader'
-import { waysOn } from '../src/shared/lines'
+import { chapterOnLine, knownLine, lineHolding, pathOfLine, waysOn } from '../src/shared/lines'
 import { readAlong, type ReaderLine } from '../src/shared/reader'
 import { MAIN_LINE } from '../src/shared/types'
 import { createTestBed, type TestBed } from './support/harness'
@@ -398,5 +398,42 @@ describe('a story that goes more than one way, to whoever reads it', () => {
         await rm(out, { recursive: true, force: true })
       }
     })
+  })
+})
+
+describe('the line in hand', () => {
+  let bed: TestBed
+  beforeEach(async () => { bed = await createTestBed() })
+  afterEach(async () => { await bed.cleanup() })
+
+  it('goes with the chapter in focus, and a line taken in hand puts the Studio on a chapter of it', async () => {
+    const { project } = bed.runtime
+    const main = await book(bed, 3, 2)
+    // A line that parts after the first chapter, with one chapter written and one to write; and a story of its own.
+    const stay = await project.addLine({ title: '她没有上船', from: main[0]! })
+    const s1 = await project.addChapter({ title: '回头' }, { line: stay.id })
+    const s2 = await project.addChapter({ title: '再往后' }, { line: stay.id })
+    await project.saveChapterText(s1.id, '她折了回去。')
+    const south = await project.addLine({ title: '城南的铺子' })
+    const c1 = await project.addChapter({ title: '开张' }, { line: south.id })
+    const empty = await project.addLine({ title: '还没写的线' })
+    const state = await project.state()
+    expect(pathOfLine(state, MAIN_LINE)).toEqual(main)
+    expect(pathOfLine(state, stay.id)).toEqual([main[0], s1.id, s2.id])
+    expect([knownLine(state, undefined), knownLine(state, 'gone'), knownLine(state, south.id)]).toEqual([MAIN_LINE, MAIN_LINE, south.id])
+    // A chapter the line in hand reads — its own, or one it shares with the line it parts from — leaves the line as it is.
+    expect(lineHolding(state, stay.id, s2.id)).toBe(stay.id)
+    expect(lineHolding(state, stay.id, main[0]!)).toBe(stay.id)
+    // A chapter it does not read takes the Studio to that chapter's own line.
+    expect(lineHolding(state, stay.id, main[2]!)).toBe(MAIN_LINE)
+    expect(lineHolding(state, MAIN_LINE, c1.id)).toBe(south.id)
+    expect(lineHolding(state, 'gone', s1.id)).toBe(stay.id)
+    // Taking a line in hand: the chapter in focus stays where the line reads it; else its first chapter still to
+    // write, else its last — and a line with nothing on it leaves the Studio where its path ends, or nowhere.
+    expect(chapterOnLine(state, stay.id, main[0]!)).toBe(main[0])
+    expect(chapterOnLine(state, stay.id, main[2]!)).toBe(s2.id)
+    expect(chapterOnLine(state, MAIN_LINE, c1.id)).toBe(main[2])
+    expect(chapterOnLine(state, south.id, main[1]!)).toBe(c1.id)
+    expect(chapterOnLine(state, empty.id, main[1]!)).toBeUndefined()
   })
 })

@@ -56,3 +56,36 @@ export function waysOn(project: ProjectState, chapter: ChapterInfo, lineId: stri
   }
   return { ...(along !== undefined ? { along } : {}), ways }
 }
+
+/** What of a book the line in hand is told from: its lines, and the chapters each reads. */
+type Lined = Pick<ProjectState, 'chapters' | 'lines'> & { outline: Pick<ProjectState['outline'], 'lines'> }
+
+/** The line a name stands for in a book: the main one for a line the book does not have. */
+export function knownLine(project: Lined, line: string | undefined): string {
+  return line !== undefined && line !== MAIN_LINE && (project.outline.lines ?? []).some(candidate => candidate.id === line) ? line : MAIN_LINE
+}
+
+/** The chapters read on a line, by id: what comes before it, its own, and what it arrives at. */
+export function pathOfLine(project: Lined, line: string): string[] {
+  return line === MAIN_LINE ? project.chapters.map(chapter => chapter.id) : project.lines?.find(candidate => candidate.id === line)?.path ?? []
+}
+
+/**
+ * The line a chapter is worked on: the one in hand while it reads that chapter — a chapter a line shares with the one
+ * it parts from does not take anybody off that line —, else the chapter's own.
+ */
+export function lineHolding(project: Lined, current: string | undefined, chapterId: string): string {
+  const now = knownLine(project, current)
+  if (pathOfLine(project, now).includes(chapterId)) return now
+  return (project.lines ?? []).find(line => line.chapters.some(chapter => chapter.id === chapterId))?.id ?? MAIN_LINE
+}
+
+/** Where the Studio stands on a line taken in hand: on the chapter in focus where the line reads it; else on the line's first chapter still to write, else its last. */
+export function chapterOnLine(project: Lined, line: string, focused: string | undefined): string | undefined {
+  const id = knownLine(project, line)
+  const path = pathOfLine(project, id)
+  if (focused !== undefined && path.includes(focused)) return focused
+  const own = id === MAIN_LINE ? project.chapters : project.lines?.find(candidate => candidate.id === id)?.chapters ?? []
+  return (own.find(chapter => !chapter.hasText) ?? own.at(-1))?.id ?? path.at(-1)
+}
+

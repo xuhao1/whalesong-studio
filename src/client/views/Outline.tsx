@@ -9,7 +9,7 @@ import { Icon } from '../icons'
 import { PlotGraph } from './PlotGraph'
 import { CHAPTER_STATUS, CHAPTER_STATUS_TONE, THREAD_KIND, THREAD_STATUS, THREAD_STATUS_TONE } from '../labels'
 import {
-  Button, Chip, cx, Empty, Field, Menu, Modal, SectionTitle, Select, Tabs, TextArea, TextInput, useAction, useConfirm, useKept, useLoad, useProject, useSnapshot,
+  Button, Chip, cx, Empty, Field, Menu, Modal, SectionTitle, Select, Tabs, TextArea, TextInput, useAction, useBookLine, useConfirm, useLoad, useProject, useSnapshot,
   useStudio, useT, type Translate,
 } from '../ui'
 
@@ -68,16 +68,11 @@ function Chapters({ onGraph }: { onGraph: () => void }) {
   const info = new Map([...project.chapters, ...(project.lines ?? []).flatMap(line => line.chapters)].map(chapter => [chapter.id, chapter]))
   // One line of the plot at a time: the page lists the line chosen — the main one, or another as it is read (what it
   // shares with the line it parts from, then its own) — and not every line under the other.
-  const [wantedLine, setLine] = useKept<string>('outline.line', MAIN_LINE)
+  const [wantedLine, setLine] = useBookLine()
   const shownLine = others.find(line => line.id === wantedLine)
   const pathOf = (line: PlotLine | undefined): string[] => (line === undefined ? main.map(plan => plan.id) : project.lines?.find(candidate => candidate.id === line.id)?.path ?? line.chapters.map(plan => plan.id))
   const path = pathOf(shownLine)
-  // A chapter opened from elsewhere that this line does not read takes the page to the line it belongs to.
-  const focusedHome = focused !== undefined && everything.some(plan => plan.id === focused) ? others.find(line => line.chapters.some(plan => plan.id === focused))?.id ?? MAIN_LINE : undefined
-  useEffect(() => {
-    if (focused !== undefined && focusedHome !== undefined && !path.includes(focused)) setLine(focusedHome)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focused, focusedHome])
+  // (A chapter opened from elsewhere that this line does not read takes the whole Studio to its own line.)
   const own = shownLine !== undefined ? shownLine.chapters : main
   const selected = everything.find(plan => plan.id === focused && path.includes(plan.id)) ?? own[0] ?? everything.find(plan => path.includes(plan.id))
   const home = selected !== undefined ? others.find(line => line.chapters.some(plan => plan.id === selected.id)) : undefined
@@ -87,8 +82,6 @@ function Chapters({ onGraph }: { onGraph: () => void }) {
   const pickLine = (id: string): void => {
     setLine(id)
     setDeriving(false)
-    const first = id === MAIN_LINE ? main[0] : others.find(line => line.id === id)?.chapters[0]
-    if (first !== undefined) controller.focusChapter(first.id)
   }
   const addToLine = (line: PlotLine): Promise<unknown> => run(async () => {
     const results = await apply([{ op: 'add-chapter', title: t('新章节', 'New chapter'), line: line.id }])
