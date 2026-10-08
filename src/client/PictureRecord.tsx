@@ -155,8 +155,11 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
     if (same === true) standing.push({ tone: 'ok', text: anchored ? t('视觉锚点和现在的一样。', 'The visual anchor is the same as now.') : t('人物卡上写的外貌和现在的一样（还没有视觉锚点）。', 'The appearance on the card is the same as now (there is no visual anchor yet).') })
     else if (same === false) standing.push(withAction({ tone: 'warn', text: t('视觉锚点在这张图之后改过：这张图不是照现在写的样子画的。', 'The visual anchor was changed after this picture: it was not drawn from the words as they are now.') }, editLook !== undefined ? { label: t('看现在的视觉锚点', 'See the anchor as it is'), run: editLook } : undefined))
     // The moment a portrait shows: the one on the card now, or another.
-    const shownScene = parts?.pieces?.find(piece => piece.of === 'scene')?.text
-    if (image.kind === 'portrait' && shownScene !== undefined) {
+    const scenePiece = parts?.pieces?.find(piece => piece.of === 'scene')
+    const shownScene = scenePiece?.text
+    if (image.kind === 'portrait' && scenePiece?.from === 'asked') {
+      standing.push({ tone: 'info', text: t('这一张的场面是导演按你当时写的要求另挑、另写的，只用在这一张；人物卡上定的名场面没有因此改变。', 'The moment of this one was picked and written by the director for what you asked then, for this picture alone; the scene kept on the card was not changed by it.') })
+    } else if (image.kind === 'portrait' && shownScene !== undefined) {
       const sceneNow = tidyPart(card.visual?.scene ?? '')
       if (sceneNow !== shownScene) standing.push(withAction({ tone: 'warn', text: sceneNow.length > 0 ? t('人物卡上定的名场面在这张图之后改过：这张画的是当时的那一幕。', 'The scene kept on the card was changed after this picture: it shows the one of that time.') : t('人物卡上现在没有定名场面：这张画的是当时的那一幕。', 'No scene is kept on the card now: this shows the one of that time.') }, onEditLook !== undefined ? { label: t('看现在的', 'See it as it is'), run: () => { onEditLook({ kind: 'character', id: card.id, what: 'scene' }) } } : undefined))
     }
@@ -266,13 +269,14 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
         {parts !== undefined ? (
           <dl className="nv-parts">
             {parts.pieces !== undefined && parts.pieces.length > 0 ? parts.pieces.map((piece, index) => (
-              <PieceRow key={index} label={piece.of === 'look' ? (card !== undefined ? t('这个人的样子', 'How they look') : t('它的样子', 'How it looks')) : t(...PIECE[piece.of])} chip={piece.of === 'scene' ? t('人物卡上定的那一幕', 'the moment kept on the card') : piece.of !== 'look' ? undefined : card !== undefined
+              <PieceRow key={index} label={piece.of === 'look' ? (card !== undefined ? t('这个人的样子', 'How they look') : t('它的样子', 'How it looks')) : t(...PIECE[piece.of])} chip={piece.of === 'scene' ? (piece.from === 'asked' ? t('导演按这一张的要求挑的', 'picked by the director for this picture') : t('人物卡上定的那一幕', 'the moment kept on the card')) : piece.of !== 'look' ? undefined : card !== undefined
                 ? (piece.from === 'anchor' ? t('视觉锚点', 'visual anchor') : t('人物卡的外貌（还没有视觉锚点）', 'the card\'s appearance (no anchor yet)'))
                 : (piece.from === 'anchor' ? t('条目上的"样子"', 'the entry\'s look') : t('条目的名字和概括', 'the entry\'s name and summary'))}
               >
                 {piece.text}
                 {piece.of === 'look' && editLook !== undefined ? <> <button type="button" className="nv-link nv-small" onClick={editLook}>{t('去改', 'Change it')}</button></> : null}
-                {piece.of === 'scene' && onEditLook !== undefined && card !== undefined ? <> <button type="button" className="nv-link nv-small" onClick={() => { onEditLook({ kind: 'character', id: card.id, what: 'scene' }) }}>{t('去改', 'Change it')}</button></> : null}
+                {piece.of === 'scene' && piece.asked !== undefined ? <span className="nv-muted nv-small"> —— {t(`你当时写的要求：${piece.asked}（它引导了导演挑哪一幕、怎么写，本身不在提示词里）`, `what you asked then: ${piece.asked} (it guided which moment the director picked and how it is written; it is not itself in the prompt)`)}</span> : null}
+                {piece.of === 'scene' && onEditLook !== undefined && card !== undefined ? <> <button type="button" className="nv-link nv-small" onClick={() => { onEditLook({ kind: 'character', id: card.id, what: 'scene' }) }}>{piece.from === 'asked' ? t('看人物卡上定的那一幕', 'See the one kept on the card') : t('去改', 'Change it')}</button></> : null}
               </PieceRow>
             )) : <PieceRow label={t('画面内容', 'Subject')}>{parts.subject}</PieceRow>}
             {parts.clipped === true ? <PieceRow label={t('注意', 'Note')}><span className="nv-picture-warn">{t('画面内容太长，给后面的参考图说明和画风让了位置，被截短了。实际发出去的见下面的原话。', 'The subject was too long and was cut to leave room for the lines after it. What went is in the words below.')}</span></PieceRow> : null}

@@ -310,15 +310,20 @@ export function jobTarget(job: Pick<JobInfo, 'target'>, project: Pick<ProjectSta
  */
 export interface PortraitScene {
   text?: string
+  /** The director picked it just now, and it is on the card. */
   picked?: boolean
+  /** The director picked it for this picture alone, guided by this — what the author asked of the picture. */
+  asked?: string
+  /** Why this moment, in the director's words. */
+  why?: string
   none?: string
 }
 
 export function sceneOf(job: { result?: Record<string, unknown> } | undefined): PortraitScene | undefined {
   const scene = job?.result?.scene
   if (typeof scene !== 'object' || scene === null) return undefined
-  const { text, picked, none } = scene as { text?: unknown; picked?: unknown; none?: unknown }
-  if (typeof text === 'string' && text.length > 0) return { text, ...(picked === true ? { picked: true } : {}) }
+  const { text, picked, asked, why, none } = scene as { text?: unknown; picked?: unknown; asked?: unknown; why?: unknown; none?: unknown }
+  if (typeof text === 'string' && text.length > 0) return { text, ...(picked === true ? { picked: true } : {}), ...(typeof asked === 'string' && asked.length > 0 ? { asked } : {}), ...(typeof why === 'string' && why.length > 0 ? { why } : {}) }
   return typeof none === 'string' ? { none } : undefined
 }
 

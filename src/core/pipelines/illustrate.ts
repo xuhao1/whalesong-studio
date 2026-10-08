@@ -28,10 +28,12 @@
  *   an avoid list   per Studio, per book, per character and per call, joined
  *                   and sent with every picture.
  *
- * A portrait with nothing asked of it shows the person in the moment a reader
- * remembers them by: the director picks that moment from the book, it is kept
- * on the card (`visual.scene`) where the author reads and rewrites it, and
- * every later portrait asked for nothing is drawn from it.
+ * A portrait shows the person in the moment a reader remembers them by: the
+ * director picks that moment from the book, it is kept on the card
+ * (`visual.scene`) where the author reads and rewrites it, and every later
+ * portrait asked for nothing is drawn from it. What the author asks of one
+ * portrait — brighter, the night of the fire, looking back — does not take
+ * the moment's place: it guides the director's pick for that picture.
  *
  * Every picture records what its prompt was assembled from, part by part,
  * which pictures went along with it, and what reached the image service word
@@ -376,10 +378,11 @@ export async function sortNotes(core: NovelCore, runtime: ProjectRuntime, card: 
  * (`visual.scene`). The director is an agent with the book to look in: it is
  * handed what the chapter digests noted of the person as leads, and reads the
  * text where it needs to; which moment it is, is the director's to say.
- * @param params.direction - what the author wants of the moment ("the one by the river"); it decides.
+ * @param params.direction - what the author asks: it guides which moment is picked and how it is written ("the one by the river", "in bright daylight").
+ * @param params.once - the pick is for one portrait, asked for with wishes of its own: the scene on the card stands unless they call for another, and nothing is kept — the card's scene is not what one picture wanted.
  * @returns the scene, empty where the book has no such moment yet — then nothing is kept, and `why` says so.
  */
-export async function derivePortraitScene(core: NovelCore, runtime: ProjectRuntime, params: { character: string; direction?: string }, task: TaskContext): Promise<{ card: CharacterCard; scene: string; why?: string }> {
+export async function derivePortraitScene(core: NovelCore, runtime: ProjectRuntime, params: { character: string; direction?: string; once?: boolean }, task: TaskContext): Promise<{ card: CharacterCard; scene: string; why?: string }> {
   const { project } = runtime
   const card = await project.findCharacter(params.character)
   if (card === undefined) throw new ProjectError('novel/not-found', `no character matches "${params.character}"`)
@@ -395,7 +398,9 @@ export async function derivePortraitScene(core: NovelCore, runtime: ProjectRunti
     event.where !== undefined ? L(lang, `（${event.where}）`, ` (${event.where})`) : '',
   ].join('')).join('\n')
   const undigested = chapters.filter(chapter => !chapter.digested).length
-  const restore = task.job?.note(L(lang, `导演在书里挑「${card.name}」的名场面…`, `The director is picking the signature scene of ${card.name} from the book…`))
+  const restore = task.job?.note(params.once === true
+    ? L(lang, `导演在按你写的要求，给「${card.name}」这张立绘挑场面…`, `The director is picking the scene of this portrait of ${card.name}, by what you asked…`)
+    : L(lang, `导演在书里挑「${card.name}」的名场面…`, `The director is picking the signature scene of ${card.name} from the book…`))
   try {
     const { value } = await assign(core, runtime, task, {
       role: 'director',
@@ -414,6 +419,7 @@ export async function derivePortraitScene(core: NovelCore, runtime: ProjectRunti
         record: [record, undigested > 0 ? L(lang, `（这条线上还有 ${undigested} 章有正文但没有收录，上面没有它们的记载。）`, `(${undigested} more chapters of this line are not digested: nothing above is of them.)`) : ''].filter(part => part.length > 0).join('\n'),
         ...(card.visual?.scene !== undefined && card.visual.scene.trim().length > 0 ? { current: card.visual.scene.trim() } : {}),
         ...(params.direction !== undefined && params.direction.trim().length > 0 ? { direction: params.direction.trim() } : {}),
+        ...(params.once === true ? { once: true } : {}),
         avoid: art.avoid,
         artStyle: art.style,
       }),
@@ -422,7 +428,7 @@ export async function derivePortraitScene(core: NovelCore, runtime: ProjectRunti
     })
     const scene = asText(value.scene) ?? ''
     const why = asText(value.why)
-    if (scene.length === 0) return { card, scene, ...(why !== undefined ? { why } : {}) }
+    if (scene.length === 0 || params.once === true) return { card, scene, ...(why !== undefined ? { why } : {}) }
     const saved = await project.saveCharacter({ id: card.id, visual: { scene } })
     await project.addActivity({ by: 'crew', role: 'director', tool: 'art', summary: L(lang, `给「${card.name}」的立绘挑了名场面：${clip(scene, 60)}`, `Picked the scene ${card.name}'s portrait shows: ${clip(scene, 80)}`) })
     return { card: saved, scene, ...(why !== undefined ? { why } : {}) }
@@ -888,11 +894,12 @@ export interface IllustrateResult extends IllustrationInfo {
   /** How the author's loose notes were sorted: into the person's look, into this picture, or nowhere. */
   sorted?: SortedNotes
   /**
-   * A portrait asked for nothing: the moment of the book it shows. `picked`: the director picked it for this picture
-   * (it is on the card now); otherwise it was on the card. `none`: the director was asked and found no such moment in
-   * the book yet — the portrait is plain, and this is why.
+   * A portrait: the moment of the book it shows. `picked`: the director picked it just now and it is on the card;
+   * `asked`: the director picked it for this picture alone, guided by what the author asked of it (given back here),
+   * and the card keeps what it had; neither: it was on the card. `none`: the director was asked and gave no moment —
+   * the portrait is drawn without one, and this is why.
    */
-  scene?: { text: string; picked?: boolean } | { none: string }
+  scene?: { text: string; picked?: boolean; asked?: string; why?: string } | { none: string }
 }
 
 export async function illustrate(core: NovelCore, runtime: ProjectRuntime, params: IllustrateParams, task: TaskContext): Promise<IllustrateResult> {
@@ -966,31 +973,38 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
     }
     let anchored = await withAnchor(core, runtime, noted, task)
     if (looksOf(anchored).length === 0) throw new ProjectError('novel/invalid', `${anchored.name} has no appearance yet — describe how they look first (or let novel_bible expand the card)`)
-    // A portrait asked for nothing shows the person in the moment a reader remembers them by. Which moment that is, is
-    // on their card; where it is not, the director picks it from the book — an agent's choice, not a rule's — and it is
-    // kept there. Something asked of this picture takes its place; so does `plain`, and the author's setting.
+    // A portrait shows the person in the moment a reader remembers them by. Which moment that is, is on their card;
+    // where it is not, the director picks it from the book — an agent's choice, not a rule's — and it is kept there.
+    // What the author asks of this one portrait does not take the moment's place: it guides the director, who picks
+    // and writes the moment for this picture by it, and the card keeps what it had. `plain`, and the author's setting,
+    // are what turn the moment off.
     let scene: string | undefined
-    if (params.kind === 'portrait' && direction === undefined && params.plain !== true && core.currentSettings().image.portraitScene !== false) {
-      scene = anchored.visual?.scene?.trim()
-      if (scene !== undefined && scene.length > 0) shown = { text: scene }
+    let guided: string | undefined
+    if (params.kind === 'portrait' && params.plain !== true && core.currentSettings().image.portraitScene !== false) {
+      const kept = anchored.visual?.scene?.trim() ?? ''
       // A book with nothing written yet has no moment to pick: nobody is asked.
-      else if ((await project.chapterInfos()).some(chapter => chapter.hasText)) {
-        scene = undefined
+      const written = (await project.chapterInfos()).some(chapter => chapter.hasText)
+      if (direction === undefined && kept.length > 0) {
+        scene = kept
+        shown = { text: kept }
+      } else if (written) {
         try {
-          const picked = await derivePortraitScene(core, runtime, { character: anchored.id }, task)
-          anchored = picked.card
+          const picked = await derivePortraitScene(core, runtime, { character: anchored.id, ...(direction !== undefined ? { direction, once: true } : {}) }, task)
+          if (direction === undefined) anchored = picked.card
           if (picked.scene.length > 0) {
             scene = picked.scene
-            shown = { text: scene, picked: true }
+            if (direction !== undefined) guided = direction
+            shown = { text: scene, ...(direction !== undefined ? { asked: direction } : { picked: true }), ...(picked.why !== undefined ? { why: picked.why } : {}) }
           } else {
             shown = { none: picked.why ?? L(lang, '书里还没有找到算得上名场面的一幕', 'the book has no moment yet that stands for them') }
           }
         } catch (error) {
           if (isAbort(error) || task.signal?.aborted === true) throw error
-          core.log(`could not pick the scene ${anchored.name}'s portrait shows; drawing a plain portrait`, error)
+          core.log(`could not pick the scene ${anchored.name}'s portrait shows; drawing without one`, error)
           shown = { none: L(lang, `导演没能挑出来（${error instanceof Error ? clip(error.message, 80) : '没有回答'}）`, `the director could not pick one (${error instanceof Error ? clip(error.message, 100) : 'no answer'})`) }
         }
-      } else scene = undefined
+      }
+      // (Something asked of a book with nothing written yet is drawn as asked, below: there is no moment to pick.)
       // Said with the job while the picture is still being drawn: which moment it is to show.
       if (shown !== undefined) task.job?.result({ scene: shown })
     }
@@ -1003,7 +1017,9 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
             // In their scene the person is still what the picture is of — it is also their face in every list.
             piece('frame', L(lang, '人物立绘：人物是画面的主体，半身到七分身，脸在画面上半部、看得清', 'character portrait: the person is the subject, waist-up to three-quarter length, the face in the upper half and clearly seen')),
             piece('look', looksOf(card), lookFrom(card)),
-            piece('scene', scene),
+            // Picked for this picture by what the author asked — which is in the scene as the director wrote it, not
+            // sent a second time — or the one the card keeps.
+            guided !== undefined ? { of: 'scene' as const, text: scene, from: 'asked' as const, asked: guided } : piece('scene', scene, 'card'),
           ], comma)
         : compose([
             // Asked for nothing in particular, a portrait faces the viewer on a plain ground; a direction of its own — a snowy

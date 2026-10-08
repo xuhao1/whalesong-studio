@@ -1200,13 +1200,22 @@ Output JSON only: {"prompt": "", "negative": ""}`)
 /**
  * The moment of the book somebody's portrait shows: the scene a reader
  * remembers them by, picked from the book and written as a picture.
+ *
+ * What moments are fit to be shown is the author's to say — a book's Christ is
+ * on the cross, its general in the thick of the fight — through the book's
+ * avoid list and through what they ask; the task rules none out by kind.
  * @param base.record - what the chapter digests noted of them, chapter by chapter: leads to follow into the text, not the text.
  * @param base.anchor - how they look, as every picture of them restates it: not to be written again.
- * @param base.current - the scene kept so far, when another is asked for.
+ * @param base.current - the scene kept on the card so far.
+ * @param base.direction - what the author asks. It guides the pick — which moment, or what kind of moment — and how it is written.
+ * @param base.once - the pick is for one picture, asked for with wishes of its own: the kept scene stands unless those call for another. Otherwise the scene to keep is picked, and a kept one is to be replaced.
  */
-export function portraitSceneTask(base: Base & { name: string; card: string; anchor?: string; record: string; current?: string; direction?: string; avoid?: string[]; artStyle?: string }): string {
+export function portraitSceneTask(base: Base & { name: string; card: string; anchor?: string; record: string; current?: string; direction?: string; once?: boolean; avoid?: string[]; artStyle?: string }): string {
   const avoid = (base.avoid ?? []).join(base.lang === 'zh' ? '、' : ', ')
   const styled = (base.artStyle?.trim() ?? '').length > 0
+  const kept = base.current !== undefined && base.current.length > 0
+  const asked = base.direction !== undefined && base.direction.length > 0
+  const once = base.once === true
   return L(base.lang, `请为《${bare(base.title)}》里的「${base.name}」挑一个"名场面"：读过这本书的人一想到这个人，就会想起的那一幕。这个人的立绘就照这一幕来画。
 
 ## 人物
@@ -1217,21 +1226,19 @@ ${base.anchor !== undefined && base.anchor.length > 0 ? base.anchor : '（还没
 
 ## 各章的收录里对这个人的记载
 ${base.record.length > 0 ? base.record : '（还没有哪一章的收录记到这个人——到原文里去找。）'}
-${base.current !== undefined && base.current.length > 0 ? `\n## 现在定的那一幕（作者要换一个）\n${base.current}\n` : ''}${base.direction !== undefined && base.direction.length > 0 ? `\n## 作者的要求（以它为准）\n${base.direction}\n` : ''}${artSection(base.lang, base.artStyle)}
+${kept ? (once ? `\n## 人物卡上定的名场面（没有别的要求时，立绘画的就是它）\n${base.current}\n` : `\n## 现在定的那一幕（作者要换一个）\n${base.current}\n`) : ''}${asked ? (once ? `\n## 作者对这一张立绘的要求（用它来挑、来写）\n${base.direction}\n` : `\n## 作者的要求（用它来挑、来写）\n${base.direction}\n`) : ''}${artSection(base.lang, base.artStyle)}
 ## 这本书的画面里不能出现
 ${avoid.length > 0 ? avoid : '（无特别限制）'}
 
 要求：
 1. 只从这本书里挑：正文里真写了的一幕。上面的记载是各章收录时记下的，只是线索，而且可能只收录了一部分章节——没收录的章节里也可能有；定下来的那一幕，要照原文那一段来写。书里还没有哪一幕算得上（这个人还没怎么出场），就如实说没有：scene 留空，不要编。
-2. 挑最属于这个人的那一幕：换一个人就不成立；一眼认得出——在哪里、在做什么、手里拿着什么。书里公认的名场面优先于只是出场多的地方。
-3. 这是立绘，是这个人的门面——挂在人物页和列表里，读者在画册里也看得到：
-   - 画面里只有这个人。那一幕里还有别人的，只写这个人自己那一刻的样子，别人一个字不写；离了别人就不成立的一幕（搂抱、厮打、对饮、对谈），换一幕。
-   - 不挑亲热、裸露、施暴、受刑、病危和死状这类场面，再有名也换一幕：挑这个人最好认、也拿得出手的样子。
-   - 写一个定格的瞬间，不是一段经过：不写对话，不写先后发生的几件事。
-4. scene：用这本书的语言写成一段，60–140 字。先用几个字点明是哪一幕、在第几章（如"葬花（第 27 章）："），再写画面：时间与地点、这个人在做什么、姿态与神情、手里和身边的东西、光线与气氛。人物是画面的主体，半身到七分身，脸看得清。
-5. 长相和平常的衣着不要重写（会另行带上）；只有这一幕里原文写明换了的穿戴才写。${styled ? '画风里对年代、形制有规定的（发式、服饰、建筑、器物属于哪个朝代、哪种式样），画面里这些东西照它写；原文的写法与它不一样时以画风为准。' : ''}
-6. 只写眼睛看得见的；只有读过这本书才懂的名字，写成它实际的样子；"不能出现"的东西不要写。不写画风、镜头、画质。
-7. why：一句话告诉作者为什么是这一幕。
+2. 挑最属于这个人的那一幕：换一个人就不成立；一眼认得出——在哪里、在做什么、手里拿着什么。书里公认的名场面优先于只是出场多的地方。${asked ? `
+3. 作者的要求是给你的引导，按它来挑、来写：它点名了哪一幕，就是那一幕；它说的是光线、时间、天气、气氛、神态、姿态这一类，就挑合得上这个要求的那一幕，并照它来写${once && kept ? '——人物卡上定的那一幕合得上，就还用它，按要求调整；合不上，就在书里另挑一幕合得上的' : ''}；它不要某一类画面，就避开。它要的根本不是书里的哪一幕（比如素底、面向镜头的定妆照），就照它说的写成画面，不必硬套一幕。` : ''}
+${asked ? 4 : 3}. 这是立绘：这个人是画面的主体，半身到七分身，脸看得清；那一幕里的别人只作陪衬（背影、远处、局部），不抢主体。写一个定格的瞬间，不是一段经过：不写对话，不写先后发生的几件事。未成年的人物不写亲热和裸露的画面。
+${asked ? 5 : 4}. scene：用这本书的语言写成一段，60–140 字。先用几个字点明是哪一幕、在第几章（如"葬花（第 27 章）："），再写画面：时间与地点、这个人在做什么、姿态与神情、手里和身边的东西、光线与气氛。
+${asked ? 6 : 5}. 长相和平常的衣着不要重写（会另行带上）；只有这一幕里原文写明换了的穿戴才写。${styled ? '画风里对年代、形制有规定的（发式、服饰、建筑、器物属于哪个朝代、哪种式样），画面里这些东西照它写；原文的写法与它不一样时以画风为准。' : ''}
+${asked ? 7 : 6}. 只写眼睛看得见的；只有读过这本书才懂的名字，写成它实际的样子；"不能出现"的东西不要写。不写画风、镜头、画质。
+${asked ? 8 : 7}. why：一句话告诉作者为什么是这一幕${asked ? '，以及他的要求是怎么用上的' : ''}。
 
 只输出 JSON：{"scene": "", "why": ""}`, `Pick the "signature scene" of ${base.name} in "${bare(base.title)}": the moment somebody who has read the book thinks of when they think of this person. Their portrait is drawn from it.
 
@@ -1243,21 +1250,19 @@ ${base.anchor !== undefined && base.anchor.length > 0 ? base.anchor : '(not writ
 
 ## What the chapter digests noted of them
 ${base.record.length > 0 ? base.record : '(No chapter digest names them yet — look in the text.)'}
-${base.current !== undefined && base.current.length > 0 ? `\n## The scene kept so far (the author wants another)\n${base.current}\n` : ''}${base.direction !== undefined && base.direction.length > 0 ? `\n## The author asks (this decides)\n${base.direction}\n` : ''}${artSection(base.lang, base.artStyle)}
+${kept ? (once ? `\n## The scene kept on their card (what a portrait shows where nothing else is asked)\n${base.current}\n` : `\n## The scene kept so far (the author wants another)\n${base.current}\n`) : ''}${asked ? (once ? `\n## What the author asks of this one portrait (pick and write by it)\n${base.direction}\n` : `\n## What the author asks (pick and write by it)\n${base.direction}\n`) : ''}${artSection(base.lang, base.artStyle)}
 ## Must not appear in this book's pictures
 ${avoid.length > 0 ? avoid : '(nothing in particular)'}
 
 Rules:
 1. From this book only: a moment the text really has. The notes above were taken as chapters were digested — leads, and possibly of some chapters only; chapters not digested may have one too. The moment settled on is written as that passage of the text has it. Where the book has no such moment yet (they have hardly been on the page), say so: leave scene empty, invent nothing.
-2. The moment that is most this person's own: it would not hold with anybody else in it; it is told at a glance — where, doing what, holding what. A moment the book is known by comes before a place they are merely often in.
-3. It is a portrait — how this person is presented: on their page, in every list, and to readers in the book's album:
-   - Only this person is in the picture. Where others are in the moment, write this person as they are in that instant and not a word of the others; a moment that does not hold without somebody else (an embrace, a fight, a toast, a talk) gives way to another.
-   - No moment of intimacy, nudity, violence done or suffered, torture, the sickbed or death, however well known: another moment is picked — the one they are best known by that can be shown to anyone.
-   - One instant held still, not a course of events: no dialogue, no one thing after another.
-4. scene: one paragraph in the language of the book, 40–100 words. First, in a few words, which moment it is and in which chapter (as in "Burying the flowers (chapter 27):"), then the picture: time and place, what they are doing, bearing and expression, what is in their hands and around them, light and mood. The person is the subject, waist-up to three-quarter length, the face clearly seen.
-5. Their face and usual clothing are not written again (they are added separately); only what the text says they wear differently in this moment.${styled ? ' Where the art direction fixes a period or a form (which dynasty or fashion hair, dress, buildings and objects belong to), these are written in that form; where the text says otherwise, the art direction holds.' : ''}
-6. Only what the eye can see; a name only a reader of the book understands is written as what it looks like; nothing from "must not appear". No words about art style, camera or image quality.
-7. why: one sentence telling the author why this moment.
+2. The moment that is most this person's own: it would not hold with anybody else in it; it is told at a glance — where, doing what, holding what. A moment the book is known by comes before a place they are merely often in.${asked ? `
+3. What the author asks is your guide — pick by it and write by it: a moment it names is the moment; where it speaks of light, time of day, weather, mood, expression or bearing, pick the moment that answers to it and write it so${once && kept ? ' — the scene kept on the card where that answers, adjusted as asked; another moment of the book where it does not' : ''}; a kind of picture it does not want is left aside. Where what it asks for is no moment of the book at all (a plain ground, facing the viewer), write the picture as asked and force no moment onto it.` : ''}
+${asked ? 4 : 3}. It is a portrait: this person is the subject, waist-up to three-quarter length, the face clearly seen; whoever else is in the moment is there as company only (a back, a distance, a part), never the subject. One instant held still, not a course of events: no dialogue, no one thing after another. Somebody who is not yet an adult is not written into a moment of intimacy or nudity.
+${asked ? 5 : 4}. scene: one paragraph in the language of the book, 40–100 words. First, in a few words, which moment it is and in which chapter (as in "Burying the flowers (chapter 27):"), then the picture: time and place, what they are doing, bearing and expression, what is in their hands and around them, light and mood.
+${asked ? 6 : 5}. Their face and usual clothing are not written again (they are added separately); only what the text says they wear differently in this moment.${styled ? ' Where the art direction fixes a period or a form (which dynasty or fashion hair, dress, buildings and objects belong to), these are written in that form; where the text says otherwise, the art direction holds.' : ''}
+${asked ? 7 : 6}. Only what the eye can see; a name only a reader of the book understands is written as what it looks like; nothing from "must not appear". No words about art style, camera or image quality.
+${asked ? 8 : 7}. why: one sentence telling the author why this moment${asked ? ', and how what they asked was used' : ''}.
 
 Output JSON only: {"scene": "", "why": ""}`)
 }
@@ -1273,10 +1278,10 @@ export function lookNotesTask(base: Base & { card: string; anchor?: string; nega
   const avoid = (base.avoid ?? []).join(', ')
   const zhPicture = base.picture === 'sheet'
     ? '人设图（三视图）：同一个人的全身站姿画三次——正面、侧面、背面，素底，表情平静。它没有背景、天气、时间、动作和镜头，这类想法这张图用不上。'
-    : '立绘：半身像，面向镜头。它可以有自己的背景、时间、天气、光线、姿势和神态。'
+    : '立绘：画的是这个人在书里的一幕，人物是主体。画哪一幕、什么背景、时间、天气、光线、姿势和神态，都可以由作者的想法来引导——只属于这一张的想法会交给导演，由他照着去挑、去写这一幕。'
   const enPicture = base.picture === 'sheet'
     ? 'a design sheet (turnaround): the same person standing, full body, three times — front, side, back — on a plain ground, with a neutral expression. It has no setting, weather, time of day, action or camera: ideas of that kind have no place in it.'
-    : 'a portrait: waist-up, facing the viewer. It can have a setting, a time of day, weather, light, a pose and an expression of its own.'
+    : 'a portrait: it shows the person in a moment of the book, the person being the subject. Which moment, what setting, time of day, weather, light, pose and expression — the author\'s ideas may guide all of it: what is of this one picture is handed to the director, who picks and writes the moment by it.'
   return L(base.lang, `作者在给《${bare(base.title)}》的一个人物画图之前，随手写下了一些想法。它们混在一起：有的说的是这个人本身，有的只是这一张图想要的样子。请把它们分开。
 
 ## 人物
@@ -1305,7 +1310,7 @@ ${avoid.length > 0 ? avoid : '（无特别限制）'}
 anchor 的写法：英文，逗号分隔的短语，40-70 个词，只写看得见的；不写姓名、性格、身份、经历，不用机构名、教派、头衔之类的词（绘图模型会按现实里最常见的样子去画，要写成它实际的形状和材质）；不写动作、姿势、此刻的表情，不写画风、光线、镜头、画质。没有任何想法属于这个人本身、而锚点已经有了时，anchor 原样照抄。
 
 只输出 JSON：
-{"anchor": "分完之后的整段视觉锚点", "negative": "这个人身上不该画出的东西（英文，逗号分隔）；没有变化就照抄原来的，没有就留空", "appearance": "kept 里那几点当中，人物卡的外貌还没有写到的：用${base.language}写成一句短话，可以直接接在原有外貌后面。只写作者说的那几点——外貌里已经有的不重复，作者没说的材质、新旧、来历之类不要添。都已经有了就留空", "picture": "只属于这一张图的要求，写成给绘图模型的一句话；没有就留空", "kept": ["进了这个人形象的每一点，用作者的话，几个字一条"], "once": ["只用在这一张图上的每一点，几个字一条"], "unused": ["这一张图用不上的每一点，几个字一条"]}`, `Before a picture of a character of "${bare(base.title)}" is drawn, the author jotted down some ideas. They are mixed: some are about the person, some only about what this one picture should be. Sort them.
+{"anchor": "分完之后的整段视觉锚点", "negative": "这个人身上不该画出的东西（英文，逗号分隔）；没有变化就照抄原来的，没有就留空", "appearance": "kept 里那几点当中，人物卡的外貌还没有写到的：用${base.language}写成一句短话，可以直接接在原有外貌后面。只写作者说的那几点——外貌里已经有的不重复，作者没说的材质、新旧、来历之类不要添。都已经有了就留空", "picture": "只属于这一张图的要求：用${base.language}、尽量用作者自己的话写成一句，只写作者说到的，不要添构图、景别这类他没说的；没有就留空", "kept": ["进了这个人形象的每一点，用作者的话，几个字一条"], "once": ["只用在这一张图上的每一点，几个字一条"], "unused": ["这一张图用不上的每一点，几个字一条"]}`, `Before a picture of a character of "${bare(base.title)}" is drawn, the author jotted down some ideas. They are mixed: some are about the person, some only about what this one picture should be. Sort them.
 
 ## Character
 ${base.card}
@@ -1333,7 +1338,7 @@ How to sort:
 The anchor: English, comma-separated phrases, 40-70 words, only what can be seen; no names, personality, role or history, no names of institutions, orders or titles (an image model draws the most common real-world version of such words — say its actual shape and material); no action, pose or passing expression, no art style, light, camera or image quality. Where no idea is of the person and there is an anchor already, copy the anchor as it is.
 
 Output JSON only:
-{"anchor": "the whole visual anchor once sorted", "negative": "what must not be drawn on them (English, comma-separated); copy what there is where nothing changes, leave empty where there is none", "appearance": "of the points under kept, those the card's appearance does not have yet: one short sentence in ${base.language} that can follow it directly. Only what the author said — nothing the appearance already says, and no material, wear or history the author did not speak of. Empty where it has them all", "picture": "what is asked of this one picture, as one line for the image model; empty where there is nothing", "kept": ["each point that went into how the person looks, in the author's words, a few words each"], "once": ["each point used for this one picture only, a few words each"], "unused": ["each point this picture has no place for, a few words each"]}`)
+{"anchor": "the whole visual anchor once sorted", "negative": "what must not be drawn on them (English, comma-separated); copy what there is where nothing changes, leave empty where there is none", "appearance": "of the points under kept, those the card's appearance does not have yet: one short sentence in ${base.language} that can follow it directly. Only what the author said — nothing the appearance already says, and no material, wear or history the author did not speak of. Empty where it has them all", "picture": "what is asked of this one picture: one line in ${base.language}, in the author's own words as far as it goes — only what the author spoke of, no framing or shot size added; empty where there is nothing", "kept": ["each point that went into how the person looks, in the author's words, a few words each"], "once": ["each point used for this one picture only, a few words each"], "unused": ["each point this picture has no place for, a few words each"]}`)
 }
 
 export function directorSystem(base: Base & { style: string; player?: string }): string {

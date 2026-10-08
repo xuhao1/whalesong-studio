@@ -670,7 +670,7 @@ describe('design sheets and looks', () => {
     const portrait = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id, notes: '左眉有道疤，常年穿灰布袍；这张要雪夜，回头看' }, task)
     // The director was handed the notes, the anchor as it stood, and what kind of picture is about to be drawn.
     const asked = bed.llm.requests.at(-1)!.prompt
-    for (const part of ['左眉有道疤，常年穿灰布袍；这张要雪夜，回头看', 'lean woman, black hair coiled at the nape', '立绘：半身像']) expect(asked, part).toContain(part)
+    for (const part of ['左眉有道疤，常年穿灰布袍；这张要雪夜，回头看', 'lean woman, black hair coiled at the nape', '立绘：画的是这个人在书里的一幕', '不要添构图、景别这类他没说的']) expect(asked, part).toContain(part)
     expect(portrait.sorted).toEqual({ kept: ['左眉有道疤', '常年灰布袍'], once: ['雪夜', '回头看'], unused: [], picture: '雪夜，回头看向身后' })
     // Of the person: in their look from now on — the anchor every picture restates, and the appearance the writer reads.
     const after = (await project.findCharacter(card.id))!
@@ -772,10 +772,15 @@ describe('design sheets and looks', () => {
     bed.llm.responder = () => JSON.stringify({ scene: SCENE, why: '全书里只有她做这件事' })
     const portrait = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id }, task)
     const task1 = bed.llm.requests.find(request => request.prompt.includes('名场面'))!.prompt
-    for (const part of ['「黛玉」', 'slight girl of twelve, fine arched brows', '第 2 章《葬花》：在沁芳闸葬花（沁芳闸）', '还有 1 章有正文但没有收录', '只从这本书里挑', '不要编', '画面里只有这个人', '不挑亲热、裸露、施暴、受刑、病危和死状这类场面', '写一个定格的瞬间，不是一段经过']) expect(task1, part).toContain(part)
+    for (const part of ['「黛玉」', 'slight girl of twelve, fine arched brows', '第 2 章《葬花》：在沁芳闸葬花（沁芳闸）', '还有 1 章有正文但没有收录', '只从这本书里挑', '不要编', '这个人是画面的主体', '别人只作陪衬', '写一个定格的瞬间，不是一段经过']) expect(task1, part).toContain(part)
+    // Which moments are fit to be shown is the author's to say — the avoid list, what they ask — and no kind of moment
+    // is ruled out by the task: a martyr's portrait may be the martyrdom, a general's the thick of the fight.
+    for (const banned of ['施暴', '受刑', '病危', '死状', '厮打']) expect(task1, banned).not.toContain(banned)
+    // Nothing was asked: there is no guidance to speak of.
+    expect(task1).not.toContain('作者的要求是给你的引导')
     // The moment is kept on the card, where the author reads it and rewrites it; the result says it was picked just now.
     expect((await project.findCharacter(card.id))!.visual?.scene).toBe(SCENE)
-    expect(portrait.scene).toEqual({ text: SCENE, picked: true })
+    expect(portrait.scene).toEqual({ text: SCENE, picked: true, why: '全书里只有她做这件事' })
     // The portrait: the person is still what the picture is of; their look as the anchor has it; then the moment. No
     // "facing the viewer, plain ground", and no expression read off their temperament beside a moment that has its own.
     expect(portrait.parts?.pieces?.map(piece => piece.of)).toEqual(['frame', 'look', 'scene'])
@@ -797,24 +802,51 @@ describe('design sheets and looks', () => {
     await project.saveCharacter({ id: card.id, visual: { scene: '共读西厢（第 1 章）：桃花树下，石上摊开一卷书。' } })
     expect((await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id }, task)).prompt).toContain('石上摊开一卷书')
 
-    // Something asked of this one picture takes the moment's place — a direction, or ideas jotted down —, and so does
-    // `plain`: the figure the interlude stage stands before a backdrop of its own.
-    const snowy = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id, prompt: '雪夜，回头看' }, task)
-    expect(snowy.scene).toBeUndefined()
-    expect(snowy.prompt).not.toContain('共读西厢')
+    // Something asked of this one portrait does not take the moment's place: it guides the director, who is handed
+    // the scene the card keeps and what was asked, and picks and writes the moment for this picture by it.
+    const kept = '共读西厢（第 1 章）：桃花树下，石上摊开一卷书。'
+    bed.llm.responder = () => JSON.stringify({ scene: '葬花（第 2 章）：晴日正午，沁芳闸旁日光透亮，她肩荷花锄，落花满地。', why: '要明亮：改挑了白天的葬花' })
+    const bright = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id, prompt: '光线明亮些' }, task)
+    expect(asked()).toContain(`## 人物卡上定的名场面（没有别的要求时，立绘画的就是它）\n${kept}`)
+    expect(asked()).toContain('## 作者对这一张立绘的要求（用它来挑、来写）\n光线明亮些')
+    expect(asked()).toContain('作者的要求是给你的引导')
+    expect(asked()).toContain('人物卡上定的那一幕合得上，就还用它，按要求调整；合不上，就在书里另挑一幕合得上的')
+    expect(bright.scene).toEqual({ text: '葬花（第 2 章）：晴日正午，沁芳闸旁日光透亮，她肩荷花锄，落花满地。', asked: '光线明亮些', why: '要明亮：改挑了白天的葬花' })
+    // The picture is the moment as the director wrote it — what was asked is in it, not sent a second time — and its
+    // record says what guided it.
+    expect(bright.parts?.pieces?.map(piece => piece.of)).toEqual(['frame', 'look', 'scene'])
+    expect(bright.parts?.pieces?.[2]).toEqual({ of: 'scene', text: '葬花（第 2 章）：晴日正午，沁芳闸旁日光透亮，她肩荷花锄，落花满地', from: 'asked', asked: '光线明亮些' })
+    expect(bright.prompt).toContain('日光透亮')
+    expect(bright.prompt).not.toContain('光线明亮些')
+    // It was for this picture alone: the card keeps the scene it had.
+    expect((await project.findCharacter(card.id))!.visual?.scene).toBe(kept)
+    // No director to guide: what was asked is drawn as asked, as a portrait always was.
+    bed.llm.responder = () => { throw new Error('no model') }
+    const direct = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id, prompt: '雪夜，回头看' }, task)
+    expect(direct.scene).toMatchObject({ none: expect.stringContaining('导演没能挑出来') })
+    expect(direct.parts?.pieces?.map(piece => piece.of)).toEqual(['frame', 'look', 'expression', 'ask'])
+    expect(direct.prompt).toContain('雪夜，回头看')
+    expect(direct.prompt).not.toContain('共读西厢')
+    // `plain` is what turns the moment off for one picture — the figure the interlude stage stands before a backdrop
+    // of its own…
     const plain = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id, plain: true }, task)
     expect(plain.scene).toBeUndefined()
     expect(plain.prompt).toContain('面向镜头，纯净的浅色背景')
-    // …and the author's setting: portraits are plain, whatever the card keeps.
+    // …and the author's setting, for all of them: portraits are plain, and what is asked is drawn as asked, whatever
+    // the card keeps and with nobody asked.
     await bed.core.settings.update({ image: { ...bed.core.currentSettings().image, portraitScene: false } })
+    const before = bed.llm.requests.length
     expect((await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id }, task)).prompt).toContain('面向镜头，纯净的浅色背景')
+    expect((await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id, prompt: '雪夜' }, task)).prompt).toContain('人物立绘，半身像，')
+    expect(bed.llm.requests.length).toBe(before)
     await bed.core.settings.update({ image: { ...bed.core.currentSettings().image, portraitScene: true } })
 
     // Picked anew on request, with what the author wants of it; the scene kept so far goes along as the one to replace.
     bed.llm.responder = () => JSON.stringify({ scene: '焚稿（第 2 章）：病榻前，火盆里烧着诗稿。', why: '作者要的' })
     const anew = await derivePortraitScene(bed.core, bed.runtime, { character: card.id, direction: '要焚稿那一幕' }, task)
     expect(asked()).toContain('## 现在定的那一幕（作者要换一个）\n共读西厢')
-    expect(asked()).toContain('## 作者的要求（以它为准）\n要焚稿那一幕')
+    expect(asked()).toContain('## 作者的要求（用它来挑、来写）\n要焚稿那一幕')
+    expect(asked()).toContain('它点名了哪一幕，就是那一幕')
     expect(anew.card.visual?.scene).toBe('焚稿（第 2 章）：病榻前，火盆里烧着诗稿。')
 
     // Somebody the book has no moment for: the director says so, nothing is kept, the portrait is plain — and says why.

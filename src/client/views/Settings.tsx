@@ -1112,7 +1112,7 @@ function ImageSection({ value, keys, onChange, t, advanced }: { value: ImageSett
         {value.provider !== 'none' ? (
           <label className="nv-check">
             <input type="checkbox" checked={value.portraitScene !== false} onChange={(event) => { const { portraitScene: _old, ...rest } = value; onChange(event.target.checked ? rest : { ...rest, portraitScene: false }) }} />
-            <span>{t('立绘照名场面画：画立绘时没写想法，就画这个人的名场面（比如黛玉葬花）——导演从书里挑，记在人物卡的"形象"里，可以改、可以重挑（每人第一次多一次导演的调用）。不勾：素底、面向镜头的定妆照。', 'Portraits in their scene: a portrait asked for nothing shows the person in their signature scene — the director picks it from the book and keeps it under "Looks" on the card, where it can be rewritten or picked anew (one more director run per person, the first time). Unticked: plain portraits, facing the viewer on a plain ground.')}</span>
+            <span>{t('立绘照名场面画：立绘画的是这个人的名场面（比如黛玉葬花）——导演从书里挑，记在人物卡的"形象"里，可以改、可以重挑（每人第一次多一次导演的调用）。画的时候写了要求，导演照它来挑这一张的场面（多一次导演的调用）。不勾：素底、面向镜头的定妆照，写了要求就直接照写的画。', 'Portraits in their scene: a portrait shows the person in their signature scene — the director picks it from the book and keeps it under "Looks" on the card, where it can be rewritten or picked anew (one more director run per person, the first time). Something asked of a portrait guides the director\'s pick for that picture (one more director run). Unticked: plain portraits, facing the viewer on a plain ground; what is asked is drawn as asked.')}</span>
           </label>
         ) : null}
         {value.provider === 'openai' || value.provider === 'openrouter' ? (

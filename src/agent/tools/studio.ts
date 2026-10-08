@@ -46,7 +46,7 @@ export function pictureRecord(image: IllustrationInfo): string {
     `Drawn ${image.createdAt}${made.length > 0 ? `, ${made.join(', ')}` : ''}.`,
     'Its prompt was put together from, in the order sent:',
     ...(parts?.pieces !== undefined && parts.pieces.length > 0
-      ? parts.pieces.map(piece => `- ${PIECE_NAMES[piece.of]}${piece.of === 'look' ? (piece.from === 'anchor' ? ' (the visual anchor / the look written on the entry)' : ' (the prose of the card: nothing is written for an image model yet)') : ''}: ${piece.text}`)
+      ? parts.pieces.map(piece => `- ${piece.of === 'scene' && piece.from === 'asked' ? `the moment the director picked for this portrait alone, guided by what the author asked ("${piece.asked ?? ''}" — not itself in the prompt)` : PIECE_NAMES[piece.of]}${piece.of === 'look' ? (piece.from === 'anchor' ? ' (the visual anchor / the look written on the entry)' : ' (the prose of the card: nothing is written for an image model yet)') : ''}: ${piece.text}`)
       : [`- subject: ${parts?.subject ?? '(not recorded apart from the whole prompt below)'}`]),
     ...(parts?.clipped === true ? ['- (the subject was too long and was cut to leave room for the lines after it)'] : []),
     ...(parts?.referenceNote !== undefined ? [`- what the references are for: ${parts.referenceNote}`] : []),

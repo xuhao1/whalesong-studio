@@ -444,6 +444,8 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
   const [sorted, setSorted] = useState<{ kind: 'sheet' | 'portrait'; how: SortedNotes } | undefined>()
   // Which moment of the book the portrait just drawn shows: the director's pick, or the one the card had.
   const [pictured, setPictured] = useState<PortraitScene | undefined>()
+  // What the author wants of the scene when it is picked anew: it guides the director.
+  const [wish, setWish] = useState('')
   const sheets = useSheetsAsk()
   const draw = (kind: 'sheet' | 'portrait', done: string, look?: string): Promise<unknown> | undefined => {
     if (!controller.need('image')) return undefined
@@ -458,7 +460,7 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
       }
       const scene = kind === 'portrait' ? sceneOf(job) : undefined
       if (kind === 'portrait') setPictured(scene)
-      controller.toast('success', `${done}${scene?.text !== undefined ? t('：画的是这个人的名场面', ': in their signature scene') : ''}${sheetsDrawn(job, t)}`)
+      controller.toast('success', `${done}${scene?.text !== undefined ? (scene.asked !== undefined ? t('：场面是导演按你写的要求挑的', ': the director picked its scene by what you asked') : t('：画的是这个人的名场面', ': in their signature scene')) : ''}${sheetsDrawn(job, t)}`)
     })
     // A portrait of somebody without a design sheet draws the sheet first: asked, before anything is drawn.
     return kind === 'portrait' ? sheets.before([{ kind: 'portrait', target: card.id }], go) : go({})
@@ -509,20 +511,34 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
           </div>
         ) : null}
         <div className="nv-person-draw">
-          <Button size="sm" variant={draft.visual?.portrait === undefined ? 'primary' : 'outline'} icon="image" disabled={dirty || (drawing !== undefined && !portraitBusy)} busy={portraitBusy} pending={t('正在画立绘…', 'Drawing the portrait…')} onClick={() => draw('portrait', t('立绘已生成', 'Portrait ready'))} title={dirty ? t('先保存当前修改', 'Save your edits first') : `${draft.visual?.sheet === undefined ? t('立绘：列表、群像和这一页用的那张脸。还没有人设图，会先画人设图、再照着它画立绘', 'The portrait: the face the lists and this page use. There is no design sheet yet: it is drawn first, and the portrait against it') : t('立绘：列表、群像和这一页用的那张脸（照着人设图画）', 'The portrait: the face the lists and this page use (drawn against the design sheet)')}${scenes ? t('。下面的框空着时，画的是这个人的名场面——"形象"里定的那一幕；还没定，导演先从书里挑', '. With the box below left empty it shows them in their signature scene — the one kept under "Looks"; where none is kept yet, the director first picks it from the book') : ''}`}>{draft.visual?.portrait !== undefined ? t('重画立绘', 'Redraw portrait') : t('画立绘', 'Draw portrait')}</Button>
+          <Button size="sm" variant={draft.visual?.portrait === undefined ? 'primary' : 'outline'} icon="image" disabled={dirty || (drawing !== undefined && !portraitBusy)} busy={portraitBusy} pending={t('正在画立绘…', 'Drawing the portrait…')} onClick={() => draw('portrait', t('立绘已生成', 'Portrait ready'))} title={dirty ? t('先保存当前修改', 'Save your edits first') : `${draft.visual?.sheet === undefined ? t('立绘：列表、群像和这一页用的那张脸。还没有人设图，会先画人设图、再照着它画立绘', 'The portrait: the face the lists and this page use. There is no design sheet yet: it is drawn first, and the portrait against it') : t('立绘：列表、群像和这一页用的那张脸（照着人设图画）', 'The portrait: the face the lists and this page use (drawn against the design sheet)')}${scenes ? t('。画的是这个人的名场面：下面的框空着，照"形象"里定的那一幕（还没定，导演先从书里挑）；框里写了要求，导演照它来挑这一张的场面', '. It shows them in their signature scene: with the box below empty, the one kept under "Looks" (where none is kept yet, the director first picks it from the book); with something asked in the box, the director picks this picture\'s scene by it') : ''}`}>{draft.visual?.portrait !== undefined ? t('重画立绘', 'Redraw portrait') : t('画立绘', 'Draw portrait')}</Button>
           <Button size="sm" variant="outline" icon="users" disabled={dirty || (drawing !== undefined && !sheetBusy)} busy={sheetBusy} pending={t('正在画人设图（约一两分钟）…', 'Drawing the sheet (a minute or two)…')} onClick={() => draw('sheet', t('人设图已生成', 'Design sheet ready'))} title={dirty ? t('先保存当前修改', 'Save your edits first') : draft.visual?.sheet !== undefined ? t('重画只照文字——下面"形象"里的视觉锚点、这本书的画风、你在下面写的想法——不看现在这张，也不看别的旧图。想让它变样，先改视觉锚点（或把想法写在下面）', 'Drawn again from the words alone — the visual anchor under "Looks" below, the book\'s art direction, the ideas you jot down below — not against this one or any other older picture. To change the look, change the anchor first (or jot the idea down below)') : t('正面、侧面、背面三视图：之后每张有此人的图都以它为参考，长相才一致。它自己只照文字画（视觉锚点和画风）', 'Front, side and back: every later picture of them is drawn with it as reference, which is what keeps the face the same. The sheet itself is drawn from the words alone (the visual anchor and the art direction)')}>{draft.visual?.sheet !== undefined ? t('重画人设图', 'Redraw sheet') : t('生成人设图', 'Design sheet')}</Button>
         </div>
         {portraitBehind ? <p className="nv-muted nv-small">{t('立绘不是照现在这张人设图画的（人设图是在它之后画的，或者重画过）。想让两张是同一个人，重画立绘。', 'The portrait was not drawn against the sheet in use now (the sheet was drawn, or drawn again, after it). For the two to show the same person, redraw the portrait.')}</p> : null}
         {draft.visual?.sheet === undefined ? <p className="nv-muted nv-small">{t('人设图是之后所有图里这个人长相一致的依据：画立绘、插图、分镜画面之前，没有的会先画它（先问你一句）。', 'The design sheet is what keeps this face the same in every later picture: before a portrait, an illustration or a panel is drawn, one that is missing is drawn first (you are asked).')}</p> : null}
         <div className="nv-person-notes">
           <TextArea value={notes} minRows={2} maxRows={8} placeholder={t('随手写想法（可不填），混着写就行：\n左眉有道疤，常年穿灰布袍；这张要雪夜，回头看', 'Jot down ideas (optional), mixed as they come:\na scar through the left brow, always in a grey robe; this one on a snowy night, looking back')} onChange={(event) => { setNotes(event.target.value) }} />
-          <p className="nv-muted nv-small">{scenes ? t('空着点"画立绘"：画这个人的名场面（"形象"里定的那一幕；没定时导演先从书里挑）。要素底的，就写"素底，面向镜头"。', 'Left empty, "Draw portrait" shows them in their signature scene (the one kept under "Looks"; where none is kept, the director first picks one from the book and keeps it there). For the plain one, write "plain ground, facing the viewer".') : null}{scenes ? ' ' : ''}{t('点上面的按钮时，导演先把它们分开：说这个人本身的（疤、常穿的袍子）进"形象"，以后每张图都带上；只说这一张图的（雪夜、回头看）只用这一次。怎么分的，画完列在这里。', 'When a button above is pressed the director sorts them first: what is of the person (the scar, the robe they always wear) goes into "Looks" below and into every later picture; what is of this one picture (the snowy night, the look back) is used this once and kept nowhere. How they were sorted is listed here when the picture is done.')}</p>
+          <p className="nv-muted nv-small">{scenes ? t('画立绘时，画的是这个人的名场面。框空着：照"形象"里定的那一幕（没定时导演先从书里挑）。框里写了要求（"光线明亮些""要葬花那一场""不要血"）：导演照它去挑、去写这一张的场面——是引导，不是换掉；要素底的定妆照也在这里写。', 'A portrait shows them in their signature scene. Box left empty: the one kept under "Looks" (where none is kept, the director first picks one from the book). Something asked in the box ("brighter", "the one where she buries the flowers", "no blood"): the director picks and writes this picture\'s scene by it — it guides, it does not replace; a plain portrait is asked for here too.') : null}{scenes ? ' ' : ''}{t('点上面的按钮时，导演先把它们分开：说这个人本身的（疤、常穿的袍子）进"形象"，以后每张图都带上；只说这一张图的（雪夜、回头看）只用这一次。怎么分的，画完列在这里。', 'When a button above is pressed the director sorts them first: what is of the person (the scar, the robe they always wear) goes into "Looks" below and into every later picture; what is of this one picture (the snowy night, the look back) is used this once and kept nowhere. How they were sorted is listed here when the picture is done.')}</p>
           {pictured !== undefined ? (
             <div className="nv-person-sorted">
-              <strong>{pictured.text !== undefined ? (pictured.picked === true ? t('这张立绘画的是导演从书里挑的名场面', 'This portrait shows the scene the director picked from the book') : t('这张立绘画的是"形象"里定的名场面', 'This portrait shows the scene kept under "Looks"')) : t('这张立绘是素底的定妆照', 'This portrait is the plain one')}</strong>
+              <strong>{pictured.text !== undefined
+                ? pictured.asked !== undefined ? t('这张立绘的场面是导演按你写的要求挑的', 'The director picked this portrait\'s scene by what you asked')
+                  : pictured.picked === true ? t('这张立绘画的是导演从书里挑的名场面', 'This portrait shows the scene the director picked from the book')
+                    : t('这张立绘画的是"形象"里定的名场面', 'This portrait shows the scene kept under "Looks"')
+                : t('这张立绘没有照名场面画', 'This portrait was drawn without a scene')}</strong>
               <Button size="sm" variant="ghost" icon="x" onClick={() => { setPictured(undefined) }} title={t('知道了', 'Got it')} />
-              <p>{pictured.text ?? t(`导演去书里找过，没有挑出名场面：${pictured.none ?? ''}。`, `The director looked in the book and picked no scene: ${pictured.none ?? ''}.`)}</p>
-              {pictured.text !== undefined ? <p className="nv-muted">{t('想换一幕：在下面"形象 → 立绘画哪一场"里改，或点"让导演重挑"；只想这一张不一样，就在上面的框里写。', 'For another moment: change it under "Looks → The scene the portrait shows" below, or have the director pick again; for this one picture only, write it in the box above.')}</p> : null}
+              <p>{pictured.text ?? t(`导演没有给出场面：${pictured.none ?? ''}。`, `The director gave no scene: ${pictured.none ?? ''}.`)}</p>
+              {pictured.why !== undefined ? <p className="nv-muted">{t(`导演的说法：${pictured.why}`, `The director: ${pictured.why}`)}</p> : null}
+              {pictured.text !== undefined && pictured.asked !== undefined ? (
+                <p className="nv-muted">
+                  {t('只用在这一张：人物卡上定的名场面没有变。', 'For this picture alone: the scene kept on the card is as it was.')}{' '}
+                  <button type="button" className="nv-link" disabled={dirty} title={dirty ? t('先保存当前修改', 'Save your edits first') : t('把这一幕记到"形象 → 立绘画哪一场"里：以后不写要求画立绘，画的就是它', 'Keep this moment under "Looks → The scene the portrait shows": a portrait asked for nothing is drawn from it from now on')} onClick={() => controller.guard(async () => {
+                    await controller.api.call('character.save', { root, card: { id: card.id, visual: { scene: pictured.text! } } })
+                    setPictured({ text: pictured.text! })
+                    controller.toast('success', t('定为这个人的名场面了', 'Kept as their signature scene'))
+                  })}>{t('把这一幕定为名场面', 'Keep this as their scene')}</button>
+                </p>
+              ) : pictured.text !== undefined ? <p className="nv-muted">{t('想换一幕：在上面的框里写想要的（要明亮的、要哪一回的那一场……）再画，导演会照着挑；或者到下面"形象 → 立绘画哪一场"里直接改。', 'For another moment: write what you want in the box above (brighter, the one in that chapter…) and draw again — the director picks by it; or change it under "Looks → The scene the portrait shows" below.')}</p> : null}
             </div>
           ) : null}
           {sorted !== undefined ? (
@@ -627,15 +643,18 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
       <Field label={t('这个人物身上不要画出', 'Never drawn on them')} hint={t('逗号分隔；会并入每张有此人的图的"不要出现"', 'Comma-separated; joins the avoid list of every picture that shows them')}>
         <TextInput value={draft.visual?.negative ?? ''} placeholder={t('如：cross emblem, shoulder straps', 'e.g. cross emblem, shoulder straps')} onChange={(event) => { set('visual', { ...draft.visual, negative: event.target.value }) }} />
       </Field>
-      <Field label={t('立绘画哪一场（名场面）', 'The scene the portrait shows')} hint={t('读者一想到这个人就会想起的那一幕，写成画面：是哪一幕、在哪里、在做什么、手里拿着什么。没写想法就画立绘时，照它来画。留空：第一次画立绘时导演从书里挑；想要素底的定妆照，在设置 → 图像里关掉"立绘照名场面画"。', 'The moment a reader thinks of when they think of this person, written as a picture: which moment, where, doing what, holding what. A portrait asked for nothing is drawn from it. Left empty, the director picks it from the book the first time a portrait is drawn; for plain portraits, turn "Portraits in their scene" off under Settings → Images.')}>
+      <Field label={t('立绘画哪一场（名场面）', 'The scene the portrait shows')} hint={t('读者一想到这个人就会想起的那一幕，写成画面：是哪一幕、在哪里、在做什么、手里拿着什么。画立绘时没写要求，就照它画。留空：第一次画立绘时导演从书里挑。哪一类画面这本书不要，写在"设定 → 画风"的"不要出现"里，导演挑的时候会避开；一律要素底的定妆照，在设置 → 图像里关掉"立绘照名场面画"。', 'The moment a reader thinks of when they think of this person, written as a picture: which moment, where, doing what, holding what. A portrait asked for nothing is drawn from it. Left empty, the director picks it from the book the first time a portrait is drawn. What kind of picture this book does not want goes on the avoid list under Bible → Art — the director steers round it when picking; for plain portraits throughout, turn "Portraits in their scene" off under Settings → Images.')}>
         <TextArea id={sceneField} value={draft.visual?.scene ?? ''} placeholder={scenes ? t('留空时，画立绘前导演会从书里挑（比如黛玉：葬花）', 'Left empty, the director picks it from the book before a portrait is drawn') : t('"立绘照名场面画"已在设置里关掉：这里写了也不会用', 'Portraits in their scene are turned off in Settings: what is written here is not used')} onChange={(event) => { set('visual', { ...draft.visual, scene: event.target.value }) }} />
       </Field>
-      <div className="nv-row-wrap">
-        <Button size="sm" icon="wand" disabled={dirty} busy={picking} pending={t('导演在书里挑…', 'The director is looking in the book…')} title={dirty ? t('先保存当前修改', 'Save your edits first') : t('让导演去书里读，挑出最属于这个人的那一幕，写成画面记在这里。只挑不画；之后画立绘（不写想法时）就照它', 'Have the director read the book, pick the moment that is most this person\'s own and write it here as a picture. Nothing is drawn; a portrait asked for nothing is drawn from it afterwards')} onClick={() => controller.guard(async () => {
-          const job = await controller.run('character.scene', { root, id: card.id })
+      <div className="nv-assist">
+        <TextInput value={wish} placeholder={t('想要哪一幕、什么样的？（可不填）如：要白天、明亮的；要她焚稿那一场', 'Which moment, what kind? (optional) e.g. in daylight; the one where she burns her poems')} onChange={(event) => { setWish(event.target.value) }} />
+        <Button size="sm" icon="wand" disabled={dirty} busy={picking} pending={t('导演在书里挑…', 'The director is looking in the book…')} title={dirty ? t('先保存当前修改', 'Save your edits first') : t('让导演去书里读，挑出最属于这个人的那一幕，写成画面记在这里；旁边写了要求就照它挑。只挑不画；之后画立绘（不写要求时）就照它', 'Have the director read the book, pick the moment that is most this person\'s own and write it here as a picture — by what you ask beside the button, where you ask. Nothing is drawn; a portrait asked for nothing is drawn from it afterwards')} onClick={() => controller.guard(async () => {
+          const job = await controller.run('character.scene', { root, id: card.id, ...(wish.trim().length > 0 ? { direction: wish.trim() } : {}) })
           const output = job.result?.output as { scene?: string; why?: string } | undefined
-          if (output?.scene !== undefined && output.scene.length > 0) controller.toast('success', t(`名场面定了${output.why !== undefined ? `：${output.why}` : ''}`, `The scene is picked${output.why !== undefined ? `: ${output.why}` : ''}`))
-          else controller.toast('info', t(`导演没有挑出名场面${output?.why !== undefined ? `：${output.why}` : '（书里还没有写到）'}`, `The director picked no scene${output?.why !== undefined ? `: ${output.why}` : ' (the book has none yet)'}`))
+          if (output?.scene !== undefined && output.scene.length > 0) {
+            setWish('')
+            controller.toast('success', t(`名场面定了${output.why !== undefined ? `：${output.why}` : ''}`, `The scene is picked${output.why !== undefined ? `: ${output.why}` : ''}`))
+          } else controller.toast('info', t(`导演没有挑出名场面${output?.why !== undefined ? `：${output.why}` : '（书里还没有写到）'}`, `The director picked no scene${output?.why !== undefined ? `: ${output.why}` : ' (the book has none yet)'}`))
         })}>{(draft.visual?.scene ?? '').trim().length > 0 ? t('让导演重挑', 'Have the director pick again') : t('让导演挑名场面', 'Have the director pick the scene')}</Button>
       </div>
       <LooksEditor

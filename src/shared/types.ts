@@ -1507,8 +1507,14 @@ export interface IllustrationPiece {
    */
   of: 'frame' | 'look' | 'outfit' | 'expression' | 'ask' | 'composed' | 'scene'
   text: string
-  /** `look` only — where the words were taken from: what is written for an image model (a visual anchor, a place's look), or, lacking that, the prose of the card. */
-  from?: 'anchor' | 'card'
+  /**
+   * Where the words were taken from. A `look`: what is written for an image model (`anchor` — a visual anchor, a
+   * place's look), or, lacking that, the prose of the card (`card`). A `scene`: the one kept on the person's card
+   * (`card`), or one the director picked for this picture alone, guided by what the author asked of it (`asked`).
+   */
+  from?: 'anchor' | 'card' | 'asked'
+  /** A `scene` picked for this picture alone: what the author asked, which guided the pick. It is not itself part of the prompt. */
+  asked?: string
 }
 
 /** What an image prompt was assembled from, so the history shows where every part came from. */
