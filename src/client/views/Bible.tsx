@@ -5,6 +5,7 @@
  * its own — and how the book is written and how it is drawn. The people of
  * the book have a page of their own (`views/Cast.tsx`).
  */
+import { LinesField, LineTags } from '../LinesField'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { NarrativePov, StyleProfile, WorldCategory, WorldEntry, WorldEvent } from '../../shared/types'
 import { ArtPage } from '../ArtPage'
@@ -332,7 +333,7 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
       ) : null}
       <header className="nv-detail-head nv-person-head">
         <div className="nv-person-title">
-          <h2>{draft.name}<Chip tone="neutral">{t(...CATEGORY_LABELS[draft.category])}</Chip>{group !== 'ideas' ? <Chip tone={(draft.weight ?? derived) === 'core' ? 'green' : (draft.weight ?? derived) === 'major' ? 'blue' : 'neutral'}>{t(...WEIGHT_LABELS[draft.weight ?? derived])}</Chip> : null}{draft.importance === 1 ? <Chip tone="amber">{t('★ 随上下文', '★ In context')}</Chip> : null}</h2>
+          <h2>{draft.name}<Chip tone="neutral">{t(...CATEGORY_LABELS[draft.category])}</Chip><LineTags lines={draft.lines} />{group !== 'ideas' ? <Chip tone={(draft.weight ?? derived) === 'core' ? 'green' : (draft.weight ?? derived) === 'major' ? 'blue' : 'neutral'}>{t(...WEIGHT_LABELS[draft.weight ?? derived])}</Chip> : null}{draft.importance === 1 ? <Chip tone="amber">{t('★ 随上下文', '★ In context')}</Chip> : null}</h2>
           {draft.summary !== undefined && draft.summary.length > 0 ? <p className="nv-person-tagline">{draft.summary}</p> : null}
           <span className="nv-muted nv-small">
             {where.length > 0
@@ -382,7 +383,8 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
       <div className="nv-form-grid">
         <Field label={t('名称', 'Name')}><TextInput value={draft.name} onChange={(event) => { set('name', event.target.value) }} /></Field>
         <Field label={t('别名', 'Aliases')} hint={t('正文里对它的别的叫法；按这些名字数它在哪几章出现', 'Other names the text calls it by; chapters are counted by these too')}><TextInput value={(draft.aliases ?? []).join('、')} onChange={(event) => { set('aliases', event.target.value.split(/[、,，]+/).map(item => item.trim()).filter(Boolean)) }} /></Field>
-        <Field label={t('类别', 'Category')} hint={t('地点、家族与组织、物品各有自己的页面；其余的都在"世界观"', 'Places, houses and things have pages of their own; everything else is under World')}><Select value={draft.category} options={options(CATEGORY_LABELS, t)} onChange={(value) => { set('category', value) }} /></Field>
+        <Field label={t('类别', 'Category')}><Select value={draft.category} options={options(CATEGORY_LABELS, t)} onChange={(value) => { set('category', value) }} /></Field>
+        <LinesField value={draft.lines} onChange={(lines) => { set('lines', lines) }} />
         {group !== 'ideas' ? (
           <Field label={t('在故事里的分量', 'Weight in the story')} hint={t('“自动”按正文里写到它的章数来定', 'Automatic goes by how many chapters write of it')}>
             <Select

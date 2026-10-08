@@ -121,6 +121,35 @@ describe('the story so far', () => {
     expect(review.rest).toContain('下文梗概')
   })
 
+  it('keeps who and what belongs to another line of the plot out of a chapter, and tells where each is seen', async () => {
+    const { project, index } = bed.runtime
+    const shared = await project.saveCharacter({ name: '沈蘅', role: 'protagonist', personality: '寡言' })
+    const one = await project.addChapter({ title: '主线一', synopsis: '沈蘅在码头。' })
+    await project.saveChapterText(one.id, '沈蘅在码头。')
+    const line = await project.addLine({ title: '城南的铺子' })
+    const other = await project.addChapter({ title: '城南一', synopsis: '陆掌柜翻账本。' }, { line: line.id })
+    await project.saveChapterText(other.id, '陆掌柜翻开账本。')
+    // Somebody and something of that line alone; and somebody the author kept to the main line.
+    const theirs = await project.saveCharacter({ name: '陆掌柜', role: 'supporting', personality: '精明', lines: [line.id] })
+    await project.saveCharacter({ name: '周衡', role: 'supporting', personality: '体面', lines: ['main'] })
+    await project.saveWorld({ name: '城南账房', category: 'location', importance: 1, summary: '陆家的账房。', lines: [line.id] })
+    await project.saveWorld({ name: '寄死笔', category: 'item', importance: 1, summary: '写下名字的人七日后死。' })
+    const pack = async (id: string) => { const made = await packContext(project, index, { purpose: 'draft', chapter: (await project.findChapter(id))!, textBudget: 50_000, sideBudget: 20_000, tailChars: 200 }); return `${made.stable}\n${made.rest}` }
+    const main = await pack(one.id)
+    for (const part of ['沈蘅', '周衡', '寄死笔']) expect(main, part).toContain(part)
+    for (const part of ['陆掌柜', '城南账房']) expect(main, part).not.toContain(part)
+    const south = await pack(other.id)
+    for (const part of ['沈蘅', '陆掌柜', '城南账房', '寄死笔']) expect(south, part).toContain(part)
+    expect(south).not.toContain('周衡')
+    // Where each is seen is read off the digests along each line.
+    const memory = (chapterId: string, who: { id: string; name: string }) => ({ schema: 1 as const, chapterId, textHash: 'x', updatedAt: '', brief: '', summary: '', facts: [], newEntities: [], threads: [], characters: [{ character: who.id, name: who.name, role: '在场' }] })
+    await project.saveMemory(memory(one.id, shared))
+    await project.saveMemory(memory(other.id, theirs))
+    const seen = await project.seenOn()
+    expect(seen.lines.map(item => item.id)).toEqual(['main', line.id])
+    expect([seen.people[shared.id], seen.people[theirs.id]]).toEqual([['main'], [line.id]])
+  })
+
   it('says who is out of the story as of the chapter in hand, on that chapter\'s own line — and nothing of it in what repeats', async () => {
     const { project, index } = bed.runtime
     const lead = await project.saveCharacter({ name: '沈蘅', role: 'protagonist', personality: '寡言' })

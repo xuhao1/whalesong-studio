@@ -472,6 +472,8 @@ export interface NovelRpc {
   'ai.analyze': { params: { root: string; steps?: AnalyzeStep[] }; result: JobStarted }
   /** Have the director settle the look of the book's pictures from the book itself; `direction` is what the author wants of it. The look is written into the book (`novel.json`: `artStyle`, `artAvoid`). */
   'ai.artDirection': { params: { root: string; direction?: string }; result: JobStarted }
+  /** On which lines of the plot each character is seen, read off the digests along each line. */
+  'lines.seen': { params: { root: string }; result: { lines: { id: string; title: string }[]; people: Record<string, string[]> } }
   /**
    * Import a manuscript as another line of this book's plot: a story different from its first chapter, in the same
    * world. The line begins where the story begins; its chapters are digested unless `digest` is false. A job.

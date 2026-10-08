@@ -142,6 +142,7 @@ visual:
       why: 她一生都在这本账里      # the director's sentence
       portrait: assets/images/portrait-….png   # the portrait drawn of it
   sceneAt: scene_k3x9     # which one a portrait shows by default; left out: the first (`scene`, one paragraph, is how releases before kept a single moment — read as a list of one)
+lines: [ln_j4d6]           # the lines of the plot they belong to (`main` = the main line); left out: every line. World entries take the same key
 stages:                    # the stretches of their life in the book, in the order they come; the planner finds them, the author rewrites them
   - id: stage_a1
     title: 幼年

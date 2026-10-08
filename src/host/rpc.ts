@@ -608,6 +608,7 @@ export function createHandlers(service: NovelService): Handlers {
       const runtime = await open(root)
       return job(runtime, 'bible', 'art direction', undefined, async task => await deriveArtDirection(core, runtime, typeof direction === 'string' && direction.trim().length > 0 ? { direction: direction.trim() } : {}, task))
     },
+    'lines.seen': async ({ root }) => await (await open(root)).project.seenOn(),
     'line.import': async ({ root, title, premise, text, file, digest }) => {
       const runtime = await open(root)
       let manuscript = typeof text === 'string' ? text : ''

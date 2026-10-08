@@ -820,6 +820,28 @@ export class Project {
     return located(linePath(outline, lineOf(outline, line)))
   }
 
+  /** The line of the plot a chapter is of: its id, `main` for the main line. */
+  async lineOf(chapterId: string): Promise<string> {
+    return homeOf(await this.outline(), chapterId)?.id ?? MAIN_LINE
+  }
+
+  /**
+   * On which lines of the plot each character is seen — read off the digests along each line. What the page shows
+   * beside a name where the author has not said which lines somebody belongs to.
+   */
+  async seenOn(): Promise<{ lines: { id: string; title: string }[]; people: Record<string, string[]> }> {
+    const outline = await this.outline()
+    const lines = [{ id: MAIN_LINE, title: '' }, ...(outline.lines ?? []).map(line => ({ id: line.id, title: line.title }))]
+    const people: Record<string, string[]> = {}
+    for (const line of lines) {
+      const { lives } = await this.lives(line.id === MAIN_LINE ? undefined : line.id)
+      for (const [id, life] of Object.entries(lives)) {
+        if (life.events.some(event => event.index >= 1)) people[id] = [...(people[id] ?? []), line.id]
+      }
+    }
+    return { lines, people }
+  }
+
   /** The chapters in the order whoever reaches this one has read them: the line it belongs to, whole. */
   async pathOf(chapterId: string): Promise<LocatedChapter[]> {
     const outline = await this.outline()

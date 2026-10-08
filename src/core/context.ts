@@ -19,6 +19,7 @@
  * the prefix every time: it holds its first chapter until the chapters no
  * longer fit, then lets go of the oldest quarter at once.
  */
+import { belongsTo } from '../shared/types'
 import { stageAt } from '../shared/stages'
 import type { CharacterCard, ChapterMemory, ContextStrategy, PromptLanguage, WorldEntry } from '../shared/types'
 import { clip, clipTail, estimateTokens, sameName } from '../shared/text'
@@ -195,7 +196,11 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
   const current = options.chapter
   // The chapters as they are read by whoever reaches this one: its own line of the plot.
   const path = current !== undefined ? await project.pathOf(current.plan.id) : await project.chapters(options.line)
-  const [characters, world, outline] = await Promise.all([project.characters(), project.world(), project.outline()])
+  const [everyone, everything, outline] = await Promise.all([project.characters(), project.world(), project.outline()])
+  // A world may hold several stories: who and what belongs to another line of the plot alone is not this chapter's to know.
+  const lineHere = current !== undefined ? await project.lineOf(current.plan.id) : options.line
+  const characters = everyone.filter(card => belongsTo(card, lineHere))
+  const world = everything.filter(entry => belongsTo(entry, lineHere))
   const at = current !== undefined ? path.findIndex(chapter => chapter.plan.id === current.plan.id) : -1
   const limit = at >= 0 ? at + 1 : options.canonThrough !== undefined ? options.canonThrough + 1 : undefined
   const before = limit === undefined ? path : path.filter(chapter => chapter.index < limit)

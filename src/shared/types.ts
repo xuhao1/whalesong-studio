@@ -261,6 +261,8 @@ export interface CharacterCard {
   lifeMarks?: LifeMark[]
   /** The stretches of their life in the book, in the order they come: how old, who and how they look from which chapter on. */
   stages?: CharacterStage[]
+  /** The lines of the plot they belong to, by id (`main` for the main line). Left out: every line — the world is shared, and so is whoever is in it. */
+  lines?: string[]
   visual?: CharacterVisual
   voiceProfile?: CharacterVoiceProfile
   /** Free-form Markdown body below the front matter. */
@@ -309,6 +311,8 @@ export interface WorldEntry {
   name: string
   aliases?: string[]
   category: WorldCategory
+  /** The lines of the plot it belongs to, by id (`main` for the main line). Left out: every line. */
+  lines?: string[]
   /** 1 = core canon that always travels in context, 2 = normal, 3 = detail fetched on demand. */
   importance: 1 | 2 | 3
   /**
@@ -469,6 +473,11 @@ export type PlotLineOrigin = 'author' | 'planner' | 'interlude' | 'replaced' | '
 
 /** The name the main line goes by wherever a line is named. */
 export const MAIN_LINE = 'main'
+
+/** Whether a card or an entry belongs to a line of the plot: one that names no lines belongs to all of them. */
+export function belongsTo(item: { lines?: string[] | undefined }, line: string | undefined): boolean {
+  return item.lines === undefined || item.lines.length === 0 || item.lines.includes(line ?? MAIN_LINE)
+}
 
 /**
  * A line of the plot beside the main one: another way the story goes from

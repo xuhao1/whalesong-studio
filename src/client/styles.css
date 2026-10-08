@@ -10554,3 +10554,21 @@ button.nv-album-chapter:hover {
 .nv-art-written > p {
   margin: 8px 0;
 }
+
+/* Which lines of the plot a card or an entry belongs to. */
+.nv-line-pick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.nv-line-pick > .nv-chip {
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+
+.nv-line-pick > .nv-chip.is-on {
+  border-color: var(--nv-accent);
+  color: var(--nv-accent);
+}

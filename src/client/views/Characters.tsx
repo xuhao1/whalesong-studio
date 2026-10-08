@@ -18,9 +18,10 @@ import { sceneOf, sheetsDrawn, type PortraitScene } from '../labels'
 import { PictureViewer, usePictures } from '../PictureRecord'
 import { useSheetsAsk, type SheetsChoice } from '../SheetsAsk'
 import { TiesBlock } from '../Ties'
+import { LinesField, LineTags } from '../LinesField'
 import { Icon } from '../icons'
 import {
-  Button, Chip, cx, Empty, Field, Modal, ProjectImage, SectionTitle, Select, TextArea, TextInput, useAction, useConfirm, useMediaUrl,
+  Button, Chip, cx, Empty, Field, Modal, ProjectImage, SectionTitle, Select, TextArea, TextInput, useAction, useConfirm, useLoad, useMediaUrl,
   useProject, useRunningJob, useSnapshot, useStudio, useT,
 } from '../ui'
 
@@ -439,6 +440,8 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
     setDirty(false)
     controller.toast('success', t('已保存', 'Saved'))
   })
+  // On which lines of the plot they are seen: asked only of a book that has more than one. (A Host from before answers with an error: then nothing is shown.)
+  const seen = useLoad(async signal => ((project.lines ?? []).length > 0 ? await controller.api.call('lines.seen', { root }, signal).catch(() => undefined) : undefined), [root, project.revision])
   const presence = project.presence.find(entry => entry.character === card.id)
   const told = lives?.lives[card.id]?.first !== undefined ? lives.lives[card.id] : undefined
   const voices: VoiceOption[] = settings?.voices ?? []
@@ -597,6 +600,7 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
         <div className="nv-person-title">
           <h2>{draft.name}<Chip tone="neutral">{t(...ROLE_LABELS[draft.role])}</Chip></h2>
           {draft.tagline !== undefined && draft.tagline.length > 0 ? <p className="nv-person-tagline">{draft.tagline}</p> : null}
+          <LineTags lines={draft.lines} seen={seen.data?.people[card.id]} />
           <span className="nv-muted nv-small">
             {/* Where they are in the book is their life, along the line looked at — told in full just below. */}
             {told !== undefined
@@ -630,6 +634,7 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
         <Field label={t('姓名', 'Name')}><TextInput value={draft.name} onChange={(event) => { set('name', event.target.value) }} /></Field>
         <Field label={t('别名 / 称呼', 'Aliases')} hint={t('用顿号或逗号分隔', 'Comma separated')}><TextInput value={(draft.aliases ?? []).join('、')} onChange={(event) => { set('aliases', event.target.value.split(/[、,，]+/).map(item => item.trim()).filter(Boolean)) }} /></Field>
         <Field label={t('定位', 'Role')}><Select value={draft.role} options={options(ROLE_LABELS, t)} onChange={(value) => { set('role', value) }} /></Field>
+        <LinesField value={draft.lines} onChange={(lines) => { set('lines', lines) }} />
         <Field label={t('性别', 'Gender')}><TextInput {...text('gender')} /></Field>
         <Field label={t('年龄', 'Age')}><TextInput {...text('age')} /></Field>
       </div>
