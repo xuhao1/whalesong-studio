@@ -78,8 +78,8 @@ export function JobProgress({ job, synthesizing, sounding, onStop }: { job: JobI
       </div>
       <Progress done={done} total={total} />
       {job.thinking !== undefined ? <p className="nv-jobprogress-now">{t(`模型思考中（${job.thinking} 字）…`, `The model is thinking (${job.thinking} chars)…`)}</p> : job.progress?.label !== undefined && job.progress.label.length > 0 ? <p className="nv-jobprogress-now">{job.progress.label}</p> : null}
-      {sounding === true ? <p className="nv-muted nv-small">{t('环境声、音效和配乐由声音模型按每一处的描述生成，一处十几秒到一分钟；生成好的会马上垫进播放里。停止后已生成的会保留。', 'Ambience, effects and music are made by the sound model from each cue\'s description, a quarter of a minute to a minute apiece; each comes in under the playback as soon as it is ready. Stopping keeps what is made.')}</p> : null}
-      {synthesizing ? <p className="nv-muted nv-small">{t('合成好的句子会陆续出现，不用等全部完成就能先听；每一句都会被"听检"，没念完或不像原来声音的会自动重念。停止后已合成的会保留，下次从剩下的继续。', 'Finished lines appear as they come and can be played before the rest is done; every take is checked, and one that is cut short or not in its voice is spoken again. Stopping keeps what is voiced, and the next run picks up the remainder.')}</p> : null}
+      {sounding === true ? <p className="nv-muted nv-small">{t('停止后已生成的会保留。', 'What is already generated is kept when you stop.')}</p> : null}
+      {synthesizing ? <p className="nv-muted nv-small">{t('合成好的句子可以先听。停止后已合成的会保留。', 'Lines can be heard as they are done. What is already synthesised is kept when you stop.')}</p> : null}
     </div>
   )
 }
@@ -158,7 +158,7 @@ export function AudioDesk({ chapter, view, job, player, onBody, onChanged }: {
   }
   const makeSound = (force = false): Promise<unknown> | undefined => {
     if (!soundReady) {
-      controller.toast('info', t('还没有能生成声音的模型：语音用百炼的音频生成模型时会自动沿用它，也可以在设置里单独指定。', 'Nothing can make sound yet: it follows the speech setup when that is Bailian audio generation, or can be given its own endpoint in the settings.'))
+      controller.toast('info', t('还没有能生成声音的模型，在设置里指定。', 'No model that makes sound yet: name one in Settings.'))
       controller.openSettings('tts')
       return undefined
     }
@@ -170,7 +170,7 @@ export function AudioDesk({ chapter, view, job, player, onBody, onChanged }: {
   const reshape = (): Promise<unknown> => controller.guard(async () => {
     player.stop()
     const result = await controller.api.call('audio.reshape', { root, chapter: chapter.id })
-    controller.toast('success', t(`已重新整理：${result.before} 行 → ${result.after} 行，${result.kept} 句原有配音保留；合并过的旁白需要重新合成。`, `Reshaped: ${result.before} lines → ${result.after}; ${result.kept} recordings kept. Joined narration needs voicing again.`))
+    controller.toast('success', t(`已重新整理：${result.before} 行 → ${result.after} 行，保留 ${result.kept} 句配音`, `Regrouped: ${result.before} lines → ${result.after}, ${result.kept} voiced line(s) kept`))
     onChanged?.()
   })
   const speakers = new Map<string, { name: string; count: number; voice?: string; own: boolean }>()
@@ -206,7 +206,7 @@ export function AudioDesk({ chapter, view, job, player, onBody, onChanged }: {
       </div>
       <div className="nv-row-wrap">
         {incomplete
-          ? <Button variant="primary" icon="headphones" busy={job?.batch === true || (script === undefined && synthesizing)} disabled={working} pending={t('正在生成有声版…', 'Making the audio version…')} onClick={makeAll} title={soundReady ? t('一次做完：编排脚本、合成每一句的配音、生成环境声、音效和配乐。已经做好的不会重做。', 'All in one go: the script, a voice for every line, and the ambience, effects and music. What is there already is not made again.') : t('一次做完：编排脚本、合成每一句的配音。（还没有能生成声音的模型，环境声由浏览器合成。）', 'All in one go: the script and a voice for every line. (Nothing can make sound yet; the browser synthesizes the ambience.)')}>{script === undefined ? t('一键生成有声版', 'Make the audio version') : t('一键补齐配音和声音', 'Finish voices and sound')}</Button>
+          ? <Button variant="primary" icon="headphones" busy={job?.batch === true || (script === undefined && synthesizing)} disabled={working} pending={t('正在生成有声版…', 'Making the audio version…')} onClick={makeAll} title={soundReady ? t('脚本、配音、声音一次做完', 'Script, voices and sound in one go') : t('脚本、配音一次做完', 'Script and voices in one go')}>{script === undefined ? t('一键生成有声版', 'Make the audio version') : t('一键补齐配音和声音', 'Finish voices and sound')}</Button>
           : null}
         {script === undefined || view.stale
           ? <Button variant={script === undefined ? 'outline' : 'primary'} icon="sparkles" busy={directing} disabled={working} pending={t('正在编排脚本…', 'Directing the script…')} onClick={() => start('audio.build', { force: view.stale })}>{script === undefined ? t('只编排脚本', 'Direct the script only') : t('按新正文重排脚本', 'Redo the script')}</Button>
@@ -218,35 +218,35 @@ export function AudioDesk({ chapter, view, job, player, onBody, onChanged }: {
         {script !== undefined && voiced > 0 ? (
           <Button icon="download" disabled={working} pending={t('正在拼接…', 'Joining…')} onClick={() => controller.guard(async () => { setExported(await controller.api.call('audio.export', { root, chapter: chapter.id })) })}>{t('导出整章音频', 'Export chapter audio')}</Button>
         ) : null}
-        {script !== undefined ? <Button variant="ghost" icon="refresh" disabled={working} onClick={() => start('audio.build', { force: true })} title={t('重新编排脚本（已合成的相同台词会复用）', 'Redo the script (unchanged lines keep their audio)')} /> : null}
-        {script !== undefined ? <Button variant="ghost" icon="trash" disabled={working} onClick={() => { confirmScript.ask(t('删除这一章的整份有声脚本？已经合成的配音文件会留在磁盘上，重新编排后内容相同的句子会直接复用；这一章的分镜是照着这份脚本排的，会跟着失效。正文不受影响。', 'Delete this chapter\'s whole audio script? Takes already spoken stay on disk and are reused by lines that come back unchanged; the chapter\'s storyboard was cut to this script and goes stale with it. The manuscript is untouched.'), () => { void controller.guard(async () => { await controller.api.call('audio.clear', { root, chapter: chapter.id }); controller.toast('success', t('已删除这一章的有声脚本', 'The audio script is deleted')); onChanged?.() }) }) }} title={t('删除这一章的有声脚本', 'Delete this chapter\'s audio script')} /> : null}
+        {script !== undefined ? <Button variant="ghost" icon="refresh" disabled={working} onClick={() => start('audio.build', { force: true })} title={t('重新编排脚本', 'Script it again')} /> : null}
+        {script !== undefined ? <Button variant="ghost" icon="trash" disabled={working} onClick={() => { confirmScript.ask(t('删除这一章的有声脚本？这一章的分镜会跟着失效；配音文件留着，重新编排后相同的句子直接复用。', 'Delete this chapter\'s script? Its storyboard goes with it; the voice files stay, and lines that come back the same reuse them.'), () => { void controller.guard(async () => { await controller.api.call('audio.clear', { root, chapter: chapter.id }); controller.toast('success', t('已删除这一章的有声脚本', 'The audio script is deleted')); onChanged?.() }) }) }} title={t('删除这一章的有声脚本', 'Delete this chapter\'s audio script')} /> : null}
         {confirmScript.element}
         <span className="nv-spacer" />
       </div>
       <NeedsSetup what="tts">{t('编排脚本不需要它，合成人声才需要。', 'Directing the script works without it; voicing the lines needs it.')}</NeedsSetup>
       {job !== undefined ? <JobProgress job={job} synthesizing={synthesizing} sounding={sounding} onStop={() => { void controller.cancelJob(job.id) }} /> : null}
-      {job === undefined && batch !== undefined ? <p className="nv-note"><Spinner size={12} /> {t('批量制作正在处理这一章（现在在做别的步骤，或者排在后面）。', 'A batch is at work on this chapter (on another step right now, or it is waiting its turn).')} <button type="button" className="nv-link" onClick={() => { controller.navigate({ view: 'stage', tab: 'production' }) }}>{t('看整体进度', 'See the whole batch')}</button></p> : null}
-      {job?.batch === true ? <p className="nv-muted nv-small">{t('这是批量任务里的一步；“停止”会停下整个批量任务，已经做好的都保留。', 'This is one step of a batch; Stop stops the whole batch, and what is made is kept.')}</p> : null}
+      {job === undefined && batch !== undefined ? <p className="nv-note"><Spinner size={12} /> {t('批量制作正在处理这一章。', 'A batch is working on this chapter.')} <button type="button" className="nv-link" onClick={() => { controller.navigate({ view: 'stage', tab: 'production' }) }}>{t('看整体进度', 'See the whole batch')}</button></p> : null}
+      {job?.batch === true ? <p className="nv-muted nv-small">{t('“停止”会停下整个批量任务。', 'Stop halts the whole batch.')}</p> : null}
       {oldShape && job === undefined ? (
         <p className="nv-note is-warn">
-          {t(`这份脚本是旧的切法：旁白被切成了 ${all.filter(line => line.kind === 'narration').length} 小段，每段单独配音，听起来断断续续。重新整理会把相邻的旁白合成一口气念的大段，并把夹在对白之间的"他说"标为不念——不调用模型；对白的配音保留，合并过的旁白要重新合成。`, `This script is cut the old way: its narration is in ${all.filter(line => line.kind === 'narration').length} short pieces, each voiced on its own, which sounds choppy. Reshaping joins neighbouring narration into takes spoken in one breath and marks the "he said" between spoken lines as unspoken — without calling a model; dialogue keeps its recordings, joined narration is voiced again.`)}{' '}
+          {t(`这份脚本是旧的切法：旁白被切成了 ${all.filter(line => line.kind === 'narration').length} 小段。重新整理会把相邻的旁白合并，合并过的要重新合成。`, `This script is cut the old way: the narration is in ${all.filter(line => line.kind === 'narration').length} small pieces. Regrouping joins neighbours; joined ones are synthesised again.`)}{' '}
           <Button size="sm" variant="primary" icon="wand" disabled={working} pending={t('正在整理…', 'Reshaping…')} onClick={reshape}>{t('重新整理脚本', 'Reshape the script')}</Button>
         </p>
       ) : null}
       {script?.degraded !== undefined ? (
         <p className="nv-note is-warn">
-          {t(`有 ${script.degraded.blocks} / ${script.degraded.of} 段没能由导演模型编排，改用了规则切分：这几段的对白认不出是谁说的，会用旁白的声音念。`, `${script.degraded.blocks} of ${script.degraded.of} passages could not be directed by the model and were cut by rule instead: their dialogue has no speakers and is read in the narrator's voice.`)}
+          {t(`${script.degraded.blocks} / ${script.degraded.of} 段没能由导演编排，对白会用旁白的声音念。`, `${script.degraded.blocks} of ${script.degraded.of} passages were not scripted by the director: their dialogue is read in the narrator's voice.`)}
           <span className="nv-muted"> {t('原因：', 'Reason: ')}{script.degraded.reason}</span>{' '}
           <button type="button" className="nv-link" disabled={working} onClick={() => { void start('audio.build', { force: true }) }}>{t('重新编排', 'Direct it again')}</button>
         </p>
       ) : script !== undefined && unnamed > 0 && unnamed >= spoken.length / 2 ? (
         <p className="nv-note is-warn">
-          {t(`${unnamed} 句对白没有认出说话人，会用旁白的声音念——这通常是脚本编排时模型输出被截断留下的。`, `${unnamed} spoken lines have no speaker and are read in the narrator's voice — usually what a script cut off in the making leaves behind.`)}{' '}
+          {t(`${unnamed} 句对白没有认出说话人，会用旁白的声音念。`, `${unnamed} line(s) of dialogue have no known speaker and are read in the narrator's voice.`)}{' '}
           <button type="button" className="nv-link" disabled={working} onClick={() => { void start('audio.build', { force: true }) }}>{t('重新编排脚本', 'Direct the script again')}</button>
         </p>
       ) : null}
       {flagged > 0 && job === undefined ? (
-        <p className="nv-note">{t(`${flagged} 句重念之后仍然和别的句子不太一样（可能没念完，或声线有偏差），已在"脚本"里标出，可以逐句再念一次。`, `${flagged} lines still stand out after their retakes (cut short, or off their voice); they are marked under "Script" and can be spoken again one by one.`)}{' '}
+        <p className="nv-note">{t(`${flagged} 句重念之后仍有问题，已在脚本里标出。`, `${flagged} line(s) are still off after rereading; they are marked in the script.`)}{' '}
           <button type="button" className="nv-link" onClick={() => { onBody('script') }}>{t('去看看', 'Show them')}</button>
         </p>
       ) : null}
@@ -261,7 +261,7 @@ export function AudioDesk({ chapter, view, job, player, onBody, onChanged }: {
         <div className="nv-cast-voices">
           <span className="nv-muted nv-small">{t('声音表', 'Voices')}</span>
           {voices.map(([key, speaker]) => (
-            <Chip key={key} tone={speaker.own ? 'green' : speaker.voice !== undefined ? 'blue' : 'neutral'} title={speaker.voice !== undefined ? t(`${speaker.own ? '人物卡上指定的音色' : '这位说话人在有声剧里的声音（按人物卡的声音描述或性别年龄选定，全书沿用）'}：${speaker.voice}`, `${speaker.own ? 'Voice set on the card' : 'This speaker\'s voice in the audio drama (from how their card says they speak, or cast by gender and age; kept for the whole book)'}: ${speaker.voice}`) : t('合成时按性别年龄选角，定下后全书沿用；也可以在人物卡上指定音色或设计专属声线', 'Cast by gender and age at synthesis and kept for the whole book; or set a voice or design one on the character card')}>
+            <Chip key={key} tone={speaker.own ? 'green' : speaker.voice !== undefined ? 'blue' : 'neutral'} title={speaker.voice !== undefined ? t(`${speaker.own ? '人物卡上指定的音色' : '这位说话人的声音'}：${speaker.voice}`, `${speaker.own ? 'Voice set on the card' : 'This speaker\'s voice in the audio drama (from how their card says they speak, or cast by gender and age; kept for the whole book)'}: ${speaker.voice}`) : t('合成时自动选角；也可以在人物卡上指定', 'Cast automatically at synthesis; a voice can be named on the character\'s card')}>
               {speaker.name} · {speaker.count}{speaker.voice !== undefined ? ` · ${speaker.voice.startsWith('qwen-tts-vd') ? t('专属声线', 'designed') : speaker.voice.length > 14 ? `${speaker.voice.slice(0, 14)}…` : speaker.voice}` : ''}
             </Chip>
           ))}
@@ -363,7 +363,7 @@ export function ScriptTable({ chapter, lines, cues, state, player, job, sound, o
                     <span className="nv-line-speaker">{line.kind === 'narration' ? t('旁白', 'Narrator') : (card?.name ?? line.speakerName ?? t('未指定', 'unassigned'))}{line.kind === 'thought' ? t('（心声）', ' (thought)') : ''}</span>
                     {line.direction !== undefined ? <span className="nv-line-direction">{line.direction}</span> : null}
                     {skipped
-                      ? <Chip title={line.tag === true ? t('夹在两句对白之间、只交代谁在说的提示语：每个人有自己的声音，念出来是多余的，而且两三个字的短句正是语音模型最不稳的地方。', 'A tag between two spoken lines that only says who speaks: with a voice per speaker it is redundant, and a clip of two or three syllables is where a speech model is least steady.') : t('你让这一行不念', 'You left this line unspoken')}>{t('不念', 'unspoken')}</Chip>
+                      ? <Chip title={line.tag === true ? t('只交代谁在说的提示语，不念', 'A tag that only says who is speaking: not read') : t('你让这一行不念', 'You left this line unspoken')}>{t('不念', 'unspoken')}</Chip>
                       : inBooth.has(line.id)
                         ? <span className="nv-line-busy"><Spinner size={11} /> {t('合成中', 'voicing')}</span>
                         : line.error !== undefined ? <Chip tone="red" title={line.error}>{t('合成失败', 'failed')}</Chip>
@@ -378,7 +378,7 @@ export function ScriptTable({ chapter, lines, cues, state, player, job, sound, o
                   {skipped
                     ? <Button size="sm" variant="ghost" icon="volume" pending={t('正在改…', 'Changing…')} onClick={() => voice(line, true)} title={t('还是念出来', 'Have it spoken after all')} />
                     : line.kind === 'narration' ? <Button size="sm" variant="ghost" icon="mute" pending={t('正在改…', 'Changing…')} onClick={() => voice(line, false)} title={t('这一行不念', 'Leave this line unspoken')} /> : null}
-                  <Button size="sm" variant="ghost" icon="plus" onClick={() => { setCueEdit({ at: line.id }) }} title={t('在这一行加一处声音（环境、音效、配乐）', 'Add a sound at this line (ambience, effect, music)')} />
+                  <Button size="sm" variant="ghost" icon="plus" onClick={() => { setCueEdit({ at: line.id }) }} title={t('在这一行加一处声音', 'Add a sound at this line')} />
                   <Button size="sm" variant="ghost" icon="pen" onClick={() => { setEditing(line) }} title={t('修改这一句', 'Edit this line')} />
                   {skipped ? null : <Button size="sm" variant="ghost" icon="mic" disabled={job !== undefined} pending={t('正在开始重念…', 'Starting the retake…')} onClick={() => retake(line)} title={t('把这一句再念一次', 'Speak this line again')} />}
                 </div>
@@ -433,7 +433,7 @@ function CueEditor({ chapterId, at, cue, sound, busy: working, onClose, onSaved 
         <Button variant="primary" icon="volume" disabled={busy || working || !described} pending={t('正在开始生成…', 'Starting…')} title={sound !== undefined ? t(`用 ${sound.model} 生成`, `Made with ${sound.model}`) : t('还没有能生成声音的模型', 'Nothing can make sound yet')} onClick={() => run(async () => {
           const id = await save()
           if (sound === undefined) {
-            controller.toast('info', t('已保存为注释。还没有能生成声音的模型：语音用百炼的音频生成模型时会自动沿用它。', 'Saved as a note. Nothing can make sound yet: it follows the speech setup when that is Bailian audio generation.'))
+            controller.toast('info', t('已保存为注释；还没有能生成声音的模型', 'Saved as a note; no model that makes sound yet'))
           } else if (id !== undefined) {
             await controller.api.call('audio.sound', { root, chapter: chapterId, cues: [id], force: true })
             await controller.refreshJobs()
@@ -455,7 +455,7 @@ function CueEditor({ chapterId, at, cue, sound, busy: working, onClose, onSaved 
       <Field label={t('给读者看的注释', 'The note the reader sees')} hint={t('写得让人"听得见"，例：嗒——银槌轻碰骨木', 'Let the reader hear it, e.g. "tok — the silver gavel touches bone"')}>
         <TextInput value={caption} onChange={(event) => { setCaption(event.target.value) }} />
       </Field>
-      <Field label={t('给声音模型的描述', 'What the sound model is asked for')} hint={kind === 'effect' ? t('只说这个声音本身：什么东西、什么材质、怎么响、几秒。留空就用上面的注释。', 'The sound itself: what object, what material, how it sounds, how long. Left empty, the note above is used.') : kind === 'music' ? t('乐器、速度、情绪；纯器乐。留空就用上面的注释。', 'Instruments, tempo, mood; instrumental. Left empty, the note above is used.') : t('这个地方持续不断的底声由什么组成；平稳、可循环。留空就用上面的注释。', 'What the steady bed of this place is made of; even and loopable. Left empty, the note above is used.')}>
+      <Field label={t('给声音模型的描述', 'What the sound model is asked for')} hint={kind === 'effect' ? t('什么东西、怎么响、几秒。留空用上面的注释。', 'What it is, how it sounds, how long. Empty: the note above.') : kind === 'music' ? t('乐器、速度、情绪；纯器乐。留空就用上面的注释。', 'Instruments, tempo, mood; instrumental. Left empty, the note above is used.') : t('持续的底声由什么组成。留空用上面的注释。', 'What the steady bed of sound is made of. Empty: the note above.')}>
         <TextArea value={prompt} minRows={2} onChange={(event) => { setPrompt(event.target.value) }} />
       </Field>
       {kind === 'bed' ? (
@@ -484,7 +484,7 @@ function LineEditor({ chapterId, line, onClose, onSaved }: { chapterId: string; 
   })
   const confirm = useConfirm()
   const remove = (): void => {
-    confirm.ask(t('把这一句从有声脚本里删掉？正文不受影响；从这一句开始的声音提示会顺延到下一句，只对着它的分镜格会一并去掉。', 'Take this line out of the audio script? The manuscript is untouched; a sound cue that began here moves to the next line, and a storyboard panel that showed only this line goes with it.'), () => {
+    confirm.ask(t('把这一句从有声脚本里删掉？只对着它的分镜格会一并去掉。', 'Delete this line from the script? A panel that shows only it goes too.'), () => {
       void run(async () => {
         const done = await controller.api.call('audio.removeLine', { root, chapter: chapterId, line: line.id })
         controller.toast('success', done.panels > 0 ? t(`已删除这一句，连带去掉 ${done.panels} 格分镜`, `Line removed, and ${done.panels} storyboard panel(s) with it`) : t('已删除这一句', 'Line removed'))

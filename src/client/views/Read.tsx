@@ -78,7 +78,7 @@ function SidesPage({ counts, sides, side }: { counts: AlbumCounts; sides: SideRe
         <ViewerTabs t={t} value="sides" counts={counts} sides={sides.length} onChange={(next) => { controller.setAlbum({ section: next }) }} />
         <span className="nv-spacer" />
         <Button size="sm" variant="ghost" icon="phone" onClick={() => { setSharing(true) }} title={t('给别人看：在手机上读，或发布成网站——番外也在里面', 'Show it to others: on a phone, or as a site of its own — the side stories go with it')} />
-        <Button size="sm" icon="pen" onClick={() => { controller.navigate({ view: 'stage', tab: 'play' }) }} title={t('去"演出 → 幕间"：在那里玩幕间、把一场留作番外或收回', 'Open Stage → Interludes: where interludes are played, kept as side stories, or taken back')}>{t('编辑', 'Edit')}</Button>
+        <Button size="sm" icon="pen" onClick={() => { controller.navigate({ view: 'stage', tab: 'play' }) }} title={t('去“演出 → 幕间”', 'To Stage → Interludes')}>{t('编辑', 'Edit')}</Button>
       </header>
       <div className="nv-album-page">
         {side !== undefined ? (
@@ -126,7 +126,7 @@ function AlbumPage({ at, counts, sides }: { at: AlbumAt; counts: AlbumCounts; si
       <header className="nv-reader-bar">
         <ViewerTabs t={t} value={at.section} counts={counts} sides={sides} onChange={(next) => { controller.setAlbum({ section: next }) }} />
         <span className="nv-spacer" />
-        <Button size="sm" variant="ghost" icon="phone" onClick={() => { setSharing(true) }} title={t('给别人看：在手机上读，或发布成网站——人物和世界也在里面', 'Show it to others: on a phone, or as a site of its own — the people and the world go with it')} />
+        <Button size="sm" variant="ghost" icon="phone" onClick={() => { setSharing(true) }} title={t('给别人看：在手机上读，或发布成网站', 'Show it to others: read on a phone, or publish as a site')} />
         <Button size="sm" icon="pen" onClick={edit} title={at.end !== undefined ? t('去编辑这一页写的是谁、是什么', 'Edit who or what this page is about') : at.section === 'people' ? t('去"人物"页编辑', 'Edit under People') : t('去"设定"页编辑', 'Edit under Bible')}>{t('编辑', 'Edit')}</Button>
       </header>
       <div className="nv-album-page">
@@ -423,7 +423,7 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
           ) : (
             <>
               <span>
-                {t(`这一章有 ${openIssues} 条审校意见没处理：${notes.marks.length} 条标在正文里（点带底色的句子）`, `${openIssues} review notes are open in this chapter: ${notes.marks.length} are marked in the text (press a tinted sentence)`)}
+                {t(`${openIssues} 条审校意见没处理：${notes.marks.length} 条标在正文里`, `${openIssues} review note(s) open: ${notes.marks.length} marked in the text`)}
                 {notes.loose.length > 0 ? t(`，${notes.loose.length} 条没有对应的句子。`, `, ${notes.loose.length} have no sentence of their own.`) : t('。', '.')}
               </span>
               {notes.loose.length > 0 ? <Button size="sm" variant="ghost" icon={looseOpen ? 'chevronUp' : 'chevronDown'} onClick={() => { setLooseOpen(!looseOpen) }}>{looseOpen ? t('收起', 'Fold') : t('看这几条', 'Show them')}</Button> : null}
@@ -470,7 +470,7 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
             <div className="nv-desk-loading"><Spinner size={13} /><span className="nv-muted nv-small">{t('正在读取分镜…', 'Loading the storyboard…')}</span></div>
           ) : (
             <Empty icon="film" title={t('这一章还没有有声漫', 'This chapter has no motion comic yet')}>
-              <p className="nv-muted">{t('有声漫是把这一章的有声脚本切成分镜、每格配上画面。在"演出 → 有声漫"里做；做好了这里就能看。', 'A motion comic cuts the chapter\'s audio script into panels and gives each a picture. It is made under Stage → Motion comic, and watched here once it is.')}</p>
+              <p className="nv-muted">{t('这一章还没有有声漫，在“演出 → 有声漫”里做。', 'This chapter has no motion comic yet: make one under Stage → Motion comic.')}</p>
               <Button variant="primary" icon="film" onClick={() => { controller.navigate({ view: 'stage', tab: 'comic', chapter: chapter.id }) }}>{t('去制作', 'Make it')}</Button>
             </Empty>
           )}
@@ -589,7 +589,7 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
           t={t}
           onClose={() => { setSettings(false) }}
           extra={(
-            <label className="nv-check" title={t('把审校出的问题标在正文里，点开可以就地修（只有作者这边有）', 'Mark what the review found in the text; press one to mend it there (the author\'s side only)')}>
+            <label className="nv-check" title={t('把审校出的问题标在正文里', 'Mark what the review found in the text')}>
               <input type="checkbox" checked={annotate} onChange={(event) => { setAnnotate(event.target.checked); setNoted(undefined) }} />
               <span>{t('在正文里显示审校批注', 'Show review notes in the text')}</span>
             </label>

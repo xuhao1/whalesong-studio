@@ -34,11 +34,11 @@ import {
 import { QuickSetup, Readiness, Signature } from './Setup'
 
 const ROLES: { role: TextRole; label: [string, string]; hint: [string, string] }[] = [
-  { role: 'writer', label: ['写手', 'Writer'], hint: ['写正文、续写、改写。选文笔最好的模型——不必是最"聪明"的那个。写手只写，不调用工具。', 'Drafts, continues and rewrites prose. Pick the best stylist, not necessarily the smartest model. The writer only writes; it calls no tools.'] },
-  { role: 'analyst', label: ['场记', 'Continuity'], hint: ['收录记忆、审校、整理导入的书稿。选快而稳、读得细的模型。', 'Digests chapters, reviews them, takes in manuscripts. Pick something fast, literal and attentive.'] },
-  { role: 'architect', label: ['策划', 'Planner'], hint: ['推演大纲与节拍、起草设定、假设分支、查资料。选推理强的模型。', 'Derives outlines and beats, drafts the bible, explores what-ifs, researches. Pick a strong reasoner.'] },
-  { role: 'director', label: ['导演', 'Director'], hint: ['有声脚本、分镜、幕间演绎的实时回合。选响应快、守得住格式的模型。', 'Audio scripts, storyboards, the real-time turns of an interlude. Pick a responsive model that keeps to a format.'] },
-  { role: 'producer', label: ['后期', 'Post-production'], hint: ['把配音、音效和分镜画面剪成视频：自己写脚本、跑命令、看结果。选写代码最稳的模型。', 'Cuts voice, sound and storyboard pictures into a video: writes its own script, runs it, checks the result. Pick the model that codes most reliably.'] },
+  { role: 'writer', label: ['写手', 'Writer'], hint: ['写正文、续写、改写。选文笔最好的模型。', 'Prose, continuations, rewrites. Pick the best stylist.'] },
+  { role: 'analyst', label: ['场记', 'Continuity'], hint: ['收录记忆、审校、整理导入的书稿。选快而稳的模型。', 'Digests, review, sorting an imported manuscript. Pick a fast, steady model.'] },
+  { role: 'architect', label: ['策划', 'Planner'], hint: ['推演大纲与节拍、起草设定、查资料。选推理强的模型。', 'Outlines and beats, drafting the bible, research. Pick a strong reasoner.'] },
+  { role: 'director', label: ['导演', 'Director'], hint: ['有声脚本、分镜、幕间。选响应快、守得住格式的模型。', 'Scripts, storyboards, interludes. Pick a quick model that keeps to a format.'] },
+  { role: 'producer', label: ['后期', 'Post-production'], hint: ['把配音、音效和画面剪成视频。选写代码最稳的模型。', 'Cuts voices, sound and frames into a video. Pick the steadiest coder.'] },
 ]
 
 const SEPARATOR = ' :: '
@@ -74,8 +74,8 @@ const CREW_WAYS: { value: CrewWay; label: [string, string] }[] = [
 ]
 
 const CREW_WAY_HINT: [string, string] = [
-  '内部工具：工坊给这个角色的工具，外加它的活用得上的少数几样（策划联网搜索、后期用命令行）。所有工具：对话里装了的它都有——命令行、读写文件、联网、MCP……按当前对话的权限模式运行。非 agent：一问一答，快而省，但看不到书里别处，也没有工具。无论哪一种，书稿本身只能通过工坊的工具改动。',
-  'Its own tools: what the Studio gives the role, and the few of the conversation\'s that its work calls for (the planner searches the web, post-production has a shell). All tools: whatever the conversation has — the shell, files, the web, MCP… — under the conversation\'s permission mode. Not an agent: one question, one answer; faster and cheaper, but blind to the rest of the book and without tools. Whichever it is, the book itself changes only through the Studio\'s own tools.',
+  '内部工具：工坊给的工具，加上它的活用得上的几样。所有工具：对话里装了的都有。非 agent：一问一答，没有工具。',
+  'Its own tools: the Studio\'s, plus the few its work calls for. Every tool: whatever the conversation has. Not an agent: one request, one answer, no tools.',
 ]
 
 /** What a role's settings come to; what they leave unsaid is taken from `under` (the settings for every book), then from the built-in default. */
@@ -297,11 +297,10 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
       <header className="nv-settings-head">
         <div>
           <h2>{t('小说工坊设置', 'Novel Studio settings')}</h2>
-          <p className="nv-muted nv-small">{t('默认对所有作品生效；模型可以改成只跟着当前这本书。常用的就这几项——其余的在右上角的“高级选项”里。', 'Applies to every book; the models can be set for the open book alone. This is what is usually set — the rest is under Advanced, top right.')}</p>
         </div>
         <div className="nv-row-wrap">
           <Button variant="ghost" icon="clock" onClick={() => { controller.setView('usage') }}>{t('用量与成本', 'Usage and cost')}</Button>
-          <label className="nv-check nv-advanced-switch" title={t('逐个角色的模型、工作方式与工具，并发，上下文预算，各类图片的比例……', 'A model, a way of working and tools per role; how much at once; context budgets; the shape of each kind of picture…')}>
+          <label className="nv-check nv-advanced-switch" title={t('逐个角色的模型、并发、上下文预算、图片比例', 'Models role by role, concurrency, context budgets, picture shapes')}>
             <input type="checkbox" checked={advanced} onChange={(event) => { setAdvanced(event.target.checked) }} />
             <span>{t('高级选项', 'Advanced')}</span>
           </label>
@@ -318,7 +317,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
             <Button size="sm" variant="ghost" icon={quick ? 'chevronUp' : 'chevronDown'} onClick={() => { setQuick(value => !value) }}>{quick ? t('收起', 'Hide') : t('展开', 'Show')}</Button>
           </>
         )}>{t('一键配置', 'One-click setup')}</SectionTitle>
-        <p className="nv-muted nv-small">{t('贴一个 key，按推荐把插图、配音、检索一次配好（文字模型不在这里配：它们来自 DSH）。之后仍可在下面逐项修改。', 'Paste one key and get images, speech and retrieval set up as recommended (text models are not set up here: they come from DSH). Everything stays editable below.')}</p>
+        <p className="nv-muted nv-small">{t('贴一个 key，把画图、配音、检索一次配好。', 'One key sets up pictures, voices and search.')}</p>
         {quick || view.setupNeeded ? <QuickSetup view={view} services={['bailian', 'openrouter', 'openai']} /> : (
           <div className="nv-row-wrap">
             {(['bailian', 'openrouter', 'openai'] as const).map(service => <Button key={service} size="sm" onClick={() => { setQuick(true) }}>{t(...SERVICES[service].name)}</Button>)}
@@ -330,7 +329,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
 
       <section className="nv-card" data-section="reading">
         <SectionTitle>{t('阅读体验', 'Reading')}</SectionTitle>
-        <p className="nv-muted nv-small">{t('读和听的时候怎么显示、怎么播放。这就是阅读页上"阅读设置"的那个面板——在哪里调都是同一份；手机上、发布出去的网站上也是它，各自记在各自的设备上。', 'How a chapter is shown and played. This is the panel behind Reading in the reader\'s bar — one and the same wherever it is opened; a phone and a published site have it too, each kept on its own device.')}</p>
+        
         <ReadingPanel t={t} />
       </section>
 
@@ -344,13 +343,13 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
               <button type="button" role="radio" aria-checked={scope === 'book'} className={cx('nv-segment', scope === 'book' && 'is-active')} onClick={() => { setScope('book') }}>{t(`只跟这本书：《${bookTitle}》`, `with this book: "${bookTitle}"`)}</button>
             </div>
             <p className="nv-muted nv-small">{scope === 'book'
-              ? t('这里设的写进这本书自己的 novel.json，书到哪里跟到哪里；没有单独设的角色沿用全局设置。插图、配音、检索的接口和密钥始终是全局的。', 'What is set here is written into this book\'s own novel.json and travels with it; a role not set here follows the Studio-wide settings. The endpoints and keys of pictures, speech and search are always Studio-wide.')
+              ? t('只对这本书生效；没单独设的沿用全局。接口和密钥始终是全局的。', 'For this book only; what is not set here follows the global settings. Endpoints and keys are always global.')
               : bookHasOwn
-                ? t(`《${bookTitle}》有自己的设置，会盖过这里的全局设置——切到“只跟这本书”查看和修改。`, `"${bookTitle}" has settings of its own, which override the Studio-wide ones here — switch to "with this book" to see and change them.`)
-                : t('这里设的对所有的书生效。想让当前这本书用不一样的模型或班底，切到“只跟这本书”。', 'What is set here applies to every book. To give the open book models or a crew of its own, switch to "with this book".')}</p>
+                ? t(`《${bookTitle}》有自己的设置，会盖过这里的。`, `"${bookTitle}" has settings of its own, which override these.`)
+                : t('对所有的书生效。', 'For every book.')}</p>
           </div>
         ) : null}
-        <p className="nv-muted nv-small">{t('文字模型都来自 DSH（在 DSH 的“设置 → 模型”里接入的都能选）。对话里的总编用的是会话自己选的模型；这里定的是替它干活的人用什么。', 'Text models all come from DSH (whatever is connected under DSH\'s Settings → Models can be chosen). The showrunner in the conversation runs on the conversation\'s own model; here you choose what those who work for it run on.')}</p>
+        <p className="nv-muted nv-small">{t('文字模型来自 DSH 的“设置 → 模型”。总编用对话自己选的模型。', 'Text models come from DSH Settings → Models. The showrunner uses the conversation\'s own model.')}</p>
         {advanced ? null : (
           <>
             {(() => {
@@ -362,8 +361,8 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
               role="architect"
               label={t('编排模型', 'The crew\'s model')}
               hint={crewSame
-                ? t('场记、策划、导演、后期共用这一个：读得细、推理强、守得住格式、会用工具。想让它们各用各的，打开“高级选项”。', 'Continuity, the planner, the director and post-production share this one: a careful reader that reasons, keeps to a format and uses tools. To give each its own, switch on Advanced.')
-                : t('现在四个角色用的不是同一个模型（在“高级选项”里逐个看）。在这里选一个，就把它们统一成这一个。', 'The four roles are not on one model now (see each under Advanced). Choose one here and all four are set to it.')}
+                ? t('场记、策划、导演、后期共用。', 'Shared by the scribe, the planner, the director and post-production.')
+                : t('四个角色现在各不相同；在这里选一个就统一。', 'The four roles differ now; choosing one here makes them the same.')}
               route={crewSame ? routeOf(CREW_ROLES[0]!) : undefined}
               models={view.models}
               providers={view.providers ?? []}
@@ -374,7 +373,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
               extra={view.crew !== undefined ? (
                 <Field
                   label={t('agent 能力范围', 'What the crew may do')}
-                  hint={`${t(...CREW_WAY_HINT)}${crewWayNow !== 'call' && unable.length > 0 ? t(` 现在有 ${unable.length} 个角色的模型当不了 agent（${unable.map(item => t(...(ROLE_NAME[item.role] ?? [item.role, item.role]))).join('、')}），它们会按普通调用干活——在“高级选项”里看原因。`, ` ${unable.length} of the roles have a model that cannot drive an agent now (${unable.map(item => t(...(ROLE_NAME[item.role] ?? [item.role, item.role]))).join(', ')}); they work by plain calls — Advanced says why.`) : ''}`}
+                  hint={`${t(...CREW_WAY_HINT)}${crewWayNow !== 'call' && unable.length > 0 ? t(` ${unable.length} 个角色的模型当不了 agent（${unable.map(item => t(...(ROLE_NAME[item.role] ?? [item.role, item.role]))).join('、')}），按普通调用干活。`, ` ${unable.length} role(s) have a model that cannot drive an agent (${unable.map(item => t(...(ROLE_NAME[item.role] ?? [item.role, item.role]))).join(', ')}); they work by plain calls.`) : ''}`}
                 >
                   <Select<CrewWay | '' | 'mixed'>
                     value={crewWayNow}
@@ -428,7 +427,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
                 <div className="nv-form-grid">
                   <Field
                     label={t('agent 能力范围', 'What it may do')}
-                    hint={`${t(...CREW_WAY_HINT)}${info !== undefined && info.own.length > 0 ? t(` 这个角色的“内部工具”里，来自对话的是这几样（装了才有）：${info.own.join('、')}。`, ` Of the conversation's tools, this role's own are these (where present): ${info.own.join(', ')}.`) : ''}`}
+                    hint={`${t(...CREW_WAY_HINT)}${info !== undefined && info.own.length > 0 ? t(` 内部工具里来自对话的：${info.own.join('、')}。`, ` Of the conversation's tools, its own: ${info.own.join(', ')}.`) : ''}`}
                   >
                     <Select<CrewWay | ''>
                       value={inBook && !spoken ? '' : wayNow}
@@ -443,7 +442,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
                       }}
                     />
                   </Field>
-                  <Field label={t('最多几步', 'Step limit')} hint={t(`一次运行最多调用多少次工具；到了就让它收尾。留空用默认的 ${info?.steps ?? 40} 步。`, `How many tool calls one run may make before it is told to wrap up. Empty uses the default of ${info?.steps ?? 40}.`)}>
+                  <Field label={t('最多几步', 'Step limit')} hint={t(`一次运行最多调用几次工具。留空：${info?.steps ?? 40}`, `How many tool calls one run may make. Empty: ${info?.steps ?? 40}`)}>
                     <TextInput inputMode="numeric" value={set.steps !== undefined ? String(set.steps) : ''} placeholder={String((inBook ? everywhere.steps : undefined) ?? info?.steps ?? 40)} onChange={(event) => { const value = number(event.target.value); change({ steps: value !== undefined && value >= 4 ? Math.round(value) : undefined }) }} />
                   </Field>
                 </div>
@@ -451,7 +450,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
             )
           })(crewRole)
         }) : null}
-        {advanced && view.crew !== undefined ? <p className="nv-muted nv-small">{t('四个角色都是 DSH 的 agent：总编或你把活交给它们时，每一次运行都是当前对话的一个子 agent，过程全程可查。“全部工具”包括命令行、读写文件、联网、MCP 等对话里装了的一切，按当前对话的权限模式运行（需要你批准的操作，子 agent 会被直接拒绝）。无论给多少工具，书稿本身都只能通过工坊的工具改动。', 'The four roles are agents of DSH: handed a piece of work by the showrunner or by you, each run is a child of the conversation, open to be watched. "All tools" covers the shell, files, the web, MCP and whatever else the conversation has, under the conversation\'s permission mode (what would need your approval is refused to a child agent outright). However many tools a role has, the book itself changes only through the Studio\'s own.')}</p> : null}
+        {advanced && view.crew !== undefined ? <p className="nv-muted nv-small">{t('每一次运行都是当前对话的一个子 agent。无论给多少工具，书稿只能通过工坊的工具改。', 'Each run is a subagent of the conversation. Whatever tools it has, the manuscript changes only through the Studio\'s.')}</p> : null}
         {view.crew !== undefined ? (
           <div className="nv-crew-row">
             <div className="nv-crew-head">
@@ -465,7 +464,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
               <Chip tone={view.crew.ffmpeg ? 'green' : 'red'}>{view.crew.ffmpeg ? t('ffmpeg 可用', 'ffmpeg found') : t('没有 ffmpeg', 'no ffmpeg')}</Chip>
             </div>
             {view.crew.helpers !== undefined ? <OutsideHelp view={view.crew.helpers} /> : null}
-            {view.crew.helpers === undefined ? <p className="nv-muted nv-small">{t('后期做不了的活可以转交给你自己的 Claude Code 或 Codex：在 DSH 的“设置 → 插件”里添加 @deepseek-ai/dsh-subagent-claude-code 或 @deepseek-ai/dsh-subagent-codex。（重启 DSH 后，这里会有一键安装。）', 'What post-production cannot do it can hand to your own Claude Code or Codex: add @deepseek-ai/dsh-subagent-claude-code or @deepseek-ai/dsh-subagent-codex under DSH\'s Settings → Plugins. (After DSH restarts, they install from here with one press.)')}</p> : null}
+            {view.crew.helpers === undefined ? <p className="nv-muted nv-small">{t('外援：在 DSH 的“设置 → 插件”里添加 @deepseek-ai/dsh-subagent-claude-code 或 @deepseek-ai/dsh-subagent-codex。', 'Outside help: add @deepseek-ai/dsh-subagent-claude-code or @deepseek-ai/dsh-subagent-codex under DSH Settings → Plugins.')}</p> : null}
             {!view.crew.ffmpeg ? <p className="nv-note is-warn">{t(`剪视频和验收都要用 ffmpeg / ffprobe，这台电脑上没有找到。${FFMPEG_INSTALL[0]}。`, `Cutting and checking a video needs ffmpeg / ffprobe, and they were not found on this computer. ${FFMPEG_INSTALL[1]}.`)}</p> : null}
           </div>
         ) : null}
@@ -474,7 +473,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
       {advanced ? (
       <section className="nv-card" data-section="parallel">
         <SectionTitle>{t('并发：同时发出多少个请求', 'How much at once')}</SectionTitle>
-        <p className="nv-muted nv-small">{t(`每一类请求同时最多发出多少个——不管是哪一章、哪个任务在用，都算在一起。默认 ${PARALLEL_DEFAULT}，最多 ${PARALLEL_MAX}。服务回答“太快了”（限流）时，工坊会自己降速、等一等、把被拒的请求重发，通顺后再升回来，所以数字可以放心往大了填；真正的上限是你的账号在那个服务上的限额。`, `How many requests of each kind go out at once — over every chapter and every job together. ${PARALLEL_DEFAULT} by default, ${PARALLEL_MAX} at most. When a service answers "too fast", the Studio slows down by itself, waits, sends what was refused again, and climbs back once requests go through — so a high number is safe to set; the real limit is what your account is allowed on that service.`)}</p>
+        <p className="nv-muted nv-small">{t(`每一类请求同时最多发出几个。默认 ${PARALLEL_DEFAULT}，最多 ${PARALLEL_MAX}；被限流时自动降速重试。`, `How many requests of each kind go out at once. ${PARALLEL_DEFAULT} by default, ${PARALLEL_MAX} at most; when rate-limited it slows down and retries.`)}</p>
         <div className="nv-form-grid">
           <Field label={t('语音：同时合成几句', 'Speech: lines at once')}>
             <TextInput inputMode="numeric" value={draft.tts.concurrency !== undefined ? String(draft.tts.concurrency) : ''} placeholder={String(PARALLEL_DEFAULT)} onChange={(event) => { update({ tts: without(draft.tts, 'concurrency', parallel(event.target.value)) }) }} />
@@ -485,7 +484,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
           <Field label={t('声音：同时生成几处', 'Sound: clips at once')} hint={(draft.sound?.provider ?? 'auto') === 'auto' ? t('声音沿用语音的模型时，和语音共用上面那个数', 'While sound rides on the speech model, it shares the speech number') : undefined}>
             <TextInput inputMode="numeric" value={draft.sound?.concurrency !== undefined ? String(draft.sound.concurrency) : ''} placeholder={String(PARALLEL_DEFAULT)} disabled={(draft.sound?.provider ?? 'auto') === 'auto'} onChange={(event) => { update({ sound: without<SoundDraft, 'concurrency'>(draft.sound ?? { provider: 'auto' }, 'concurrency', parallel(event.target.value)) }) }} />
           </Field>
-          <Field label={t('文字：同时进行几件活', 'Text: pieces of work at once')} hint={t('一件活 = 某个角色做的一段脚本、一章收录、一章审校、一章节拍……', 'A piece of work = a role\'s run on a script passage, a digest, a review, a chapter\'s beats…')}>
+          <Field label={t('文字：同时进行几件活', 'Text: pieces of work at once')} hint={t('一件活：一段脚本、一章收录、一章审校……', 'One piece of work: a script, a chapter\'s digest, a chapter\'s review…')}>
             <TextInput inputMode="numeric" value={draft.textConcurrency !== undefined ? String(draft.textConcurrency) : ''} placeholder={String(PARALLEL_DEFAULT)} onChange={(event) => { const value = parallel(event.target.value); setDraft(({ textConcurrency: _old, ...rest }) => (value !== undefined ? { ...rest, textConcurrency: value } : rest)); setDirty(true) }} />
           </Field>
         </div>
@@ -495,7 +494,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
       {advanced ? (
       <section className="nv-card" data-section="context">
         <SectionTitle>{t('上下文与记忆', 'Context and memory')}</SectionTitle>
-        <p className="nv-muted nv-small">{t('写一章时，模型读到的“前文”分两层：离这一章最近的若干整章原文，和更早章节的梗概。原文按整章取，默认占模型窗口的一半；重写中间的章节时，后面已经写好的章节也会一起给它。原文的排列不随章节变化、只在末尾追加，所以连续写作时模型服务端的缓存能命中绝大部分输入。', 'When a chapter is written, the model reads the story so far in two layers: the nearest chapters word for word, and the ones before them as an outline. The text is taken in whole chapters and gets half of the model\'s window by default; a chapter in the middle that is written again is given the chapters after it too. The text is laid out the same from chapter to chapter and only grows at its end, so a provider\'s cache covers most of the input while chapters are written one after the other.')}</p>
+        <p className="nv-muted nv-small">{t('写一章时带的前文：最近若干整章的原文，加更早章节的梗概。', 'What a chapter is written with: the latest chapters whole, and summaries of the ones before.')}</p>
         <div className="nv-form-grid">
           <Field label={t('前文怎么给', 'How the story so far travels')}>
             <Select value={draft.context.strategy} options={[
@@ -504,16 +503,16 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
               { value: 'retrieval', label: t('不带整章：梗概 + 检索片段（最省）', 'No whole chapter: outline + looked-up passages (cheapest)') },
             ]} onChange={(value) => { update({ context: { ...draft.context, strategy: value } }) }} />
           </Field>
-          <Field label={t('前文原文的预算（tokens）', 'Budget for the text itself (tokens)')} hint={t('留空：模型窗口的一半。填了就按这个数（不会超过窗口放得下的量），按整章取。', 'Empty: half of the model\'s window. A figure is used as given (never more than the window can hold), in whole chapters.')}>
+          <Field label={t('前文原文的预算（tokens）', 'Budget for the text itself (tokens)')} hint={t('留空：模型窗口的一半', 'Empty: half the model\'s window')}>
             <TextInput inputMode="numeric" value={draft.context.budgetTokens !== undefined ? String(draft.context.budgetTokens) : ''} placeholder={t('窗口的一半', 'half the window')} disabled={draft.context.strategy !== 'auto'} onChange={(event) => { const value = number(event.target.value); update({ context: without(draft.context, 'budgetTokens', value !== undefined && value > 0 ? Math.max(2000, Math.round(value)) : undefined) }) }} />
           </Field>
           <Field label={t('没有整章时带上的上文（字符）', 'Preceding text when no chapter is whole (characters)')} hint={t('只在不带整章原文时用：上一章结尾原样带上的长度', 'Only when no whole chapter travels: how much of the end of the chapter before is carried word for word')}>
             <TextInput inputMode="numeric" value={String(draft.context.tailChars)} onChange={(event) => { const value = number(event.target.value); if (value !== undefined) update({ context: { ...draft.context, tailChars: Math.max(0, Math.round(value)) } }) }} />
           </Field>
-          <Field label={t('设定、线索、检索片段一共占多少（tokens）', 'Bible, threads and looked-up passages together (tokens)')} hint={t('留空：模型窗口的 22%，最多 12 万。人物卡、世界观、未回收线索、检索到的旧段落都从这里分；不够时先裁龙套和远的线索。', 'Empty: 22% of the model\'s window, 120k at most. Character cards, the world, open threads and looked-up passages share it; when it runs short, walk-ons and distant threads go first.')}>
+          <Field label={t('设定、线索、检索片段一共占多少（tokens）', 'Bible, threads and looked-up passages together (tokens)')} hint={t('留空：模型窗口的 22%，最多 12 万', 'Empty: 22% of the window, 120k at most')}>
             <TextInput inputMode="numeric" value={draft.context.sideTokens !== undefined ? String(draft.context.sideTokens) : ''} placeholder={t('窗口的 22%', '22% of the window')} onChange={(event) => { const value = number(event.target.value); const { sideTokens: _old, ...rest } = draft.context; update({ context: value !== undefined && value > 0 ? { ...rest, sideTokens: Math.round(value) } : rest }) }} />
           </Field>
-          <Field label={t('幕间每一回合带多少上下文（tokens）', 'Context of each turn of an interlude (tokens)')} hint={t(`留空：${PLAY_CONTEXT_DEFAULT.toLocaleString()}。幕间要回得快，所以比写正文带得少；觉得导演记不住前面的事就调大。`, `Empty: ${PLAY_CONTEXT_DEFAULT.toLocaleString()}. An interlude has to answer fast, so it carries less than drafting does; raise it when the director forgets what came before.`)}>
+          <Field label={t('幕间每一回合带多少上下文（tokens）', 'Context of each turn of an interlude (tokens)')} hint={t(`留空：${PLAY_CONTEXT_DEFAULT.toLocaleString()}`, `Empty: ${PLAY_CONTEXT_DEFAULT.toLocaleString()}`)}>
             <TextInput inputMode="numeric" value={draft.context.playTokens !== undefined ? String(draft.context.playTokens) : ''} placeholder={String(PLAY_CONTEXT_DEFAULT)} onChange={(event) => { const value = number(event.target.value); const { playTokens: _old, ...rest } = draft.context; update({ context: value !== undefined && value > 0 ? { ...rest, playTokens: Math.round(value) } : rest }) }} />
           </Field>
         </div>
@@ -529,13 +528,13 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
         ) : null}
         <label className="nv-check">
           <input type="checkbox" checked={draft.autoDigest} onChange={(event) => { update({ autoDigest: event.target.checked }) }} />
-          <span>{t('写完或改完一章后自动收录记忆（摘要、事实、人物状态、线索）', 'Digest a chapter automatically after it is written or revised (summary, facts, character states, threads)')}</span>
+          <span>{t('写完或改完一章后自动收录', 'Digest a chapter once it is written or changed')}</span>
         </label>
         <label className="nv-check">
           <input type="checkbox" checked={draft.reviewAgentRevisions} onChange={(event) => { update({ reviewAgentRevisions: event.target.checked }) }} />
           <span>{t('总编发起的正文修订先作为提案，等我确认后才生效', 'Revisions requested by the showrunner wait as proposals until I accept them')}</span>
         </label>
-        <Field label={t('总编想绕过工坊、直接用文件工具改书的文件时', 'When the showrunner reaches for a book\'s files with raw file tools')} hint={t('总编改书有专门的工具（改稿、改设定、改大纲、修正记忆），每一次改动都会留版本、重新收录记忆、记进"改动记录"。绕过它们直接写文件，这些就都对不上了。无论选哪一项，工坊之外的改动事后都会被发现并记录。', 'The showrunner has a tool for every kind of change — text, bible, outline, memory — and each keeps a version, digests memory again and puts the change on the record. A file written around them leaves all of that out of step. Whatever is chosen here, a change from outside is noticed and recorded afterwards.')}>
+        <Field label={t('总编想绕过工坊、直接用文件工具改书的文件时', 'When the showrunner reaches for a book\'s files with raw file tools')} hint={t('总编改书有专门的工具，每次改动都留版本、记进改动记录。直接写文件会绕过这些。', 'The showrunner changes a book through its tools, which keep versions and a record. Writing files directly goes round them.')}>
           <Select<'guide' | 'ask' | 'allow'> value={draft.agentFiles ?? 'guide'} options={[
             { value: 'guide', label: t('拦下，并告诉它该用哪个工具（推荐）', 'Refuse, and name the tool to use (recommended)') },
             { value: 'ask', label: t('每次问我', 'Ask me each time') },
@@ -546,22 +545,22 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
       ) : null}
 
       <Fold id="image" title={t('图像生成', 'Image generation')} summary={draft.image.provider === 'none' ? t('未使用', 'off') : `${draft.image.provider === 'codex' ? t('ChatGPT 订阅', 'ChatGPT subscription') : draft.image.model ?? draft.image.provider}${view.ready.image ? '' : t(' · 还不能用', ' · not ready')}`} ready={view.ready.image} {...fold('image')}>
-        <p className="nv-muted nv-small">{t('人物立绘、场景、封面、有声漫的画面和幕间背景都用它。推荐最新的 GPT Image：经 OpenRouter 或 OpenAI 用 key 调用，或者直接用 ChatGPT 订阅。', 'Portraits, scenes, covers, comic panels and interlude backdrops. The latest GPT Image is recommended — with a key through OpenRouter or OpenAI, or straight from a ChatGPT subscription.')}</p>
+        <p className="nv-muted nv-small">{t('立绘、插图、封面、分镜画面都用它。', 'Portraits, illustrations, covers and panels all use it.')}</p>
         <ImageSection value={draft.image} keys={keys} t={t} advanced={advanced} onChange={(image) => { update({ image }) }} />
       </Fold>
 
       <Fold id="tts" title={t('语音合成', 'Speech')} summary={draft.tts.provider === 'none' ? t('未使用', 'off') : `${draft.tts.model ?? draft.tts.provider}${view.ready.tts ? '' : t(' · 还不能用', ' · not ready')}`} ready={view.ready.tts} {...fold('tts')}>
-        <p className="nv-muted nv-small">{t('有声剧按人物卡选音色：人物指定的音色优先，其次是为他设计的专属声线，再按性别年龄自动选角，同一人物全书保持同一个声音。', 'The audio drama casts by character card: a voice set on the card wins, then a voice designed for them, then automatic casting by gender and age — one voice per character for the whole book.')}</p>
+        <p className="nv-muted nv-small">{t('同一人物全书用同一个声音：人物卡指定的优先，其次自动选角。', 'One voice per person through the book: the one on their card first, else cast automatically.')}</p>
         <TtsSection value={draft.tts} keys={keys} voices={view.voices.map(voice => ({ id: voice.id, note: `${voice.note}${voice.accent !== undefined ? ` · ${voice.accent}` : ''}` }))} savedProvider={view.settings.tts.provider} t={t} onChange={(tts) => { update({ tts }) }} />
       </Fold>
 
       <Fold id="sound" title={t('声音设计：环境声、音效、配乐', 'Sound design: ambience, effects, music')} summary={(draft.sound?.provider ?? 'auto') === 'none' ? t('未使用', 'off') : (draft.sound?.provider ?? 'auto') === 'auto' ? t('沿用语音的模型', 'rides on the speech model') : draft.sound?.model ?? String(draft.sound?.provider)} ready={view.ready.sound === true} {...fold('sound')}>
-        <p className="nv-muted nv-small">{t('有声脚本除了台词，还会安排每个场景听得到什么——环境底声、音效、配乐。它们会作为注释显示在正文旁边给读者气氛，也可以由声音模型生成出来垫在人声下面。', 'Besides its lines an audio script says what each scene sounds like — the bed of the place, effects, music. These show as notes beside the text for atmosphere, and a sound model can make them audible under the voices.')}</p>
+        <p className="nv-muted nv-small">{t('环境声、音效和配乐：显示成正文旁的注释，也可以生成出来垫在人声下面。', 'Ambience, effects and music: shown as notes beside the text, or generated to lie under the voices.')}</p>
         <SoundSection value={draft.sound ?? { provider: 'auto' }} tts={draft.tts} ready={view.ready.sound === true} keys={keys} t={t} onChange={(sound) => { update({ sound }) }} />
       </Fold>
 
       <Fold id="embedding" title={t('语义检索（向量）', 'Semantic retrieval (embeddings)')} summary={draft.embedding.provider === 'none' ? t('未使用：按关键词检索', 'off: keyword retrieval') : draft.embedding.model ?? draft.embedding.provider} ready={view.ready.embedding} {...fold('embedding')}>
-        <p className="nv-muted nv-small">{t('不配置时按关键词检索（对中文按二元切分）；配置后与关键词混合排序，长篇里找"意思相近"的旧情节更准。', 'Without it retrieval is keyword-based; with it both are fused, which finds earlier passages by meaning far better in a long book.')}</p>
+        <p className="nv-muted nv-small">{t('不配置时按关键词检索；配置后两者混合排序。', 'Without it, search is by keyword; with it, the two are ranked together.')}</p>
         <EmbeddingSection value={draft.embedding} keys={keys} t={t} onChange={(embedding) => { update({ embedding }) }} />
       </Fold>
 
@@ -646,10 +645,10 @@ function KeyField({ endpoint, refName, keys, onRef, t }: { endpoint: string | un
         ? <Chip tone="green">{state.source === 'saved' ? t('已保存', 'Saved') : state.source === 'env' ? t(`环境变量 ${state.name ?? ''}`, `Env ${state.name ?? ''}`) : t('可用', 'Found')}</Chip>
         : <Chip tone="red">{byName ? t('没有找到这个变量', 'Not found') : t('未填写', 'Missing')}</Chip>
   const hint = byName
-    ? t('从启动 DSH 的环境里按这个名字读取密钥。', 'The key is read by this name from the environment that starts the Harness.')
+    ? t('从启动 DSH 的环境里按这个名字读取密钥。', 'The key is read by this name from the environment that starts DSH.')
     : state?.configured === true && typed.length === 0
-      ? t(`${host} 的密钥已就绪，同一服务的其他选项共用它。留空沿用，填写则更换。`, `The key for ${host} is in place and shared by every slot on that service. Leave empty to keep it; type to replace it.`)
-      : t(`只对 ${host} 生效，保存在本机的 DSH 凭据库里。`, `Used for ${host} only; stored in the Harness credential store on this machine.`)
+      ? t(`${host} 的密钥已保存。留空沿用，填写则更换。`, `The key for ${host} is saved. Leave empty to keep it, type to replace it.`)
+      : t(`只对 ${host} 生效，保存在本机的 DSH 凭据库里。`, `Used for ${host} only; stored in DSH credential store on this machine.`)
   return (
     <Field label={byName ? t('密钥所在的环境变量', 'Environment variable with the key') : 'API key'} hint={hint}>
       <span className="nv-keyrow">
@@ -725,8 +724,8 @@ function ModelField({ label, hint, endpoint, kind, value, onChange, suggestions,
       if (models.length === 0) controller.toast('info', t('这个接口没有列出这类模型，直接填写模型名即可', 'The endpoint lists no such models; type the model id'))
       else {
         controller.toast('success', usable === models.length
-          ? t(`这个接口列出了 ${models.length} 个模型，已全部列在下面`, `The endpoint lists ${models.length} models, all shown below`)
-          : t(`这个接口有 ${models.length} 个这类模型，其中 ${usable} 个工坊可以直接用，已全部列在下面`, `The endpoint has ${models.length} such models; the Studio can drive ${usable} of them. All are listed below`))
+          ? t(`这个接口列出了 ${models.length} 个模型`, `The endpoint lists ${models.length} model(s)`)
+          : t(`这个接口有 ${models.length} 个这类模型，${usable} 个可以直接用`, `The endpoint has ${models.length} such model(s), ${usable} usable as they are`))
         // Show them: a count nobody can act on is no answer.
         setSignal(count => count + 1)
       }
@@ -820,7 +819,7 @@ function RoleRow({ role, label, hint, route, models, providers, fallback, keys, 
   const follows = details.data?.outputCap !== undefined
     ? t(`留空时跟随模型：单次回复最多 ${kilo(details.data.outputCap)}`, `Empty follows the model: up to ${kilo(details.data.outputCap)} per reply`)
     : t('留空时不设上限，由模型和接口自己决定', 'Empty sets no limit; the model and the endpoint decide')
-  const outputHint = `${follows}${details.data?.maxOutput !== undefined ? t(`（这个模型最大 ${kilo(details.data.maxOutput)}）`, ` (this model writes at most ${kilo(details.data.maxOutput)})`) : ''}${t('。会思考的模型，思考也算在这个数里——填小了，正文、脚本和分镜会被截断。', '. A model that reasons spends its reasoning out of this figure — set it low and prose, scripts and storyboards get cut off.')}`
+  const outputHint = `${follows}${details.data?.maxOutput !== undefined ? t(`（这个模型最大 ${kilo(details.data.maxOutput)}）`, ` (this model writes at most ${kilo(details.data.maxOutput)})`) : ''}${t('。思考也算在这个数里，填小了会被截断。', '. Reasoning counts towards it; set low, output is cut off.')}`
   const fallbackName = fallback !== undefined ? (models.find(model => model.provider === fallback.provider && model.id === fallback.model)?.name ?? fallback.model) : undefined
   const pick = (next: RoleSource): void => {
     if (next === '') onChange(undefined)
@@ -882,7 +881,7 @@ function RoleRow({ role, label, hint, route, models, providers, fallback, keys, 
           {direct ? (
             <>
               <p className="nv-note is-warn nv-role-legacy">
-                {t('这个角色还在用旧的直连接口。它照常能用，但只能以普通调用的方式工作：当不了 agent——没有工具，也不会出现在对话的子 agent 列表里。文字模型现在统一来自 DSH：把这家的模型接进 DSH 的“设置 → 模型”，再回来选它。', 'This role still uses a directly called endpoint of the old kind. It works as before, but only by plain calls: it cannot be an agent — no tools, and no place in the conversation\'s list of child agents. Text models now all come from DSH: connect this vendor under DSH\'s Settings → Models, then choose it here.')}
+                {t('这个角色还在用旧的直连接口，只能按普通调用干活。把这家的模型接进 DSH 的“设置 → 模型”，再回来选它。', 'This role still uses an old direct endpoint and can only work by plain calls. Connect that provider under DSH Settings → Models, then choose it here.')}
                 {' '}
                 <button type="button" className="nv-link" onClick={() => { onChange(undefined) }}>{t('改为跟随对话模型', 'Follow the chat model instead')}</button>
               </p>
@@ -894,7 +893,7 @@ function RoleRow({ role, label, hint, route, models, providers, fallback, keys, 
             <Field
               label={t('模型', 'Model')}
               hint={provider?.error !== undefined
-                ? t(`${provider.name} 现在列不出模型（${provider.error.slice(0, 80)}）。在 DSH 里登录或配好之后再来选，或者直接填模型名。`, `${provider.name} cannot list its models right now (${provider.error.slice(0, 80)}). Sign in or finish its setup in the Harness, or type a model id.`)
+                ? t(`${provider.name} 现在列不出模型（${provider.error.slice(0, 80)}）。可以直接填模型名。`, `${provider.name} cannot list its models now (${provider.error.slice(0, 80)}). A model name can be typed in.`)
                 : providerModels.length === 0
                   ? t('这个提供方没有列出模型，直接填模型名即可', 'This provider lists no models; type a model id')
                   : detected !== undefined ? t(`上下文窗口 ${Math.round(detected / 1000)}k`, `Context window ${Math.round(detected / 1000)}k`) : undefined}
@@ -923,7 +922,7 @@ function RoleRow({ role, label, hint, route, models, providers, fallback, keys, 
               <Field label={t('最大输出 tokens', 'Max output tokens')} hint={outputHint}>
                 <TextInput inputMode="numeric" value={route.maxTokens !== undefined ? String(route.maxTokens) : ''} placeholder={t('不限（跟随模型）', 'none (the model\'s own)')} onChange={(event) => { const value = number(event.target.value); set('maxTokens', value !== undefined && value > 0 ? Math.round(value) : undefined) }} />
               </Field>
-              <Field label={t('上下文窗口（tokens）', 'Context window (tokens)')} hint={route.contextWindow !== undefined ? t('按你填的算', 'Using your figure') : detected !== undefined ? t(`已识别为 ${Math.round(detected / 1000)}k，一般不用填`, `Detected as ${Math.round(detected / 1000)}k; usually no need to fill in`) : t('没能识别这个模型的窗口，先按 200k 算；它其实更大就填上（如 1000000），整本书才装得进去', 'Could not tell this model\'s window, so 200k is assumed; if it is larger, say so (e.g. 1000000) and the whole book fits')}>
+              <Field label={t('上下文窗口（tokens）', 'Context window (tokens)')} hint={route.contextWindow !== undefined ? t('按你填的算', 'Using your figure') : detected !== undefined ? t(`已识别为 ${Math.round(detected / 1000)}k，一般不用填`, `Detected as ${Math.round(detected / 1000)}k; usually no need to fill in`) : t('没能识别这个模型的窗口，先按 200k 算；更大就填上', 'This model\'s window is not known; 200k is assumed. Enter it if it is larger')}>
                 <TextInput inputMode="numeric" value={route.contextWindow !== undefined ? String(route.contextWindow) : ''} placeholder={detected !== undefined ? String(detected) : '200000'} onChange={(event) => { const value = number(event.target.value); set('contextWindow', value !== undefined && value >= 4000 ? Math.round(value) : undefined) }} />
               </Field>
             </>
@@ -1028,8 +1027,8 @@ function PictureSizeFields({ value, onChange, t, advanced }: { value: ImageSetti
   return (
     <>
       <Field label={t('清晰度', 'Fineness')} hint={tier === undefined
-        ? t('默认：每类图片用它一直以来的尺寸（见下面各项）。选一个档位，所有图片就按“和这个名字的屏幕一样多的像素”来画。', 'Default: each kind of picture at the size it has always had (shown below). Choose a tier and every picture is drawn with as many pixels as a screen of that name.')
-        : t(`所有图片共用：和这个名字的屏幕一样多的像素，按各自的比例分配（16:9 就是 ${pixelSize('16:9', tier).replace('x', '×')}）。越高越慢、越贵；模型不支持时会报错，换低一档即可。`, `For every picture: as many pixels as a screen of that name, in the picture's own shape (16:9 is ${pixelSize('16:9', tier).replace('x', '×')}). Higher is slower and dearer; a model that refuses it says so — choose a lower one.`)}>
+        ? t('默认：每类图片各用自己的常用尺寸。', 'Default: each kind of picture at its usual size.')
+        : t(`所有图片共用，按各自的比例分配（16:9 就是 ${pixelSize('16:9', tier).replace('x', '×')}）。模型不支持时会报错，换低一档。`, `For every picture, shaped by its own ratio (16:9 is ${pixelSize('16:9', tier).replace('x', '×')}). A model that cannot do it says so: step down.`)}>
         <Select value={tier ?? ''} options={[{ value: '', label: t('默认（各类图片的常用尺寸）', 'Default (each kind\'s usual size)') }, ...PICTURE_TIERS.map(item => ({ value: item as string, label: t(...TIER_LABELS[item]) }))]} onChange={(next) => { onChange(without(value, 'resolution', next)) }} />
       </Field>
       {/* The shape of each kind of picture: for whoever wants other than a standing cover and a lying stage. */}
@@ -1081,7 +1080,7 @@ function ImageSection({ value, keys, onChange, t, advanced }: { value: ImageSett
           ]} onChange={pick} />
         </Field>
         {value.provider === 'codex' ? (
-          <Field label={t('通道', 'Bridge')} hint={ready ? t('这条通道已登录，可以出图', 'This bridge is signed in and can draw') : value.bridge === 'cli' ? t('还没有登录：在终端运行 codex login，选择用 ChatGPT 登录', 'Not signed in yet: run codex login in a terminal and sign in with ChatGPT') : value.bridge === 'connect' ? t('还没有登录：在 DSH 设置 → 模型 → Openai-Codex 里授权', 'Not signed in yet: authorize under Harness Settings → Models → Openai-Codex') : t('还没有登录：在 DSH 设置 → 模型 → Openai-Codex 授权，或运行 codex login', 'Not signed in yet: authorize under Harness Settings → Models → Openai-Codex, or run codex login')}>
+          <Field label={t('通道', 'Bridge')} hint={ready ? t('这条通道已登录，可以出图', 'This bridge is signed in and can draw') : value.bridge === 'cli' ? t('还没有登录：在终端运行 codex login，选择用 ChatGPT 登录', 'Not signed in yet: run codex login in a terminal and sign in with ChatGPT') : value.bridge === 'connect' ? t('还没有登录：在 DSH 设置 → 模型 → Openai-Codex 里授权', 'Not signed in yet: authorize under DSH Settings → Models → Openai-Codex') : t('还没有登录：在 DSH 设置 → 模型 → Openai-Codex 授权，或运行 codex login', 'Not signed in yet: authorize under DSH Settings → Models → Openai-Codex, or run codex login')}>
             <Select<CodexBridgeKind> value={value.bridge ?? 'auto'} options={[
               { value: 'auto', label: t('自动（优先 Codex Connect）', 'Automatic (Codex Connect first)') },
               { value: 'connect', label: `Codex Connect${codex.connect ? (codex.connectSignedIn ? t(' · 已登录', ' · signed in') : t(' · 未登录', ' · not signed in')) : t(' · 未安装', ' · not installed')}` },
@@ -1098,7 +1097,7 @@ function ImageSection({ value, keys, onChange, t, advanced }: { value: ImageSett
         ) : null}
         {value.provider !== 'none' ? <PictureSizeFields value={value} onChange={onChange} t={t} advanced={advanced} /> : null}
         {value.provider !== 'none' && advanced ? (
-          <Field label={t('一张图带几张参考图', 'Reference pictures per image')} hint={t(`画面里人物的人设图、地点的设定图会作为参考图一起发给绘图模型。留空：${REFERENCES_DEFAULT} 张（收参考图的模型都收得下）；最多 ${REFERENCES_MAX} 张，能收更多的模型人物更稳。`, `The design sheets of the people in a picture and the art of its place go along as references. Empty: ${REFERENCES_DEFAULT} (every model that takes references takes that many); ${REFERENCES_MAX} at most — a model that takes more holds faces steadier.`)}>
+          <Field label={t('一张图带几张参考图', 'Reference pictures per image')} hint={t(`每张图最多带几张参考图。留空：${REFERENCES_DEFAULT}，最多 ${REFERENCES_MAX}。`, `How many reference pictures one picture may carry. Empty: ${REFERENCES_DEFAULT}; ${REFERENCES_MAX} at most.`)}>
             <TextInput inputMode="numeric" value={value.references !== undefined ? String(value.references) : ''} placeholder={String(REFERENCES_DEFAULT)} onChange={(event) => { const count = number(event.target.value); const { references: _old, ...rest } = value; onChange(count !== undefined && count >= 0 ? { ...rest, references: Math.min(REFERENCES_MAX, Math.round(count)) } : rest) }} />
           </Field>
         ) : null}
@@ -1106,13 +1105,13 @@ function ImageSection({ value, keys, onChange, t, advanced }: { value: ImageSett
           // Shown outright, not only among the fine print: it decides how many pictures a click draws.
           <label className="nv-check">
             <input type="checkbox" checked={value.sheetFirst !== false} onChange={(event) => { const { sheetFirst: _old, ...rest } = value; onChange(event.target.checked ? rest : { ...rest, sheetFirst: false }) }} />
-            <span>{t('画人之前先补人设图：画立绘时这个人还没有人设图，就先画人设图、再照着它画；插图、分镜画面、封面里多次出场的人也一样（各多一次绘图调用，画完会说明）。不勾：有什么就照什么画。', 'The design sheet first: a portrait of somebody without a sheet draws the sheet first and the portrait against it; so do illustrations, panels and covers for whoever comes back in the book (one more image call each, named when done). Unticked: pictures are drawn from what there is.')}</span>
+            <span>{t('画人之前先补人设图', 'Draw a missing design sheet before a picture of the person')}</span>
           </label>
         ) : null}
         {value.provider !== 'none' ? (
           <label className="nv-check">
             <input type="checkbox" checked={value.portraitScene !== false} onChange={(event) => { const { portraitScene: _old, ...rest } = value; onChange(event.target.checked ? rest : { ...rest, portraitScene: false }) }} />
-            <span>{t('立绘照名场面画：立绘画的是这个人的名场面（比如黛玉葬花）——导演从书里挑，记在人物卡的"形象"里，可以改、可以重挑（每人第一次多一次导演的调用）。画的时候写了要求，导演照它来挑这一张的场面（多一次导演的调用）。不勾：素底、面向镜头的定妆照，写了要求就直接照写的画。', 'Portraits in their scene: a portrait shows the person in their signature scene — the director picks it from the book and keeps it under "Looks" on the card, where it can be rewritten or picked anew (one more director run per person, the first time). Something asked of a portrait guides the director\'s pick for that picture (one more director run). Unticked: plain portraits, facing the viewer on a plain ground; what is asked is drawn as asked.')}</span>
+            <span>{t('立绘照名场面画（不勾：素底定妆照）', 'Portraits show the signature scene (unticked: a plain likeness)')}</span>
           </label>
         ) : null}
         {value.provider === 'openai' || value.provider === 'openrouter' ? (
@@ -1123,7 +1122,7 @@ function ImageSection({ value, keys, onChange, t, advanced }: { value: ImageSett
       </div>
       {value.provider !== 'none' ? (
         <div className="nv-note">
-          <p>{t('画风不在这里：它属于每一本书，在那本书的“设定 → 画风”里看和改。导入书稿、起草设定时，导演会按那本书自动定一份。', 'The look of the pictures is not set here: it belongs to each book, on the Art page of that book\'s bible. When a manuscript is imported or a bible drafted, the director settles one for that book.')}</p>
+          <p>{t('画风属于每一本书，在那本书的“设定 → 画风”里。', 'Art direction belongs to each book: under its Bible → Art.')}</p>
           {/* What was once entered here is still in force for books without a look of their own: shown, and removable, not silently kept. */}
           {(value.stylePrompt ?? '').trim().length > 0 ? (
             <p className="nv-small">
@@ -1221,7 +1220,7 @@ function TtsSection({ value, keys, voices, savedProvider, onChange, t }: { value
             <KeyField endpoint={endpoint} refName={value.apiKeyRef} keys={keys} t={t} onRef={(name) => { onChange(without(value, 'apiKeyRef', name)) }} />
             <ModelField
               label={t('模型', 'Model')}
-              hint={serviceOf(endpoint) === 'bailian' ? t('点开可以看到百炼上所有能合成语音的模型；选了别的协议的模型，"服务"会跟着切换', 'Open the list for every Bailian model that can speak; choosing one of another protocol switches the service with it') : undefined}
+              hint={serviceOf(endpoint) === 'bailian' ? t('可选百炼上所有语音模型', 'Any speech model on Bailian can be chosen') : undefined}
               endpoint={endpoint}
               kind="speech"
               value={value.model ?? ''}
@@ -1250,11 +1249,11 @@ function TtsSection({ value, keys, voices, savedProvider, onChange, t }: { value
             <Field label={t('旁白音色', 'Narrator voice')} hint={inWords ? t('这个模型用文字描述音色，如"沉稳、有故事感的中年男声"', 'This model takes voices in words, e.g. "a calm middle-aged man with a storyteller\'s warmth"') : undefined}>
               <TextInput list={id} value={value.narratorVoice ?? ''} placeholder={inWords ? t('留空用默认旁白', 'empty for the default narrator') : ''} onChange={(event) => { onChange(without(value, 'narratorVoice', inWords ? event.target.value : event.target.value.trim())) }} />
             </Field>
-            <Field label={t('并发数', 'Parallel requests')} hint={t(`同时合成几句，默认 ${PARALLEL_DEFAULT}，最多 ${PARALLEL_MAX}；被限流时会自动降速重试`, `Lines at once: ${PARALLEL_DEFAULT} by default, ${PARALLEL_MAX} at most; slowed down and retried by itself when the service pushes back`)}><TextInput inputMode="numeric" value={value.concurrency !== undefined ? String(value.concurrency) : ''} placeholder={String(PARALLEL_DEFAULT)} onChange={(event) => { onChange(without(value, 'concurrency', parallel(event.target.value))) }} /></Field>
-            <Field label={t('不合格时最多重念', 'Retakes when a line fails the check')} hint={t('每一句合成后都会"听检"：没念完、没声音，或明显不像这个角色的声音，就再念一次，留下最好的那次；音量也会统一。重念会多花一点合成用量，填 0 关闭重念（仍会标出有问题的句子）。', 'Every line is checked once voiced: cut short, silent, or plainly not in the speaker\'s voice, and it is spoken again — the best take is kept, and all lines are brought to one level. Retakes cost a little more synthesis; 0 switches them off (lines are still marked).')}>
+            <Field label={t('并发数', 'Parallel requests')} hint={t(`默认 ${PARALLEL_DEFAULT}，最多 ${PARALLEL_MAX}`, `${PARALLEL_DEFAULT} by default, ${PARALLEL_MAX} at most`)}><TextInput inputMode="numeric" value={value.concurrency !== undefined ? String(value.concurrency) : ''} placeholder={String(PARALLEL_DEFAULT)} onChange={(event) => { onChange(without(value, 'concurrency', parallel(event.target.value))) }} /></Field>
+            <Field label={t('不合格时最多重念', 'Retakes when a line fails the check')} hint={t('没念完、没声音或不像这个角色时重念几次。填 0 不重念。', 'How many times a line is read again when cut short, silent or unlike the voice. 0: never.')}>
               <TextInput inputMode="numeric" value={value.retakes !== undefined ? String(value.retakes) : ''} placeholder="2" onChange={(event) => { const count = number(event.target.value); onChange(without(value, 'retakes', count !== undefined ? Math.max(0, Math.min(4, Math.round(count))) : undefined)) }} />
             </Field>
-            <Field label={t('对白之间的"他说"', 'The "he said" between spoken lines')} hint={t('每个人物有自己的声音时，夹在两句对白之间、只交代谁在说的提示语是多余的，而且两三个字的短句正是语音模型最不稳的地方。"不念"更像广播剧；"照念"一字不落，更像有声书。脚本里可以逐行改。', 'With a voice per speaker, a tag that only says who speaks is redundant between two spoken lines, and a clip of two or three syllables is where a speech model is least steady. "Unspoken" is how an audio drama does it; "read" keeps every word, as an audiobook would. Any line can be changed in the script.')}>
+            <Field label={t('对白之间的"他说"', 'The "he said" between spoken lines')} hint={t('“某某说”这类提示语念不念。脚本里可以逐行改。', 'Whether "he said" tags are read aloud. Each line can be set in the script.')}>
               <Select<'drop' | 'read'> value={value.speechTags ?? 'drop'} options={[{ value: 'drop', label: t('不念（广播剧）', 'Unspoken (audio drama)') }, { value: 'read', label: t('照念（有声书）', 'Read (audiobook)') }]} onChange={(speechTags) => { onChange(without(value, 'speechTags', speechTags === 'drop' ? undefined : speechTags)) }} />
             </Field>
             {value.provider === 'openrouter' || value.provider === 'openai' ? (
@@ -1265,7 +1264,7 @@ function TtsSection({ value, keys, voices, savedProvider, onChange, t }: { value
       </div>
       {value.provider !== 'none' ? (
         <>
-          {inWords ? <p className="nv-note">{t('这个模型没有固定音色表：每个人物的声音由人物卡上的"声音"描述决定，工坊会为每个声音生成一段参考音并一直沿用，所以同一个人全书是同一个嗓子。每句大约需要十几秒。', 'This model has no fixed voice list: a character\'s voice comes from the "voice" line on their card. The Studio makes one reference clip per voice and keeps using it, so a character sounds the same throughout. Each line takes about fifteen seconds.')}</p> : null}
+          {inWords ? <p className="nv-note">{t('这个模型没有固定音色表：声音由人物卡上的“声音”描述决定。', 'This model has no fixed voices: a voice comes from the description on the character\'s card.')}</p> : null}
           <Field label={t('旁白的讲述方式', 'How the narrator reads')}><TextInput value={value.narratorInstructions ?? ''} placeholder={t('如：沉稳、克制，像深夜电台', 'e.g. calm and restrained, like late-night radio')} onChange={(event) => { onChange(without(value, 'narratorInstructions', event.target.value)) }} /></Field>
           <div className="nv-form-grid">
             <Field label={t('默认女声', 'Default female voice')}><TextInput list={id} value={fallback.female ?? ''} onChange={(event) => { setFallback('female', event.target.value) }} /></Field>
@@ -1308,19 +1307,19 @@ function SoundSection({ value, tts, ready, keys, onChange, t }: { value: SoundSe
             <TextInput value={value.model ?? ''} placeholder={follows ? tts.model ?? providerDefault('sound', 'qwen-audiogen').model : providerDefault('sound', 'qwen-audiogen').model} onChange={(event) => { onChange(without(value, 'model', event.target.value.trim())) }} />
           </Field>
         ) : null}
-        <Field label={t('环境底声', 'Ambience beds')} hint={t('"模型生成"按每个场景的描述做一段可循环的底声；没生成之前、以及没有声音模型时，播放时先用浏览器合成的顶上。', '"Generated" has the model make a loopable bed from each scene\'s description; until one is made, and without a sound model, the browser-synthesized bed stands in.')}>
+        <Field label={t('环境底声', 'Ambience beds')} hint={t('没生成之前先用浏览器合成的顶上。', 'Until generated, the browser\'s own synthesis stands in.')}>
           <Select<'generate' | 'browser'> value={value.beds ?? 'generate'} options={[{ value: 'generate', label: t('模型生成（推荐）', 'Generated by the model (recommended)') }, { value: 'browser', label: t('只用浏览器合成', 'Browser-synthesized only') }]} onChange={(beds) => { onChange(without(value, 'beds', beds === 'generate' ? undefined : beds)) }} />
         </Field>
       </div>
       <div className="nv-row-wrap">
-        <label className="nv-check"><input type="checkbox" checked={value.effects !== false} onChange={(event) => { onChange(without(value, 'effects', event.target.checked ? undefined : false)) }} /><span>{t('让导演安排音效（门、脚步、槌声……）', 'Have the director place effects (a door, steps, a gavel…)')}</span></label>
+        <label className="nv-check"><input type="checkbox" checked={value.effects !== false} onChange={(event) => { onChange(without(value, 'effects', event.target.checked ? undefined : false)) }} /><span>{t('让导演安排音效', 'Have the director place sound effects')}</span></label>
         <label className="nv-check"><input type="checkbox" checked={value.music !== false} onChange={(event) => { onChange(without(value, 'music', event.target.checked ? undefined : false)) }} /><span>{t('让导演安排配乐', 'Have the director place music')}</span></label>
       </div>
       {value.provider === 'none'
-        ? <p className="nv-note">{t('不生成声音：脚本里的声音只作为正文旁的注释出现，环境底声由浏览器合成。', 'No generated sound: the script\'s sounds appear as notes beside the text only, and beds are synthesized by the browser.')}</p>
+        ? <p className="nv-note">{t('不生成声音：只作为正文旁的注释。', 'No sound is generated: it shows only as notes beside the text.')}</p>
         : follows && !canFollow
-          ? <p className="nv-note is-warn">{t('现在的语音服务不能生成声音（只有百炼的音频生成模型既能说话也能做声音）。声音仍会作为注释显示，环境底声由浏览器合成；想听到音效和配乐，把上面改成"百炼音频生成"并填密钥，或把语音换成百炼的 qwen-audio-3.1-tts-next。', 'The current speech service cannot make sound (only Bailian audio generation both speaks and makes sound). Sounds still show as notes and beds are synthesized by the browser; to hear effects and music, choose "Bailian audio generation" above and give it a key, or move speech to Bailian\'s qwen-audio-3.1-tts-next.')}</p>
-          : <p className="nv-note">{ready ? t('已就绪：在朗读页的"听"里点"生成声音"，环境声、音效和配乐会按脚本逐处生成。现在的声音模型还不够稳，哪一处不满意可以改描述后单独重做。', 'Ready: under Listen in the reader choose "Make the sounds" and ambience, effects and music are made cue by cue. Sound models are still uneven; any cue can be reworded and made again on its own.') : t('还缺密钥：保存语音那一栏的密钥后这里就能用。', 'A key is still missing: once the speech section has its key this is ready.')}</p>}
+          ? <p className="nv-note is-warn">{t('现在的语音服务不能生成声音。把上面改成“百炼音频生成”并填密钥。', 'The speech service in use cannot generate sound. Set the above to Bailian audio generation and add its key.')}</p>
+          : <p className="nv-note">{ready ? t('已就绪。', 'Ready.') : t('还缺密钥：保存语音那一栏的密钥后这里就能用。', 'A key is still missing: once the speech section has its key this is ready.')}</p>}
     </>
   )
 }

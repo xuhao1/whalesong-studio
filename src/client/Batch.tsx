@@ -113,7 +113,7 @@ export function GateNotes({ kinds }: { kinds?: GateKind[] }) {
     const pause = gate.pausedMs > 0 ? t(`，暂停 ${Math.ceil(gate.pausedMs / 1000)} 秒`, `, pausing ${Math.ceil(gate.pausedMs / 1000)} s`) : ''
     return (
       <p key={kind} className="nv-note is-warn nv-gate-note">
-        {t(`${GATE[kind][0]}在限流：同时进行的请求从 ${gate.ceiling} 个降到了 ${gate.limit} 个${pause}。被拒绝的请求会自动重发，通顺以后并发会自己升回去；一直这样的话，可以在设置里把并发数调低。`, `${GATE[kind][1]} is pushing back: requests at once are down from ${gate.ceiling} to ${gate.limit}${pause}. What was refused is sent again, and the number climbs back by itself once requests go through; if it keeps happening, lower the number in the settings.`)}
+        {t(`${GATE[kind][0]}在限流：并发从 ${gate.ceiling} 降到了 ${gate.limit}${pause}，会自动重发。`, `${GATE[kind][1]} is being rate-limited: down from ${gate.ceiling} at once to ${gate.limit}${pause}; refused requests are sent again.`)}
         {gate.waiting > 0 ? <span className="nv-muted"> {t(`${gate.waiting} 个在排队。`, `${gate.waiting} waiting.`)}</span> : null}
       </p>
     )
@@ -149,7 +149,7 @@ function StepCell({ step, t }: { step: BatchStepView | undefined; t: Translate }
           type="button"
           className="nv-batch-open"
           onClick={() => { host.openRun!({ session, parent }) }}
-          title={`${run.running === true ? t(`打开正在做这一格的${who}：它是对话的一个子智能体，每一步都看得到`, `Open the ${who} working on this step: a subagent of the conversation, every step of it in view`) : t(`打开${who}做这一格的记录`, `Open the record of the ${who}'s run on this step`)}${title !== undefined ? `\n${title}` : ''}`}
+          title={`${run.running === true ? t(`看${who}正在做这一格`, `See the ${who} working on this step`) : t(`打开${who}做这一格的记录`, `Open the record of the ${who}'s run on this step`)}${title !== undefined ? `\n${title}` : ''}`}
         >
           {mark}
         </button>
@@ -327,14 +327,14 @@ export function ProductionBoard({ onOpen }: { onOpen: (chapterId: string) => voi
     })
   })
   if (overview.data === undefined) return <div className="nv-center">{overview.error ?? <Spinner />}</div>
-  if (chapters.length === 0) return <div className="nv-card"><p className="nv-muted">{t('还没有写出正文的章节。先写出至少一章，这里就能把它搬上舞台。', 'No chapter has text yet. Write at least one, and it can be put on stage here.')}</p></div>
+  if (chapters.length === 0) return <div className="nv-card"><p className="nv-muted">{t('还没有写出正文的章节。', 'No chapter has text yet.')}</p></div>
   const order = STAGE_STEPS.filter(step => chosen.has(step))
   return (
     <div className="nv-production">
       <section className="nv-card">
         <div className="nv-audio-summary">
           <strong>{t('一键制作', 'Produce in one go')}</strong>
-          <span className="nv-muted nv-small">{t('选好要做的步骤和章节，点一次。每一章的脚本排好以后，配音、声音和分镜会同时进行；已经做好的不会重做，中途停下，下次从剩下的接着来。', 'Choose the steps and the chapters, click once. Once a chapter\'s script stands, its voices, sounds and storyboard are made side by side; what is there already is not made again, and a batch that was stopped goes on with what is left.')}</span>
+          <span className="nv-muted nv-small">{t('已经做好的不会重做；中途停下，下次接着来。', 'What is done is not done again; stopped midway, it picks up from there.')}</span>
         </div>
         <div className="nv-steps-pick">
           {STAGE_STEPS.map((step) => {
@@ -355,7 +355,7 @@ export function ProductionBoard({ onOpen }: { onOpen: (chapterId: string) => voi
               <Select value={density} options={STORYBOARD_DENSITIES.map(value => ({ value, label: t(...DENSITY[value]) }))} onChange={setDensity} />
             </label>
           ) : null}
-          <label className="nv-check" title={t('已经做好的也重新做一遍（脚本、配音、声音、分镜、画面）', 'Make again what is there already (script, voices, sound, storyboard, pictures)')}>
+          <label className="nv-check" title={t('已经做好的也重新做一遍', 'Do again what is already done')}>
             <input type="checkbox" checked={force} disabled={running} onChange={(event) => { setForce(event.target.checked) }} />
             <span>{t('已有的也重做', 'Redo what is there')}</span>
           </label>
@@ -366,11 +366,11 @@ export function ProductionBoard({ onOpen }: { onOpen: (chapterId: string) => voi
           </Button>
         </div>
         {chosen.has('video') ? (
-          <Field label={t('对成片的要求（可不填）', 'What you want of the videos (optional)')}>
+          <Field label={t('对成片的要求', 'What to ask of the cut')}>
             <TextArea value={direction} minRows={1} maxRows={4} placeholder={t('例如：节奏慢一点，换画面用淡入淡出', 'For example: slower, with cross-fades between pictures')} onChange={(event) => { setDirection(event.target.value) }} />
             <label className="nv-check">
               <input type="checkbox" checked={subtitles} disabled={running} onChange={(event) => { setSubtitles(event.target.checked) }} />
-              <span>{t('成片带字幕（台词和旁白按配音的时间出现）', 'Videos with subtitles (the lines appear as they are spoken)')}</span>
+              <span>{t('成片带字幕', 'Subtitles in the cut')}</span>
             </label>
           </Field>
         ) : null}
@@ -424,7 +424,7 @@ export function ProductionBoard({ onOpen }: { onOpen: (chapterId: string) => voi
 const TEXT_HINT: Record<TextStep, [string, string]> = {
   beats: ['没有节拍的章节，先让策划推演节拍', 'The planner derives beats for chapters that have none'],
   write: ['写手一章接一章地写：每一章都读过前面刚写的', 'The writer goes chapter after chapter, each knowing the one just written'],
-  digest: ['场记把写好的章节收录进记忆（连续写作时必做）', 'Continuity takes each chapter into memory (always, when writing a run)'],
+  digest: ['场记把写好的章节收录进记忆', 'The scribe digests written chapters into memory'],
   review: ['场记审校每一章，问题记在审校页', 'Continuity reviews each chapter; issues go to the Review page'],
 }
 
@@ -482,7 +482,7 @@ export function TextBatchDialog({ chapters, preset, line, onClose }: { chapters:
   return (
     <Modal wide title={t('批量：写作与整理', 'Batch: writing and upkeep')} onClose={onClose} footer={started && job !== undefined ? (
       <>
-        <span className="nv-muted nv-small">{t('可以关掉这个窗口：批量任务在后台继续，进度在右下角和“任务”里。', 'This window can be closed: the batch goes on, and its progress is in the corner and under Jobs.')}</span>
+        <span className="nv-muted nv-small">{t('可以关掉这个窗口，任务在后台继续。', 'This window can be closed; the batch carries on.')}</span>
         <span className="nv-spacer" />
         <Button onClick={onClose}>{t('关闭', 'Close')}</Button>
       </>
@@ -518,7 +518,7 @@ export function TextBatchDialog({ chapters, preset, line, onClose }: { chapters:
               </Field>
             ) : null}
             {writing ? (
-              <Field label={t('每章字数（可不填）', 'Words per chapter (optional)')} hint={t('不填：用各章自己的预算，没有预算的由写手判断', 'Empty: each chapter\'s own recommendation; where there is none, the writer judges')}>
+              <Field label={t('每章字数', 'Words per chapter')} hint={t('不填：用各章自己的预算，没有预算的由写手判断', 'Empty: each chapter\'s own recommendation; where there is none, the writer judges')}>
                 <TextInput inputMode="numeric" value={words} placeholder={t('由写手判断', 'left to the writer')} onChange={(event) => { setWords(event.target.value.replace(/\D/g, '').slice(0, 6)) }} />
               </Field>
             ) : null}
@@ -533,15 +533,15 @@ export function TextBatchDialog({ chapters, preset, line, onClose }: { chapters:
             </div>
           ) : null}
           {writing ? (
-            <Field label={t('对这一批章节的要求（可不填）', 'What every chapter of this run should keep to (optional)')} hint={t('各章自己的章纲和节拍照旧；这里写的是这一批都要守的东西。', 'Each chapter keeps its own outline and beats; this is what holds for all of them.')}>
+            <Field label={t('对这一批章节的要求', 'What to ask of these chapters')}>
               <TextArea value={brief} minRows={2} maxRows={6} onChange={(event) => { setBrief(event.target.value) }} />
             </Field>
           ) : null}
           <label className="nv-check">
             <input type="checkbox" checked={redo} onChange={(event) => { setRedo(event.target.checked) }} />
-            <span>{writing ? t('已经有正文的章节也重写（原文会留一个版本）', 'Write chapters that have text again too (the old text is kept as a version)') : t('已经做过的也重做', 'Redo what was done already')}</span>
+            <span>{writing ? t('已经有正文的章节也重写', 'Rewrite chapters that already have text') : t('已经做过的也重做', 'Redo what was done already')}</span>
           </label>
-          {writing ? <p className="nv-muted nv-small">{t('连续写作时，每一章都带着前面的原文一起发给写手：模型窗口的一半留给前文，按整章取；再往前的章节用梗概。前文的排列不随章节变化，所以一章接一章写时，模型服务端的缓存能命中绝大部分输入。', 'In a run, every chapter is sent to the writer with the text before it: half of the model\'s window goes to that text, in whole chapters, and what lies further back travels as an outline. The text is laid out the same from chapter to chapter, so a provider\'s cache covers most of the input as the run goes on.')}</p> : null}
+          
         </>
       )}
     </Modal>
@@ -597,8 +597,8 @@ export function ArtBatchDialog({ onClose }: { onClose: () => void }) {
   const rows: { key: ArtPick; label: [string, string]; hint: [string, string]; count: number; needs: 'image' | 'tts' }[] = [
     { key: 'sheets', label: ['人设图（三视图）', 'Design sheets'], hint: ['先画它：之后有这个人的图都拿它当参考', 'Drawn first: every later picture of the person is drawn against it'], count: lists.sheets.length, needs: 'image' },
     { key: 'portraits', label: ['立绘', 'Portraits'], hint: ['头像和幕间舞台用', 'For avatars and the interlude stage'], count: lists.portraits.length, needs: 'image' },
-    { key: 'places', label: ['场景设定图', 'Place art'], hint: ['核心和重要地点的样子（写到三章以上的），分镜和插图会参考；路过一次的不画', 'How the places of weight look (those named in three chapters or more); panels and illustrations are drawn against it. Places passed once are left'], count: lists.places.length, needs: 'image' },
-    { key: 'items', label: ['物品设定图', 'Thing art'], hint: ['核心和重要物品的样子（写到三章以上的，或您定为核心 / 重要的）：只画这一件东西；之后有它的插图会照着画', 'How the things of weight look (named in three chapters or more, or set so by you): the object alone; later pictures that show it are drawn against it'], count: lists.items.length, needs: 'image' },
+    { key: 'places', label: ['场景设定图', 'Place art'], hint: ['核心和重要的地点', 'Central and major places'], count: lists.places.length, needs: 'image' },
+    { key: 'items', label: ['物品设定图', 'Thing art'], hint: ['核心和重要的物品', 'Central and major things'], count: lists.items.length, needs: 'image' },
     { key: 'scenes', label: ['章节插图', 'Chapter illustrations'], hint: ['每章一张，照这一章的梗概画', 'One per chapter, drawn from its summary'], count: lists.scenes.length, needs: 'image' },
     { key: 'cover', label: ['封面', 'Cover'], hint: ['照故事核和主角的样子画', 'From the premise and the look of the leads'], count: noCover ? 1 : 0, needs: 'image' },
     { key: 'voices', label: ['专属声线', 'Voices of their own'], hint: ['按人物卡的声音描述给每个人设计一个声音', 'A voice designed for each character from what their card says'], count: lists.voices.length, needs: 'tts' },
@@ -648,7 +648,7 @@ export function ArtBatchDialog({ onClose }: { onClose: () => void }) {
     )}>
       {started && job !== undefined ? <BatchMatrix job={job} onAgain={again} /> : (
         <>
-          <p className="nv-muted nv-small">{t('只做还没有的。人设图、场景设定图和物品设定图先画，立绘、插图和封面等它们画完再照着画，所以同一个人、同一个地方、同一件东西不会每张都变样。', 'Only what is missing is made. Design sheets and place art are drawn first; portraits, illustrations and the cover wait for them and are drawn against them, so a person and a place stay the same from picture to picture.')}</p>
+          <p className="nv-muted nv-small">{t('只做还没有的。人设图和设定图先画，其余照着它们画。', 'Only what is missing. Sheets and art come first; the rest is drawn against them.')}</p>
           <div className="nv-steps-pick">
             {rows.map(row => (
               <label key={row.key} className={cx('nv-step-pick', picked.has(row.key) && row.count > 0 && 'is-on', (row.count === 0 || !ready[row.needs]) && 'is-off')} title={!ready[row.needs] ? (row.needs === 'image' ? t('还没有配置图像模型', 'No image model is set up') : t('还没有配置语音模型', 'No speech model is set up')) : undefined}>
@@ -667,7 +667,7 @@ export function ArtBatchDialog({ onClose }: { onClose: () => void }) {
           {(picked.has('sheets') || picked.has('portraits') || picked.has('voices')) && project.characters.length > 0 ? (
             <section className="nv-batch-who">
               <SectionTitle>{t('给哪些人物做', 'For whom')}</SectionTitle>
-              <p className="nv-muted nv-small">{t('人设图、立绘和声线只给这里选中的人做。人物多的书默认只选撑起故事的人；小人物想要的话，点开"次要""龙套"再选。', 'Design sheets, portraits and voices are made for the people chosen here only. A book with a large cast starts with those who carry the story; open "Minor" and "Cameo" for the small parts you want as well.')}</p>
+              <p className="nv-muted nv-small">{t('人设图、立绘和声线只给选中的人做。', 'Sheets, portraits and voices are made only for those chosen.')}</p>
               <CharacterPicker
                 cards={project.characters}
                 selected={who}

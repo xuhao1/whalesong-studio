@@ -7944,6 +7944,94 @@ blockquote.nv-issue-quote {
   margin: 0;
 }
 
+/* Which of their moments the next portrait shows. */
+.nv-person-moment {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--nv-text-2);
+}
+
+.nv-person-moment > span {
+  flex: none;
+}
+
+.nv-person-moment > .nv-select {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The moments a person is remembered by: one row each, the portrait drawn of it beside the words. */
+.nv-scenes {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  outline: none;
+}
+
+.nv-scene-row {
+  display: flex;
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid var(--nv-border);
+  border-radius: var(--nv-radius);
+}
+
+.nv-scene-row.is-first {
+  border-color: var(--nv-accent);
+}
+
+.nv-scene-thumb {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 84px;
+  height: 112px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--nv-border);
+  border-radius: var(--nv-radius-s);
+  background: var(--nv-surface-2);
+  color: var(--nv-text-3);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+span.nv-scene-thumb {
+  cursor: default;
+}
+
+.nv-scene-thumb > img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.nv-scene-fields {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.nv-scene-fields > p {
+  margin: 0;
+}
+
+.nv-scene-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.nv-scene-head > .nv-input {
+  flex: 1;
+  min-width: 120px;
+}
+
 .nv-person-sorted {
   position: relative;
   padding: 8px 10px;

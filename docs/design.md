@@ -200,6 +200,10 @@ Keys are kept **per endpoint host**, one record each, in the Harness credential 
 
 A ChatGPT subscription is the odd one out: it can draw, but it has no API key. The Studio adds no sign-in of its own and rides on one that exists — the image service the Codex Connect plugin exposes to companion plugins, or a Codex CLI already signed in on the machine. A subscription has no embedding or speech endpoint, and the Studio says so instead of pretending.
 
+### What the interface says: what a thing is, and no more
+
+A hint answers the question the author has at that spot: what this is, what happens on a click. It does not tell how things work behind it, does not repeat what the button beside it says, and adds no aside in brackets. A hint is one short sentence at most and none where none is needed; a tooltip is a phrase; a confirmation says what will happen and whether it can be undone. The mechanics are in the documents. The measure for new screens: an explanation the author would do without is not there.
+
 ## 6. What it can become
 
 Five things share one model, with the **audio script** as the hub:
@@ -240,6 +244,8 @@ So the look of a book is made of parts the author can read, and every picture re
 The order matters and the Studio says so: direction and avoid list, then anchors and sheets, then pictures.
 
 *A portrait is not an identity photograph.* Asked for with nothing said of it, it shows the person in the moment a reader remembers them by — and which moment that is cannot be computed: it is a judgement about the book, so the director makes it, reading the text, and writes it onto the card where the author can overrule it. The Studio's part is the frame around that judgement: what a portrait is (this person as its subject, one instant held still), that the choice is said and kept, and that nothing is picked where the book has nothing yet. Two things follow from its being a judgement. What the author asks of a portrait — brighter, the night of the fire — is *guidance to whoever judges*, not a replacement for the judging: the director picks the moment that answers to it. And which moments are fit to be shown is not the Studio's to decide by kind: a book's Christ is on the cross and its general in the thick of the fight; the author says what their book does not show, on its avoid list or in what they ask. (A first version listed kinds of moment never to pick. It kept the director from a boy's love scene, and from the crucifixion with it.)
+
+*Signature scenes are a list in plain sight, not a decision made out of it.* The director finds not one moment but several, and they sit on the card by weight: which moment, which chapter, the picture, why it is theirs. The author sees them, rewrites them and chooses among them before anything is drawn — which is why nobody is stopped to be asked first.
 
 *Words lead, pictures follow.* A reference picture is the strongest thing a prompt carries: told to match one, an image model returns it. So which way references run is a decision, and it runs one way only — from the words to the sheet, from the sheet to everything else. The main sheet is drawn from the anchor and the art direction alone, never against an older picture of the person: a sheet held against the sheet before could not change, whatever the author changed, and nothing on the screen would say why. A portrait, a scene, a panel are held against the sheet; a look against the main sheet, with the prompt saying what the reference is for (the face, not the clothes). To change how somebody looks, change the words and draw the sheet again — then what was drawn against the old one says so.
 

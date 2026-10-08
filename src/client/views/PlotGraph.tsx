@@ -163,8 +163,8 @@ export function PlotGraph() {
         <div className="nv-audio-summary">
           <strong>{t('剧情图', 'The plot, as a graph')}</strong>
           <span className="nv-muted nv-small">{lines.length === 0
-            ? t('故事现在只有一条线。点任意一章，可以从那里“另开一条线”，或者“重写这之后的大纲”——被替换下来的章节如果已经写了正文，会留成一条搁置的线，不会丢。幕间演出来的走向，也可以开成一条线。', 'The story goes one way for now. Click any chapter to open another line from there, or to rewrite the outline after it — chapters that are written are kept as a line put aside, never lost. What an interlude played out can become a line too.')
-            : t(`主线之外有 ${lines.length} 条线。实心的站是已经写了正文的章节；线从哪一章分出、汇入哪一章，都画在图上。点一条线或一章看能做什么。`, `${lines.length} lines beside the main one. A filled station is a chapter that is written; where a line leaves and where it arrives is drawn. Click a line or a chapter to see what can be done.`)}</span>
+            ? t('故事现在只有一条线。点任意一章，可以从那里另开一条线，或重写这之后的大纲。', 'The story has one line. Click any chapter to open another line from it, or to plot what follows anew.')
+            : t(`主线之外有 ${lines.length} 条线。实心的站是写了正文的章节。`, `${lines.length} line(s) beside the main one. A filled stop is a written chapter.`)}</span>
           <span className="nv-spacer" />
           <Button size="sm" icon="branch" onClick={() => { setEditing('new') }}>{t('开一条新线', 'Open a line')}</Button>
         </div>
@@ -243,7 +243,7 @@ export function PlotGraph() {
             <Button size="sm" icon="tree" onClick={() => { controller.setView('outline', station.plan.id) }}>{t('改章纲', 'Edit its outline')}</Button>
             <span className="nv-spacer" />
             <Button size="sm" icon="branch" onClick={() => { setDeriving({ ...(station.line !== undefined ? { line: station.line } : {}), after: station.plan.id, mode: 'branch' }) }} title={t('这一章之后原来的走向保留；策划另外推演一条不同的线', 'What follows this chapter stays; the planner derives another way on, as a line of its own')}>{t('从这里另开一条线', 'Open a line from here')}</Button>
-            <Button size="sm" icon="refresh" onClick={() => { setDeriving({ ...(station.line !== undefined ? { line: station.line } : {}), after: station.plan.id, mode: 'replace' }) }} title={t('这一章之后的大纲换成新推演的；已经写了正文的章节会留成一条搁置的线', 'The outline after this chapter is replaced by a new one; chapters that are written are kept as a line put aside')}>{t('重写这之后的大纲', 'Rewrite the outline after it')}</Button>
+            <Button size="sm" icon="refresh" onClick={() => { setDeriving({ ...(station.line !== undefined ? { line: station.line } : {}), after: station.plan.id, mode: 'replace' }) }} title={t('换掉这一章之后的大纲；写了正文的章节留成搁置的线', 'Replace the outline after this chapter; written chapters are kept as a shelved line')}>{t('重写这之后的大纲', 'Rewrite the outline after it')}</Button>
           </div>
         </section>
       ) : null}
@@ -256,7 +256,7 @@ export function PlotGraph() {
             {track.line?.shelved === true ? <Chip tone="amber">{t('已搁置', 'Put aside')}</Chip> : null}
             <span className="nv-muted nv-small">{t(`${track.stations.length} 章，已写 ${track.stations.filter(node => node.info?.hasText === true).length} 章`, `${track.stations.length} chapters, ${track.stations.filter(node => node.info?.hasText === true).length} written`)}</span>
           </div>
-          {track.line === undefined ? <p className="nv-muted nv-small">{t('主线是这本书被阅读、导出、配音和搬上舞台的样子。别的线可以“设为主线”，原来的主线在那一段就变成一条线。', 'The main line is the book as it is read, exported, voiced and staged. Another line can be made the main one; what the main line had in its place then becomes a line.')}</p> : (
+          {track.line === undefined ? <p className="nv-muted nv-small">{t('主线是这本书被阅读、导出和演出的那条线。', 'The main line is the one the book is read, exported and staged by.')}</p> : (
             <p className="nv-small">
               {track.line.from !== undefined ? t(`从${labelOf(track.line.from)}之后分出`, `Leaves after ${labelOf(track.line.from)}`) : t('从故事开头就走另一条路', 'Goes another way from the first page')}
               {track.line.choice !== undefined ? t(`；分叉处的抉择：${track.line.choice}`, `; the choice there: ${track.line.choice}`) : ''}
@@ -270,11 +270,11 @@ export function PlotGraph() {
             {track.line !== undefined ? (
               <>
                 <span className="nv-spacer" />
-                <Button size="sm" icon="star" disabled={busy} pending={t('正在设为主线…', 'Making it the main line…')} onClick={() => { confirm.ask(t(`把「${track.line!.title}」设为主线？它经过的章节会成为这本书的正文顺序；主线上被它替换的那一段会变成一条线，一个字都不会丢。`, `Make "${track.line!.title}" the main line? The chapters it passes through become the book as it is read; what the main line had in their place becomes a line, with nothing lost.`), () => { void run(async () => { await apply([{ op: 'promote-line', line: track.line!.id }]); setPicked(undefined); controller.toast('success', t('已设为主线', 'It is the main line now')) }) }) }}>{t('设为主线', 'Make it the main line')}</Button>
+                <Button size="sm" icon="star" disabled={busy} pending={t('正在设为主线…', 'Making it the main line…')} onClick={() => { confirm.ask(t(`把「${track.line!.title}」设为主线？原来主线上被替换的那一段会变成一条线。`, `Make "${track.line!.title}" the main line? The stretch of the main line it replaces becomes a line of its own.`), () => { void run(async () => { await apply([{ op: 'promote-line', line: track.line!.id }]); setPicked(undefined); controller.toast('success', t('已设为主线', 'It is the main line now')) }) }) }}>{t('设为主线', 'Make it the main line')}</Button>
                 <Button size="sm" icon="merge" onClick={() => { setJoining(track.line) }}>{track.line.into !== undefined ? t('改汇入的地方', 'Change where it arrives') : t('汇入另一条线…', 'Join another line…')}</Button>
                 <Button size="sm" icon="pen" onClick={() => { setEditing(track.line) }}>{t('改名和说明', 'Rename')}</Button>
                 <Button size="sm" variant="ghost" icon={track.line.shelved === true ? 'play' : 'pause'} pending={t('正在保存…', 'Saving…')} onClick={() => run(async () => { await apply([{ op: 'update-line', line: track.line!.id, shelved: track.line!.shelved !== true }]) })} title={t('搁置的线保留在图上，只是写下一章时不再列出来', 'A line put aside stays on the graph; it is only no longer offered when the next chapter is chosen')}>{track.line.shelved === true ? t('重新启用', 'Take it up again') : t('搁置', 'Put aside')}</Button>
-                <Button size="sm" variant="ghost" icon="trash" onClick={() => { confirm.ask(t(`删除「${track.line!.title}」这条线和它的 ${track.line!.chapters.length} 章？有正文的章节会先各存一份历史版本。从它身上分出去的线会改从它分出的地方分出。`, `Delete the line "${track.line!.title}" and its ${track.line!.chapters.length} chapters? Chapters with text are snapshotted first. Lines that left from it will leave where it did.`), () => { void run(async () => { await apply([{ op: 'remove-line', line: track.line!.id }]); setPicked(undefined) }) }) }}>{t('删除这条线', 'Delete the line')}</Button>
+                <Button size="sm" variant="ghost" icon="trash" onClick={() => { confirm.ask(t(`删除「${track.line!.title}」和它的 ${track.line!.chapters.length} 章？有正文的章节会先各存一份历史版本。`, `Delete "${track.line!.title}" and its ${track.line!.chapters.length} chapter(s)? Written chapters are each kept as a version first.`), () => { void run(async () => { await apply([{ op: 'remove-line', line: track.line!.id }]); setPicked(undefined) }) }) }}>{t('删除这条线', 'Delete the line')}</Button>
               </>
             ) : null}
           </div>
@@ -319,11 +319,11 @@ function LineEditor({ line, stations, labelOf, onClose, onSave }: { line: PlotLi
     <Modal title={line === undefined ? t('开一条新线', 'Open a line') : t('这条线的名字和说明', 'The line\'s name and what it says of itself')} onClose={onClose} footer={<Button variant="primary" busy={busy} disabled={title.trim().length === 0} pending={t('正在保存…', 'Saving…')} onClick={save}>{t('保存', 'Save')}</Button>}>
       <Field label={t('这条线叫什么', 'What the line is called')}><TextInput autoFocus value={title} placeholder={t('例：她没有烧掉那封信', 'e.g. She keeps the letter')} onChange={(event) => { setTitle(event.target.value) }} /></Field>
       {line === undefined ? (
-        <Field label={t('从哪一章之后分出', 'The chapter it leaves after')} hint={t('不选：从故事开头就走另一条路。先空着开线，之后往里加章节，或让策划推演。', 'None: it goes another way from the first page. The line is opened empty; add chapters to it, or have them derived.')}>
+        <Field label={t('从哪一章之后分出', 'The chapter it leaves after')} hint={t('不选：从故事开头就走另一条路。', 'None: another road from the very start.')}>
           <Select value={from} options={[{ value: '', label: t('（故事开头）', '(the start of the story)') }, ...options]} onChange={setFrom} />
         </Field>
       ) : null}
-      <Field label={t('分叉处的抉择（可不填）', 'What is decided there (optional)')} hint={t('走上这条线，是因为谁在那里做了什么决定。以后把故事做成可以选的，这就是读者看到的选项。', 'Who decides what, there, to go this way. Should the story be made playable, these are the words a reader chooses.')}>
+      <Field label={t('分叉处的抉择（可不填）', 'What is decided there (optional)')} hint={t('谁在那里做了什么决定。读者在分叉处看到的就是它。', 'Who decided what there. It is what a reader sees at the fork.')}>
         <TextInput value={choice} onChange={(event) => { setChoice(event.target.value) }} />
       </Field>
       <Field label={t('这条线讲的是什么（可不填）', 'What this line is about (optional)')}><TextArea value={premise} minRows={2} onChange={(event) => { setPremise(event.target.value) }} /></Field>
@@ -345,7 +345,7 @@ function JoinDialog({ line, graph, labelOf, onClose, onSave }: { line: PlotLine;
   })
   return (
     <Modal title={t(`「${line.title}」汇入哪里`, `Where "${line.title}" arrives`)} onClose={onClose} footer={<Button variant="primary" busy={busy} pending={t('正在保存…', 'Saving…')} onClick={save}>{t('保存', 'Save')}</Button>}>
-      <p className="nv-muted nv-small">{t('一条线走完自己的章节后，可以汇入另一条线的某一章：从那一章起，两条路是同一个故事。汇入之后，策划为这条线推演章节时会朝那一章收束；读这条线的人读完它的最后一章，接着读到的就是那一章。', 'When a line has run its own chapters it may arrive at a chapter of another line: from there the two ways are one story. Once it does, chapters derived for the line lead towards that chapter, and whoever reads the line reads that chapter after its last.')}</p>
+      <p className="nv-muted nv-small">{t('这条线走完后接到另一条线的某一章：从那一章起是同一个故事。', 'Where this line ends it joins a chapter of another: from there the two are one story.')}</p>
       <Field label={t('汇入的章节', 'The chapter it arrives at')}>
         <Select value={into} options={[{ value: '', label: t('（不汇入：这条线自己走到底）', '(nowhere: the line runs to its own end)') }, ...options]} onChange={setInto} />
       </Field>

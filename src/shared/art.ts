@@ -5,6 +5,7 @@
  * (which shows exactly what will be applied, and where it comes from) — a
  * picture must never carry words its author cannot see.
  */
+import type { SignatureScene } from './types'
 
 /** What a book starts from until its author writes an art direction of their own. */
 export const DEFAULT_ART_STYLE = {
@@ -39,6 +40,30 @@ export function lookWords(card: { visual?: { prompt?: string | undefined } | und
   const anchor = card.visual?.prompt
   const base = anchor !== undefined && anchor.length > 0 ? [anchor] : [card.appearance, card.gender, card.age]
   return base.filter((value): value is string => value !== undefined && value.length > 0).join('，')
+}
+
+/**
+ * The moments a person is remembered by, as their card has them — the single paragraph of an earlier version read as
+ * a list of one ("葬花（第27章）：……" gives the moment its name).
+ */
+export function scenesOf(card: { visual?: { scenes?: SignatureScene[] | undefined; scene?: string | undefined } | undefined }): SignatureScene[] {
+  const scenes = (card.visual?.scenes ?? []).filter(scene => scene.text.trim().length > 0)
+  if (scenes.length > 0) return scenes
+  const kept = card.visual?.scene?.trim() ?? ''
+  if (kept.length === 0) return []
+  const head = /^([^：:（(\n]{1,24})(?:[（(][^）)]*[）)])?\s*[：:]\s*([\s\S]+)$/.exec(kept)
+  return [{ id: 'kept', title: head !== null ? head[1]!.trim() : [...kept].slice(0, 10).join(''), text: head !== null ? head[2]!.trim() : kept }]
+}
+
+/** The moment a portrait shows: the one named, else the one the card marks, else the first. */
+export function sceneFor(card: { visual?: { scenes?: SignatureScene[] | undefined; scene?: string | undefined; sceneAt?: string | undefined } | undefined }, id?: string): SignatureScene | undefined {
+  const scenes = scenesOf(card)
+  return scenes.find(scene => scene.id === id) ?? (id === undefined ? scenes.find(scene => scene.id === card.visual?.sceneAt) ?? scenes[0] : undefined)
+}
+
+/** A moment as it is put before an image model: its name, then the picture. */
+export function sceneWords(scene: { title: string; text: string }): string {
+  return scene.title.length > 0 && !scene.text.startsWith(scene.title) ? `${scene.title}：${scene.text}` : scene.text
 }
 
 /** Split a free-form "keep these out" line into items: commas, semicolons, enumeration commas and line breaks all separate. */

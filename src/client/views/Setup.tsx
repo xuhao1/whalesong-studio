@@ -84,7 +84,7 @@ function ServiceCard({ service, view, t, onDone }: { service: 'bailian' | 'openr
           </>
         ) : null}
       </ul>
-      <Field label="API key" hint={state?.configured === true ? t('留空就沿用现有的密钥；填写则更换。', 'Leave empty to keep the key in use; type one to replace it.') : t('只保存在本机的 DSH 凭据库里，不会写进设置文件，也不会回传到页面。', 'Stored only in the Harness credential store on this machine — never in the settings file, never sent back to the page.')}>
+      <Field label="API key" hint={state?.configured === true ? t('留空就沿用现有的密钥；填写则更换。', 'Leave empty to keep the key in use; type one to replace it.') : t('只存在本机的 DSH 凭据库里。', 'Kept only in DSH\'s credential store on this machine.')}>
         <TextInput type="password" autoComplete="off" spellCheck={false} value={key} placeholder={state?.configured === true ? '••••••••••••' : t('粘贴 API key', 'Paste the API key')} onChange={(event) => { setKey(event.target.value) }} onKeyDown={(event) => { if (event.key === 'Enter' && canApply) apply() }} />
       </Field>
       <div className="nv-setup-parts">
@@ -95,15 +95,15 @@ function ServiceCard({ service, view, t, onDone }: { service: 'bailian' | 'openr
           </label>
         ))}
       </div>
-      {!hasChatModel ? <p className="nv-muted nv-small">{t('写作用的文字模型不在这里配：先在 DSH 的“设置 → 模型”里接入一个模型，总编和班底都用它。', 'The text models that write are not set up here: connect a model under DSH\'s Settings → Models first — the showrunner and the crew all run on it.')}</p> : null}
+      {!hasChatModel ? <p className="nv-muted nv-small">{t('文字模型在 DSH 的“设置 → 模型”里接入。', 'The text model is connected under DSH Settings → Models.')}</p> : null}
       {advanced ? (
-        <Field label={t('接口地址', 'Service address')} hint={service === 'bailian' ? t('默认公共域名即可；有专属域名（如 https://ws-xxxx.cn-beijing.maas.aliyuncs.com）也可以填，粘贴任何一个接口地址都行。', 'The public domain works; a workspace domain (https://ws-xxxx.cn-beijing.maas.aliyuncs.com) may be given instead — any endpoint URL of it will do.') : t('经代理或镜像访问时填写。', 'Only when going through a proxy or a mirror.')}>
+        <Field label={t('接口地址', 'Service address')} hint={service === 'bailian' ? t('默认即可；有专属域名可以填。', 'The default will do; a dedicated domain can be entered.') : t('经代理或镜像访问时填写。', 'Only when going through a proxy or a mirror.')}>
           <TextInput value={origin} placeholder={info.origin} spellCheck={false} onChange={(event) => { setOrigin(event.target.value) }} />
         </Field>
       ) : null}
       {check !== undefined ? (
         <p className={cx('nv-note', check.ok ? 'is-ok' : 'is-warn')}>
-          {check.ok ? t(`密钥可用${check.models !== undefined ? `，可选模型 ${check.models} 个` : ''}。已按推荐配置，下面每一项都可以再改。`, `The key works${check.models !== undefined ? `; ${check.models} models available` : ''}. Recommended models are in place, and every slot can still be changed.`) : checkMessage(check, t)}
+          {check.ok ? t(`密钥可用${check.models !== undefined ? `，可选模型 ${check.models} 个` : ''}，已按推荐配置。`, `The key works${check.models !== undefined ? `, ${check.models} models on offer` : ''}; set up as recommended.`) : checkMessage(check, t)}
         </p>
       ) : null}
       <div className="nv-form-actions">
@@ -135,12 +135,12 @@ function CodexCard({ view, t, onDone }: { view: SettingsData; t: Translate; onDo
         <h3>{t('ChatGPT 订阅（Codex）', 'ChatGPT subscription (Codex)')}</h3>
         {active ? <Chip tone="green">{t('正在用于插图', 'Drawing images')}</Chip> : null}
       </header>
-      <p className="nv-muted">{t('用订阅自带的 GPT Image 画插图，不需要 API key，也不用另外登录——沿用 Codex Connect 插件或本机 Codex CLI 已有的登录。', 'Draw with the GPT Image that comes with the subscription: no API key and no extra sign-in — it rides on the Codex Connect plugin or the Codex CLI already signed in on this machine.')}</p>
+      <p className="nv-muted">{t('用订阅自带的 GPT Image 画图，沿用 Codex 已有的登录。', 'Pictures by the subscription\'s GPT Image, on the sign-in Codex already has.')}</p>
       <ul className="nv-setup-what">
-        {line(codex.connect, codex.connectSignedIn, 'Codex Connect', t('在 DSH 设置 → 模型 → Openai-Codex 里授权', 'authorize under Harness Settings → Models → Openai-Codex'))}
+        {line(codex.connect, codex.connectSignedIn, 'Codex Connect', t('在 DSH 设置 → 模型 → Openai-Codex 里授权', 'authorize under DSH Settings → Models → Openai-Codex'))}
         {line(codex.cli, codex.cliSignedIn, 'Codex CLI', <code>codex login</code>)}
       </ul>
-      <p className="nv-muted nv-small">{t('订阅只提供插图：没有向量接口，也没有语音合成接口，这两项请用上面的服务。授权后，Openai-Codex 的文本模型也会出现在"模型分工"的 DSH 模型里。', 'A subscription draws images only: it has no embedding and no speech endpoint — use a service above for those. Once authorized, the Openai-Codex text models also appear among the Harness models under "Model roles".')}</p>
+      <p className="nv-muted nv-small">{t('订阅只能画图；配音和检索用上面的服务。', 'The subscription only draws; voices and search use the services above.')}</p>
       {check !== undefined && !check.ok ? <p className="nv-note is-warn">{t('已选用，但现在还画不了：', 'Selected, but it cannot draw yet: ')}{checkMessage(check, t)}</p> : null}
       <div className="nv-form-actions">
         <span className="nv-spacer" />
@@ -217,13 +217,13 @@ export function SetupView() {
       <header className="nv-setup-hero">
         <Icon name="feather" size={28} />
         <h1>{t('先把模型接上', 'Connect the models first')}</h1>
-        <p>{t('小说工坊是一个剧组：总编和你对话，写手执笔，场记、策划、导演、后期各管一摊——他们用的文字模型都来自 DSH（设置 → 模型），可以给每个角色单独选。工坊自己要配的是画插图的、配音的和做检索的模型：贴一个 key 就能全部配好，之后每一项都可以单独换。', 'Novel Studio is a crew: the showrunner talks with you, the writer writes, and continuity, the planner, the director and post-production each have their part. The text models they run on are all DSH\'s (Settings → Models), and each role can be given its own. What the Studio sets up itself are the models that draw, speak and search: one key sets all of them up, and every slot can be changed afterwards.')}</p>
+        <p>{t('文字模型来自 DSH（设置 → 模型）。这里配画图、配音和检索：贴一个 key 就能全部配好。', 'Text models come from DSH (Settings → Models). Pictures, voices and search are set up here: one key covers all three.')}</p>
       </header>
       <Readiness view={view} t={t} />
       {view.ready.text && chat !== undefined ? (
-        <p className="nv-note is-ok">{t(`对话里的总编和未单独设置的角色，现在都用 DSH 的对话模型「${chat}」，可以直接开始。下面是可选的增强：插图、配音、检索。`, `The showrunner in the chat and every role without a model of its own currently use DSH's chat model "${chat}", so you can start right away. What follows is optional: pictures, speech, search.`)}</p>
+        <p className="nv-note is-ok">{t(`文字模型用的是 DSH 的「${chat}」，可以直接开始。`, `The text model is DSH's "${chat}": you can start right away.`)}</p>
       ) : !view.ready.text ? (
-        <p className="nv-note is-warn">{t('还没有可用的文字模型。总编、写手和班底都用 DSH 的模型：请先在 DSH 的“设置 → 模型”里接入一个。下面配的是插图、配音和检索。', 'No text model yet. The showrunner, the writer and the crew all run on DSH\'s models: connect one under DSH\'s Settings → Models first. What is set up below is pictures, speech and search.')}</p>
+        <p className="nv-note is-warn">{t('还没有文字模型：请先在 DSH 的“设置 → 模型”里接入一个。', 'No text model yet: connect one under DSH Settings → Models first.')}</p>
       ) : null}
       <QuickSetup view={view} />
       <div className="nv-form-actions nv-setup-foot">

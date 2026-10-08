@@ -30,7 +30,7 @@ export function useRemoveBook(): { ask: (book: { root: string; title: string }, 
   const confirm = useConfirm()
   const ask = (book: { root: string; title: string }, after?: () => void): void => {
     confirm.ask(
-      t(`删除《${book.title}》？这本书的文件——正文、设定、大纲、插图、配音——会移到废纸篓，可以从那里找回。文件夹里不属于这本书的东西不会动。`, `Remove "${book.title}"? Its files — manuscript, bible, outline, pictures, audio — go to the trash, from where they can be put back. Anything else in its folder is left alone.`),
+      t(`删除《${book.title}》？文件会移到废纸篓，可以找回。`, `Delete "${book.title}"? Its files go to the Trash and can be put back.`),
       () => { void removeBook(controller, t, book).then(after) },
     )
   }
@@ -195,14 +195,14 @@ function TalkDialog({ shelf, onClose, onNew }: { shelf: ShelfBook[]; onClose: ()
       else {
         // A Harness that cannot be told to open a conversation: the book opens, and its overview says where to talk.
         await controller.openProject(book.root)
-        if (conversation === undefined) controller.toast('info', t('这个 DSH 不能替你打开对话：请在左侧栏为这本书开一场。', 'This DSH cannot open a conversation for you: start one for this book in the left sidebar.'))
+        if (conversation === undefined) controller.toast('info', t('请在左侧栏为这本书开一场对话', 'Open a conversation for this book from the sidebar'))
       }
       onClose()
     }).finally(() => { setOpening(undefined) })
   }
   return (
     <Modal title={t('和总编聊哪一本？', 'Which book is this about?')} onClose={onClose}>
-      <p className="nv-muted nv-small">{t('一场对话说的是一本书：总编读得到这本书的一切，工坊会停在对话旁边。', 'A conversation is about one book: the showrunner can read everything of it, and the Studio stays beside the conversation.')}</p>
+      
       <ul className="nv-talk-list">
         {shelf.map(book => (
           <li key={book.root}>
@@ -223,7 +223,7 @@ function TalkDialog({ shelf, onClose, onNew }: { shelf: ShelfBook[]; onClose: ()
             <span className="nv-talk-cover is-new"><Icon name="sparkles" size={16} /></span>
             <span className="nv-talk-text">
               <strong>{t('新小说', 'A new novel')}</strong>
-              <span className="nv-muted">{t('去"新创作"页开一本或导入一本；建好后它会有自己的对话', 'Start or bring one in on the New work page; it gets a conversation of its own')}</span>
+              <span className="nv-muted">{t('开一本或导入一本', 'Start one or import one')}</span>
             </span>
             <Icon name="arrowRight" size={14} />
           </button>
@@ -258,7 +258,7 @@ function Shelf({ onNew }: { onNew: () => void }) {
             <img src={studioIcon} alt="" width={44} height={44} />
             <h1>{t('小说工坊', 'Novel Studio')}</h1>
           </div>
-          <p>{t('长篇小说的设定、大纲、写作、修订与演出，都在这里。总编在对话里统筹，写手模型执笔，你来定夺。', 'Bible, outline, drafting, revision and staging for long-form fiction. The showrunner runs the room in the conversation, the writer model drafts, and you decide.')}</p>
+          <p>{t('长篇小说的设定、大纲、写作、修订与演出。', 'The bible, outline, writing, revision and staging of a long novel.')}</p>
           <div className="nv-home-actions">
             {canTalk ? (
               <button type="button" className="nv-home-cta is-primary" onClick={() => { if (shelf.length === 0) onNew(); else setTalking(true) }}>
@@ -287,12 +287,12 @@ function Shelf({ onNew }: { onNew: () => void }) {
           <h2>{t('书架', 'Bookshelf')}<span className="nv-muted">{shelf.length > 0 ? shelf.length : ''}</span></h2>
           <Button size="sm" variant="ghost" icon="settings" onClick={() => { controller.setView('settings') }}>{t('设置', 'Settings')}</Button>
         </header>
-        {controller.sessionId !== undefined && shelf.length > 1 ? <p className="nv-muted nv-small">{t('打开哪一本，左边的对话就跟到哪一本——Agent 始终知道你正在看的是哪本书。', 'Open a book and the conversation beside this panel follows it — the agent always knows which book you are looking at.')}</p> : null}
+        
         {shelf.length > 0 ? (
           <div className="nv-shelf">
             {shelf.map(project => (
               <div key={project.root} className={cx('nv-shelf-item', opening === project.root && 'is-opening')}>
-                <button type="button" className="nv-shelf-open" disabled={opening !== undefined} onClick={() => { setOpening(project.root); void run(async () => { await controller.readBook(project.root) }).finally(() => { setOpening(undefined) }) }} title={project.locked === true ? t(`打开《${project.title}》`, `Open "${project.title}"`) : t(`读《${project.title}》：回到上次读到的地方`, `Read "${project.title}": back where you left off`)}>
+                <button type="button" className="nv-shelf-open" disabled={opening !== undefined} onClick={() => { setOpening(project.root); void run(async () => { await controller.readBook(project.root) }).finally(() => { setOpening(undefined) }) }} title={project.locked === true ? t(`打开《${project.title}》`, `Open "${project.title}"`) : t(`读《${project.title}》`, `Read "${project.title}"`)}>
                   <span className="nv-shelf-cover">
                     {project.locked === true
                       ? <span className="nv-shelf-blank is-locked"><Icon name="lock" size={22} /><em>{t('已上锁', 'Locked')}</em></span>
@@ -308,18 +308,18 @@ function Shelf({ onNew }: { onNew: () => void }) {
                 </button>
                 {project.locked === true ? null : (
                   <div className="nv-shelf-over">
-                    <button type="button" className="nv-shelf-edit" disabled={opening !== undefined} onClick={() => { setOpening(project.root); void run(async () => { await controller.openProject(project.root) }).finally(() => { setOpening(undefined) }) }} title={t('进这本书的工作台：总览、人物、设定、大纲、写作、演出', 'Open this book\'s workbench: overview, people, bible, outline, writing, stage')}><Icon name="pen" size={12} />{t('编辑', 'Work on it')}</button>
+                    <button type="button" className="nv-shelf-edit" disabled={opening !== undefined} onClick={() => { setOpening(project.root); void run(async () => { await controller.openProject(project.root) }).finally(() => { setOpening(undefined) }) }} title={t('编辑这本书', 'Edit this book')}><Icon name="pen" size={12} />{t('编辑', 'Work on it')}</button>
                   </div>
                 )}
                 {project.locked === true ? null : (
                   <div className="nv-shelf-ways">
-                    {project.shows?.read !== undefined ? <button type="button" disabled={opening !== undefined} onClick={() => { go(project.root, 'read') }} title={t(`读：${project.shows.read.chapters} 章有正文，回到上次读到的地方`, `Read: ${project.shows.read.chapters} chapters written; back where you left off`)}><Icon name="book" size={12} />{t('读', 'Read')}</button> : null}
+                    {project.shows?.read !== undefined ? <button type="button" disabled={opening !== undefined} onClick={() => { go(project.root, 'read') }} title={t(`读：${project.shows.read.chapters} 章有正文`, `Read: ${project.shows.read.chapters} chapter(s) written`)}><Icon name="book" size={12} />{t('读', 'Read')}</button> : null}
                     {project.shows?.listen !== undefined ? <button type="button" disabled={opening !== undefined} onClick={() => { go(project.root, 'listen', project.shows!.listen!.first) }} title={t(`听：${project.shows.listen.chapters} 章有配音`, `Listen: ${project.shows.listen.chapters} chapters voiced`)}><Icon name="headphones" size={12} />{t('听', 'Listen')}</button> : null}
                     {project.shows?.watch !== undefined ? <button type="button" disabled={opening !== undefined} onClick={() => { go(project.root, 'watch', project.shows!.watch!.first) }} title={t(`看：${project.shows.watch.chapters} 章有画面（有声漫 / 成片）`, `Watch: ${project.shows.watch.chapters} chapters drawn (motion comic / video)`)}><Icon name="film" size={12} />{t('看', 'Watch')}</button> : null}
                     {project.shows !== undefined && project.shows.read === undefined ? <span className="nv-muted">{t('还没有正文', 'Nothing written yet')}</span> : null}
                   </div>
                 )}
-                <button type="button" className="nv-shelf-remove" title={t('删除这本书（移到废纸篓）', 'Remove this book (to the trash)')} aria-label={t('删除这本书', 'Remove this book')} onClick={() => { removal.ask(project) }}>
+                <button type="button" className="nv-shelf-remove" title={t('删除这本书', 'Delete this book')} aria-label={t('删除这本书', 'Remove this book')} onClick={() => { removal.ask(project) }}>
                   <Icon name="trash" size={13} />
                 </button>
               </div>
@@ -334,7 +334,7 @@ function Shelf({ onNew }: { onNew: () => void }) {
             <img src={emptyArt} alt="" width={176} height={176} />
             <div>
               <strong>{t('书架还空着', 'The shelf is empty')}</strong>
-              <p className="nv-muted">{t('从一个点子开一本新书，或者把已经写好的小说整本搬进来——人物、设定、大纲会替你理出来。', 'Start a new book from an idea, or bring a finished novel in whole — its people, world and outline are worked out for you.')}</p>
+              <p className="nv-muted">{t('开一本新书，或把写好的小说导入。', 'Start a new book, or import one already written.')}</p>
               <Button variant="primary" icon="sparkles" onClick={onNew}>{t('新创作', 'New work')}</Button>
             </div>
           </div>
@@ -443,7 +443,7 @@ function NewBook({ onBack }: { onBack: () => void }) {
         <Button variant="ghost" size="sm" icon="chevronLeft" onClick={onBack}>{t('书架', 'Bookshelf')}</Button>
         <div className="nv-new-title">
           <h1>{t('新创作', 'New work')}</h1>
-          <p className="nv-muted">{t('从一个点子开一本新书，或者把写好的小说整本搬进来。建好之后，这本书会有一场自己的对话。', 'A new book from an idea, or a finished novel brought in whole. Once it exists, the book has a conversation of its own.')}</p>
+          <p className="nv-muted">{t('从一个点子开一本新书，或把写好的小说整本导入。', 'Start a book from an idea, or import a finished novel whole.')}</p>
         </div>
         <img className="nv-new-art" src={createArt} alt="" width={120} height={120} />
       </header>
@@ -464,7 +464,7 @@ function NewBook({ onBack }: { onBack: () => void }) {
         >
           <Icon name="upload" size={22} />
           <strong>{t('导入一本已有的小说', 'Bring in an existing novel')}</strong>
-          <span>{t('整本读进来：拆章、理出人物/设定/大纲/文风，然后续写、修订或做成有声剧。可以直接把文件拖到这里', 'Read the whole book in: chapters, cast, world, outline and style — then continue it, revise it or stage it. Drop a file here')}</span>
+          <span>{t('整本读进来，理出人物、设定、大纲和文风。可以把文件拖到这里', 'Read in whole: characters, bible, outline and style are worked out. Drop a file here')}</span>
         </button>
       </div>
 
@@ -488,11 +488,11 @@ function NewBook({ onBack }: { onBack: () => void }) {
         {mode === 'new' ? (
           <>
             <Field label={t('你想写一个什么样的故事？', 'What story do you want to tell?')}>
-              <TextArea value={idea} minRows={4} maxRows={12} placeholder={t('一句话或一段话都可以：谁、想要什么、遇到什么、你最想写的那种感觉……', 'A sentence or a paragraph: who, what they want, what stands in the way, the feeling you are after…')} onChange={(event) => { setIdea(event.target.value) }} />
+              <TextArea value={idea} minRows={4} maxRows={12} placeholder={t('谁、想要什么、遇到什么……', 'Who, wanting what, up against what…')} onChange={(event) => { setIdea(event.target.value) }} />
             </Field>
             <label className="nv-check">
               <input type="checkbox" checked={draftFoundation} onChange={(event) => { setDraftFoundation(event.target.checked) }} />
-              <span>{t('让 AI 据此起草故事核、主要人物、世界观、分卷与开篇章纲（之后都可以改）', 'Draft the premise, main cast, world, volumes and opening chapters from it (all editable afterwards)')}</span>
+              <span>{t('让 AI 据此起草故事核、人物、世界观和章纲', 'Have the AI draft the premise, characters, world and chapter outlines from it')}</span>
             </label>
           </>
         ) : (
@@ -509,7 +509,7 @@ function NewBook({ onBack }: { onBack: () => void }) {
                   ? t(`已选 ${importFile.name}（${formatCount(Math.round(importFile.size / 1024), locale)} KB）`, `${importFile.name} selected (${formatCount(Math.round(importFile.size / 1024), locale)} KB)`)
                   : importText.length > 0
                     ? t(`已读取 ${formatCount(importText.length, locale)} 字符`, `${formatCount(importText.length, locale)} characters loaded`)
-                    : t('支持 .txt / .md / .epub / .docx，也可以把文件拖到这里。自动识别 UTF-8 / GBK 与章节标题', '.txt, .md, .epub and .docx; or drop the file here. UTF-8 / GBK and chapter headings are detected')}
+                    : t('支持 .txt / .md / .epub / .docx，也可以拖进来', 'Takes .txt / .md / .epub / .docx; a file can be dropped here')}
               </span>
             </div>
             {importFile === undefined ? (
@@ -519,7 +519,7 @@ function NewBook({ onBack }: { onBack: () => void }) {
             ) : null}
             <label className="nv-check">
               <input type="checkbox" checked={analyze} onChange={(event) => { setAnalyze(event.target.checked) }} />
-              <span>{t('导入后通读全书：逐章提取摘要与事实，归并人物卡与世界观，生成大纲并提炼文风（长篇需要几分钟；不勾选则只拆分章节，之后随时可以补做）', 'Read the whole book after importing: digest every chapter, merge character cards and world entries, build the outline and learn the style (minutes for a long book; untick to only split chapters and analyze later)')}</span>
+              <span>{t('导入后通读全书：理出人物、世界观、大纲和文风。不勾选就只拆章，以后可以补做', 'Read the whole book after importing: characters, world, outline and style. Unticked, it is only split into chapters; the rest can be done later')}</span>
             </label>
           </>
         )}
@@ -531,7 +531,7 @@ function NewBook({ onBack }: { onBack: () => void }) {
           </label>
           {seal ? (
             <>
-              <p className="nv-muted nv-small">{t('正文、设定、大纲、记忆、插图、配音——这本书的每一个文件都只以密文存在磁盘上，起草和导入的内容也直接写成密文。打开它要输入密码；创建之后可以在“加密”里再加上这台电脑的指纹 / 系统密码解锁。密码是最后的钥匙：忘了它，这本书就打不开，没有后门。', 'Text, bible, outline, memory, pictures, voices — every file of this book exists on disk only as ciphertext, and what is drafted or imported now is written that way from the start. It opens with its password; this computer\'s fingerprint or system password can be added afterwards under "Seal". The password is the last key: lose it and the book cannot be opened — there is no back door.')}</p>
+              <p className="nv-muted nv-small">{t('这本书的每一个文件在磁盘上都只是密文。打开它要输入密码；忘了密码就打不开，没有后门。', 'Every file of this book is kept on disk as ciphertext only. It opens with the password; forget it and the book stays shut — there is no back door.')}</p>
               <div className="nv-form-grid">
                 <Field label={t('密码', 'Password')} hint={t('至少 4 个字符；越长越好，可以是一句话', 'At least 4 characters; longer is better — a phrase works')}>
                   <TextInput type="password" autoComplete="new-password" value={password} onChange={(event) => { setPassword(event.target.value) }} />
@@ -539,7 +539,7 @@ function NewBook({ onBack }: { onBack: () => void }) {
                 <Field label={t('再输一遍', 'Once more')} hint={again.length > 0 && password !== again ? t('两次输入的不一样', 'The two do not match') : undefined}>
                   <TextInput type="password" autoComplete="new-password" value={again} onChange={(event) => { setAgain(event.target.value) }} />
                 </Field>
-                <Field label={t('书架上显示的名字（可不填）', 'Name shown on the shelf (optional)')} hint={t('上锁时，书架和用量记录里只显示这个名字；不填就显示书名', 'While locked, the shelf and the usage ledger show only this name; the title when left empty')}>
+                <Field label={t('上锁时书架上显示的名字', 'Name shown on the shelf while locked')} hint={t('不填就显示书名', 'Left empty, the title is shown')}>
                   <TextInput value={shelfName} placeholder={title.trim() || t('如：我的草稿', 'e.g. My draft')} onChange={(event) => { setShelfName(event.target.value) }} />
                 </Field>
               </div>
@@ -585,8 +585,8 @@ function BookConversation() {
         <strong>{note.created ? t(`《${title}》有自己的对话了`, `"${title}" has a conversation of its own`) : t('这本书就在旁边这场对话里', 'This book is in the conversation beside it')}</strong>
         <p className="nv-muted">
           {note.created
-            ? t(`已经在左侧栏为它开了一场对话${note.title !== undefined ? `（${note.title}）` : ''}。设定怎么调、接下来写什么、哪里不满意，都可以去那里直接跟总编说——它读得到这本书的一切，工坊会停在对话右边。之后从总览页的"和总编讨论"随时回到它。`, `A conversation was opened for it in the left sidebar${note.title !== undefined ? ` (${note.title})` : ''}. What to change in the bible, what to write next, what you do not like: say it there to the showrunner — it can read all of this book, and the Studio docks beside the conversation. "Talk it over" on the overview takes you back to it any time.`)
-            : t('想讨论设定、让总编动笔、说哪里不满意，直接在旁边的对话里说——总编现在就在这本书上，你在工坊里看到的它都读得到。', 'To talk the bible over, have the showrunner write, or say what is wrong: say it in the conversation beside this — the showrunner is on this book now and can read everything you see here.')}
+            ? t(`已为它开了一场对话${note.title !== undefined ? `（${note.title}）` : ''}，可以去那里跟总编说。`, `A conversation was opened for it${note.title !== undefined ? ` (${note.title})` : ''}: talk to the showrunner there.`)
+            : t('有什么想法，直接在旁边的对话里跟总编说。', 'Whatever you have in mind, say it to the showrunner in the conversation beside this.')}
         </p>
       </div>
       {note.created && host.openChat !== undefined ? <Button variant="primary" icon="chat" onClick={() => { host.openChat!(note.sessionId) }}>{t('去对话', 'Open it')}</Button> : null}
@@ -658,7 +658,7 @@ export function HomeView() {
               ? <ProjectImage path={project.cover} alt={t(`《${manifest.title}》的封面`, `Cover of "${manifest.title}"`)} version={project.revision} />
               : <span className="nv-hero-blank"><Icon name="book" size={26} /><em>{manifest.title}</em></span>}
           </button>
-          <Button size="sm" variant={project.cover === undefined ? 'primary' : 'outline'} icon="image" busy={painting} pending={t('绘制中…', 'Painting…')} onClick={paintCover} title={t('按这本书的故事核和美术风格画一张封面；任何一张插图也可以在"演出 → 插图"里设为封面', 'Paint a cover from the book\'s premise and art direction; any illustration can also be made the cover under Stage → Illustrations')}>
+          <Button size="sm" variant={project.cover === undefined ? 'primary' : 'outline'} icon="image" busy={painting} pending={t('绘制中…', 'Painting…')} onClick={paintCover} title={t('画一张封面', 'Draw a cover')}>
             {project.cover === undefined ? t('生成封面', 'Paint a cover') : t('重画', 'Repaint')}
           </Button>
         </div>
@@ -675,8 +675,8 @@ export function HomeView() {
           {manifest.premise !== undefined ? <p className="nv-hero-premise">{manifest.premise}</p> : null}
         </div>
         <Button variant="ghost" size="sm" icon="pen" onClick={() => { setEditing(true) }}>{t('作品信息', 'Book info')}</Button>
-        <Button variant="ghost" size="sm" icon="clock" onClick={() => { controller.setView('usage') }} title={t('这本书用了多少 token、图片和语音，花了多少钱', 'Tokens, pictures and speech this book has used, and what they cost')}>{t('用量', 'Usage')}</Button>
-        {host.openChat !== undefined ? <Button variant="ghost" size="sm" icon="chat" busy={talking.busy} pending={t('正在打开…', 'Opening…')} onClick={talk} title={t('打开这本书的对话：和总编讨论设定、让它动笔、说哪里不满意。还没有就开一场。', 'Open this book\'s conversation: talk the bible over with the showrunner, have it write, say what is wrong. One is made when there is none.')}>{t('和总编讨论', 'Talk it over')}</Button> : null}
+        <Button variant="ghost" size="sm" icon="clock" onClick={() => { controller.setView('usage') }} title={t('这本书的用量和花费', 'What this book has used and cost')}>{t('用量', 'Usage')}</Button>
+        {host.openChat !== undefined ? <Button variant="ghost" size="sm" icon="chat" busy={talking.busy} pending={t('正在打开…', 'Opening…')} onClick={talk} title={t('打开这本书的对话', 'Open this book\'s conversation')}>{t('和总编讨论', 'Talk it over')}</Button> : null}
       </section>
 
       <BookConversation />
@@ -704,7 +704,7 @@ export function HomeView() {
               <Step
                 icon="layers"
                 title={t('这本书的分析没有做完', 'The analysis of this book was left unfinished')}
-                body={t(`导入之后要把书读一遍、把读到的记下来；上一次做到一半就停了（DSH 退出、网络中断或被停止）。还差：${project.analysis.pending.map(step => analyzeStepLabel(step, stats.undigested, t)).join('、')}。从停下的地方接着做，做过的不会重来。`, `After an import the book is read through and what it says is written down; last time that stopped half way (DSH quit, the network dropped, or it was stopped). Still to do: ${project.analysis.pending.map(step => analyzeStepLabel(step, stats.undigested, t)).join(', ')}. It goes on where it stopped; nothing done is done again.`)}
+                body={t(`导入分析上次没做完，还差：${project.analysis.pending.map(step => analyzeStepLabel(step, stats.undigested, t)).join('、')}。`, `The analysis after import was left unfinished. Still to do: ${project.analysis.pending.map(step => analyzeStepLabel(step, stats.undigested, t)).join(', ')}.`)}
                 action={t('继续分析', 'Go on')}
                 busy={running.some(job => job.kind === 'import')}
                 onClick={() => controller.guard(async () => { await controller.api.call('ai.analyze', { root }) })}
@@ -713,7 +713,7 @@ export function HomeView() {
               <Step
                 icon="users"
                 title={t(`${project.uncarded.count} 个多次出场的人物还没有人物卡`, `${project.uncarded.count} people who keep coming back have no character card`)}
-                body={t(`${project.uncarded.names.join('、')}${project.uncarded.count > project.uncarded.names.length ? ' 等' : ''}在好几章里出场，设定集里却没有。让策划按出场多少归并人物表：多次出场的给完整的人物卡，同一个人的不同称呼并到一处，只露一面的仍留作龙套。`, `${project.uncarded.names.join(', ')}${project.uncarded.count > project.uncarded.names.length ? ' and others' : ''} act in several chapters and are not in the bible. The planner makes the cast by how much each is on the page: whole cards for those who keep coming back, one card for one person under several names, and whoever passes once stays a walk-on.`)}
+                body={t(`${project.uncarded.names.join('、')}${project.uncarded.count > project.uncarded.names.length ? ' 等' : ''}多次出场，还没有人物卡。`, `${project.uncarded.names.join(', ')}${project.uncarded.count > project.uncarded.names.length ? ' and others' : ''} appear in several chapters and have no card.`)}
                 action={t('归并人物表', 'Make the cast')}
                 busy={running.some(job => job.kind === 'import')}
                 onClick={() => controller.guard(async () => { await controller.api.call('ai.analyze', { root, steps: ['cast'] }) })}
@@ -732,7 +732,7 @@ export function HomeView() {
                 onClick={nextPlan?.synopsis !== undefined ? writeNext : () => { controller.setView('outline') }}
               />
             ) : stats.chapters > 0 ? (
-              <Step icon="tree" title={t('续写：大纲里的章节都有正文了', 'Continue: every outlined chapter has its text')} body={t('让策划接着已有的情节推演后续章节，再逐章写下去；也可以先修订与审校。', 'Let the planner derive what comes next from the story so far, then write on chapter by chapter — or revise and review first.')} action={t('推演后续', 'Derive more')} onClick={() => { controller.setView('outline') }} />
+              <Step icon="tree" title={t('续写：大纲里的章节都有正文了', 'Continue: every outlined chapter has its text')} body={t('让策划推演后续章节，再逐章写。', 'Have the planner plot the chapters to come, then write them one by one.')} action={t('推演后续', 'Derive more')} onClick={() => { controller.setView('outline') }} />
             ) : null}
             {stats.chaptersWithText > 0 ? (
               <Step icon="stage" title={t('把写好的章节搬上舞台', 'Put finished chapters on stage')} body={settings?.ready.tts === true ? t('有声剧、有声漫、插图和可以亲自下场的幕间。', 'Audio drama, motion comics, illustrations and playable interludes.') : t('有声剧、有声漫、插图与幕间。配音和插图还没有配置，可以先去接上。', 'Audio drama, motion comics, illustrations and interludes. Speech and images are not set up yet.')} action={settings !== undefined && !settings.ready.tts && !settings.ready.image ? t('去配置', 'Set up') : t('去演出', 'Open Stage')} onClick={() => { controller.setView(settings !== undefined && !settings.ready.tts && !settings.ready.image ? 'setup' : 'stage') }} />
@@ -747,7 +747,7 @@ export function HomeView() {
               <Step
                 icon="refresh"
                 title={t(`已收录 ${chapters.filter(chapter => chapter.hasText && chapter.digested).length} / ${stats.chaptersWithText} 章`, `${chapters.filter(chapter => chapter.hasText && chapter.digested).length} of ${stats.chaptersWithText} chapters digested`)}
-                body={t('人物表或设定变了、或者觉得哪几章收录得不准，可以让场记把正文重新读一遍，重写那些章的收录结果。', 'When the cast or the bible has changed, or some chapters were digested poorly, continuity can read the text again and write their digests anew.')}
+                body={t('让场记把正文重读一遍，重写收录结果。', 'Have the scribe read the text again and write the digests anew.')}
                 action={t('重新收录…', 'Digest again…')}
                 quiet
                 busy={running.some(job => job.kind === 'digest')}
@@ -830,7 +830,7 @@ function ChangeRecord() {
     return `${date.toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' })} ${date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}`
   }
   const undo = (chapter: string, version: string): void => {
-    confirm.ask(t('把这一章恢复到这次改动之前的样子？现在的正文会先存成一个版本，随时可以再换回来。', 'Put this chapter back to how it was before this change? The text in place is kept as a version first, so this can be reversed too.'), () => {
+    confirm.ask(t('把这一章恢复到这次改动之前？现在的正文会存成一个版本。', 'Put this chapter back to what it was before this change? The text as it is now is kept as a version.'), () => {
       void controller.guard(async () => {
         await controller.api.call('chapter.restore', { root, id: chapter, version })
         controller.toast('success', t('已恢复到改动之前', 'Restored to before the change'))
@@ -840,7 +840,7 @@ function ChangeRecord() {
   return (
     <section className="nv-card">
       <SectionTitle actions={entries.length > 5 ? <Button size="sm" variant="ghost" onClick={() => { setAll(value => !value) }}>{all ? t('收起', 'Fold') : t(`全部 ${entries.length} 条`, `All ${entries.length}`)}</Button> : undefined}>{t('改动记录', 'What changed the book')}</SectionTitle>
-      <p className="nv-muted nv-small">{t('不是你在这块面板上亲手做的改动都记在这里：总编通过工具做的、在手机等其他设备上做的，和工坊之外对文件的直接改动。改过正文的可以一键撤销。', 'Every change not made by your own hand on this panel is listed here: what the showrunner did with its tools, what was done from a phone or another device, and changes made to the files outside the Studio. A change to the manuscript can be undone with one press.')}</p>
+      <p className="nv-muted nv-small">{t('总编、其他设备和工坊之外做的改动。改过正文的可以撤销。', 'Changes made by the showrunner, from other devices and outside the Studio. One that touched the text can be undone.')}</p>
       <ul className="nv-record">
         {shown.map(entry => (
           <li key={entry.id} className={cx('nv-record-row', entry.by === 'outside' && 'is-outside')}>
@@ -916,7 +916,7 @@ function RedigestDialog({ onClose }: { onClose: () => void }) {
   const start = (): Promise<unknown> => run(async () => {
     await controller.api.call('ai.digest', { root, chapters: picked.map(chapter => chapter.id), force: true })
     await controller.refreshJobs()
-    controller.toast('info', t(`场记开始重新收录 ${picked.length} 章；进度在底部的任务条里，随时可以停——停下时已经做完的章不会白做。`, `Continuity is digesting ${picked.length} chapters again; progress is in the bar at the bottom and can be stopped at any time — chapters already done stay done.`))
+    controller.toast('info', t(`场记开始重新收录 ${picked.length} 章`, `The scribe is digesting ${picked.length} chapter(s) again`))
     onClose()
   })
   return (
@@ -925,10 +925,10 @@ function RedigestDialog({ onClose }: { onClose: () => void }) {
       onClose={onClose}
       footer={<Button variant="primary" icon="refresh" busy={busy} disabled={picked.length === 0} pending={t('正在开始…', 'Starting…')} onClick={start}>{t(`重新收录 ${picked.length} 章`, `Digest ${picked.length} chapters again`)}</Button>}
     >
-      <p>{t('场记把这些章的正文重新读一遍，按现在的人物表和设定，重写每一章的收录结果。', 'Continuity reads the text of these chapters again and, with the cast and the bible as they are now, writes each chapter\'s digest anew.')}</p>
+      <p>{t('场记把这些章重读一遍，重写收录结果。', 'The scribe reads these chapters again and writes their digests anew.')}</p>
       <ul className="nv-plain-list nv-small">
-        <li><strong>{t('会被重写：', 'Written anew: ')}</strong>{t('这些章的摘要、人物在这一章的状态、确立的事实、线索的动向、新出现的名字。', 'the summary of each chapter, where its people stand at its end, the facts it settles, what it does to the threads, the new names in it.')}</li>
-        <li><strong>{t('不会动：', 'Left alone: ')}</strong>{t('正文；人物卡和设定里已有的内容（只更新首末出场，状态变化仍作为建议等你确认）；章纲里已经填了的项（空着的项按新的收录补上）；审校结果。', 'the text; what the character cards and the bible already say (first and last appearance are kept up, changes of status still wait for your yes); what the plans already hold (blanks are filled from the new digest); reviews.')}</li>
+        <li><strong>{t('会被重写：', 'Written anew: ')}</strong>{t('摘要、人物状态、事实、线索动向、新名字。', 'Summaries, where each person stands, facts, how threads moved, new names.')}</li>
+        <li><strong>{t('不会动：', 'Left alone: ')}</strong>{t('正文、人物卡、设定、章纲里已填的项、审校结果。', 'The text, character cards, the bible, what the chapter outlines already say, review results.')}</li>
         <li><strong>{t('新发现：', 'What it finds: ')}</strong>{t('新的人物、设定、线索照旧进“待确认”。', 'new people, entries and threads go to the suggestions as before.')}</li>
       </ul>
       <div className="nv-radio-list">
@@ -948,7 +948,7 @@ function RedigestDialog({ onClose }: { onClose: () => void }) {
         </label>
       </div>
       <p className="nv-muted nv-small">{picked.length > 0
-        ? t(`共 ${picked.length} 章、约 ${formatCount(words, locale)} 字要读。每一章是一次场记的运行，会用到文字模型的额度。`, `${picked.length} chapters, about ${formatCount(words, locale)} words to read. Each chapter is one run of continuity and spends the text model's tokens.`)
+        ? t(`共 ${picked.length} 章、约 ${formatCount(words, locale)} 字。`, `${picked.length} chapter(s), about ${formatCount(words, locale)} words.`)
         : t('这个范围里没有带正文的章节。', 'No chapter with text lies in this stretch.')}</p>
     </Modal>
   )
@@ -1016,12 +1016,12 @@ function ManifestEditor({ manifest, root, onClose }: { manifest: ProjectManifest
         <Field label={t('正文语言', 'Language')}><Select value={draft.language} options={LANGUAGES.some(item => item.value === draft.language) ? LANGUAGES : [...LANGUAGES, { value: draft.language, label: draft.language }]} onChange={(value) => { setDraft(previous => ({ ...previous, language: value })) }} /></Field>
         <Field label={t('类型', 'Genre')}><TextInput value={draft.genre} onChange={set('genre')} /></Field>
         <Field label={t('目标总字数', 'Target length')}><TextInput inputMode="numeric" value={draft.targetWords} onChange={set('targetWords')} /></Field>
-        <Field label={t('每章建议字数', 'Recommended words per chapter')} hint={t('留空：由写手按每一章要做的事自己判断篇幅；某一章要另外的字数，在它的章纲里填', 'Empty: the writer judges each chapter\'s length from what it has to do; a chapter that wants its own figure gets it in its plan')}><TextInput inputMode="numeric" value={draft.chapterBudget} placeholder={t('由写手判断', 'left to the writer')} onChange={set('chapterBudget')} /></Field>
+        <Field label={t('每章建议字数', 'Recommended words per chapter')} hint={t('留空由写手自己判断', 'Left empty, the writer judges')}><TextInput inputMode="numeric" value={draft.chapterBudget} placeholder={t('由写手判断', 'left to the writer')} onChange={set('chapterBudget')} /></Field>
       </div>
       <Field label={t('一句话梗概', 'Logline')}><TextArea value={draft.logline} minRows={2} onChange={set('logline')} /></Field>
       <Field label={t('故事核', 'Premise')}><TextArea value={draft.premise} minRows={4} onChange={set('premise')} /></Field>
       <Field label={t('主题', 'Themes')} hint={t('用顿号或逗号分隔', 'Separate with commas')}><TextInput value={draft.themes} onChange={set('themes')} /></Field>
-      <Field label={t('美术风格', 'Art direction')} hint={art.source === 'book' ? t('原样接在本书每一张图的画面内容后面', 'Appended as is to the subject of every picture of this book') : art.source === 'studio' ? t('现在显示的是工坊设置里的统一画风；保存后就成为这本书自己的', 'Showing the Studio-wide direction from Settings; saving makes it this book\'s own') : t('现在显示的是内置默认；改成你要的样子，保存后就成为这本书自己的', 'Showing the built-in default; make it yours — saving stores it with this book')}><TextArea value={draft.artStyle} minRows={2} onChange={set('artStyle')} /></Field>
+      <Field label={t('美术风格', 'Art direction')} hint={art.source === 'book' ? t('原样接在本书每一张图的画面内容后面', 'Appended as is to the subject of every picture of this book') : art.source === 'studio' ? t('这是工坊设置里的画风，保存后归这本书', 'This is the Studio\'s art direction; saved, it becomes this book\'s own') : t('这是内置默认，保存后归这本书', 'This is the built-in default; saved, it becomes this book\'s own')}><TextArea value={draft.artStyle} minRows={2} onChange={set('artStyle')} /></Field>
       <Field label={t('画面里不要出现', 'Never in the picture')} hint={t('逗号分隔，作为负面提示词随本书每张图发送', 'Comma-separated; sent as the negative prompt with every picture of this book')}><TextInput value={draft.artAvoid} placeholder={t('如：十字架、哥特式教堂、现代服饰', 'e.g. crosses, gothic cathedral, modern clothing')} onChange={set('artAvoid')} /></Field>
       <Field label={t('作者备注', 'Author notes')} hint={t('总会随上下文提供给模型', 'Always sent to the models with the context')}><TextArea value={draft.notes} minRows={2} onChange={set('notes')} /></Field>
     </Modal>

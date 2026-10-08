@@ -194,13 +194,13 @@ export function TiesReport({ report, onDismiss }: { report: TiesPass | undefined
   return (
     <div className="nv-note" role="status">
       {t(`策划这一遍：新增 ${report.added ?? 0} 条关系，改了 ${report.changed ?? 0} 条，去掉 ${report.removed ?? 0} 条。`, `This pass: ${report.added ?? 0} ties added, ${report.changed ?? 0} changed, ${report.removed ?? 0} removed.`)}
-      {(report.events ?? 0) > 0 ? t(` 还记下了 ${report.events} 件地点 / 家族 / 物品自己的大事（建成、易主、荒废、被毁），在各自条目的"轨迹"里。`, ` ${report.events} things that happen to places, houses and things (built, changed, in decline, gone) were written down too, under each entry's course.`) : ''}
-      {(report.created?.length ?? 0) > 0 ? t(` 关系里要用到、设定里原来没有的，已经建成条目：${report.created!.join('、')}（都在"设定"里，可以改、可以删）。`, ` Entries the ties needed and the bible lacked were made: ${report.created!.join(', ')} (all under Bible, to be changed or removed).`) : ''}
-      {(report.skipped?.length ?? 0) > 0 ? t(` 有 ${report.skipped!.length} 条没能记下（名字在设定里对不上）：${report.skipped!.slice(0, 4).join('；')}${report.skipped!.length > 4 ? ' 等' : ''}`, ` ${report.skipped!.length} could not be written down (a name nothing in the bible answers to): ${report.skipped!.slice(0, 4).join('; ')}${report.skipped!.length > 4 ? '…' : ''}`) : ''}
+      {(report.events ?? 0) > 0 ? t(` 记下 ${report.events} 件轨迹。`, ` ${report.events} event(s) noted.`) : ''}
+      {(report.created?.length ?? 0) > 0 ? t(` 新建条目：${report.created!.join('、')}。`, ` New entries: ${report.created!.join(', ')}.`) : ''}
+      {(report.skipped?.length ?? 0) > 0 ? t(` ${report.skipped!.length} 条名字对不上，没记下：${report.skipped!.slice(0, 4).join('；')}${report.skipped!.length > 4 ? ' 等' : ''}`, ` ${report.skipped!.length} could not be matched to a name: ${report.skipped!.slice(0, 4).join('; ')}${report.skipped!.length > 4 ? ' …' : ''}`) : ''}
       <button type="button" className="nv-link" onClick={onDismiss}> {t('知道了', 'Got it')}</button>
     </div>
   )
 }
 
 /** What the planner's pass over the ties is asked with, and what it does: the words of the button wherever it stands. */
-export const DERIVE_TIES_HINT: [string, string] = ['让策划根据设定和各章的收录，理出谁在哪里面、谁属于谁、谁住在哪、谁持有什么；已有的关系会保留', 'Have the planner work out, from the bible and the chapter digests, what is in what, who belongs where, lives where, holds what; ties already there are kept']
+export const DERIVE_TIES_HINT: [string, string] = ['让策划理出位置、归属、住处和持有；已有的关系保留', 'Have the planner work out what lies where, who belongs where, who lives where and who holds what; ties already kept stay']

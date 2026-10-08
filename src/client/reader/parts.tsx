@@ -108,7 +108,7 @@ export function PrefsControls({ prefs, update, t }: { prefs: ReaderPrefs; update
       <button type="button" className="nv-btn nv-btn-ghost nv-btn-sm" onClick={() => { update({ size: Math.max(14, prefs.size - 1) }) }} title={t('缩小字号', 'Smaller text')}><span>A−</span></button>
       <button type="button" className="nv-btn nv-btn-ghost nv-btn-sm" onClick={() => { update({ size: Math.min(30, prefs.size + 1) }) }} title={t('放大字号', 'Larger text')}><span>A+</span></button>
       <button type="button" className={cx('nv-btn nv-btn-ghost nv-btn-sm nv-btn-icon', prefs.serif && 'is-active')} onClick={() => { update({ serif: !prefs.serif }) }} title={t('衬线 / 无衬线', 'Serif / sans')}><Icon name="type" size={14} /></button>
-      <button type="button" className={cx('nv-btn nv-btn-ghost nv-btn-sm nv-btn-icon', prefs.notes && 'is-active')} onClick={() => { update({ notes: !prefs.notes }) }} title={t('声音注释：在正文旁边标出这里听得到什么（环境、音效、配乐）', 'Sound notes: mark beside the text what is heard here (the room, effects, music)')} aria-pressed={prefs.notes}><Icon name="volume" size={14} /></button>
+      <button type="button" className={cx('nv-btn nv-btn-ghost nv-btn-sm nv-btn-icon', prefs.notes && 'is-active')} onClick={() => { update({ notes: !prefs.notes }) }} title={t('在正文旁标出环境声、音效和配乐', 'Note ambience, effects and music beside the text')} aria-pressed={prefs.notes}><Icon name="volume" size={14} /></button>
       <select className="nv-input nv-select" value={prefs.theme} onChange={(event) => { update({ theme: event.target.value as ReaderPrefs['theme'] }) }} aria-label={t('纸张', 'Paper')}>
         <option value="auto">{t('跟随主题', 'App theme')}</option>
         <option value="paper">{t('纸张', 'Paper')}</option>
@@ -178,7 +178,7 @@ export function ReaderSettings({ prefs, update, options, updateOptions, t, extra
       </button>
       {more ? (
         <div className="nv-reader-settings-list">
-          <label className="nv-check" title={t('在"文字"版面按播放时，自动翻到"脚本"版面；关掉就留在正文里听，正在念的那一句会标出来', 'Pressing play over the prose turns to the script; switched off, the prose stays and the line being spoken is marked in it')}>
+          <label className="nv-check" title={t('按播放时自动翻到“脚本”版面', 'Turn to the script when playback starts')}>
             <input type="checkbox" checked={prefs.follow !== false} onChange={(event) => { update({ follow: event.target.checked }) }} />
             <span>{t('按播放时翻到脚本版面', 'Turn to the script on play')}</span>
           </label>
@@ -198,7 +198,7 @@ export function ReaderSettings({ prefs, update, options, updateOptions, t, extra
           {extra}
         </div>
       ) : null}
-      <p className="nv-muted nv-small nv-reader-settings-foot">{t('这些只记在这台设备上：换一台设备、换一个人读，各是各的。', 'Kept on this device only: another device, another reader, has its own.')}</p>
+      <p className="nv-muted nv-small nv-reader-settings-foot">{t('只记在这台设备上。', 'Kept on this device only.')}</p>
     </div>
   )
   if (onClose === undefined) return panel

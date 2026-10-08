@@ -67,10 +67,10 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
         { value: 'network', label: t('在手机上读（同一个 Wi-Fi）', 'On a phone (same network)'), icon: 'phone' },
         { value: 'site', label: t('发布成网站', 'Publish as a site'), icon: 'globe' },
       ]} />
-      {way === 'site' ? <PublishSite /> : status === undefined ? <div className="nv-center">{loaded.error !== undefined ? <p className="nv-muted">{t('这个版本的工坊服务还不支持手机阅读——重启一次 DSH 就有了。', 'This Studio service does not offer reading on other devices yet — restart the Harness once.')}</p> : <Spinner />}</div> : (
+      {way === 'site' ? <PublishSite /> : status === undefined ? <div className="nv-center">{loaded.error !== undefined ? <p className="nv-muted">{t('这个版本的工坊服务还不支持手机阅读——重启一次 DSH 就有了。', 'This Studio service does not offer reading on other devices yet — restart DSH once.')}</p> : <Spinner />}</div> : (
         <div className="nv-share">
           <p>
-            {t(`打开之后，和这台电脑连着同一个 Wi-Fi 的手机、平板，用浏览器打开下面的地址，就能读《${project.manifest.title}》，有配音的章节能听，画好的有声漫也能看。`, `Once on, a phone or tablet on the same Wi-Fi as this computer can open the address below in its browser and read "${project.manifest.title}" — listen to the chapters that have a voice, and watch the motion comics that are drawn.`)}
+            {t(`同一个 Wi-Fi 下的手机、平板，用浏览器打开下面的地址就能读《${project.manifest.title}》。`, `Phones and tablets on the same Wi-Fi read "${project.manifest.title}" by opening the address below in a browser.`)}
           </p>
           {on ? (
             <div className="nv-share-mode">
@@ -83,11 +83,11 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
           ) : null}
           <ul className="nv-share-facts">
             {mode === 'edit' && on
-              ? <li>{t('可编辑：那边可以改这本书的正文（每次保存前这边都会留一个版本，并记进"改动记录"），也可以玩幕间——每一回合会调用这台电脑上配置的模型，花的是你的用量。设置、密钥和没分享的书仍然碰不到。', 'Read and change: the text of this book can be edited from there (a version is kept here before each save, and the change goes on the record), and its interludes played — every turn calls the models set up on this computer, on your usage. Settings, keys and books you have not shared stay out of reach.')}</li>
-              : <li>{t('仅阅读：那边不能改任何东西，也碰不到模型、密钥和没分享的书。想在手机上改稿、玩幕间，开启后选"可编辑"。', 'Read only: nothing can be changed from there, and models, keys and books you have not shared are out of reach. To edit or play interludes on the phone, choose "Read and change" once it is on.')}</li>}
-            {mine?.sealed === true || sealedHere ? <li>{t('这本书加了密：每台设备第一次打开要输入它的密码，之后那台设备会被记住（在"加密与上锁"里可以逐台收回）。注意手机和电脑之间走的是局域网里的普通连接，密码和内容在这一段不加密——只在信得过的网络里开。', 'This book is sealed: every device is asked for its password the first time, and remembered afterwards (each can be withdrawn under "Seal and lock"). Mind that the link between phone and computer is an ordinary one inside the local network: the password and the content are not encrypted on that stretch — switch this on only on a network you trust.')}</li> : null}
-            <li>{t('地址里带一段随机口令，拿到这个地址的人都能读——别发到不相干的地方。想让旧链接失效，点"换一个地址"。', 'The address carries a random token: whoever has it can read. To make links you gave out stop working, choose "New address".')}</li>
-            <li>{t('电脑要开着、DSH 要开着才读得到；第一次打开时系统可能会问是否允许接入网络连接，选允许。', 'The computer and the Harness must be running; the first time, the system may ask whether to allow incoming connections — allow it.')}</li>
+              ? <li>{t('可编辑：那边可以改正文、玩幕间，花的是你的模型用量。', 'Editing: the text can be changed there and interludes played, on your model usage.')}</li>
+              : <li>{t('仅阅读：那边不能改任何东西。', 'Reading only: nothing can be changed from there.')}</li>}
+            {mine?.sealed === true || sealedHere ? <li>{t('这本书加了密：每台设备第一次打开要输入密码。局域网里这一段不加密，只在信得过的网络里开。', 'This book is sealed: each device enters the password once. The hop across the local network is not encrypted — only on a network you trust.')}</li> : null}
+            <li>{t('拿到这个地址的人都能读。想让旧链接失效，点“换一个地址”。', 'Whoever has the address can read. "New address" makes the old link stop working.')}</li>
+            <li>{t('电脑和 DSH 要开着。', 'The computer and DSH must be running.')}</li>
           </ul>
           <div className="nv-row-wrap">
             {on
@@ -97,8 +97,8 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
             <span className="nv-spacer" />
             {on ? <Chip tone={status.running ? 'green' : 'red'}>{status.running ? t('已开启', 'On') : t('没能启动', 'Could not start')}</Chip> : <Chip>{t('未开启', 'Off')}</Chip>}
           </div>
-          {status.error !== undefined && status.enabled ? <p className="nv-note is-warn">{/in use/.test(status.error) ? t('这台电脑上的端口都被别的程序占着，没能启动。在下面的"端口"里换一个再试。', 'The ports are taken by other programs on this computer. Choose another one under "Port" below.') : status.error}</p> : null}
-          {status.running && status.instead !== undefined ? <p className="nv-note">{t(`端口 ${status.instead} 被这台电脑上的别的程序占用了（比如另一个开着的 DSH），这次改用 ${status.port}——地址里的端口随之不同。`, `Port ${status.instead} is held by another program on this computer (another Harness, perhaps); ${status.port} is used instead — the address differs accordingly.`)}</p> : null}
+          {status.error !== undefined && status.enabled ? <p className="nv-note is-warn">{/in use/.test(status.error) ? t('端口都被占着，没能启动。换一个端口再试。', 'Every port was taken and it could not start. Try another port.') : status.error}</p> : null}
+          {status.running && status.instead !== undefined ? <p className="nv-note">{t(`端口 ${status.instead} 被占用，这次改用 ${status.port}。`, `Port ${status.instead} was taken; ${status.port} is used this time.`)}</p> : null}
           {on && status.running && link !== undefined ? (
             <div className="nv-share-link">
               <Code text={link} />
@@ -124,7 +124,7 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
           <details className="nv-share-advanced">
             <summary>{t('端口', 'Port')}</summary>
             <div className="nv-keyrow">
-              <Field label={t('监听端口', 'Port to listen on')} hint={t('默认 4319；被别的程序占用时换一个（1024–65535）', 'Default 4319; pick another (1024-65535) when something else uses it')}>
+              <Field label={t('监听端口', 'Port to listen on')} hint={t('默认 4319', '4319 by default')}>
                 <TextInput inputMode="numeric" value={port ?? String(status.port ?? 4319)} onChange={(event) => { setPort(event.target.value.replace(/\D/g, '')) }} />
               </Field>
               <Button size="sm" disabled={wanted === undefined || wanted === status.port || !Number.isInteger(wanted) || wanted < 1024 || wanted > 65535} pending={t('正在更换…', 'Changing…')} onClick={() => update({ port: wanted! })}>{t('换到这个端口', 'Use this port')}</Button>
@@ -192,87 +192,85 @@ function PublishSite() {
   return (
     <div className="nv-share nv-site">
       <p>
-        {t(`把《${project.manifest.title}》做成一个文件夹：里面是和手机上一模一样的页面，加上这本书的正文、配音、有声漫、成片视频、插图，和人物与世界的画册。把这个文件夹放到任何能放静态网页的地方（GitHub Pages、Cloudflare Pages、对象存储、自己的服务器……），别人打开网址就能读、听、看——不需要 DSH，也不需要这台电脑开着。`, `Turn "${project.manifest.title}" into a folder: the same pages a phone gets, with the book's text, voices, motion comic, finished videos and pictures, and the album of its people and its world. Put the folder anywhere static pages are served (GitHub Pages, Cloudflare Pages, a bucket, your own server…) and whoever opens the address can read, listen and watch — without DSH, and without this computer.`)}
+        {t(`把《${project.manifest.title}》做成一个文件夹，放到任何静态网页托管上，别人打开网址就能读、听、看。`, `"${project.manifest.title}" as one folder: put it on any static host and people read, listen and watch at its address.`)}
       </p>
       <ul className="nv-share-facts">
         <li>{t(`会发布：有正文的 ${data.chapters} 章${data.voiced > 0 ? `，其中 ${data.voiced} 章有配音` : ''}${data.drawn > 0 ? `，${data.drawn} 章有有声漫` : ''}。`, `Published: the ${data.chapters} chapters with text${data.voiced > 0 ? `, ${data.voiced} of them voiced` : ''}${data.drawn > 0 ? `, ${data.drawn} with a motion comic` : ''}.`)}</li>
-        <li>{t('只有读者看得到的东西会放进去：正文、能听的声音、画好的画面、封面，以及（勾选时）人物和世界的画册。大纲、审校意见、提示词、模型和密钥都不在里面。', 'Only what a reader is given goes in: text, sound that plays, pictures that are drawn, the cover, and (when ticked) the album of the people and the world. The outline, review notes, prompts, models and keys do not.')}</li>
-        <li>{t('发布出去的是只读的：不能在网站上改稿，也不能玩幕间（那要调用这台电脑上的模型）——您留作番外的幕间可以作为文字记录带上。', 'What is published is read-only: nothing can be edited on the site and no interlude can be played (that calls the models on this computer) — the ones you kept as side stories can go along as transcripts.')}</li>
-        <li>{t('放到公开的地方，就是谁都能看。想只给几个人看，用"在手机上读"，或者把文件夹放到要登录的地方。', 'Put somewhere public, anyone can read it. To show it to a few people only, use reading on a phone, or host the folder behind a login.')}</li>
+        <li>{t('只有读者看得到的东西会放进去；大纲、审校意见、提示词、模型和密钥都不在里面。', 'Only what a reader sees goes in; outlines, review notes, prompts, models and keys do not.')}</li>
+        <li>{t('网站是只读的。', 'The site is read-only.')}</li>
+        <li>{t('放到公开的地方，就是谁都能看。', 'Put somewhere public, it is there for anyone.')}</li>
       </ul>
       {written.length > 1 ? (
-        <Field label={t('发布到哪一章', 'Publish as far as')} hint={t('连载时用：只发布到某一章为止。画册也只讲到那一章——之后才登场的人、才成立的关系、才发生的死亡都不带。', 'For a book published a part at a time: as far as one chapter. The album is told up to it too — nobody who comes on later, no tie that begins later, no death that comes later.')}>
+        <Field label={t('发布到哪一章', 'Publish as far as')} hint={t('连载时用：只发布到某一章为止，画册也只讲到那一章。', 'For a serial: publish up to one chapter, and the album tells only as far.')}>
           <Select value={part?.id ?? ''} options={[{ value: '', label: t(`全部已写的章节（${written.length} 章）`, `Everything written (${written.length} chapters)`) }, ...written.slice(0, -1).map(chapter => ({ value: chapter.id, label: t(`到第 ${chapter.index} 章《${chapter.title}》为止`, `As far as chapter ${chapter.index}, "${chapter.title}"`) }))]} onChange={setUpto} />
         </Field>
       ) : null}
       <div className="nv-site-options">
-        <label className="nv-check"><input type="checkbox" checked={listen} disabled={data.voiced === 0} onChange={(event) => { setListen(event.target.checked) }} /><span>{t('带上有声版（脚本、配音、环境声与音效）', 'With the audio drama (script, voices, ambience and effects)')}{data.voiced === 0 ? t('——这本书还没有配过音', ' — nothing is voiced yet') : ''}</span></label>
+        <label className="nv-check"><input type="checkbox" checked={listen} disabled={data.voiced === 0} onChange={(event) => { setListen(event.target.checked) }} /><span>{t('带上有声版', 'With the audio edition')}{data.voiced === 0 ? t('——这本书还没有配过音', ' — nothing is voiced yet') : ''}</span></label>
         {data.press !== undefined && (data.voiced > 0 || (data.sides ?? 0) > 0) ? (
           <label className="nv-check nv-site-press">
             <input type="checkbox" checked={press && data.press} disabled={!data.press || (!listen && !sides)} onChange={(event) => { setPress(event.target.checked) }} />
             <span>
-              {t('把配音和声音压缩成 AAC（高质量：听起来一样，体积约为原来的四分之一）', 'Compress voices and sound to AAC (high quality: it sounds the same, at about a quarter the size)')}
+              {t('把配音和声音压缩成 AAC，体积约四分之一', 'Compress voices and sound to AAC, about a quarter the size')}
               {data.press
-                ? <em className="nv-muted nv-small">{t(' 书里的原件不动，压缩的只是带出去的那一份；不勾就按书里的原样（WAV）带出去。再次发布时只压缩有变化的声音。', ' What is in the book stays as it is; only the copy that goes out is compressed. Unticked, sound goes out as it lies in the book (WAV). Published again, only sound that changed is compressed.')}</em>
-                : <em className="nv-site-press-missing">{t(`——这台电脑上没有 ffmpeg，压缩不了：声音会按书里的原样（WAV）带上，网站会大得多。装上之后再发布一次就会换成压缩的——${FFMPEG_INSTALL[0]}。`, ` — this computer has no ffmpeg, so it cannot: sound goes out as it lies in the book (WAV), and the site is much larger. Install it and publish again to have it compressed — ${FFMPEG_INSTALL[1]}.`)}</em>}
+                ? <em className="nv-muted nv-small">{t(' 书里的原件不动。', ' The book\'s own files are left as they are.')}</em>
+                : <em className="nv-site-press-missing">{t(`——这台电脑上没有 ffmpeg，压缩不了。${FFMPEG_INSTALL[0]}。`, ` — no ffmpeg on this computer, so nothing can be compressed. ${FFMPEG_INSTALL[1]}.`)}</em>}
             </span>
           </label>
         ) : null}
-        <label className="nv-check"><input type="checkbox" checked={watch} disabled={data.drawn === 0} onChange={(event) => { setWatch(event.target.checked) }} /><span>{t('带上有声漫（分镜画面）', 'With the motion comic (its panels)')}{data.drawn === 0 ? t('——这本书还没有画过分镜', ' — no panel is drawn yet') : ''}</span></label>
+        <label className="nv-check"><input type="checkbox" checked={watch} disabled={data.drawn === 0} onChange={(event) => { setWatch(event.target.checked) }} /><span>{t('带上有声漫', 'With the motion comic')}{data.drawn === 0 ? t('——这本书还没有画过分镜', ' — no panel is drawn yet') : ''}</span></label>
         {data.videos !== undefined ? (
           <label className="nv-check">
             <input type="checkbox" checked={video} onChange={(event) => { setVideo(event.target.checked) }} />
             <span>
-              {t(`带上成片视频（${data.videos.chapters} 章剪好的视频，共 ${megabytes(data.videos.bytes)}）`, `With the finished videos (${data.videos.chapters} chapters cut, ${megabytes(data.videos.bytes)} in all)`)}
-              <em className="nv-muted nv-small">{t(' 读者在"看"里看到的就是它；同一章还有有声漫时可以切换。视频是一本书里最大的文件——不带的话，"看"里仍然有有声漫。', ' It is what a reader watches; where a chapter has a motion comic too, they can change between the two. Videos are the largest files a book has — left out, the motion comic still plays.')}</em>
+              {t(`带上成片视频：${data.videos.chapters} 章，共 ${megabytes(data.videos.bytes)}`, `With the finished videos: ${data.videos.chapters} chapter(s), ${megabytes(data.videos.bytes)}`)}
             </span>
           </label>
         ) : null}
         <label className="nv-check">
           <input type="checkbox" checked={album && data.album !== undefined} disabled={data.album === undefined} onChange={(event) => { setAlbum(event.target.checked) }} />
           <span>
-            {t('带上人物和世界（画册）', 'With the people and the world (the album)')}
+            {t('带上人物和世界的画册', 'With the album of people and the world')}
             {data.album === undefined
               ? t('——这本书还没有人物和设定', ' — the book has no people or bible yet')
-              : t(`——已经写进正文的 ${data.album.people} 位人物、${data.album.places} 个地点、${data.album.factions} 个家族与组织、${data.album.items} 件物品，和 ${data.album.ideas} 条世界观`, ` — the ${data.album.people} people, ${data.album.places} places, ${data.album.factions} houses and ${data.album.items} things the text has come to, and ${data.album.ideas} ideas of the world`)}
-            {part !== undefined ? t(`（这是全书的数；只发布到第 ${part.index} 章时，那一章之后才写到的不带，会更少）`, ` (of the whole book; published as far as chapter ${part.index}, what the text comes to after it is left out, so fewer)`) : ''}
-            <em className="nv-muted nv-small">{t(' 每个人带：称呼、一句话身份、外貌、性格、来历、能力、履历、立绘和人设图、和谁是什么关系。动机、缺陷、人物弧光、秘密、备注、怎么画怎么配音——这些只在您的编辑页里，不带出去。地点和物品带：名字、概括、正文、设定图。', ' Of each person: names, who they are in a line, how they look, how they are, where they come from, what they can do, what they go through, portrait and design sheets, who they are to others. What they want and lack, the change planned for them, their secrets, your notes, how they are drawn and voiced — these stay on your editing pages. Of places and things: name, summary, what is written of them, design art.')}</em>
+              : t(`——${data.album.people} 位人物、${data.album.places} 个地点、${data.album.factions} 个家族与组织、${data.album.items} 件物品、${data.album.ideas} 条世界观`, ` — ${data.album.people} people, ${data.album.places} places, ${data.album.factions} houses and groups, ${data.album.items} things, ${data.album.ideas} ideas`)}
+            <em className="nv-muted nv-small">{t(' 动机、缺陷、弧光、秘密、备注和提示词不带出去。', ' Wants, flaws, arcs, secrets, notes and prompts stay behind.')}</em>
           </span>
         </label>
         {data.lines !== undefined ? (
           <label className="nv-check">
             <input type="checkbox" checked={lines && part === undefined} disabled={part !== undefined} onChange={(event) => { setLines(event.target.checked) }} />
             <span>
-              {t(`带上其他剧情线（${data.lines.titles.length} 条：${data.lines.titles.slice(0, 4).join('、')}${data.lines.titles.length > 4 ? ' 等' : ''}；它们自己的 ${data.lines.chapters} 章）`, `With the other lines of the plot (${data.lines.titles.length}: ${data.lines.titles.slice(0, 4).join(', ')}${data.lines.titles.length > 4 ? '…' : ''}; ${data.lines.chapters} chapters of their own)`)}
+              {t(`带上其他剧情线：${data.lines.titles.slice(0, 4).join('、')}${data.lines.titles.length > 4 ? ' 等' : ''}，${data.lines.chapters} 章`, `With the other plot lines: ${data.lines.titles.slice(0, 4).join(', ')}${data.lines.titles.length > 4 ? ' …' : ''}, ${data.lines.chapters} chapter(s)`)}
               <em className="nv-muted nv-small">{part !== undefined
                 ? t(' 只发布到某一章时发布的是主线的一段，不带别的线。', ' A book published as far as one chapter is a part of the main line, without the others.')
-                : t(' 读者在目录里选一条线读；读到故事分开的那一章，章末会给出另外的走法。搁置的线、还没有正文的线不带。不勾就只发布主线。', ' A reader chooses a line on the contents page, and is shown the other ways on at the end of the chapter where the story parts. Lines put aside, and lines with nothing written, do not go. Unticked, only the main line is published.')}</em>
+                : t(' 搁置的线、还没有正文的线不带。', ' Shelved lines and lines with no text are left out.')}</em>
             </span>
           </label>
         ) : null}
         {(data.sides ?? 0) > 0 ? (
           <label className="nv-check">
             <input type="checkbox" checked={sides} onChange={(event) => { setSides(event.target.checked) }} />
-            <span>{t(`带上番外（${data.sides} 场留作番外的幕间：只带它们的文字记录，读者能读、不能玩）`, `With the side stories (${data.sides} interludes kept as side stories: their transcripts, to be read and not played)`)}</span>
+            <span>{t(`带上番外：${data.sides} 场`, `With the side stories: ${data.sides}`)}</span>
           </label>
         ) : null}
         {data.jpeg !== undefined ? (
           <label className="nv-check nv-site-press">
             <input type="checkbox" checked={jpeg && data.jpeg} disabled={!data.jpeg} onChange={(event) => { setJpeg(event.target.checked) }} />
             <span>
-              {t('把图片压缩成 JPG（高质量：看起来一样，体积约为原来的五分之一到十分之一）', 'Compress pictures to JPG (high quality: they look the same, at a fifth to a tenth the size)')}
+              {t('把图片压缩成 JPG，体积约五分之一到十分之一', 'Compress pictures to JPEG, a fifth to a tenth the size')}
               {data.jpeg
-                ? <em className="nv-muted nv-small">{t(' 封面、插图、分镜画面、立绘和设定图都算。书里的原件不动，压缩的只是带出去的那一份；不勾就按书里的原样（PNG，一张两三兆）带出去。带透明的图不压。再次发布时只压缩有变化的图。', ' The cover, illustrations, panels, portraits and design art alike. What is in the book stays as it is; only the copy that goes out is compressed. Unticked, pictures go out as they lie in the book (PNG, two or three megabytes each). A picture that is see-through somewhere is left alone. Published again, only pictures that changed are compressed.')}</em>
-                : <em className="nv-site-press-missing">{t(`——这台电脑上没有 ffmpeg，压缩不了：图片会按书里的原样（PNG）带上，网站会大得多。装上之后再发布一次就会换成压缩的——${FFMPEG_INSTALL[0]}。`, ` — this computer has no ffmpeg, so it cannot: pictures go out as they lie in the book (PNG), and the site is much larger. Install it and publish again to change them over — ${FFMPEG_INSTALL[1]}.`)}</em>}
+                ? <em className="nv-muted nv-small">{t(' 书里的原件不动；带透明的图不压。', ' The book\'s own files are left as they are; pictures with transparency are not compressed.')}</em>
+                : <em className="nv-site-press-missing">{t(`——这台电脑上没有 ffmpeg，压缩不了。${FFMPEG_INSTALL[0]}。`, ` — no ffmpeg on this computer, so nothing can be compressed. ${FFMPEG_INSTALL[1]}.`)}</em>}
             </span>
           </label>
         ) : null}
       </div>
       <label className="nv-check nv-site-mine">
         <input type="checkbox" checked={mine} onChange={(event) => { setMine(event.target.checked) }} />
-        <span>{t('访客第一次打开时，用我现在的阅读设置（字号、纸张、字体、声音注记、语速、音量、播完接下一章）——他们之后可以自己改，改了就按他们的', 'A visitor\'s first visit opens with my reading settings as they are now (type size, paper, typeface, sound notes, speed, volume, going on to the next chapter) — what they then change is theirs')}</span>
+        <span>{t('访客第一次打开时，用我现在的阅读设置', 'Visitors start with my reading settings as they are now')}</span>
       </label>
-      <Field label={t('发布到哪个文件夹', 'Folder to publish into')} hint={t('默认在这本书旁边新建一个文件夹；也可以填别处的路径。再次发布到同一个文件夹，只会更新有变化的文件。', 'By default a new folder beside the book; any other path can be given. Publishing into the same folder again writes only what changed.')}>
+      <Field label={t('发布到哪个文件夹', 'Folder to publish into')} hint={t('再次发布到同一个文件夹，只更新有变化的文件。', 'Publishing to the same folder again only updates what changed.')}>
         <div className="nv-keyrow">
           <TextInput value={out} placeholder={data.out} spellCheck={false} onChange={(event) => { setOut(event.target.value) }} />
           {host.pickDirectory !== undefined ? <Button size="sm" icon="folder" onClick={pick}>{t('选择…', 'Choose…')}</Button> : null}
@@ -280,13 +278,13 @@ function PublishSite() {
       </Field>
       {data.previous !== undefined
         ? <p className={data.previous.sameBook ? 'nv-note' : 'nv-note is-warn'}>{data.previous.sameBook
-            ? t(`这个文件夹里已经发布过这本书（${publishedWhen(data.previous.publishedAt, locale)}，${data.previous.files} 个文件）。再发布一次只更新有变化的部分。`, `This book was published into this folder before (${publishedWhen(data.previous.publishedAt, locale)}, ${data.previous.files} files). Publishing again writes only what changed.`)
-            : t('这个文件夹里发布的是另一本书。继续的话，那本书的网站会被这本书的替换掉。', 'Another book was published into this folder. Going on replaces that book\'s site with this one\'s.')}</p>
-        : data.occupied === true ? <p className="nv-note is-warn">{t('这个文件夹里已经有别的东西。网站的文件会写在它们旁边（不会删改不是这里发布的文件）——通常还是换一个空文件夹更好。', 'This folder already holds other things. The site\'s files are written beside them (nothing that was not published from here is changed or removed) — an empty folder is usually the better choice.')}</p> : null}
+            ? t(`这个文件夹里已发布过这本书（${publishedWhen(data.previous.publishedAt, locale)}，${data.previous.files} 个文件）。`, `This book was published to this folder before (${publishedWhen(data.previous.publishedAt, locale)}, ${data.previous.files} files).`)
+            : t('这个文件夹里是另一本书的网站，继续会把它换掉。', 'This folder holds another book\'s site; going on replaces it.')}</p>
+        : data.occupied === true ? <p className="nv-note is-warn">{t('这个文件夹里已有别的东西，最好换一个空文件夹。', 'This folder already holds other things: an empty one is better.')}</p> : null}
       {data.sealed ? (
         <label className="nv-check nv-site-sealed">
           <input type="checkbox" checked={sealedOk} onChange={(event) => { setSealedOk(event.target.checked) }} />
-          <span><Icon name="lock" size={12} /> {t('这本书是加密的。发布出去的网站是明文：文件夹里的正文、图片和声音谁拿到都能看。我知道，仍然发布。', 'This book is sealed. A published site is not: whoever has the folder can read its text, pictures and sound. I know, publish it all the same.')}</span>
+          <span><Icon name="lock" size={12} /> {t('这本书是加密的，发布出去的是明文。我知道，仍然发布。', 'This book is sealed and what is published is plaintext. I know; publish anyway.')}</span>
         </label>
       ) : null}
       {running !== undefined ? <Progress done={running.progress?.done ?? 0} total={running.progress?.total ?? 0} label={running.progress?.label ?? t('正在写出网站…', 'Writing the site…')} /> : null}
@@ -311,13 +309,13 @@ function PublishSite() {
               {done.pictures.failed.length > 0 ? t(`有 ${done.pictures.failed.length} 张没能压缩，按原样（PNG）带上了：${done.pictures.failed.slice(0, 3).join('、')}${done.pictures.failed.length > 3 ? ' 等' : ''}${done.pictures.reason !== undefined ? `（${done.pictures.reason}）` : ''}`, ` ${done.pictures.failed.length} could not be compressed and went out as PNG: ${done.pictures.failed.slice(0, 3).join(', ')}${done.pictures.failed.length > 3 ? '…' : ''}${done.pictures.reason !== undefined ? ` (${done.pictures.reason})` : ''}`) : null}
             </span>
           ) : null}
-          {done.unshrunk === true ? <span>{t(`图片是按书里的原样（PNG）带上的：这台电脑上没有 ffmpeg。装上之后再发布一次就会换成压缩的——${FFMPEG_INSTALL[0]}。`, `Pictures went out as they lie in the book (PNG): this computer has no ffmpeg. Install it and publish again to change them over — ${FFMPEG_INSTALL[1]}.`)}</span> : null}
-          {done.unpressed === true ? <span>{t(`配音和声音是按书里的原样（WAV）带上的：这台电脑上没有 ffmpeg。装上之后再发布一次就会换成压缩的——${FFMPEG_INSTALL[0]}。`, `Voices and sound went out as they lie in the book (WAV): this computer has no ffmpeg. Install it and publish again to have them compressed — ${FFMPEG_INSTALL[1]}.`)}</span> : null}
+          {done.unshrunk === true ? <span>{t(`图片按原样（PNG）带上了：这台电脑上没有 ffmpeg。${FFMPEG_INSTALL[0]}。`, `Pictures went out as they are (PNG): no ffmpeg on this computer. ${FFMPEG_INSTALL[1]}.`)}</span> : null}
+          {done.unpressed === true ? <span>{t(`配音和声音按原样（WAV）带上了：这台电脑上没有 ffmpeg。${FFMPEG_INSTALL[0]}。`, `Voices and sound went out as they are (WAV): no ffmpeg on this computer. ${FFMPEG_INSTALL[1]}.`)}</span> : null}
           <code className="nv-share-url">{done.dir}</code>
           <div className="nv-row-wrap">
             <Button size="sm" icon="copy" onClick={() => controller.guard(async () => { await navigator.clipboard.writeText(done.dir); controller.toast('success', t('路径已复制', 'Path copied')) })}>{t('复制路径', 'Copy the path')}</Button>
           </div>
-          <span className="nv-muted nv-small">{t('想先在这台电脑上看一眼：在这个文件夹里开一个本地的静态服务器（比如 `npx serve`），用浏览器打开它给的地址。直接双击 index.html 不行——浏览器不让本地文件读旁边的数据。（`python3 -m http.server` 也能看，但它不让播放器跳着取文件：视频拖不动进度，iPhone 上放不了声音和视频。正式的网站托管都没有这个问题。）', 'To look at it on this computer first: start a local static server in the folder (`npx serve`) and open the address it gives. Opening index.html by double-click does not work — a browser does not let a local file read the data beside it. (`python3 -m http.server` shows it too, but does not let a player fetch a file in pieces: a video cannot be scrubbed, and an iPhone plays neither sound nor video from it. No real host has that problem.)')}</span>
+          <span className="nv-muted nv-small">{t('想先在本机看：在这个文件夹里开一个静态服务器（如 `npx serve`）。直接双击 index.html 不行。', 'To look at it here first: start a static server in the folder (`npx serve`, say). Opening index.html directly does not work.')}</span>
           {done.missing.length > 0 ? <span className="nv-small">{t(`有 ${done.missing.length} 个图片或声音文件书里提到了、磁盘上却没有，已跳过：${done.missing.slice(0, 3).join('、')}${done.missing.length > 3 ? ' 等' : ''}`, `${done.missing.length} pictures or sounds the book names are not on disk and were left out: ${done.missing.slice(0, 3).join(', ')}${done.missing.length > 3 ? '…' : ''}`)}</span> : null}
         </div>
       ) : null}

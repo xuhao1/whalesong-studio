@@ -137,8 +137,8 @@ function BookNotice() {
   useEffect(() => {
     if (moved === undefined) return
     controller.toast('info', moved.by === 'author'
-      ? t(`对话已跟到《${moved.title}》：Agent 从下一步起在这本书上工作`, `The conversation followed you to "${moved.title}": the agent works on this book from its next step`)
-      : t(`Agent 把对话切到了《${moved.title}》，工坊已跟过去`, `The agent moved the conversation to "${moved.title}"; the Studio followed`))
+      ? t(`对话已换到《${moved.title}》`, `The conversation is now on "${moved.title}"`)
+      : t(`已跟着对话换到《${moved.title}》`, `Followed the conversation to "${moved.title}"`))
   }, [controller, moved?.nonce])
   return null
 }
@@ -155,12 +155,12 @@ function JobNotice() {
     if (batch !== undefined) {
       const done = batch.rows.reduce((sum, row) => sum + Object.values(row.steps).filter(step => step.state === 'done').length, 0)
       controller.toast(batch.failed > 0 ? 'info' : 'success', batch.failed > 0
-        ? t(`批量任务结束：完成 ${done} 步，${batch.failed} 步没有做成——原因在“任务”里，可以只把没做成的再做一次`, `The batch is over: ${done} steps done, ${batch.failed} did not come about — Jobs says why, and what is missing can be done again`)
+        ? t(`批量任务结束：${done} 步完成，${batch.failed} 步失败，原因见“任务”`, `Batch finished: ${done} done, ${batch.failed} failed — see Tasks`)
         : t(`批量任务完成：${done} 步`, `The batch is done: ${done} steps`))
     } else if (ended.job.kind === 'audio' && typeof output.rendered === 'number') {
       const failed = output.failed ?? 0
       controller.toast(failed > 0 ? 'info' : 'success', failed > 0
-        ? t(`语音合成结束：新合成 ${output.rendered} 句，${failed} 句失败（失败的句子上有原因，可单句重试）`, `Speech finished: ${output.rendered} new lines, ${failed} failed (each failed line says why and can be retried)`)
+        ? t(`语音合成结束：新合成 ${output.rendered} 句，${failed} 句失败`, `Speech finished: ${output.rendered} new, ${failed} failed`)
         : t(`语音合成完成：新合成 ${output.rendered} 句${(output.cached ?? 0) > 0 ? `，${output.cached} 句沿用已有的` : ''}`, `Speech done: ${output.rendered} new lines${(output.cached ?? 0) > 0 ? `, ${output.cached} reused` : ''}`))
     } else if (ended.job.kind === 'audio') controller.toast('success', t('有声脚本已编排好', 'The audio script is ready'))
     else controller.toast('success', t('有声漫这一步完成了', 'The motion-comic step is done'))
@@ -171,19 +171,19 @@ function JobNotice() {
 const NEEDS: Record<Capability, { title: [string, string]; body: [string, string] }> = {
   tts: {
     title: ['还没有配置语音合成', 'Speech is not set up yet'],
-    body: ['配音、有声剧和幕间的人声都要用到一个语音模型。贴一个阿里云百炼或 OpenRouter 的 key 就能一键配好，也可以在设置里填你自己的接口。', 'Voices for audio drama, motion comics and interludes need a speech model. One Aliyun Bailian or OpenRouter key sets it up in one click, or name an endpoint of your own in the settings.'],
+    body: ['配音要用语音模型：贴一个百炼或 OpenRouter 的 key 即可。', 'Voices need a speech model: a Bailian or OpenRouter key sets one up.'],
   },
   image: {
     title: ['还没有配置图像生成', 'Image generation is not set up yet'],
-    body: ['人设图、立绘、插图、封面和分镜都要用到一个绘图模型。可以用 key 一键配好，也可以直接用已经登录的 ChatGPT 订阅（Codex）。', 'Design sheets, portraits, illustrations, covers and panels need an image model. Set it up with a key in one click, or use a ChatGPT subscription that is already signed in (Codex).'],
+    body: ['画图要用绘图模型：贴一个 key，或用已登录的 ChatGPT 订阅。', 'Pictures need an image model: paste a key, or use a signed-in ChatGPT subscription.'],
   },
   text: {
     title: ['有一个模型还缺密钥', 'A model is missing its key'],
-    body: ['这一步要用的模型指向了一个还没有保存密钥的接口。去设置里把密钥贴上，或者把这个角色改成"跟随对话模型"。', 'The model for this step points at an endpoint whose key has not been saved. Paste the key in the settings, or let the role follow the chat model.'],
+    body: ['这一步用的接口还没有密钥：去设置里贴上，或让这个角色跟随对话模型。', 'The endpoint this step uses has no key: add it in Settings, or let the role follow the conversation\'s model.'],
   },
   embedding: {
     title: ['语义检索还缺密钥', 'Retrieval is missing its key'],
-    body: ['语义检索（向量）用的接口还没有保存密钥。去设置里贴上，或者把它关掉——没有它，工坊会改用关键词检索。', 'The endpoint for semantic retrieval has no saved key. Paste it in the settings, or switch retrieval off — the Studio then searches by keywords.'],
+    body: ['语义检索的接口还没有密钥：去设置里贴上，或关掉它改用关键词检索。', 'The semantic search endpoint has no key: add it in Settings, or switch it off for keyword search.'],
   },
 }
 
@@ -292,7 +292,7 @@ function StaleHostNotice() {
     try {
       const stopped = await controller.reloadHost()
       controller.toast('success', stopped > 0
-        ? t(`已换上新版本的后台。有 ${stopped} 个进行中的任务被中断了，可以重新开始。`, `The new backend is up. ${stopped} running jobs were stopped; start them again when you like.`)
+        ? t(`后台已更新，${stopped} 个任务被中断`, `Backend updated; ${stopped} task(s) were interrupted`)
         : t('已换上新版本的后台。', 'The new backend is up.'))
     } catch (error) {
       setFailed(true)
@@ -300,7 +300,7 @@ function StaleHostNotice() {
     }
   })
   const ask = (): void => {
-    if (running > 0) confirm.ask(t(`有 ${running} 个任务正在进行，重启后台会中断它们（做完的部分都在，之后可以接着做）。已解锁的加密书需要重新解锁。现在重启？`, `${running} jobs are running, and restarting the backend stops them (what they finished is kept; they can be taken up again). Sealed books that are unlocked will need unlocking again. Restart now?`), () => { void change() })
+    if (running > 0) confirm.ask(t(`有 ${running} 个任务正在进行，重启会中断它们；已解锁的加密书要重新解锁。现在重启？`, `${running} task(s) are running and a restart interrupts them; unlocked sealed books lock again. Restart now?`), () => { void change() })
     else void change()
   }
   const can = reloadable === true && !failed
@@ -310,10 +310,10 @@ function StaleHostNotice() {
         <Icon name="refresh" size={14} />
         <b>{can ? t('小说工坊更新了', 'Novel Studio was updated') : t('请重启 DSH', 'Restart DSH')}</b>
         {can
-          ? t('——界面已经是新的，后台还是旧版本。点“重启”把后台也换成新的：只重启工坊自己的后台，DSH 和对话都不动，几秒钟就好。', ' — what you see is the new version, what works behind it is still the old one. "Restart" brings the backend up to date: only the Studio\'s own backend restarts, DSH and its conversations stay as they are, and it takes a few seconds.')
+          ? t('——后台还是旧版本。', ' — the backend is still the old one.')
           : failed
-            ? t('——后台没能自己换成新版本，这一次请重启 DSH。', ' — the backend could not change to the new version by itself; restart DSH this once.')
-            : t('——小说工坊刚刚更新过：界面已经是新的，后台还是 DSH 这次启动时装载的旧版本。这一次要重启 DSH 才能一致（之后的更新可以在这里一键重启）；在那之前，新加的功能可能用不了，或者表现得不对。', ' — Novel Studio was just updated: what you see is the new version, what works behind it is still the one DSH loaded when it started. This once DSH has to be restarted for them to match (later updates restart from here with one press); until then, what is new may not work, or not as it should.')}
+            ? t('——后台没能换成新版本，请重启 DSH。', ' — the backend could not be replaced; restart DSH.')
+            : t('——后台还是旧版本，这一次要重启 DSH。', ' — the backend is still the old one; restart DSH this once.')}
       </span>
       {can ? <Button size="sm" variant="primary" icon="refresh" busy={restart.busy} pending={t('正在重启…', 'Restarting…')} onClick={ask}>{t('重启', 'Restart')}</Button> : null}
       <Button size="sm" variant="ghost" onClick={() => { setHidden(true) }}>{t('知道了', 'Got it')}</Button>
@@ -340,8 +340,8 @@ function NoSwarmNotice() {
         <Icon name="users" size={14} />
         <b>{t('子智能体没有开启', 'Subagents are switched off')}</b>
         {crew.loop
-          ? t('——小说工坊的场记、策划、导演、后期都是 DSH 的子智能体。现在 DSH 的子智能体功能（@deepseek-ai/dsh-subagent）被关掉了：各个角色只能一问一答地干活，不能查原文、不能自查，运行过程也看不到。请在 DSH 的"设置 → 插件"里把它启用，然后重启 DSH。', ' — the Studio\'s continuity, planner, director and post-production are subagents of DSH. DSH\'s subagent service (@deepseek-ai/dsh-subagent) is switched off here: each role can only answer one request at a time — it cannot look up the text, check its own work, or be watched. Enable it under DSH\'s Settings → Plugins, then restart DSH.')
-          : t('——这个 DSH 没有 agent 循环（纯后台模式）：各个角色只能一问一答地干活。', ' — this DSH runs no agent loop (a bare headless core): each role can only answer one request at a time.')}
+          ? t('——各个角色现在只能一问一答。请在 DSH“设置 → 插件”里启用 @deepseek-ai/dsh-subagent，再重启 DSH。', ' — every role can only answer one request at a time. Enable @deepseek-ai/dsh-subagent under DSH Settings → Plugins, then restart DSH.')
+          : t('——这个 DSH 没有 agent 循环，各个角色只能一问一答。', ' — this DSH runs no agent loop: every role answers one request at a time.')}
       </span>
       <Button size="sm" variant="ghost" onClick={() => { setHidden(true) }}>{t('知道了', 'Got it')}</Button>
     </div>
@@ -396,7 +396,7 @@ function Header({ onSearch }: { onSearch: () => void }) {
         label={project.manifest.title}
         icon="book"
         items={[
-          ...others.map(ref => ({ label: controller.sessionId !== undefined ? t(`${ref.title}（对话一起换过去）`, `${ref.title} (the conversation moves too)`) : ref.title, icon: 'book' as IconName, onSelect: () => { void controller.guard(async () => { await controller.openProject(ref.root) }) } })),
+          ...others.map(ref => ({ label: ref.title, icon: 'book' as IconName, onSelect: () => { void controller.guard(async () => { await controller.openProject(ref.root) }) } })),
           ...(others.length > 0 ? ['separator' as const] : []),
           // The shelf is the home page; starting something new has a page of its own behind it.
           { label: t('回书架', 'Back to the shelf'), icon: 'home', onSelect: () => { controller.kept.delete('onboard.page'); controller.closeProject() } },
@@ -443,7 +443,7 @@ function LinkedChip({ title, others }: { title: string; others: ProjectRef[] }) 
     <Popover
       className="nv-linked-card"
       trigger={({ open, toggle }) => (
-        <button type="button" className={cx('nv-linked', open && 'is-open')} aria-expanded={open} onClick={toggle} title={t('对话和这块面板在同一本书上——点开看这是什么意思', 'The conversation and this panel are on the same book — click for what that means')}>
+        <button type="button" className={cx('nv-linked', open && 'is-open')} aria-expanded={open} onClick={toggle} title={t('对话和这块面板在同一本书上', 'The conversation and this panel are on the same book')}>
           <Icon name="chat" size={12} />
           <span>{t('对话同步', 'In sync')}</span>
         </button>
@@ -452,12 +452,7 @@ function LinkedChip({ title, others }: { title: string; others: ProjectRef[] }) 
       {close => (
         <>
           <strong>{t(`对话正在《${title}》上`, `The conversation is on "${title}"`)}</strong>
-          <p>{t('你在左边对总编说的话、它调用的工具，默认都作用在这本书上；这块面板显示的也是这本书。两边始终是同一本。', 'What you say to the showrunner on the left, and the tools it calls, act on this book; this panel shows the same book. The two always stay together.')}</p>
-          <ul>
-            <li>{t('在这里换书，对话跟着换过去——之后说的话就是在说新那本。', 'Change book here and the conversation moves with you — what you say next is about the new one.')}</li>
-            <li>{t('让总编换书（"我们来写另一本"），这块面板也跟着换。', 'Ask the showrunner to change book and this panel follows.')}</li>
-            <li>{t('只想让总编碰一下别的书（比如抄一个人物过来），直接说书名，不用换。', 'To have the showrunner touch another book once (copying a character over, say), just name it — no need to move.')}</li>
-          </ul>
+          <p>{t('在这里换书，对话跟着换；让总编换书，这里也跟着换。', 'Change book here and the conversation follows; ask the showrunner to change book and this panel follows.')}</p>
           {others.length > 0 ? (
             <div className="nv-linked-books">
               <span className="nv-muted nv-small">{t('换到：', 'Move to:')}</span>

@@ -94,9 +94,9 @@ export function TidyDialog({ onClose }: { onClose: () => void }) {
         {same.length + kinds.length > 0 ? <Button variant="primary" busy={doing.busy} pending={t('正在整理…', 'Tidying…')} disabled={chosen === 0 || busy} onClick={apply}>{t(`照勾选的做（${chosen}）`, `Do what is ticked (${chosen})`)}</Button> : null}
       </>
     )}>
-      <p className="nv-muted">{t('导入的书、写了很久的书，同一处地方常常被记成好几条（"宁府""东府""宁国府"），也有类别放错的。让策划把全部条目看一遍，列出它有把握的；下面每一行您可以取消勾选，合并时留下哪个名字也可以改。只有您点了"照勾选的做"才会动设定。', 'In an imported book, or one written over a long time, one place is often written down several times under its different names, and some entries are filed under the wrong kind. The planner looks all entries over and lists what it is sure of; untick any line, and choose which name stays in a merge. Nothing is changed until you press the button.')}</p>
+      <p className="nv-muted">{t('让策划找出记重了的条目和放错类别的。它只提议，勾选后才会改。', 'The planner looks for entries kept twice and ones filed wrongly. It only proposes; nothing changes until you tick and apply.')}</p>
       {busy ? <p className="nv-row"><Spinner size={13} /><span className="nv-muted">{running?.progress?.label ?? t(`策划正在把 ${project.world.length} 个条目看一遍…`, `The planner is looking over ${project.world.length} entries…`)}</span></p> : null}
-      {done !== undefined ? <p className="nv-note is-ok" role="status">{t(`做完了：合并了 ${done.merged} 组，改了 ${done.moved} 条的类别。并进去的名字成了留下那一条的别名，它们的正文、图和关系也都归了它。`, `Done: ${done.merged} groups merged, ${done.moved} entries moved to another kind. The names folded in are other names of the entry that stayed; their text, pictures and ties are its now.`)}</p> : null}
+      {done !== undefined ? <p className="nv-note is-ok" role="status">{t(`做完了：合并了 ${done.merged} 组，改了 ${done.moved} 条的类别。`, `Done: ${done.merged} group(s) merged, ${done.moved} entr(ies) refiled.`)}</p> : null}
       {found !== undefined && !busy && same.length + kinds.length === 0 && done === undefined ? <p className="nv-note">{t(`策划看了 ${found.entries} 个条目，没有发现记重了的或类别放错的。`, `The planner looked over ${found.entries} entries and found none written down twice or filed wrongly.`)}</p> : null}
       {same.length > 0 ? (
         <section className="nv-tidy">
@@ -164,7 +164,7 @@ export function MergeDialog({ entry, onClose }: { entry: WorldEntry; onClose: ()
   })
   return (
     <Modal title={t(`合并「${entry.name}」`, `Merge "${entry.name}"`)} onClose={onClose} footer={<Button variant="primary" icon="branch" busy={busy} pending={t('正在合并…', 'Merging…')} disabled={chosen === undefined} onClick={merge}>{t('合并成一条', 'Make them one')}</Button>}>
-      <p className="nv-muted">{t('两条并成一条：并进去的那个名字成为留下那一条的别名（正文里按别名也能数到它），它的正文留在留下那一条的正文末尾，它的图在留下那一条没有图时接过来，关系和场景上的按钮都改指留下的那一条。合并之后不能一键拆回去。', 'The two become one: the name folded in is another name of the one that stays (the text is counted by it too), its text is kept at the end of the other\'s, its picture is taken over where the other has none, and ties and scene marks point at the one that stays. A merge cannot be taken apart again with one press.')}</p>
+      <p className="nv-muted">{t('并进去的那一条成为留下那一条的别名，正文、图和关系都归它。合并后不能拆回。', 'The one folded in becomes an alias of the one kept, which takes its text, art and ties. A merge cannot be undone.')}</p>
       <Field label={t('和它是同一样东西的', 'The entry it is one thing with')}>
         <Select value={other} options={[{ value: '', label: t('请选择…', 'Choose…') }, ...others.map(candidate => ({ value: candidate.id, label: `${candidate.name}${groupOf(candidate.category) !== group ? ` · ${t(...WORLD_CATEGORY[candidate.category])}` : ''}` }))]} onChange={setOther} />
       </Field>

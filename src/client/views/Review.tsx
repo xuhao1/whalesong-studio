@@ -61,10 +61,10 @@ function Proposals() {
         failed += 1
       }
     }
-    if (failed > 0) controller.toast('error', t(`${failed} 条提案没能处理（对应的正文可能已被修改）。`, `${failed} proposals could not be settled (their passages may have changed).`))
+    if (failed > 0) controller.toast('error', t(`${failed} 条提案没能处理，正文可能已被改过`, `${failed} proposal(s) could not be applied: the text may have changed`))
   })
   if (project.proposals.length === 0) {
-    return <Empty icon="checkCircle" title={t('没有待处理的提案', 'No proposals waiting')}>{t('在写作视图里选中文字让写手改写，或在"全书修订"里发起一次修订，改动都会先来到这里等你定夺。', 'Select text in Write to have it rewritten, or start a book-wide revision — every change waits here for your decision.')}</Empty>
+    return <Empty icon="checkCircle" title={t('没有待处理的提案', 'No proposals waiting')}>{t('写手和修订提出的改动会先来到这里。', 'Changes the writer and revisions propose arrive here first.')}</Empty>
   }
   return (
     <div className="nv-proposals">
@@ -104,12 +104,12 @@ function Suggestions() {
     }
   })
   if (project.suggestions.length === 0) {
-    return <Empty icon="sparkles" title={t('没有待处理的设定建议', 'No bible suggestions waiting')}>{t('收录章节时，场记会留意正文里新出现的人物、地点与线索，以及人物的登场、退场与死亡，并在这里提出建议。', 'While digesting, continuity notices new characters, places and threads in the prose, and entrances, exits and deaths — and proposes them here.')}</Empty>
+    return <Empty icon="sparkles" title={t('没有待处理的设定建议', 'No bible suggestions waiting')}>{t('收录章节时发现的新人物、地点和线索会列在这里。', 'New people, places and threads found while digesting are listed here.')}</Empty>
   }
   return (
     <div className="nv-suggestions">
       <div className="nv-toolbar">
-        <span className="nv-muted">{t('这些是从正文里发现、但设定里还没有的东西。采纳会写入设定或大纲。', 'Found in the prose but missing from the bible. Accepting writes them into the bible or the outline.')}</span>
+        <span className="nv-muted">{t('正文里有、设定里还没有的。采纳会写入设定或大纲。', 'In the text and not yet in the bible. Accepting writes it to the bible or the outline.')}</span>
         <span className="nv-spacer" />
         <Button size="sm" variant="ghost" busy={busy} onClick={() => { settleAll(false) }}>{t('全部忽略', 'Dismiss all')}</Button>
         <Button size="sm" variant="primary" icon="check" busy={busy} onClick={() => { settleAll(true) }}>{t('全部采纳', 'Accept all')}</Button>
@@ -162,7 +162,7 @@ function Issues() {
   return (
     <div className="nv-issues">
       <div className="nv-toolbar">
-        <span className="nv-muted">{t('审校对照设定、记忆与文风逐章检查；点开一章可以定位问题并让 AI 修。', 'A review checks each chapter against the bible, memory and style; open a chapter to locate issues and fix them with AI.')}</span>
+        <span className="nv-muted">{t('审校对照设定、记忆与文风逐章检查。', 'A review checks each chapter against the bible, memory and style.')}</span>
         <span className="nv-spacer" />
         {batch === undefined && undigested.length > 0 ? <Button size="sm" icon="layers" pending={t('正在开始…', 'Starting…')} onClick={() => start(['digest'], undigested.map(chapter => chapter.id))} title={t('审校要对照记忆：先把还没收录的章节收录进去', 'A review checks against memory: take the chapters that are not digested yet into it first')}>{t(`收录未收录的 ${undigested.length} 章`, `Digest ${undigested.length} chapters`)}</Button> : null}
         {batch === undefined && pending.length > 0 ? <Button size="sm" icon="checkCircle" pending={t('正在开始…', 'Starting…')} onClick={() => start(['review'], pending.map(chapter => chapter.id))}>{t(`一键审校未审的 ${pending.length} 章`, `Review ${pending.length} unreviewed chapters`)}</Button> : null}
@@ -246,7 +246,7 @@ function BookRevision({ onStarted }: { onStarted: () => void }) {
     <div className="nv-book-revision">
       <section className="nv-card">
         <SectionTitle>{t('对全书提一个修改要求', 'Ask for a change across the whole book')}</SectionTitle>
-        <p className="nv-muted nv-small">{t('策划先判断哪些章节受影响，写手只改这些章节；每一章的改动都作为提案等你对比定夺，不会直接覆盖正文。', 'The planner first decides which chapters are affected; the writer changes only those. Every chapter comes back as a proposal to compare — nothing is overwritten directly.')}</p>
+        <p className="nv-muted nv-small">{t('策划先判断哪些章节受影响，写手只改这些章；改动作为提案等你确认。', 'The planner decides which chapters are affected and the writer changes only those; each change waits as a proposal.')}</p>
         <div className="nv-form-grid">
           {project.world.length > 0 ? (
             <Field label={t('同步一条世界观变更', 'Carry a world change through')}>
@@ -260,7 +260,7 @@ function BookRevision({ onStarted }: { onStarted: () => void }) {
           ) : null}
         </div>
         <Field label={t('修改要求', 'The instruction')}>
-          <TextArea value={instruction} minRows={4} maxRows={14} placeholder={t('例：把女主的口头禅"无所谓"全部去掉；把第一人称改成第三人称有限视角；把所有"灵力"改称"炁"并调整相关描写', 'e.g. drop the heroine\'s catchphrase everywhere; move from first person to third limited; rename "mana" to "aether" and adjust the passages around it')} onChange={(event) => { setInstruction(event.target.value) }} />
+          <TextArea value={instruction} minRows={4} maxRows={14} placeholder={t('例：把所有“灵力”改称“炁”并调整相关描写', 'E.g. call every "spirit power" "qi" and adjust the descriptions around it')} onChange={(event) => { setInstruction(event.target.value) }} />
         </Field>
         <Field label={t('范围', 'Scope')}>
           <Select value={scope} options={[{ value: 'auto', label: t('由策划判断哪些章节需要改', 'Let the planner decide which chapters change') }, { value: 'pick', label: t('只在我选的章节里改', 'Only the chapters I pick') }]} onChange={setScope} />

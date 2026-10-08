@@ -88,8 +88,8 @@ export function apply(ctx: ClientContext): void {
   const api: NovelApi = createApi(ctx.connection, {
     onOlderHost: () => { noteOlderHost() },
     olderHostMessage: () => (getLocale().toLowerCase().startsWith('zh')
-      ? '这个功能要等重启 DSH 之后才能用：小说工坊刚更新过，后台还是这次启动时的旧版本。'
-      : 'This needs DSH restarted first: Novel Studio was just updated, and what runs behind it is still the version DSH started with.'),
+      ? '后台还是旧版本：请先重启。'
+      : 'The backend is still the old version: restart first.'),
   })
   const subscribeLocale = (listener: () => void): (() => void) => ctx.locale.subscribe(listener)
   const getLocale = (): string => ctx.locale.getSnapshot().active

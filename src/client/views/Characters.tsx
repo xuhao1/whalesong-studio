@@ -10,7 +10,8 @@
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { VoiceOption } from '../../shared/rpc'
-import type { CharacterCard, CharacterLook, CharacterRole, LifeMark, SortedNotes } from '../../shared/types'
+import type { CharacterCard, CharacterLook, CharacterRole, LifeMark, SignatureScene, SortedNotes } from '../../shared/types'
+import { sceneFor, scenesOf } from '../../shared/art'
 import { lifeEnd, lifeLine, type Life, type LifeEvent, type LifeStanding } from '../../shared/life'
 import { lines, options, useAssist } from '../forms'
 import { sceneOf, sheetsDrawn, type PortraitScene } from '../labels'
@@ -139,8 +140,8 @@ export function CharacterCards({ shown, grouped, searching, lives }: { shown: Ch
     // The sheet comes first: whoever has none gets one before their portrait — said here, where the calls are counted.
     const sheetless = settings?.settings.image.sheetFirst === false ? 0 : faceless.filter(item => item.visual?.sheet === undefined).length
     // So does their scene: whoever has none on their card has the director pick one from the book first.
-    const sceneless = settings?.settings.image.portraitScene === false || !project.chapters.some(chapter => chapter.hasText) ? 0 : faceless.filter(item => (item.visual?.scene ?? '').trim().length === 0).length
-    confirm.ask(t(`要为列表里还没有定妆照的 ${todo.length} 个人物各画一张吗？每张调用一次绘图模型，一张一张画，随时可以在底部停下。${sheetless > 0 ? `其中 ${sheetless} 人还没有人设图：会先画人设图、再照着它画立绘（各多一次调用）。` : ''}${sceneless > 0 ? `${sceneless} 人还没定名场面：导演会先从书里各挑一幕（各多一次导演的调用），立绘照那一幕画。` : ''}（只画现在筛出来的这些人；想少画就先在上面筛一下。）`, `Draw a portrait for each of the ${todo.length} characters listed here without one? One image-model call each, one after another; stop any time from the bar below. ${sheetless > 0 ? `${sheetless} of them have no design sheet yet: the sheet is drawn first and the portrait against it (one more call each). ` : ''}${sceneless > 0 ? `${sceneless} have no signature scene yet: the director first picks one each from the book (one more director run each), and the portrait is drawn from it. ` : ''}(Only the people the filter shows: narrow it first to draw fewer.)`), () => {
+    const sceneless = settings?.settings.image.portraitScene === false || !project.chapters.some(chapter => chapter.hasText) ? 0 : faceless.filter(item => scenesOf(item).length === 0).length
+    confirm.ask(t(`给 ${todo.length} 个还没有定妆照的人物各画一张？${sheetless > 0 ? `其中 ${sheetless} 人会先画人设图。` : ''}${sceneless > 0 ? `${sceneless} 人会先由导演找名场面。` : ''}`, `Draw a portrait for each of the ${todo.length} without one?${sheetless > 0 ? ` ${sheetless} get a design sheet first.` : ''}${sceneless > 0 ? ` For ${sceneless} the director finds their signature scenes first.` : ''}`), () => {
       void controller.guard(async () => {
         setBatch({ done: 0, total: todo.length })
         try {
@@ -194,7 +195,7 @@ export function CharacterCards({ shown, grouped, searching, lives }: { shown: Ch
       <aside className="nv-split-list">
         <div className="nv-people-tools">
           <div className="nv-seg" role="group" aria-label={t('人物列表的样子', 'How the list looks')}>
-            <button type="button" className={cx(mode === 'photos' && 'is-active')} onClick={() => { pick('photos') }} title={t('每个人显示定妆照（立绘；没有立绘时用人设图的正面）', 'Show everyone\'s portrait (or the front view of their design sheet)')}><Icon name="users" size={13} /><span>{t('定妆照', 'Portraits')}</span></button>
+            <button type="button" className={cx(mode === 'photos' && 'is-active')} onClick={() => { pick('photos') }} title={t('显示定妆照', 'Show portraits')}><Icon name="users" size={13} /><span>{t('定妆照', 'Portraits')}</span></button>
             <button type="button" className={cx(mode === 'minimal' && 'is-active')} onClick={() => { pick('minimal') }} title={t('只看名字和定位，不显示图片', 'Names and roles only, no pictures')}><Icon name="list" size={13} /><span>{t('极简', 'Minimal')}</span></button>
           </div>
           <Button size="sm" icon="plus" variant="primary" onClick={() => { setCreating(true) }}>{t('新建人物', 'New character')}</Button>
@@ -219,7 +220,7 @@ export function CharacterCards({ shown, grouped, searching, lives }: { shown: Ch
           )
         })}
         {project.characters.length === 0
-          ? <p className="nv-muted nv-pad">{t('还没有人物。新建一个，或让总编 / 策划根据故事核起草。', 'No characters yet. Create one, or let the showrunner draft the cast from the premise.')}</p>
+          ? <p className="nv-muted nv-pad">{t('还没有人物。', 'No characters yet.')}</p>
           : listed.length === 0 ? <p className="nv-muted nv-pad">{t('上面的筛选条件下没有人物。', 'Nobody passes the filter above.')}</p> : null}
         <button type="button" className="nv-add-row" onClick={() => { controller.openCast('walkons') }}>{t('没立卡的路人、龙套在"龙套"页签里管 →', 'People without a card are kept under Walk-ons →')}</button>
       </aside>
@@ -300,8 +301,8 @@ function LifeBlock({ card, lives, value, dirty, onChange }: { card: CharacterCar
     <section className="nv-life">
       <SectionTitle actions={(
         <>
-          <Button size="sm" variant="ghost" icon="pen" onClick={() => { if (marking !== undefined) setMarking(undefined); else start() }} title={t('收录漏记或记错了——亲手记一笔：在某一章登场、回归、离开或死亡；也可以记"故事开始之前就已经不在了"。你记的盖过收录对那一章的说法', 'Where a digest missed something or has it wrong — write it down yourself: comes on, comes back, leaves or dies at a chapter; or was gone before the story begins. Your word holds over the digest\'s for that chapter')}>{t('记一笔', 'Write a mark')}</Button>
-          <Button size="sm" icon="feather" disabled={dirty || life === undefined} busy={writing} pending={t('场记正在写…', 'Continuity is writing…')} onClick={write} title={dirty ? t('先保存当前修改', 'Save your edits first') : life === undefined ? t('还没有哪一章的收录里记到这个人', 'No chapter\'s digest names them yet') : t('让场记根据各章的收录，把这个人在书里的经历写成一段话', 'Have continuity tell their life in the book in a paragraph, from the chapter digests')}>{value.length > 0 ? t('重写一段', 'Write it again') : t('写成一段话', 'Tell it in a paragraph')}</Button>
+          <Button size="sm" variant="ghost" icon="pen" onClick={() => { if (marking !== undefined) setMarking(undefined); else start() }} title={t('亲手记一笔：登场、回归、离开或死亡', 'Write one down yourself: an entrance, a return, a leaving, a death')}>{t('记一笔', 'Write a mark')}</Button>
+          <Button size="sm" icon="feather" disabled={dirty || life === undefined} busy={writing} pending={t('场记正在写…', 'Continuity is writing…')} onClick={write} title={dirty ? t('先保存当前修改', 'Save your edits first') : life === undefined ? t('还没有哪一章的收录里记到这个人', 'No chapter\'s digest names them yet') : t('让场记把这个人的经历写成一段话', 'Have the scribe write what this person has lived through as a paragraph')}>{value.length > 0 ? t('重写一段', 'Write it again') : t('写成一段话', 'Tell it in a paragraph')}</Button>
         </>
       )}>{t('履历', 'Life on the page')}{lives.line !== undefined ? <span className="nv-muted"> · {lives.line.title}</span> : null}</SectionTitle>
       {lives.chapters.length > 0 ? (
@@ -323,10 +324,10 @@ function LifeBlock({ card, lives, value, dirty, onChange }: { card: CharacterCar
       {told !== undefined ? (
         <p className="nv-life-line">
           <span className={cx(gone?.dead === true && 'is-dead')}>{told}</span>
-          <span className="nv-muted">{t(`（共 ${life!.events.filter(event => event.index >= 1).length} 章；这条线已收录 ${digested} / ${lives.chapters.length} 章）`, ` (${life!.events.filter(event => event.index >= 1).length} chapters; ${digested} of this line's ${lives.chapters.length} digested)`)}</span>
+          <span className="nv-muted">{t(`共 ${life!.events.filter(event => event.index >= 1).length} 章，这条线已收录 ${digested} / ${lives.chapters.length} 章`, `${life!.events.filter(event => event.index >= 1).length} chapter(s); ${digested} of this line's ${lives.chapters.length} digested`)}</span>
         </p>
       ) : (
-        <p className="nv-muted nv-small">{digested === 0 ? t('这条线上还没有收录过的章节：履历是从各章的收录里读出来的。', 'No chapter of this line is digested yet: a life is read off the chapter digests.') : t(`已收录的 ${digested} 章里都没有记到这个人。`, `None of the ${digested} digested chapters names them.`)}</p>
+        <p className="nv-muted nv-small">{digested === 0 ? t('这条线上还没有收录过的章节。', 'No chapter of this line is digested yet.') : t(`已收录的 ${digested} 章里都没有记到这个人。`, `None of the ${digested} digested chapters names them.`)}</p>
       )}
       {marks.length > 0 || marking !== undefined ? (
         <div className="nv-life-marks">
@@ -346,15 +347,15 @@ function LifeBlock({ card, lives, value, dirty, onChange }: { card: CharacterCar
             <div className="nv-life-mark-form">
               <Select value={marking.chapter} options={[{ value: BEFORE, label: t('故事开始之前', 'Before the story begins') }, ...lives.chapters.map(chapter => ({ value: chapter.id, label: t(`第 ${chapter.index} 章 ${chapter.title}`, `Ch. ${chapter.index} ${chapter.title}`) }))]} onChange={(chapter) => { setMarking({ ...marking, chapter, ...(chapter === BEFORE && marking.kind !== 'death' && marking.kind !== 'exit' ? { kind: 'death' as const } : {}) }) }} />
               <Select value={marking.kind} options={MARK_KINDS.filter(kind => marking.chapter !== BEFORE || kind.value === 'death' || kind.value === 'exit').map(kind => ({ value: kind.value, label: marking.chapter === BEFORE ? (kind.value === 'death' ? t('已故', 'dead') : t('已离开', 'gone')) : t(...kind.label) }))} onChange={(kind) => { setMarking({ ...marking, kind }) }} />
-              <TextInput value={marking.what} placeholder={t('发生了什么（可不填）', 'What happened (optional)')} onChange={(event) => { setMarking({ ...marking, what: event.target.value }) }} />
+              <TextInput value={marking.what} placeholder={t('发生了什么', 'What happened')} onChange={(event) => { setMarking({ ...marking, what: event.target.value }) }} />
               <Button size="sm" variant="primary" pending={t('正在记下…', 'Writing it down…')} onClick={() => saveMark(marking.chapter, marking.kind, marking.what)}>{t('记下', 'Write it down')}</Button>
               <Button size="sm" variant="ghost" onClick={() => { setMarking(undefined) }}>{t('取消', 'Cancel')}</Button>
-              <p className="nv-muted nv-small">{t('你记的这一笔盖过收录对这一章的说法，在这一章所在的每条世界线上都算数；一章只记一笔。记了"死亡 / 离开"之后，后面的章节里再提到他只算被提起，要让他回来就再记一笔"回归"。', 'Your mark holds over what the digest says of that chapter, on every line of the plot the chapter is read on; one mark a chapter. After a death or a leaving of yours, later chapters that have them only remember them — to bring them back, write a return.')}</p>
+              <p className="nv-muted nv-small">{t('你记的盖过收录对这一章的说法；一章只记一笔。', 'Your mark overrides what the digest says of the chapter; one mark per chapter.')}</p>
             </div>
           ) : null}
         </div>
       ) : null}
-      <Field label={t('履历（一段话）', 'The life, in a paragraph')} hint={t('这个人在书里实际经历了什么——和"人物弧光"（打算怎么写）不同。可以自己写，也可以让场记按收录写。', 'What they actually go through in the book — unlike the arc, which is the plan. Write it yourself, or have continuity write it from the digests.')}>
+      <Field label={t('履历', 'Their course')} hint={t('这个人在书里实际经历了什么', 'What this person has lived through in the book')}>
         <TextArea value={value} minRows={2} maxRows={10} onChange={(event) => { onChange(event.target.value) }} />
       </Field>
       {life !== undefined && life.events.length > 0 ? (
@@ -443,24 +444,25 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
   const [notes, setNotes] = useState('')
   const [sorted, setSorted] = useState<{ kind: 'sheet' | 'portrait'; how: SortedNotes } | undefined>()
   // Which moment of the book the portrait just drawn shows: the director's pick, or the one the card had.
-  const [pictured, setPictured] = useState<PortraitScene | undefined>()
-  // What the author wants of the scene when it is picked anew: it guides the director.
-  const [wish, setWish] = useState('')
+  const [pictured, setPictured] = useState<(PortraitScene & { path?: string | undefined }) | undefined>()
+  // Which of their moments the next portrait shows: an id, 'plain' for none of them, '' for the one the card marks.
+  const [moment, setMoment] = useState('')
   const sheets = useSheetsAsk()
-  const draw = (kind: 'sheet' | 'portrait', done: string, look?: string): Promise<unknown> | undefined => {
+  const draw = (kind: 'sheet' | 'portrait', done: string, look?: string, scene?: string): Promise<unknown> | undefined => {
     if (!controller.need('image')) return undefined
     // A look (outfit) is described on its own row; the ideas here are for the main sheet and the portrait.
     const jotted = look === undefined ? notes.trim() : ''
     const go = (choice: SheetsChoice): Promise<unknown> => controller.guard(async () => {
-      const job = await controller.run('image.create', { root, kind, target: card.id, ...(look !== undefined ? { look } : {}), ...(jotted.length > 0 ? { notes: jotted } : {}), ...choice })
+      const job = await controller.run('image.create', { root, kind, target: card.id, ...(look !== undefined ? { look } : {}), ...(jotted.length > 0 ? { notes: jotted } : {}), ...(kind !== 'portrait' ? {} : (scene ?? moment) === 'plain' ? { plain: true } : (scene ?? moment).length > 0 ? { scene: scene ?? moment } : {}), ...choice })
       const how = job.result?.sorted as SortedNotes | undefined
       if (how !== undefined) {
         setSorted({ kind, how })
         setNotes('')
       }
-      const scene = kind === 'portrait' ? sceneOf(job) : undefined
-      if (kind === 'portrait') setPictured(scene)
-      controller.toast('success', `${done}${scene?.text !== undefined ? (scene.asked !== undefined ? t('：场面是导演按你写的要求挑的', ': the director picked its scene by what you asked') : t('：画的是这个人的名场面', ': in their signature scene')) : ''}${sheetsDrawn(job, t)}`)
+      const shown = kind === 'portrait' ? sceneOf(job) : undefined
+      // One of the card's own moments shows in its row; what is said here is what the author could not have known: a moment settled for this picture alone, or none.
+      if (kind === 'portrait') setPictured(shown?.asked !== undefined || shown?.none !== undefined ? { ...shown, path: (job.result?.output as { path?: string } | undefined)?.path } : undefined)
+      controller.toast('success', `${done}${shown?.title !== undefined ? t(`：${shown.title}`, `: ${shown.title}`) : ''}${sheetsDrawn(job, t)}`)
     })
     // A portrait of somebody without a design sheet draws the sheet first: asked, before anything is drawn.
     return kind === 'portrait' ? sheets.before([{ kind: 'portrait', target: card.id }], go) : go({})
@@ -473,7 +475,8 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
     ...(draft.visual?.looks ?? []).filter(look => look.sheet !== undefined).map(look => ({ key: `look:${look.id}`, label: look.name.length > 0 ? look.name : t('造型', 'Look'), path: look.sheet!, wide: true })),
   ]
   const [picked, setPicked] = useState<string | undefined>()
-  const [viewing, setViewing] = useState(false)
+  // The picture opened large: one of the strip's, or the portrait of one of their moments.
+  const [viewing, setViewing] = useState<string | undefined>()
   const picture = pictures.find(item => item.key === picked) ?? pictures[0]
   const sheetBusy = drawing?.title === 'illustrate sheet'
   const portraitBusy = drawing?.title === 'illustrate portrait'
@@ -484,14 +487,15 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
   const portraitBehind = portraitOf !== undefined && draft.visual?.sheet !== undefined && !(portraitOf.parts?.references ?? []).some(reference => reference.path === draft.visual!.sheet)
   const anchorField = `nv-anchor-${card.id}`
   const sceneField = `nv-scene-${card.id}`
-  const picking = useRunningJob(job => job.kind === 'bible' && job.title.startsWith('portrait scene') && job.target === card.id) !== undefined
-  const scenes = settings?.settings.image.portraitScene !== false
+  const scenic = settings?.settings.image.portraitScene !== false
+  const moments = scenesOf(draft)
+  const marked = sceneFor(draft)
 
   return (
     <div className={cx('nv-person-page', pictures.length === 0 && 'is-bare')}>
       <aside className="nv-person-figure">
         {picture !== undefined ? (
-          <button type="button" className={cx('nv-person-picture', picture.wide && 'is-wide')} onClick={() => { setViewing(true) }} title={t('点开看大图', 'Open it large')}>
+          <button type="button" className={cx('nv-person-picture', picture.wide && 'is-wide')} onClick={() => { setViewing(picture.path) }} title={t('点开看大图', 'Open it large')}>
             <ProjectImage path={picture.path} alt={`${draft.name} · ${picture.label}`} />
           </button>
         ) : (
@@ -511,41 +515,49 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
           </div>
         ) : null}
         <div className="nv-person-draw">
-          <Button size="sm" variant={draft.visual?.portrait === undefined ? 'primary' : 'outline'} icon="image" disabled={dirty || (drawing !== undefined && !portraitBusy)} busy={portraitBusy} pending={t('正在画立绘…', 'Drawing the portrait…')} onClick={() => draw('portrait', t('立绘已生成', 'Portrait ready'))} title={dirty ? t('先保存当前修改', 'Save your edits first') : `${draft.visual?.sheet === undefined ? t('立绘：列表、群像和这一页用的那张脸。还没有人设图，会先画人设图、再照着它画立绘', 'The portrait: the face the lists and this page use. There is no design sheet yet: it is drawn first, and the portrait against it') : t('立绘：列表、群像和这一页用的那张脸（照着人设图画）', 'The portrait: the face the lists and this page use (drawn against the design sheet)')}${scenes ? t('。画的是这个人的名场面：下面的框空着，照"形象"里定的那一幕（还没定，导演先从书里挑）；框里写了要求，导演照它来挑这一张的场面', '. It shows them in their signature scene: with the box below empty, the one kept under "Looks" (where none is kept yet, the director first picks it from the book); with something asked in the box, the director picks this picture\'s scene by it') : ''}`}>{draft.visual?.portrait !== undefined ? t('重画立绘', 'Redraw portrait') : t('画立绘', 'Draw portrait')}</Button>
-          <Button size="sm" variant="outline" icon="users" disabled={dirty || (drawing !== undefined && !sheetBusy)} busy={sheetBusy} pending={t('正在画人设图（约一两分钟）…', 'Drawing the sheet (a minute or two)…')} onClick={() => draw('sheet', t('人设图已生成', 'Design sheet ready'))} title={dirty ? t('先保存当前修改', 'Save your edits first') : draft.visual?.sheet !== undefined ? t('重画只照文字——下面"形象"里的视觉锚点、这本书的画风、你在下面写的想法——不看现在这张，也不看别的旧图。想让它变样，先改视觉锚点（或把想法写在下面）', 'Drawn again from the words alone — the visual anchor under "Looks" below, the book\'s art direction, the ideas you jot down below — not against this one or any other older picture. To change the look, change the anchor first (or jot the idea down below)') : t('正面、侧面、背面三视图：之后每张有此人的图都以它为参考，长相才一致。它自己只照文字画（视觉锚点和画风）', 'Front, side and back: every later picture of them is drawn with it as reference, which is what keeps the face the same. The sheet itself is drawn from the words alone (the visual anchor and the art direction)')}>{draft.visual?.sheet !== undefined ? t('重画人设图', 'Redraw sheet') : t('生成人设图', 'Design sheet')}</Button>
+          <Button size="sm" variant={draft.visual?.portrait === undefined ? 'primary' : 'outline'} icon="image" disabled={dirty || (drawing !== undefined && !portraitBusy)} busy={portraitBusy} pending={t('正在画立绘…', 'Drawing the portrait…')} onClick={() => draw('portrait', t('立绘已生成', 'Portrait ready'))} title={dirty ? t('先保存当前修改', 'Save your edits first') : draft.visual?.sheet === undefined ? t('先画人设图，再照着它画立绘', 'The design sheet is drawn first, then the portrait against it') : t('照着人设图画', 'Drawn against the design sheet')}>{draft.visual?.portrait !== undefined ? t('重画立绘', 'Redraw portrait') : t('画立绘', 'Draw portrait')}</Button>
+          <Button size="sm" variant="outline" icon="users" disabled={dirty || (drawing !== undefined && !sheetBusy)} busy={sheetBusy} pending={t('正在画人设图…', 'Drawing the sheet…')} onClick={() => draw('sheet', t('人设图已生成', 'Design sheet ready'))} title={dirty ? t('先保存当前修改', 'Save your edits first') : t('三视图，只照文字画：视觉锚点、画风和下面写的想法', 'Three views, drawn from the words alone: the visual anchor, the art direction and the ideas below')}>{draft.visual?.sheet !== undefined ? t('重画人设图', 'Redraw sheet') : t('生成人设图', 'Design sheet')}</Button>
         </div>
-        {portraitBehind ? <p className="nv-muted nv-small">{t('立绘不是照现在这张人设图画的（人设图是在它之后画的，或者重画过）。想让两张是同一个人，重画立绘。', 'The portrait was not drawn against the sheet in use now (the sheet was drawn, or drawn again, after it). For the two to show the same person, redraw the portrait.')}</p> : null}
-        {draft.visual?.sheet === undefined ? <p className="nv-muted nv-small">{t('人设图是之后所有图里这个人长相一致的依据：画立绘、插图、分镜画面之前，没有的会先画它（先问你一句）。', 'The design sheet is what keeps this face the same in every later picture: before a portrait, an illustration or a panel is drawn, one that is missing is drawn first (you are asked).')}</p> : null}
+        {portraitBehind ? <p className="nv-muted nv-small">{t('立绘不是照现在这张人设图画的。', 'The portrait was not drawn against the sheet in use now.')}</p> : null}
+        {scenic ? (
+          <label className="nv-person-moment">
+            <span>{t('立绘画', 'Portrait shows')}</span>
+            <Select
+              value={moment !== '' && (moment === 'plain' || moments.some(scene => scene.id === moment)) ? moment : marked?.id ?? ''}
+              onChange={setMoment}
+              options={[
+                ...(moments.length === 0 ? [{ value: '', label: t('名场面（导演从书里找）', 'A signature scene (the director finds them)') }] : []),
+                ...moments.map(scene => ({ value: scene.id, label: scene.title.length > 0 ? scene.title : t('未命名的一幕', 'An unnamed moment') })),
+                { value: 'plain', label: t('素底定妆照', 'A plain likeness') },
+              ]}
+            />
+          </label>
+        ) : null}
         <div className="nv-person-notes">
-          <TextArea value={notes} minRows={2} maxRows={8} placeholder={t('随手写想法（可不填），混着写就行：\n左眉有道疤，常年穿灰布袍；这张要雪夜，回头看', 'Jot down ideas (optional), mixed as they come:\na scar through the left brow, always in a grey robe; this one on a snowy night, looking back')} onChange={(event) => { setNotes(event.target.value) }} />
-          <p className="nv-muted nv-small">{scenes ? t('画立绘时，画的是这个人的名场面。框空着：照"形象"里定的那一幕（没定时导演先从书里挑）。框里写了要求（"光线明亮些""要葬花那一场""不要血"）：导演照它去挑、去写这一张的场面——是引导，不是换掉；要素底的定妆照也在这里写。', 'A portrait shows them in their signature scene. Box left empty: the one kept under "Looks" (where none is kept, the director first picks one from the book). Something asked in the box ("brighter", "the one where she buries the flowers", "no blood"): the director picks and writes this picture\'s scene by it — it guides, it does not replace; a plain portrait is asked for here too.') : null}{scenes ? ' ' : ''}{t('点上面的按钮时，导演先把它们分开：说这个人本身的（疤、常穿的袍子）进"形象"，以后每张图都带上；只说这一张图的（雪夜、回头看）只用这一次。怎么分的，画完列在这里。', 'When a button above is pressed the director sorts them first: what is of the person (the scar, the robe they always wear) goes into "Looks" below and into every later picture; what is of this one picture (the snowy night, the look back) is used this once and kept nowhere. How they were sorted is listed here when the picture is done.')}</p>
+          <TextArea value={notes} minRows={2} maxRows={8} placeholder={t('想法，可不填：左眉有道疤；这张要雪夜，回头看', 'Ideas, if any: a scar through the left brow; this one on a snowy night, looking back')} onChange={(event) => { setNotes(event.target.value) }} />
           {pictured !== undefined ? (
             <div className="nv-person-sorted">
-              <strong>{pictured.text !== undefined
-                ? pictured.asked !== undefined ? t('这张立绘的场面是导演按你写的要求挑的', 'The director picked this portrait\'s scene by what you asked')
-                  : pictured.picked === true ? t('这张立绘画的是导演从书里挑的名场面', 'This portrait shows the scene the director picked from the book')
-                    : t('这张立绘画的是"形象"里定的名场面', 'This portrait shows the scene kept under "Looks"')
-                : t('这张立绘没有照名场面画', 'This portrait was drawn without a scene')}</strong>
+              <strong>{pictured.text !== undefined ? pictured.title ?? t('这张立绘画的是', 'This portrait shows') : t('没有照名场面画', 'Drawn without a scene')}</strong>
               <Button size="sm" variant="ghost" icon="x" onClick={() => { setPictured(undefined) }} title={t('知道了', 'Got it')} />
-              <p>{pictured.text ?? t(`导演没有给出场面：${pictured.none ?? ''}。`, `The director gave no scene: ${pictured.none ?? ''}.`)}</p>
-              {pictured.why !== undefined ? <p className="nv-muted">{t(`导演的说法：${pictured.why}`, `The director: ${pictured.why}`)}</p> : null}
+              <p>{pictured.text ?? pictured.none}</p>
+              {pictured.why !== undefined ? <p className="nv-muted">{pictured.why}</p> : null}
               {pictured.text !== undefined && pictured.asked !== undefined ? (
-                <p className="nv-muted">
-                  {t('只用在这一张：人物卡上定的名场面没有变。', 'For this picture alone: the scene kept on the card is as it was.')}{' '}
-                  <button type="button" className="nv-link" disabled={dirty} title={dirty ? t('先保存当前修改', 'Save your edits first') : t('把这一幕记到"形象 → 立绘画哪一场"里：以后不写要求画立绘，画的就是它', 'Keep this moment under "Looks → The scene the portrait shows": a portrait asked for nothing is drawn from it from now on')} onClick={() => controller.guard(async () => {
-                    await controller.api.call('character.save', { root, card: { id: card.id, visual: { scene: pictured.text! } } })
-                    setPictured({ text: pictured.text! })
-                    controller.toast('success', t('定为这个人的名场面了', 'Kept as their signature scene'))
-                  })}>{t('把这一幕定为名场面', 'Keep this as their scene')}</button>
+                <p>
+                  <button type="button" className="nv-link" disabled={dirty} title={dirty ? t('先保存当前修改', 'Save your edits first') : undefined} onClick={() => controller.guard(async () => {
+                    const kept: SignatureScene = { id: `scene-${Date.now().toString(36)}`, title: pictured.title ?? '', text: pictured.text!, ...(pictured.chapter !== undefined ? { chapter: pictured.chapter } : {}), ...(pictured.why !== undefined ? { why: pictured.why } : {}), ...(pictured.path !== undefined ? { portrait: pictured.path } : {}) }
+                    await controller.api.call('character.save', { root, card: { id: card.id, visual: { scenes: [...scenesOf(card), kept], scene: '' } } })
+                    setPictured(undefined)
+                    controller.toast('success', t('加进名场面了', 'Added to their signature scenes'))
+                  })}>{t('加进名场面', 'Add to their signature scenes')}</button>
                 </p>
-              ) : pictured.text !== undefined ? <p className="nv-muted">{t('想换一幕：在上面的框里写想要的（要明亮的、要哪一回的那一场……）再画，导演会照着挑；或者到下面"形象 → 立绘画哪一场"里直接改。', 'For another moment: write what you want in the box above (brighter, the one in that chapter…) and draw again — the director picks by it; or change it under "Looks → The scene the portrait shows" below.')}</p> : null}
+              ) : null}
             </div>
           ) : null}
           {sorted !== undefined ? (
             <div className="nv-person-sorted">
-              <strong>{t(`上一次（${sorted.kind === 'sheet' ? '人设图' : '立绘'}）是这样分的`, `Last time (${sorted.kind === 'sheet' ? 'sheet' : 'portrait'}) they were sorted so`)}</strong>
+              <strong>{t('想法是这样分的', 'How the ideas were sorted')}</strong>
               <Button size="sm" variant="ghost" icon="x" onClick={() => { setSorted(undefined) }} title={t('知道了', 'Got it')} />
-              {sorted.how.unsorted === true ? <p>{t('没能整理（导演没有答上来）：这次全部只当作这一张图的要求，形象没有动。', 'They could not be sorted (the director did not answer): all of it directed this one picture, and the look was left as it is.')}</p> : (
+              {sorted.how.unsorted === true ? <p>{t('导演没能整理：全部只用在了这一张。', 'The director could not sort them: all of it went into this one picture.')}</p> : (
                 <ul>
                   <li><span>{t('进了这个人的形象', 'Into how they look')}</span>{sorted.how.kept.length > 0 ? sorted.how.kept.join(t('；', '; ')) : t('没有', 'nothing')}</li>
                   <li><span>{t('只用在这一张', 'This picture only')}</span>{sorted.how.once.length > 0 ? sorted.how.once.join(t('；', '; ')) : t('没有', 'nothing')}</li>
@@ -569,10 +581,10 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
               : lives !== undefined ? t('尚未在正文中出场', 'Not on the page yet')
                 : presence !== undefined && presence.chapters.length > 0 ? t(`出场 ${presence.chapters.length} 章`, `In ${presence.chapters.length} chapters`) : t('尚未在正文中出场', 'Not on the page yet')}
             {' · '}
-            <button type="button" className="nv-link" onClick={() => { controller.openCast('lives') }} title={t('所有人的履历排在一张表里：谁在哪几章在场，在哪里登场、离开、死亡', 'Everyone\'s life in one table: who is in which chapters, where they come on, leave, die')}>{t('履历表', 'Life table')}</button>
+            <button type="button" className="nv-link" onClick={() => { controller.openCast('lives') }} title={t('所有人的履历表', 'Everyone\'s course in one table')}>{t('履历表', 'Life table')}</button>
             {' · '}
             <button type="button" className="nv-link" onClick={() => { controller.openCast('relations') }}>{t('关系图', 'Relationships')}</button>
-            {' · '}<button type="button" className="nv-link" onClick={() => { controller.openExplore({ type: 'character', id: card.id }) }} title={t('观看：他在"观看 → 人物"里的样子——读者看到的那一页', 'View: their page in the viewer\'s People — what a reader is shown')}>{t('观看', 'View')}</button>
+            {' · '}<button type="button" className="nv-link" onClick={() => { controller.openExplore({ type: 'character', id: card.id }) }} title={t('在“观看 → 人物”里看他', 'See them under Watch → People')}>{t('观看', 'View')}</button>
           </span>
         </div>
         <div className="nv-row">
@@ -585,7 +597,7 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
       <TiesBlock of={{ type: 'character', id: card.id }} />
 
       <div className="nv-assist">
-        <TextInput value={direction} placeholder={t('让 AI 补全这张人物卡（可写要求，如"给他一个不愿提起的过去"）', 'Let AI complete this card (optionally say what you want)')} onChange={(event) => { setDirection(event.target.value) }} />
+        <TextInput value={direction} placeholder={t('想补全的方向，如：给他一个不愿提起的过去', 'What to fill in, e.g. a past he will not speak of')} onChange={(event) => { setDirection(event.target.value) }} />
         <Button icon="sparkles" busy={assist.running} pending={t('AI 正在补全…', 'Completing…')} disabled={dirty} title={dirty ? t('先保存当前修改', 'Save your edits first') : undefined} onClick={() => { assist.start(async (onText) => { await controller.run('character.expand', { root, id: card.id, ...(direction.trim().length > 0 ? { direction: direction.trim() } : {}) }, onText); setDirection('') }) }}>{t('AI 补全', 'Complete')}</Button>
       </div>
       {assist.stream.length > 0 ? <pre className="nv-stream">{assist.stream.slice(-800)}</pre> : null}
@@ -633,30 +645,29 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
       <SectionTitle>{t('关系', 'Relationships')}</SectionTitle>
       <RelationshipEditor value={draft.relationships ?? []} onChange={(value) => { set('relationships', value) }} />
 
-      <SectionTitle actions={<Button size="sm" icon="wand" disabled={dirty} busy={anchoring} pending={t('正在提炼…', 'Distilling…')} title={(draft.visual?.prompt ?? '').trim().length > 0
-        ? t('让导演把视觉锚点重写一遍：照人物卡、照这本书现在的画风——画风里定了年代、形制的（哪个朝代的发式、服饰），以画风为准。不冲突的写法保留。写完要重画人设图，图才会跟着变', 'Have the director write the visual anchor again: from the card and from the book\'s art direction as it is now — where that fixes a period or a form of dress, it holds. What does not conflict is kept. Draw the sheet again afterwards for the pictures to follow')
-        : t('让导演把外貌写成绘图模型画得稳的短语。这本书的画风里定了年代、形制的（哪个朝代的发式、服饰），发式和衣着照它写，哪怕原文写的是另一种', 'Have the director write the appearance as phrases an image model draws consistently. Where the book\'s art direction fixes a period or a form of dress, hair and clothing are written in that form, also where the source text has another')} onClick={() => controller.guard(async () => { await controller.run('character.visual', { root, id: card.id }); controller.toast('success', t('视觉锚点已更新', 'Visual anchor updated')) })}>{(draft.visual?.prompt ?? '').trim().length > 0 ? t('让导演重写', 'Have the director rewrite') : t('提炼视觉锚点', 'Distill anchor')}</Button>}>{t('形象', 'Looks')}</SectionTitle>
+      <SectionTitle actions={<Button size="sm" icon="wand" disabled={dirty} busy={anchoring} pending={t('正在提炼…', 'Distilling…')} title={dirty ? t('先保存当前修改', 'Save your edits first') : t('让导演照人物卡和这本书的画风写视觉锚点', 'Have the director write the visual anchor from the card and the book\'s art direction')} onClick={() => controller.guard(async () => {
+        await controller.run('character.visual', { root, id: card.id })
+        controller.toast('success', t('视觉锚点已更新', 'Visual anchor updated'))
+      })}>{(draft.visual?.prompt ?? '').trim().length > 0 ? t('让导演重写', 'Have the director rewrite it') : t('提炼视觉锚点', 'Distill the anchor')}</Button>}>{t('形象', 'Looks')}</SectionTitle>
       <Field label={t('外貌', 'Appearance')} hint={t('写给读者和写手看的', 'Written for readers and for the writer')}><TextArea {...text('appearance')} /></Field>
-      <Field label={t('视觉锚点', 'Visual anchor')} hint={t('写给绘图模型看的：具体、看得见、可复用的短语（英文最稳），如发型的实际形状、衣料与颜色、随身标志物。每张有此人的图都会原样带上。不要写机构名、头衔这类词——模型会按现实里最常见的样子去画。', 'Written for the image model: concrete, visible, reusable phrases (English is steadiest) — the actual shape of the hair, fabric and colour, signature items. Restated as is in every picture of them. No names of institutions or titles: a model draws the commonest real-world version.')}>
-        <TextArea id={anchorField} value={draft.visual?.prompt ?? ''} placeholder={t('留空时，生成人设图或立绘前会自动从"外貌"提炼', 'Left empty, it is distilled from "Appearance" before a sheet or portrait is drawn')} onChange={(event) => { set('visual', { ...draft.visual, prompt: event.target.value }) }} />
+      <Field label={t('视觉锚点', 'Visual anchor')} hint={t('写给绘图模型看的短语，每张有此人的图都原样带上', 'Phrases for the image model, restated in every picture of them')}>
+        <TextArea id={anchorField} value={draft.visual?.prompt ?? ''} placeholder={t('留空时自动从“外貌”提炼', 'Left empty, it is distilled from Appearance')} onChange={(event) => { set('visual', { ...draft.visual, prompt: event.target.value }) }} />
       </Field>
-      <Field label={t('这个人物身上不要画出', 'Never drawn on them')} hint={t('逗号分隔；会并入每张有此人的图的"不要出现"', 'Comma-separated; joins the avoid list of every picture that shows them')}>
+      <Field label={t('这个人物身上不要画出', 'Never drawn on them')} hint={t('逗号分隔', 'Comma-separated')}>
         <TextInput value={draft.visual?.negative ?? ''} placeholder={t('如：cross emblem, shoulder straps', 'e.g. cross emblem, shoulder straps')} onChange={(event) => { set('visual', { ...draft.visual, negative: event.target.value }) }} />
       </Field>
-      <Field label={t('立绘画哪一场（名场面）', 'The scene the portrait shows')} hint={t('读者一想到这个人就会想起的那一幕，写成画面：是哪一幕、在哪里、在做什么、手里拿着什么。画立绘时没写要求，就照它画。留空：第一次画立绘时导演从书里挑。哪一类画面这本书不要，写在"设定 → 画风"的"不要出现"里，导演挑的时候会避开；一律要素底的定妆照，在设置 → 图像里关掉"立绘照名场面画"。', 'The moment a reader thinks of when they think of this person, written as a picture: which moment, where, doing what, holding what. A portrait asked for nothing is drawn from it. Left empty, the director picks it from the book the first time a portrait is drawn. What kind of picture this book does not want goes on the avoid list under Bible → Art — the director steers round it when picking; for plain portraits throughout, turn "Portraits in their scene" off under Settings → Images.')}>
-        <TextArea id={sceneField} value={draft.visual?.scene ?? ''} placeholder={scenes ? t('留空时，画立绘前导演会从书里挑（比如黛玉：葬花）', 'Left empty, the director picks it from the book before a portrait is drawn') : t('"立绘照名场面画"已在设置里关掉：这里写了也不会用', 'Portraits in their scene are turned off in Settings: what is written here is not used')} onChange={(event) => { set('visual', { ...draft.visual, scene: event.target.value }) }} />
-      </Field>
-      <div className="nv-assist">
-        <TextInput value={wish} placeholder={t('想要哪一幕、什么样的？（可不填）如：要白天、明亮的；要她焚稿那一场', 'Which moment, what kind? (optional) e.g. in daylight; the one where she burns her poems')} onChange={(event) => { setWish(event.target.value) }} />
-        <Button size="sm" icon="wand" disabled={dirty} busy={picking} pending={t('导演在书里挑…', 'The director is looking in the book…')} title={dirty ? t('先保存当前修改', 'Save your edits first') : t('让导演去书里读，挑出最属于这个人的那一幕，写成画面记在这里；旁边写了要求就照它挑。只挑不画；之后画立绘（不写要求时）就照它', 'Have the director read the book, pick the moment that is most this person\'s own and write it here as a picture — by what you ask beside the button, where you ask. Nothing is drawn; a portrait asked for nothing is drawn from it afterwards')} onClick={() => controller.guard(async () => {
-          const job = await controller.run('character.scene', { root, id: card.id, ...(wish.trim().length > 0 ? { direction: wish.trim() } : {}) })
-          const output = job.result?.output as { scene?: string; why?: string } | undefined
-          if (output?.scene !== undefined && output.scene.length > 0) {
-            setWish('')
-            controller.toast('success', t(`名场面定了${output.why !== undefined ? `：${output.why}` : ''}`, `The scene is picked${output.why !== undefined ? `: ${output.why}` : ''}`))
-          } else controller.toast('info', t(`导演没有挑出名场面${output?.why !== undefined ? `：${output.why}` : '（书里还没有写到）'}`, `The director picked no scene${output?.why !== undefined ? `: ${output.why}` : ' (the book has none yet)'}`))
-        })}>{(draft.visual?.scene ?? '').trim().length > 0 ? t('让导演重挑', 'Have the director pick again') : t('让导演挑名场面', 'Have the director pick the scene')}</Button>
-      </div>
+      <ScenesPanel
+        id={sceneField}
+        card={card}
+        value={moments}
+        marked={marked?.id}
+        dirty={dirty}
+        off={!scenic}
+        busy={drawing !== undefined}
+        onChange={(scenes, first) => { set('visual', { ...draft.visual, scenes, scene: '', sceneAt: first ?? '' }) }}
+        onDraw={scene => draw('portrait', t('立绘已生成', 'Portrait ready'), undefined, scene.id)}
+        onOpen={setViewing}
+      />
       <LooksEditor
         value={draft.visual?.looks ?? []}
         dirty={dirty}
@@ -677,7 +688,7 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
         <TextArea value={voiceProfile.designPrompt ?? ''} onChange={(event) => { set('voiceProfile', { ...voiceProfile, designPrompt: event.target.value }) }} />
       </Field>
       <div className="nv-row-wrap">
-        <Button size="sm" icon="volume" disabled={dirty} pending={t('正在生成试听语音…', 'Recording the audition…')} title={t('用这个人物在有声剧里的声音念一句话——人物卡上的音色，或为他定下的那个。新声音第一次要先定音色，会久一些', 'Speak a line in the voice this character has in the audio drama — the one on the card, or the one cast for them. A new voice is set up first, which takes a little longer')} onClick={audition}>{t('试听', 'Audition')}</Button>
+        <Button size="sm" icon="volume" disabled={dirty} pending={t('正在生成试听语音…', 'Recording the audition…')} title={t('用这个人物的声音念一句', 'Hear a line in this character\'s voice')} onClick={audition}>{t('试听', 'Audition')}</Button>
         <Button size="sm" icon="wand" disabled={dirty} busy={designing} pending={t('正在设计声线…', 'Designing the voice…')} onClick={() => (controller.need('tts') ? controller.guard(async () => { await controller.run('voice.design', { root, character: card.id }); controller.toast('success', t('专属声线已创建', 'Voice designed')) }) : undefined)}>{t('设计专属声线', 'Design a voice')}</Button>
         {sample !== undefined ? <audio key={sample.at} controls preload="auto" src={mediaUrl(sample.path, sample.at)} className="nv-audio-inline" title={t('刚才的试听', 'The audition just recorded')} /> : voiceProfile.sample !== undefined ? <audio controls preload="none" src={mediaUrl(voiceProfile.sample)} className="nv-audio-inline" title={t('专属声线的样音', 'Sample of the designed voice')} /> : null}
       </div>
@@ -685,12 +696,11 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
       <SectionTitle>{t('备注', 'Notes')}</SectionTitle>
       <TextArea {...text('notes')} minRows={3} maxRows={20} />
       </div>
-      {viewing && picture !== undefined ? (
+      {viewing !== undefined ? (
         <PictureViewer
-          path={picture.path}
-          title={`${draft.name} · ${picture.label}`}
-          note={picture.key !== 'portrait' ? t('人设图（正面、侧面、背面）。之后每一张有此人的图，都会把它当参考图一起交给绘图模型。', 'Design sheet (front, side, back). Every later picture of them is drawn with it as a reference.') : undefined}
-          onClose={() => { setViewing(false) }}
+          path={viewing}
+          title={`${draft.name} · ${pictures.find(item => item.path === viewing)?.label ?? moments.find(scene => scene.portrait === viewing)?.title ?? t('立绘', 'Portrait')}`}
+          onClose={() => { setViewing(undefined) }}
           onEditLook={(of) => {
             // Their own anchor is on this page, under "Looks": the form scrolls to it.
             if (of.kind === 'character' && of.id === card.id) {
@@ -735,13 +745,75 @@ function RelationshipEditor({ value, onChange }: { value: NonNullable<CharacterC
 
 
 
+/** The moments a person is remembered by: the director finds them in the book, the author rewrites them, and a portrait is drawn of one. */
+function ScenesPanel({ id, card, value, marked, dirty, off, busy, onChange, onDraw, onOpen }: {
+  id: string
+  card: CharacterCard
+  value: SignatureScene[]
+  marked: string | undefined
+  dirty: boolean
+  off: boolean
+  busy: boolean
+  onChange: (scenes: SignatureScene[], marked?: string) => void
+  onDraw: (scene: SignatureScene) => unknown
+  onOpen: (path: string) => void
+}) {
+  const { controller } = useStudio()
+  const t = useT()
+  const { project, root } = useProject()
+  const [wish, setWish] = useState('')
+  const finding = useRunningJob(job => job.kind === 'bible' && job.title.startsWith('signature scenes') && job.target === card.id) !== undefined
+  const chapters = useMemo(() => new Map([...project.chapters, ...(project.lines ?? []).flatMap(line => line.chapters)].map(chapter => [chapter.id, chapter])), [project.chapters, project.lines])
+  const patch = (scene: string, change: Partial<SignatureScene>): void => { onChange(value.map(item => (item.id === scene ? { ...item, ...change } : item)), marked) }
+  return (
+    <div className="nv-scenes" id={id} tabIndex={-1}>
+      <SectionTitle actions={<Button size="sm" variant="ghost" icon="plus" onClick={() => { onChange([...value, { id: `scene-${Date.now().toString(36)}`, title: '', text: '' }], marked) }}>{t('添加', 'Add')}</Button>}>{t('名场面', 'Signature scenes')}{value.length > 0 ? ` · ${value.length}` : ''}</SectionTitle>
+      {off ? <p className="nv-muted nv-small">{t('“立绘照名场面画”已在设置里关掉。', 'Portraits in their scene are turned off in Settings.')}</p> : null}
+      <div className="nv-assist">
+        <TextInput value={wish} placeholder={t('想要哪一幕、不要哪一类', 'A moment you want, a kind you do not')} onChange={(event) => { setWish(event.target.value) }} />
+        <Button size="sm" icon="wand" disabled={dirty} busy={finding} pending={t('导演在书里找…', 'The director is looking in the book…')} title={dirty ? t('先保存当前修改', 'Save your edits first') : undefined} onClick={() => controller.guard(async () => {
+          const job = await controller.run('character.scene', { root, id: card.id, ...(wish.trim().length > 0 ? { direction: wish.trim() } : {}) })
+          const output = job.result?.output as { scenes?: unknown[]; why?: string } | undefined
+          const found = Array.isArray(output?.scenes) ? output.scenes.length : 0
+          if (found > 0) {
+            setWish('')
+            controller.toast('success', t(`找到 ${found} 个名场面`, `${found} signature scene(s) found`))
+          } else controller.toast('info', t(`导演没有找到名场面${output?.why !== undefined ? `：${output.why}` : ''}`, `The director found no scene${output?.why !== undefined ? `: ${output.why}` : ''}`))
+        })}>{value.length > 0 ? t('让导演再找一遍', 'Have the director look again') : t('让导演从书里找', 'Have the director find them')}</Button>
+      </div>
+      {value.map((scene) => {
+        const chapter = scene.chapter !== undefined ? chapters.get(scene.chapter) : undefined
+        const first = scene.id === marked
+        return (
+          <div key={scene.id} className={cx('nv-scene-row', first && 'is-first')}>
+            {scene.portrait !== undefined
+              ? <button type="button" className="nv-scene-thumb" onClick={() => { onOpen(scene.portrait!) }} title={t('点开看大图', 'Open it large')}><ProjectImage path={scene.portrait} alt={scene.title} /></button>
+              : <span className="nv-scene-thumb nv-look-empty">{t('未画', 'none')}</span>}
+            <div className="nv-scene-fields">
+              <div className="nv-scene-head">
+                <TextInput value={scene.title} placeholder={t('哪一幕', 'Which moment')} onChange={(event) => { patch(scene.id, { title: event.target.value }) }} />
+                {chapter !== undefined ? <button type="button" className="nv-link nv-small" onClick={() => { controller.openReader('read', chapter.id) }}>{t(`第 ${chapter.index} 章`, `Ch. ${chapter.index}`)}</button> : null}
+                {first ? <Chip>{t('立绘默认', 'Default')}</Chip> : <button type="button" className="nv-link nv-small" onClick={() => { onChange(value, scene.id) }}>{t('设为默认', 'Make default')}</button>}
+                <Button size="sm" variant="outline" icon="image" disabled={dirty || busy || scene.text.trim().length === 0} title={dirty ? t('先保存当前修改', 'Save your edits first') : undefined} onClick={() => onDraw(scene)}>{scene.portrait !== undefined ? t('重画', 'Redraw') : t('画这一幕', 'Draw it')}</Button>
+                <Button size="sm" variant="ghost" icon="trash" title={t('删除', 'Delete')} onClick={() => { onChange(value.filter(item => item.id !== scene.id), marked === scene.id ? undefined : marked) }} />
+              </div>
+              <TextArea value={scene.text} minRows={2} maxRows={8} placeholder={t('写成画面：在哪里、在做什么、手里拿着什么、光线', 'As a picture: where, doing what, holding what, the light')} onChange={(event) => { patch(scene.id, { text: event.target.value }) }} />
+              {scene.why !== undefined ? <p className="nv-muted nv-small">{scene.why}</p> : null}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 function LooksEditor({ value, dirty, busy, onChange, onDraw }: { value: CharacterLook[]; dirty: boolean; busy: boolean; onChange: (looks: CharacterLook[]) => void; onDraw: (look: CharacterLook) => unknown }) {
   const t = useT()
   const patch = (index: number, change: Partial<CharacterLook>): void => { onChange(value.map((look, at) => (at === index ? { ...look, ...change } : look))) }
   return (
     <div className="nv-looks">
       <SectionTitle actions={<Button size="sm" variant="ghost" icon="plus" onClick={() => { onChange([...value, { id: `look-${Date.now().toString(36)}`, name: '' }]) }}>{t('添加造型', 'Add a look')}</Button>}>{t('造型（服饰）', 'Looks (outfits)')}</SectionTitle>
-      {value.length === 0 ? <p className="nv-muted nv-small">{t('人物有不止一身行头时在这里添加：日常、戎装、丧服……每套造型从主人设图衍生出自己的人设图，所以换了衣服还是同一个人。画某一场戏时，会按场合选用。', 'Add a look when a character has more than one outfit: everyday, armour, mourning… Each look gets a sheet derived from the main one, so it is still the same person. A scene picks the look that fits its occasion.')}</p> : null}
+      {value.length === 0 ? <p className="nv-muted nv-small">{t('不止一身行头时在这里添加：日常、戎装、丧服……', 'Add one for each further outfit: everyday, armour, mourning…')}</p> : null}
       {value.map((look, index) => (
         <div key={look.id} className="nv-look">
           {look.sheet !== undefined ? <ProjectImage className="nv-look-thumb" path={look.sheet} alt={look.name} /> : <span className="nv-look-thumb nv-look-empty">{t('未画', 'none')}</span>}

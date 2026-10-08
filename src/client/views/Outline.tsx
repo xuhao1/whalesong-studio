@@ -87,7 +87,7 @@ function Chapters({ onGraph }: { onGraph: () => void }) {
   const [ticked, setTicked] = useState<Set<string>>(new Set())
   const removed = project.removed ?? []
   const [showRemoved, setShowRemoved] = useState(false)
-  const whereToFind = t('删掉的章节收在这一页最下面的“最近删除的章节”里，随时可以恢复。', 'Removed chapters are kept under "Recently removed" at the bottom of this page and can be put back at any time.')
+  const whereToFind = t('可以在这一页最下面恢复。', 'It can be restored at the bottom of this page.')
   const remove = (ids: string[]): void => {
     const gone = ids.map(id => ({ id, plan: everything.find(plan => plan.id === id), chapter: info.get(id) })).filter(item => item.plan !== undefined)
     if (gone.length === 0) return
@@ -133,7 +133,7 @@ function Chapters({ onGraph }: { onGraph: () => void }) {
           {chapter !== undefined && chapter.words > 0 ? <span className="nv-list-meta">{formatCount(chapter.words, locale)}</span> : null}
         </span>
       </button>
-      {choosing ? null : <button type="button" className="nv-list-remove" onClick={() => { remove([plan.id]) }} title={t('删除这一章（可恢复）', 'Delete this chapter (it can be put back)')} aria-label={t(`删除「${plan.title}」`, `Delete "${plan.title}"`)}><Icon name="trash" size={12} /></button>}
+      {choosing ? null : <button type="button" className="nv-list-remove" onClick={() => { remove([plan.id]) }} title={t('删除这一章', 'Delete this chapter')} aria-label={t(`删除「${plan.title}」`, `Delete "${plan.title}"`)}><Icon name="trash" size={12} /></button>}
     </li>
   )
 
@@ -143,7 +143,7 @@ function Chapters({ onGraph }: { onGraph: () => void }) {
   const fill = (): Promise<unknown> => filling.run(async () => {
     const done = await controller.api.call('outline.fill', { root })
     await controller.refreshProject()
-    controller.toast('success', t(`补全了 ${done.chapters} 章章纲里空着的 ${done.fields} 项。写过的内容一个字没有动。`, `Filled ${done.fields} empty fields in ${done.chapters} chapter plans. Nothing that was written was touched.`))
+    controller.toast('success', t(`补全了 ${done.chapters} 章章纲里空着的 ${done.fields} 项`, `Filled ${done.fields} empty item(s) in ${done.chapters} chapter outline(s)`))
   })
 
   return (
@@ -168,7 +168,7 @@ function Chapters({ onGraph }: { onGraph: () => void }) {
         </div>
         {fillable.data !== undefined && fillable.data.chapters > 0 ? (
           <div className="nv-note nv-outline-fill">
-            <span>{t(`有 ${fillable.data.chapters} 章已经收录过，章纲里却还空着（梗概、地点、时间、出场人物或线索）——收录的结果里都有。`, `${fillable.data.chapters} chapters have been digested while their plans still have blanks (synopsis, place, time, cast or threads) — the digests know them.`)}</span>
+            <span>{t(`${fillable.data.chapters} 章的章纲还有空项，收录结果里有。`, `${fillable.data.chapters} chapter outline(s) have empty items the digests can fill.`)}</span>
             <Button size="sm" icon="wand" busy={filling.busy} pending={t('正在补全…', 'Filling…')} onClick={fill} title={t('只填空着的项；已经写了内容的项不动', 'Only empty fields are filled; a field with anything in it is left alone')}>{t('按收录结果补全', 'Fill from the digests')}</Button>
           </div>
         ) : null}
@@ -233,7 +233,7 @@ function Chapters({ onGraph }: { onGraph: () => void }) {
                       <span className="nv-list-title">{item.plan.title}</span>
                       <span className="nv-list-meta">{t(`原第 ${item.index} 章`, `was chapter ${item.index}`)}{item.words > 0 ? ` · ${formatCount(item.words, locale)}${t(' 字', ' words')}` : t(' · 没有正文', ' · no text')} · {new Date(item.removedAt).toLocaleString()}</span>
                     </span>
-                    <Button size="sm" icon="undo" onClick={() => { void restore(item.plan.id) }} title={t('放回原来的位置，章纲、正文和由它做出来的东西一起回来', 'Put it back where it stood, with its plan, its text and what was made from it')}>{t('恢复', 'Put back')}</Button>
+                    <Button size="sm" icon="undo" onClick={() => { void restore(item.plan.id) }} title={t('放回原来的位置', 'Put it back where it was')}>{t('恢复', 'Put back')}</Button>
                   </li>
                 ))}
               </ul>
@@ -312,13 +312,13 @@ function PlanCast({ chosen, memory, onChange }: { chosen: string[]; memory: Chap
           <span className="nv-muted nv-small">
             {project.characters.length === 0
               ? t('设定里还没有人物。', 'No characters in the bible yet.')
-              : t('章纲里还没有指定谁出场。写这一章时，写手拿到的是这里列出的人物的完整人物卡。', 'The plan names nobody yet. Whoever is listed here is handed to the writer with their whole card.')}
+              : t('还没有指定谁出场。', 'Nobody is set to appear yet.')}
           </span>
         ) : null}
       </div>
       {more.length > 0 ? (
         <div className="nv-plan-found">
-          <span className="nv-muted nv-small">{t(`收录时在这一章里出场、章纲还没列的 ${more.length} 人：`, `${more.length} more were in this chapter when it was digested:`)}</span>
+          <span className="nv-muted nv-small">{t(`收录里出场、章纲没列的 ${more.length} 人：`, `${more.length} in the digest and not in the outline: `)}</span>
           <div className="nv-chips">
             {more.map(card => <Chip key={card.id} onClick={() => { onChange([...chosen, card.id]) }} title={t('点一下加进章纲', 'Click to add to the plan')}>+ {card.name}</Chip>)}
             <Button size="sm" variant="ghost" onClick={() => { onChange([...chosen, ...more.map(card => card.id)]) }}>{t('都加进来', 'Add them all')}</Button>
@@ -370,14 +370,14 @@ function PlanThreads({ chosen, memory, onChange }: { chosen: string[]; memory: C
         {mine.length === 0 ? (
           <span className="nv-muted nv-small">
             {threads.length === 0
-              ? t('还没有线索；在"线索与伏笔"里添加，或写完后由收录自动发现。', 'No threads yet — add them under Threads, or let digest find them after writing.')
+              ? t('还没有线索。', 'No threads yet.')
               : t('章纲里还没有指定这一章牵动哪些线索。', 'The plan names no thread for this chapter yet.')}
           </span>
         ) : null}
       </div>
       {more.length > 0 ? (
         <div className="nv-plan-found">
-          <span className="nv-muted nv-small">{t(`收录时这一章牵动、章纲还没列的 ${more.length} 条：`, `${more.length} more were touched when it was digested:`)}</span>
+          <span className="nv-muted nv-small">{t(`收录里牵动、章纲没列的 ${more.length} 条：`, `${more.length} touched in the digest and not in the outline: `)}</span>
           <div className="nv-chips">
             {more.map(thread => <Chip key={thread.id} onClick={() => { toggle(thread.id) }} title={t('点一下加进章纲', 'Click to add to the plan')}>+ {thread.title}</Chip>)}
             <Button size="sm" variant="ghost" onClick={() => { onChange([...chosen, ...more.map(thread => thread.id)]) }}>{t('都加进来', 'Add them all')}</Button>
@@ -484,7 +484,7 @@ function ChapterPlanEditor({ plan, index, plans }: { plan: ChapterPlan; index: n
                 label: t(`移到「${volume.title}」`, `Move to "${volume.title}"`), icon: 'folder' as const, onSelect: () => { void run(async () => { await apply([{ op: 'move-chapter', chapter: plan.id, volume: volume.id }]) }) },
               })) : []),
               'separator',
-              { label: t('删除章节', 'Delete chapter'), icon: 'trash', danger: true, onSelect: () => { confirm.ask(t(`删除第 ${index} 章「${plan.title}」？它会收进这一页最下面的“最近删除的章节”，随时可以恢复。`, `Delete chapter ${index}, "${plan.title}"? It goes to "Recently removed" at the bottom of this page and can be put back at any time.`), () => { void run(async () => { await apply([{ op: 'remove-chapter', chapter: plan.id }]) }) }) } },
+              { label: t('删除章节', 'Delete chapter'), icon: 'trash', danger: true, onSelect: () => { confirm.ask(t(`删除第 ${index} 章「${plan.title}」？可以在这一页最下面恢复。`, `Delete chapter ${index}, "${plan.title}"? It can be restored at the bottom of this page.`), () => { void run(async () => { await apply([{ op: 'remove-chapter', chapter: plan.id }]) }) }) } },
             ]}
           />
           {chapter?.hasText === true ? <Button variant="ghost" icon="eye" onClick={() => { controller.setView('read', plan.id) }} title={t('观看：这一章在读者那里的样子', 'View: this chapter as a reader has it')}>{t('观看', 'View')}</Button> : null}
@@ -505,7 +505,7 @@ function ChapterPlanEditor({ plan, index, plans }: { plan: ChapterPlan; index: n
         </Field>
         <Field label={t('地点', 'Location')}><TextInput value={draft.location ?? ''} onChange={(event) => { set('location', event.target.value) }} /></Field>
         <Field label={t('故事时间', 'Story time')}><TextInput value={draft.time ?? ''} onChange={(event) => { set('time', event.target.value) }} /></Field>
-        <Field label={t('建议字数（预算）', 'Recommended length')} hint={bookBudget !== undefined ? t(`留空：用本书的每章建议字数 ${bookBudget}`, `Empty: the book's recommendation of ${bookBudget}`) : t('留空：由写手按这一章要做的事自己判断', 'Empty: the writer judges from what the chapter has to do')}><TextInput inputMode="numeric" value={draft.targetWords !== undefined && draft.targetWords > 0 ? String(draft.targetWords) : ''} placeholder={bookBudget !== undefined ? String(bookBudget) : t('由写手判断', 'left to the writer')} onChange={(event) => {
+        <Field label={t('建议字数', 'Suggested length')} hint={bookBudget !== undefined ? t(`留空：用本书的每章建议字数 ${bookBudget}`, `Empty: the book's recommendation of ${bookBudget}`) : t('留空：由写手按这一章要做的事自己判断', 'Empty: the writer judges from what the chapter has to do')}><TextInput inputMode="numeric" value={draft.targetWords !== undefined && draft.targetWords > 0 ? String(draft.targetWords) : ''} placeholder={bookBudget !== undefined ? String(bookBudget) : t('由写手判断', 'left to the writer')} onChange={(event) => {
           const value = Number(event.target.value)
           setDraft(({ targetWords: _old, ...rest }) => (Number.isFinite(value) && value > 0 ? { ...rest, targetWords: Math.round(value) } : rest))
           setDirty(true)
@@ -515,9 +515,9 @@ function ChapterPlanEditor({ plan, index, plans }: { plan: ChapterPlan; index: n
       <PlanCast chosen={draft.characters ?? []} memory={memory} onChange={(next) => { set('characters', next) }} />
       <PlanThreads chosen={draft.threads ?? []} memory={memory} onChange={(next) => { set('threads', next) }} />
 
-      <SectionTitle actions={<Button size="sm" icon="plus" variant="ghost" onClick={() => { set('beats', [...beats, { id: `new-${Date.now()}`, summary: '' }]) }}>{t('添加节拍', 'Add beat')}</Button>}>{t('节拍（场景）', 'Beats')}</SectionTitle>
+      <SectionTitle actions={<Button size="sm" icon="plus" variant="ghost" onClick={() => { set('beats', [...beats, { id: `new-${Date.now()}`, summary: '' }]) }}>{t('添加节拍', 'Add beat')}</Button>}>{t('节拍', 'Beats')}</SectionTitle>
       <div className="nv-assist">
-        <TextInput value={direction} placeholder={t('让策划排出这一章的节拍（可写方向）', 'Let the planner lay out the beats (optional direction)')} onChange={(event) => { setDirection(event.target.value) }} />
+        <TextInput value={direction} placeholder={t('想要的方向', 'A direction, if any')} onChange={(event) => { setDirection(event.target.value) }} />
         <Button icon="sparkles" busy={deriving} disabled={dirty} title={dirty ? t('先保存当前修改', 'Save your edits first') : undefined} onClick={deriveBeats}>{t('推演节拍', 'Derive beats')}</Button>
       </div>
       <ol className="nv-beats">
@@ -574,7 +574,7 @@ function Threads() {
         ]} />
         <Button icon="plus" variant="primary" size="sm" onClick={() => { setEditing('new') }}>{t('添加线索', 'Add thread')}</Button>
       </div>
-      {threads.length === 0 ? <Empty icon="thread" title={t('这里没有线索', 'No threads here')}>{t('伏笔、悬念、支线、对读者的承诺——收录章节时会自动发现并提出建议，也可以手动添加。', 'Foreshadowing, mysteries, subplots, promises to the reader — digest proposes them as chapters are written, and you can add your own.')}</Empty> : (
+      {threads.length === 0 ? <Empty icon="thread" title={t('这里没有线索', 'No threads here')}>{t('还没有线索：收录章节时会自动发现，也可以手动添加。', 'No threads yet: digesting chapters finds them, and they can be added by hand.')}</Empty> : (
         <ul className="nv-thread-list">
           {threads.map((thread) => {
             const last = Math.max(0, ...[...(thread.planted ?? []), ...(thread.advanced ?? []), ...(thread.paid ?? [])].map(id => indexOf.get(id) ?? 0))
@@ -792,12 +792,12 @@ export function Derive({ onApplied, only, autoStart, preset }: {
     <div className="nv-derive">
       <section className="nv-card">
         <SectionTitle>{t('推演后续章节', 'Derive the next chapters')}</SectionTitle>
-        <p className="nv-muted nv-small">{t('策划读过设定、已写章节与未回收线索后，排出接下来的章纲。可以接着写，也可以让故事从某一章起换一条路：替换那之后的大纲，或者另开一条线，两条线都留着。', 'The planner reads the bible, what is written and the open threads, then outlines what comes next. The story can go on — or go another way from some chapter: replace the outline after it, or open a line of its own and keep both.')}</p>
+        <p className="nv-muted nv-small">{t('策划排出接下来的章纲：接着写，替换某一章之后的大纲，或另开一条线。', 'The planner plots what comes next: carry on, replace the outline after a chapter, or open another line.')}</p>
         <div className="nv-form-grid">
-          <Field label={t('章数', 'How many')} hint={wanted > 12 ? t(`分 ${Math.ceil(wanted / 10)} 轮推演，每轮接着上一轮，直接加入大纲`, `Derived in ${Math.ceil(wanted / 10)} rounds, each from where the last left off, and added as they come`) : t('想要多少章都可以；超过 12 章分轮推演，每轮十章', 'As many as you want; more than 12 are derived in rounds of ten')}><TextInput inputMode="numeric" value={count} onChange={(event) => { setCount(event.target.value.replace(/\D/g, '').slice(0, 3)) }} /></Field>
+          <Field label={t('章数', 'How many')} hint={wanted > 12 ? t(`分 ${Math.ceil(wanted / 10)} 轮，直接加入大纲`, `In ${Math.ceil(wanted / 10)} rounds, added straight to the outline`) : t('想要多少章都可以；超过 12 章分轮推演，每轮十章', 'As many as you want; more than 12 are derived in rounds of ten')}><TextInput inputMode="numeric" value={count} onChange={(event) => { setCount(event.target.value.replace(/\D/g, '').slice(0, 3)) }} /></Field>
           <Field label={t('怎么处理原有的后续', 'What becomes of what follows')}>
             <Select value={mode} options={[
-              { value: 'append', label: t('接着往后推演（追加）', 'Go on from there (add)') },
+              { value: 'append', label: t('接着往后推演', 'Carry on from the end') },
               { value: 'replace', label: t('替换那之后的大纲', 'Replace the outline after it') },
               { value: 'branch', label: t('另开一条线，原来的也留着', 'Open a line of its own, and keep what is there') },
             ]} onChange={setMode} />
@@ -818,7 +818,7 @@ export function Derive({ onApplied, only, autoStart, preset }: {
             <Field label={t('分叉处的抉择（可不填）', 'What is decided where they part (optional)')}><TextInput value={choice} onChange={(event) => { setChoice(event.target.value) }} /></Field>
           </div>
         ) : null}
-        {mode === 'replace' ? <p className="nv-note is-warn">{t(`这会把${after.length > 0 ? '所选章节' : '最后一章已写章节'}之后、这条线上的大纲换掉。还没写正文的章节会被删除；已经写了正文的不会丢——它们会留成一条“搁置”的线，在剧情图里随时能找回或设回主线。`, `This replaces the outline of the line after ${after.length > 0 ? 'the chapter chosen' : 'the last written chapter'}. Chapters without text are removed; chapters that are written are not lost — they are kept as a line put aside, and can be found on the plot graph and made the main line again.`)}</p> : null}
+        {mode === 'replace' ? <p className="nv-note is-warn">{t(`这会把${after.length > 0 ? '所选章节' : '最后一章已写章节'}之后的大纲换掉。没写正文的章节会被删除；写了正文的留成一条“搁置”的线。`, `This replaces the outline after ${after.length > 0 ? 'the chosen chapter' : 'the last written chapter'}. Unwritten chapters are deleted; written ones are kept as a shelved line.`)}</p> : null}
         <Field label={t('方向（可留空）', 'Direction (optional)')}><TextArea value={direction} minRows={2} placeholder={t('例：让反派先赢一局；这几章把感情线推到误会最深处', 'e.g. let the antagonist win a round; push the romance to its deepest misunderstanding')} onChange={(event) => { setDirection(event.target.value) }} /></Field>
         <div className="nv-form-actions">
           <Button variant="primary" icon="sparkles" busy={working === 'chapters'} disabled={working !== undefined} onClick={() => { derive() }}>{t('推演', 'Derive')}</Button>
@@ -890,7 +890,7 @@ export function Derive({ onApplied, only, autoStart, preset }: {
                     setDirection(`${branch.title}：${branch.development}`)
                     setMode('branch')
                     setLineTitle(branch.title)
-                    controller.toast('info', t('已填到上面：另开一条线。看一眼从哪一章之后分出，再点“推演”。', 'Filled in above: a line of its own. Check which chapter it leaves after, then Derive.'))
+                    controller.toast('info', t('已填到上面，确认后点“推演”', 'Filled in above: check it, then Plot'))
                   }}>{t('把这个走向开成一条线', 'Open this branch as a line')}</Button>
                 </div>
               </article>

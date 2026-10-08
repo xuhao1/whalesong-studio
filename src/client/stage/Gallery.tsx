@@ -88,13 +88,13 @@ export function Gallery() {
         </div>
         <span className="nv-spacer" />
         {drawing > 0 ? <span className="nv-muted nv-small"><Spinner size={12} /> {t(`${drawing} 张绘制中`, `${drawing} in progress`)}</span> : null}
-        <Button size="sm" icon="layers" onClick={() => { setBatching(true) }} title={t('一次补齐：人设图、立绘、场景设定图、章节插图、封面、专属声线——只做还没有的', 'Everything that is missing, in one go: design sheets, portraits, place art, chapter illustrations, a cover, voices')}>{t('批量绘制…', 'Draw in a batch…')}</Button>
+        <Button size="sm" icon="layers" onClick={() => { setBatching(true) }} title={t('补齐还没有的图和声线', 'Make the pictures and voices still missing')}>{t('批量绘制…', 'Draw in a batch…')}</Button>
         <Button variant="primary" size="sm" icon="plus" onClick={() => { if (controller.need('image')) setCreating(true) }}>{t('画一张', 'New picture')}</Button>
       </div>
       <NeedsSetup what="image" />
       <ArtDirection />
       {images.data === undefined ? <div className="nv-center"><Spinner /></div> : list.length === 0 ? (
-        <Empty icon="image" title={t('还没有图片', 'No pictures yet')}>{t('建议的顺序：先给主要人物各画一张人设图（三视图），给常去的地点画场景设定图——之后的插图、分镜都会拿它们当参考图，人和地方才不会每张都变样。在写作或阅读视图里选中一段文字点"配图"，图片会插入到正文里。先在设置里配置图像服务。', 'A good order: draw a design sheet (three views) for each main character and place art for the places the story returns to — later pictures and panels use them as reference images, so people and places stop changing from one picture to the next. Select a passage in Write or Read and choose Illustrate to embed a picture in the text. Configure an image provider in Settings first.')}</Empty>
+        <Empty icon="image" title={t('还没有图片', 'No pictures yet')}>{t('还没有图。先给主要人物画人设图、给常去的地点画设定图，之后的图以它们为参考。', 'No pictures yet. Start with design sheets for the main characters and art for the usual places; later pictures are drawn against them.')}</Empty>
       ) : (
         <div className="nv-gallery-grid">
           {list.map(image => (
@@ -119,7 +119,7 @@ export function Gallery() {
                 ? <Chip tone="green">{t('这是封面', 'This is the cover')}</Chip>
                 : <Button icon="book" pending={t('正在设为封面…', 'Setting the cover…')} onClick={() => controller.guard(async () => { await controller.api.call('project.update', { root, patch: { cover: open.path } }); await controller.refreshProject(); controller.toast('success', t('已设为这本书的封面', 'This is the book\'s cover now')) })}>{t('设为封面', 'Make it the cover')}</Button>}
               <Button variant="ghost" icon="trash" onClick={() => {
-                confirm.ask(t('删除这张图片？它是谁的立绘、人设图、设定图或"这时的样子"，会一并从那里取下；正文里插着它的地方不会自动移除。', 'Delete this picture? Where it is somebody\'s portrait or design sheet, a place\'s art or the picture of a turn of its course, it is taken off there too; where the text shows it, the text is not changed.'), () => {
+                confirm.ask(t('删除这张图？用它的人物卡和条目会取下它；正文里插着它的地方不会自动移除。', 'Delete this picture? Cards and entries using it let go of it; where it sits in the text it is not removed.'), () => {
                   void run(async () => {
                     const done = await controller.api.call('image.delete', { root, id: open.id })
                     setOpen(undefined)
@@ -127,7 +127,7 @@ export function Gallery() {
                     const released = done.released ?? []
                     if (released.length > 0) {
                       await controller.refreshProject()
-                      controller.toast('info', t(`已删除。它原来是 ${released.join('、')} 的图，已从那里取下。`, `Deleted. It was the picture of ${released.join(', ')}: taken off there.`))
+                      controller.toast('info', t(`已删除，并从 ${released.join('、')} 取下`, `Deleted, and taken off ${released.join(', ')}`))
                     }
                   })
                 })
@@ -139,7 +139,7 @@ export function Gallery() {
 
       {creating ? (
         <Modal title={t('画一张', 'New picture')} onClose={() => { setCreating(false) }} footer={<Button variant="primary" busy={busy} disabled={(kind === 'custom' && prompt.trim().length === 0) || ((ofCharacter || kind === 'location') && target.length === 0)} onClick={create}>{t('绘制', 'Draw')}</Button>}>
-          <Field label={t('画什么', 'What')} hint={kind === 'sheet' ? t('同一个人的正面、侧面、背面画在一张图上。之后有此人的图都以它为参考，所以先画它。', 'Front, side and back of one person on a single sheet. Later pictures of them are drawn against it, so make it first.') : undefined}>
+          <Field label={t('画什么', 'What')} hint={kind === 'sheet' ? t('正面、侧面、背面三视图，之后的图以它为参考。', 'Front, side and back on one sheet; later pictures are drawn against it.') : undefined}>
             <Select value={kind} options={[
               { value: 'cover', label: t('封面', 'Cover') },
               { value: 'sheet', label: t('人设图（三视图）', 'Character design sheet (three views)') },
@@ -163,7 +163,7 @@ export function Gallery() {
               </div>
             </Field>
           ) : null}
-          <Field label={kind === 'custom' ? t('画面描述', 'Prompt') : t('额外要求（可留空）', 'Extra direction (optional)')} hint={t('本书的画风和"不要出现"会自动带上，见上方"画风"', 'The book\'s art direction and avoid list are applied automatically — see "Art direction" above')}>
+          <Field label={kind === 'custom' ? t('画面描述', 'Prompt') : t('额外要求', 'Anything more')} hint={t('本书的画风和"不要出现"会自动带上，见上方"画风"', 'The book\'s art direction and avoid list are applied automatically — see "Art direction" above')}>
             <TextArea value={prompt} minRows={3} onChange={(event) => { setPrompt(event.target.value) }} />
           </Field>
           <Field label={t('这一张另外不要出现', 'Also keep out of this one')} hint={t('逗号分隔，可留空', 'Comma-separated, optional')}>
@@ -202,7 +202,7 @@ function ArtDirection() {
   const save = (): Promise<unknown> => run(async () => {
     await controller.api.call('project.update', { root, patch: { artStyle: style.trim(), artAvoid: splitAvoid(avoid) } })
     await controller.refreshProject()
-    controller.toast('success', t('已保存到本书（novel.json）', 'Saved to this book (novel.json)'))
+    controller.toast('success', t('已保存', 'Saved'))
   })
   const all = mergeAvoid(studioAvoid, manifest.artAvoid)
   return (
@@ -219,23 +219,23 @@ function ArtDirection() {
           <Field
             label={t('这本书的画风', 'This book\'s art direction')}
             hint={resolved.source === 'book'
-              ? t('写在本书的 novel.json 里，原样接在每张图的画面内容后面。', 'Stored in this book\'s novel.json and appended as is to the subject of every picture.')
+              ? t('接在每张图的提示词后面。', 'Appended to every picture\'s prompt.')
               : resolved.source === 'studio'
-                ? t('现在用的是以前填在工坊设置里的全局画风（画风现在属于每一本书，见“设定 → 画风”）。画第一张图时会把它写进本书的 novel.json，之后这本书就以自己这份为准；也可以现在就改好保存。', 'This is the Studio-wide art direction from Settings. The first picture writes it into this book\'s novel.json, and from then on the book keeps its own; or edit and save it now.')
-                : t('你还没有给这本书定画风，现在显示的是内置的起点。画第一张图时会把它写进本书的 novel.json；最好现在就改成你要的样子再保存。', 'This book has no art direction of its own yet; what you see is the built-in starting point. The first picture writes it into novel.json — better to make it yours now and save.')}
+                ? t('这是以前工坊设置里的全局画风，保存后归这本书。', 'This is the old global art direction; saved, it becomes this book\'s own.')
+                : t('这是内置的起点，保存后归这本书。', 'This is the built-in start; saved, it becomes this book\'s own.')}
           >
             <TextArea value={style} minRows={2} onChange={(event) => { setStyle(event.target.value) }} />
           </Field>
           <Field
             label={t('画面里不要出现', 'Never in the picture')}
-            hint={t('逗号分隔。作为负面提示词随本书每一张图发送，并告诉写画面描述的模型绕开它们——比如书里的"教会"并不是现实里的教堂，就写上：十字架、哥特式教堂、彩绘玻璃。', 'Comma-separated. Sent as the negative prompt with every picture of this book, and given to the model that writes picture descriptions — if the "church" of your story is nothing like a real one, list: crosses, gothic cathedral, stained glass.')}
+            hint={t('逗号分隔，作为负面提示词随每张图发送。', 'Comma-separated; sent with every picture as its negative prompt.')}
           >
             <TextInput value={avoid} placeholder={t('如：十字架、哥特式教堂、现代服饰', 'e.g. crosses, gothic cathedral, modern clothing')} onChange={(event) => { setAvoid(event.target.value) }} />
           </Field>
           {studioAvoid.length > 0 ? <p className="nv-muted nv-small">{t(`工坊设置里对所有书另有：${studioAvoid.join('、')}`, `The Studio settings add for every book: ${studioAvoid.join(', ')}`)}</p> : null}
           <div className="nv-row-wrap">
             <Button variant="primary" size="sm" busy={busy} disabled={!dirty && resolved.source === 'book'} onClick={save}>{resolved.source === 'book' ? t('保存', 'Save') : t('定为本书画风', 'Make it this book\'s')}</Button>
-            <span className="nv-muted nv-small">{t('人物各自的"视觉锚点"和人设图在人物卡上；地点的样子在世界设定上。', 'Each character\'s visual anchor and design sheet live on their card; a place\'s look lives on its world entry.')}</span>
+            
           </div>
         </div>
       ) : null}

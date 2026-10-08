@@ -94,7 +94,7 @@ export function SearchPanel({ onClose }: { onClose: () => void }) {
           </>
         ) : null}
 
-        {debounced.length === 0 ? <p className="nv-muted">{t('"精确查找"逐字匹配全书正文；"语义检索"按意思找——比如搜"她第一次说谎"。点击结果直接跳到那一处。', '"Exact find" matches the manuscript literally; "By meaning" finds what you describe — try "the first time she lies". Click a result to jump there.')}</p> : null}
+        {debounced.length === 0 ? <p className="nv-muted">{t('“精确查找”逐字匹配；“语义检索”按意思找。', 'Exact matches the words; Semantic finds by meaning.')}</p> : null}
       </div>
     </Modal>
   )

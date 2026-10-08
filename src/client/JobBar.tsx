@@ -90,10 +90,10 @@ export function JobBar({ job, now, dense, className }: { job: JobInfo; now?: num
   }
   const hint = canOpen
     ? agent.running === true
-      ? t(`打开正在干活的${crewLabel(agent.role, t)}：它是对话的一个子智能体，每一步都看得到`, `Open the ${crewLabel(agent.role, t)} at work: a subagent of the conversation, every step of it in view`)
+      ? t(`看${crewLabel(agent.role, t)}正在做什么`, `See what the ${crewLabel(agent.role, t)} is doing`)
       : t(`打开${crewLabel(agent.role, t)}这次运行的记录`, `Open the record of the ${crewLabel(agent.role, t)}'s run`)
     : (job.crew ?? []).some(run => run.running === true && run.session !== undefined && run.parent === undefined)
-      ? t('展开看它写出来的东西。这本书还没有自己的对话，所以 agent 的过程没有地方挂——在总览页点“和总编讨论”开一场，之后的任务就能点进去看', 'Unfold what it has written. This book has no conversation of its own yet, so the agent has nowhere to be listed — open one with "Talk it over" on the overview, and later jobs can be opened and watched')
+      ? t('展开看它写出来的东西。这本书还没有对话，agent 的过程看不到', 'Unfold what it has written. This book has no conversation yet, so the agent\'s steps cannot be shown')
       : t('展开看它写出来的东西', 'Unfold what it has written')
   return (
     <div className={cx('nv-jobbar', dense === true && 'is-dense', !running && `is-${job.status}`, className)}>

@@ -80,10 +80,10 @@ export function LineWorldPanel({ line, names }: { line: string; names: { id: str
         <strong>{t('这条线上的世界', 'The world along this line')}</strong>
         <span className="nv-muted nv-small">
           {t(`读到这条线的末尾：${world.path.length} 章，已写 ${written} 章，收录了 ${digested} 章。`, `Read to the end of the line: ${world.path.length} chapters, ${written} written, ${digested} digested.`)}
-          {written > digested ? t(` 还有 ${written - digested} 章写了没收录——那几章里发生的事这里不知道。`, ` ${written - digested} written chapters are not digested — what happens in them is not known here.`) : ''}
+          {written > digested ? t(` 还有 ${written - digested} 章没收录。`, ` ${written - digested} more are not digested.`) : ''}
         </span>
       </div>
-      {world.people.length === 0 ? <p className="nv-muted nv-small">{t('这条线上还没有收录过的章节，所以读不出谁在、谁不在。', 'No chapter of this line is digested yet, so nothing can be said of who is there.')}</p> : (
+      {world.people.length === 0 ? <p className="nv-muted nv-small">{t('这条线上还没有收录过的章节。', 'No chapter of this line is digested yet.')}</p> : (
         <div className="nv-worldline-standings">
           {STANDINGS.map((status) => {
             const list = count(status)
@@ -111,7 +111,7 @@ export function LineWorldPanel({ line, names }: { line: string; names: { id: str
             <div className="nv-worldline-standing nv-worldline-knows">
               <Chip tone="blue">{t(`知道了什么 ${informed.length} 人`, `What they know: ${informed.length}`)}</Chip>
               <span className="nv-worldline-names nv-small">
-                <button type="button" className="nv-link" onClick={() => { setKnowing(!knowing) }}>{knowing ? t('收起', 'Fold') : t('沿这条线，各人先后得知的事（来自各章的收录）', 'What each has come to know along this line, as the digests noted it')}</button>
+                <button type="button" className="nv-link" onClick={() => { setKnowing(!knowing) }}>{knowing ? t('收起', 'Fold') : t('各人先后得知的事', 'What each has come to know')}</button>
               </span>
               {knowing ? (
                 <ul className="nv-worldline-known">
@@ -186,7 +186,7 @@ export function LineWorldPanel({ line, names }: { line: string; names: { id: str
               </tbody>
             </table>
           ) : null}
-          <p className="nv-muted nv-small">{t(`两条线上一样的：${compared.alike.people} 人、${compared.alike.threads} 条线索（分开之前发生的事是同一个故事，不算不同）。`, `Alike on both: ${compared.alike.people} people, ${compared.alike.threads} threads (what happened before they part is one story, and no difference).`)}</p>
+          <p className="nv-muted nv-small">{t(`两条线上一样的：${compared.alike.people} 人、${compared.alike.threads} 条线索。`, `The same on both: ${compared.alike.people} people, ${compared.alike.threads} threads.`)}</p>
         </div>
       ) : null}
     </div>

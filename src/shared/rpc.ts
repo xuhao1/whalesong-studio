@@ -393,7 +393,7 @@ export interface NovelRpc {
   'character.expand': { params: { root: string; id: string; direction?: string }; result: JobStarted }
   /** Distill a character's appearance into a visual anchor for image generation. */
   'character.visual': { params: { root: string; id: string; direction?: string }; result: JobStarted }
-  /** Have the director pick, from the book, the moment somebody's portrait shows — their signature scene — and keep it on their card (`visual.scene`). A job; its result says which, or that the book has none yet. */
+  /** Have the director find, in the book, the moments somebody is remembered by — their signature scenes — and keep them on their card (`visual.scenes`), the most their own first. A job; its result is the list, or says the book has none yet. */
   'character.scene': { params: { root: string; id: string; direction?: string }; result: JobStarted }
   'world.save': { params: { root: string; entry: Partial<WorldEntry> }; result: WorldEntry }
   /** Make several entries one: `fold` are folded into `keep` — names, text, picture, ties, marks on scenes all go with them. */
@@ -497,7 +497,7 @@ export interface NovelRpc {
   'jobs.cancel': { params: { id: string }; result: { cancelled: boolean } }
 
   // ── stage: illustration ──
-  'image.create': { params: { root: string; kind: 'portrait' | 'sheet' | 'scene' | 'location' | 'item' | 'cover' | 'custom'; target?: string; quote?: string; prompt?: string; size?: string; insert?: boolean; /** Portrait, sheet: the author's loose ideas — what is of the person goes into their look, what is of this picture directs it only. */ notes?: string; /** Sheet: which look (outfit) to draw. */ look?: string; looks?: Record<string, string>; characters?: string[]; avoid?: string[]; raw?: boolean; /** false: this once, no design sheet is drawn first. */ sheetFirst?: boolean; /** Portrait: plain — facing the viewer on a plain ground, not their signature scene. */ plain?: boolean; /** Location, item: the turn of its course to draw it at (`<chapter>` or `<chapter>:<kind>`); the picture is kept with that turn. */ event?: string }; result: JobStarted }
+  'image.create': { params: { root: string; kind: 'portrait' | 'sheet' | 'scene' | 'location' | 'item' | 'cover' | 'custom'; target?: string; quote?: string; prompt?: string; size?: string; insert?: boolean; /** Portrait, sheet: the author's loose ideas — what is of the person goes into their look, what is of this picture directs it only. */ notes?: string; /** Sheet: which look (outfit) to draw. */ look?: string; looks?: Record<string, string>; characters?: string[]; avoid?: string[]; raw?: boolean; /** false: this once, no design sheet is drawn first. */ sheetFirst?: boolean; /** Portrait: plain — facing the viewer on a plain ground, not their signature scene. */ plain?: boolean; /** Portrait: which of their signature scenes it shows (by id). */ scene?: string; /** Location, item: the turn of its course to draw it at (`<chapter>` or `<chapter>:<kind>`); the picture is kept with that turn. */ event?: string }; result: JobStarted }
   /**
    * Whose design sheets what is about to be drawn would draw first — asked before any of it is started, so that the author
    * can be told and say yes, or not this time. `unknown`: asks that cannot be told yet (panels with no storyboard).

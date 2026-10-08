@@ -67,7 +67,7 @@ function Lobby({ onOpen }: { onOpen: (id: string, fresh?: boolean) => void }) {
     <div className="nv-play-lobby">
       <section className="nv-card">
         <SectionTitle>{t('开一段幕间', 'Start an interlude')}</SectionTitle>
-        <p className="nv-muted nv-small">{t('幕间是从正文某一处岔出去的一场即兴戏：你可以扮演其中一个人物，也可以只当导演。其他人物由导演模型按人设、记忆和当时的处境来演。它不会改动正文——演完后可以作废、留作番外，或者让写手把它写成一章。', 'An interlude is an improvised scene branching off the book: play one of the characters, or just direct. The director model plays everyone else from their cards, their memory and the situation. It never changes the manuscript — afterwards discard it, keep it as a side story, or have the writer turn it into a chapter.')}</p>
+        <p className="nv-muted nv-small">{t('从正文某一处岔出去的一场即兴戏：你演一个人物，或只当导演。不会改动正文。', 'An improvised scene branching off the text: play one of the people, or only direct. The text is not changed.')}</p>
         {project.characters.length === 0 ? <p className="nv-note is-warn">{t('幕间需要人物卡。先在"设定"里建立人物。', 'Interludes need character cards. Create characters in the Bible first.')}</p> : (
           <>
             <div className="nv-form-grid">
@@ -345,9 +345,9 @@ function PlayRoom({ id, fresh, onExit }: { id: string; fresh: boolean; onExit: (
         {Object.entries(session.state ?? {}).slice(0, 3).map(([key, value]) => <Chip key={key} tone="violet" title={`${key}: ${String(value)}`}>{`${key} ${String(value)}`.length > 16 ? `${`${key} ${String(value)}`.slice(0, 15)}…` : `${key} ${String(value)}`}</Chip>)}
         {Object.keys(session.state ?? {}).length > 3 ? <Chip tone="violet" title={Object.entries(session.state ?? {}).slice(3).map(([key, value]) => `${key}: ${String(value)}`).join('\n')}>+{Object.keys(session.state ?? {}).length - 3}</Chip> : null}
         <span className="nv-spacer" />
-        <Chip tone={prefs.voice ? 'green' : 'neutral'} active={prefs.voice} onClick={() => { setPrefs({ voice: !prefs.voice }) }} title={t('逐句配音（调用语音服务）', 'Voice each line (uses the speech provider)')}>{t('配音', 'Voices')}</Chip>
+        <Chip tone={prefs.voice ? 'green' : 'neutral'} active={prefs.voice} onClick={() => { setPrefs({ voice: !prefs.voice }) }} title={t('逐句配音', 'Voice each line')}>{t('配音', 'Voices')}</Chip>
         <Chip tone={prefs.ambience ? 'green' : 'neutral'} active={prefs.ambience} onClick={() => { setPrefs({ ambience: !prefs.ambience }) }}>{prefs.ambience && scene.ambience !== undefined && scene.ambience !== 'none' ? `♪ ${t(...AMBIENCE[scene.ambience])}` : t('环境音', 'Ambience')}</Chip>
-        <Chip tone={prefs.paint ? 'green' : 'neutral'} active={prefs.paint} onClick={() => { setPrefs({ paint: !prefs.paint }) }} title={t('自动绘制场景与立绘（调用图像服务）', 'Paint scenes and portraits automatically (uses the image provider)')}>{painting ? t('绘制中…', 'Painting…') : t('自动配图', 'Auto paint')}</Chip>
+        <Chip tone={prefs.paint ? 'green' : 'neutral'} active={prefs.paint} onClick={() => { setPrefs({ paint: !prefs.paint }) }} title={t('自动绘制场景与立绘', 'Draw scenes and portraits as it goes')}>{painting ? t('绘制中…', 'Painting…') : t('自动配图', 'Auto paint')}</Chip>
         <Button size="sm" variant="ghost" icon="history" onClick={() => { setLog(true) }} title={t('回看', 'Backlog')} />
         <Menu icon="more" align="end" items={[
           { label: t('画出当前场景', 'Paint this scene'), icon: 'image', onSelect: () => { paintScene(true) } },
@@ -380,7 +380,7 @@ function PlayRoom({ id, fresh, onExit }: { id: string; fresh: boolean; onExit: (
             <strong>{session.outcome === 'novelized' ? t('这段幕间已经写成正文。', 'This interlude has been turned into a chapter.') : t('这一场落幕了。', 'The scene has come to its end.')}</strong>
             <div className="nv-row-wrap">
               {session.outcome !== 'novelized' ? <Button variant="primary" icon="feather" busy={busy} onClick={() => novelize()} title={t('写成一章，接在它分出的那一章后面，成为主线的一部分', 'Written as a chapter after the one it branched off, as part of the main line')}>{t('让写手写成一章', 'Turn it into a chapter')}</Button> : session.novelizedChapter !== undefined ? <Button icon="pen" onClick={() => { controller.setView('write', session.novelizedChapter) }}>{t('打开那一章', 'Open the chapter')}</Button> : null}
-              {session.outcome !== 'novelized' ? <Button icon="branch" busy={busy} onClick={() => novelize('line')} title={t('不动主线：把演出来的走向开成一条新的剧情线，这一场是它的第一章。之后可以接着推演、并回主线，或者设为主线。', 'The main line stays as it is: what was played becomes a new line of the plot, with this scene as its first chapter. It can be gone on with, joined to the main line, or made the main line.')}>{t('开成一条剧情线', 'Open it as a line of the plot')}</Button> : null}
+              {session.outcome !== 'novelized' ? <Button icon="branch" busy={busy} onClick={() => novelize('line')} title={t('把这一场开成一条新的剧情线，不动主线', 'Open this scene as a new plot line; the main line stays')}>{t('开成一条剧情线', 'Open it as a line of the plot')}</Button> : null}
               {session.outcome !== 'novelized' ? <Button icon="heart" busy={busy} onClick={() => { settle('side-story') }}>{t('留作番外', 'Keep as a side story')}</Button> : null}
               {session.outcome !== 'novelized' ? <Button variant="ghost" busy={busy} onClick={() => { settle('discarded') }}>{t('作废', 'Discard')}</Button> : null}
               {turn?.ended !== true && session.outcome !== 'novelized' && session.outcome !== 'open' ? <Button variant="ghost" busy={busy} onClick={() => { settle('open') }}>{t('接着演', 'Keep playing')}</Button> : null}

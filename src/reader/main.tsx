@@ -245,13 +245,13 @@ function Unlock({ id, title, t, onOpen }: { id: string; title?: string; t: Trans
     <div className="nr-lock">
       <span className="nv-lock-icon"><Icon name="lock" size={28} /></span>
       <h1>{title ?? t('一本加密的书', 'A sealed book')}</h1>
-      <p className="nv-muted">{t('这本书加了密。在这台设备上第一次打开要输入它的密码，之后会记住这台设备。', 'This book is sealed. The first time on this device its password is asked for; the device is remembered afterwards.')}</p>
+      <p className="nv-muted">{t('这本书加了密：输入密码，之后会记住这台设备。', 'This book is sealed: enter its password, and this device is remembered.')}</p>
       <form className="nv-lock-form" onSubmit={(event) => { event.preventDefault(); submit() }}>
         <input className="nv-input" type="password" autoComplete="off" autoFocus value={password} placeholder={t('这本书的密码', 'The book\'s password')} onChange={(event) => { setPassword(event.target.value); setWrong(undefined) }} />
         <button type="submit" className="nv-btn nv-btn-primary" disabled={password.length === 0 || busy}>{busy ? <span className="nv-spinner" style={{ width: 14, height: 14 }} aria-hidden="true" /> : <Icon name="unlock" size={15} />}<span>{t('解锁', 'Unlock')}</span></button>
       </form>
       {wrong !== undefined ? <p className="nv-note is-warn">{wrong}</p> : null}
-      <p className="nv-muted nv-small">{t('这里和作者的电脑之间走的是同一个 Wi-Fi 里的普通连接，密码不加密传输——只在信得过的网络里输入。', 'The connection to the author\'s computer is an ordinary one inside the same Wi-Fi, and the password travels unencrypted — type it only on a network you trust.')}</p>
+      <p className="nv-muted nv-small">{t('这段连接不加密，只在信得过的网络里输入。', 'This connection is not encrypted: enter it only on a network you trust.')}</p>
       <button type="button" className="nv-btn nv-btn-ghost nv-btn-sm" onClick={() => { go({}) }}><Icon name="chevronLeft" size={15} /><span>{t('书架', 'Shelf')}</span></button>
     </div>
   )
@@ -265,7 +265,7 @@ function Problem({ error, t, onRetry }: { error: string; t: Translate; onRetry: 
       <div className="nv-empty-body">
         <p>{error === 'gone'
           ? t('这本书可能已经不再分享，或者链接换过了。向作者要一个新的链接。', 'The book may no longer be shared, or the link was replaced. Ask the author for a new one.')
-          : t('请确认这台设备和作者的电脑连着同一个网络，而且那边的 Harness 开着。', 'Make sure this device is on the same network as the author\'s computer, and that the Harness is running there.')}</p>
+          : t('请确认这台设备和作者的电脑在同一个网络，而且那边的 DSH 开着。', 'Check that this device is on the author\'s network and that DSH is running there.')}</p>
         <button type="button" className="nv-btn nv-btn-outline" onClick={onRetry}><Icon name="refresh" size={15} /><span>{t('再试一次', 'Try again')}</span></button>
       </div>
     </div>
@@ -627,7 +627,7 @@ function Chapter({ book, chapters, chapter, ways, onLine, t }: { book: Book; cha
     setNotice(undefined)
     send<{ words: number; changed: boolean }>('PUT', `api/books/${encodeURIComponent(book.id)}/chapters/${encodeURIComponent(chapter.id)}`, { text: draft }).then((saved) => {
       setDraft(undefined)
-      setNotice(saved.changed ? t(`已保存，现在 ${saved.words} 字。改动前的样子在作者那边存了一个版本。`, `Saved, ${saved.words} words now. A version of the text as it was is kept on the author's side.`) : t('没有改动。', 'Nothing changed.'))
+      setNotice(saved.changed ? t(`已保存，现在 ${saved.words} 字`, `Saved: ${saved.words} words now`) : t('没有改动。', 'Nothing changed.'))
       data.reload()
     }, (error: unknown) => {
       setNotice(error instanceof ApiError && error.code === 'read-only' ? t('作者已经把这本书改回只读了。', 'The author has made this book read-only again.') : t('没能保存：连不上作者的电脑。你的改动还在这里，稍后再试。', 'Could not save: the author\'s computer cannot be reached. Your changes are still here; try again later.'))
@@ -782,7 +782,7 @@ function PlayList({ book, chapters, t }: { book: Book; chapters: ChapterRef[]; t
       </header>
       <div className="nr-book">
         <h1 className="nr-section-title">{t('幕间', 'Interludes')}</h1>
-        <p className="nv-muted nv-small">{t('幕间是从正文岔出去的一场戏：你扮演一个人物，或者站在场外指挥，导演模型让其他人物按各自的性格回应。它不改动正文。每一回合都会调用作者电脑上配置的模型。', 'An interlude is a scene branched off the story: you play a character, or direct from outside, and the director model has the others answer in character. It never changes the manuscript. Every turn calls the models set up on the author\'s computer.')}</p>
+        <p className="nv-muted nv-small">{t('从正文岔出去的一场戏：你演一个人物，或在场外指挥。每一回合都会调用作者电脑上的模型。', 'A scene branching off the text: play one of the people, or direct from outside. Every turn calls a model on the author\'s computer.')}</p>
         {plays.error !== undefined ? <Problem error={plays.error} t={t} onRetry={plays.reload} /> : plays.data === undefined ? <div className="nv-center"><span className="nv-spinner" style={{ width: 18, height: 18 }} aria-hidden="true" /></div> : plays.data.plays.length > 0 ? (
           <ol className="nr-chapters">
             {plays.data.plays.map(item => (

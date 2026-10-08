@@ -109,6 +109,22 @@ export interface CharacterLook {
   sheet?: string
 }
 
+/** A moment of the book a person is remembered by, written as the picture a portrait of it would be. */
+export interface SignatureScene {
+  /** Stable id within the character. */
+  id: string
+  /** What the moment is called, in a few words: 葬花. */
+  title: string
+  /** The chapter it is from, by id. */
+  chapter?: string
+  /** The moment as a picture, in the language of the book: where, doing what, holding what, the light. */
+  text: string
+  /** Why it is theirs, in a sentence — the director's, for the author. */
+  why?: string
+  /** Project-relative path of the portrait drawn of it. */
+  portrait?: string
+}
+
 export interface CharacterVisual {
   /**
    * The character's visual anchor: a short, concrete, drawable description
@@ -130,11 +146,14 @@ export interface CharacterVisual {
   /** Project-relative path of the bust portrait (avatars, the interlude stage); the reference when there is no sheet. */
   portrait?: string
   /**
-   * The moment of the book their portrait shows — the scene a reader remembers them by — in the language of the book:
-   * which moment it is, then the picture (where, what they are doing, what they hold, the light). The director picks
-   * it from the book the first time a portrait is drawn with nothing asked of it; the author can rewrite it, or have
-   * it picked anew. Left out: a portrait asked for nothing is plain — facing the viewer, on a plain ground.
+   * The moments of the book a reader remembers them by, the most their own first — each written as the picture a
+   * portrait of it would be. The director finds them in the book; the author reads, rewrites, reorders, adds and
+   * removes them, and picks which one a portrait shows.
    */
+  scenes?: SignatureScene[]
+  /** Which of `scenes` a portrait shows where nothing else is said (by id). Left out: the first. */
+  sceneAt?: string
+  /** As books of releases 40 and 41 kept it: one moment, as one paragraph. Read as the first of `scenes` where there are none. */
   scene?: string
   /** Emotion → sprite path, used by the interlude (visual-novel) stage. */
   sprites?: Record<string, string>
@@ -811,7 +830,7 @@ export interface ImageSettings {
   sheetFirst?: boolean
   /**
    * A portrait asked for with nothing said of it shows the person in their signature scene, which the director picks
-   * from the book and keeps on the card (`visual.scene`). Unset: yes. `false`: such a portrait is plain — facing the
+   * from the book and keeps on the card (`visual.scenes`). Unset: yes. `false`: such a portrait is plain — facing the
    * viewer, on a plain ground.
    */
   portraitScene?: boolean

@@ -97,7 +97,7 @@ export function CastView() {
       }
       // Somebody with a part who has gone missing is a question; a face in the crowd that is not seen again is how books are.
       if (gone === undefined && seen !== undefined && seen.chapters.length > 0 && seen.absentFor >= LIFE_AWAY && planned.length === 0 && MAIN_ROLES.includes(card.role)) {
-        away.push({ tone: 'amber', character: card.id, text: t(`${card.name}已 ${seen.absentFor} 章没有出场，后面的章纲里也没有安排。安排回来，或者在正文里交代去向。`, `${card.name} has been away for ${seen.absentFor} chapters and no planned chapter brings them back. Bring them back, or let the text say where they went.`) })
+        away.push({ tone: 'amber', character: card.id, text: t(`${card.name}已 ${seen.absentFor} 章没有出场，后面的章纲里也没有安排。`, `${card.name} has not appeared for ${seen.absentFor} chapters, and no outline ahead brings them back.`) })
       }
       if ((card.role === 'protagonist' || card.role === 'deuteragonist' || card.role === 'antagonist') && (card.motivation === undefined || card.arc === undefined)) {
         lacking.push({ tone: 'blue', character: card.id, text: t(`${card.name}是主要人物，但还缺少${card.motivation === undefined ? '动机' : ''}${card.motivation === undefined && card.arc === undefined ? '和' : ''}${card.arc === undefined ? '弧光' : ''}。`, `${card.name} is a lead but has no ${[card.motivation === undefined ? 'motivation' : '', card.arc === undefined ? 'arc' : ''].filter(Boolean).join(' or ')} yet.`) })
@@ -109,7 +109,7 @@ export function CastView() {
       const seen = presence.get(card.id)
       return MAIN_ROLES.includes(card.role) && seen !== undefined && seen.chapters.length > 0 && seen.death === undefined && seen.exit === undefined && seen.absentFor < LIFE_AWAY
     })
-    if (around.length > 14) list.push({ tone: 'amber', text: t(`最近几章里同时在场的主要人物和配角有 ${around.length} 个。读者很难同时记住这么多人——考虑让一部分先退到幕后，分批登场。`, `${around.length} leads and supporting characters are on the page in the latest chapters. Readers struggle to hold that many — let some step back and bring them on in shifts.`) })
+    if (around.length > 14) list.push({ tone: 'amber', text: t(`最近几章里同时在场的主要人物和配角有 ${around.length} 个，读者很难同时记住。`, `${around.length} leading and supporting characters have been on stage together lately — more than a reader keeps in mind.`) })
     list.push(...lacking)
     return list
   }, [cards, presence, plans, info, t])
@@ -178,7 +178,7 @@ export function CastView() {
           { value: 'walkons', label: t('龙套', 'Walk-ons'), icon: 'users' },
         ]} />
         {advice.length > 0 && notes === 'hidden' ? (
-          <button type="button" className="nv-advice-mark" onClick={() => { setNotes('open') }} title={t(`调度提醒 ${advice.length} 条（已隐藏）——点一下打开`, `${advice.length} scheduling notes (hidden) — click to show them`)}>
+          <button type="button" className="nv-advice-mark" onClick={() => { setNotes('open') }} title={t(`调度提醒 ${advice.length} 条`, `${advice.length} casting note(s)`)}>
             <Icon name="alert" size={12} /><span>{advice.length}</span>
           </button>
         ) : null}
@@ -190,7 +190,7 @@ export function CastView() {
         <div className="nv-cast-line">
           <span className="nv-muted nv-small">{t('世界线', 'Line of the plot')}</span>
           <Select value={line} options={[{ value: MAIN_LINE, label: `★ ${t('主线', 'Main line')}` }, ...plotLines.map(candidate => ({ value: candidate.id, label: `${candidate.shelved === true ? '⏸ ' : ''}${candidate.title}` }))]} onChange={setLine} />
-          <span className="nv-muted nv-small">{t('履历沿着这条线读：同一个人在这条线上死了，在另一条线上可以还活着。', 'A life is read along this line: dead on one, somebody can be alive on another.')}</span>
+          
         </div>
       ) : null}
 
@@ -229,8 +229,8 @@ function LifeTable({ shown, lives }: { shown: CharacterCard[]; lives: Lives }) {
     <div className="nv-presence nv-lives">
       {digested < lives.chapters.length ? (
         <p className="nv-muted nv-small nv-lives-note">{digested === 0
-          ? t('这条线上还没有收录过的章节：履历是从各章的收录里读出来的——在总览页点"收录"。', 'No chapter of this line is digested yet: a life is read off the chapter digests — digest them from the overview.')
-          : t(`这条线已收录 ${digested} / ${lives.chapters.length} 章：没收录的章节里发生了什么，这里不知道。`, `${digested} of this line's ${lives.chapters.length} chapters are digested: what happens in the others is not known here.`)}</p>
+          ? t('这条线上还没有收录过的章节。', 'No chapter of this line is digested yet.')
+          : t(`这条线已收录 ${digested} / ${lives.chapters.length} 章。`, `${digested} of this line's ${lives.chapters.length} chapters are digested.`)}</p>
       ) : null}
       <table>
         <thead>
@@ -385,7 +385,7 @@ function Relations({ cards }: { cards: CharacterCard[] }) {
   // Where somebody stands on the picture: in the hand that moves them, else where the layout has them.
   const spot = (id: string): Point | undefined => (held?.id === id ? held.at : layout.at.get(id))
 
-  if (edges.length === 0) return <Empty icon="link" title={t('还没有人物关系', 'No relationships yet')}>{t('在人物卡的"关系"里添加；从稿件导入或收录章节时也会自动归并。', 'Add them under Relationships on a character card; importing a manuscript or digesting chapters fills them in too.')}</Empty>
+  if (edges.length === 0) return <Empty icon="link" title={t('还没有人物关系', 'No relationships yet')}>{t('在人物卡的“关系”里添加。', 'Add them under Relationships on a character\'s card.')}</Empty>
   const nameOf = (id: string): string => cards.find(card => card.id === id)?.name ?? id
   const touches = (edge: { from: string; to: string }, id: string): boolean => edge.from === id || edge.to === id
   const listed = centred !== undefined ? edges.filter(edge => touches(edge, centred)) : edges
@@ -498,7 +498,7 @@ function Relations({ cards }: { cards: CharacterCard[] }) {
                       place(card.id, undefined)
                     }}
                   >
-                    <title>{t(`「${card.name}」是你挪到这里的——点这里让他回到自动排布的位置`, `You put ${card.name} here — click to let them stand where the layout has them`)}</title>
+                    <title>{t('放回自动排布的位置', 'Back to where the layout puts them')}</title>
                     <circle r={5.5} />
                     <path d="M-2.2 -2.2 L2.2 2.2 M2.2 -2.2 L-2.2 2.2" />
                   </g>
@@ -508,16 +508,16 @@ function Relations({ cards }: { cards: CharacterCard[] }) {
           })}
         </svg>
         <div className="nv-graph-tools">
-          <Button size="sm" variant="ghost" onClick={() => { zoom(1 / 1.3) }} title={t('放大（也可以滚轮）', 'Enlarge (the wheel does it too)')}>＋</Button>
+          <Button size="sm" variant="ghost" onClick={() => { zoom(1 / 1.3) }} title={t('放大', 'Zoom in')}>＋</Button>
           <Button size="sm" variant="ghost" onClick={() => { zoom(1.3) }} title={t('缩小', 'Reduce')}>－</Button>
           <Button size="sm" variant="ghost" disabled={view === undefined} onClick={() => { setView(undefined) }} title={t('回到整张图', 'Back to the whole picture')}>{t('全图', 'Whole')}</Button>
-          {centred === undefined && Object.keys(places).length > 0 ? <Button size="sm" variant="ghost" onClick={() => { place(undefined, undefined) }} title={t(`你挪动过 ${Object.keys(places).length} 个人的位置：都放回自动排布`, `You moved ${Object.keys(places).length}: let all of them stand where the layout has them`)}>{t('自动排布', 'Lay out again')}</Button> : null}
+          {centred === undefined && Object.keys(places).length > 0 ? <Button size="sm" variant="ghost" onClick={() => { place(undefined, undefined) }} title={t(`把挪动过的 ${Object.keys(places).length} 人放回自动排布`, `Put the ${Object.keys(places).length} you moved back where the layout puts them`)}>{t('自动排布', 'Lay out again')}</Button> : null}
         </div>
         <p className="nv-muted nv-small nv-graph-legend">
           {kinds.map(kind => <span key={kind} className={cx('nv-graph-key', `is-${kind}`)}><i />{t(...KIND_LABELS[kind])}</span>)}
           <span className="nv-graph-hint">{centred !== undefined
-            ? t(`以「${nameOf(centred)}」为中心：内圈是和他直接有关系的人，按关系的种类排在一起；外圈是这些人各自牵出的人。`, `Around ${nameOf(centred)}: the inner ring is who they are bound to, each kind of bond together; beyond are those the ring leads to.`)
-            : t('关系近的人站得近。点一个人，以他为中心重排；拖动一个人把他挪到别处（记在这本书里）；拖动空白处移动，滚轮缩放。', 'People bound to one another stand close. Click someone to arrange the picture around them; drag someone to move them elsewhere (kept with the book); drag the empty part to move, the wheel to enlarge.')}</span>
+            ? t(`以「${nameOf(centred)}」为中心`, `Centred on ${nameOf(centred)}`)
+            : t('点一个人以他为中心；拖动挪位置；滚轮缩放。', 'Click someone to centre on them; drag to move; scroll to zoom.')}</span>
         </p>
       </div>
       <ul className="nv-relation-list">
@@ -555,7 +555,7 @@ function WalkOns({ cards }: { cards: CharacterCard[] }) {
   const index = useMemo(() => new Map(project.chapters.map(chapter => [chapter.id, chapter.index])), [project.chapters])
   const light = cards.filter(card => card.role === 'minor' || card.role === 'cameo')
   if (loaded.data === undefined) {
-    return <div className="nv-center">{loaded.error !== undefined ? <p className="nv-muted">{t('这个版本的工坊服务还不会整理龙套——重启一次 DSH 就有了。', 'This Studio service cannot list walk-ons yet — restart the Harness once.')}</p> : <Spinner />}</div>
+    return <div className="nv-center">{loaded.error !== undefined ? <p className="nv-muted">{t('这个版本的工坊服务还不会整理龙套——重启一次 DSH 就有了。', 'This Studio service cannot list walk-ons yet — restart DSH once.')}</p> : <Spinner />}</div>
   }
   const all = loaded.data.walkons
   const listed = all.filter(item => item.ignored !== true)
@@ -599,7 +599,7 @@ function WalkOns({ cards }: { cards: CharacterCard[] }) {
             {cards.length > 0 ? (
               <Menu label={t('是别名', 'Alias of')} icon="link" align="end" items={[...(near !== undefined ? [near] : []), ...cards.filter(card => card.id !== near?.id)].slice(0, 30).map(card => ({ label: card.name, onSelect: () => { void settle(item, 'alias', { target: card.id }) } }))} />
             ) : null}
-            <Button size="sm" variant="ghost" icon="x" pending={t('正在移出…', 'Removing…')} onClick={() => settle(item, 'ignore')} title={t('不是人物，或者不值得管：从列表里拿掉（随时可以放回）', 'Not a person, or not worth tracking: take it off the list (it can be put back)')} />
+            <Button size="sm" variant="ghost" icon="x" pending={t('正在移出…', 'Removing…')} onClick={() => settle(item, 'ignore')} title={t('从列表里拿掉', 'Take off the list')} />
           </div>
         )}
       </li>
@@ -611,7 +611,7 @@ function WalkOns({ cards }: { cards: CharacterCard[] }) {
         <SectionTitle actions={quote !== undefined && listed.length > 0 ? (
           <Button size="sm" icon="quote" onClick={() => { quote(t(`这些名字在正文里出现了但还没有人物卡：${listed.slice(0, 20).map(item => item.name).join('、')}。请判断哪些值得立卡、哪些其实是已有人物的别名、哪些不用管，并替我处理。\n`, `These names are on the page without a character card: ${listed.slice(0, 20).map(item => item.name).join(', ')}. Decide which deserve a card, which are aliases of existing characters and which can be left alone, and settle them for me.\n`)) }}>{t('交给总编', 'Hand to the showrunner')}</Button>
         ) : undefined}>{t(`正文里有名字、还没立卡的人（${listed.length}）`, `Named on the page, no card yet (${listed.length})`)}</SectionTitle>
-        <p className="nv-muted nv-small">{t('从章节记忆、场记的建议、有声脚本和声音表里汇总。路人甲不必人人立卡：值得跟踪的给一张卡，其实是某个人物另一个叫法的并成别名，其余放着不管也不影响写作。', 'Gathered from chapter memories, suggestions, audio scripts and the voice sheet. Not every passer-by needs a card: give one to those worth tracking, fold other names of an existing character into their aliases, and leave the rest.')}</p>
+        <p className="nv-muted nv-small">{t('值得跟踪的立卡，是别名的并进去，其余不用管。', 'Give a card to those worth following, fold aliases in, leave the rest.')}</p>
         {listed.length === 0 ? <Empty icon="users" title={t('没有漏掉的人', 'Nobody is missing a card')}>{t('写了新章节并收录记忆之后，新冒出来的名字会出现在这里。', 'New names show up here after new chapters are digested.')}</Empty> : <ul className="nv-walkon-list">{listed.map(row)}</ul>}
         {ignored.length > 0 ? (
           <>

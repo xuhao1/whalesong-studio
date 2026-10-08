@@ -71,7 +71,7 @@ export function UsageView() {
       <header className="nv-settings-head">
         <div>
           <h2>{t('用量与成本', 'Usage and cost')}</h2>
-          <p className="nv-muted nv-small">{t('工坊每调用一次模型就记一笔：写手、场记、策划、导演、后期用了多少 token，画了几张图，合成了多少分钟语音。填上你实际付的单价，就能看到钱花在了哪里。', 'Every call the Studio makes to a model is written down: the tokens each role used, the pictures drawn, the minutes of speech. Enter what you actually pay per model and see where the money goes.')}</p>
+          <p className="nv-muted nv-small">{t('工坊每调用一次模型就记一笔。填上单价就能看到花费。', 'Every model call the Studio makes is noted. Enter prices to see the cost.')}</p>
         </div>
         <Button variant="ghost" icon="refresh" busy={loaded.loading} onClick={() => { loaded.reload() }}>{t('刷新', 'Refresh')}</Button>
       </header>
@@ -88,7 +88,7 @@ export function UsageView() {
       </div>
 
       {total.calls === 0 ? (
-        <Empty icon="clock" title={t('这段时间还没有调用记录', 'No calls in this period')}>{t('用量从这一版开始记录：写一章、收录一次记忆、画一张图或合成一段语音之后，这里就会有数字。', 'Counting starts with this version: write a chapter, digest one, draw a picture or voice a line, and figures appear here.')}</Empty>
+        <Empty icon="clock" title={t('这段时间还没有调用记录', 'No calls in this period')}>{t('还没有用量记录。', 'Nothing has been used yet.')}</Empty>
       ) : (
         <>
           <div className="nv-usage-cards">
@@ -101,7 +101,7 @@ export function UsageView() {
 
           <section className="nv-card">
             <SectionTitle>{t('按模型', 'By model')}</SectionTitle>
-            <p className="nv-muted nv-small">{t('点"定价"填上你为这个模型付的单价（按你的账单来，各家、各套餐不同）。没填单价的模型只计数，不算钱。', 'Choose "Price" to enter what you pay for a model (go by your own bill; it differs by service and plan). A model without a price is counted, not costed.')}</p>
+            <p className="nv-muted nv-small">{t('没填单价的模型只计数，不算钱。', 'A model with no price entered is counted, not costed.')}</p>
             <div className="nv-table-wrap">
               <table className="nv-table">
                 <thead>
@@ -144,7 +144,7 @@ export function UsageView() {
           {!inBook && summary.byBook.length > 0 ? (
             <section className="nv-card">
               <SectionTitle>{t('按作品', 'By book')}</SectionTitle>
-              <Rows rows={summary.byBook.map(row => ({ ...row, label: row.label.length > 0 ? row.label : t('（没有归到某本书的调用：试听、设置检查等）', '(calls not tied to a book: auditions, checks)') }))} count={count} t={t} />
+              <Rows rows={summary.byBook.map(row => ({ ...row, label: row.label.length > 0 ? row.label : t('（不属于某本书的调用）', '(calls that belong to no book)') }))} count={count} t={t} />
             </section>
           ) : null}
 
@@ -165,8 +165,8 @@ export function UsageView() {
       )}
 
       <p className="nv-muted nv-small">
-        {begun !== undefined ? t(`用量从 ${new Date(begun).toLocaleDateString()} 开始记录，在那之前的调用没有记账（不代表没有花费）。`, `Counting began on ${new Date(begun).toLocaleDateString()}; calls before that were never recorded, which does not mean they were free. `) : ''}
-        {t('这里只有小说工坊自己发出的调用。左边对话里总编（Agent）自己的 token 由 DSH 统计，不在其中。带 ≈ 的数字是接口没有回报用量时按字数估算的。记录存在 DSH 目录下的 novel-writer/usage/，每月一个文件。', 'Only calls the Studio itself makes are here. The tokens of the showrunner in the conversation are counted by the Harness, not included. Figures marked ≈ were estimated from the text because the endpoint reported no usage. The ledger lives under the Harness home in novel-writer/usage/, one file a month.')}
+        {begun !== undefined ? t(`用量从 ${new Date(begun).toLocaleDateString()} 开始记录。`, `Usage is recorded from ${new Date(begun).toLocaleDateString()}.`) : ''}
+        {t('只有工坊自己发出的调用；总编的 token 由 DSH 统计。带 ≈ 的是估算。', 'Only the Studio\'s own calls; the showrunner\'s tokens are counted by DSH. Figures marked ≈ are estimates.')}
       </p>
 
       {pricing !== undefined ? <PriceEditor row={pricing} price={prices[pricing.label]} onClose={() => { setPricing(undefined) }} onSaved={() => { setPricing(undefined); loaded.reload() }} /> : null}
@@ -256,7 +256,7 @@ function PriceEditor({ row, price, onClose, onSaved }: { row: UsageRow; price: P
         <Button variant="primary" busy={busy} onClick={() => { save() }}>{t('保存', 'Save')}</Button>
       </>
     )}>
-      <p className="nv-muted nv-small">{t('按你的账单或服务商的价目表填，只填用得到的项。保存后，这个模型过去和以后的用量都按这个单价折算。', 'Go by your bill or the service\'s price list, and fill in only what applies. Once saved, this model\'s past and future usage is costed at these prices.')}</p>
+      <p className="nv-muted nv-small">{t('只填用得到的项。过去和以后的用量都按这个单价算。', 'Fill in only what is used. Past and future usage is costed at these prices.')}</p>
       <div className="nv-form-grid">
         <Field label={t('货币符号', 'Currency sign')}><TextInput value={draft.currency} placeholder="¥" onChange={set('currency')} /></Field>
         {kind === 'text' || kind === 'embedding' ? <Field label={t('每百万输入 tokens', 'Per million input tokens')}><TextInput inputMode="decimal" value={draft.input} onChange={set('input')} /></Field> : null}

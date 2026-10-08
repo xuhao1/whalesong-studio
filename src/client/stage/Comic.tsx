@@ -142,7 +142,7 @@ export function ComicStage({ chapter }: { chapter: ChapterInfo | undefined }) {
           <div className="nv-density-go">
             {estimate !== undefined ? <span className="nv-muted nv-small">{t('这一章：', 'This chapter: ')}{estimate}</span> : <span className="nv-muted nv-small">{t('有了有声脚本才能估算格数', 'The count can be estimated once there is an audio script')}</span>}
             {unfinished ? (
-              <Button variant="primary" icon="layers" busy={job?.batch === true} disabled={working} pending={t('正在一键制作…', 'Producing…')} onClick={makeAll} title={t(`一次做完这一章的有声漫：脚本${ready?.tts === true ? '、配音' : ''}${ready?.sound === true ? '、声音' : ''}、分镜${ready?.image === true ? '、画面' : ''}。脚本排好以后几步同时进行；已经做好的不会重做。`, `This chapter's motion comic in one go: script${ready?.tts === true ? ', voices' : ''}${ready?.sound === true ? ', sound' : ''}, storyboard${ready?.image === true ? ', pictures' : ''}. Once the script stands the rest is made side by side; what is there already is not made again.`)}>{t('一键制作这一章', 'Produce this chapter')}</Button>
+              <Button variant="primary" icon="layers" busy={job?.batch === true} disabled={working} pending={t('正在一键制作…', 'Producing…')} onClick={makeAll} title={t(`一次做完这一章的有声漫：脚本${ready?.tts === true ? '、配音' : ''}${ready?.sound === true ? '、声音' : ''}、分镜${ready?.image === true ? '、画面' : ''}`, `This chapter's motion comic in one go: script${ready?.tts === true ? ', voices' : ''}${ready?.sound === true ? ', sound' : ''}, storyboard${ready?.image === true ? ', pictures' : ''}`)}>{t('一键制作这一章', 'Produce this chapter')}</Button>
             ) : null}
             <Button variant={!unfinished && (board.data.stale || changed) ? 'primary' : 'outline'} icon="sparkles" busy={storyboarding} disabled={working} pending={t('正在编排分镜…', 'Storyboarding…')} onClick={() => cut(panels.length > 0)}>
               {panels.length === 0 ? t('生成分镜', 'Storyboard it') : board.data.stale ? t('按新正文重做分镜', 'Redo the storyboard') : changed ? t('按这个密度重做分镜', 'Redo with this cut') : t('重做分镜', 'Redo the storyboard')}
@@ -155,13 +155,13 @@ export function ComicStage({ chapter }: { chapter: ChapterInfo | undefined }) {
             {lines.some(item => item.audio === undefined) ? <Button icon="mic" busy={voicing} disabled={working} pending={t('正在合成配音…', 'Voicing…')} onClick={() => (!controller.need('tts') ? undefined : run(async () => { await controller.api.call('audio.synthesize', { root, chapter: chapter.id }); await controller.refreshJobs() }))}>{t('合成配音', 'Synthesize voices')}</Button> : null}
             <Button variant="ghost" icon="headphones" onClick={() => { controller.openReader('listen', chapter.id) }}>{t('去"听"里制作配音', 'Voices are made under Listen')}</Button>
             <span className="nv-spacer" />
-            <Button variant="ghost" icon="trash" disabled={working} onClick={() => { confirm.ask(t('删除这一章的整份分镜？画好的图还留在画廊里（可以在那里逐张删），重新生成分镜后要重新绘制。', 'Delete this chapter\'s whole storyboard? The pictures drawn for it stay in the gallery (where each can be deleted); a storyboard cut again has to be drawn again.'), () => { void run(async () => { player.stop(); await controller.api.call('comic.clear', { root, chapter: chapter.id }); controller.toast('success', t('已删除这一章的分镜', 'The storyboard is deleted')); board.reload() }) }) }} title={t('删除这一章的分镜', 'Delete this chapter\'s storyboard')} />
+            <Button variant="ghost" icon="trash" disabled={working} onClick={() => { confirm.ask(t('删除这一章的分镜？画好的图还留在图库里。', 'Delete this chapter\'s storyboard? Pictures already drawn stay in the gallery.'), () => { void run(async () => { player.stop(); await controller.api.call('comic.clear', { root, chapter: chapter.id }); controller.toast('success', t('已删除这一章的分镜', 'The storyboard is deleted')); board.reload() }) }) }} title={t('删除这一章的分镜', 'Delete this chapter\'s storyboard')} />
           </div>
         ) : null}
         {board.data.board?.note !== undefined ? <p className="nv-note">{board.data.board.note}</p> : null}
         <NeedsSetup what="image">{t('分镜可以先做，画面要等它。', 'The storyboard can be made first; the pictures wait for it.')}</NeedsSetup>
         <NeedsSetup what="tts" />
-        {job === undefined && batch !== undefined ? <p className="nv-note"><Spinner size={12} /> {t('批量制作正在处理这一章（现在在做别的步骤，或者排在后面）。', 'A batch is at work on this chapter (on another step right now, or it is waiting its turn).')} <button type="button" className="nv-link" onClick={() => { controller.navigate({ view: 'stage', tab: 'production' }) }}>{t('看整体进度', 'See the whole batch')}</button></p> : null}
+        {job === undefined && batch !== undefined ? <p className="nv-note"><Spinner size={12} /> {t('批量制作正在处理这一章。', 'A batch is working on this chapter.')} <button type="button" className="nv-link" onClick={() => { controller.navigate({ view: 'stage', tab: 'production' }) }}>{t('看整体进度', 'See the whole batch')}</button></p> : null}
         {job !== undefined && job.kind === 'audio' ? <JobProgress job={job} synthesizing={job.title === 'synthesize'} onStop={() => { void controller.cancelJob(job.id) }} /> : job !== undefined ? (
           <div className="nv-jobprogress" role="status">
             <div className="nv-jobprogress-head">
@@ -178,7 +178,7 @@ export function ComicStage({ chapter }: { chapter: ChapterInfo | undefined }) {
 
       {panels.length === 0 ? (
         <Empty icon="film" title={t('这一章还没有分镜', 'This chapter has no storyboard yet')}>
-          {t('分镜把有声脚本编成一格格画面：每格写明画面内容、出场人物与镜头运动，在对应的台词播放时停留在屏幕上；长段旁白也可以中途换画面。人物外貌取自人物卡，所以同一个人在每一格里长得一样。上面可以选要切得多细。', 'A storyboard arranges the audio script into panels: each names what is shown, who is in it and how the camera moves, and stays on screen while its lines play — a long narration can change picture midway. Looks come from each character card, so a person stays the same from panel to panel. Choose above how finely to cut.')}
+          {t('还没有分镜。分镜把有声脚本编成一格格画面。', 'No storyboard yet. A storyboard turns the script into panels.')}
         </Empty>
       ) : (
         <>
@@ -195,7 +195,7 @@ export function ComicStage({ chapter }: { chapter: ChapterInfo | undefined }) {
                 <Button size="sm" icon="refresh" disabled={job !== undefined || picked.size === 0} onClick={() => render({ panels: [...picked], force: true })} title={t('把选中的这些格重新画一遍', 'Draw the chosen panels again')}>{t(`重画选中的 ${picked.size} 格`, `Redraw the ${picked.size} chosen`)}</Button>
                 <Button size="sm" variant="danger" icon="trash" disabled={working || picked.size === 0} onClick={() => {
                   const ids = [...picked]
-                  confirm.ask(t(`删除选中的 ${ids.length} 格分镜？它们的台词并到相邻的格里；画好的图还留在画廊。`, `Delete the ${ids.length} chosen panels? Their lines go to the panels beside them; pictures already drawn stay in the gallery.`), () => {
+                  confirm.ask(t(`删除选中的 ${ids.length} 格？它们的台词并到相邻的格里。`, `Delete the ${ids.length} chosen panel(s)? Their lines join the neighbours.`), () => {
                     void run(async () => {
                       for (const id of ids) await controller.api.call('comic.removePanel', { root, chapter: chapter.id, panel: id })
                       setPicked(new Set())
@@ -319,7 +319,7 @@ function PanelDeck({ ids, picked, onPick, actions, children }: { ids: string[]; 
             {actions}
             <Button size="sm" variant="ghost" onClick={() => { setChoosing(false); onPick(new Set()) }}>{t('完成', 'Done')}</Button>
           </>
-        ) : ids.length > 1 ? <Button size="sm" variant="ghost" icon="check" onClick={() => { setChoosing(true) }} title={t('选几格一起重画或删除：点选、Shift 连选，或在空白处拖出一个框', 'Choose several panels to redraw or delete together: click, Shift-click a stretch, or drag a box from an empty spot')}>{t('多选', 'Choose several')}</Button> : null}
+        ) : ids.length > 1 ? <Button size="sm" variant="ghost" icon="check" onClick={() => { setChoosing(true) }} title={t('多选：点选、Shift 连选或拖框', 'Choose several: click, Shift-click a run, or drag a box')}>{t('多选', 'Choose several')}</Button> : null}
         <span className="nv-spacer" />
         <span className="nv-deck-layout" role="group" aria-label={t('分镜的排法', 'How the panels are laid out')}>
           <button type="button" className={cx(layout === 'grid' && 'is-active')} onClick={() => { setLayout('grid') }} title={t('排成几行，上下滚动', 'In rows, scrolling down')}><Icon name="layers" size={13} />{t('网格', 'Grid')}</button>
@@ -400,7 +400,7 @@ function PanelEditor({ chapterId, panel, onClose, onSaved }: { chapterId: string
   return (
     <Modal wide title={t('修改这一格', 'Edit panel')} onClose={onClose} footer={(
       <>
-        <Button variant="ghost" icon="trash" disabled={busy} onClick={() => { confirm.ask(t('删除这一格？它对着的台词会并给前一格（它是第一格时并给后一格），所以不会有哪句话没有画面；画好的图还留在画廊里。', 'Delete this panel? The lines it stayed on screen for go to the panel before it (after it, when it is the first), so no line is left without a picture; its drawing stays in the gallery.'), () => { void run(async () => { await controller.api.call('comic.removePanel', { root, chapter: chapterId, panel: panel.id }); controller.toast('success', t('已删除这一格', 'Panel deleted')); onSaved(); onClose() }) }) }}>{t('删除这一格', 'Delete this panel')}</Button>
+        <Button variant="ghost" icon="trash" disabled={busy} onClick={() => { confirm.ask(t('删除这一格？它的台词并给相邻的一格。', 'Delete this panel? Its lines join a neighbour.'), () => { void run(async () => { await controller.api.call('comic.removePanel', { root, chapter: chapterId, panel: panel.id }); controller.toast('success', t('已删除这一格', 'Panel deleted')); onSaved(); onClose() }) }) }}>{t('删除这一格', 'Delete this panel')}</Button>
         <span className="nv-spacer" />
         <Button variant="primary" busy={busy} pending={t('正在保存…', 'Saving…')} onClick={() => run(async () => { await controller.api.call('comic.updatePanel', { root, chapter: chapterId, panel: panel.id, patch: { description, prompt, camera } }); onSaved(); onClose() })}>{t('保存', 'Save')}</Button>
       </>

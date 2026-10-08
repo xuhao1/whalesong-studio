@@ -77,17 +77,17 @@ export function useSheetsAsk(): {
     <Modal title={t(`这次会先补 ${count} 张人设图`, `This will first draw ${count} design sheet${count === 1 ? '' : 's'}`)} onClose={() => { answer('cancel') }} footer={(
       <>
         <Button variant="ghost" onClick={() => { answer('cancel') }}>{t('取消', 'Cancel')}</Button>
-        <Button variant="outline" onClick={() => { answer('skip') }} title={t('这一次有什么照什么画：不补人设图，少几次绘图调用；这些人在这张图里的长相就只靠文字', 'This once, draw from what there is: no sheets, fewer image calls — and these people look the way the words alone make them')}>{t('这次不补，直接画', 'Not this time')}</Button>
+        <Button variant="outline" onClick={() => { answer('skip') }} title={t('这次不补人设图，长相只照文字画', 'Skip the sheets this once: faces come from the words alone')}>{t('这次不补，直接画', 'Not this time')}</Button>
         <Button variant="primary" onClick={() => { answer('first') }}>{t(`先补 ${count} 张，再画`, `Draw ${count === 1 ? 'it' : `the ${count}`} first`)}</Button>
       </>
     )}>
       <p className="nv-confirm-text">
         {pending.portrait
-          ? t(`${names}还没有人设图。先画人设图，再照着它画立绘——多 1 次绘图调用。`, `${names} has no design sheet yet. The sheet is drawn first and the portrait against it — one more image call.`)
-          : t(`${names}多次出场、还没有人设图。先给${count === 1 ? ' TA ' : '他们各'}画一张——多 ${count} 次绘图调用——这张图和以后的图里才是同一张脸。`, `${names} come${count === 1 ? 's' : ''} back in the book and ha${count === 1 ? 's' : 've'} no design sheet. One is drawn for each first — ${count} more image call${count === 1 ? '' : 's'} — so that this picture and every later one show the same face.`)}
+          ? t(`${names}还没有人设图，先画它，多 1 次绘图调用。`, `${names} has no design sheet: it is drawn first, one more image call.`)
+          : t(`${names}还没有人设图，先各画一张，多 ${count} 次绘图调用。`, `${names}: no design sheet yet. One each is drawn first, ${count} more image call(s).`)}
       </p>
-      {pending.unknown > 0 ? <p className="nv-muted nv-small">{t(`另有 ${pending.unknown} 章的分镜还没编排：编排好之后才知道那几章要不要补，到时任务条上会说。`, `${pending.unknown} more chapter${pending.unknown === 1 ? ' has' : 's have'} no storyboard yet: whether sheets are needed there is known once it is laid out, and the job bar says so then.`)}</p> : null}
-      <p className="nv-muted nv-small">{t('想一直不问、也不补：设置 → 图像生成 → 取消"画人之前先补人设图"。', 'Never to be asked, and never to have them drawn: Settings → Images → untick "The design sheet first".')}</p>
+      {pending.unknown > 0 ? <p className="nv-muted nv-small">{t(`另有 ${pending.unknown} 章还没编排分镜，要补谁到时才知道。`, `${pending.unknown} more chapter(s) have no storyboard yet; who they need is known then.`)}</p> : null}
+      <p className="nv-muted nv-small">{t('不想再问：设置 → 图像生成。', 'To stop being asked: Settings → Images.')}</p>
     </Modal>
   ) : null
   return { before, element }

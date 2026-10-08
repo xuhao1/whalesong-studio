@@ -5,7 +5,7 @@ import { acceptSuggestion, deriveTies, dismissSuggestion, expandCharacter, expan
 import { applyOutlineOps, type OutlineOp } from '../../core/pipelines/outline'
 import { buildFoundation, deriveBeats, deriveChapters, whatIf } from '../../core/pipelines/plot'
 import { ProjectError, upsertLooks } from '../../core/project'
-import { deriveLook, derivePortraitScene, deriveVisual } from '../../core/pipelines/illustrate'
+import { deriveLook, deriveScenes, deriveVisual } from '../../core/pipelines/illustrate'
 import { L, promptLanguage, renderCharacter, renderWorld } from '../../core/render'
 import { lifeLine } from '../../shared/life'
 import type { NovelService } from '../../host/service'
@@ -44,7 +44,7 @@ export function bibleTools(service: NovelService): ToolDefinition[] {
         '- action=expand lets the architect model flesh out a character or world entry in agreement with the written text (`direction` steers it).',
         '- action=derive_visual (kind=world) has the director write down how a place or a thing looks, from what the book says of it, and keeps it on the entry (visualPrompt): its design art is drawn from that, and it is done by itself the first time such art is drawn (`direction` steers it). It is written with the book\'s art direction in hand: where that fixes a period or a form (buildings and objects of which dynasty or fashion), the look is written in that form, also where the text has another.',
         '- action=derive_visual (kind=character) distills the prose appearance of a character into a visual anchor and a negative list for image generation, and stores both on the card (`direction` steers it). Do this — or write fields.visual yourself — before drawing someone: an image model handed the prose of a card invents what the prose leaves open. The anchor is written with the book\'s art direction in hand: where that fixes a period or a form of dress (hair and clothing of which dynasty or fashion), the anchor is written in that form, over what the card and the source text say — the art direction itself comes last in a prompt and cannot overrule an anchor that says otherwise. On a character who has an anchor it is a rewrite that keeps what nothing speaks against. An anchor already written does not follow a changed art direction by itself: after changing fields.artStyle, derive the anchors (and the looks of places and things) it touches again, then draw the sheets again.',
-        '- action=derive_scene (`ref` = character) has the director pick, from the book, the moment that character\'s portrait shows — the scene a reader remembers them by (for Lin Daiyu, burying the flowers) — and keeps it on the card (fields.visual.scene), written as a picture in the book\'s language. The director reads the text for it; `direction` guides the pick — a moment named ("the night of the fire"), or what kind of moment ("in daylight", "nothing bloody"). Which moments are fit to show is the author\'s to say (the book\'s avoid list, `direction`); none is ruled out by kind. It happens by itself the first time a portrait is drawn with nothing asked of it; use this to pick another, or to show the author which moment it would be before anything is drawn. Where the book has no such moment yet, it says so and keeps nothing.',
+        '- action=derive_scene (`ref` = character) has the director find, in the book, the moments that character is remembered by — their signature scenes (for Lin Daiyu, burying the flowers first) — and keeps them on the card (fields.visual.scenes: id, title, chapter, text, why), the most their own first, each written as a picture in the book\'s language. `direction` guides it (a moment the author wants in, a kind they want left out). A portrait shows one of them: the first, the one fields.visual.sceneAt names, or the one novel_illustrate is given. What a book\'s pictures may show is the author\'s to say (the book\'s avoid list, or what they ask): rule no kind of moment out on your own.',
         '- action=learn_style (kind=style) distills a style profile from a sample passage in fields.sample.',
         '- action=accept_suggestion / dismiss_suggestion settle a suggestion that digest left (ids are listed by novel_status).',
         `Character fields: ${CHARACTER_FIELDS}.`,
@@ -58,7 +58,7 @@ export function bibleTools(service: NovelService): ToolDefinition[] {
         kind: { type: 'string', enum: ['character', 'world', 'style'], description: 'Required except for the suggestion actions and the actions on ties (ties, tie, untie, derive_ties).' },
         ref: { type: 'string', description: 'Entry id or name; the suggestion id for the suggestion actions.' },
         fields: { type: 'object', additionalProperties: true, description: 'Fields to set (save), or {sample, name} for learn_style.' },
-        direction: { type: 'string', description: 'For expand and derive_ties: what to develop, change or look at. For derive_scene: which moment the author wants.' },
+        direction: { type: 'string', description: 'For expand and derive_ties: what to develop, change or look at. For derive_scene: what the author wants of the list.' },
         activate: { type: 'boolean', description: 'For styles: make it the active style.' },
       },
       async run(args, env) {
@@ -269,12 +269,12 @@ export function bibleTools(service: NovelService): ToolDefinition[] {
         }
 
         if (args.action === 'derive_scene') {
-          if (args.ref === undefined) throw new ProjectError('novel/invalid', 'derive_scene picks the moment a character\'s portrait shows: `ref` names the character')
+          if (args.ref === undefined) throw new ProjectError('novel/invalid', 'derive_scene finds the moments a character is remembered by: `ref` names the character')
           const character = args.ref
-          const result = await env.job('bible', `portrait scene ${character}`, character, async task => await derivePortraitScene(env.core, runtime, { character, ...(args.direction !== undefined ? { direction: args.direction } : {}) }, task))
-          return result.scene.length > 0
-            ? { text: `The moment ${result.card.name}'s portrait shows, as the director picked it from the book: ${result.scene}${result.why !== undefined ? `\nWhy: ${result.why}` : ''}\nIt is kept on their card (visual.scene) and every portrait asked for nothing is drawn from it; the author can rewrite it there. Draw the portrait (novel_illustrate kind=portrait) for it to show.`, data: toJson({ scene: result.scene, why: result.why ?? null }), record: { summary: [`导演给「${result.card.name}」的立绘挑了名场面`, `The director picked the scene ${result.card.name}'s portrait shows`] } }
-            : { text: `The director found no moment in the book yet that stands for ${result.card.name}${result.why !== undefined ? `: ${result.why}` : ''}. Nothing was kept; a portrait of them is plain (facing the viewer, plain ground) until there is one — or write the scene yourself (fields.visual.scene).`, data: toJson({ scene: null, why: result.why ?? null }), record: false }
+          const result = await env.job('bible', `signature scenes ${character}`, character, async task => await deriveScenes(env.core, runtime, { character, ...(args.direction !== undefined ? { direction: args.direction } : {}) }, task))
+          return result.scenes.length > 0
+            ? { text: `The moments ${result.card.name} is remembered by, as the director found them in the book, the most their own first:\n${result.scenes.map((scene, at) => `${at + 1}. [${scene.id}] ${scene.title}: ${scene.text}${scene.why !== undefined ? ` (${scene.why})` : ''}`).join('\n')}\nThey are kept on the card (visual.scenes); the author can rewrite, reorder, add and remove them there. A portrait asked for nothing shows the first (or the one visual.sceneAt names); novel_illustrate kind=portrait scene=<id> draws another. Tell the author which moments they are.`, data: toJson({ scenes: result.scenes }), record: { summary: [`导演给「${result.card.name}」找了 ${result.scenes.length} 个名场面`, `The director found ${result.scenes.length} signature scene(s) of ${result.card.name}`] } }
+            : { text: `The director found no moment in the book yet that stands for ${result.card.name}${result.why !== undefined ? `: ${result.why}` : ''}. The card is as it was; a portrait of them is plain (facing the viewer, plain ground) until there is one — or write the scenes yourself (fields.visual.scenes).`, data: toJson({ scenes: [], why: result.why ?? null }), record: false }
         }
         if (args.action === 'derive_visual' && args.kind === 'world') {
           if (args.ref === undefined) throw new ProjectError('novel/invalid', '`ref` names the place or the thing')

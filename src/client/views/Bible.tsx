@@ -31,10 +31,10 @@ const POV_LABELS: Record<NarrativePov, [string, string]> = {
 
 /** The pages of the bible that hold entries: what each is called, and what it says of itself when it is empty. */
 const GROUP_LABELS: Record<WorldGroup, { tab: [string, string]; icon: IconName; create: [string, string]; empty: [string, string] }> = {
-  places: { tab: ['地点', 'Places'], icon: 'home', create: ['新建地点', 'New place'], empty: ['还没有地点。故事发生的地方记在这里：分量重的在上面，路过一次的在下面。', 'No places yet. Where the story happens is kept here: the heavy ones above, those passed once below.'] },
+  places: { tab: ['地点', 'Places'], icon: 'home', create: ['新建地点', 'New place'], empty: ['还没有地点。', 'No places yet.'] },
   factions: { tab: ['家族与组织', 'Houses'], icon: 'users', create: ['新建家族 / 组织', 'New house or organization'], empty: ['还没有家族或组织。', 'No houses or organizations yet.'] },
-  items: { tab: ['物品', 'Things'], icon: 'star', create: ['新建物品', 'New thing'], empty: ['还没有物品。故事里要紧的东西记在这里——一件信物、一把剑、一封信——并且可以各有一张设定图。', 'No things yet. What matters in the story is kept here — a token, a sword, a letter — each with design art of its own.'] },
-  ideas: { tab: ['世界观', 'World'], icon: 'globe', create: ['新建设定', 'New entry'], empty: ['还没有世界观条目。这里放概念性的东西：规则、命题、制度、历史。★ 核心设定会始终随上下文提供给模型，其余按相关性取用。', 'No entries yet. Ideas live here: rules, premises, institutions, history. ★ core canon always travels in context; the rest is fetched when relevant.'] },
+  items: { tab: ['物品', 'Things'], icon: 'star', create: ['新建物品', 'New thing'], empty: ['还没有物品。', 'No things yet.'] },
+  ideas: { tab: ['世界观', 'World'], icon: 'globe', create: ['新建设定', 'New entry'], empty: ['还没有世界观条目：规则、命题、制度、历史。', 'No world entries yet: rules, themes, institutions, history.'] },
 }
 
 const WEIGHT_LABELS: Record<WorldWeight, [string, string]> = {
@@ -162,14 +162,14 @@ function World({ group }: { group: WorldGroup }) {
           {group === 'ideas' && used.length > 1
             ? <Select value={category} options={[{ value: 'all', label: t('全部类别', 'All categories') }, ...options(CATEGORY_LABELS, t).filter(option => used.includes(option.value))]} onChange={setCategory} />
             : <span className="nv-spacer" />}
-          {project.world.length > 1 ? <Button size="sm" icon="sparkles" variant="ghost" onClick={() => { setTidying(true) }} title={t('整理：让策划找出同一样东西记成了几条的（宁府 / 东府 / 宁国府），和类别放错了的；列出来由你勾选，再合并或改类别', 'Tidy: have the planner find one thing written down as several entries, and entries filed under the wrong kind; you tick what to go by')}>{t('整理', 'Tidy')}</Button> : null}
+          {project.world.length > 1 ? <Button size="sm" icon="sparkles" variant="ghost" onClick={() => { setTidying(true) }} title={t('让策划找出记重了的条目和放错类别的', 'Have the planner find entries kept twice and ones filed wrongly')}>{t('整理', 'Tidy')}</Button> : null}
           <Button size="sm" icon="plus" variant="primary" onClick={() => { setCreating(true) }}>{t(...labels.create)}</Button>
         </div>
         {undrawn.length > 0 ? (
           <p className="nv-note nv-small">
             {group === 'places'
-              ? t(`${undrawn.length} 个核心 / 重要的地点还没有设定图：${undrawn.slice(0, 3).map(item => item.name).join('、')}${undrawn.length > 3 ? ' 等' : ''}。点开它，在右边画一张；或在"演出 → 一键制作"里批量画。`, `${undrawn.length} core or major places have no design art yet: ${undrawn.slice(0, 3).map(item => item.name).join(', ')}${undrawn.length > 3 ? '…' : ''}. Open one and draw it on the right, or draw them together under Stage → One-click.`)
-              : t(`${undrawn.length} 件核心 / 重要的物品还没有设定图：${undrawn.slice(0, 3).map(item => item.name).join('、')}${undrawn.length > 3 ? ' 等' : ''}。点开它，在右边画一张。`, `${undrawn.length} core or major things have no design art yet: ${undrawn.slice(0, 3).map(item => item.name).join(', ')}${undrawn.length > 3 ? '…' : ''}. Open one and draw it on the right.`)}
+              ? t(`${undrawn.length} 个核心 / 重要的地点还没有设定图：${undrawn.slice(0, 3).map(item => item.name).join('、')}${undrawn.length > 3 ? ' 等' : ''}。`, `${undrawn.length} central or major place(s) have no art: ${undrawn.slice(0, 3).map(item => item.name).join(', ')}${undrawn.length > 3 ? ' …' : ''}.`)
+              : t(`${undrawn.length} 件核心 / 重要的物品还没有设定图：${undrawn.slice(0, 3).map(item => item.name).join('、')}${undrawn.length > 3 ? ' 等' : ''}。`, `${undrawn.length} central or major thing(s) have no art: ${undrawn.slice(0, 3).map(item => item.name).join(', ')}${undrawn.length > 3 ? ' …' : ''}.`)}
           </p>
         ) : null}
         {hasTree ? (
@@ -182,7 +182,7 @@ function World({ group }: { group: WorldGroup }) {
           </div>
         ) : (group === 'places' || group === 'factions') && mine.length > 1 ? (
           <p className="nv-note nv-small">
-            {group === 'places' ? t('还没有理过哪个地方在哪个地方里面。理一遍之后，这里可以按包含关系排，"观看 → 世界"里也能一层层点进去。', 'What place is in what has not been worked out yet. Once it has, this list can go by what is in what, and the viewer\'s World can be stepped into level by level.') : t('还没有理过谁属于哪一家、哪一家坐落在哪。', 'Who belongs to which house, and where each has its seat, has not been worked out yet.')}
+            {group === 'places' ? t('还没有理过地点之间的包含关系。', 'What lies inside what has not been worked out yet.') : t('还没有理过谁属于哪一家、哪一家坐落在哪。', 'Who belongs to which house, and where each has its seat, has not been worked out yet.')}
             {' '}
             <Button size="sm" icon="sparkles" busy={ties.busy} pending={t('策划正在理关系…', 'The planner is working out the ties…')} onClick={ties.derive} title={t(...DERIVE_TIES_HINT)}>{t('让策划理一遍关系', 'Have the planner work out the ties')}</Button>
           </p>
@@ -250,7 +250,7 @@ function CourseBlock({ events, onChange, picture }: { events: WorldEvent[]; onCh
         <strong>{t('轨迹', 'Its course')}</strong>
         <Button size="sm" variant="ghost" icon="plus" disabled={chapters.length === 0} onClick={() => { onChange([...sorted, { chapter: (chapters.find(chapter => chapter.hasText) ?? chapters[0]!).id, kind: 'begin', what: '' }]) }}>{t('添加一件事', 'Add something that happens')}</Button>
       </header>
-      {sorted.length === 0 ? <p className="nv-muted nv-small">{t('它在故事里的大事——哪一章建成、易主、荒废、被毁。记下之后，"观看 → 世界"里拖动时间轴，还没建成的不出现，毁掉的变灰。策划理关系时会一并写；也可以在这里手写。', 'What happens to it in the story — the chapter it is built in, changes hands, falls to ruin, is destroyed. Once written down, the viewer\'s World leaves out what is not built yet at the chapter looked at, and greys what is gone. The planner writes these with the ties; they can be written here by hand.')}</p> : null}
+      {sorted.length === 0 ? <p className="nv-muted nv-small">{t('哪一章建成、易主、荒废、被毁。', 'The chapter it was built, changed hands, fell into ruin, was destroyed.')}</p> : null}
       {sorted.map((event, at) => (
         <div key={at} className="nv-course-row">
           <Select value={event.chapter} options={chapters.map(chapter => ({ value: chapter.id, label: `${chapter.index}. ${chapter.title}` }))} onChange={(value) => { change(at, { chapter: value }) }} />
@@ -341,8 +341,8 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
           </span>
         </div>
         <div className="nv-row">
-          <Button variant="ghost" size="sm" icon="eye" onClick={() => { controller.openExplore({ type: 'world', id: entry.id }) }} title={t('观看：它在"观看 → 世界"里的样子——画面、写了什么、里面有什么、谁在这里', 'View: how it looks in the viewer\'s World — its picture, what is written of it, what is in it, who is here')}>{t('观看', 'View')}</Button>
-          {project.world.length > 1 ? <Button variant="ghost" size="sm" icon="branch" onClick={() => { setMerging(true) }} title={t('合并：它和另一条是同一样东西（同一处地方的另一个名字）——两条并成一条，别名、正文、图和关系都跟过去', 'Merge: it and another entry are one thing (another name of the same place) — the two become one, with names, text, picture and ties going along')}>{t('合并…', 'Merge…')}</Button> : null}
+          <Button variant="ghost" size="sm" icon="eye" onClick={() => { controller.openExplore({ type: 'world', id: entry.id }) }} title={t('在“观看 → 世界”里看它', 'See it under Watch → World')}>{t('观看', 'View')}</Button>
+          {project.world.length > 1 ? <Button variant="ghost" size="sm" icon="branch" onClick={() => { setMerging(true) }} title={t('和另一条合并', 'Merge with another entry')}>{t('合并…', 'Merge…')}</Button> : null}
           <Button variant="ghost" size="sm" icon="trash" onClick={() => { confirm.ask(t(`删除设定「${entry.name}」？`, `Delete the entry "${entry.name}"?`), () => { void run(async () => { await controller.api.call('world.delete', { root, id: entry.id }); onDeleted() }) }) }} />
           <Button variant="primary" busy={busy} pending={t('正在保存…', 'Saving…')} disabled={!dirty} onClick={save}>{t('保存', 'Save')}</Button>
         </div>
@@ -357,7 +357,7 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
               {event.image !== undefined ? (
                 <>
                   <button type="button" className="nv-course-thumb" onClick={() => { setShown(event.image); setViewing(true) }} title={t('这时的样子——点开看大图', 'How it looks then — open it large')}><ProjectImage path={event.image} alt="" /></button>
-                  <Button size="sm" variant="ghost" icon="x" onClick={() => { change({ image: undefined } as Partial<WorldEvent>) }} title={t('不要这张图了（保存后生效；图本身还在"演出 → 插图"里）', 'Take the picture off this turn (on saving; the picture itself stays under Stage → Illustrations)')} />
+                  <Button size="sm" variant="ghost" icon="x" onClick={() => { change({ image: undefined } as Partial<WorldEvent>) }} title={t('取下这张图', 'Take this picture off')} />
                 </>
               ) : null}
               <Button
@@ -368,14 +368,14 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
                 busy={turning === `${event.chapter}:${event.kind}`}
                 pending={t('正在画…', 'Drawing…')}
                 onClick={() => drawTurn(event)}
-                title={dirty ? t('先保存当前修改', 'Save your edits first') : event.what.trim().length === 0 ? t('先写上发生了什么', 'Say what happened first') : t('画它这时的样子：导演先照这一章的正文，把"这件事过后它看上去什么样"写成画面，再画（变动、衰败是照着平常的设定图改；刚开始、终结是另画一张）。"观看 → 世界"里把时间轴拖到这一章之后，显示的就是这张——直到后面又有一件画了图的事。（"开始"的图只管到下一件事之前；重建之后回到平常的设定图。）', 'Draw it as it is from this on: the director first writes, from this chapter\'s text, what it looks like once this has happened, and that is drawn (a change or a decline against its design art; a beginning or an end as a picture of its own). In the viewer\'s World, with the slider at or past this chapter, this is the picture shown — until a later turn has one of its own. (A picture of its beginning holds until the next thing happens to it; built anew, it is back to its design art.)')}
+                title={dirty ? t('先保存当前修改', 'Save your edits first') : event.what.trim().length === 0 ? t('先写上发生了什么', 'Say what happened first') : t('画它在这件事之后的样子', 'Draw it as it is after this event')}
               >{event.image !== undefined ? t('重画', 'Redraw') : t('画这时的样子', 'Draw it then')}</Button>
             </span>
           ) } : {})}
         />
       ) : null}
       <div className="nv-assist">
-        <TextInput value={direction} placeholder={t('让 AI 完善这条设定（规则、代价、限制、与情节的关联）', 'Let AI develop this entry (rules, costs, limits, ties to the plot)')} onChange={(event) => { setDirection(event.target.value) }} />
+        <TextInput value={direction} placeholder={t('想补全的方向', 'What to fill in')} onChange={(event) => { setDirection(event.target.value) }} />
         <Button icon="sparkles" busy={assist.running} pending={t('AI 正在补全…', 'Completing…')} disabled={dirty} onClick={() => { assist.start(async (onText) => { await controller.run('world.expand', { root, id: entry.id, ...(direction.trim().length > 0 ? { direction: direction.trim() } : {}) }, onText) }) }}>{t('AI 补全', 'Expand')}</Button>
       </div>
       {assist.stream.length > 0 ? <pre className="nv-stream">{assist.stream.slice(-800)}</pre> : null}
@@ -384,7 +384,7 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
         <Field label={t('别名', 'Aliases')} hint={t('正文里对它的别的叫法；按这些名字数它在哪几章出现', 'Other names the text calls it by; chapters are counted by these too')}><TextInput value={(draft.aliases ?? []).join('、')} onChange={(event) => { set('aliases', event.target.value.split(/[、,，]+/).map(item => item.trim()).filter(Boolean)) }} /></Field>
         <Field label={t('类别', 'Category')} hint={t('地点、家族与组织、物品各有自己的页面；其余的都在"世界观"', 'Places, houses and things have pages of their own; everything else is under World')}><Select value={draft.category} options={options(CATEGORY_LABELS, t)} onChange={(value) => { set('category', value) }} /></Field>
         {group !== 'ideas' ? (
-          <Field label={t('在故事里的分量', 'Weight in the story')} hint={t('决定它排在哪、要不要提醒给它画设定图。"自动"按正文里写到它的章数来定', 'Decides where it is listed and whether design art is asked for. Automatic goes by how many chapters name it')}>
+          <Field label={t('在故事里的分量', 'Weight in the story')} hint={t('“自动”按正文里写到它的章数来定', 'Automatic goes by how many chapters write of it')}>
             <Select
               value={draft.weight ?? 'auto'}
               options={[{ value: 'auto' as const, label: t(`自动（现在：${WEIGHT_LABELS[derived][0]}）`, `Automatic (now: ${WEIGHT_LABELS[derived][1]})`) }, ...WORLD_WEIGHTS.map(weight => ({ value: weight, label: t(...WEIGHT_LABELS[weight]) }))]}
@@ -398,7 +398,7 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
             />
           </Field>
         ) : null}
-        <Field label={t('怎么给模型', 'How it reaches a model')} hint={t('和分量是两回事：这里管的是它的文字随不随每次请求发给模型。核心的最好不超过 6 条', 'Not its weight: this is whether its text travels with every request. Keep the core ones to six or so')}>
+        <Field label={t('怎么给模型', 'How it reaches a model')} hint={t('它的文字随不随每次请求发给模型。核心的最好不超过 6 条', 'Whether its text goes to the model with every request. Keep the core ones to six or fewer')}>
           <Select value={String(draft.importance) as '1' | '2' | '3'} options={[
             { value: '1', label: t('★ 核心（始终提供给模型）', '★ Core (always in context)') },
             { value: '2', label: t('常规（相关时提供）', 'Normal (when relevant)') },
@@ -412,8 +412,8 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
         <Field
           label={picture === 'item' ? t('这件东西的样子', 'What the thing looks like') : t('场景视觉描述', 'Visual description')}
           hint={picture === 'item'
-            ? t('它实际的样子：形状、大小、材质、颜色、上面刻着或写着什么、新旧与磨损。画到它的图都会用；别只写名字——绘图模型会按现实里同名的东西去画。', 'What it actually looks like: shape, size, material, colour, what is carved or written on it, its age and wear. Every picture that shows it uses this; a name alone is drawn as the commonest real thing of that name.')
-            : t('这个地方实际的样子：结构、材质、新旧、光线。画到这里的图都会用它；别只写名字——绘图模型会按现实里同名的东西去画。', 'What the place actually looks like: layout, materials, age, light. Every picture set here uses it; a name alone is drawn as the commonest real thing of that name.')}
+            ? t('它实际的样子：形状、大小、材质、颜色、新旧。画到它的图都用这段。', 'How it really looks: shape, size, material, colour, wear. Every picture of it uses this.')
+            : t('这个地方实际的样子：结构、材质、新旧、光线。画到这里的图都用这段。', 'How the place really looks: structure, materials, age, light. Every picture of it uses this.')}
         >
           <div className="nv-row">
             <TextArea id={lookField} value={draft.visualPrompt ?? ''} onChange={(event) => { set('visualPrompt', event.target.value) }} />
@@ -424,7 +424,7 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
               busy={looking}
               pending={t('导演在照正文写…', 'The director is writing…')}
               onClick={() => { void run(async () => { await controller.run('ai.worldLook', { root, id: entry.id, ...(direction.trim().length > 0 ? { direction: direction.trim() } : {}) }) }) }}
-              title={dirty ? t('先保存当前修改', 'Save your edits first') : t('让导演读正文里写到它的地方，把它实际的样子写在这里（上面"补全方向"里写了要求的话会照着办）。画设定图时这里空着也会先做这一步。', 'Have the director read where the text names it and write down here what it actually looks like (a wish written under "Direction" above is followed). Drawing its design art does this first when this is empty.')}
+              title={dirty ? t('先保存当前修改', 'Save your edits first') : t('让导演照正文写出它的样子', 'Have the director write its look from the text')}
             >
               {(draft.visualPrompt ?? '').trim().length > 0 ? t('让导演重写', 'Have the director rewrite') : t('让导演照正文写', 'Have the director write it')}
             </Button>
@@ -435,14 +435,14 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
         </Field>
       ) : null}
       {picture !== undefined && draft.visualImage === undefined && (draft.weight ?? derived) === 'once'
-        ? <p className="nv-muted nv-small">{picture === 'item' ? t('这件东西在正文里只出现一次：不必专门给它画设定图，除非你想留一张。', 'This thing is in the text once: it needs no design art, unless you want one kept.') : t('这个地方在正文里只路过一次：不必专门给它画设定图，除非你想留一张。', 'This place is passed once in the text: it needs no design art, unless you want one kept.')}</p>
+        ? <p className="nv-muted nv-small">{picture === 'item' ? t('正文里只出现一次。', 'It appears once in the text.') : t('正文里只路过一次。', 'The text passes through it once.')}</p>
         : null}
       {merging ? <MergeDialog entry={entry} onClose={() => { setMerging(false) }} /> : null}
       {viewing && shown !== undefined ? (
         <PictureViewer
           path={shown}
           title={draft.name}
-          note={t('它在轨迹里这一件事之后的样子。"观看 → 世界"里把时间轴拖到这一章之后，显示的就是这张；"不分时间"看的时候仍是它平常的设定图。', 'How it looks from this turn of its course on. In the viewer\'s World, with the slider at or past this chapter, this is the picture shown; looked at "whenever", it is still its design art.')}
+          note={t('它在这件事之后的样子。', 'How it looks after this event.')}
           onClose={() => { setViewing(false) }}
           onEditLook={editLook}
         />
@@ -450,7 +450,7 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
         <PictureViewer
           path={draft.visualImage}
           title={draft.name}
-          note={picture === 'item' ? t('物品设定图。画到这件东西的图会把它当参考图，所以每次都是同一件东西。', 'Object art. Pictures that show the thing are drawn with it as a reference, so it is the same thing every time.') : t('场景设定图。发生在这里的画面会把它当参考图。', 'Place art. Pictures set here are drawn with it as a reference image.')}
+          note={picture === 'item' ? t('物品设定图，画到它的图以此为参考。', 'The thing\'s art: pictures showing it are drawn against this.') : t('场景设定图。发生在这里的画面会把它当参考图。', 'Place art. Pictures set here are drawn with it as a reference image.')}
           onClose={() => { setViewing(false) }}
           onEditLook={editLook}
         />
@@ -511,7 +511,7 @@ function Styles() {
           }}>{t('提炼', 'Learn')}</Button>
         )}>
           <Field label={t('文风名称', 'Style name')}><TextInput value={sampleName} placeholder={t('可留空', 'Optional')} onChange={(event) => { setSampleName(event.target.value) }} /></Field>
-          <Field label={t('范文', 'Sample')} hint={t('贴几段你想模仿其笔触的文字（至少几百字）。只学写法，不学内容。', 'Paste a few paragraphs whose touch you want. Only the manner is learned, not the content.')}>
+          <Field label={t('范文', 'Sample')} hint={t('贴几段想模仿的文字。只学写法，不学内容。', 'Paste passages to imitate. The manner is learnt, not the matter.')}>
             <TextArea value={sample} minRows={10} maxRows={22} onChange={(event) => { setSample(event.target.value) }} />
           </Field>
         </Modal>

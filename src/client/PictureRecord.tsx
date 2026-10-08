@@ -20,7 +20,7 @@
  * leave the book through the shared reader or a published site.
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { lookWords, resolveArtStyle, tidyPart, type ArtSource } from '../shared/art'
+import { lookWords, resolveArtStyle, tidyPart, type ArtSource, scenesOf, sceneWords } from '../shared/art'
 import type { IllustrationInfo, IllustrationPiece } from '../shared/types'
 import { Button, Chip, cx, Modal, Spinner, useLoad, useMediaUrl, useProject, useSnapshot, useStudio, useT } from './ui'
 import { Icon } from './icons'
@@ -152,25 +152,25 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
     const then = look?.text
     const same = then !== undefined ? then === now : parts !== undefined && !parts.subject.endsWith('…') && now.length > 0 ? parts.subject.includes(now) : undefined
     const anchored = (card.visual?.prompt ?? '').length > 0
-    if (same === true) standing.push({ tone: 'ok', text: anchored ? t('视觉锚点和现在的一样。', 'The visual anchor is the same as now.') : t('人物卡上写的外貌和现在的一样（还没有视觉锚点）。', 'The appearance on the card is the same as now (there is no visual anchor yet).') })
-    else if (same === false) standing.push(withAction({ tone: 'warn', text: t('视觉锚点在这张图之后改过：这张图不是照现在写的样子画的。', 'The visual anchor was changed after this picture: it was not drawn from the words as they are now.') }, editLook !== undefined ? { label: t('看现在的视觉锚点', 'See the anchor as it is'), run: editLook } : undefined))
+    if (same === true) standing.push({ tone: 'ok', text: anchored ? t('视觉锚点和现在的一样。', 'The visual anchor is the same as now.') : t('外貌和现在的一样。', 'The appearance is as it is now.') })
+    else if (same === false) standing.push(withAction({ tone: 'warn', text: t('视觉锚点在这张图之后改过。', 'The visual anchor was changed after this picture.') }, editLook !== undefined ? { label: t('看现在的视觉锚点', 'See the anchor as it is'), run: editLook } : undefined))
     // The moment a portrait shows: the one on the card now, or another.
     const scenePiece = parts?.pieces?.find(piece => piece.of === 'scene')
     const shownScene = scenePiece?.text
     if (image.kind === 'portrait' && scenePiece?.from === 'asked') {
-      standing.push({ tone: 'info', text: t('这一张的场面是导演按你当时写的要求另挑、另写的，只用在这一张；人物卡上定的名场面没有因此改变。', 'The moment of this one was picked and written by the director for what you asked then, for this picture alone; the scene kept on the card was not changed by it.') })
+      standing.push({ tone: 'info', text: t('这一幕是导演按你当时的要求挑的，只用在这一张。', 'The director picked this scene by what you asked then; it serves this picture only.') })
     } else if (image.kind === 'portrait' && shownScene !== undefined) {
-      const sceneNow = tidyPart(card.visual?.scene ?? '')
-      if (sceneNow !== shownScene) standing.push(withAction({ tone: 'warn', text: sceneNow.length > 0 ? t('人物卡上定的名场面在这张图之后改过：这张画的是当时的那一幕。', 'The scene kept on the card was changed after this picture: it shows the one of that time.') : t('人物卡上现在没有定名场面：这张画的是当时的那一幕。', 'No scene is kept on the card now: this shows the one of that time.') }, onEditLook !== undefined ? { label: t('看现在的', 'See it as it is'), run: () => { onEditLook({ kind: 'character', id: card.id, what: 'scene' }) } } : undefined))
+      const kept = scenesOf(card).map(scene => tidyPart(sceneWords(scene)))
+      if (!kept.includes(shownScene)) standing.push(withAction({ tone: 'warn', text: kept.length > 0 ? t('这一幕在这张图之后改过，或已不在名场面里。', 'This moment was changed after the picture, or is no longer among their scenes.') : t('人物卡上现在没有名场面：这张画的是当时的那一幕。', 'The card keeps no scene now: this shows the one of that time.') }, onEditLook !== undefined ? { label: t('看现在的', 'See it as it is'), run: () => { onEditLook({ kind: 'character', id: card.id, what: 'scene' }) } } : undefined))
     }
     // A portrait is held against the sheet: against the one in use, an older one, or none.
     if (image.kind === 'portrait' && card.visual?.sheet !== undefined) {
       if (references.some(reference => reference.path === card.visual!.sheet)) standing.push({ tone: 'ok', text: t('照着现在这张人设图画的。', 'Drawn against the design sheet in use now.') })
-      else if (references.length > 0) standing.push({ tone: 'warn', text: t('照着以前的一张人设图画的——人设图在它之后重画过。想让两张是同一个人，重画立绘。', 'Drawn against an earlier design sheet — the sheet has been drawn again since. For the two to show the same person, redraw the portrait.') })
-      else standing.push({ tone: 'warn', text: t('画的时候没有带人设图。想让它和人设图是同一个人，重画立绘。', 'Drawn without a design sheet. For it to show the same person as the sheet, redraw the portrait.') })
+      else if (references.length > 0) standing.push({ tone: 'warn', text: t('照着以前的一张人设图画的。', 'Drawn against an earlier design sheet.') })
+      else standing.push({ tone: 'warn', text: t('画的时候没有带人设图。', 'Drawn without a design sheet.') })
     }
     if (image.kind === 'sheet' && !ofLook && references.length > 0) {
-      standing.push({ tone: 'info', text: t('这张人设图是照着另一张图画的（见下面的参考图），所以和那张几乎一样——这是以前的做法。现在重画人设图只照文字，不带旧图。', 'This sheet was drawn against another picture (see the references below), which is why it is nearly the same picture — that is how it used to be done. A sheet drawn again now is drawn from the words alone, with no older picture.') })
+      standing.push({ tone: 'info', text: t('这张人设图是照着另一张图画的，所以和那张几乎一样。现在重画只照文字。', 'This sheet was drawn against another picture, so it is nearly the same. A redraw now goes by the words alone.') })
     }
   } else if (entry !== undefined) {
     const turn = (entry.events ?? []).find(event => event.image === image.path)
@@ -204,7 +204,7 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
   const wire = sent?.prompt ?? image.prompt
   const avoidHow = kept.length === 0 ? undefined
     : sent?.negative !== undefined ? t('作为"负面提示词"单独一栏发给了绘图模型。', 'Sent to the image model in a field of its own, the negative prompt.')
-      : sent !== undefined ? (sent.prompt.includes('Avoid:') ? t('这个绘图接口没有单独的"不要出现"一栏，所以接在提示词最后（Avoid: …）。', 'This image service has no field of its own for it, so it is appended to the prompt (Avoid: …).') : t('提示词太长，这一段没能带上。', 'The prompt was too long: this part did not fit.'))
+      : sent !== undefined ? (sent.prompt.includes('Avoid:') ? t('接在提示词最后（Avoid: …）。', 'Appended to the prompt (Avoid: …).') : t('提示词太长，这一段没能带上。', 'The prompt was too long: this part did not fit.'))
         : undefined
   const service = image.provider !== undefined ? SERVICE[image.provider] : undefined
   const copy = (): Promise<unknown> => controller.guard(async () => {
@@ -258,9 +258,9 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
             })}
           </div>
         ) : unsent ? (
-          <p className="nv-picture-warn nv-small"><Icon name="alert" size={13} /><span>{t('提示词里交代了参考图，但图没有发出去：这条通往绘图模型的路不收图。所以这张图其实只照文字画的。', 'The prompt speaks of reference pictures, but none went: this way to the image model takes no pictures. So this was drawn from the words alone.')}</span></p>
+          <p className="nv-picture-warn nv-small"><Icon name="alert" size={13} /><span>{t('提示词里交代了参考图，但图没有发出去：这张图只照文字画的。', 'The prompt spoke of references, yet none were sent: this picture came from the words alone.')}</span></p>
         ) : (
-          <p className="nv-muted nv-small">{image.kind === 'sheet' && !ofLook ? t('没有带参考图：人设图只照文字画（视觉锚点、画风、这一张的要求）。它是别的图的依据，所以不照着任何旧图画。', 'None: a design sheet is drawn from the words alone (the visual anchor, the art direction, what was asked of this one). It is what other pictures are held against, so it is drawn against no older picture.') : t('没有带参考图：只照文字画的。', 'None: drawn from the words alone.')}</p>
+          <p className="nv-muted nv-small">{image.kind === 'sheet' && !ofLook ? t('没有带参考图：人设图只照文字画。', 'No references: a design sheet is drawn from the words alone.') : t('没有带参考图：只照文字画的。', 'None: drawn from the words alone.')}</p>
         )}
       </section>
 
@@ -269,17 +269,17 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
         {parts !== undefined ? (
           <dl className="nv-parts">
             {parts.pieces !== undefined && parts.pieces.length > 0 ? parts.pieces.map((piece, index) => (
-              <PieceRow key={index} label={piece.of === 'look' ? (card !== undefined ? t('这个人的样子', 'How they look') : t('它的样子', 'How it looks')) : t(...PIECE[piece.of])} chip={piece.of === 'scene' ? (piece.from === 'asked' ? t('导演按这一张的要求挑的', 'picked by the director for this picture') : t('人物卡上定的那一幕', 'the moment kept on the card')) : piece.of !== 'look' ? undefined : card !== undefined
+              <PieceRow key={index} label={piece.of === 'look' ? (card !== undefined ? t('这个人的样子', 'How they look') : t('它的样子', 'How it looks')) : t(...PIECE[piece.of])} chip={piece.of === 'scene' ? (piece.from === 'asked' ? t('导演按这一张的要求挑的', 'picked by the director for this picture') : t('人物卡上的名场面', 'one of the card\'s signature scenes')) : piece.of !== 'look' ? undefined : card !== undefined
                 ? (piece.from === 'anchor' ? t('视觉锚点', 'visual anchor') : t('人物卡的外貌（还没有视觉锚点）', 'the card\'s appearance (no anchor yet)'))
                 : (piece.from === 'anchor' ? t('条目上的"样子"', 'the entry\'s look') : t('条目的名字和概括', 'the entry\'s name and summary'))}
               >
                 {piece.text}
                 {piece.of === 'look' && editLook !== undefined ? <> <button type="button" className="nv-link nv-small" onClick={editLook}>{t('去改', 'Change it')}</button></> : null}
-                {piece.of === 'scene' && piece.asked !== undefined ? <span className="nv-muted nv-small"> —— {t(`你当时写的要求：${piece.asked}（它引导了导演挑哪一幕、怎么写，本身不在提示词里）`, `what you asked then: ${piece.asked} (it guided which moment the director picked and how it is written; it is not itself in the prompt)`)}</span> : null}
-                {piece.of === 'scene' && onEditLook !== undefined && card !== undefined ? <> <button type="button" className="nv-link nv-small" onClick={() => { onEditLook({ kind: 'character', id: card.id, what: 'scene' }) }}>{piece.from === 'asked' ? t('看人物卡上定的那一幕', 'See the one kept on the card') : t('去改', 'Change it')}</button></> : null}
+                {piece.of === 'scene' && piece.asked !== undefined ? <span className="nv-muted nv-small"> —— {t(`你当时写的要求：${piece.asked}`, `What you asked then: ${piece.asked}`)}</span> : null}
+                {piece.of === 'scene' && onEditLook !== undefined && card !== undefined ? <> <button type="button" className="nv-link nv-small" onClick={() => { onEditLook({ kind: 'character', id: card.id, what: 'scene' }) }}>{piece.from === 'asked' ? t('看名场面', 'See their scenes') : t('去改', 'Change it')}</button></> : null}
               </PieceRow>
             )) : <PieceRow label={t('画面内容', 'Subject')}>{parts.subject}</PieceRow>}
-            {parts.clipped === true ? <PieceRow label={t('注意', 'Note')}><span className="nv-picture-warn">{t('画面内容太长，给后面的参考图说明和画风让了位置，被截短了。实际发出去的见下面的原话。', 'The subject was too long and was cut to leave room for the lines after it. What went is in the words below.')}</span></PieceRow> : null}
+            {parts.clipped === true ? <PieceRow label={t('注意', 'Note')}><span className="nv-picture-warn">{t('画面内容太长，被截短了。', 'The subject was too long and was cut short.')}</span></PieceRow> : null}
             {said !== undefined ? <PieceRow label={t('参考图怎么用', 'What the references are for')}>{said}</PieceRow> : null}
             {parts.style !== undefined ? (
               <PieceRow label={t('画风', 'Art direction')} chip={parts.styleSource !== undefined ? t(...SOURCE[parts.styleSource]) : undefined} tone={parts.styleSource === 'book' ? 'green' : 'amber'}>
@@ -293,7 +293,7 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
               </PieceRow>
             ) : null}
           </dl>
-        ) : <p className="nv-muted nv-small">{t('这张图没有记下提示词是由哪几部分拼成的；完整的提示词在下面。', 'No record of what this picture\'s prompt was put together from; the whole prompt is below.')}</p>}
+        ) : <p className="nv-muted nv-small">{t('这张图没有记下各部分；完整的提示词在下面。', 'The parts of this prompt were not kept; the whole prompt is below.')}</p>}
       </section>
 
       <section>
@@ -308,7 +308,7 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
             <pre className="nv-picture-sent">{sent.negative}</pre>
           </>
         ) : null}
-        {sent === undefined ? <p className="nv-muted nv-small">{t('这张图是在工坊开始记"原话"之前画的：上面是工坊拼好的提示词。"不要出现"那几项当时是另外附上的（有的绘图接口接在提示词最后）。', 'This picture was drawn before the Studio kept the words as sent: above is the prompt as the Studio put it together. The things to keep out were attached separately (some services get them at the end of the prompt).')}</p> : null}
+        {sent === undefined ? <p className="nv-muted nv-small">{t('这张图是在工坊开始记“原话”之前画的：上面是工坊拼好的提示词。', 'Drawn before the Studio kept the exact words sent: above is the prompt as the Studio composed it.')}</p> : null}
       </section>
       <p className="nv-muted nv-small nv-picture-file">{image.path}</p>
     </div>
@@ -370,7 +370,7 @@ export function PictureViewer({ path, title, note, footer, onClose, onEditLook }
             : pictures.loaded
               ? (
                   <>
-                    <p className="nv-muted nv-small">{t('这张图没有留下记录：它不是在工坊里画的，或者是在工坊开始记录之前画的。', 'Nothing is on record of this picture: it was not drawn in the Studio, or was drawn before the Studio kept records.')}</p>
+                    <p className="nv-muted nv-small">{t('这张图没有留下记录。', 'No record was kept of this picture.')}</p>
                     <p className="nv-muted nv-small nv-picture-file">{at}</p>
                   </>
                 )

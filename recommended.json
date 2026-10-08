@@ -3,8 +3,8 @@
   "version": 1,
   "date": "2026-10-08",
   "notes": {
-    "zh": "第 1 版：把原先写在代码里的推荐搬到这个文件里——各家服务的插图、配音、检索模型，各种接口没填模型时用哪个，下拉里的候选，以及常见模型的上下文窗口。",
-    "en": "Issue 1: what used to be fixed in the code now lives in this file — the image, speech and retrieval models of each service, the model each kind of endpoint is used with when none is named, the models offered beside them, and the context windows of the usual model families."
+    "zh": "第 1 版：初版。",
+    "en": "Issue 1: the first."
   },
   "services": {
     "bailian": {

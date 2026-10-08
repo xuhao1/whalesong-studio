@@ -310,10 +310,15 @@ export function jobTarget(job: Pick<JobInfo, 'target'>, project: Pick<ProjectSta
  */
 export interface PortraitScene {
   text?: string
-  /** The director picked it just now, and it is on the card. */
-  picked?: boolean
-  /** The director picked it for this picture alone, guided by this — what the author asked of the picture. */
+  title?: string
+  /** One of the card's moments, drawn as it stands. */
+  id?: string
+  /** The director found the person's moments just now — this many — and this is the first. */
+  found?: number
+  /** The director settled it for this picture alone, guided by this — what the author asked of the picture. */
   asked?: string
+  /** The chapter it is from, by id. */
+  chapter?: string
   /** Why this moment, in the director's words. */
   why?: string
   none?: string
@@ -322,8 +327,9 @@ export interface PortraitScene {
 export function sceneOf(job: { result?: Record<string, unknown> } | undefined): PortraitScene | undefined {
   const scene = job?.result?.scene
   if (typeof scene !== 'object' || scene === null) return undefined
-  const { text, picked, asked, why, none } = scene as { text?: unknown; picked?: unknown; asked?: unknown; why?: unknown; none?: unknown }
-  if (typeof text === 'string' && text.length > 0) return { text, ...(picked === true ? { picked: true } : {}), ...(typeof asked === 'string' && asked.length > 0 ? { asked } : {}), ...(typeof why === 'string' && why.length > 0 ? { why } : {}) }
+  const { text, title, id, found, asked, chapter, why, none } = scene as Record<string, unknown>
+  const said = (value: unknown): value is string => typeof value === 'string' && value.length > 0
+  if (said(text)) return { text, ...(said(title) ? { title } : {}), ...(said(id) ? { id } : {}), ...(typeof found === 'number' ? { found } : {}), ...(said(asked) ? { asked } : {}), ...(said(chapter) ? { chapter } : {}), ...(said(why) ? { why } : {}) }
   return typeof none === 'string' ? { none } : undefined
 }
 

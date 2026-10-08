@@ -308,7 +308,7 @@ export function AlbumView({ t, album, media, at, go, onRead, onEdit, worldTools,
   const worldRows = (list: readonly AlbumEntry[]): ReactNode => rows(list.map(entry => ({ end: { type: 'world' as const, id: entry.id } })))
 
   const way = ways !== undefined && ways.length > 1 && onWay !== undefined ? (
-    <label className="nv-album-way" title={t('这本书的故事不止一种走法。选一条线，看这条线上的人物和世界：谁登场了、谁死了、什么地方建起来了，都按这条线算。', 'This book goes more than one way. Choose a line to see its people and its world: who has come on, who has died, what has been built — as that line has it.')}>
+    <label className="nv-album-way" title={t('选一条线，按这条线看人物和世界', 'Choose a line to see the people and the world along it')}>
       <Icon name="branch" size={13} />
       <select value={along} onChange={(event) => { onWay(event.target.value) }} aria-label={t('看哪一条线上的人物和世界', 'The line whose people and world are shown')}>
         {ways.map(item => <option key={item.id} value={item.id}>{item.id === MAIN_LINE ? t('★ 主线', '★ Main line') : item.title}</option>)}
@@ -526,7 +526,7 @@ export function AlbumView({ t, album, media, at, go, onRead, onEdit, worldTools,
         <header className="nv-explore-top">
           <div>
             <h2>{t('人物', 'People')}</h2>
-            <p className="nv-muted">{album.people.length === 0 ? t('这本书还没有人物。', 'This book has nobody in it yet.') : moment !== undefined ? t(`故事进行到第 ${moment} 章时，登场过的有 ${there.length} 位。`, `By chapter ${moment}, ${there.length} have come on.`) : t(`${album.people.length} 位。点一位看他的样子、来历和这一路。`, `${album.people.length} of them. Open one for how they look, where they come from, and what they go through.`)}</p>
+            <p className="nv-muted">{album.people.length === 0 ? t('这本书还没有人物。', 'This book has nobody in it yet.') : moment !== undefined ? t(`故事进行到第 ${moment} 章时，登场过的有 ${there.length} 位。`, `By chapter ${moment}, ${there.length} have come on.`) : t(`${album.people.length} 位。`, `${album.people.length} people.`)}</p>
           </div>
         </header>
         {time}
@@ -626,7 +626,7 @@ export function AlbumView({ t, album, media, at, go, onRead, onEdit, worldTools,
       <header className="nv-explore-top">
         <div>
           <h2>{t('这个世界', 'This world')}</h2>
-          <p className="nv-muted">{nothing ? t('这本书的设定里还没有地点、家族、物品和世界观。', 'The book\'s bible has no places, houses, things or ideas yet.') : album.ties.length > 0 ? t('故事里最要紧的排在前面。点一处进去：里面有什么、谁在那里。', 'What the story lives in comes first. Step into one: what is in it, who is there.') : t('地点、家族、物品和世界观，故事里最要紧的排在前面。点一处看它的样子和来历。', 'Places, houses, things and ideas, what the story lives in first. Open one for how it looks and what it is.')}</p>
+          <p className="nv-muted">{nothing ? t('这本书的设定里还没有地点、家族、物品和世界观。', 'The book\'s bible has no places, houses, things or ideas yet.') : album.ties.length > 0 ? t('最要紧的排在前面。', 'What matters most comes first.') : t('地点、家族、物品和世界观，最要紧的排在前面。', 'Places, houses, things and ideas, what matters most first.')}</p>
         </div>
         {worldTools}
       </header>
@@ -748,7 +748,7 @@ function Scene({ t, entry, src, marks, open, onZoom, onPin, children }: {
       </div>
       {onPin !== undefined ? (
         <div className="nv-scene-tools">
-          {arranging ? <span className="nv-scene-hint">{t('把按钮拖到画面上它所在的地方，就钉在那里（读者看到的也是）；双击一个钉住的按钮让它回到自动排布。', 'Drag a mark to where the thing is in the picture and it is pinned there, for readers too; press a pinned mark twice to have it laid out by itself again.')}</span> : null}
+          {arranging ? <span className="nv-scene-hint">{t('把按钮拖到画面上钉住；双击复位。', 'Drag a button onto the picture to pin it; double-click to release.')}</span> : null}
           {arranging && pinned > 0 ? <button type="button" className="nv-btn nv-btn-sm nv-scene-tool" onClick={() => { onPin(entry.id, undefined, undefined) }}>{t(`全部复位（${pinned}）`, `Let all go (${pinned})`)}</button> : null}
           <button type="button" className={cx('nv-btn nv-btn-sm nv-scene-tool', arranging && 'is-active')} onClick={() => { setArranging(!arranging) }} title={t('摆位置：把画面上的按钮拖到它们在画里的位置', 'Arrange: drag the marks to where the things are in the picture')}>
             <Icon name={arranging ? 'check' : 'pen'} size={12} />

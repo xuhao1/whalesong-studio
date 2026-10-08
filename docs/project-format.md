@@ -134,7 +134,14 @@ visual:
   negative: loose hair, heavy makeup       # never drawn on them
   sheet: assets/images/sheet-….png         # design sheet: front, side, back
   portrait: assets/images/portrait-….png
-  scene: 夜校（第 3 章）：灯下，她俯身在旧账本上…  # the moment of the book their portrait shows; the director picks it, the author may rewrite it
+  scenes:                 # the moments they are remembered by, the most theirs first; the director finds them, the author rewrites them
+    - id: scene_k3x9
+      title: 夜校
+      chapter: ch003       # the chapter it is from
+      text: 灯下，她俯身在旧账本上…   # the moment as a picture
+      why: 她一生都在这本账里      # the director's sentence
+      portrait: assets/images/portrait-….png   # the portrait drawn of it
+  sceneAt: scene_k3x9     # which one a portrait shows by default; left out: the first (`scene`, one paragraph, is how releases before kept a single moment — read as a list of one)
   looks:                                   # further outfits, each with a sheet derived from the main one
     - id: 雨夜外出
       name: 雨夜外出

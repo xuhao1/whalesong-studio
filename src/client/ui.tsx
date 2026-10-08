@@ -700,7 +700,7 @@ export function ThoughtPanel({ thought, thinking, wrote, className }: { thought:
   if (thought.length === 0) return null
   return (
     <div className={cx('nv-thought', open && 'is-open', className)}>
-      <button type="button" className="nv-thought-head" aria-expanded={open} onClick={() => { setChoice(!open) }} title={t('模型在落笔之前和中途想了什么。开源模型给出完整的思维链；闭源模型只给它自己写的摘要。', 'What the model thinks before and between the words. Open models show the chain of thought itself; closed ones show the summary they write of it.')}>
+      <button type="button" className="nv-thought-head" aria-expanded={open} onClick={() => { setChoice(!open) }} title={t('模型的思考过程', 'What the model thought')}>
         <Icon name={open ? 'chevronDown' : 'chevronRight'} size={12} />
         {thinking ? <Spinner size={11} /> : null}
         <span>{thinking ? t('模型正在思考', 'The model is thinking') : t('思考过程', 'Thought')}</span>
@@ -716,7 +716,7 @@ export function ThoughtPanel({ thought, thinking, wrote, className }: { thought:
 export function JobThought({ job }: { job: JobInfo }) {
   const { thought } = useJobTail(job.id)
   const t = useT()
-  if (thought.length === 0) return <p className="nv-muted">{job.status === 'running' ? t('模型还没有给出思考内容——有的模型不思考，有的不公开。', 'The model has shown no thought yet — some do not reason, some do not show it.') : t('这个任务没有留下思考内容。', 'This job left no thought behind.')}</p>
+  if (thought.length === 0) return <p className="nv-muted">{job.status === 'running' ? t('还没有思考内容', 'No thinking yet') : t('这个任务没有留下思考内容。', 'This job left no thought behind.')}</p>
   return <ThoughtPanel thought={thought} thinking={job.status === 'running' && job.thinking !== undefined} wrote={false} className="is-plain" />
 }
 
@@ -754,7 +754,7 @@ export function CrewRuns({ job }: { job: JobInfo }) {
             <Chip tone={run.by === 'agent' ? 'blue' : 'amber'}>{crewLabel(run.role, t)}</Chip>
             <span className="nv-crewrun-label">{run.label}</span>
             <span className="nv-muted nv-small">{run.running === true ? t('agent · 正在干活', 'agent · at work') : run.by === 'agent' ? t(`agent · ${run.steps ?? 0} 步`, `agent · ${run.steps ?? 0} steps`) : t('普通调用', 'plain call')}</span>
-            {open !== undefined ? <button type="button" className="nv-link nv-small" onClick={() => { open({ session: run.session!, parent: run.parent! }) }} title={t('打开这次运行的完整记录：它是对话的一个子 agent', 'Open the whole record of this run: it is a child agent of the conversation')}>{t('看过程', 'Open run')}</button> : null}
+            {open !== undefined ? <button type="button" className="nv-link nv-small" onClick={() => { open({ session: run.session!, parent: run.parent! }) }} title={t('打开这次运行的记录', 'Open this run\'s record')}>{t('看过程', 'Open run')}</button> : null}
             {run.note !== undefined ? <span className="nv-crewrun-note">{run.note}</span> : null}
           </li>
         )
