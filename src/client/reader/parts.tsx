@@ -210,12 +210,15 @@ export function ReaderSettings({ prefs, update, options, updateOptions, t, extra
 }
 
 /**
- * The switch between the two faces of a chapter — and, where a host adds one,
- * a further way of taking it in. On a phone they are reading and listening;
- * where the script has a page of its own (`pages`), they are the prose and the
- * script, and listening is the play button under either.
+ * The switch between the faces of a chapter. On a phone they are reading and
+ * listening; where the script has a page of its own (`pages`), they are the
+ * prose and the script, and listening is the play button under either. Where
+ * there is something to watch — a finished video, a motion comic — watching
+ * is the third.
+ * @param mode - the face shown; `undefined` while it is being watched.
+ * @param watch - given where watching is offered: whether it is the face shown, and the way to it.
  */
-export function ModeSwitch({ mode, onChange, t, extra, pages }: { mode: ReadMode | undefined; onChange: (mode: ReadMode) => void; t: Translate; extra?: ReactNode; pages?: boolean }) {
+export function ModeSwitch({ mode, onChange, t, watch, pages }: { mode: ReadMode | undefined; onChange: (mode: ReadMode) => void; t: Translate; watch?: { active: boolean; onChoose: () => void } | undefined; pages?: boolean }) {
   return (
     <div className="nv-modes" role="tablist" aria-label={t('阅读方式', 'How to take in the chapter')}>
       <button type="button" role="tab" aria-selected={mode === 'read'} className={cx('nv-mode', mode === 'read' && 'is-active')} onClick={() => { onChange('read') }} title={pages === true ? t('文字：这一章的正文', 'Prose: the text of the chapter') : undefined}>
@@ -226,7 +229,12 @@ export function ModeSwitch({ mode, onChange, t, extra, pages }: { mode: ReadMode
         <Icon name={pages === true ? 'list' : 'headphones'} size={14} />
         <span>{pages === true ? t('脚本', 'Script') : t('听', 'Listen')}</span>
       </button>
-      {extra}
+      {watch !== undefined ? (
+        <button type="button" role="tab" aria-selected={watch.active} className={cx('nv-mode', watch.active && 'is-active')} onClick={watch.onChoose} title={t('看：成片视频，或有声漫——画面跟着配音走', 'Watch: the finished video, or the motion comic — pictures following the voices')}>
+          <Icon name="film" size={14} />
+          <span>{t('看', 'Watch')}</span>
+        </button>
+      ) : null}
     </div>
   )
 }

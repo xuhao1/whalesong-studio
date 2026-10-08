@@ -27,13 +27,13 @@ import { groupOf } from '../../shared/world'
 import { AlbumView, ViewerTabs } from '../reader/album'
 import { PlayTranscript, SideList, type SideRef } from '../reader/sides'
 import { ListenBar, ModeSwitch, ReaderPage, ReaderSettings, usePlayerOptions, useReaderPrefs } from '../reader/parts'
-import { chapterFigures, ScriptPage } from '../reader/script'
-import { Film, place, secondsOf, Theater, useCurrentPanel, WatchChoice, type ChapterFilm } from '../reader/theater'
+import { useChapterPlayback } from '../reader/playback'
+import { ScriptPage } from '../reader/script'
+import { Film, place, Theater, WatchChoice, type ChapterFilm } from '../reader/theater'
 import { chapterJob } from '../Batch'
 import { Icon } from '../icons'
 import { IssueCard, issueMarks } from '../Issues'
 import { AudioDesk, ScriptTable, type ScriptView } from '../stage/Audio'
-import { useLinePlayer } from '../stage/player'
 import {
   Button, cx, Empty, Select, Spinner, useLoad, useMediaUrl, useProject, useQuote, useSnapshot, useStudio, useT, useLineView, waysOn,
 } from '../ui'
@@ -214,8 +214,6 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
   })()
   const [settings, setSettings] = useState(false)
   const scroller = useRef<HTMLDivElement>(null)
-  // The next chapter starts playing by itself when the one before it ran out.
-  const carryOn = useRef(false)
   // One line of the plot is read at a time: the main one, or the one a choice at a fork led onto.
   const { lineId, path, pick: pickLine } = useLineView(project, chapterId)
   const written = path.filter(chapter => chapter.hasText)
@@ -266,27 +264,24 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
   const video = cut.data
   const film: ChapterFilm | undefined = useMemo(() => (video !== undefined ? { src: mediaUrl(video.path, video.createdAt), ...(video.subtitles?.path !== undefined ? { subtitles: mediaUrl(video.subtitles.path, video.createdAt) } : {}), ...(video.subtitles?.burned === true ? { burned: true } : {}), language: project.manifest.language.slice(0, 2) } : undefined), [video, mediaUrl, project.manifest.language])
   const filming = film !== undefined && (options.film !== false || placed.length === 0)
-  const { player, state } = useLinePlayer(lines, cues, mediaUrl, options, () => {
-    const next = written[position + 1]
-    if (!autoNext || next === undefined) return
-    carryOn.current = true
-    controller.focusChapter(next.id)
+  // What plays, and how the page behaves while it does: the same as on other devices.
+  const after = written[position + 1]
+  const { player, state, current, engaged, pace, figures: pictures } = useChapterPlayback({
+    chapter: chapter?.id,
+    text,
+    lines,
+    cues,
+    placed,
+    scripted: script !== undefined,
+    arrived: script !== undefined && script.chapterId === chapter?.id,
+    media: mediaUrl,
+    options,
+    mode,
+    follow: prefs.follow !== false,
+    toScript: () => { controller.setReadMode('listen') },
+    onward: autoNext && after !== undefined ? () => { controller.focusChapter(after.id) } : undefined,
+    scroller,
   })
-  const current = useCurrentPanel(placed, player, state)
-  // How long the line being spoken takes at the speed it is played: what the mark that runs through it goes by.
-  const pace = useMemo(() => ({ seconds: secondsOf(lines[state.index]) / Math.max(0.25, options.rate), paused: state.status === 'paused' }), [lines, state.index, state.status, options.rate])
-  // The player has been started on this chapter: from then on the prose shows which line is spoken, and a line can be pressed to hear from there.
-  const engaged = state.index >= 0
-  // Pressing play over the prose turns the page to the script — unless the reader would rather stay.
-  const wasIdle = useRef(true)
-  useEffect(() => {
-    const starting = wasIdle.current && state.status === 'playing'
-    wasIdle.current = state.status === 'idle'
-    if (starting && mode === 'read' && prefs.follow !== false && script !== undefined) controller.setReadMode('listen')
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.status])
-  // The pictures of the chapter, each before the script line that follows it in the text — so that the script has them where the prose does.
-  const pictures = useMemo(() => chapterFigures(text, lines), [text, lines])
 
   // A new chapter starts at the top.
   useEffect(() => {
@@ -295,13 +290,6 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
     setNoted(undefined)
     setLooseOpen(false)
   }, [chapter?.id])
-
-  // A script that arrives after a chapter ran out starts the next one.
-  useEffect(() => {
-    if (!carryOn.current || script === undefined || script.chapterId !== chapter?.id) return
-    carryOn.current = false
-    if (script.lines.some(line => line.audio !== undefined)) player.play(0)
-  }, [script, chapter?.id, player])
 
   // Arrow keys turn chapters when nothing is being typed; the space bar plays and pauses.
   useEffect(() => {
@@ -337,11 +325,6 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jump?.nonce, text])
 
-  // In the script view the line being spoken stays in sight.
-  useEffect(() => {
-    if (!scripted || state.index < 0) return
-    scroller.current?.querySelector(`[data-script-line="${lines[state.index]?.id}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-  }, [state.index, scripted, lines])
 
   if (chapter === undefined) {
     return (
@@ -406,12 +389,7 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
           t={t}
           pages
           // The way to watch shows where the chapter has pictures — and stays while it is the way in use, so that it can be left.
-          extra={drawn > 0 || film !== undefined || watching ? (
-            <button type="button" role="tab" aria-selected={watching} className={cx('nv-mode', watching && 'is-active')} onClick={() => { controller.setReadMode('watch') }} title={t('看：成片视频，或有声漫——画面跟着配音走', 'Watch: the finished video, or the motion comic — pictures following the voices')}>
-              <Icon name="film" size={14} />
-              <span>{t('看', 'Watch')}</span>
-            </button>
-          ) : undefined}
+          watch={drawn > 0 || film !== undefined || watching ? { active: watching, onChoose: () => { controller.setReadMode('watch') } } : undefined}
         />
         <span className="nv-spacer" />
         <Button

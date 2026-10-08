@@ -20,9 +20,9 @@ import { Icon } from '../client/icons'
 import { AlbumView, ViewerTabs, type ViewerHalf } from '../client/reader/album'
 import { PlayTranscript, SideList, type SidePlay, type SideRef } from '../client/reader/sides'
 import { ListenBar, ModeSwitch, ReaderPage, ReaderSettings, setReaderDefaults, usePlayerOptions, useReaderPrefs, type ReadMode, type Translate } from '../client/reader/parts'
-import { chapterFigures, ScriptPage } from '../client/reader/script'
-import { Film, place, secondsOf, Theater, useCurrentPanel, WatchChoice, type ChapterFilm, type TheaterPanel } from '../client/reader/theater'
-import { useLinePlayer } from '../client/stage/player'
+import { useChapterPlayback } from '../client/reader/playback'
+import { ScriptPage } from '../client/reader/script'
+import { Film, place, Theater, WatchChoice, type ChapterFilm, type TheaterPanel } from '../client/reader/theater'
 import studioStyles from '../client/styles.css'
 import { albumEmpty, type Album, type AlbumAt, type AlbumCounts } from '../shared/album'
 import { readAlong, type ReaderLine, type ReaderWay } from '../shared/reader'
@@ -545,7 +545,6 @@ function Chapter({ book, chapters, chapter, ways, onLine, t }: { book: Book; cha
   const [saving, setSaving] = useState(false)
   const [notice, setNotice] = useState<string | undefined>()
   const scroller = useRef<HTMLDivElement>(null)
-  const carryOn = useRef(false)
   const position = chapters.findIndex(candidate => candidate.id === chapter.id)
   const next = chapters[position + 1]
   const previous = chapters[position - 1]
@@ -563,29 +562,23 @@ function Chapter({ book, chapters, chapter, ways, onLine, t }: { book: Book; cha
   const mode: ViewMode = data.data === undefined ? wanted
     : wanted === 'watch' && placed.length === 0 && film === undefined ? 'read'
       : wanted === 'listen' && script === undefined ? 'read' : wanted
-  const { player, state } = useLinePlayer(lines, cues, url, options, () => {
-    if (!autoNext || next === undefined) return
-    carryOn.current = true
-    go({ book: book.id, chapter: next.id })
+  // What plays, and how the page behaves while it does: the same as in the Studio's viewer.
+  const { player, state, current, engaged, pace, figures } = useChapterPlayback({
+    chapter: chapter.id,
+    text: data.data?.text,
+    lines,
+    cues,
+    placed,
+    scripted: script !== undefined,
+    arrived: data.data !== undefined && data.data.id === chapter.id,
+    media: url,
+    options,
+    mode,
+    follow: prefs.follow !== false,
+    toScript: () => { chooseMode('listen') },
+    onward: autoNext && next !== undefined ? () => { go({ book: book.id, chapter: next.id }) } : undefined,
+    scroller,
   })
-  const current = useCurrentPanel(placed, player, state)
-  // The player has been started on this chapter: from then on the prose shows which line is spoken, and a line can be pressed to hear from there.
-  const engaged = state.index >= 0
-  const pace = useMemo(() => ({ seconds: secondsOf(lines[state.index]) / Math.max(0.25, options.rate), paused: state.status === 'paused' }), [lines, state.index, state.status, options.rate])
-  const figures = useMemo(() => chapterFigures(data.data?.text, lines), [data.data, lines])
-  // Pressing play over the prose turns the page to the script — unless the reader would rather stay.
-  const wasIdle = useRef(true)
-  useEffect(() => {
-    const starting = wasIdle.current && state.status === 'playing'
-    wasIdle.current = state.status === 'idle'
-    if (starting && mode === 'read' && prefs.follow !== false && script !== undefined) chooseMode('listen')
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.status])
-  // In the script the line being spoken stays in sight.
-  useEffect(() => {
-    if (mode !== 'listen' || state.index < 0) return
-    scroller.current?.querySelector(`[data-script-line="${lines[state.index]?.id}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-  }, [state.index, mode, lines])
 
   useEffect(() => { remember(book.id, chapter.id) }, [book.id, chapter.id])
   useEffect(() => {
@@ -596,12 +589,6 @@ function Chapter({ book, chapters, chapter, ways, onLine, t }: { book: Book; cha
   useEffect(() => {
     document.title = `${chapter.title} · ${book.title}`
   }, [chapter.title, book.title])
-  // The chapter that follows one that ran out starts by itself, once it has arrived.
-  useEffect(() => {
-    if (!carryOn.current || data.data === undefined || data.data.id !== chapter.id) return
-    carryOn.current = false
-    if (lines.some(line => line.audio !== undefined)) player.play(0)
-  }, [data.data, chapter.id, lines, player])
   // The lock screen and the headphones' buttons drive the same player.
   useEffect(() => {
     const session = navigator.mediaSession as MediaSession | undefined
@@ -683,12 +670,7 @@ function Chapter({ book, chapters, chapter, ways, onLine, t }: { book: Book; cha
             onChange={chooseMode}
             t={t}
             pages
-            extra={placed.length > 0 || film !== undefined ? (
-              <button type="button" role="tab" aria-selected={mode === 'watch'} className={cx('nv-mode', mode === 'watch' && 'is-active')} onClick={() => { chooseMode('watch') }}>
-                <Icon name="film" size={14} />
-                <span>{t('看', 'Watch')}</span>
-              </button>
-            ) : undefined}
+            watch={placed.length > 0 || film !== undefined ? { active: mode === 'watch', onChoose: () => { chooseMode('watch') } } : undefined}
           />
         )}
         {book.mode === 'edit' && !editing && data.data !== undefined ? <button type="button" className="nv-btn nv-btn-ghost nv-btn-sm nv-btn-icon" onClick={() => { player.stop(); chooseMode('read'); setDraft(data.data!.text) }} title={t('编辑这一章', 'Edit this chapter')} aria-label={t('编辑这一章', 'Edit this chapter')}><Icon name="pen" size={15} /></button> : null}
