@@ -33,6 +33,7 @@ import { readStub, VaultError } from '../core/util/vault'
 import { BuildWatch, type BuildState } from './build'
 import { createDeviceAuth, type DeviceAuth } from './device-auth'
 import { DOOR_VERSION, type HostControl } from './door'
+import { bookInPlay, type InPlayClues } from './in-play'
 import { ProjectError } from '../core/project'
 import { SessionBooks, SessionStateStore, type SwitchedBy } from '../core/session-state'
 import { DEFAULT_SETTINGS, mergeSettings, SettingsStore, type DeepPartial } from '../core/settings'
@@ -456,21 +457,17 @@ export class NovelService extends Service {
   // ───────────── projects per session ─────────────
 
   /**
-   * The book in play for a session: the one bound to it, else the workspace's
-   * only one. The conversation and the Studio beside it are both on this book.
+   * The book in play for a session: the conversation and the Studio beside it
+   * are both on this book. In what order it is looked for — and why a role's
+   * run is on the book it works on, not on the book its folder happens to be —
+   * is said in `in-play.ts`.
    */
   async projectOfSession(sessionId: string, workspace?: string): Promise<ProjectRuntime | undefined> {
-    const state = await this.sessions.get(sessionId)
-    if (state.project !== undefined) {
-      const bound = await this.core.tryRuntime(state.project)
-      if (bound !== undefined) return bound
-    }
-    const cwd = workspace ?? await this.workspaceOfSession(sessionId)
-    const here = cwd !== undefined ? await this.core.defaultProject(cwd) : undefined
-    if (here !== undefined) return here
-    // A role's run is about the one book it worked on, whatever folder its conversation was given: the Studio beside it shows that book.
-    const held = await this.sessionBooks.booksOf(sessionId)
-    return held.length === 1 ? await this.core.tryRuntime(held[0]!) : undefined
+    return await bookInPlay(sessionId, {
+      ...this.clues(),
+      at: async root => await this.core.tryRuntime(root),
+      inFolder: async folder => await this.core.defaultProject(folder),
+    }, workspace)
   }
 
   /**
@@ -483,13 +480,53 @@ export class NovelService extends Service {
       return (await this.projectOfSession(sessionId, workspace))?.project.root
     } catch (error) {
       if (!(error instanceof ProjectError) || error.code !== 'novel/locked') throw error
-      const cwd = workspace ?? await this.workspaceOfSession(sessionId)
-      // In the order the book in play is looked for: the one the session was put on, the folder itself, the folder's only book.
-      for (const candidate of [(await this.sessions.get(sessionId)).project, cwd]) {
-        if (candidate !== undefined && await readStub(resolve(candidate)) !== undefined) return resolve(candidate)
+      // Looked for in the same order, by what a sealed book shows of itself while it is locked.
+      const sealed = async (root: string): Promise<string | undefined> => (await readStub(resolve(root)) !== undefined ? resolve(root) : undefined)
+      return await bookInPlay(sessionId, {
+        ...this.clues(),
+        at: sealed,
+        inFolder: async (folder) => {
+          const direct = await sealed(folder)
+          if (direct !== undefined) return direct
+          const refs = await this.safeDiscover(folder)
+          return refs.length === 1 ? refs[0]!.root : undefined
+        },
+      }, workspace)
+    }
+  }
+
+  /** What this Host knows of its conversations, for one search for the book a conversation is on. */
+  private clues(): Pick<InPlayClues<never>, 'named' | 'held' | 'worksFor' | 'folder'> {
+    // What DSH keeps at the head of a session is read once for one search, whichever of its facts is asked for first.
+    const headers = new Map<string, Promise<{ cwd?: string; origin?: string; parentSession?: string } | undefined>>()
+    const header = (sessionId: string): Promise<{ cwd?: string; origin?: string; parentSession?: string } | undefined> => {
+      let found = headers.get(sessionId)
+      if (found === undefined) {
+        found = (async () => {
+          const id = sessionId as SessionId
+          const live = this.ctx.get('sessions')?.get(id)?.header
+          if (live !== undefined) return live
+          try {
+            return (await this.ctx.get('sessionPersistence')?.stat(id))?.header
+          } catch (error) {
+            this.log(`could not read session ${sessionId}`, error)
+            return undefined
+          }
+        })()
+        headers.set(sessionId, found)
       }
-      const refs = cwd !== undefined ? await this.safeDiscover(cwd) : []
-      return refs.length === 1 ? refs[0]!.root : undefined
+      return found
+    }
+    return {
+      named: async sessionId => (await this.sessions.get(sessionId)).project,
+      held: async sessionId => await this.sessionBooks.booksOf(sessionId),
+      // A role's run, a subagent of DSH's: a child of the conversation that asked for it, or — a run nobody's conversation asked for — marked as no conversation of the author's.
+      worksFor: async (sessionId) => {
+        const known = await header(sessionId)
+        if (known?.parentSession !== undefined) return { parent: known.parentSession }
+        return known?.origin === 'subagent' || this.crew.isRole(sessionId) ? {} : undefined
+      },
+      folder: async sessionId => (await header(sessionId))?.cwd ?? await this.workspaceOfSession(sessionId),
     }
   }
 
