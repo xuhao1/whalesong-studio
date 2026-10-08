@@ -27,7 +27,7 @@ import { Icon } from './icons'
 import { BATCH_STEP, DENSITY, STAGE_STEP_HINT } from './labels'
 import {
   Button, Chip, crewLabel, cx, Field, Modal, Progress, Select, Spinner, TextArea, TextInput, useAction, useLoad, useProject, useSnapshot, useStudio, useT, type Translate,
-  SectionTitle,
+  SectionTitle, Menu, useKept,
 } from './ui'
 import { CharacterPicker, defaultCastFilter, matchesCast, useCastFilter } from './CharacterPicker'
 import { useSheetsAsk } from './SheetsAsk'
@@ -451,6 +451,8 @@ export function TextBatchDialog({ chapters, preset, line, onClose }: { chapters:
   const [words, setWords] = useState('')
   const [redo, setRedo] = useState(false)
   const [started, setStarted] = useState(false)
+  // One after the other unless the author chooses otherwise; what they chose is kept.
+  const [order, setOrder] = useKept<'sequence' | 'together'>('batch.order', 'sequence')
   const [last, setLast] = useState<Parameters<typeof controller.api.call<'batch.text'>>[1] | undefined>()
   const toggleStep = (step: TextStep): void => {
     const next = new Set(steps)
@@ -472,6 +474,7 @@ export function TextBatchDialog({ chapters, preset, line, onClose }: { chapters:
       ...(brief.trim().length > 0 ? { brief: brief.trim() } : {}),
       ...(/^\d+$/.test(words) && Number(words) > 0 ? { words: Number(words) } : {}),
       ...(redo ? { redo: true } : {}),
+      ...(writing && order === 'together' ? { order: 'together' as const } : {}),
     }
     setLast(params)
     await controller.api.call('batch.text', params)
@@ -488,9 +491,17 @@ export function TextBatchDialog({ chapters, preset, line, onClose }: { chapters:
       </>
     ) : (
       <>
-        <span className="nv-muted nv-small">{amount > 0 ? t(`将处理 ${amount} 章`, `${amount} chapters`) : t('没有要处理的章节', 'Nothing to do for any chapter')}</span>
+        <span className="nv-muted nv-small">{amount > 0 ? t(`将处理 ${amount} 章`, `${amount} chapters`) : t('没有要处理的章节', 'Nothing to do for any chapter')}{writing && amount > 1 ? (order === 'together' ? t(' · 并发：各章照章纲同时写', ' · side by side, each from its outline') : t(' · 顺序：后一章读得到前一章', ' · in order, each knowing the one before')) : ''}</span>
         <span className="nv-spacer" />
-        <Button variant="primary" icon="sparkles" busy={busy} disabled={running || steps.size === 0 || amount === 0} pending={t('正在开始…', 'Starting…')} onClick={start}>{t('开始', 'Start')}</Button>
+        <div className="nv-split-btn">
+          <Button variant="primary" icon="sparkles" busy={busy} disabled={running || steps.size === 0 || amount === 0} pending={t('正在开始…', 'Starting…')} onClick={start}>{writing ? (order === 'together' ? t('并发写', 'Write side by side') : t('顺序写', 'Write in order')) : t('开始', 'Start')}</Button>
+          {writing ? (
+            <Menu icon="chevronDown" variant="primary" size="md" align="end" items={[
+              { label: t(`${order === 'sequence' ? '✓ ' : ''}顺序：一章接一章，前后更一致`, `${order === 'sequence' ? '✓ ' : ''}In order: chapter after chapter, more of a piece`), onSelect: () => { setOrder('sequence') } },
+              { label: t(`${order === 'together' ? '✓ ' : ''}并发：同时写，更快`, `${order === 'together' ? '✓ ' : ''}Side by side: at once, faster`), onSelect: () => { setOrder('together') } },
+            ]} />
+          ) : null}
+        </div>
       </>
     )}>
       {started && job !== undefined ? <BatchMatrix job={job} onAgain={again} /> : (
@@ -501,7 +512,7 @@ export function TextBatchDialog({ chapters, preset, line, onClose }: { chapters:
               <label key={step} className={cx('nv-step-pick', steps.has(step) && 'is-on')}>
                 <input type="checkbox" checked={steps.has(step)} disabled={step === 'digest' && writing} onChange={() => { toggleStep(step) }} />
                 <span className="nv-step-name">{t(...BATCH_STEP[step]!)}</span>
-                <span className="nv-step-hint">{t(...TEXT_HINT[step])}</span>
+                <span className="nv-step-hint">{step === 'write' && order === 'together' ? t('各章同时写：每一章照自己的章纲，和它前面各章的章纲', 'All at once: each from its own outline and the outlines of the chapters before it') : t(...TEXT_HINT[step])}</span>
               </label>
             ))}
           </div>

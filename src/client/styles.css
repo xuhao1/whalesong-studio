@@ -6483,6 +6483,25 @@ button.nv-stat:hover {
 
 /* ───────────────────────────── lines of the plot ───────────────────────────── */
 
+/* A button with a small triangle beside it: the button does the thing, the triangle chooses how. */
+.nv-split-btn {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 1px;
+}
+
+.nv-split-btn > .nv-btn {
+  border-start-end-radius: 0;
+  border-end-end-radius: 0;
+}
+
+.nv-split-btn > .nv-menu > .nv-btn {
+  height: 100%;
+  padding-inline: 6px;
+  border-start-start-radius: 0;
+  border-end-start-radius: 0;
+}
+
 /* The review page, line by line: the name of a line of the plot above its chapters. */
 .nv-review-line {
   display: flex;

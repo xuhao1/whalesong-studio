@@ -364,6 +364,16 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
     if (outlineOf.length > 0) take('followingOutline', whole.length > 0 ? L(lang, '再往后的章节（梗概）', 'Further on (in outline)') : L(lang, '下文梗概（本章之后已经写好的章节）', 'What follows, in outline (chapters already written after this one)'), `${whole.length > 0 ? '' : `${note}\n\n`}${outlineOf.join('\n')}`, share(0.12))
   }
 
+  // Chapters that come before this one and are not written yet — being written beside it, or left for later: what their
+  // outlines say, so that this chapter follows from where they are to leave the story and does not tell their part.
+  if (current !== undefined && (options.purpose === 'draft' || options.purpose === 'continue')) {
+    const gap = before.filter(chapter => chapter.plan.id !== current.plan.id && (texts.get(chapter.plan.id) ?? '').length === 0 && (chapter.plan.synopsis !== undefined || (chapter.plan.beats ?? []).length > 0))
+    if (gap.length > 0) {
+      const told = gap.map(chapter => `${heading(chapter)}  ${chapter.plan.synopsis ?? chapter.plan.beats!.map(beat => beat.summary).join(lang === 'zh' ? '；' : '; ')}`)
+      take('gap', L(lang, '排在本章之前、还没有写出来的章节（按章纲）', 'Chapters before this one that are not written yet (by their outlines)'), `${L(lang, '这些章节的正文还没有（可能正在同时写）。本章接在它们章纲写的结果之后：不要重写它们的内容，也不要与它们的章纲相矛盾。', 'Their text is not there yet (they may be being written at this moment). This chapter follows from what their outlines say happens: do not tell their part again, and do not contradict their outlines.')}\n\n${told.join('\n')}`, share(0.12))
+    }
+  }
+
   // Who is in this chapter: named by the task and the plan, or found in the text around it.
   const asked = [options.brief, options.focus, planText].filter(Boolean).join('\n')
   const signals = [asked, clipTail(currentText, 4000, ''), clipTail(previousText, 1500, '')].filter(Boolean).join('\n')
@@ -524,7 +534,7 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
 
   const render = (keys: string[]): string => keys.map(key => sections[key]).filter((section): section is Section => section !== undefined).map(section => `## ${section.title}\n\n${section.body}`).join('\n\n')
   const stable = render(stableKeys)
-  const rest = render(['following', 'followingOutline', 'cast', 'gone', 'threads', 'lore', 'passages', 'next', 'tail', 'current', 'plan'])
+  const rest = render(['gap', 'following', 'followingOutline', 'cast', 'gone', 'threads', 'lore', 'passages', 'next', 'tail', 'current', 'plan'])
   const text = [stable, rest].filter(part => part.length > 0).join('\n\n')
   const stableTokens = estimateTokens(stable)
   return {

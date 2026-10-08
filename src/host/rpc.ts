@@ -714,11 +714,12 @@ export function createHandlers(service: NovelService): Handlers {
         ...(sheetFirst === false ? { sheetFirst: false } : {}),
       }, task))
     },
-    'batch.text': async ({ root, chapters, count, line, steps, brief, words, redo, focus }) => {
+    'batch.text': async ({ root, chapters, count, line, steps, brief, words, redo, focus, order }) => {
       const runtime = await open(root)
       const wanted = (Array.isArray(steps) ? steps : []).filter((step): step is TextStep => TEXT_STEPS.includes(step))
       return await batch(runtime, 'text batch', async () => await textPlan(core, runtime, {
         steps: wanted,
+        ...(order === 'together' ? { order: 'together' as const } : {}),
         ...(Array.isArray(chapters) && chapters.length > 0 ? { chapters } : {}),
         ...(typeof count === 'number' && count > 0 ? { count } : {}),
         ...(typeof line === 'string' && line.length > 0 ? { line } : {}),

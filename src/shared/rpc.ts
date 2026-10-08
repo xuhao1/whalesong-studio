@@ -514,7 +514,7 @@ export interface NovelRpc {
   /** Script, voices, sound, storyboard, panels, video — whichever are named — for the chapters named (all written ones when left out). */
   'batch.stage': { params: { root: string; chapters?: string[]; line?: string; steps?: StageStep[]; force?: boolean; density?: StoryboardDensity; maxPanels?: number; direction?: string; subtitles?: boolean; sheetFirst?: boolean }; result: JobStarted }
   /** Beats, writing, memory, review for a run of chapters. Writing goes chapter after chapter; the rest side by side. */
-  'batch.text': { params: { root: string; chapters?: string[]; count?: number; line?: string; steps: TextStep[]; brief?: string; words?: number; redo?: boolean; focus?: string }; result: JobStarted }
+  'batch.text': { params: { root: string; chapters?: string[]; count?: number; line?: string; steps: TextStep[]; brief?: string; words?: number; redo?: boolean; focus?: string; /** Writing: one chapter after the other (default), or side by side. */ order?: 'sequence' | 'together' }; result: JobStarted }
   /** Design sheets, portraits and voices for characters, reference art for places, design art for things, an illustration per chapter, a cover. */
   'batch.art': { params: { root: string; sheets?: string[]; portraits?: string[]; voices?: string[]; places?: string[]; items?: string[]; scenes?: string[]; cover?: boolean; insert?: boolean; force?: boolean; sheetFirst?: boolean }; result: JobStarted }
 

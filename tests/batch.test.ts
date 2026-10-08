@@ -204,6 +204,55 @@ describe('batches of real work', () => {
       expect(order).toEqual(['beats', 'write 4', 'digest'])
     })
 
+    it('writes a run of chapters side by side when asked to: faster, each from its outline and the outlines before it', async () => {
+      const { project } = bed.runtime
+      const ids: string[] = []
+      for (let n = 1; n <= 4; n++) ids.push((await project.addChapter({ title: `第${n}回`, synopsis: `第 ${n} 回的梗概。`, beats: [{ id: `b${n}`, summary: '开场' }] })).id)
+      await project.saveChapterText(ids[0]!, '第1回是早就写好的。')
+      // Every writer is held until all three have begun: in order, the second would never begin.
+      let begun = 0
+      let release!: () => void
+      const all = new Promise<void>((resolve) => { release = resolve })
+      const order: string[] = []
+      bed.llm.responder = async (request) => {
+        if ((request.system ?? '').includes('只输出小说正文')) {
+          const n = /本章章纲[\s\S]*?第(\d)回/.exec(request.prompt)?.[1] ?? '?'
+          order.push(`begin ${n}`)
+          begun += 1
+          if (begun === 3) release()
+          await all
+          order.push(`write ${n}`)
+          return `第${n}回的正文写在这里。`.repeat(5)
+        }
+        order.push('digest')
+        return JSON.stringify({ brief: '摘要', summary: '这一回发生的事。', characters: [], facts: [], newEntities: [], threads: [] })
+      }
+      // In order is how it goes unless the author says otherwise: one writer at a time, each waiting for the one before.
+      const inOrder = await textPlan(bed.core, bed.runtime, { steps: ['write', 'digest'], count: 3 })
+      expect(inOrder.lanes.write).toBe(1)
+      expect(inOrder.steps.filter(step => step.op === 'write').map(step => (step.after ?? []).length)).toEqual([0, 1, 1])
+      expect(inOrder.finish).toBeUndefined()
+      // Side by side: as many at once as the settings allow, none waiting for another.
+      const laid = await textPlan(bed.core, bed.runtime, { steps: ['write', 'digest'], count: 3, order: 'together' })
+      expect(laid.rows.map(row => row.id)).toEqual(ids.slice(1))
+      expect(laid.lanes.write).toBe(bed.core.parallel('text'))
+      expect(laid.steps.filter(step => step.op === 'write').map(step => step.after ?? [])).toEqual([[], [], []])
+      expect(laid.finish).toBeDefined()
+      const result = await runBatch(laid, { origin: 'user' }, 'zh')
+      expect(result.failed).toEqual([])
+      expect(order.slice(0, 3).sort()).toEqual(['begin 2', 'begin 3', 'begin 4'])
+      expect((await project.chapterInfos()).map(info => [info.hasText, info.digested])).toEqual([[true, false], [true, true], [true, true], [true, true]])
+      // The fourth chapter's writer had the text there was before the batch, and of the two chapters written beside it
+      // what their outlines say — told that their text is not there, and not to tell their part.
+      const fourth = bed.llm.requests.find(request => (request.system ?? '').includes('只输出小说正文') && /本章章纲[\s\S]*?第4回/.test(request.prompt))!
+      expect(fourth.stable).toContain('第1回是早就写好的。')
+      expect(`${fourth.stable ?? ''}${fourth.prompt}`).not.toContain('第2回的正文写在这里')
+      for (const part of ['排在本章之前、还没有写出来的章节（按章纲）', '可能正在同时写', '第2章 第2回  第 2 回的梗概。', '第3章 第3回  第 3 回的梗概。']) expect(fourth.prompt, part).toContain(part)
+      // The second, which follows a chapter that is written, is told of no such gap.
+      const second = bed.llm.requests.find(request => (request.system ?? '').includes('只输出小说正文') && /本章章纲[\s\S]*?第2回/.test(request.prompt))!
+      expect(second.prompt).not.toContain('还没有写出来的章节')
+    })
+
     it('gives beats and reviews to many chapters side by side', async () => {
       const { project } = bed.runtime
       for (let n = 1; n <= 5; n++) {

@@ -481,6 +481,13 @@ export interface TextBatchParams {
   redo?: boolean
   /** What the reviews should look at. */
   focus?: string
+  /**
+   * How the chapters of a batch that writes are taken. `sequence` (default): one after the other, each written knowing
+   * the text of the one before and what was learned from it — the surer way to a run of chapters that agree.
+   * `together`: side by side, as many at once as the settings allow — faster; each is written from its own outline, the
+   * outlines of the chapters before it that are being written beside it, and the text there was before the batch.
+   */
+  order?: 'sequence' | 'together'
 }
 
 export async function textPlan(core: NovelCore, runtime: ProjectRuntime, params: TextBatchParams): Promise<BatchPlan> {
@@ -511,13 +518,15 @@ export async function textPlan(core: NovelCore, runtime: ProjectRuntime, params:
   if (chapters.length === 0) throw new ProjectError('novel/empty', L(lang, '这些步骤在选中的章节里没有要做的事。', 'the steps have nothing to do for the chapters chosen'))
   const columns = TEXT_STEPS.filter(step => wanted.has(step))
   const writing = wanted.has('write')
+  // Side by side on the author's word; otherwise a run of chapters is written in order.
+  const together = writing && params.order === 'together'
   const steps: BatchStep[] = []
   let previous: string | undefined
   for (const chapter of chapters) {
     const id = chapter.id
     const facts = infos.get(id)!
     // Writing goes chapter after chapter: each is written knowing the one before, and what was learned from it.
-    const chain = writing && previous !== undefined ? [key(previous, wanted.has('digest') ? 'digest' : 'write')] : []
+    const chain = writing && !together && previous !== undefined ? [key(previous, wanted.has('digest') ? 'digest' : 'write')] : []
     if (wanted.has('beats')) {
       steps.push({
         target: id,
@@ -555,7 +564,7 @@ export async function textPlan(core: NovelCore, runtime: ProjectRuntime, params:
         async run(sub) {
           const memory = await digestChapter(core, runtime, id, sub, redo ? { force: true } : {})
           // The chapters after this one are written with the arcs brought up to it.
-          if (writing) await updateArcs(core, runtime, sub).catch((error: unknown) => { if (sub.signal?.aborted === true) throw error })
+          if (writing && !together) await updateArcs(core, runtime, sub).catch((error: unknown) => { if (sub.signal?.aborted === true) throw error })
           facts.digested = true
           return memory !== undefined ? L(lang, `${memory.facts.length} 条事实，${memory.characters.length} 个人物`, `${memory.facts.length} facts, ${memory.characters.length} characters`) : undefined
         },
@@ -581,9 +590,9 @@ export async function textPlan(core: NovelCore, runtime: ProjectRuntime, params:
     columns,
     rows: chapters.map(chapter => ({ id: chapter.id, label: chapter.label, kind: 'chapter' as const })),
     steps,
-    lanes: { beats: writing ? 1 : text, write: 1, digest: writing ? 1 : text, review: text },
-    // Without writing, the digests ran side by side: the arcs are brought up once, at the end.
-    ...(wanted.has('digest') && !writing ? { finish: async (sub: TaskContext) => { await updateArcs(core, runtime, sub) } } : {}),
+    lanes: { beats: writing && !together ? 1 : text, write: together ? text : 1, digest: writing && !together ? 1 : text, review: text },
+    // Where the digests ran side by side — no writing, or writing side by side — the arcs are brought up once, at the end.
+    ...(wanted.has('digest') && (!writing || together) ? { finish: async (sub: TaskContext) => { await updateArcs(core, runtime, sub) } } : {}),
   }
 }
 
