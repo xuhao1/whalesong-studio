@@ -10,7 +10,10 @@
  *                   one, and the first picture writes that text into the book,
  *                   where it can be read and changed.
  *   visual anchors  each character has a short, drawable description written
- *                   for an image model (not the prose of the card), a design
+ *                   for an image model (not the prose of the card) — and
+ *                   written with the art direction in hand: the period and
+ *                   the forms it fixes are in the anchor itself, over what
+ *                   the source text says —, a design
  *                   sheet — front, side and back — and further looks (outfits)
  *                   derived from that sheet. A scene restates the anchor and
  *                   sends the sheet along as a reference image; a place's
@@ -270,6 +273,11 @@ export async function deriveVisual(core: NovelCore, runtime: ProjectRuntime, par
       title: manifest.title,
       card: renderCharacter({ ...card, secrets: undefined, relationships: undefined, notes: undefined } as CharacterCard, lang),
       avoid: art.avoid,
+      // The period and the forms the art direction fixes are written into the look itself: appended after a subject
+      // that says otherwise, the art direction changes nothing.
+      artStyle: art.style,
+      // Written again, an anchor keeps what nothing speaks against: pictures already drawn were drawn from it.
+      ...(card.visual?.prompt !== undefined && card.visual.prompt.trim().length > 0 ? { current: card.visual.prompt, ...(card.visual.negative !== undefined ? { currentNegative: card.visual.negative } : {}) } : {}),
       ...(params.direction !== undefined ? { direction: params.direction } : {}),
     }),
     temperature: 0.3,
@@ -319,6 +327,7 @@ export async function sortNotes(core: NovelCore, runtime: ProjectRuntime, card: 
         notes,
         picture,
         avoid: art.avoid,
+        artStyle: art.style,
       }),
       temperature: 0.2,
       validate: (raw) => {
@@ -414,6 +423,7 @@ export async function deriveLook(core: NovelCore, runtime: ProjectRuntime, param
       entry: renderWorld({ ...entry, visualPrompt: undefined } as WorldEntry, lang),
       passages: passages.join('\n'),
       avoid: art.avoid,
+      artStyle: art.style,
       ...(params.direction !== undefined ? { direction: params.direction } : {}),
     }),
     temperature: 0.3,
@@ -542,6 +552,7 @@ async function turnLook(core: NovelCore, runtime: ProjectRuntime, entry: WorldEn
         turn: { ...(chapter !== undefined ? { index: chapter.index } : {}), kind: turn.kind, what: turn.what },
         passages: passages.join('\n'),
         avoid: art.avoid,
+        artStyle: art.style,
       }),
       temperature: 0.3,
       validate: (raw) => {

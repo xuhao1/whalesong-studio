@@ -10327,3 +10327,18 @@ button.nv-album-chapter:hover {
     max-height: 46cqh;
   }
 }
+
+/* Looks already written, which a changed art direction does not reach by itself. */
+.nv-art-written {
+  margin-top: 10px;
+  font-size: 13px;
+}
+
+.nv-art-written > summary {
+  color: var(--nv-text-2);
+  cursor: pointer;
+}
+
+.nv-art-written > p {
+  margin: 8px 0;
+}

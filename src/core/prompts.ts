@@ -820,7 +820,7 @@ ${base.units}
 2. ${base.count}
 3. 什么时候换画面：动作变了、情绪转了、说话的人换了、视点或地点变了、出现了值得一看的新东西。大段对话用正反打和特写切换；长段叙述也要随内容换画面，不要让一张图从头停到尾。
 4. description 用一句话说明画面内容（给作者看）。
-5. prompt 是给绘图模型的完整画面描述：景别与构图（特写/中景/远景、机位）、在场人物的外貌与动作表情（外貌必须沿用"人物外貌"，每次都写全，不要用姓名指代）、环境与光线、氛围。不要出现文字、对白气泡、分格。60-120 字。只写眼睛看得见的东西：机构名、头衔、专有名词一律换成它在这个故事里实际的样子（材质、形状、新旧、颜色），否则绘图模型会按现实里最常见的样子去画。相邻画面不要只是同一张图换个说法——景别、机位或主体要有变化。${avoid.length > 0 ? `下列东西不能出现在任何画面里，也不要把这些词写进 prompt：${avoid}。` : ''}
+5. prompt 是给绘图模型的完整画面描述：景别与构图（特写/中景/远景、机位）、在场人物的外貌与动作表情（外貌必须沿用"人物外貌"，每次都写全，不要用姓名指代）、环境与光线、氛围。不要出现文字、对白气泡、分格。60-120 字。只写眼睛看得见的东西：机构名、头衔、专有名词一律换成它在这个故事里实际的样子（材质、形状、新旧、颜色），否则绘图模型会按现实里最常见的样子去画。美术风格里对年代、形制有规定的（发式、服饰、建筑、器物属于哪个朝代、哪种式样），画面里这些东西照它写；正文的写法与它不一样时以美术风格为准。相邻画面不要只是同一张图换个说法——景别、机位或主体要有变化。${avoid.length > 0 ? `下列东西不能出现在任何画面里，也不要把这些词写进 prompt：${avoid}。` : ''}
 6. camera 从 still|zoom-in|zoom-out|pan-left|pan-right|pan-up|pan-down 里选一个缓慢的镜头运动。
 
 只输出 JSON：
@@ -843,7 +843,7 @@ Rules:
 2. ${base.count}
 3. When to cut: the action changes, the mood turns, the speaker changes, the point of view or the place changes, something worth seeing appears. Long exchanges alternate shot / reverse shot and close-ups; long narration changes picture with its content too — no single picture should sit through all of it.
 4. description: one sentence on what the panel shows (for the author).
-5. prompt: the full picture for the image model — shot size and composition (close-up / medium / wide, angle), the looks, action and expression of everyone in frame (reuse "Character looks" in full every time; never refer to anyone by name), setting and light, mood. No text, speech balloons or panel borders. 40-80 words. Only what the eye can see: an institution, a title or a proper noun is written as what it looks like in this story. Neighbouring panels must not be the same picture in other words — change the shot size, the angle or the subject.${avoid.length > 0 ? ` None of the following may appear in any panel, and none of these words belongs in a prompt: ${avoid}.` : ''}
+5. prompt: the full picture for the image model — shot size and composition (close-up / medium / wide, angle), the looks, action and expression of everyone in frame (reuse "Character looks" in full every time; never refer to anyone by name), setting and light, mood. No text, speech balloons or panel borders. 40-80 words. Only what the eye can see: an institution, a title or a proper noun is written as what it looks like in this story. Where the art direction fixes a period or a form (which dynasty or fashion hair, dress, buildings and objects belong to), these are written in that form; where the text says otherwise, the art direction holds. Neighbouring panels must not be the same picture in other words — change the shot size, the angle or the subject.${avoid.length > 0 ? ` None of the following may appear in any panel, and none of these words belongs in a prompt: ${avoid}.` : ''}
 6. camera: one slow move from still|zoom-in|zoom-out|pan-left|pan-right|pan-up|pan-down.
 
 Output JSON only:
@@ -931,7 +931,7 @@ ${avoid.length > 0 ? avoid : '（无特别限制）'}
 要求：
 1. 封面要让没读过的人一眼看出这是一本什么样的书：选一个最能代表这个故事的画面——人物的关系与处境、标志性的地方、一件有分量的东西，而不是把情节画成连环画。
 2. 竖幅构图；画面上方留出一块干净的空间放标题；主体在中下部。写清谁在画面里（用他们的样子，不用姓名）、姿态与神情、所处的环境、光线、色调与气氛。
-3. 只写眼睛看得见的东西。机构名、头衔、专有名词换成它在这个故事里实际的样子：材质、形状、新旧、颜色。
+3. 只写眼睛看得见的东西。机构名、头衔、专有名词换成它在这个故事里实际的样子：材质、形状、新旧、颜色。美术风格里对年代、形制有规定的（发式、服饰、建筑、器物属于哪个朝代、哪种式样），画面里这些东西照它写；正文的写法与它不一样时以美术风格为准。
 4. "画面里不能出现"的东西不要画，也不要把这些词写进描述。不要出现任何文字、水印、边框。
 5. 120-220 字，只输出这条描述，不要任何其他内容。`, `Design the cover of the novel "${bare(base.title)}": write one picture description for an image model.
 
@@ -959,7 +959,7 @@ ${avoid.length > 0 ? avoid : '(nothing in particular)'}
 Requirements:
 1. A cover tells somebody who has not read the book what kind of book it is: choose the one picture that stands for this story — who these people are to each other and where they stand, a place that is the book's own, one thing that carries weight — not the plot drawn as a strip.
 2. Portrait format; a clean area at the top for the title; the subject in the middle and lower part. Say who is in the picture (by how they look, not by name), their pose and expression, where they are, the light, the palette and the mood.
-3. Only what the eye can see. Names of institutions, ranks and proper nouns become what they actually look like in this story: material, shape, age, colour.
+3. Only what the eye can see. Names of institutions, ranks and proper nouns become what they actually look like in this story: material, shape, age, colour. Where the art direction fixes a period or a form (which dynasty or fashion hair, dress, buildings and objects belong to), these are written in that form; where the text says otherwise, the art direction holds.
 4. Nothing from "must not appear" is drawn, and none of those words go into the description. No lettering, no watermark, no frame.
 5. 80-150 words. Output the description only.`)
 }
@@ -987,7 +987,7 @@ ${avoid.length > 0 ? avoid : '（无特别限制）'}
 要求：
 1. 选取最有画面感的一个瞬间；写清构图与景别、人物的动作表情、环境、光线与氛围。
 2. 人物的样子沿用上面的写法并写全，不用姓名指代。
-3. 只写眼睛看得见的东西。机构名、头衔、教派、专有名词这类词，绘图模型会按现实世界里最常见的样子去画（看到"教会"就画出欧式教堂）——一律换成它在这个故事里实际的样子：材质、形状、新旧、脏净、颜色。
+3. 只写眼睛看得见的东西。机构名、头衔、教派、专有名词这类词，绘图模型会按现实世界里最常见的样子去画（看到"教会"就画出欧式教堂）——一律换成它在这个故事里实际的样子：材质、形状、新旧、脏净、颜色。美术风格里对年代、形制有规定的（发式、服饰、建筑、器物属于哪个朝代、哪种式样），画面里这些东西照它写；正文的写法与它不一样时以美术风格为准。
 4. "画面里不能出现"的东西不要画，也不要把这些词写进描述。
 5. 不要出现文字、水印、分格。80-150 字。${dressed ? '只输出 JSON：{"description": "画面描述", "wearing": {"人物名": "造型名"}}；选了造型的人物，描述里按那套造型来写。' : '只输出这条描述，不要任何其他内容。'}`, `Write one picture description for an image model, to illustrate the fiction below.
 
@@ -1009,7 +1009,7 @@ ${avoid.length > 0 ? avoid : '(nothing in particular)'}
 Rules:
 1. Pick the single most visual moment. State composition and shot size, each person's action and expression, setting, light and mood.
 2. Reuse "How the people look" in full; never refer to anyone by name.
-3. Write only what the eye can see. Names of institutions, titles, orders and other proper nouns make an image model draw the most common real-world version (it reads "church" and paints a cathedral) — replace each with what it actually looks like in this story: material, shape, age, wear, colour.
+3. Write only what the eye can see. Names of institutions, titles, orders and other proper nouns make an image model draw the most common real-world version (it reads "church" and paints a cathedral) — replace each with what it actually looks like in this story: material, shape, age, wear, colour. Where the art direction fixes a period or a form (which dynasty or fashion hair, dress, buildings and objects belong to), these are written in that form; where the text says otherwise, the art direction holds.
 4. Nothing from "Must not appear" may be drawn, and none of those words may appear in the description.
 5. No text, watermark or panel borders. 50-100 words. ${dressed ? 'Output JSON only: {"description": "the picture", "wearing": {"character name": "look name"}}; describe a character in the look you picked for them.' : 'Output the description only.'}`)
 }
@@ -1024,6 +1024,20 @@ const TURN_ASKS: Record<'begin' | 'change' | 'decline' | 'end', [string, string]
 }
 
 /**
+ * The book's art direction, as it is handed to whoever writes down how somebody
+ * or something looks. It travels with every picture anyway — appended after
+ * the subject — but there it comes last and can only colour what the subject
+ * has already said: a look that says "a queue" is drawn with a queue, whatever
+ * period the art direction names. So the period and the forms it fixes have to
+ * be in the look itself, and whoever writes the look has to be told.
+ */
+function artSection(lang: PromptLanguage, artStyle: string | undefined): string {
+  const style = artStyle?.trim() ?? ''
+  if (style.length === 0) return ''
+  return L(lang, `\n## 这本书的画风（作者定的，会另行附在每一张图后面）\n${style}\n`, `\n## The book's art direction (settled by the author; appended to every picture separately)\n${style}\n`)
+}
+
+/**
  * How a place or a thing looks from one turn of its course on: the paragraph
  * the picture of that turn is drawn from. The same place as its design art,
  * changed by what happened — and only by that.
@@ -1031,7 +1045,7 @@ const TURN_ASKS: Record<'begin' | 'change' | 'decline' | 'end', [string, string]
  * @param base.turn - what happened, and at which chapter.
  * @param base.passages - where that chapter names it, a few lines each.
  */
-export function turnLookTask(base: Base & { kind: 'place' | 'thing'; name: string; usual: string; turn: { index?: number; kind: 'begin' | 'change' | 'decline' | 'end'; what: string }; passages: string; avoid?: string[] }): string {
+export function turnLookTask(base: Base & { kind: 'place' | 'thing'; name: string; usual: string; turn: { index?: number; kind: 'begin' | 'change' | 'decline' | 'end'; what: string }; passages: string; avoid?: string[]; artStyle?: string }): string {
   const avoid = (base.avoid ?? []).join(base.lang === 'zh' ? '、' : ', ')
   const place = base.kind === 'place'
   const ask = L(base.lang, ...TURN_ASKS[base.turn.kind])
@@ -1045,14 +1059,14 @@ ${base.turn.index !== undefined ? `第 ${base.turn.index} 章：` : ''}${base.tu
 
 ## 这一章里写到它的地方
 ${base.passages.length > 0 ? base.passages : '（这一章里没有找到直接写它的句子——需要的话自己去查原文。）'}
-
+${artSection(base.lang, base.artStyle)}
 ## 这本书的画面里不能出现
 ${avoid.length > 0 ? avoid : '（无特别限制）'}
 
 要求：
 1. 用这本书的语言写，80–160 字，一段话，不分条。
 2. 写的是同一${place ? '个地方' : '件东西'}：${place ? '格局、建筑、材质' : '形状、材质、纹饰'}这些没有变的，照"平常的样子"写；变了的，写成变过之后的样子。要写的是：${ask}。
-3. 以正文为准：正文写了的照着写；正文没写的可以补全，但要与这件事、与这本书的时代和地域相称。
+3. 以正文为准：正文写了的照着写；正文没写的可以补全，但要与这件事、与这本书的时代和地域相称。只有一样例外：画风里对年代、地域和形制有规定的（建筑、陈设、器物属于哪个朝代、哪种式样），是这本书的定论——正文的写法与它冲突时，形制照画风写。
 4. 只写这件事过后留在眼前的景象，画面里一个人也没有：不写人物（工匠、仆役、路人也不写），不写谁做了什么、事情的经过；不写气味、声音、寓意这类画不出来的东西；不写画风、镜头、光线效果、画质。
 5. 不要用只有读过这本书才懂的名字来代替描述。
 
@@ -1066,14 +1080,14 @@ ${base.turn.index !== undefined ? `Chapter ${base.turn.index}: ` : ''}${base.tur
 
 ## Where that chapter names it
 ${base.passages.length > 0 ? base.passages : '(No sentence of the chapter was found that speaks of it — read the text yourself where you need to.)'}
-
+${artSection(base.lang, base.artStyle)}
 ## Must not appear in this book's pictures
 ${avoid.length > 0 ? avoid : '(nothing in particular)'}
 
 Rules:
 1. In the language of the book, 50–110 words, one paragraph, no list.
 2. It is the same ${place ? 'place' : 'thing'}: what has not changed — ${place ? 'its layout, its buildings, its materials' : 'its shape, its material, its ornament'} — say as "how it usually looks" has it; what has changed, say as it is after the change. What is wanted: ${ask}.
-3. The text is law: what it says, say as it says it; what it leaves open may be filled in, in keeping with what happened and with the book's time and region.
+3. The text is law: what it says, say as it says it; what it leaves open may be filled in, in keeping with what happened and with the book's time and region. With one exception: where the art direction fixes a period, a region or a form (which dynasty or fashion buildings, furnishings and objects belong to), that is settled for this book — where the text says otherwise, the form follows the art direction.
 4. Only what is there to be seen once it has happened, with nobody in the picture: no people (no workmen, servants or passers-by either), nothing of who did what or how it went; nothing that cannot be drawn (smell, sound, meaning); no words about art style, camera, lighting effects or image quality.
 5. Do not put a name only a reader of the book understands in place of a description.
 
@@ -1086,7 +1100,7 @@ Output JSON only: {"look": ""}`)
  * @param base.kind - `place` or `thing`: a house or an organization is drawn as the place it has its seat at.
  * @param base.passages - where the text names it, a few lines each, with the chapter.
  */
-export function lookTask(base: Base & { kind: 'place' | 'thing'; entry: string; passages: string; avoid?: string[]; direction?: string }): string {
+export function lookTask(base: Base & { kind: 'place' | 'thing'; entry: string; passages: string; avoid?: string[]; direction?: string; artStyle?: string }): string {
   const avoid = (base.avoid ?? []).join(base.lang === 'zh' ? '、' : ', ')
   const place = base.kind === 'place'
   return L(base.lang, `请把《${base.title}》里的这${place ? '个地方' : '件东西'}写成一段"它长什么样"：它的设定图照这段话画，以后凡是画到它的图也都带着这段话，所以要具体、稳定、画得出来。
@@ -1096,15 +1110,15 @@ ${base.entry}
 
 ## 正文里写到它的地方
 ${base.passages.length > 0 ? base.passages : '（正文里还没有找到直接写它样子的句子——需要的话自己去查原文。）'}
-${base.direction !== undefined && base.direction.length > 0 ? `\n## 作者的要求\n${base.direction}\n` : ''}
+${base.direction !== undefined && base.direction.length > 0 ? `\n## 作者的要求\n${base.direction}\n` : ''}${artSection(base.lang, base.artStyle)}
 ## 这本书的画面里不能出现
 ${avoid.length > 0 ? avoid : '（无特别限制）'}
 
 要求：
 1. 用这本书的语言写，80–160 字，一段话，不分条。
 2. 只写看得见的、不随情节变的：${place ? '格局与规模（几进院落、有没有水、地势高低）、主要的建筑和它们的样式、材质与颜色、草木与陈设、年代与地域的感觉' : '形状与大小、材质、颜色、纹饰或刻着的字样（照原文）、新旧与磨损、拿在手里或摆着时的样子'}。
-3. 以正文为准：正文写了的照着写，不要改；正文没写的可以补全，但要与这本书的时代、地域、身份相称，一旦写下就是定论。
-4. 不写人物、不写事件、不写某一场戏里的情形；不写气味、声音、寓意这类画不出来的东西；不写画风、镜头、光线效果、画质——那些由全书的画风统一决定。
+3. 以正文为准：正文写了的照着写，不要改；正文没写的可以补全，但要与这本书的时代、地域、身份相称，一旦写下就是定论。只有一样例外：画风里对年代、地域和形制有规定的（${place ? '建筑、陈设、器物' : '器物、纹饰、做工'}属于哪个朝代、哪种式样），是这本书的定论——把它写成那种形制下具体的样子（${place ? '屋顶、梁柱、门窗、院墙怎么样' : '器形、纹样、工艺怎么样'}）。正文的写法与它冲突时以画风为准：它自己的${place ? '格局、规模和特征' : '形状、大小和特征'}留着，形制换成画风规定的。
+4. 不写人物、不写事件、不写某一场戏里的情形；不写气味、声音、寓意这类画不出来的东西；画风里说"怎么画"的部分（画种、笔触、用色、光线）、镜头和画质都不写——那些由全书的画风统一附上。
 5. 不要用只有读过这本书才懂的名字来代替描述：${place ? '"某某的住处"要写成它实际的样子' : '"那面镜子"要写成它实际的样子'}。
 
 只输出 JSON：{"look": ""}`, `Write down what this ${place ? 'place' : 'thing'} of "${base.title}" looks like: its design art is drawn from this paragraph, and every later picture that shows it carries it along — so it has to be concrete, stable and drawable.
@@ -1114,51 +1128,71 @@ ${base.entry}
 
 ## Where the text names it
 ${base.passages.length > 0 ? base.passages : '(No sentence of the text was found that says how it looks — read the text yourself where you need to.)'}
-${base.direction !== undefined && base.direction.length > 0 ? `\n## The author asks\n${base.direction}\n` : ''}
+${base.direction !== undefined && base.direction.length > 0 ? `\n## The author asks\n${base.direction}\n` : ''}${artSection(base.lang, base.artStyle)}
 ## Must not appear in this book's pictures
 ${avoid.length > 0 ? avoid : '(nothing in particular)'}
 
 Rules:
 1. In the language of the book, 50–110 words, one paragraph, no list.
 2. Only what can be seen and does not change with the plot: ${place ? 'its layout and size (courts, water, the lie of the land), its main buildings and how they are built, materials and colours, what grows and what is kept there, the feel of its time and region' : 'its shape and size, material, colour, ornament or what is written on it (as the text has it), its age and wear, how it sits in a hand or on a table'}.
-3. The text is law: what it says, say as it says it; what it leaves open may be filled in, in keeping with the book's time, region and the standing of whoever owns it — once written it is canon.
-4. No people, no events, nothing of one particular scene; nothing that cannot be drawn (smell, sound, meaning); no words about art style, camera, lighting effects or image quality — the book's art direction decides those for every picture.
+3. The text is law: what it says, say as it says it; what it leaves open may be filled in, in keeping with the book's time, region and the standing of whoever owns it — once written it is canon. With one exception: where the art direction fixes a period, a region or a form (which dynasty or fashion ${place ? 'buildings, furnishings and objects' : 'objects, ornament and workmanship'} belong to), that is settled for this book — write it as it is in that form (${place ? 'roofs, posts and beams, doors and windows, walls' : 'its shape, its patterns, how it is made'}). Where the text says otherwise the art direction holds: keep what is its own (${place ? 'layout, size, what marks it out' : 'shape, size, what marks it out'}) and put it into the form the art direction fixes.
+4. No people, no events, nothing of one particular scene; nothing that cannot be drawn (smell, sound, meaning); nothing of how to paint (medium, brushwork, palette, light), of camera or of image quality — the book's art direction adds those to every picture.
 5. Do not put a name only a reader of the book understands in place of a description.
 
 Output JSON only: {"look": ""}`)
 }
 
-export function visualAnchorTask(base: Base & { card: string; avoid?: string[]; direction?: string }): string {
+/**
+ * A character's visual anchor: how they look, in phrases an image model draws
+ * the same way every time.
+ * @param base.artStyle - the book's art direction: where it fixes a period or a form of dress, the anchor is written in that form, over what the card and the source text say.
+ * @param base.current - the anchor as it stands, when one is written again: what it has that nothing speaks against is kept, so that pictures already drawn still fit.
+ */
+export function visualAnchorTask(base: Base & { card: string; avoid?: string[]; direction?: string; artStyle?: string; current?: string; currentNegative?: string }): string {
   const avoid = (base.avoid ?? []).join(', ')
-  return L(base.lang, `请把下面这个人物的外貌，改写成给绘图模型用的"视觉锚点"：以后每一张有此人的图都会原样带上它，所以它必须具体、稳定、画得出来。
+  const again = base.current !== undefined && base.current.trim().length > 0
+  const styled = (base.artStyle?.trim() ?? '').length > 0
+  return L(base.lang, `请把下面这个人物的外貌，${again ? '重新写成' : '改写成'}给绘图模型用的"视觉锚点"：以后每一张有此人的图都会原样带上它，所以它必须具体、稳定、画得出来。
 
 ## 人物
 ${base.card}
-${base.direction !== undefined && base.direction.length > 0 ? `\n## 作者的要求\n${base.direction}\n` : ''}
+${again ? `\n## 现在的视觉锚点（要重写的就是它）\n${base.current!.trim()}${base.currentNegative !== undefined && base.currentNegative.trim().length > 0 ? `\n这个人身上不要画出：${base.currentNegative.trim()}` : ''}\n` : ''}${base.direction !== undefined && base.direction.length > 0 ? `\n## 作者的要求\n${base.direction}\n` : ''}${artSection(base.lang, base.artStyle)}
 ## 这本书的画面里不能出现
 ${avoid.length > 0 ? avoid : '（无特别限制）'}
 
 要求：
 1. prompt：英文，逗号分隔的短语，40-70 个词。只写看得见的：年龄感与体型、脸、发色与发型（把发型拆成具体的形状，不要用风格名）、肤色、衣着（款式、材质、颜色、新旧）、随身的标志物。
 2. 不要写姓名、性格、身份、经历；不要用机构名、教派、头衔之类的词——绘图模型会按现实里最常见的样子去画。比如"教会式的发髻"要写成它实际的形状，"白甲"要写清是什么材质、什么结构、有没有纹饰。
-3. 原文没写的细节可以补全，但要与人物相称，并且一旦写下就是定论。
-4. 只写这个人"长什么样"，不写"此刻在做什么"：不要动作、姿势、此刻的表情和手里临时拿的东西；不要气味、声音、气质这类看不见的东西；也不要画风、光线、镜头、画质之类的词——那些由全书的画风统一决定。
-5. negative：英文，逗号分隔，0-10 项。写这段描述最容易被画错、而这个人物身上不该有的东西（例如不该有的纹章、饰物、发型、年龄感）。
+3. 原文没写的细节可以补全，但要与人物相称，并且一旦写下就是定论。${styled ? `
+4. 画风里对年代、地域和形制有规定的（哪个朝代、哪种式样），是这本书的定论，这个人的头发和衣着一律写成那种形制。人物卡或原文的写法与它冲突时，以画风为准：
+   - 属于形制的：头发怎么梳、束不束、编不编辫、剃不剃，头上戴什么；衣服的款式——上身下身各穿什么、领、襟、袖、下摆、怎么系；鞋帽的样式。
+   - 人物卡或原文写的发式、款式若不是那种形制里有的（比如别的朝代才有的发式和衣服），不要照搬，也不要折中成两样都有：换成那种形制下，同样年龄、身份的人会有的发式和款式，写成具体的样子，并且点明朝代。
+   - 这个人自己的东西留着，放到新的款式上：颜色、纹样、材质、贵贱、佩戴和随身的东西。
+   - 画风里说"怎么画"的部分（画种、笔触、用色、光线）不要写进来。` : ''}
+${styled ? 5 : 4}. 只写这个人"长什么样"，不写"此刻在做什么"：不要动作、姿势、此刻的表情和手里临时拿的东西；不要气味、声音、气质这类看不见的东西；也不要画风、光线、镜头、画质之类的词——那些由全书的画风统一附上。
+${styled ? 6 : 5}. negative：英文，逗号分隔，0-10 项。写这段描述最容易被画错、而这个人物身上不该有的东西（例如不该有的纹章、饰物、发型、年龄感）${styled ? '；画风规定了形制时，把最容易混进来的别的形制也列进去（比如另一个朝代的发式和服饰）' : ''}。${again ? `
+${styled ? 7 : 6}. 这是重写：现在的锚点里，与人物卡、作者的要求${styled ? '和画风' : ''}都不冲突的写法照旧保留（已经画好的图是照它画的）；有冲突的和明显写错的地方要改${styled ? '——锚点和 negative 里不合画风所定形制的发式、款式，一处也不要留' : ''}。` : ''}
 
 只输出 JSON：{"prompt": "", "negative": ""}`, `Rewrite this character's appearance as a "visual anchor" for an image model: it will be restated as is in every picture that shows them, so it must be concrete, stable and drawable.
 
 ## Character
 ${base.card}
-${base.direction !== undefined && base.direction.length > 0 ? `\n## The author asks\n${base.direction}\n` : ''}
+${again ? `\n## Their visual anchor as it stands (this is what is written again)\n${base.current!.trim()}${base.currentNegative !== undefined && base.currentNegative.trim().length > 0 ? `\nNever drawn on them: ${base.currentNegative.trim()}` : ''}\n` : ''}${base.direction !== undefined && base.direction.length > 0 ? `\n## The author asks\n${base.direction}\n` : ''}${artSection(base.lang, base.artStyle)}
 ## Must not appear in this book's pictures
 ${avoid.length > 0 ? avoid : '(nothing in particular)'}
 
 Rules:
 1. prompt: English, comma-separated phrases, 40-70 words. Only what can be seen: apparent age and build, face, hair colour and style (spell the style out as a shape, not as a style name), skin, clothing (cut, material, colour, wear), signature items.
 2. No names, personality, role or history; no names of institutions, orders or titles — an image model draws the most common real-world version of such words. Describe "a church-style bun" as its actual shape; say what "white armour" is made of, how it is built and whether it carries any emblem.
-3. Details the source leaves open may be filled in, in keeping with the character; once written they are canon.
-4. Say what the person looks like, not what they are doing: no action, pose, passing expression or thing they happen to hold; nothing that cannot be seen (smell, sound, temperament); and no words about art style, lighting, camera or image quality — the book's art direction decides those for every picture.
-5. negative: English, comma-separated, 0-10 items: what this description is most likely to be drawn as by mistake and what this character must not have (an emblem, an ornament, a hairstyle, an age).
+3. Details the source leaves open may be filled in, in keeping with the character; once written they are canon.${styled ? `
+4. Where the art direction fixes a period, a region or a form of dress (which dynasty, which fashion), that is settled for this book, and this person's hair and clothing are written in that form throughout. Where the card or the source text says otherwise, the art direction holds:
+   - Of the form: how the hair is dressed — bound or loose, braided or not, shaved or not — and what is worn on the head; the cut of the clothes — what is worn above and below, collar, lapels, sleeves, hem, how it is fastened; the make of shoes and hats.
+   - A hairstyle or a cut the card or the source text has that does not belong to that form (the hair and the garments of another dynasty, say) is not carried over, and not blended in so that both are there: put in its place what somebody of that age and standing wears in that form, written as what it looks like, with the period named.
+   - What is this person's own stays, and goes onto the new cut: colours, patterns, materials, how rich or plain, what they wear and carry.
+   - What the art direction says of how to paint (medium, brushwork, palette, light) stays out.` : ''}
+${styled ? 5 : 4}. Say what the person looks like, not what they are doing: no action, pose, passing expression or thing they happen to hold; nothing that cannot be seen (smell, sound, temperament); and no words about art style, lighting, camera or image quality — the book's art direction adds those to every picture.
+${styled ? 6 : 5}. negative: English, comma-separated, 0-10 items: what this description is most likely to be drawn as by mistake and what this character must not have (an emblem, an ornament, a hairstyle, an age)${styled ? '; where the art direction fixes a form, also the other forms most likely to creep in (the hair and dress of another dynasty, say)' : ''}.${again ? `
+${styled ? 7 : 6}. This is a rewrite: what the anchor has that neither the card, nor what the author asks${styled ? ', nor the art direction' : ''} speaks against stays as it is (pictures already drawn were drawn from it); what conflicts and what is plainly wrong is changed${styled ? ' — no hairstyle and no cut that is not of the form the art direction fixes is left in the anchor or in negative' : ''}.` : ''}
 
 Output JSON only: {"prompt": "", "negative": ""}`)
 }
@@ -1170,7 +1204,7 @@ Output JSON only: {"prompt": "", "negative": ""}`)
  * @param base.picture - the picture about to be drawn: a portrait, or a design sheet (which has no setting to give).
  * @param base.anchor - the visual anchor as it stands; absent when there is none yet, and one is to be written.
  */
-export function lookNotesTask(base: Base & { card: string; anchor?: string; negative?: string; notes: string; picture: 'portrait' | 'sheet'; avoid?: string[] }): string {
+export function lookNotesTask(base: Base & { card: string; anchor?: string; negative?: string; notes: string; picture: 'portrait' | 'sheet'; avoid?: string[]; artStyle?: string }): string {
   const avoid = (base.avoid ?? []).join(', ')
   const zhPicture = base.picture === 'sheet'
     ? '人设图（三视图）：同一个人的全身站姿画三次——正面、侧面、背面，素底，表情平静。它没有背景、天气、时间、动作和镜头，这类想法这张图用不上。'
@@ -1191,7 +1225,7 @@ ${zhPicture}
 
 ## 作者随手写的想法
 ${base.notes}
-
+${artSection(base.lang, base.artStyle)}
 ## 这本书的画面里不能出现
 ${avoid.length > 0 ? avoid : '（无特别限制）'}
 
@@ -1200,7 +1234,8 @@ ${avoid.length > 0 ? avoid : '（无特别限制）'}
 2. **只属于这一张图的**——换一张图就不一定是这样：时间、天气、季节、地点与背景、光线、姿势与动作、此刻的神态、构图与镜头、这一次临时穿戴或拿在手里的东西、气氛。它们不进视觉锚点，写进 picture。
 3. 分不清时看作者的说法："这张 / 这次 / 这幅 / 这里"说的是这一张图；"总是 / 平时 / 一直 / 常年"，或者没有限定、说的又是长相和平常衣着的，是这个人本身。
 4. 现在要画的这一张用不上的想法（见上面对这一张图的说明），不要硬塞进 picture，列进 unused。
-5. 作者没有说到的，不要替他添。
+5. 作者没有说到的，不要替他添。${(base.artStyle?.trim() ?? '').length > 0 ? `
+6. 新写进锚点的部分，形制要合这本书的画风：画风里对年代、形制有规定的（发式、服饰属于哪个朝代、哪种式样），就写成那种形制下具体的样子。作者这次明说要的样子与画风不一样时，以作者这次说的为准。` : ''}
 
 anchor 的写法：英文，逗号分隔的短语，40-70 个词，只写看得见的；不写姓名、性格、身份、经历，不用机构名、教派、头衔之类的词（绘图模型会按现实里最常见的样子去画，要写成它实际的形状和材质）；不写动作、姿势、此刻的表情，不写画风、光线、镜头、画质。没有任何想法属于这个人本身、而锚点已经有了时，anchor 原样照抄。
 
@@ -1218,7 +1253,7 @@ ${enPicture}
 
 ## The author's ideas, as jotted down
 ${base.notes}
-
+${artSection(base.lang, base.artStyle)}
 ## Must not appear in this book's pictures
 ${avoid.length > 0 ? avoid : '(nothing in particular)'}
 
@@ -1227,7 +1262,8 @@ How to sort:
 2. **Of this one picture** — not necessarily so in the next: time of day, weather, season, place and background, light, pose and action, a passing expression, composition and camera, what they wear or hold this once, mood. None of it goes into the anchor; it goes into picture.
 3. Where it is hard to tell, go by how the author put it: "in this one / this time / here" speaks of the picture; "always / usually / all year round", or no such word about looks and usual clothing, speaks of the person.
 4. An idea the picture about to be drawn has no place for (see what is said of it above) is not forced into picture: list it under unused.
-5. Add nothing the author did not speak of.
+5. Add nothing the author did not speak of.${(base.artStyle?.trim() ?? '').length > 0 ? `
+6. What is newly written into the anchor is in the form the book's art direction fixes: where it names a period or a form of dress (which dynasty or fashion hair and clothing belong to), write it as it is in that form. Where the author's idea now plainly asks for something else, the author's word now holds.` : ''}
 
 The anchor: English, comma-separated phrases, 40-70 words, only what can be seen; no names, personality, role or history, no names of institutions, orders or titles (an image model draws the most common real-world version of such words — say its actual shape and material); no action, pose or passing expression, no art style, light, camera or image quality. Where no idea is of the person and there is an anchor already, copy the anchor as it is.
 

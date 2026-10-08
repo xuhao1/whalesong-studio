@@ -135,6 +135,63 @@ describe('visual anchors', () => {
     expect(looksOf(derived.card)).toBe(derived.prompt)
   })
 
+  it('writes a look with the art direction in hand: the period and the forms it fixes hold over the source text', async () => {
+    const { bed } = await studio()
+    const { project } = bed.runtime
+    await project.updateManifest({ artStyle: '淡彩水墨，建筑服饰是典型的明制。', artAvoid: ['现代服饰'] })
+    const asked = (): string => bed!.llm.requests.at(-1)!.prompt
+    const RULE = '人物卡或原文的写法与它冲突时，以画风为准'
+    const UNBLENDED = '不要照搬，也不要折中成两样都有'
+
+    // A first anchor: the director is handed the art direction, and told what of it binds the anchor.
+    const card = await project.saveCharacter({ name: '宝玉', appearance: '总编一根大辫，黑亮如漆，穿石青起花八团倭缎排穗褂' })
+    bed.llm.responder = () => '{"prompt": "boy of thirteen, hair in one thick queue", "negative": "beard"}'
+    await deriveVisual(bed.core, bed.runtime, { character: card.id }, task)
+    expect(asked()).toContain('## 这本书的画风')
+    expect(asked()).toContain('淡彩水墨，建筑服饰是典型的明制')
+    expect(asked()).toContain(RULE)
+    expect(asked()).toContain(UNBLENDED)
+    expect(asked()).toContain('把最容易混进来的别的形制也列进去')
+    // Nothing is "written again" yet: there was no anchor.
+    expect(asked()).not.toContain('现在的视觉锚点')
+
+    // Written again — the author changed the art direction, or presses the button: the anchor as it stands goes along,
+    // to be kept where nothing speaks against it, and the new one takes its place.
+    bed.llm.responder = () => '{"prompt": "boy of thirteen, hair bound in a topknot under a small gold crown, Ming-style cross-collared crimson robe", "negative": "queue, shaved forehead"}'
+    const again = await deriveVisual(bed.core, bed.runtime, { character: card.id }, task)
+    expect(asked()).toContain('## 现在的视觉锚点（要重写的就是它）\nboy of thirteen, hair in one thick queue\n这个人身上不要画出：beard')
+    expect(asked()).toContain('不合画风所定形制的发式、款式，一处也不要留')
+    expect(again.card.visual).toMatchObject({ prompt: 'boy of thirteen, hair bound in a topknot under a small gold crown, Ming-style cross-collared crimson robe', negative: 'queue, shaved forehead' })
+
+    // The same holds wherever the director writes down a look that lasts: ideas sorted into an anchor, a place, a
+    // place at a turn of its course.
+    bed.llm.responder = () => JSON.stringify({ anchor: 'boy of thirteen, hair bound in a topknot', picture: '雪夜', kept: [], once: ['雪夜'], unused: [] })
+    await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id, notes: '这张要雪夜', sheetFirst: false }, task)
+    const sorting = bed.llm.requests.find(request => request.prompt.includes('作者随手写的想法'))!.prompt
+    expect(sorting).toContain('淡彩水墨，建筑服饰是典型的明制')
+    expect(sorting).toContain('作者这次明说要的样子与画风不一样时，以作者这次说的为准')
+
+    const chapter = await project.addChapter({ title: '入园' })
+    await project.saveChapterText(chapter.id, '进了大观园，只见正殿崇阁巍峨。后来园子荒了。')
+    const garden = await project.saveWorld({ name: '大观园', category: 'location', summary: '为省亲而建的园子', events: [{ chapter: chapter.id, kind: 'decline', what: '园子荒了' }] })
+    bed.llm.responder = () => JSON.stringify({ look: '歇山顶的正殿，朱柱青瓦，回廊环抱。' })
+    await deriveLook(bed.core, bed.runtime, { entry: garden.id }, task)
+    expect(asked()).toContain('淡彩水墨，建筑服饰是典型的明制')
+    expect(asked()).toContain('正文的写法与它冲突时以画风为准')
+    await illustrate(bed.core, bed.runtime, { kind: 'location', target: garden.id, event: chapter.id }, task)
+    const turning = bed.llm.requests.find(request => request.prompt.includes('在故事里出了一件事'))!.prompt
+    expect(turning).toContain('淡彩水墨，建筑服饰是典型的明制')
+    expect(turning).toContain('形制照画风写')
+
+    // A book with no art direction of its own hands over the one in force — the built-in start, which fixes no period.
+    await project.updateManifest({ artStyle: '' })
+    const other = await project.saveCharacter({ name: '沈砚', appearance: '高瘦' })
+    bed.llm.responder = () => ANCHOR
+    await deriveVisual(bed.core, bed.runtime, { character: other.id }, task)
+    expect(asked()).toContain(DEFAULT_ART_STYLE.zh)
+    expect(asked()).not.toContain('建筑服饰是典型的明制')
+  })
+
   it('falls back to the words of the card when no anchor exists', () => {
     expect(looksOf({ id: 'c', name: '甲', role: 'minor', appearance: '短发', gender: '女', age: '三十' })).toBe('短发，女，三十')
   })

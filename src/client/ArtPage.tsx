@@ -47,6 +47,9 @@ export function ArtPage() {
     controller.toast('info', t('导演正在读这本书来定画风；定好后会直接写在这一页上，并记进改动记录。', 'The director is reading the book to settle its look; the result is written onto this page and into the record of changes.'))
   })
   const everything = mergeAvoid(legacyAvoid, manifest.artAvoid)
+  // Whose look is already written down: a changed art direction does not reach these by itself.
+  const anchored = project.characters.filter(card => (card.visual?.prompt ?? '').trim().length > 0)
+  const looked = project.world.filter(entry => (entry.visualPrompt ?? '').trim().length > 0)
   const kinds: [PictureKind, [string, string]][] = [['cover', ['封面', 'cover']], ['portrait', ['立绘', 'portraits']], ['sheet', ['人设图', 'design sheets']], ['location', ['地点', 'places']], ['scene', ['章节插图', 'scenes']], ['panel', ['分镜', 'panels']]]
   return (
     <div className="nv-art-page">
@@ -56,7 +59,7 @@ export function ArtPage() {
         <Field
           label={t('画风', 'Art direction')}
           hint={resolved.source === 'book'
-            ? t('原样接在每张图的画面内容后面。只写“怎么画”：画种、线条、用色、光线、质感、时代感。', 'Appended as it is to the subject of every picture. Say how to paint: medium, line, palette, light, texture, the period.')
+            ? t('原样接在每张图的画面内容后面。写“怎么画”：画种、线条、用色、光线、质感。也可以定下年代和形制（比如“服饰、建筑是明制”）——导演写人物的视觉锚点、地点和物品的样子时以它为准，哪怕原文写的是另一种。', 'Appended as it is to the subject of every picture. Say how to paint: medium, line, palette, light, texture. It may also fix a period and its forms ("dress and buildings of the Ming") — the director then writes every visual anchor and every look of a place or a thing in that form, also where the source text has another.')
             : resolved.source === 'studio'
               ? t('这本书还没有自己的画风，现在显示的是以前填在全局设置里的那一段。改成这本书要的样子再保存，或者让导演按这本书来定。', 'This book has no look of its own yet; what you see was once entered in the Studio-wide settings. Change it to what this book wants and save, or have the director settle it from the book.')
               : t('这本书还没有自己的画风，现在显示的是内置的起点。让导演按这本书来定，或者自己写。', 'This book has no look of its own yet; what you see is the built-in starting point. Have the director settle it from the book, or write your own.')}
@@ -70,6 +73,16 @@ export function ArtPage() {
         <div className="nv-form-actions">
           <Button variant="primary" busy={busy} disabled={!dirty && resolved.source === 'book'} onClick={save}>{resolved.source === 'book' ? t('保存', 'Save') : t('定为这本书的画风', 'Make it this book\'s look')}</Button>
         </div>
+        {anchored.length + looked.length > 0 ? (
+          <details className="nv-art-written">
+            <summary>{t(`已经写下的形象不会自己跟着画风变：${anchored.length} 个人的视觉锚点、${looked.length} 处的“样子”`, `Looks already written do not follow a changed art direction by themselves: ${anchored.length} visual anchors, ${looked.length} looks of places and things`)}</summary>
+            <p className="nv-muted nv-small">{t('画风接在提示词最后，压不过形象里写明的东西：锚点里写着辫子，画出来就是辫子。所以在这里改了年代、形制之后，要让导演把受影响的形象重写一遍——点名字过去，在“形象”里点“让导演重写”（地点、物品是“样子”旁边的“让导演重写”），它会照现在的画风写，不冲突的地方保留；然后重画人设图 / 设定图。你手改过的形象，不点就不会被动。', 'The art direction comes last in a prompt and cannot overrule what a look says outright: an anchor that says "a queue" is drawn with a queue. So after changing a period or a form here, have the director write the looks it touches again — follow a name, press "Have the director rewrite" under Looks (for a place or a thing, beside its look): it writes in the form the art direction has now and keeps what does not conflict; then draw the sheet or the design art again. A look you wrote by hand is not touched unless you press it.')}</p>
+            <div className="nv-chips">
+              {anchored.map(card => <Chip key={card.id} onClick={() => { controller.openCharacter(card.id) }} title={card.visual?.prompt}>{card.name}</Chip>)}
+              {looked.map(entry => <Chip key={entry.id} tone="blue" onClick={() => { controller.openWorld(entry.id) }} title={entry.visualPrompt}>{entry.name}</Chip>)}
+            </div>
+          </details>
+        ) : null}
       </section>
 
       <section className="nv-card">
