@@ -874,6 +874,14 @@ export interface ImageSettings {
   workflow?: string
   /** `comfyui`: the workflow for a picture that has reference pictures to hold to; it loads them as `%image1%`, `%image2%`, …. Left out: reference pictures do not go along. */
   editWorkflow?: string
+  /**
+   * `comfyui`, with no workflow named and a `model` that is a diffusion model alone (the server's `diffusion_models`, not
+   * a checkpoint): the text encoder and the VAE it is loaded with, and the kind the encoder is loaded as (CLIPLoader's
+   * `type`: `qwen_image`, `flux2`, `sd3`…). Left out, the Studio takes what the server leaves no choice about.
+   */
+  textEncoder?: string
+  vae?: string
+  encoderType?: string
   /** `diffusers`: the Python to run — one that has `diffusers` and `torch`. Left out: `python3` (`python` on Windows). */
   python?: string
   /** `diffusers`: `cuda`, `mps`, `cpu`; left out, the best there is. */
@@ -1741,6 +1749,25 @@ export interface WalkOn {
   ignored?: boolean
   /** What the planner made of them when it last looked through the names without a card. */
   verdict?: WalkOnVerdict
+}
+
+/** What a ComfyUI server has to draw with, as it says itself. */
+export interface ComfyCatalog {
+  /** The address that answered. */
+  base: string
+  version?: string
+  /** The device it draws on, with its memory. */
+  device?: string
+  /** Whole models: a diffusion model with its text encoder and VAE in one file. */
+  checkpoints: string[]
+  /** Diffusion models alone: each needs a text encoder and a VAE named beside it. */
+  diffusion: string[]
+  encoders: string[]
+  vaes: string[]
+  /** The kinds a text encoder can be loaded as. */
+  encoderTypes: string[]
+  /** The last run of the server that made a picture, where its history has one: what it drew with, and the nodes it ran. */
+  last?: { model?: string; nodes: string[] }
 }
 
 /**

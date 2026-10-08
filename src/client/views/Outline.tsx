@@ -9,7 +9,7 @@ import { Icon } from '../icons'
 import { PlotGraph } from './PlotGraph'
 import { CHAPTER_STATUS, CHAPTER_STATUS_TONE, THREAD_KIND, THREAD_STATUS, THREAD_STATUS_TONE } from '../labels'
 import {
-  Button, Chip, cx, Empty, Field, Menu, Modal, SectionTitle, Select, Tabs, TextArea, TextInput, useAction, useConfirm, useLoad, useProject, useSnapshot,
+  Button, Chip, cx, Empty, Field, Menu, Modal, SectionTitle, Select, Tabs, TextArea, TextInput, useAction, useConfirm, useKept, useLoad, useProject, useSnapshot,
   useStudio, useT, type Translate,
 } from '../ui'
 
@@ -31,25 +31,21 @@ const labelOptions = <T extends string>(labels: Record<T, [string, string]>, t: 
 export function OutlineView() {
   const t = useT()
   const { project } = useProject()
-  const [tab, setTab] = useState<'chapters' | 'graph' | 'threads' | 'derive'>('chapters')
+  const [tab, setTab] = useState<'chapters' | 'graph' | 'threads'>('chapters')
   const open = project.outline.threads.filter(thread => thread.status === 'open').length
   const lines = project.outline.lines?.length ?? 0
-  // The line the author is on: the one the chapter in hand belongs to. What is derived goes there unless they say otherwise.
-  const focused = useSnapshot(snapshot => snapshot.chapterId)
-  const home = (project.outline.lines ?? []).find(line => line.chapters.some(plan => plan.id === focused))
   return (
     <div className="nv-page nv-outline">
       <Tabs
         value={tab}
         onChange={setTab}
         tabs={[
-          { value: 'chapters', label: t('章节', 'Chapters'), icon: 'tree', badge: project.chapters.length },
+          { value: 'chapters', label: t('章节', 'Chapters'), icon: 'tree', badge: project.chapters.length + (project.lines ?? []).reduce((sum, line) => sum + line.chapters.length, 0) },
           { value: 'graph', label: t('剧情图', 'Plot graph'), icon: 'branch', badge: lines > 0 ? lines + 1 : undefined },
           { value: 'threads', label: t('线索与伏笔', 'Threads'), icon: 'thread', badge: open },
-          { value: 'derive', label: t('推演', 'Derive'), icon: 'sparkles' },
         ]}
       />
-      {tab === 'chapters' ? <Chapters onGraph={() => { setTab('graph') }} /> : tab === 'graph' ? <PlotGraph /> : tab === 'threads' ? <Threads /> : <Derive key={home?.id ?? MAIN_LINE} preset={home !== undefined ? { line: home.id, mode: 'append' } : undefined} onApplied={() => { setTab('chapters') }} />}
+      {tab === 'chapters' ? <Chapters onGraph={() => { setTab('graph') }} /> : tab === 'graph' ? <PlotGraph /> : <Threads />}
     </div>
   )
 }
@@ -69,10 +65,31 @@ function Chapters({ onGraph }: { onGraph: () => void }) {
   const main = project.outline.volumes.flatMap(volume => volume.chapters)
   // Every chapter the book has, on whichever line; a chapter is moved up and down among the chapters of its own.
   const everything = [...main, ...others.flatMap(line => line.chapters)]
-  const selected = everything.find(plan => plan.id === focused) ?? main[0] ?? everything[0]
+  const info = new Map([...project.chapters, ...(project.lines ?? []).flatMap(line => line.chapters)].map(chapter => [chapter.id, chapter]))
+  // One line of the plot at a time: the page lists the line chosen — the main one, or another as it is read (what it
+  // shares with the line it parts from, then its own) — and not every line under the other.
+  const [wantedLine, setLine] = useKept<string>('outline.line', MAIN_LINE)
+  const shownLine = others.find(line => line.id === wantedLine)
+  const pathOf = (line: PlotLine | undefined): string[] => (line === undefined ? main.map(plan => plan.id) : project.lines?.find(candidate => candidate.id === line.id)?.path ?? line.chapters.map(plan => plan.id))
+  const path = pathOf(shownLine)
+  // A chapter opened from elsewhere that this line does not read takes the page to the line it belongs to.
+  const focusedHome = focused !== undefined && everything.some(plan => plan.id === focused) ? others.find(line => line.chapters.some(plan => plan.id === focused))?.id ?? MAIN_LINE : undefined
+  useEffect(() => {
+    if (focused !== undefined && focusedHome !== undefined && !path.includes(focused)) setLine(focusedHome)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focused, focusedHome])
+  const own = shownLine !== undefined ? shownLine.chapters : main
+  const selected = everything.find(plan => plan.id === focused && path.includes(plan.id)) ?? own[0] ?? everything.find(plan => path.includes(plan.id))
   const home = selected !== undefined ? others.find(line => line.chapters.some(plan => plan.id === selected.id)) : undefined
   const plans = home !== undefined ? home.chapters : main
-  const info = new Map([...project.chapters, ...(project.lines ?? []).flatMap(line => line.chapters)].map(chapter => [chapter.id, chapter]))
+  // What comes next is asked of the planner here, for the line shown: the chapters and their deriving are one page.
+  const [deriving, setDeriving] = useState(false)
+  const pickLine = (id: string): void => {
+    setLine(id)
+    setDeriving(false)
+    const first = id === MAIN_LINE ? main[0] : others.find(line => line.id === id)?.chapters[0]
+    if (first !== undefined) controller.focusChapter(first.id)
+  }
   const addToLine = (line: PlotLine): Promise<unknown> => run(async () => {
     const results = await apply([{ op: 'add-chapter', title: t('新章节', 'New chapter'), line: line.id }])
     const id = results[0]?.id
@@ -122,10 +139,10 @@ function Chapters({ onGraph }: { onGraph: () => void }) {
       return next
     })
   }
-  const row = (plan: ChapterPlan, chapter: ChapterInfo | undefined): JSX.Element => (
-    <li key={plan.id} className={cx('nv-list-item', choosing && 'is-choosing')}>
+  const row = (plan: ChapterPlan, chapter: ChapterInfo | undefined, shared = false): JSX.Element => (
+    <li key={plan.id} className={cx('nv-list-item', choosing && 'is-choosing', shared && 'is-shared')}>
       {choosing ? <input type="checkbox" className="nv-list-tick" checked={ticked.has(plan.id)} onChange={() => { tick(plan.id) }} aria-label={t(`选中「${plan.title}」`, `Choose "${plan.title}"`)} /> : null}
-      <button type="button" className={cx('nv-list-row', plan.id === selected?.id && 'is-active')} onClick={() => { if (choosing) tick(plan.id); else controller.focusChapter(plan.id) }}>
+      <button type="button" className={cx('nv-list-row', plan.id === selected?.id && !deriving && 'is-active')} onClick={() => { if (choosing) tick(plan.id); else { setDeriving(false); controller.focusChapter(plan.id) } }}>
         <span className="nv-list-index">{chapter?.index ?? ''}</span>
         <span className="nv-person-text">
           <span className="nv-list-title">{plan.title}</span>
@@ -163,9 +180,15 @@ function Chapters({ onGraph }: { onGraph: () => void }) {
             </>
           ) : (
             <>
-              <span className="nv-muted nv-small">{t(`${everything.length} 章`, `${everything.length} chapters`)}</span>
+              {others.length > 0 ? (
+                <Select value={shownLine?.id ?? MAIN_LINE} options={[
+                  { value: MAIN_LINE, label: `★ ${t('主线', 'Main line')}${t(`（${main.length} 章）`, ` (${main.length})`)}` },
+                  ...others.map(line => ({ value: line.id, label: `${line.shelved === true ? '⏸ ' : ''}${line.title}${t(`（${line.chapters.length} 章）`, ` (${line.chapters.length})`)}` })),
+                ]} onChange={pickLine} />
+              ) : <span className="nv-muted nv-small">{t(`${everything.length} 章`, `${everything.length} chapters`)}</span>}
               <span className="nv-spacer" />
-              {everything.length > 1 ? <Button size="sm" variant="ghost" icon="check" onClick={() => { setChoosing(true) }} title={t('勾选几章，一起删除', 'Tick several chapters and delete them together')}>{t('多选', 'Choose several')}</Button> : null}
+              <Button size="sm" variant={deriving ? 'primary' : 'outline'} icon="sparkles" onClick={() => { setDeriving(!deriving) }} title={t('让策划排出这条线接下来的章纲，或问一个"如果"', 'Have the planner plot what comes next on this line, or ask a what-if')}>{t('推演', 'Derive')}</Button>
+              {own.length > 1 ? <Button size="sm" variant="ghost" icon="check" onClick={() => { setChoosing(true) }} title={t('勾选几章，一起删除', 'Tick several chapters and delete them together')}>{t('多选', 'Choose several')}</Button> : null}
             </>
           )}
         </div>
@@ -175,7 +198,7 @@ function Chapters({ onGraph }: { onGraph: () => void }) {
             <Button size="sm" icon="wand" busy={filling.busy} pending={t('正在补全…', 'Filling…')} onClick={fill} title={t('只填空着的项；已经写了内容的项不动', 'Only empty fields are filled; a field with anything in it is left alone')}>{t('按收录结果补全', 'Fill from the digests')}</Button>
           </div>
         ) : null}
-        {project.outline.volumes.map((volume, volumeIndex) => (
+        {shownLine !== undefined ? null : project.outline.volumes.map((volume, volumeIndex) => (
           <section key={volume.id} className="nv-volume">
             <header className="nv-volume-head">
               <div className="nv-volume-title">
@@ -204,9 +227,8 @@ function Chapters({ onGraph }: { onGraph: () => void }) {
             <button type="button" className="nv-add-row" onClick={() => { addChapter(volume) }}>+ {t('添加章节', 'Add chapter')}</button>
           </section>
         ))}
-        <button type="button" className="nv-add-row" onClick={() => { setEditingVolume('new') }}>+ {t('添加分卷', 'Add volume')}</button>
-        {others.length > 0 ? <div className="nv-lines-divider"><span>{t('主线之外的剧情线', 'Lines beside the main one')}</span><button type="button" className="nv-link" onClick={onGraph}>{t('看剧情图', 'See the graph')}</button></div> : null}
-        {others.map(line => (
+        {shownLine !== undefined ? null : <button type="button" className="nv-add-row" onClick={() => { setEditingVolume('new') }}>+ {t('添加分卷', 'Add volume')}</button>}
+        {(shownLine !== undefined ? [shownLine] : []).map(line => (
           <section key={line.id} className={cx('nv-volume nv-line-section', line.shelved === true && 'is-shelved')}>
             <header className="nv-volume-head">
               <div className="nv-volume-title">
@@ -216,7 +238,8 @@ function Chapters({ onGraph }: { onGraph: () => void }) {
               <Button size="sm" variant="ghost" icon="branch" onClick={onGraph} title={t('在剧情图里看这条线，改名、汇入、设为主线都在那里', 'See this line on the graph; renaming, joining and making it the main line are there')} />
             </header>
             <ul className="nv-list">
-              {line.chapters.map(plan => row(plan, info.get(plan.id)))}
+              {/* As the line is read: what it shares with the line it parts from, greyed, then its own. */}
+              {path.map(id => everything.find(plan => plan.id === id)).filter((plan): plan is ChapterPlan => plan !== undefined).map(plan => row(plan, project.lines?.find(candidate => candidate.id === line.id)?.chapters.find(chapter => chapter.id === plan.id) ?? info.get(plan.id), !line.chapters.some(mine => mine.id === plan.id)))}
             </ul>
             <button type="button" className="nv-add-row" onClick={() => { addToLine(line) }}>+ {t('给这条线添加章节', 'Add a chapter to this line')}</button>
           </section>
@@ -245,9 +268,17 @@ function Chapters({ onGraph }: { onGraph: () => void }) {
         ) : null}
       </aside>
       <section className="nv-split-detail">
-        {selected !== undefined
+        {deriving ? (
+          <>
+            <div className="nv-toolbar">
+              <button type="button" className="nv-link" onClick={() => { setDeriving(false) }}>‹ {t('回到章纲', 'Back to the chapter')}</button>
+              <span className="nv-muted nv-small">{shownLine !== undefined ? t(`剧情线「${shownLine.title}」`, `The line "${shownLine.title}"`) : others.length > 0 ? t('主线', 'Main line') : ''}</span>
+            </div>
+            <Derive key={shownLine?.id ?? MAIN_LINE} preset={shownLine !== undefined ? { line: shownLine.id, mode: 'append' } : undefined} onApplied={() => { setDeriving(false) }} />
+          </>
+        ) : selected !== undefined
           ? <ChapterPlanEditor key={selected.id} plan={selected} index={info.get(selected.id)?.index ?? 0} plans={plans} />
-          : <Empty icon="tree" title={t('还没有章节', 'No chapters yet')}>{t('在左侧添加章节，或到"推演"里让策划排出开篇。', 'Add a chapter on the left, or let the planner model outline the opening under Derive.')}</Empty>}
+          : <Empty icon="tree" title={t('这条线还没有章节', 'No chapters on this line yet')}>{t('在左侧添加章节，或点"推演"让策划排出来。', 'Add a chapter on the left, or have the planner plot them with Derive.')}</Empty>}
       </section>
       {editingVolume !== undefined ? <VolumeEditor volume={editingVolume === 'new' ? undefined : editingVolume} onClose={() => { setEditingVolume(undefined) }} /> : null}
       {confirm.element}

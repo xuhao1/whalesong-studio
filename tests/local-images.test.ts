@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createImageProvider } from '../src/core/media/image'
-import { fillWorkflow, stopLocalWorkers, workflowImages } from '../src/core/media/local'
+import { comfyCatalog, comfyLastWorkflow, fillWorkflow, stopLocalWorkers, workflowImages, workflowTemplate } from '../src/core/media/local'
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3])
 const keys = { get: async () => undefined } as never
@@ -30,7 +30,18 @@ describe('a workflow\'s placeholders', () => {
 describe('ComfyUI', () => {
   let server: Server
   let base = ''
-  const seen: { prompts: Record<string, unknown>[]; uploads: number; interrupted: number; fail?: 'queue' | 'run' } = { prompts: [], uploads: 0, interrupted: 0 }
+  const seen: { prompts: Record<string, unknown>[]; uploads: number; interrupted: number; fail?: 'queue' | 'run'; checkpoints: string[]; runs: Record<string, unknown> } = { prompts: [], uploads: 0, interrupted: 0, checkpoints: ['first.safetensors', 'second.safetensors'], runs: {} }
+  // A run as a server keeps it: a diffusion model that comes alone, one node encoding both prompts.
+  const RUN = {
+    1: { class_type: 'UNETLoader', inputs: { unet_name: 'noct.safetensors', weight_dtype: 'default' } },
+    2: { class_type: 'CLIPLoader', inputs: { clip_name: 'enc-8b.safetensors', type: 'qwen_image', device: 'default' } },
+    3: { class_type: 'VAELoader', inputs: { vae_name: 'image-vae.safetensors' } },
+    4: { class_type: 'TextEncodeQwenImage21', inputs: { clip: ['2', 0], prompt: 'a cat on a roof', negative_prompt: 'blurry', resolution: 1024 } },
+    5: { class_type: 'EmptyLatentImage', inputs: { width: 768, height: 768, batch_size: 1 } },
+    6: { class_type: 'KSampler', inputs: { model: ['1', 0], positive: ['4', 0], negative: ['4', 1], latent_image: ['5', 0], seed: 20261009, steps: 25, cfg: 3, sampler_name: 'euler', scheduler: 'simple', denoise: 1 } },
+    7: { class_type: 'VAEDecode', inputs: { samples: ['6', 0], vae: ['3', 0] } },
+    8: { class_type: 'SaveImage', inputs: { images: ['7', 0], filename_prefix: 'mine/cat' } },
+  }
 
   beforeAll(async () => {
     server = createServer((request, response) => {
@@ -39,7 +50,13 @@ describe('ComfyUI', () => {
       request.on('end', () => {
         const url = new URL(request.url ?? '/', 'http://x')
         const json = (status: number, body: unknown): void => { response.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body)) }
-        if (url.pathname === '/object_info/CheckpointLoaderSimple') return json(200, { CheckpointLoaderSimple: { input: { required: { ckpt_name: [['first.safetensors', 'second.safetensors']] } } } })
+        if (url.pathname === '/object_info/CheckpointLoaderSimple') return json(200, { CheckpointLoaderSimple: { input: { required: { ckpt_name: [seen.checkpoints] } } } })
+        if (url.pathname === '/object_info/UNETLoader') return json(200, { UNETLoader: { input: { required: { unet_name: [['noct.safetensors', 'video.safetensors']], weight_dtype: [['default']] } } } })
+        // (The newer shape of a list of choices.)
+        if (url.pathname === '/object_info/CLIPLoader') return json(200, { CLIPLoader: { input: { required: { clip_name: ['COMBO', { options: ['enc-32b.safetensors', 'enc-8b.safetensors'] }], type: [['sd3', 'qwen_image', 'flux2']] }, optional: { device: [['default', 'cpu']] } } } })
+        if (url.pathname === '/object_info/VAELoader') return json(200, { VAELoader: { input: { required: { vae_name: [['video-vae.safetensors', 'image-vae.safetensors', 'taesd', 'pixel_space']] } } } })
+        if (url.pathname === '/system_stats') return json(200, { system: { comfyui_version: '0.39.0' }, devices: [{ name: 'cuda:0 NVIDIA GeForce RTX 4080 SUPER : cudaMallocAsync', vram_total: 16 * 2 ** 30 }] })
+        if (url.pathname === '/history') return json(200, seen.runs)
         if (url.pathname === '/upload/image') { seen.uploads += 1; return json(200, { name: `up-${seen.uploads}.png`, subfolder: '', type: 'input' }) }
         if (url.pathname === '/interrupt') { seen.interrupted += 1; return json(200, {}) }
         if (url.pathname === '/prompt') {
@@ -63,13 +80,13 @@ describe('ComfyUI', () => {
   afterAll(async () => { await new Promise(resolve => server.close(resolve)) })
 
   it('draws with the built-in graph for a checkpoint: queues it, waits, fetches the picture', async () => {
-    const provider = createImageProvider({ provider: 'comfyui', baseURL: base, model: 'mine.safetensors', steps: 12 }, keys)!
-    expect([provider.kind, provider.model]).toEqual(['comfyui', 'mine.safetensors'])
+    const provider = createImageProvider({ provider: 'comfyui', baseURL: base, model: 'second.safetensors', steps: 12 }, keys)!
+    expect([provider.kind, provider.model]).toEqual(['comfyui', 'second.safetensors'])
     const result = await provider.generate({ prompt: '少女，三视图', negativePrompt: '辫子', size: '1280x720', references: [{ data: PNG, mime: 'image/png' }] })
     expect(Array.from(result.data)).toEqual(Array.from(PNG))
     expect(result.mime).toBe('image/png')
     const graph = seen.prompts.at(-1) as Record<string, { class_type: string; inputs: Record<string, unknown> }>
-    expect(graph[4]!.inputs.ckpt_name).toBe('mine.safetensors')
+    expect(graph[4]!.inputs.ckpt_name).toBe('second.safetensors')
     expect(graph[6]!.inputs.text).toBe('少女，三视图')
     expect(graph[7]!.inputs.text).toBe('辫子')
     // Sizes a latent model can make, as numbers; the author's steps, the default guidance; a seed of its own.
@@ -84,6 +101,88 @@ describe('ComfyUI', () => {
     // No checkpoint named: the first the server has.
     await createImageProvider({ provider: 'comfyui', baseURL: base }, keys)!.generate({ prompt: 'x' })
     expect((seen.prompts.at(-1) as Record<string, { inputs: Record<string, unknown> }>)[4]!.inputs.ckpt_name).toBe('first.safetensors')
+  })
+
+  it('says what the server has, and draws with a diffusion model that comes alone beside its encoder and VAE', async () => {
+    // Asked of the server itself: nobody types a file name from memory.
+    const catalog = await comfyCatalog(base)
+    expect(catalog).toEqual({
+      base,
+      version: '0.39.0',
+      device: 'NVIDIA GeForce RTX 4080 SUPER · 16 GB',
+      checkpoints: ['first.safetensors', 'second.safetensors'],
+      diffusion: ['noct.safetensors', 'video.safetensors'],
+      encoders: ['enc-32b.safetensors', 'enc-8b.safetensors'],
+      vaes: ['video-vae.safetensors', 'image-vae.safetensors'],
+      encoderTypes: ['sd3', 'qwen_image', 'flux2'],
+    })
+    await expect(comfyCatalog('http://127.0.0.1:9')).rejects.toThrow('did not answer')
+    // A model the server lists among its diffusion models: loaded by parts, with what the settings name beside it.
+    const provider = createImageProvider({ provider: 'comfyui', baseURL: base, model: 'noct.safetensors', textEncoder: 'enc-8b.safetensors', vae: 'image-vae.safetensors', encoderType: 'qwen_image', guidance: 3 }, keys)!
+    await provider.generate({ prompt: '一座桥', negativePrompt: '人', size: '768x768' })
+    const graph = seen.prompts.at(-1) as Record<string, { class_type: string; inputs: Record<string, unknown> }>
+    expect(Object.values(graph).map(node => node.class_type).sort()).toEqual(['CLIPLoader', 'CLIPTextEncode', 'CLIPTextEncode', 'EmptyLatentImage', 'KSampler', 'SaveImage', 'UNETLoader', 'VAEDecode', 'VAELoader'])
+    expect(graph[1]!.inputs).toMatchObject({ unet_name: 'noct.safetensors' })
+    expect(graph[2]!.inputs).toEqual({ clip_name: 'enc-8b.safetensors', type: 'qwen_image' })
+    expect(graph[3]!.inputs).toEqual({ vae_name: 'image-vae.safetensors' })
+    expect([graph[6]!.inputs.text, graph[7]!.inputs.text]).toEqual(['一座桥', '人'])
+    expect(graph[4]!.inputs).toMatchObject({ steps: 25, cfg: 3, model: ['1', 0], positive: ['6', 0], negative: ['7', 0] })
+    // Where the server leaves a choice and the settings make none, it is said what to name — nothing is guessed.
+    await expect(createImageProvider({ provider: 'comfyui', baseURL: base, model: 'noct.safetensors' }, keys)!.generate({ prompt: 'x' })).rejects.toThrow(/comes alone.*a text encoder \(enc-32b\.safetensors, enc-8b\.safetensors\).*a VAE.*the kind the encoder is loaded as/)
+    // A name the server does not have: said, with what it has.
+    await expect(createImageProvider({ provider: 'comfyui', baseURL: base, model: 'gone.safetensors' }, keys)!.generate({ prompt: 'x' })).rejects.toThrow('has no model "gone.safetensors" — it has: first.safetensors')
+    // No checkpoint at all, and no model named: the diffusion models are named, and where to choose.
+    seen.checkpoints = []
+    try {
+      await expect(createImageProvider({ provider: 'comfyui', baseURL: base }, keys)!.generate({ prompt: 'x' })).rejects.toThrow('has no checkpoint, and 2 diffusion models (noct.safetensors, video.safetensors)')
+    } finally {
+      seen.checkpoints = ['first.safetensors', 'second.safetensors']
+    }
+  })
+
+  it('takes the server\'s last run that made a picture as the workflow to fill in', async () => {
+    expect(await comfyLastWorkflow(base)).toBeUndefined()
+    seen.runs = {
+      // A run that failed, one that made no picture, and — older than both — the one that drew.
+      c: { prompt: [9, 'c', RUN], outputs: {}, status: { status_str: 'error' } },
+      b: { prompt: [8, 'b', { 1: { class_type: 'SaveText', inputs: {} } }], outputs: { 1: { text: ['x'] } }, status: { status_str: 'success' } },
+      a: { prompt: [7, 'a', RUN], outputs: { 8: { images: [{ filename: 'cat.png' }] } }, status: { status_str: 'success' } },
+      // Newer than all of them, and the Studio's own: it does not stand before the author's.
+      d: { prompt: [10, 'd', { ...RUN, 4: { class_type: 'CLIPTextEncode', inputs: { text: 'x', clip: ['2', 0] } }, 6: { ...RUN[6], inputs: { ...RUN[6].inputs, negative: ['4', 0] } }, 8: { class_type: 'SaveImage', inputs: { images: ['7', 0], filename_prefix: 'novel-studio' } } }], outputs: { 8: { images: [{ filename: 'novel-studio_1.png' }] } }, status: { status_str: 'success' } },
+    }
+    const last = (await comfyLastWorkflow(base))!
+    expect(last.model).toBe('noct.safetensors')
+    expect(last.nodes).toEqual(['UNETLoader', 'CLIPLoader', 'VAELoader', 'TextEncodeQwenImage21', 'EmptyLatentImage', 'KSampler', 'VAEDecode', 'SaveImage'])
+    const graph = last.workflow as Record<string, { inputs: Record<string, unknown> }>
+    // The words, the size and the seed are the Studio's to fill; the models and the sampling stay as the server ran them.
+    expect(graph[4]!.inputs).toEqual({ clip: ['2', 0], prompt: '%prompt%', negative_prompt: '%negative_prompt%', resolution: 1024 })
+    expect(graph[5]!.inputs).toEqual({ width: '%width%', height: '%height%', batch_size: 1 })
+    expect(graph[6]!.inputs).toMatchObject({ seed: '%seed%', steps: 25, cfg: 3, sampler_name: 'euler', scheduler: 'simple' })
+    expect(graph[1]!.inputs.unet_name).toBe('noct.safetensors')
+    expect(graph[8]!.inputs.filename_prefix).toBe('novel-studio')
+    expect((await comfyCatalog(base)).last).toEqual({ model: 'noct.safetensors', nodes: last.nodes })
+    // Kept in the settings as it is, it draws.
+    await createImageProvider({ provider: 'comfyui', baseURL: base, workflow: JSON.stringify(last.workflow) }, keys)!.generate({ prompt: '雨夜的码头', negativePrompt: '字', size: '1280x720' })
+    const sent = seen.prompts.at(-1) as Record<string, { inputs: Record<string, unknown> }>
+    expect(sent[4]!.inputs).toMatchObject({ prompt: '雨夜的码头', negative_prompt: '字' })
+    expect(sent[5]!.inputs).toMatchObject({ width: 1280, height: 720 })
+    expect(typeof sent[6]!.inputs.seed).toBe('number')
+    // Two text nodes, one a side; a guidance node between the text and the sampler; a sampler that names its seed otherwise.
+    const two = workflowTemplate({
+      1: { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: 'xl.safetensors' } },
+      2: { class_type: 'CLIPTextEncode', inputs: { text: 'a dog', clip: ['1', 1] } },
+      3: { class_type: 'CLIPTextEncode', inputs: { text: 'ugly', clip: ['1', 1] } },
+      4: { class_type: 'FluxGuidance', inputs: { conditioning: ['2', 0], guidance: 3.5 } },
+      5: { class_type: 'EmptySD3LatentImage', inputs: { width: 1024, height: 1024, batch_size: 1 } },
+      6: { class_type: 'KSamplerAdvanced', inputs: { model: ['1', 0], positive: ['4', 0], negative: ['3', 0], latent_image: ['5', 0], noise_seed: 5, steps: 20 } },
+    })!
+    const made = two.workflow as Record<string, { inputs: Record<string, unknown> }>
+    expect([made[2]!.inputs.text, made[3]!.inputs.text, made[6]!.inputs.noise_seed, made[5]!.inputs.width, two.model]).toEqual(['%prompt%', '%negative_prompt%', '%seed%', '%width%', 'xl.safetensors'])
+    // What was handed over is left as it was; a graph with no sampler fed by a text is no template.
+    expect(RUN[4].inputs.prompt).toBe('a cat on a roof')
+    expect(workflowTemplate({ 1: { class_type: 'LoadImage', inputs: { image: 'x.png' } } })).toBeUndefined()
+    expect(workflowTemplate(null)).toBeUndefined()
+    seen.runs = {}
   })
 
   it('runs the author\'s own workflow, and the one that takes reference pictures where there are some', async () => {
@@ -110,7 +209,7 @@ describe('ComfyUI', () => {
   })
 
   it('says what the server said when a workflow is refused or fails, and when nothing answers', async () => {
-    const provider = createImageProvider({ provider: 'comfyui', baseURL: base, model: 'gone.safetensors' }, keys)!
+    const provider = createImageProvider({ provider: 'comfyui', baseURL: base, model: 'first.safetensors' }, keys)!
     seen.fail = 'queue'
     await expect(provider.generate({ prompt: 'x' })).rejects.toThrow(/did not take the workflow: Prompt outputs failed validation — CheckpointLoaderSimple: Value not in list ckpt_name/)
     seen.fail = 'run'

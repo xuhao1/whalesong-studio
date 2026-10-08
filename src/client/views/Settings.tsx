@@ -12,6 +12,7 @@
  */
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import type { EndpointCheck, EndpointModel, KeyState, ModelKind, ModelOption, ProviderOption, SettingsView as SettingsData } from '../../shared/rpc'
+import type { ComfyCatalog } from '../../shared/types'
 import { ASPECTS, DEFAULT_ART_STYLE, KIND_ASPECT, PICTURE_KINDS, PICTURE_TIERS, pictureSize, pixelSize, type PictureKind, type PictureTier } from '../../shared/art'
 import { FFMPEG_INSTALL } from '../../shared/text'
 import { OutsideHelp } from '../OutsideHelp'
@@ -1055,6 +1056,95 @@ function PictureSizeFields({ value, onChange, t, advanced }: { value: ImageSetti
   )
 }
 
+/**
+ * ComfyUI: the address, what the server there has to draw with — asked of it, so that nobody types a file name from
+ * memory —, and what to draw with: a workflow, or a model the built-in graph can load.
+ */
+function ComfyFields({ value, onChange, t }: { value: ImageSettings; onChange: (value: ImageSettings) => void; t: Translate }) {
+  const { controller } = useStudio()
+  const [server, setServer] = useState<{ catalog?: ComfyCatalog; error?: string } | undefined>()
+  const [asking, setAsking] = useState(false)
+  const [adopting, setAdopting] = useState(false)
+  const address = value.baseURL?.trim() ?? ''
+  const connect = (): void => {
+    setAsking(true)
+    controller.api.call('image.comfy', address.length > 0 ? { baseURL: address } : {})
+      .then((catalog) => { setServer({ catalog }) })
+      // (A Host from before cannot ask: said as it is.)
+      .catch((error: unknown) => { setServer({ error: messageOf(error) }) })
+      .finally(() => { setAsking(false) })
+  }
+  // Asked once as the form opens; again on the author's word, after the address changed or a model was added.
+  useEffect(() => {
+    connect()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  const catalog = server?.catalog
+  const set = <K extends keyof ImageSettings>(key: K, next: ImageSettings[K] | undefined): void => { onChange(without(value, key, next)) }
+  const typed = (key: 'baseURL' | 'model' | 'workflow' | 'editWorkflow', placeholder: string) => ({ value: value[key] ?? '', placeholder, onChange: (event: { target: { value: string } }) => { set(key, event.target.value.length > 0 ? event.target.value : undefined) } })
+  const workflow = value.workflow?.trim() ?? ''
+  // Kept in the settings as the JSON itself: taken from the server's own last run.
+  const kept = workflow.startsWith('{')
+  const keptNodes = (() => { try { return kept ? Object.keys(JSON.parse(workflow) as object).length : 0 } catch { return 0 } })()
+  const model = value.model?.trim() ?? ''
+  const listed = catalog !== undefined ? [...catalog.checkpoints, ...catalog.diffusion] : []
+  const alone = catalog !== undefined && catalog.diffusion.includes(model)
+  const choice = (list: readonly string[], current: string | undefined, none: string) => [{ value: '', label: none }, ...list.map(name => ({ value: name, label: name })), ...(current !== undefined && current.length > 0 && !list.includes(current) ? [{ value: current, label: current }] : [])]
+  const adopt = (): void => {
+    setAdopting(true)
+    controller.api.call('image.comfyAdopt', address.length > 0 ? { baseURL: address } : {})
+      .then((last) => {
+        onChange({ ...value, workflow: last.workflow, ...(last.model !== undefined ? { model: last.model } : {}) })
+        controller.toast('success', t(`已取来：${last.nodes.length} 个节点${last.model !== undefined ? `，模型 ${last.model}` : ''}。保存后生效。`, `Taken: ${last.nodes.length} nodes${last.model !== undefined ? `, model ${last.model}` : ''}. It holds once saved.`))
+      })
+      .catch((error: unknown) => { controller.toast('error', messageOf(error)) })
+      .finally(() => { setAdopting(false) })
+  }
+  return (
+    <>
+      <Field label={t('地址', 'Address')}>
+        <div className="nv-row">
+          <TextInput {...typed('baseURL', 'http://127.0.0.1:8188')} />
+          <Button size="sm" icon="refresh" busy={asking} pending={t('正在连接…', 'Connecting…')} onClick={connect}>{t('连接', 'Connect')}</Button>
+        </div>
+        {catalog !== undefined ? (
+          <p className="nv-muted nv-small">
+            {['ComfyUI', catalog.version, catalog.device].filter(Boolean).join(' · ')}
+            {t(` — checkpoint ${catalog.checkpoints.length}，扩散模型 ${catalog.diffusion.length}，文本编码器 ${catalog.encoders.length}，VAE ${catalog.vaes.length}`, ` — ${catalog.checkpoints.length} checkpoints, ${catalog.diffusion.length} diffusion models, ${catalog.encoders.length} text encoders, ${catalog.vaes.length} VAEs`)}
+          </p>
+        ) : server?.error !== undefined ? <p className="nv-note is-warn nv-small">{server.error}</p> : null}
+      </Field>
+      <Field label={t('工作流', 'Workflow')} hint={kept ? undefined : t('API 格式导出的 JSON 文件，里面写 %prompt%、%negative_prompt%、%width%、%height%、%seed%；留空用内置流程', 'A JSON file exported in API format, with %prompt%, %negative_prompt%, %width%, %height%, %seed% in it; empty: the built-in graph')}>
+        {kept ? (
+          <div className="nv-row">
+            <span className="nv-muted nv-small">{t(`存在设置里的工作流（${keptNodes} 个节点）`, `A workflow kept in the settings (${keptNodes} nodes)`)}</span>
+            <Button size="sm" variant="ghost" icon="x" onClick={() => { set('workflow', undefined) }}>{t('清除', 'Clear')}</Button>
+          </div>
+        ) : <TextInput {...typed('workflow', '~/ComfyUI/user/default/workflows/novel.json')} />}
+        {!kept && workflow.length === 0 && catalog?.last !== undefined ? (
+          <div className="nv-row">
+            <span className="nv-muted nv-small">{t(`这台服务器上次跑成功的一次：${catalog.last.model ?? ''}（${catalog.last.nodes.length} 个节点）`, `The server's last run that made a picture: ${catalog.last.model ?? ''} (${catalog.last.nodes.length} nodes)`)}</span>
+            <Button size="sm" icon="download" busy={adopting} pending={t('正在取…', 'Taking it…')} onClick={adopt} title={t('把那一次的工作流取来当模板：提示词、尺寸、种子换成工坊填的，模型和采样照它的', 'Take that run as the template: prompt, size and seed become the Studio\'s to fill, models and sampling stay its own')}>{t('用它当工作流', 'Use it as the workflow')}</Button>
+          </div>
+        ) : null}
+      </Field>
+      <Field label={t('模型', 'Model')} hint={workflow.length > 0 ? t('工作流里的 %model%；工作流自己写了模型时不用填', '%model% in the workflow; not needed where the workflow names its own') : catalog === undefined ? t('内置流程用的模型文件名；连接后可以从服务器上选', 'The model file the built-in graph loads; once connected it is chosen from the server\'s') : undefined}>
+        {catalog !== undefined && listed.length > 0
+          ? <Select value={model} options={[{ value: '', label: t('（未选）', '(none)') }, ...catalog.checkpoints.map(name => ({ value: name, label: `checkpoint · ${name}` })), ...catalog.diffusion.map(name => ({ value: name, label: t(`扩散模型 · ${name}`, `diffusion model · ${name}`) })), ...(model.length > 0 && !listed.includes(model) ? [{ value: model, label: model }] : [])]} onChange={(next) => { set('model', next.length > 0 ? next : undefined) }} />
+          : <TextInput {...typed('model', 'sd_xl_base_1.0.safetensors')} />}
+      </Field>
+      {alone && workflow.length === 0 && catalog !== undefined ? (
+        <>
+          <Field label={t('文本编码器', 'Text encoder')}><Select value={value.textEncoder ?? ''} options={choice(catalog.encoders, value.textEncoder, catalog.encoders.length === 1 ? catalog.encoders[0]! : t('（请选）', '(choose)'))} onChange={(next) => { set('textEncoder', next.length > 0 ? next : undefined) }} /></Field>
+          <Field label={t('编码器类型', 'Encoder kind')} hint={t('这个模型属于哪一族', 'The family the model is of')}><Select value={value.encoderType ?? ''} options={choice(catalog.encoderTypes, value.encoderType, t('（请选）', '(choose)'))} onChange={(next) => { set('encoderType', next.length > 0 ? next : undefined) }} /></Field>
+          <Field label="VAE"><Select value={value.vae ?? ''} options={choice(catalog.vaes, value.vae, catalog.vaes.length === 1 ? catalog.vaes[0]! : t('（请选）', '(choose)'))} onChange={(next) => { set('vae', next.length > 0 ? next : undefined) }} /></Field>
+        </>
+      ) : null}
+      <Field label={t('带参考图的工作流', 'Workflow with reference pictures')} hint={t('用 %image1%、%image2% 载入参考图；留空则不带参考图', 'Loads them as %image1%, %image2%; empty: reference pictures do not go along')}><TextInput {...typed('editWorkflow', '~/ComfyUI/user/default/workflows/novel-edit.json')} /></Field>
+    </>
+  )
+}
+
 function ImageSection({ value, keys, onChange, t, advanced }: { value: ImageSettings; keys: KeyBag; onChange: (value: ImageSettings) => void; t: Translate; advanced: boolean }) {
   const source = imageSourceOf(value)
   const { codex } = keys.view
@@ -1100,14 +1190,7 @@ function ImageSection({ value, keys, onChange, t, advanced }: { value: ImageSett
             ]} onChange={(bridge) => { onChange(without(value, 'bridge', bridge === 'auto' ? undefined : bridge)) }} />
           </Field>
         ) : null}
-        {value.provider === 'comfyui' ? (
-          <>
-            <Field label={t('地址', 'Address')}><TextInput {...text('baseURL', 'http://127.0.0.1:8188')} /></Field>
-            <Field label={t('工作流文件', 'Workflow file')} hint={t('API 格式导出的 JSON，里面写 %prompt%、%negative_prompt%、%width%、%height%、%seed%；留空用内置的文生图流程', 'JSON exported in API format, with %prompt%, %negative_prompt%, %width%, %height%, %seed% in it; empty: the built-in text-to-image graph')}><TextInput {...text('workflow', '~/ComfyUI/user/default/workflows/novel-api.json')} /></Field>
-            <Field label={t('模型', 'Model')} hint={t('checkpoint 文件名，也是工作流里的 %model%；留空用服务器上的第一个', 'A checkpoint file name, also %model% in a workflow; empty: the first the server has')}><TextInput {...text('model', 'sd_xl_base_1.0.safetensors')} /></Field>
-            <Field label={t('带参考图的工作流', 'Workflow with reference pictures')} hint={t('用 %image1%、%image2% 载入参考图；留空则不带参考图', 'Loads them as %image1%, %image2%; empty: reference pictures do not go along')}><TextInput {...text('editWorkflow', '~/ComfyUI/user/default/workflows/novel-edit-api.json')} /></Field>
-          </>
-        ) : null}
+        {value.provider === 'comfyui' ? <ComfyFields value={value} onChange={onChange} t={t} /> : null}
         {value.provider === 'diffusers' ? (
           <>
             <Field label={t('模型', 'Model')} hint={t('Hugging Face 上的名字，或本机的文件夹 / .safetensors 路径', 'A Hugging Face id, or a folder or .safetensors path on this computer')}><TextInput {...text('model', 'stabilityai/stable-diffusion-xl-base-1.0')} /></Field>

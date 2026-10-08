@@ -38,6 +38,7 @@ import { fixIssue, fixIssues, acceptProposal, rejectProposal, reviseBook, revise
 import { writeChapter } from '../core/pipelines/write'
 import { ProjectError } from '../core/project'
 import { siftCast } from '../core/pipelines/cast'
+import { comfyCatalog, comfyLastWorkflow } from '../core/media/local'
 import { listWalkOns, settleWalkOn } from '../core/walkons'
 import { checkPassword, readStub, VaultError } from '../core/util/vault'
 import type { DeepPartial } from '../core/settings'
@@ -420,6 +421,12 @@ export function createHandlers(service: NovelService): Handlers {
       return job(runtime, 'bible', 'style sample', undefined, async task => ({ text: await styleSample(core, runtime, { ...(style !== undefined ? { style } : {}), ...(draft !== undefined ? { draft } : {}), ...(scene !== undefined ? { scene } : {}) }, task) }))
     },
     'cast.walkons': async ({ root, ignored }) => ({ walkons: await listWalkOns((await open(root)).project, { ignored: ignored === true }) }),
+    'image.comfy': async ({ baseURL }) => await comfyCatalog(typeof baseURL === 'string' && baseURL.trim().length > 0 ? baseURL : core.currentSettings().image.baseURL),
+    'image.comfyAdopt': async ({ baseURL }) => {
+      const last = await comfyLastWorkflow(typeof baseURL === 'string' && baseURL.trim().length > 0 ? baseURL : core.currentSettings().image.baseURL)
+      if (last === undefined) throw new ProjectError('novel/not-found', 'the ComfyUI server has no run in its history that made a picture from a text — run the workflow once in ComfyUI, or export it in API format and name the file')
+      return { workflow: JSON.stringify(last.workflow), ...(last.model !== undefined ? { model: last.model } : {}), nodes: last.nodes }
+    },
     'cast.sift': async ({ root, all, direction }) => {
       const runtime = await open(root)
       return job(runtime, 'bible', 'sift cast', undefined, async task => await siftCast(core, runtime, { ...(all === true ? { all: true } : {}), ...(typeof direction === 'string' && direction.trim().length > 0 ? { direction: direction.trim() } : {}) }, task))

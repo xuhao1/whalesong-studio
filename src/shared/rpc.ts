@@ -18,7 +18,7 @@ import type { Tie } from './ties'
 import type { Recommended } from './recommended'
 import type { ServiceId, SetupPart } from './services'
 import type {
-  AnalyzeStep,
+  AnalyzeStep, ComfyCatalog,
   PriceEntry,
   UsageSummary,
   TtsProviderKind,
@@ -431,6 +431,10 @@ export interface NovelRpc {
   /** People on the page without a card. */
   'cast.walkons': { params: { root: string; ignored?: boolean }; result: { walkons: WalkOn[] } }
   /** Give a walk-on a card, fold them into a character as an alias, or take them off the list. */
+  /** Ask a ComfyUI server what it has to draw with. `baseURL`: the address as typed; left out, the one in the settings. */
+  'image.comfy': { params: { baseURL?: string }; result: ComfyCatalog }
+  /** The last run of that server that made a picture, as a workflow with the Studio's placeholders in it: what the settings keep as the workflow. */
+  'image.comfyAdopt': { params: { baseURL?: string }; result: { workflow: string; model?: string; nodes: string[] } }
   /** Have the planner look through the names without a card and say who is worth one. `all`: every name again, also those already looked at or proposed. */
   'cast.sift': { params: { root: string; all?: boolean; direction?: string }; result: JobStarted }
   'cast.settle': { params: { root: string; name: string; action: 'card' | 'alias' | 'ignore' | 'restore'; target?: string; role?: CharacterRole }; result: { walkons: WalkOn[]; card?: CharacterCard; lines: number } }

@@ -19,7 +19,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { ImageSettings } from '../../shared/types'
+import type { ComfyCatalog, ImageSettings } from '../../shared/types'
 import { ProviderError, trimBase } from './http'
 import type { ImageProvider, ImageReference, ImageRequest, ImageResult } from './image'
 
@@ -81,6 +81,158 @@ function checkpointGraph(model: string): Graph {
   }
 }
 
+/**
+ * The graph for a diffusion model that comes alone — the server's `diffusion_models` —, loaded beside a text encoder
+ * and a VAE: text in, one picture out.
+ */
+function partsGraph(model: string, encoder: string, type: string, vae: string): Graph {
+  return {
+    1: { class_type: 'UNETLoader', inputs: { unet_name: model, weight_dtype: 'default' } },
+    2: { class_type: 'CLIPLoader', inputs: { clip_name: encoder, type } },
+    3: { class_type: 'VAELoader', inputs: { vae_name: vae } },
+    5: { class_type: 'EmptyLatentImage', inputs: { width: '%width%', height: '%height%', batch_size: 1 } },
+    6: { class_type: 'CLIPTextEncode', inputs: { text: '%prompt%', clip: ['2', 0] } },
+    7: { class_type: 'CLIPTextEncode', inputs: { text: '%negative_prompt%', clip: ['2', 0] } },
+    4: { class_type: 'KSampler', inputs: { seed: '%seed%', steps: '%steps%', cfg: '%scale%', sampler_name: 'euler', scheduler: 'simple', denoise: 1, model: ['1', 0], positive: ['6', 0], negative: ['7', 0], latent_image: ['5', 0] } },
+    8: { class_type: 'VAEDecode', inputs: { samples: ['4', 0], vae: ['3', 0] } },
+    9: { class_type: 'SaveImage', inputs: { filename_prefix: 'novel-studio', images: ['8', 0] } },
+  }
+}
+
+const trimmedBase = (baseURL: string | undefined): string => trimBase(baseURL?.trim() || COMFY_DEFAULT)
+
+/** What one of a loader node's inputs can be set to, as the server lists it: the files it has, or the kinds it knows. */
+async function loaderChoices(base: string, node: string, input: string, signal: AbortSignal | undefined): Promise<string[]> {
+  const answered = await fetch(`${base}/object_info/${node}`, { signal: signal ?? AbortSignal.timeout(15_000) })
+  if (!answered.ok) return []
+  const info = await answered.json().catch(() => ({})) as Record<string, { input?: Record<string, Record<string, unknown>> }>
+  const spec = info[node]?.input?.required?.[input] ?? info[node]?.input?.optional?.[input]
+  // The old shape: [[choices], {…}]. The new one: ["COMBO", { options: [choices] }].
+  const first = Array.isArray(spec) ? spec[0] : undefined
+  const listed = Array.isArray(first) ? first : (Array.isArray(spec) ? (spec[1] as { options?: unknown } | undefined)?.options : undefined)
+  return Array.isArray(listed) ? listed.filter((item): item is string => typeof item === 'string') : []
+}
+
+/** A file of weights, as against the stand-ins a loader lists beside them (`taesd`, `pixel_space`). */
+const isFile = (name: string): boolean => /\.(safetensors|ckpt|pt|pth|bin|gguf|sft)$/i.test(name)
+
+/**
+ * A run the server made, turned into a workflow the Studio can fill in: the words it was given become `%prompt%` and
+ * `%negative_prompt%`, the size of its empty latent `%width%` and `%height%`, its seed `%seed%`. Everything else — the
+ * models it loads, the sampler, the steps — stays as the server ran it: those are what made the run work.
+ * @returns undefined for a graph that has no sampler fed by a text the Studio could replace.
+ */
+export function workflowTemplate(run: unknown): { workflow: Graph; model?: string; nodes: string[] } | undefined {
+  if (run === null || typeof run !== 'object' || Array.isArray(run)) return undefined
+  const graph = JSON.parse(JSON.stringify(run)) as Graph
+  const linked = (node: Graph[string] | undefined, input: string): string | undefined => {
+    const value = node?.inputs?.[input]
+    return Array.isArray(value) && (typeof value[0] === 'string' || typeof value[0] === 'number') ? String(value[0]) : undefined
+  }
+  const sampler = Object.values(graph).find(node => linked(node, 'positive') !== undefined && linked(node, 'negative') !== undefined)
+  if (sampler === undefined) return undefined
+  const NOT_WORDS = /name|sampler|scheduler|type|device|dtype|prefix|mode|method|format|upscale|crop/i
+  const words = (node: Graph[string] | undefined, negative: boolean): string | undefined => {
+    const keys = Object.entries(node?.inputs ?? {}).filter(([key, value]) => typeof value === 'string' && !NOT_WORDS.test(key)).map(([key]) => key)
+    if (negative) return keys.find(key => /neg/i.test(key))
+    return keys.find(key => /^(prompt|text|positive|caption)$/i.test(key)) ?? keys.find(key => !/neg|system/i.test(key))
+  }
+  // The text a conditioning comes from: the node itself, or one a few steps up (a guidance or a combine in between).
+  const source = (id: string | undefined, negative: boolean): { node: Graph[string]; key: string } | undefined => {
+    let at = id
+    for (let hop = 0; hop < 4 && at !== undefined; hop += 1) {
+      const node = graph[at]
+      const key = words(node, negative)
+      if (node !== undefined && key !== undefined) return { node, key }
+      at = linked(node, 'conditioning') ?? linked(node, 'positive') ?? linked(node, 'conditioning_1')
+    }
+    return undefined
+  }
+  const positiveId = linked(sampler, 'positive')
+  const negativeId = linked(sampler, 'negative')
+  const positive = source(positiveId, false)
+  if (positive === undefined) return undefined
+  // One node may encode both (its negative under a name of its own); else the negative side has a node of its own.
+  const negative = words(positive.node, true) !== undefined ? { node: positive.node, key: words(positive.node, true)! }
+    : negativeId !== positiveId ? (() => {
+        const node = negativeId !== undefined ? graph[negativeId] : undefined
+        const key = words(node, true) ?? words(node, false)
+        return node !== undefined && key !== undefined ? { node, key } : undefined
+      })() : undefined
+  positive.node.inputs![positive.key] = '%prompt%'
+  if (negative !== undefined && !(negative.node === positive.node && negative.key === positive.key)) negative.node.inputs![negative.key] = '%negative_prompt%'
+  const latent = graph[linked(sampler, 'latent_image') ?? linked(sampler, 'latent') ?? '']
+  if (typeof latent?.inputs?.width === 'number' && typeof latent.inputs.height === 'number') {
+    latent.inputs.width = '%width%'
+    latent.inputs.height = '%height%'
+  }
+  for (const key of ['seed', 'noise_seed']) if (typeof sampler.inputs?.[key] === 'number') sampler.inputs[key] = '%seed%'
+  for (const node of Object.values(graph)) if (node.class_type === 'SaveImage' && node.inputs !== undefined) node.inputs.filename_prefix = 'novel-studio'
+  const loaders = Object.values(graph)
+  const named = (type: string, input: string): string | undefined => {
+    const value = loaders.find(node => node.class_type === type)?.inputs?.[input]
+    return typeof value === 'string' ? value : undefined
+  }
+  const model = named('UNETLoader', 'unet_name') ?? named('CheckpointLoaderSimple', 'ckpt_name') ?? named('CheckpointLoader', 'ckpt_name') ?? named('UnetLoaderGGUF', 'unet_name')
+  return { workflow: graph, ...(model !== undefined ? { model } : {}), nodes: Object.values(graph).map(node => node.class_type ?? '?') }
+}
+
+/** The last run in the server's history that made a picture, as a workflow to fill in. The history is the server's memory only: it is gone when the server restarts. */
+export async function comfyLastWorkflow(baseURL: string | undefined, signal?: AbortSignal): Promise<{ workflow: Graph; model?: string; nodes: string[] } | undefined> {
+  const base = trimmedBase(baseURL)
+  const answered = await fetch(`${base}/history?max_items=24`, { signal: signal ?? AbortSignal.timeout(15_000) }).catch(() => undefined)
+  if (answered === undefined || !answered.ok) return undefined
+  type Run = { prompt?: [number, string, unknown, ...unknown[]]; outputs?: Record<string, { images?: unknown[] }>; status?: { status_str?: string } }
+  const runs = Object.values(await answered.json().catch(() => ({})) as Record<string, Run>)
+    .filter(run => run.status?.status_str !== 'error' && Object.values(run.outputs ?? {}).some(output => (output.images?.length ?? 0) > 0))
+    .sort((left, right) => (right.prompt?.[0] ?? 0) - (left.prompt?.[0] ?? 0))
+  // The author's own runs first: what the Studio queued itself (it saves under its own name) says nothing new.
+  const own = (run: Run): boolean => Object.values((run.prompt?.[2] ?? {}) as Graph).some(node => node.class_type === 'SaveImage' && node.inputs?.filename_prefix === 'novel-studio')
+  for (const run of [...runs.filter(run => !own(run)), ...runs.filter(own)]) {
+    const made = workflowTemplate(run.prompt?.[2])
+    if (made !== undefined) return made
+  }
+  return undefined
+}
+
+/**
+ * Ask a ComfyUI server what it has to draw with: the models its loaders list, the device it runs on, and the last run
+ * that made a picture.
+ * @throws ProviderError when nothing answers at the address.
+ */
+export async function comfyCatalog(baseURL: string | undefined, signal?: AbortSignal): Promise<ComfyCatalog> {
+  const base = trimmedBase(baseURL)
+  let stats: { system?: { comfyui_version?: string }; devices?: { name?: string; vram_total?: number }[] }
+  try {
+    const answered = await fetch(`${base}/system_stats`, { signal: signal ?? AbortSignal.timeout(10_000) })
+    if (!answered.ok) throw new Error(`HTTP ${answered.status}`)
+    stats = await answered.json() as typeof stats
+  } catch (error) {
+    if (signal?.aborted === true) throw error
+    throw new ProviderError(`ComfyUI at ${base} did not answer (${error instanceof Error ? error.message : String(error)}) — is it running, and reachable from this computer?`)
+  }
+  const [checkpoints, diffusion, encoders, encoderTypes, vaes, last] = await Promise.all([
+    loaderChoices(base, 'CheckpointLoaderSimple', 'ckpt_name', signal),
+    loaderChoices(base, 'UNETLoader', 'unet_name', signal),
+    loaderChoices(base, 'CLIPLoader', 'clip_name', signal),
+    loaderChoices(base, 'CLIPLoader', 'type', signal),
+    loaderChoices(base, 'VAELoader', 'vae_name', signal),
+    comfyLastWorkflow(base, signal),
+  ])
+  const device = stats.devices?.[0]
+  return {
+    base,
+    ...(stats.system?.comfyui_version !== undefined ? { version: stats.system.comfyui_version } : {}),
+    ...(device?.name !== undefined ? { device: `${device.name.replace(/^cuda:\d+\s*/, '').replace(/\s*:\s*\w+$/, '')}${device.vram_total !== undefined ? ` · ${Math.round(device.vram_total / 2 ** 30)} GB` : ''}` } : {}),
+    checkpoints,
+    diffusion,
+    encoders,
+    vaes: vaes.filter(isFile),
+    encoderTypes,
+    ...(last !== undefined ? { last: { ...(last.model !== undefined ? { model: last.model } : {}), nodes: last.nodes } } : {}),
+  }
+}
+
 /** A workflow as the settings name it: the JSON itself, or the path of a file that holds it. */
 async function readWorkflow(source: string): Promise<unknown> {
   const text = source.trim().startsWith('{') ? source : await readFile(source.trim().replace(/^~(?=$|[\\/])/, homedir()), 'utf8').catch((error: unknown) => {
@@ -130,15 +282,42 @@ export class ComfyImages implements ImageProvider {
     let model = this.model
     if (source !== undefined && source.trim().length > 0) graph = await readWorkflow(source)
     else {
-      if (model.length === 0) {
-        // No checkpoint named: the first one the server has.
-        const listed = await this.call('/object_info/CheckpointLoaderSimple', {}, request.signal)
-        const info = listed.ok ? await listed.json() as { CheckpointLoaderSimple?: { input?: { required?: { ckpt_name?: [unknown] } } } } : {}
-        const first = info.CheckpointLoaderSimple?.input?.required?.ckpt_name?.[0]
-        model = Array.isArray(first) && typeof first[0] === 'string' ? first[0] : ''
-        if (model.length === 0) throw new ProviderError('ComfyUI has no checkpoint to draw with: name one under Model, or name a workflow file')
+      // No workflow named: a small graph built here, for what the model named is — a whole checkpoint, or a diffusion
+      // model that comes alone and is loaded beside a text encoder and a VAE. Which it is, the server says.
+      const choices = async (node: string, input: string): Promise<string[]> => {
+        try {
+          return await loaderChoices(this.base, node, input, request.signal)
+        } catch (error) {
+          if (request.signal?.aborted === true) throw error
+          throw new ProviderError(`ComfyUI at ${this.base} did not answer (${error instanceof Error ? error.message : String(error)}) — is it running?`)
+        }
       }
-      graph = checkpointGraph(model)
+      const checkpoints = await choices('CheckpointLoaderSimple', 'ckpt_name')
+      // No model named: the first checkpoint the server has.
+      if (model.length === 0 && checkpoints.length > 0) model = checkpoints[0]!
+      if (checkpoints.includes(model)) graph = checkpointGraph(model)
+      else {
+        const diffusion = await choices('UNETLoader', 'unet_name')
+        if (model.length === 0 && diffusion.length === 1) model = diffusion[0]!
+        if (model.length === 0) {
+          throw new ProviderError(diffusion.length > 0
+            ? `ComfyUI at ${this.base} has no checkpoint, and ${diffusion.length} diffusion models (${diffusion.slice(0, 4).join(', ')}): choose one under Settings → Images → Model — or use the workflow of the server's last run there`
+            : 'ComfyUI has no model to draw with: name one under Model, or name a workflow file')
+        }
+        if (!diffusion.includes(model)) {
+          // Not a name the server lists (or it lists nothing, being older): taken for a checkpoint, as it always was.
+          if (diffusion.length > 0 || checkpoints.length > 0) throw new ProviderError(`ComfyUI at ${this.base} has no model "${model}" — it has: ${[...checkpoints, ...diffusion].slice(0, 8).join(', ')}`)
+          graph = checkpointGraph(model)
+        } else {
+          const [encoders, types, vaes] = await Promise.all([choices('CLIPLoader', 'clip_name'), choices('CLIPLoader', 'type'), choices('VAELoader', 'vae_name').then(list => list.filter(isFile))])
+          const encoder = this.settings.textEncoder?.trim() || (encoders.length === 1 ? encoders[0]! : '')
+          const vae = this.settings.vae?.trim() || (vaes.length === 1 ? vaes[0]! : '')
+          const type = this.settings.encoderType?.trim() || (types.length === 1 ? types[0]! : '')
+          const missing = [encoder.length === 0 ? `a text encoder (${encoders.slice(0, 4).join(', ') || 'the server lists none'})` : '', vae.length === 0 ? `a VAE (${vaes.slice(0, 4).join(', ') || 'the server lists none'})` : '', type.length === 0 ? 'the kind the encoder is loaded as' : ''].filter(part => part.length > 0)
+          if (missing.length > 0) throw new ProviderError(`"${model}" is a diffusion model that comes alone: it is loaded beside a text encoder and a VAE, and the server leaves a choice — name ${missing.join(', ')} under Settings → Images, or use the workflow of the server's last run there`)
+          graph = partsGraph(model, encoder, type, vae)
+        }
+      }
     }
     // Reference pictures go up first, as many as the workflow has places for; it names them by the file names it is given back.
     const places = workflowImages(graph)
