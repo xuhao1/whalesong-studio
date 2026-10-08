@@ -972,10 +972,10 @@ function EmbeddingSection({ value, keys, onChange, t }: { value: EmbeddingSettin
 
 // ───────────────────────────── images ─────────────────────────────
 
-type ImageSource = 'none' | 'codex' | ServiceId
+type ImageSource = 'none' | 'codex' | 'comfyui' | 'diffusers' | ServiceId
 
 function imageSourceOf(value: ImageSettings): ImageSource {
-  if (value.provider === 'none' || value.provider === 'codex') return value.provider
+  if (value.provider === 'none' || value.provider === 'codex' || value.provider === 'comfyui' || value.provider === 'diffusers') return value.provider
   if (value.provider === 'dashscope') return 'bailian'
   if (value.provider === 'openrouter') return 'openrouter'
   return serviceOf(value.baseURL) === 'openai' || value.baseURL === undefined ? 'openai' : 'custom'
@@ -1058,11 +1058,16 @@ function ImageSection({ value, keys, onChange, t, advanced }: { value: ImageSett
   const pick = (next: ImageSource): void => {
     if (next === 'none') onChange({ provider: 'none', ...look })
     else if (next === 'codex') onChange({ provider: 'codex', size: '1536x1024', ...look })
+    else if (next === 'comfyui' || next === 'diffusers') onChange({ provider: next, size: value.size ?? '1024x1024', ...look })
     else if (next === 'custom') onChange({ provider: 'openai', baseURL: '', model: '', size: value.size ?? '1024x1024', ...look })
     else onChange({ ...recommendedSetup(next)!.image, ...look })
   }
   const endpoint = value.provider === 'dashscope' ? value.baseURL ?? SERVICES.bailian.origin : value.provider === 'openrouter' ? value.baseURL ?? compatibleBase('openrouter') : value.baseURL ?? compatibleBase('openai')
-  const suggestions = source !== 'none' && source !== 'codex' ? recommendedSetup(source)?.suggestions.image ?? [] : []
+  // On this machine: no key, no list of models to choose from.
+  const local = value.provider === 'comfyui' || value.provider === 'diffusers'
+  const suggestions = source !== 'none' && source !== 'codex' && source !== 'comfyui' && source !== 'diffusers' ? recommendedSetup(source)?.suggestions.image ?? [] : []
+  const text = (key: 'baseURL' | 'model' | 'workflow' | 'editWorkflow' | 'python', placeholder: string) => ({ value: value[key] ?? '', placeholder, onChange: (event: { target: { value: string } }) => { onChange(without(value, key, event.target.value.length > 0 ? event.target.value : undefined)) } })
+  const figure = (key: 'steps' | 'guidance') => ({ value: value[key] !== undefined ? String(value[key]) : '', onChange: (event: { target: { value: string } }) => { const given = Number(event.target.value); onChange(without(value, key, event.target.value.trim().length > 0 && Number.isFinite(given) && given >= 0 ? given : undefined)) } })
   const viaConnect = codex.connect && codex.connectSignedIn
   const viaCli = codex.cli && codex.cliSignedIn
   const ready = value.bridge === 'connect' ? viaConnect : value.bridge === 'cli' ? viaCli : viaConnect || viaCli
@@ -1077,6 +1082,8 @@ function ImageSection({ value, keys, onChange, t, advanced }: { value: ImageSett
             { value: 'openai', label: t('OpenAI（GPT Image）', 'OpenAI (GPT Image)') },
             { value: 'bailian', label: t('阿里云百炼（Qwen-Image、万相、Z-Image）', 'Aliyun Bailian (Qwen-Image, Wan, Z-Image)') },
             { value: 'custom', label: t('自定义接口（OpenAI 兼容 /images/generations）', 'Custom endpoint (OpenAI-compatible /images/generations)') },
+            { value: 'comfyui', label: t('ComfyUI（本机）', 'ComfyUI (this machine)') },
+            { value: 'diffusers', label: t('Diffusers（本机的 Python）', 'Diffusers (this machine\'s Python)') },
           ]} onChange={pick} />
         </Field>
         {value.provider === 'codex' ? (
@@ -1088,7 +1095,30 @@ function ImageSection({ value, keys, onChange, t, advanced }: { value: ImageSett
             ]} onChange={(bridge) => { onChange(without(value, 'bridge', bridge === 'auto' ? undefined : bridge)) }} />
           </Field>
         ) : null}
-        {value.provider !== 'none' && value.provider !== 'codex' ? (
+        {value.provider === 'comfyui' ? (
+          <>
+            <Field label={t('地址', 'Address')}><TextInput {...text('baseURL', 'http://127.0.0.1:8188')} /></Field>
+            <Field label={t('工作流文件', 'Workflow file')} hint={t('API 格式导出的 JSON，里面写 %prompt%、%negative_prompt%、%width%、%height%、%seed%；留空用内置的文生图流程', 'JSON exported in API format, with %prompt%, %negative_prompt%, %width%, %height%, %seed% in it; empty: the built-in text-to-image graph')}><TextInput {...text('workflow', '~/ComfyUI/user/default/workflows/novel-api.json')} /></Field>
+            <Field label={t('模型', 'Model')} hint={t('checkpoint 文件名，也是工作流里的 %model%；留空用服务器上的第一个', 'A checkpoint file name, also %model% in a workflow; empty: the first the server has')}><TextInput {...text('model', 'sd_xl_base_1.0.safetensors')} /></Field>
+            <Field label={t('带参考图的工作流', 'Workflow with reference pictures')} hint={t('用 %image1%、%image2% 载入参考图；留空则不带参考图', 'Loads them as %image1%, %image2%; empty: reference pictures do not go along')}><TextInput {...text('editWorkflow', '~/ComfyUI/user/default/workflows/novel-edit-api.json')} /></Field>
+          </>
+        ) : null}
+        {value.provider === 'diffusers' ? (
+          <>
+            <Field label={t('模型', 'Model')} hint={t('Hugging Face 上的名字，或本机的文件夹 / .safetensors 路径', 'A Hugging Face id, or a folder or .safetensors path on this computer')}><TextInput {...text('model', 'stabilityai/stable-diffusion-xl-base-1.0')} /></Field>
+            <Field label="Python" hint={t('装了 diffusers 和 torch 的那个', 'The one that has diffusers and torch')}><TextInput {...text('python', 'python3')} /></Field>
+            <Field label={t('设备', 'Device')}>
+              <Select value={value.device ?? 'auto'} options={[{ value: 'auto', label: t('自动', 'Automatic') }, { value: 'cuda', label: 'CUDA' }, { value: 'mps', label: 'MPS (Apple)' }, { value: 'cpu', label: 'CPU' }]} onChange={(device) => { onChange(without(value, 'device', device === 'auto' ? undefined : device)) }} />
+            </Field>
+          </>
+        ) : null}
+        {local ? (
+          <>
+            <Field label={t('步数', 'Steps')} hint={value.provider === 'comfyui' ? t('留空：25', 'Empty: 25') : t('留空用模型自己的', 'Empty: the pipeline\'s own')}><TextInput inputMode="numeric" {...figure('steps')} /></Field>
+            <Field label={t('引导强度（CFG）', 'Guidance (CFG)')} hint={value.provider === 'comfyui' ? t('留空：7', 'Empty: 7') : t('留空用模型自己的', 'Empty: the pipeline\'s own')}><TextInput inputMode="decimal" {...figure('guidance')} /></Field>
+          </>
+        ) : null}
+        {value.provider !== 'none' && value.provider !== 'codex' && !local ? (
           <>
             <EndpointField value={value.baseURL ?? ''} placeholder={endpoint} hint={value.provider === 'dashscope' ? t('百炼的域名；专属域名也可以', 'The Bailian domain; a workspace domain works too') : undefined} t={t} onChange={(baseURL) => { onChange(without(value, 'baseURL', baseURL)) }} />
             <KeyField endpoint={endpoint} refName={value.apiKeyRef} keys={keys} t={t} onRef={(name) => { onChange(without(value, 'apiKeyRef', name)) }} />

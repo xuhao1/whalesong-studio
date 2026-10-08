@@ -795,7 +795,8 @@ export function parallelOf(value: unknown): number {
  * `/images/generations`, `dashscope` Aliyun Bailian's native image models, and
  * `codex` the image generation of a ChatGPT subscription (no key of its own).
  */
-export type ImageProviderKind = 'dashscope' | 'openai' | 'openrouter' | 'codex' | 'none'
+/** `comfyui` and `diffusers` draw on the author's own machine: a running ComfyUI server, or the Diffusers library in their Python. */
+export type ImageProviderKind = 'dashscope' | 'openai' | 'openrouter' | 'codex' | 'comfyui' | 'diffusers' | 'none'
 /** How a ChatGPT subscription is reached: the Codex Connect plugin, the local Codex CLI, or whichever is signed in. */
 export type CodexBridgeKind = 'auto' | 'connect' | 'cli'
 export interface ImageSettings {
@@ -808,6 +809,24 @@ export interface ImageSettings {
   quality?: string
   /** `codex` only: which bridge to the ChatGPT subscription to use. */
   bridge?: CodexBridgeKind
+  /**
+   * `comfyui`: the workflow to run — the path of a file exported from ComfyUI in API format, or that JSON itself. The
+   * Studio fills in `%prompt%`, `%negative_prompt%`, `%width%`, `%height%`, `%seed%`, `%steps%`, `%scale%` and
+   * `%model%`. Left out: a plain text-to-image graph for the checkpoint named under `model`.
+   */
+  workflow?: string
+  /** `comfyui`: the workflow for a picture that has reference pictures to hold to; it loads them as `%image1%`, `%image2%`, …. Left out: reference pictures do not go along. */
+  editWorkflow?: string
+  /** `diffusers`: the Python to run — one that has `diffusers` and `torch`. Left out: `python3` (`python` on Windows). */
+  python?: string
+  /** `diffusers`: `cuda`, `mps`, `cpu`; left out, the best there is. */
+  device?: string
+  /** `diffusers`: `float16`, `float32`, `bfloat16`; left out, float16 on CUDA and float32 elsewhere. */
+  dtype?: string
+  /** `comfyui`, `diffusers`: sampling steps. Left out: 25 for the built-in ComfyUI graph, the pipeline's own for Diffusers. */
+  steps?: number
+  /** `comfyui`, `diffusers`: guidance scale (CFG). Left out: 7 for the built-in ComfyUI graph, the pipeline's own for Diffusers. */
+  guidance?: number
   /** `1024x1024`, `1280x720`… What a picture of no particular kind is drawn at; each kind the Studio draws has its own shape (see `aspects`). */
   size?: string
   /** How fine pictures are drawn: `720p` (the default), `1080p`, `2k`, `4k` — as many pixels as a screen of that name, in whatever shape. */

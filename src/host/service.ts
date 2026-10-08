@@ -8,6 +8,7 @@
  * consume this one service, so a chapter written by the orchestrator shows up
  * in the Studio the moment it lands on disk.
  */
+import { stopLocalWorkers } from '../core/media/local'
 import { Service, type Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-credentials'
@@ -137,7 +138,7 @@ export class NovelService extends Service {
     })
     // Files changed behind the Studio's back are noticed, recorded and digested again.
     attachReconciler(this.core)
-    ctx.effect(() => () => { this.core.dispose() }, 'novel: studio engine')
+    ctx.effect(() => () => { this.core.dispose(); stopLocalWorkers() }, 'novel: studio engine')
     this.share = new ShareServer(this.core, (message, error) => { this.log(message, error) })
     ctx.effect(() => () => { void this.share.close().catch(() => {}) }, 'novel: reader for other devices')
     this.sessionSeal = new SessionSeal(ctx, this)
@@ -831,7 +832,7 @@ export class NovelService extends Service {
     const slots: { url: string | undefined; ref: string | undefined }[] = [
       ...Object.values(settings.models).map(route => ({ url: route?.baseURL, ref: route?.apiKeyRef })),
       { url: settings.embedding.provider !== 'none' ? settings.embedding.baseURL : undefined, ref: settings.embedding.apiKeyRef },
-      { url: settings.image.provider !== 'none' && settings.image.provider !== 'codex' ? settings.image.baseURL ?? defaultEndpoint(settings.image.provider) : undefined, ref: settings.image.apiKeyRef },
+      { url: keyedImages(settings) ? settings.image.baseURL ?? defaultEndpoint(settings.image.provider) : undefined, ref: settings.image.apiKeyRef },
       { url: settings.tts.provider !== 'none' ? settings.tts.baseURL ?? defaultEndpoint(settings.tts.provider) : undefined, ref: settings.tts.apiKeyRef },
       // Sound with an endpoint of its own; when it rides on the speech setup, that slot already covers it.
       { url: settings.sound?.provider === 'qwen-audiogen' ? settings.sound.baseURL ?? defaultEndpoint('qwen-audiogen') : undefined, ref: settings.sound?.apiKeyRef },
@@ -874,7 +875,10 @@ export class NovelService extends Service {
       embedding: settings.embedding.provider !== 'none' && settings.embedding.model !== undefined && this.hasKey(keys, settings.embedding.baseURL, settings.embedding.apiKeyRef),
       image: settings.image.provider === 'codex'
         ? codexReady(codex, settings.image.bridge)
-        : settings.image.provider !== 'none' && this.hasKey(keys, settings.image.baseURL ?? defaultEndpoint(settings.image.provider), settings.image.apiKeyRef),
+        // A model on this machine holds no key: a ComfyUI server is there or it is not, Diffusers needs its model named.
+        : settings.image.provider === 'comfyui' ? true
+          : settings.image.provider === 'diffusers' ? (settings.image.model ?? '').trim().length > 0
+            : settings.image.provider !== 'none' && this.hasKey(keys, settings.image.baseURL ?? defaultEndpoint(settings.image.provider), settings.image.apiKeyRef),
       tts: settings.tts.provider !== 'none' && this.hasKey(keys, settings.tts.baseURL ?? defaultEndpoint(settings.tts.provider), settings.tts.apiKeyRef),
     }
   }
@@ -964,6 +968,11 @@ export function codexReady(codex: CodexStatus, bridge: NovelSettings['image']['b
 }
 
 /** The endpoint a provider kind talks to when its slot leaves the address empty. */
+/** Whether pictures come from a service that is reached with a key. */
+function keyedImages(settings: NovelSettings): boolean {
+  return !['none', 'codex', 'comfyui', 'diffusers'].includes(settings.image.provider)
+}
+
 function defaultEndpoint(provider: string): string | undefined {
   if (provider === 'dashscope' || provider === 'qwen-audiogen' || provider === 'qwen-realtime') return SERVICES.bailian.origin
   if (provider === 'openrouter') return compatibleBase('openrouter')

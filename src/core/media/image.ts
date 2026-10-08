@@ -13,6 +13,7 @@ import { providerDefault } from '../../shared/recommended'
 import { compatibleBase, originOf } from '../../shared/services'
 import type { CodexBridgeKind, IllustrationSent, ImageProviderKind, ImageSettings } from '../../shared/types'
 import { download, postJson, ProviderError, requireKey, trimBase, type KeySource } from './http'
+import { ComfyImages, DiffusersImages } from './local'
 
 /** A picture sent along with a prompt so the model keeps what it shows: a character's portrait, usually. */
 export interface ImageReference {
@@ -67,6 +68,8 @@ export function createImageProvider(settings: ImageSettings, keys: KeySource, br
   if (settings.provider === 'openai') return new OpenAiImages(settings, keys)
   if (settings.provider === 'openrouter') return new OpenRouterImages(settings, keys)
   if (settings.provider === 'codex') return new CodexImages(settings, bridges.codex)
+  if (settings.provider === 'comfyui') return new ComfyImages(settings)
+  if (settings.provider === 'diffusers') return new DiffusersImages(settings)
   return undefined
 }
 

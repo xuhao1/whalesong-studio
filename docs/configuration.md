@@ -239,12 +239,15 @@ Settings files saved by earlier versions carry budgets nobody chose (48,000, lat
 
 | Field | Meaning |
 |---|---|
-| `image.provider` | `none`; `openrouter` (`POST <baseURL>/images`); `openai` (`POST <baseURL>/images/generations`); `dashscope` (Bailian's native API: Qwen-Image, Wan, Z-Image); `codex` (a ChatGPT subscription) |
+| `image.provider` | `none`; `openrouter` (`POST <baseURL>/images`); `openai` (`POST <baseURL>/images/generations`); `dashscope` (Bailian's native API: Qwen-Image, Wan, Z-Image); `codex` (a ChatGPT subscription); `comfyui` and `diffusers` (models on this machine — see *Images from a model on this machine*) |
 | `image.baseURL` | `openrouter`, `openai`: the `/v1` base. `dashscope`: only the origin matters (`https://dashscope.aliyuncs.com` or a workspace domain). `codex`: unused |
 | `image.model` | e.g. `openai/gpt-image-2.5-sunburst`, `gpt-image-2`, `qwen-image-3.0`, `z-image-turbo` |
 | `image.size` | default `WIDTHxHEIGHT`; panels and interlude backgrounds ask for 1280x720, portraits for 1024x1024 |
 | `image.quality` | `openrouter`, `openai`: `low`, `medium`, `high`; omitted = the model's default |
 | `image.bridge` | `codex` only: `auto` (default), `connect` or `cli` — see below |
+| `image.workflow`, `image.editWorkflow` | `comfyui` only: the workflow to run, and the one for pictures with reference pictures — each the path of a file exported in API format, or the JSON itself |
+| `image.python`, `image.device`, `image.dtype` | `diffusers` only: the Python to run (`python3`), the device (`cuda`, `mps`, `cpu`; the best there is when left out) and the precision (`float16` on CUDA, `float32` elsewhere) |
+| `image.steps`, `image.guidance` | `comfyui`, `diffusers`: sampling steps and guidance scale; left out, 25 and 7 for the built-in ComfyUI graph, the pipeline's own for Diffusers |
 | `image.stylePrompt` | *legacy*: a Studio-wide art direction from before the look became each book's own. Still what a book without one starts from; no longer offered in the settings, which show it — with a way to clear it — while it is set. See *How a book keeps one look* below |
 | `image.resolution` | how fine pictures are drawn: `720p`, `1080p`, `2k` or `4k` — as many pixels as a screen of that name, in each picture's own shape. Unset: each kind of picture at its usual size |
 | `image.aspects` | the shape of each kind of picture — `cover`, `portrait`, `sheet`, `location`, `scene`, `panel` — as an aspect (`1:1`, `3:4`, `4:3`, `16:9`, `9:16`, `3:2`, `2:3`) or exact pixels (`1600x900`). Unset: a cover stands (2:3), a stage lies (16:9), a portrait is square, a design sheet 3:2 |
@@ -347,6 +350,20 @@ The job says while it runs that the director is picking, the picture says which 
 A look nobody asked for comes from one of these — a word in the anchor, a reference picture, the art direction — or from none of them, and then from the model. The showrunner reads the same record (`novel_manage action=show_image id=<id or path>`). Pictures drawn before the words as sent were kept show the prompt as it was put together. None of it leaves the book: the reader on a phone and a published site carry no prompts.
 
 A good order for a new book: write the art direction and the avoid list, make a design sheet for each main character, add looks and place art where the story needs them, then illustrate.
+
+### Images from a model on this machine
+
+For trying a local model against a book. Neither way holds a key, and both keep the same record of a picture as every service: what was sent word for word, and how many reference pictures really went along.
+
+**ComfyUI** (`image.provider: comfyui`) talks to a running ComfyUI server over its HTTP API (`image.baseURL`, `http://127.0.0.1:8188` when left out): the workflow is queued (`POST /prompt`), waited for (`GET /history/<id>`), and its picture fetched (`GET /view`). Stopping the job tells the server to stop too.
+
+- **Your own workflow** (`image.workflow`): build it in ComfyUI, export it in **API format** (*Workflow → Export (API)*; the editor's own save format is refused with a message that says so), and write placeholders where the Studio's values go: `%prompt%`, `%negative_prompt%`, `%width%`, `%height%`, `%seed%`, `%steps%`, `%scale%`, `%model%`. A field that is a placeholder alone takes the value with its type (a number stays a number); inside a longer string it is replaced as text. The workflow needs a `SaveImage` node. This is the way for anything that is not a plain checkpoint — Flux, Qwen-Image, a GGUF loader, LoRAs, an upscaler.
+- **Reference pictures** (`image.editWorkflow`): a second workflow, used for a picture that has references (a portrait against a design sheet, a scene with the people in it). It loads them with `LoadImage` nodes whose `image` is `%image1%`, `%image2%`, …; the Studio uploads the pictures (`POST /upload/image`) and fills in the names, as many as the workflow has places for. Without it, reference pictures do not go along, and the picture's record says so.
+- **No workflow**: a small text-to-image graph for the checkpoint named under `image.model` (the first one the server has, when none is named) — `CheckpointLoaderSimple`, two `CLIPTextEncode`, `KSampler` (euler, `image.steps` or 25, `image.guidance` or 7), `VAEDecode`, `SaveImage`. Enough for an SD 1.5 or SDXL checkpoint.
+
+**Diffusers** (`image.provider: diffusers`) runs the Diffusers library in your own Python. The Studio starts `image.python` (`python3`; `python` on Windows) with a small worker, which loads `image.model` — a Hugging Face id, a folder on disk, or a single `.safetensors` / `.ckpt` file — with `DiffusionPipeline.from_pretrained` (so whatever pipeline the model declares is what runs), keeps it loaded between pictures, and is let go after ten minutes with nothing asked of it. That Python needs `diffusers`, `torch` and what the model wants beside them (`pip install diffusers transformers accelerate torch`); the first picture waits for the model to load — and, for an id not on disk yet, for Diffusers to fetch it. One picture is drawn at a time. The worker passes a pipeline only what its call takes: a negative prompt where there is one (appended to the prompt as `Avoid: …` otherwise), a size, steps and guidance where set, and the reference pictures where the pipeline takes an `image` (an edit pipeline) — otherwise they stay behind, and the record says so. Stopping the job stops the worker.
+
+Prompts are written in the language of the book with the visual anchors as they stand; a model whose text encoder reads only English wants anchors and an art direction in English.
 
 ### Images from a ChatGPT subscription
 
