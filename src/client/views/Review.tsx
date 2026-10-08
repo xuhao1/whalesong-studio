@@ -4,12 +4,13 @@
  * found while digesting, review issues per chapter, and book-wide revisions
  * (including carrying a changed setting or character through the manuscript).
  */
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { clip } from '../../shared/text'
 import type { IssueSeverity, Proposal, TextStep } from '../../shared/types'
 import { ProposalCard } from '../components/ProposalCard'
 import { SEVERITY, SUGGESTION_KIND } from '../labels'
-import { IssueCard, issueNoteKey } from '../Issues'
+import { IssueBatchBar, IssueCard } from '../Issues'
+import { Icon } from '../icons'
 import { BatchMatrix, batchOf, useBatchJob } from '../Batch'
 import {
   Button, Chip, cx, Empty, Field, Progress, SectionTitle, Select, Tabs, TextArea, TextInput, useAction, useConfirm, useKept, useLoad, useProject, useRunningJob, useSnapshot, useStudio, useT,
@@ -143,23 +144,22 @@ function Suggestions() {
 const GRAVITY: Record<IssueSeverity, number> = { high: 3, medium: 2, low: 1 }
 
 /**
- * What the reviews found, across chapters: each with the author's say on it, ticked into a batch that one planner
- * mends together — or every one from a severity up, in one click.
+ * What the reviews found, across chapters: ticked into a batch that one planner mends together, or every one from a
+ * severity up in one click. The bar is one; the issues are shown chapter by chapter, where the page unfolds a chapter.
  */
-function IssueBoard() {
+function useIssueBoard() {
   const { controller } = useStudio()
   const t = useT()
   const { project, root } = useProject()
-  // (A Host from before reviews were listed answers with an error: then there is no board, and the chapters below.)
+  // (A Host from before reviews were listed answers with an error: then there is no board, and the chapters as they were.)
   const listed = useLoad(async signal => await controller.api.call('review.list', { root }, signal).catch(() => undefined), [root, project.revision])
   const [level, setLevel] = useKept<IssueSeverity>('review.level', 'low')
   const [from, setFrom] = useKept<IssueSeverity>('review.from', 'high')
-  const [say, setSay] = useKept('review.say', '')
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const confirm = useConfirm()
   const mending = useRunningJob(job => job.kind === 'revise' && job.title === 'revise book') !== undefined
+  const checking = useRunningJob(job => job.kind === 'review' && job.title === 'recheck issues') !== undefined
   const open = (listed.data?.reviews ?? []).flatMap(review => review.issues.filter(issue => issue.resolved !== true).map(issue => ({ review, issue, key: `${review.chapterId}/${issue.id}` })))
-  if (open.length === 0) return null
   const shown = open.filter(item => GRAVITY[item.issue.severity] >= GRAVITY[level])
   const chosen = shown.filter(item => picked.has(item.key))
   const grave = open.filter(item => GRAVITY[item.issue.severity] >= GRAVITY[from])
@@ -178,51 +178,49 @@ function IssueBoard() {
       return next
     })
   }
-  const start = (params: { issues: { chapter: string; issue: string; note?: string }[] } | { atLeast: IssueSeverity }, count: number): Promise<unknown> => controller.guard(async () => {
-    await controller.api.call('ai.fixIssues', { root, ...params, ...(say.trim().length > 0 ? { note: say.trim() } : {}) })
-    await controller.refreshJobs()
-    setPicked(new Set())
-    controller.toast('info', t(`策划正在把这 ${count} 个问题放在一起看，改动会作为提案等你确认。`, `The planner is reading these ${count} side by side; the changes will wait as proposals.`))
-  })
-  const chapters = [...new Map(shown.map(item => [item.review.chapterId, item.review])).values()]
   const everyShown = shown.length > 0 && chosen.length === shown.length
-  return (
+  const of = (chapterId: string) => shown.filter(item => item.review.chapterId === chapterId)
+  const toolbar = open.length === 0 ? null : (
     <div className="nv-card nv-issue-board">
       <div className="nv-toolbar">
         <span className="nv-muted nv-small">{t('显示', 'Show')}</span>
         <Select value={level} onChange={setLevel} options={levels('全部问题', 'Every issue')} />
         <button type="button" className="nv-link nv-small" disabled={shown.length === 0} onClick={() => { tick(shown.map(item => item.key), !everyShown) }}>{everyShown ? t('全不选', 'None') : t(`全选 ${shown.length} 个`, `All ${shown.length}`)}</button>
         <span className="nv-spacer" />
+        <Button size="sm" variant="ghost" icon="refresh" busy={checking} pending={t('核对中…', 'Checking…')} title={t('对照现在的正文，把已经修好的标为已处理', 'Read them against the text as it stands and mark what is already mended')} onClick={() => controller.guard(async () => {
+          await controller.api.call('review.recheck', { root })
+          await controller.refreshJobs()
+        })}>{t('核对', 'Check again')}</Button>
         <Select value={from} onChange={setFrom} options={levels('全部', 'All')} />
-        <Button size="sm" icon="wand" disabled={mending || grave.length === 0} onClick={() => { confirm.ask(t(`把 ${grave.length} 个问题交给策划一起修？改动会作为提案等你确认。`, `Hand ${grave.length} issue(s) to the planner to mend together? The changes wait as proposals.`), () => { void start({ atLeast: from }, grave.length) }) }}>{t(`自动修复重大问题 · ${grave.length}`, `Mend the grave ones · ${grave.length}`)}</Button>
+        <Button size="sm" icon="wand" disabled={mending || grave.length === 0} onClick={() => {
+          confirm.ask(t(`把 ${grave.length} 个问题交给策划一起修？改动会作为提案等你确认。`, `Hand ${grave.length} issue(s) to the planner to mend together? The changes wait as proposals.`), () => {
+            void controller.guard(async () => {
+              await controller.api.call('ai.fixIssues', { root, atLeast: from })
+              await controller.refreshJobs()
+              controller.toast('info', t(`策划正在把这 ${grave.length} 个问题放在一起看，改动会作为提案等你确认。`, `The planner is reading these ${grave.length} side by side; the changes will wait as proposals.`))
+            })
+          })
+        }}>{t(`自动修复重大问题 · ${grave.length}`, `Mend the grave ones · ${grave.length}`)}</Button>
       </div>
-      <div className="nv-assist">
-        <TextInput value={say} placeholder={t('对这一批的要求', 'What to ask of this batch')} onChange={(event) => { setSay(event.target.value) }} />
-        <Button size="sm" variant="primary" icon="layers" disabled={chosen.length === 0} busy={mending} pending={t('策划在修…', 'Mending…')} onClick={() => start({ issues: chosen.map((item) => {
-          // What is being typed on this screen is what is meant, also where it has not reached the book yet.
-          const note = String(controller.kept.get(issueNoteKey(item.review.chapterId, item.issue.id)) ?? item.issue.note ?? '').trim()
-          return { chapter: item.review.chapterId, issue: item.issue.id, ...(note.length > 0 ? { note } : {}) }
-        }) }, chosen.length)}>{t(`一起修选中的 ${chosen.length} 个`, `Mend the ${chosen.length} chosen together`)}</Button>
-      </div>
-      {chapters.map((review) => {
-        const mine = shown.filter(item => item.review.chapterId === review.chapterId)
-        const all = mine.every(item => picked.has(item.key))
-        return (
-          <section key={review.chapterId} className="nv-issue-chapter">
-            <h4>
-              <button type="button" className="nv-link" onClick={() => { controller.setView('write', review.chapterId) }}>{t(`第 ${review.index} 章 ${review.title}`, `Ch. ${review.index} ${review.title}`)}</button>
-              <span className="nv-muted nv-small">{mine.map(item => t(...SEVERITY[item.issue.severity])).join(t('、', ', '))}</span>
-              <button type="button" className="nv-link nv-small" onClick={() => { tick(mine.map(item => item.key), !all) }}>{all ? t('不选这一章', 'Untick these') : t('选这一章', 'Tick these')}</button>
-            </h4>
-            <div className="nv-issue-grid">
-              {mine.map(item => <IssueCard key={item.key} chapterId={review.chapterId} issue={item.issue} selected={picked.has(item.key)} onSelect={(on) => { tick([item.key], on) }} onChanged={listed.reload} />)}
-            </div>
-          </section>
-        )
-      })}
+      <IssueBatchBar chosen={chosen.map(item => ({ chapterId: item.review.chapterId, issue: item.issue }))} onStarted={() => { setPicked(new Set()) }} />
       {confirm.element}
     </div>
   )
+  /** The issues of one chapter that the filter shows, as cards to tick. */
+  const cards = (chapterId: string): ReactNode => {
+    const mine = of(chapterId)
+    if (mine.length === 0) return null
+    const all = mine.every(item => picked.has(item.key))
+    return (
+      <div className="nv-issue-chapter">
+        <button type="button" className="nv-link nv-small" onClick={() => { tick(mine.map(item => item.key), !all) }}>{all ? t('不选这一章', 'Untick these') : t(`选这一章的 ${mine.length} 个`, `Tick these ${mine.length}`)}</button>
+        <div className="nv-issue-grid">
+          {mine.map(item => <IssueCard key={item.key} chapterId={chapterId} issue={item.issue} selected={picked.has(item.key)} onSelect={(on) => { tick([item.key], on) }} onChanged={listed.reload} />)}
+        </div>
+      </div>
+    )
+  }
+  return { toolbar, cards, shownIn: (chapterId: string): number => of(chapterId).length, pickedIn: (chapterId: string): number => of(chapterId).filter(item => picked.has(item.key)).length, severities: (chapterId: string): string => of(chapterId).map(item => t(...SEVERITY[item.issue.severity])).join(t('、', ', ')) }
 }
 
 function Issues() {
@@ -230,6 +228,9 @@ function Issues() {
   const t = useT()
   const { project, root } = useProject()
   const jobs = useSnapshot(snapshot => snapshot.jobs)
+  const board = useIssueBoard()
+  // Which chapters are unfolded to show their issues: a book's issues are read chapter by chapter, not as one long page.
+  const [unfolded, setUnfolded] = useKept<string[]>('review.unfolded', [])
   const written = project.chapters.filter(chapter => chapter.hasText)
   const pending = written.filter(chapter => chapter.openIssues === undefined)
   const undigested = written.filter(chapter => !chapter.digested)
@@ -255,13 +256,18 @@ function Issues() {
         {batch === undefined && pending.length === 0 && written.length > 1 ? <Button size="sm" variant="ghost" icon="refresh" pending={t('正在开始…', 'Starting…')} onClick={() => controller.guard(async () => { await controller.api.call('batch.text', { root, steps: ['review'], chapters: written.map(chapter => chapter.id), redo: true }); await controller.refreshJobs() })}>{t('全部重审', 'Review all again')}</Button> : null}
       </div>
       {batchJob !== undefined && (batch !== undefined || batchJob.status !== 'done' || (batchOf(batchJob)?.failed ?? 0) > 0) ? <div className="nv-card"><BatchMatrix job={batchJob} compact /></div> : null}
-      <IssueBoard />
+      {board.toolbar}
       <ul className="nv-list nv-card">
         {written.map(chapter => (
           <li key={chapter.id}>
             <div className="nv-list-row is-static">
-              <span className="nv-list-index">{chapter.index}</span>
-              <span className="nv-list-title">{chapter.title}</span>
+              <button type="button" className="nv-issue-fold" disabled={board.shownIn(chapter.id) === 0} aria-expanded={unfolded.includes(chapter.id)} onClick={() => { setUnfolded(unfolded.includes(chapter.id) ? unfolded.filter(id => id !== chapter.id) : [...unfolded, chapter.id]) }}>
+                <Icon name={unfolded.includes(chapter.id) && board.shownIn(chapter.id) > 0 ? 'chevronDown' : 'chevronRight'} size={14} />
+                <span className="nv-list-index">{chapter.index}</span>
+                <span className="nv-list-title">{chapter.title}</span>
+                {board.shownIn(chapter.id) > 0 ? <span className="nv-muted nv-small">{board.severities(chapter.id)}</span> : null}
+                {board.pickedIn(chapter.id) > 0 ? <Chip tone="blue">{t(`已选 ${board.pickedIn(chapter.id)}`, `${board.pickedIn(chapter.id)} ticked`)}</Chip> : null}
+              </button>
               <span className="nv-list-side">
                 {chapter.openIssues === undefined ? <Chip>{t('未审', 'Not reviewed')}</Chip> : chapter.openIssues === 0 ? <Chip tone="green">{t('无待办', 'Clear')}</Chip> : <Chip tone="amber">{t(`${chapter.openIssues} 个问题`, `${chapter.openIssues} open`)}</Chip>}
                 <Button size="sm" variant="ghost" busy={reviewing.has(chapter.id)} disabled={batch !== undefined} onClick={() => controller.guard(async () => { await controller.api.call('ai.review', { root, chapter: chapter.id }); await controller.refreshJobs() })}>{chapter.openIssues === undefined ? t('审校', 'Review') : t('重审', 'Again')}</Button>
@@ -283,6 +289,7 @@ function Issues() {
                 <Button size="sm" variant="ghost" icon="arrowRight" onClick={() => { controller.setView('write', chapter.id) }} title={t('打开这一章', 'Open the chapter')} />
               </span>
             </div>
+            {unfolded.includes(chapter.id) ? board.cards(chapter.id) : null}
           </li>
         ))}
       </ul>

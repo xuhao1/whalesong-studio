@@ -157,6 +157,10 @@ function JobNotice() {
       controller.toast(batch.failed > 0 ? 'info' : 'success', batch.failed > 0
         ? t(`批量任务结束：${done} 步完成，${batch.failed} 步失败，原因见“任务”`, `Batch finished: ${done} done, ${batch.failed} failed — see Tasks`)
         : t(`批量任务完成：${done} 步`, `The batch is done: ${done} steps`))
+    } else if (ended.job.kind === 'review') {
+      // The open issues were looked at again after a revision: said, since it changes what the author still has to do.
+      const found = (ended.job.result ?? {}) as { looked?: number; fixed?: number; changed?: number }
+      if ((found.looked ?? 0) > 0) controller.toast((found.fixed ?? 0) > 0 ? 'success' : 'info', t(`核对了 ${found.looked} 条审校意见：${found.fixed ?? 0} 条已修好，${found.changed ?? 0} 条按新正文更新`, `Looked again at ${found.looked} issue(s): ${found.fixed ?? 0} mended, ${found.changed ?? 0} brought up to the text`))
     } else if (ended.job.kind === 'audio' && typeof output.rendered === 'number') {
       const failed = output.failed ?? 0
       controller.toast(failed > 0 ? 'info' : 'success', failed > 0

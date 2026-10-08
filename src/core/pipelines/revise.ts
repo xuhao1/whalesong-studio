@@ -20,6 +20,7 @@ import { architectSystem, reviseChapterSystem, reviseChapterTask, reviseSpanSyst
 import { L, promptLanguage, renderStyle } from '../render'
 import { mapLimit } from '../util/async'
 import { scheduleDigest } from './digest'
+import { scheduleRecheck } from './review'
 import { cleanProse } from './write'
 
 export interface ReviseSpanParams {
@@ -543,6 +544,16 @@ export async function acceptProposal(core: NovelCore, runtime: ProjectRuntime, i
   await project.saveChapterText(proposal.chapterId, next, { reason: 'before-revise' })
   const updated = (await project.setProposalStatus(id, 'accepted'))!
   scheduleDigest(core, runtime, proposal.chapterId, task)
+  // What else the change settled, or moved: the issues still open there are looked at again.
+  const where = await project.findChapter(proposal.chapterId)
+  const lang = promptLanguage((await project.manifest()).language)
+  scheduleRecheck(core, runtime, {
+    chapterId: proposal.chapterId,
+    ...(proposal.batchId !== undefined ? { batchId: proposal.batchId } : {}),
+    change: L(lang,
+      `第 ${where?.index ?? '?'} 章${proposal.kind === 'span' ? `改了一处：\n原文：${clip(proposal.before, 400)}\n改成：${clip(proposal.after, 400)}` : '整章重写过'}\n为的是：${clip(proposal.instruction, 600)}`,
+      `Chapter ${where?.index ?? '?'}${proposal.kind === 'span' ? ` — one passage changed:\nwas: ${clip(proposal.before, 500)}\nnow: ${clip(proposal.after, 500)}` : ' was rewritten whole'}\nfor: ${clip(proposal.instruction, 800)}`),
+  }, task)
   return updated
 }
 

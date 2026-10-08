@@ -14,7 +14,8 @@
 import type { ChapterReview, ReviewIssue } from '../shared/types'
 import { fuzzyFind } from '../shared/text'
 import { ISSUE_TYPE, SEVERITY, SEVERITY_TONE } from './labels'
-import { Button, Chip, cx, TextArea, useAction, useKept, useProject, useStudio, useT } from './ui'
+import { useState, type ReactNode } from 'react'
+import { Button, Chip, cx, TextArea, TextInput, useAction, useKept, useProject, useRunningJob, useStudio, useT } from './ui'
 
 export interface IssueMark {
   id: string
@@ -109,6 +110,7 @@ export function IssueCard({ chapterId, issue, onLocate, onChanged, before, after
       ) : null}
       <p>{issue.explanation}</p>
       {issue.suggestion !== undefined ? <p className="nv-muted nv-small">{t('建议：', 'Suggestion: ')}{issue.suggestion}</p> : null}
+      {issue.checked !== undefined && issue.checked.verdict !== 'stands' ? <p className="nv-muted nv-small">{issue.checked.verdict === 'fixed' ? t('修订后核对：已解决', 'Looked at again after a revision: settled') : t('修订后核对：已按现在的正文更新', 'Looked at again after a revision: brought up to the text')}{issue.checked.why !== undefined ? t(`——${issue.checked.why}`, ` — ${issue.checked.why}`) : ''}</p> : null}
       {open ? (
         <TextArea
           className="nv-issue-note"
@@ -145,5 +147,97 @@ export function IssueCard({ chapterId, issue, onLocate, onChanged, before, after
         </Button>
       </footer>
     </article>
+  )
+}
+
+/** One issue of a batch, named where its review found it. */
+export interface BatchItem {
+  chapterId: string
+  issue: ReviewIssue
+}
+
+/**
+ * Mend the ticked issues together: a word on the batch, and the button that hands them — each with what the author
+ * says of it — to one planner. The same bar wherever issues are ticked: the review page, the editor's panel, the reader.
+ * @param before - asked before the batch is started (the editor saves what is being typed); a `false` calls it off.
+ */
+export function IssueBatchBar({ chosen, before, onStarted, children }: { chosen: BatchItem[]; before?: () => Promise<boolean>; onStarted?: () => void; children?: ReactNode }) {
+  const { controller } = useStudio()
+  const t = useT()
+  const { root } = useProject()
+  const [say, setSay] = useKept('review.say', '')
+  const mending = useRunningJob(job => job.kind === 'revise' && job.title === 'revise book') !== undefined
+  const start = (): Promise<unknown> => controller.guard(async () => {
+    if (before !== undefined && !(await before())) return
+    await controller.api.call('ai.fixIssues', {
+      root,
+      issues: chosen.map((item) => {
+        // What is being typed on this screen is what is meant, also where it has not reached the book yet.
+        const note = String(controller.kept.get(issueNoteKey(item.chapterId, item.issue.id)) ?? item.issue.note ?? '').trim()
+        return { chapter: item.chapterId, issue: item.issue.id, ...(note.length > 0 ? { note } : {}) }
+      }),
+      ...(say.trim().length > 0 ? { note: say.trim() } : {}),
+    })
+    await controller.refreshJobs()
+    controller.toast('info', t(`策划正在把这 ${chosen.length} 个问题放在一起看，改动会作为提案等你确认。`, `The planner is reading these ${chosen.length} side by side; the changes will wait as proposals.`))
+    onStarted?.()
+  })
+  return (
+    <div className="nv-assist nv-issue-batch">
+      {children}
+      <TextInput value={say} placeholder={t('对这一批的要求', 'What to ask of this batch')} onChange={(event) => { setSay(event.target.value) }} />
+      <Button size="sm" variant="primary" icon="layers" disabled={chosen.length === 0} busy={mending} pending={t('策划在修…', 'Mending…')} onClick={start}>{t(`一起修选中的 ${chosen.length} 个`, `Mend the ${chosen.length} chosen together`)}</Button>
+    </div>
+  )
+}
+
+/**
+ * The issues of one chapter, each with a tick box, and the bar that mends the ticked ones together — what the
+ * editor's panel and the reader show beside the text.
+ */
+export function IssueList({ chapterId, issues, onLocate, onChanged, before, after, className }: {
+  chapterId: string
+  issues: ReviewIssue[]
+  onLocate?: (quote: string) => void
+  onChanged?: () => void
+  before?: () => Promise<boolean>
+  after?: (scope: 'passage' | 'book') => void
+  className?: string
+}) {
+  const t = useT()
+  const [picked, setPicked] = useState<Set<string>>(new Set())
+  const open = issues.filter(issue => issue.resolved !== true)
+  const chosen = open.filter(issue => picked.has(issue.id))
+  const every = open.length > 0 && chosen.length === open.length
+  const tick = (ids: string[], on: boolean): void => {
+    setPicked((previous) => {
+      const next = new Set(previous)
+      for (const id of ids) {
+        if (on) next.add(id)
+        else next.delete(id)
+      }
+      return next
+    })
+  }
+  return (
+    <div className={cx('nv-issue-list', className)}>
+      {open.length > 1 ? (
+        <IssueBatchBar chosen={chosen.map(issue => ({ chapterId, issue }))} {...(before !== undefined ? { before } : {})} onStarted={() => { setPicked(new Set()); after?.('book') }}>
+          <button type="button" className="nv-link nv-small" onClick={() => { tick(open.map(issue => issue.id), !every) }}>{every ? t('全不选', 'None') : t(`全选 ${open.length} 个`, `All ${open.length}`)}</button>
+        </IssueBatchBar>
+      ) : null}
+      {issues.map(issue => (
+        <IssueCard
+          key={issue.id}
+          chapterId={chapterId}
+          issue={issue}
+          {...(onLocate !== undefined ? { onLocate } : {})}
+          {...(onChanged !== undefined ? { onChanged } : {})}
+          {...(before !== undefined ? { before } : {})}
+          {...(after !== undefined ? { after } : {})}
+          {...(open.length > 1 ? { selected: picked.has(issue.id), onSelect: (on: boolean) => { tick([issue.id], on) } } : {})}
+        />
+      ))}
+    </div>
   )
 }

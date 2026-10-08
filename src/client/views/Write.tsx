@@ -24,7 +24,7 @@ import {
   Button, Chip, cx, Empty, Menu, Modal, Progress, Select, Spinner, Tabs, TextInput, ThoughtButton, ThoughtPanel, useAction, useConfirm, useJobStream, useJobTail, useLoad, useProject,
   useLineView, useQuote, useSnapshot, useStudio, useT, useWidth, waysOn, type Translate,
 } from '../ui'
-import { IssueCard } from '../Issues'
+import { IssueList } from '../Issues'
 import { JobBar } from '../JobBar'
 
 type PanelTab = 'plan' | 'memory' | 'issues' | 'versions' | 'proposals'
@@ -506,17 +506,7 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
               {doc.data.review !== undefined ? <Button size="sm" variant="ghost" icon="trash" onClick={() => { confirm.ask(t('清除这一章的审校意见？', 'Clear this chapter\'s review?'), () => { void controller.guard(async () => { await controller.api.call('review.clear', { root, chapter: chapter.id }); doc.reload() }) }) }} title={t('清除这一章的审校意见', 'Clear this chapter\'s review')} /> : null}
             </div>
             {doc.data.review !== undefined ? <p className="nv-note">{doc.data.review.verdict}</p> : <p className="nv-muted">{t('审校对照设定、记忆与文风检查这一章。', 'A review checks the chapter against the bible, memory and style.')}</p>}
-            {(doc.data.review?.issues ?? []).map(issue => (
-              <IssueCard
-                key={issue.id}
-                chapterId={chapter.id}
-                issue={issue}
-                onLocate={locate}
-                onChanged={() => { doc.reload() }}
-                before={settle}
-                after={() => { showPanel('proposals') }}
-              />
-            ))}
+            <IssueList chapterId={chapter.id} issues={doc.data.review?.issues ?? []} onLocate={locate} onChanged={() => { doc.reload() }} before={settle} after={() => { showPanel('proposals') }} />
           </div>
         ) : null}
 

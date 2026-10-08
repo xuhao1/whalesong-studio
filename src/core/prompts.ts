@@ -1197,6 +1197,112 @@ ${styled ? 7 : 6}. This is a rewrite: what the anchor has that neither the card,
 Output JSON only: {"prompt": "", "negative": ""}`)
 }
 
+/**
+ * After a chapter was changed to mend something: look again at the issues still open — did the change settle them
+ * too, do they stand, or do they read differently now.
+ * @param base.changes - what was changed, here and in other chapters, in a few lines each.
+ */
+export function recheckTask(base: Base & { chapter: string; text: string; issues: string; changes: string }): string {
+  return L(base.lang, `《${bare(base.title)}》${base.chapter}的正文刚刚因为修订改过（或者别的章节为了修同一类问题改过）。下面是这一章还没处理的审校意见，请对照**现在的正文**逐条重新看一遍。
+
+## 这次改了什么
+${base.changes}
+
+## 还没处理的审校意见
+${base.issues}
+
+## 这一章现在的正文
+${base.text}
+
+逐条判断：
+- fixed：这个问题已经不存在了——这次修改（这一章的，或者它所指的那一章的）把它解决了。
+- stands：问题还在，说法也还成立。原来引用的句子如果已经变了，quote 给出现在正文里对应的那一句（必须是现在正文里的原话）。
+- changed：问题还在，但因为正文变了，它现在的样子不同了：explanation 重写成对现在正文成立的说法，quote 换成现在正文里的原话。
+只判断上面列出的这几条，不要提新的问题。拿不准的算 stands。why 用一句话说明依据。
+
+只输出 JSON：{"issues": [{"id": "", "verdict": "fixed | stands | changed", "quote": "", "explanation": "", "why": ""}]}`, `The text of ${base.chapter} of "${bare(base.title)}" has just been changed by a revision (or other chapters were, to mend the same kind of problem). Below are the review issues of this chapter that are still open. Read each again against **the text as it stands now**.
+
+## What was changed
+${base.changes}
+
+## Issues still open
+${base.issues}
+
+## The chapter as it reads now
+${base.text}
+
+For each:
+- fixed: the problem is gone — this change (to this chapter, or to the chapter it points at) settled it.
+- stands: the problem is still there and still reads true. Where the sentence it quoted has changed, quote gives the sentence that stands for it now (word for word from the text as it is).
+- changed: the problem is still there but reads differently now that the text has changed: rewrite explanation so that it is true of the text as it is, and give quote word for word from it.
+Judge only the issues listed; raise no new ones. Where unsure, it stands. why: one sentence on what you went by.
+
+Output JSON only: {"issues": [{"id": "", "verdict": "fixed | stands | changed", "quote": "", "explanation": "", "why": ""}]}`)
+}
+
+/**
+ * Find the stretches of a character's life in the book: how old they are as they enter, and the points where they
+ * turn — in age, in look, in who they are. The planner is an agent with the book to read; the digests' notes say
+ * where to look.
+ * @param base.stages - the stretches kept so far, when they are looked over again.
+ */
+export function growthTask(base: Base & { name: string; card: string; record: string; span: string; stages?: { title: string; chapter?: number; age?: string; what?: string; appearance?: string; persona?: string }[]; direction?: string }): string {
+  const kept = base.stages !== undefined && base.stages.length > 0
+  const asked = base.direction !== undefined && base.direction.length > 0
+  const list = (base.stages ?? []).map((stage, at) => L(base.lang,
+    `${at + 1}. ${stage.title}${stage.chapter !== undefined ? `（从第 ${stage.chapter} 章起）` : '（故事开始时）'}${stage.age !== undefined ? ` · ${stage.age}` : ''}${stage.what !== undefined ? ` · ${stage.what}` : ''}${stage.appearance !== undefined ? `\n   样子：${stage.appearance}` : ''}${stage.persona !== undefined ? `\n   为人：${stage.persona}` : ''}`,
+    `${at + 1}. ${stage.title}${stage.chapter !== undefined ? ` (from chapter ${stage.chapter})` : ' (as the story begins)'}${stage.age !== undefined ? ` · ${stage.age}` : ''}${stage.what !== undefined ? ` · ${stage.what}` : ''}${stage.appearance !== undefined ? `\n   Look: ${stage.appearance}` : ''}${stage.persona !== undefined ? `\n   Who: ${stage.persona}` : ''}`)).join('\n')
+  const zh = [
+    '先定他登场时的年纪：原文写明的照原文；没写明的，从称呼、辈分、旁人的年纪、他做的事和书里的时间推出来，写成"约十三岁（少年）"这样——一个大约的岁数，加上所在的年龄段（幼年、少年、青年、中年、老年）。实在无从判断就只写年龄段。',
+    '再沿着章节往后找这个人"变了"的地方——关键点：长了几岁（书里时间跳过去、过了几年）、身份变了（成婚、出仕、出家、落难、掌权）、样子变了（长大成人、伤残、久病、换了一生的装束）。每个关键点之后是一个新的时期。只是换一身衣服、心情起落、在场不在场，不算。',
+    '有几个算几个，不要凑数：全书里没怎么变的人，只有登场时那一个时期。年纪是连续长的——书里过了几年，就在大致的地方分一段，不必等原文点破。',
+    '上面的记载是各章收录时记下的，只是线索，而且可能只收录了一部分章节；拿不准的地方到原文里去看。书里没有写到的将来不要编。',
+    ...(asked ? ['作者的要求是给你的引导：他点到的转折要有；他说的年纪以他为准。'] : []),
+    ...(kept ? ['现在记着的那几个时期：仍然成立的留下（was 写它原来的序号；作者没要求改的，内容照原样），不成立的去掉，漏掉的补上。'] : []),
+    '每个时期：title 几个字（幼年、入园之后、出家之后）；chapter 它从第几章开始（数字；登场时那一个写他登场的那一章）；age 这个时期的年纪，写法同上；what 一句话说这里变了什么（登场时那一个写他登场时的处境）；appearance 这个时期他看上去什么样——只在和上一个时期明显不同时写（年纪长了的体貌、发式、装束），用这本书的语言，只写看得见的；persona 这个时期他是谁、处世如何——只在和人物卡上写的明显不同时写。',
+    'age：他登场时的年纪（和第一个时期的一样）。',
+  ]
+  const en = [
+    'First, how old they are as they enter: what the text states is taken as stated; where it states nothing, tell it from what they are called, their generation, the ages of those around them, what they do and the time of the book, and write it as "about thirteen (a youth)" — an approximate age and the stage of life (child, youth, young adult, middle-aged, old). Where nothing can be told, the stage of life alone.',
+    'Then follow the chapters for the points where this person turns: they are years older (the book skips time), their station changes (married, in office, in orders, ruined, in power), their look changes (grown up, maimed, long ill, a way of dress for good). After each such point a new stretch begins. A change of clothes, a mood, being present or absent is no turn.',
+    'As many as there are and none to make up a number: somebody who hardly changes has the one stretch they enter in. Age moves on steadily — where years pass in the book, a stretch begins about there, whether or not the text says so.',
+    'The notes above were taken as chapters were digested — leads, and possibly of some chapters only; where unsure, read the text. Nothing of a future the book has not written.',
+    ...(asked ? ['What the author asks is your guide: a turn they name is there; an age they give holds.'] : []),
+    ...(kept ? ['The stretches kept so far: those that still hold stay (`was` gives the number each had; where the author asked for no change, as they were), those that do not are dropped, missing ones are added.'] : []),
+    'Each stretch: title in a few words (childhood, after moving into the garden, in orders); chapter the chapter it begins with (a number; for the one they enter in, the chapter they enter); age in this stretch, written as above; what turned here, in a sentence (for the first, where they stand as they enter); appearance how they look in it — only where it clearly differs from the stretch before (a body grown, hair, dress), in the language of the book, only what is seen; persona who they are in it and how they bear themselves — only where it clearly differs from the card.',
+    'age: how old they are as they enter (the same as the first stretch).',
+  ]
+  return L(base.lang, `请读《${bare(base.title)}》，找出「${base.name}」在书里的各个时期：登场时多大，后来在哪些地方变了——年纪、样子、身份。
+
+## 人物
+${base.card}
+
+## 这本书的章节与时间
+${base.span}
+
+## 各章的收录里对这个人的记载
+${base.record.length > 0 ? base.record : '（还没有哪一章的收录记到这个人——到原文里去找。）'}
+${kept ? `\n## 现在记着的时期（作者让你重新看一遍）\n${list}\n` : ''}${asked ? `\n## 作者的要求\n${base.direction}\n` : ''}
+要求：
+${zh.map((rule, at) => `${at + 1}. ${rule}`).join('\n')}
+
+只输出 JSON：{"age": "", "stages": [{"title": "", "chapter": 0, "age": "", "what": "", "appearance": "", "persona": ""${kept ? ', "was": 0' : ''}}]}`, `Read "${bare(base.title)}" and find the stretches of ${base.name}'s life in it: how old they are as they enter, and where they turn afterwards — in age, in look, in who they are.
+
+## Character
+${base.card}
+
+## The book's chapters and its time
+${base.span}
+
+## What the chapter digests noted of them
+${base.record.length > 0 ? base.record : '(No chapter digest names them yet — look in the text.)'}
+${kept ? `\n## The stretches kept so far (the author has you look them over)\n${list}\n` : ''}${asked ? `\n## What the author asks\n${base.direction}\n` : ''}
+Rules:
+${en.map((rule, at) => `${at + 1}. ${rule}`).join('\n')}
+
+Output JSON only: {"age": "", "stages": [{"title": "", "chapter": 0, "age": "", "what": "", "appearance": "", "persona": ""${kept ? ', "was": 0' : ''}}]}`)
+}
+
 /** How a moment is to be written as a portrait: the same wherever the director writes one. */
 function scenePictureRules(styled: boolean): { zh: string[]; en: string[] } {
   return {

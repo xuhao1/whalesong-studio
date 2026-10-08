@@ -2280,13 +2280,60 @@ button.nv-stat:hover {
   width: auto;
 }
 
-.nv-issue-chapter > h4 {
+.nv-issue-chapter {
   display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 4px 10px 12px 30px;
+}
+
+.nv-issue-chapter > .nv-issue-grid {
+  align-self: stretch;
+}
+
+/* A chapter's row in the review: the part that unfolds its issues. */
+.nv-issue-fold {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nv-issue-fold:disabled {
+  cursor: default;
+}
+
+.nv-issue-fold:disabled > .nv-icon,
+.nv-issue-fold:disabled > svg {
+  opacity: 0.25;
+}
+
+.nv-issue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.nv-issue-batch {
   flex-wrap: wrap;
-  align-items: baseline;
-  gap: 10px;
-  margin: 0 0 6px;
-  font-size: 13.5px;
+}
+
+.nv-issue-batch > .nv-input {
+  flex: 1 1 140px;
+  min-width: 140px;
+}
+
+.nv-issue-batch > .nv-link {
+  flex: none;
 }
 
 .nv-issue-grid {

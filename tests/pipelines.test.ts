@@ -10,7 +10,7 @@ import { exportBook, zipStore } from '../src/core/pipelines/export'
 import { decodeText, importManuscript, splitChapters } from '../src/core/pipelines/import'
 import { deriveChapters } from '../src/core/pipelines/plot'
 import { fixIssue, fixIssues, acceptProposal, reviseSpan } from '../src/core/pipelines/revise'
-import { listReviews, noteIssue } from '../src/core/pipelines/review'
+import { listReviews, noteIssue, recheckIssues } from '../src/core/pipelines/review'
 import { cleanProse, writeChapter } from '../src/core/pipelines/write'
 import { chunkProse, tokenize } from '../src/core/retrieval'
 import { createTestBed, type TestBed } from './support/harness'
@@ -356,6 +356,60 @@ describe('pipelines', () => {
     expect(await fixIssues(bed.core, bed.runtime, { atLeast: 'low' }, { origin: 'user' })).toMatchObject({ issues: 3, chapters: 2 })
     expect(await fixIssues(bed.core, bed.runtime, { atLeast: 'medium', chapters: [one.id] }, { origin: 'user' })).toEqual({ issues: 0, chapters: 0 })
     await expect(fixIssues(bed.core, bed.runtime, { issues: [{ chapter: two.id, issue: 'nope' }] }, { origin: 'user' })).rejects.toThrow('no review issue')
+  })
+
+  it('looks again at what is still open once the text has changed', async () => {
+    const { project } = bed.runtime
+    const one = await project.addChapter({ title: '雨夜' })
+    const two = await project.addChapter({ title: '下山' })
+    const three = await project.addChapter({ title: '渡口' })
+    await project.saveChapterText(one.id, '她是左撇子。')
+    await project.saveChapterText(two.id, '她左手握着剑下了山。那是初春，山道上还有残雪。')
+    await project.saveChapterText(three.id, '渡口没有人，她用右手解开缆绳。')
+    await project.saveReview({ chapterId: two.id, textHash: 'x', createdAt: '', verdict: '', issues: [
+      { id: 'b1', severity: 'high', type: 'continuity', quote: '右手握着剑', explanation: '第一章写她是左撇子。' },
+      { id: 'b2', severity: 'medium', type: 'timeline', quote: '那是盛夏', explanation: '上一章还是雪天。' },
+      { id: 'b3', severity: 'low', type: 'pacing', explanation: '下山写得太快。' },
+      { id: 'b4', severity: 'low', type: 'language', quote: '残雪', explanation: '早就处理过的。', resolved: true },
+    ] })
+    await project.saveReview({ chapterId: three.id, textHash: 'x', createdAt: '', verdict: '', issues: [
+      { id: 'c1', severity: 'high', type: 'continuity', quote: '右手解开缆绳', explanation: '惯用手和前文不一致。', mending: 'batch-1' },
+      { id: 'c2', severity: 'low', type: 'style', quote: '渡口没有人', explanation: '开头平。' },
+    ] })
+    bed.llm.responder = request => request.prompt.includes('第 2 章《下山》')
+      ? JSON.stringify({ issues: [
+          { id: 'b1', verdict: 'fixed', why: '现在写的是左手' },
+          { id: 'b2', verdict: 'changed', quote: '那是初春，山道上还有残雪', explanation: '改成初春后与上一章接上了，但“残雪”和后文的桃花仍有出入。', why: '季节改了' },
+          { id: 'b3', verdict: 'stands', quote: '这一句正文里没有', why: '没有动' },
+          { id: 'b4', verdict: 'fixed' },
+          { id: 'zz', verdict: 'fixed' },
+        ] })
+      : JSON.stringify({ issues: [{ id: 'c1', verdict: 'stands', why: '这一章没有改' }] })
+    const result = await recheckIssues(bed.core, bed.runtime, { chapters: [two.id], batches: ['batch-1'], changes: '第 2 章整章重写过\n为的是：右手改左手' }, { origin: 'user' })
+    // Of the chapter that changed: everything open. Of another: only what was handed over with the batch.
+    expect(result).toMatchObject({ looked: 4, chapters: 2, fixed: [{ chapterId: two.id, index: 2, issue: 'b1', why: '现在写的是左手' }], changed: [{ chapterId: two.id, issue: 'b2' }] })
+    const asked = bed.llm.requests.map(request => request.prompt)
+    expect(asked).toHaveLength(2)
+    for (const part of ['## 这次改了什么\n第 2 章整章重写过', 'id: b1', '当时引的原文："右手握着剑"（现在的正文里已经没有这一句）', 'id: b3', '她左手握着剑下了山', '只判断上面列出的这几条，不要提新的问题']) expect(asked[0], part).toContain(part)
+    expect(asked[0]).not.toContain('id: b4')
+    expect(asked[1]).toContain('id: c1')
+    expect(asked[1]).not.toContain('id: c2')
+    const after = (await project.review(two.id))!.issues
+    // Settled by the change: marked, with why. Reading differently now: brought up to the text. Standing: as it was
+    // — a quote the text does not have is not taken. What was settled before, and what nobody was asked about, are untouched.
+    expect(after[0]).toMatchObject({ id: 'b1', resolved: true, checked: { verdict: 'fixed', why: '现在写的是左手' } })
+    expect(after[1]).toMatchObject({ id: 'b2', quote: '那是初春，山道上还有残雪', explanation: expect.stringContaining('桃花'), checked: { verdict: 'changed' } })
+    expect(after[1]!.resolved).toBeUndefined()
+    expect(after[2]).toMatchObject({ id: 'b3', explanation: '下山写得太快。', checked: { verdict: 'stands' } })
+    expect(after[2]!.quote).toBeUndefined()
+    expect(after[3]).toEqual({ id: 'b4', severity: 'low', type: 'language', quote: '残雪', explanation: '早就处理过的。', resolved: true })
+    const other = (await project.review(three.id))!.issues
+    expect(other[0]).toMatchObject({ id: 'c1', quote: '右手解开缆绳', checked: { verdict: 'stands', why: '这一章没有改' } })
+    expect(other[1]!.checked).toBeUndefined()
+    // Nothing open where the text changed: nobody is asked.
+    const before = bed.llm.requests.length
+    expect(await recheckIssues(bed.core, bed.runtime, { chapters: [one.id], changes: 'x' }, { origin: 'user' })).toMatchObject({ looked: 0, chapters: 0 })
+    expect(bed.llm.requests.length).toBe(before)
   })
 
   it('derives chapters into the outline and links cast and threads', async () => {

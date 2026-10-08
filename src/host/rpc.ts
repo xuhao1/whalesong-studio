@@ -18,7 +18,7 @@ import { chapterVideoWithSubtitles, chapterVideo, findProgram, produceVideo, rem
 import { CREW } from '../core/crew'
 import { contextBudgets } from '../core/context'
 import { resolveRoute } from '../core/llm'
-import { promptLanguage } from '../core/render'
+import { L, promptLanguage } from '../core/render'
 import { digestPending, fillPlans } from '../core/pipelines/digest'
 import { exportBook, missingImages } from '../core/pipelines/export'
 import { findPicturePress, findSoundPress } from '../core/media/press'
@@ -32,7 +32,7 @@ import {
   ensurePortrait, novelizePlay, paintPlayScene, playTurn, rewindPlay, setPlayOutcome, startPlay, voicePlayLine,
 } from '../core/pipelines/play'
 import { buildFoundation, deriveBeats, deriveChapters, whatIf } from '../core/pipelines/plot'
-import { clearReview, listReviews, noteIssue, resolveIssue, reviewChapter } from '../core/pipelines/review'
+import { clearReview, listReviews, noteIssue, recheckIssues, resolveIssue, reviewChapter } from '../core/pipelines/review'
 import { fixIssue, fixIssues, acceptProposal, rejectProposal, reviseBook, reviseChapter, reviseSpan } from '../core/pipelines/revise'
 import { writeChapter } from '../core/pipelines/write'
 import { ProjectError } from '../core/project'
@@ -642,6 +642,14 @@ export function createHandlers(service: NovelService): Handlers {
     'review.resolve': async ({ root, chapter, issue, resolved }) => ({ ok: (await resolveIssue(await open(root), chapter, issue, resolved)) !== undefined }),
     'review.note': async ({ root, chapter, issue, note }) => ({ ok: (await noteIssue(await open(root), requireString(chapter, 'chapter'), requireString(issue, 'issue'), typeof note === 'string' ? note : '')) !== undefined }),
     'review.list': async ({ root }) => ({ reviews: await listReviews(await open(root)) }),
+    'review.recheck': async ({ root, chapters }) => {
+      const runtime = await open(root)
+      const lang = promptLanguage((await runtime.project.manifest()).language)
+      // Every chapter that has something open, unless some are named: read against the text as it stands.
+      const named = Array.isArray(chapters) ? chapters.filter((item): item is string => typeof item === 'string') : []
+      const due = named.length > 0 ? named : (await listReviews(runtime)).filter(review => review.issues.some(issue => issue.resolved !== true)).map(review => review.chapterId)
+      return job(runtime, 'review', 'recheck issues', undefined, async task => await recheckIssues(core, runtime, { chapters: due, changes: L(lang, '（作者让你对照现在的正文重新核对：这些意见提出之后，正文可能已经因为修订改过。）', '(The author asks for these to be read against the text as it stands: it may have been revised since they were raised.)') }, task))
+    },
     'review.clear': async ({ root, chapter }) => ({ removed: (await clearReview(await open(root), requireString(chapter, 'chapter'))).removed }),
 
     // ── batches ──

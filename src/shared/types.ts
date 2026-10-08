@@ -202,6 +202,31 @@ export interface LifeMark {
   what?: string
 }
 
+/**
+ * A stretch of a character's life in the book: from a chapter on, how old they are, who they are and how they look.
+ * People are not the same from the first chapter to the last — they grow up, marry, take orders, fall — and a card
+ * that says one age and one face says it of no chapter in particular. The stretches are found in the book (the
+ * planner reads for the points where somebody turns), and the author's to rewrite.
+ */
+export interface CharacterStage {
+  /** Stable id within the character. */
+  id: string
+  /** What the stretch is called: 幼年 · 入府之后 · 出家之后. */
+  title: string
+  /** The chapter it begins with, by id. Left out: as they are when the story begins. */
+  from?: string
+  /** How old they are in it, as the book has it or lets one tell: 约十三岁（少年）. */
+  age?: string
+  /** What turned at this point, in a sentence. */
+  what?: string
+  /** How they look in it — for readers and for the writer. Left out: as the card has it. */
+  appearance?: string
+  /** Who they are in it — station, bearing, temper — where that is not what the card says. */
+  persona?: string
+  /** Their look in it as an image model is told, with the design sheet and the portrait drawn of it. */
+  visual?: { prompt?: string; negative?: string; sheet?: string; portrait?: string }
+}
+
 export interface CharacterCard {
   id: string
   name: string
@@ -234,6 +259,8 @@ export interface CharacterCard {
   life?: string
   /** What the author wrote down of their life themselves, one mark a chapter at most: it holds over the digests (`Project.markLife`). */
   lifeMarks?: LifeMark[]
+  /** The stretches of their life in the book, in the order they come: how old, who and how they look from which chapter on. */
+  stages?: CharacterStage[]
   visual?: CharacterVisual
   voiceProfile?: CharacterVoiceProfile
   /** Free-form Markdown body below the front matter. */
@@ -649,6 +676,8 @@ export interface ReviewIssue {
   note?: string
   /** It was handed over to be mended — the batch of proposals that came of it — and waits on those proposals. */
   mending?: string
+  /** Looked at again after the text changed: what was found — that the change settled it, or how it reads now. */
+  checked?: { at: Timestamp; verdict: 'fixed' | 'stands' | 'changed'; why?: string }
 }
 
 export interface ChapterReview {
@@ -990,6 +1019,8 @@ export interface NovelSettings {
   textConcurrency?: number
   /** Run digest automatically after a chapter is written or revised. */
   autoDigest: boolean
+  /** After a proposal is accepted, have the reviewer look again at the issues still open in what changed. Unset: yes. */
+  recheckIssues?: boolean
   /** Manuscript revisions requested by the agent wait for review instead of applying directly. */
   reviewAgentRevisions: boolean
   /**

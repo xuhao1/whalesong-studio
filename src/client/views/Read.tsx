@@ -34,7 +34,7 @@ import { chapterJob } from '../Batch'
 import { Icon } from '../icons'
 import { sheetsDrawn } from '../labels'
 import { useSheetsAsk } from '../SheetsAsk'
-import { IssueCard, issueMarks } from '../Issues'
+import { IssueCard, IssueList, issueMarks } from '../Issues'
 import { AudioDesk, ScriptTable, type ScriptView } from '../stage/Audio'
 import {
   Button, cx, Empty, Select, Spinner, useLoad, useMediaUrl, useProject, useQuote, useSnapshot, useStudio, useT, useLineView, waysOn,
@@ -426,14 +426,12 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
                 {t(`${openIssues} 条审校意见没处理：${notes.marks.length} 条标在正文里`, `${openIssues} review note(s) open: ${notes.marks.length} marked in the text`)}
                 {notes.loose.length > 0 ? t(`，${notes.loose.length} 条没有对应的句子。`, `, ${notes.loose.length} have no sentence of their own.`) : t('。', '.')}
               </span>
-              {notes.loose.length > 0 ? <Button size="sm" variant="ghost" icon={looseOpen ? 'chevronUp' : 'chevronDown'} onClick={() => { setLooseOpen(!looseOpen) }}>{looseOpen ? t('收起', 'Fold') : t('看这几条', 'Show them')}</Button> : null}
+              <Button size="sm" variant="ghost" icon={looseOpen ? 'chevronUp' : 'chevronDown'} onClick={() => { setLooseOpen(!looseOpen) }}>{looseOpen ? t('收起', 'Fold') : t('列出来选', 'List them')}</Button>
               <Button size="sm" variant="ghost" icon="checkCircle" busy={reviewing} pending={t('审校中…', 'Reviewing…')} onClick={() => controller.guard(async () => { await controller.api.call('ai.review', { root, chapter: chapter.id }); await controller.refreshJobs() })} title={t('正文改过之后重新审校一遍', 'Review again after the text has changed')}>{t('重新审校', 'Review again')}</Button>
             </>
           )}
-          {looseOpen && notes.loose.length > 0 ? (
-            <div className="nv-reader-notes-list">
-              {notes.loose.map(issue => <IssueCard key={issue.id} chapterId={chapter.id} issue={issue} onChanged={() => { doc.reload() }} />)}
-            </div>
+          {looseOpen && openIssues > 0 ? (
+            <IssueList className="nv-reader-notes-list" chapterId={chapter.id} issues={(review?.issues ?? []).filter(issue => issue.resolved !== true)} onChanged={() => { doc.reload() }} />
           ) : null}
         </div>
       ) : null}

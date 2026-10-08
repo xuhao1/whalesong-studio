@@ -480,6 +480,8 @@ export interface NovelRpc {
   'review.clear': { params: { root: string; chapter: string }; result: { removed: boolean } }
   /** Keep what the author says of how an issue is to be mended (an empty note takes it off). */
   'review.note': { params: { root: string; chapter: string; issue: string; note: string }; result: { ok: boolean } }
+  /** Have the reviewer read the issues still open against the text as it stands now: what a revision settled is marked settled, what reads differently is brought up to date. `chapters`: only these. A job. */
+  'review.recheck': { params: { root: string; chapters?: string[] }; result: JobStarted }
   /** Every review there is, in reading order — what a page that lists issues across chapters shows. */
   'review.list': { params: { root: string }; result: { reviews: (ChapterReview & { index: number; title: string })[] } }
   /**
