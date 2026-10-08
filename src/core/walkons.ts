@@ -8,13 +8,15 @@
  * start to matter, folded into an existing character when the name turns out
  * to be an alias, or left alone.
  */
-import type { CharacterCard, CharacterRole, WalkOn } from '../shared/types'
+import type { CharacterCard, CharacterRole, WalkOn, WalkOnVerdict } from '../shared/types'
 import { ProjectError, type Project } from './project'
 
 interface WalkOnFile {
   schema: 1
   /** Names the author does not want listed. */
   ignored: string[]
+  /** What the planner made of each name it looked at, by the name folded; `name`: as the page writes it. */
+  sifted?: Record<string, WalkOnVerdict & { name?: string }>
 }
 
 const FILE = 'walkons.json'
@@ -31,8 +33,9 @@ async function ignoredNames(project: Project): Promise<string[]> {
 
 /** Everyone on the page without a card, most present first. */
 export async function listWalkOns(project: Project, options: { ignored?: boolean } = {}): Promise<WalkOn[]> {
-  const [cards, memories, suggestions, cast, ignored, chapters] = await Promise.all([
+  const [cards, memories, suggestions, cast, ignored, chapters, sifted] = await Promise.all([
     project.characters(), project.memories(), project.suggestions(), project.voiceCast(), ignoredNames(project), project.chapters(),
+    project.readState<WalkOnFile>(FILE).then(file => file?.sifted ?? {}),
   ])
   const carded = new Map<string, CharacterCard>()
   for (const card of cards) {
@@ -81,6 +84,9 @@ export async function listWalkOns(project: Project, options: { ignored?: boolean
     const entry = see(name)
     if (entry !== undefined) entry.voice = voice
   }
+  // A name the planner left a walk-on stays on the list although nothing else names it any more — the suggestion an
+  // older version made for it was its only trace: what was looked at is not made to vanish.
+  for (const verdict of Object.values(sifted)) if (verdict.is === 'walkon' && verdict.name !== undefined) see(verdict.name)
   const list: WalkOn[] = []
   for (const [key, entry] of found) {
     entry.chapters.sort((left, right) => (order.get(left) ?? 0) - (order.get(right) ?? 0))
@@ -94,6 +100,11 @@ export async function listWalkOns(project: Project, options: { ignored?: boolean
       return at >= 0 && key.length - known.length <= 2 && key[at + known.length] !== '的'
     })
     if (near !== undefined) entry.near = near.id
+    const said = sifted[key]
+    if (said !== undefined) {
+      const { name: _written, ...verdict } = said
+      entry.verdict = verdict
+    }
     if (hidden.has(key)) {
       if (options.ignored !== true) continue
       entry.ignored = true
@@ -102,6 +113,19 @@ export async function listWalkOns(project: Project, options: { ignored?: boolean
   }
   return list.sort((left, right) => Number(left.ignored === true) - Number(right.ignored === true) || right.chapters.length - left.chapters.length || right.lines - left.lines || left.name.localeCompare(right.name))
 }
+
+/** Keep what the planner said of the names it looked at; a name it has a verdict on is not asked about again until they are seen in more chapters. */
+export async function noteVerdicts(project: Project, verdicts: readonly (WalkOnVerdict & { name: string })[]): Promise<void> {
+  if (verdicts.length === 0) return
+  await project.updateState<WalkOnFile>([FILE], { schema: 1, ignored: [] }, (current) => {
+    const sifted = { ...(current.sifted ?? {}) }
+    for (const verdict of verdicts) sifted[fold(verdict.name)] = verdict
+    return { ...current, sifted }
+  })
+}
+
+/** The name as the lists compare it: without quotes, spaces and case. */
+export const foldName = (name: string): string => fold(name)
 
 export interface SettleInput {
   name: string
@@ -142,7 +166,7 @@ export async function settleWalkOn(project: Project, input: SettleInput): Promis
   if (input.action === 'ignore' || input.action === 'restore') {
     await project.updateState<WalkOnFile>([FILE], { schema: 1, ignored: [] }, (current) => {
       const rest = current.ignored.filter(item => fold(item) !== key)
-      return { schema: 1, ignored: input.action === 'ignore' ? [...rest, name] : rest }
+      return { ...current, schema: 1, ignored: input.action === 'ignore' ? [...rest, name] : rest }
     })
     return { lines: 0 }
   }

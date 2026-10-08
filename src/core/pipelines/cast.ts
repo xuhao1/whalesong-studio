@@ -16,15 +16,16 @@
  * adds who is missing, fills what is empty and folds together only cards that
  * nobody has worked on.
  */
-import type { CharacterCard } from '../../shared/types'
+import type { CharacterCard, Suggestion, WalkOn, WalkOnVerdict } from '../../shared/types'
 import { clip, sameName } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { assign } from '../crew'
 import { asArray, asList, asRecord, asText } from '../llm'
-import { architectSystem, castAliasTask, castRoundTask } from '../prompts'
+import { architectSystem, castAliasTask, castRoundTask, castSiftTask } from '../prompts'
 import { L, promptLanguage } from '../render'
 import { fillPlans } from './digest'
 import { pickText } from './plot'
+import { foldName, listWalkOns, noteVerdicts } from '../walkons'
 
 export interface CastResult {
   /** Cards made for people who had none. */
@@ -329,4 +330,217 @@ export async function relinkMemories(runtime: ProjectRuntime): Promise<void> {
     if (firstAppearance === undefined || lastAppearance === undefined) continue
     if (card.firstAppearance !== firstAppearance || card.lastAppearance !== lastAppearance) await project.saveCharacter({ id: card.id, firstAppearance, lastAppearance })
   }
+}
+
+// ───────────────────────────── who is worth a card ─────────────────────────────
+
+export interface SiftResult {
+  /** Names the planner looked at. */
+  looked: number
+  /** Names it found worth a card: each waits among the suggestions, with its reason. */
+  cards: string[]
+  /** Names that are somebody's other name: each waits as a suggestion to fold it into that card. */
+  aliases: { name: string; of: string }[]
+  /** Names left as walk-ons: in the list of walk-ons, each with why. */
+  walkOns: number
+  failed: { step: string; error: string }[]
+}
+
+/** How many names one request is asked about. */
+const SIFT_ROUND = 60
+
+/**
+ * The names without a card the planner has yet to say something of: those it never looked at, and those seen in more
+ * chapters since it did — a walk-on who keeps coming back is asked about again.
+ * @param all - everybody on the list, whatever was said of them before.
+ */
+export async function siftDue(runtime: ProjectRuntime, all = false): Promise<WalkOn[]> {
+  const list = await listWalkOns(runtime.project)
+  return all ? list : list.filter(entry => entry.verdict === undefined || entry.chapters.length > entry.verdict.seen)
+}
+
+/**
+ * Have the planner look through the names the page uses for people who have no card, and say of each what it is:
+ * worth a card, another name of somebody, or a walk-on. A digest names everybody a chapter meets, and none of them
+ * is proposed for a card by that alone — a long book would bury its cast under doormen. What the planner finds worth
+ * a card waits among the suggestions with its reason; another name waits as a suggestion to fold it in; a walk-on
+ * stays in the list of walk-ons, where what the planner said of them is kept beside the name and a card is one click
+ * away. Nothing is made or folded here: the cast is the author's.
+ * @param params.all - look at every name again, also those already judged or proposed (the backlog of an older version).
+ * @param params.direction - what the author asks of the pass; it guides the planner.
+ */
+export async function siftCast(core: NovelCore, runtime: ProjectRuntime, params: { all?: boolean; direction?: string }, task: TaskContext): Promise<SiftResult> {
+  const { project } = runtime
+  const manifest = await project.manifest()
+  const lang = promptLanguage(manifest.language)
+  const zh = lang === 'zh'
+  const result: SiftResult = { looked: 0, cards: [], aliases: [], walkOns: 0, failed: [] }
+  const due = await siftDue(runtime, params.all === true)
+  if (due.length === 0) return result
+  const located = await project.chapters()
+  const indexOf = new Map(located.map(chapter => [chapter.plan.id, chapter.index]))
+  const rounds: WalkOn[][] = []
+  for (let at = 0; at < due.length; at += SIFT_ROUND) rounds.push(due.slice(at, at + SIFT_ROUND))
+  const now = new Date().toISOString()
+  for (const [at, round] of rounds.entries()) {
+    task.signal?.throwIfAborted()
+    task.job?.progress(at, rounds.length, L(lang, `策划在看 ${round.slice(0, 3).map(entry => entry.name).join('、')}${round.length > 3 ? ` 等 ${round.length} 个名字` : ''}`, `the planner is looking at ${round.slice(0, 3).map(entry => entry.name).join(', ')}${round.length > 3 ? ` and ${round.length - 3} more` : ''}`))
+    try {
+      const cards = await project.characters()
+      const known = cards.map(card => `${card.name}${card.aliases !== undefined && card.aliases.length > 0 ? `（${card.aliases.join(zh ? '、' : ', ')}）` : ''}${card.tagline !== undefined ? ` — ${clip(card.tagline, 40)}` : ''}`)
+      const names = round.map((entry) => {
+        const where = entry.chapters.map(id => indexOf.get(id)).filter((index): index is number => index !== undefined)
+        const near = entry.near !== undefined ? cards.find(card => card.id === entry.near)?.name : undefined
+        return `- ${entry.name}（${[
+          where.length > 0 ? L(lang, `出现在 ${where.length} 章：第 ${where.join('、')} 章`, `in ${where.length} chapter(s): ${where.join(', ')}`) : L(lang, '只被提到', 'only mentioned'),
+          entry.lines > 0 ? L(lang, `有声脚本里 ${entry.lines} 句台词`, `${entry.lines} spoken line(s) in the audio scripts`) : undefined,
+          near !== undefined ? L(lang, `名字和「${near}」相近`, `the name is close to "${near}"`) : undefined,
+        ].filter(Boolean).join(zh ? '；' : '; ')}）${entry.note !== undefined ? `${zh ? '：' : ': '}${clip(entry.note, 160)}` : ''}`
+      })
+      const { value } = await assign(core, runtime, task, {
+        role: 'architect',
+        label: rounds.length > 1 ? L(lang, `筛新名字 ${at + 1}/${rounds.length}`, `New names ${at + 1}/${rounds.length}`) : L(lang, '筛新名字', 'New names'),
+        tool: 'submit_sift',
+        what: L(lang, '这一批名字各自该怎么办：建卡、是别名、还是留作龙套', 'what each of these names is: worth a card, another name of somebody, or a walk-on'),
+        system: architectSystem(lang),
+        prompt: castSiftTask({ lang, language: manifest.language, title: manifest.title, names: names.join('\n'), known: clip(known.join('\n'), 12_000), ...(params.direction !== undefined ? { direction: params.direction } : {}) }),
+        temperature: 0.2,
+        validate: (raw) => {
+          const record = asRecord(raw)
+          if (asArray(record.people).length === 0) throw new Error('"people" is empty')
+          return record
+        },
+      })
+      // One answer a name; a name the round was not asked about is nobody the chapters gave a reason for.
+      const answers = new Map<string, { entry: WalkOn; is: WalkOnVerdict['is']; why?: string; role?: CharacterCard['role']; tagline?: string; same?: string }>()
+      for (const raw of asArray(value.people)) {
+        const item = asRecord(raw)
+        const name = asText(item.name)
+        const entry = name !== undefined ? round.find(candidate => foldName(candidate.name) === foldName(name)) : undefined
+        const is = asText(item.is)
+        if (entry === undefined || answers.has(foldName(entry.name)) || (is !== 'card' && is !== 'alias' && is !== 'walkon')) continue
+        const why = asText(item.why)
+        const role = asText(item.role) as CharacterCard['role'] | undefined
+        const tagline = asText(item.tagline)
+        const same = asText(item.same_as)
+        answers.set(foldName(entry.name), { entry, is, ...(why !== undefined ? { why } : {}), ...(role !== undefined && ROLES.includes(role) ? { role } : {}), ...(tagline !== undefined ? { tagline } : {}), ...(same !== undefined ? { same } : {}) })
+      }
+      // Another name of somebody: of a card — then that is proposed —, of a name this round found worth a card — then
+      // it goes onto that card with it —, or of nobody the book knows: then they are a walk-on, and the list says why.
+      const extra = new Map<string, string[]>()
+      const verdicts: (WalkOnVerdict & { name: string })[] = []
+      const suggestions: Omit<Suggestion, 'id' | 'createdAt'>[] = []
+      const stale: string[] = []
+      const verdict = (entry: WalkOn, is: WalkOnVerdict['is'], why?: string, same?: string): void => {
+        verdicts.push({ name: entry.name, is, ...(why !== undefined ? { why } : {}), ...(same !== undefined ? { same } : {}), at: now, seen: entry.chapters.length })
+      }
+      for (const answer of answers.values()) {
+        if (answer.is !== 'alias') continue
+        const { entry, why, same } = answer
+        if (entry.suggestion !== undefined) stale.push(entry.suggestion)
+        const target = same !== undefined ? cards.find(card => sameName(card.name, same) || card.aliases?.some(alias => sameName(alias, same)) === true) : undefined
+        const fellow = same !== undefined && target === undefined ? [...answers.values()].find(other => other.is === 'card' && foldName(other.entry.name) === foldName(same)) : undefined
+        if (target !== undefined) {
+          suggestions.push({
+            kind: 'alias',
+            title: L(lang, `别名：「${entry.name}」就是${target.name}？`, `Another name: is "${entry.name}" ${target.name}?`),
+            detail: why ?? entry.note ?? '',
+            ...(entry.chapters[0] !== undefined ? { chapterId: entry.chapters[0] } : {}),
+            payload: { name: entry.name, target: target.id, targetName: target.name },
+            sifted: true,
+          })
+          verdict(entry, 'alias', why, target.name)
+          result.aliases.push({ name: entry.name, of: target.name })
+        } else if (fellow !== undefined) {
+          extra.set(foldName(fellow.entry.name), [...(extra.get(foldName(fellow.entry.name)) ?? []), entry.name])
+          verdict(entry, 'alias', why, fellow.entry.name)
+          result.aliases.push({ name: entry.name, of: fellow.entry.name })
+        } else {
+          verdict(entry, 'walkon', [why, same !== undefined ? L(lang, `（策划认为是「${same}」的另一个称呼，但书里没有这个人的卡）`, `(the planner takes them for "${same}" under another name, and the book has no card of that name)`) : undefined].filter(Boolean).join(' '))
+          result.walkOns += 1
+        }
+      }
+      for (const answer of answers.values()) {
+        const { entry, why } = answer
+        if (answer.is === 'walkon') {
+          // Proposed before by a digest of an older version: no longer.
+          if (entry.suggestion !== undefined) stale.push(entry.suggestion)
+          verdict(entry, 'walkon', why)
+          result.walkOns += 1
+        } else if (answer.is === 'card') {
+          if (entry.suggestion !== undefined) stale.push(entry.suggestion)
+          const others = extra.get(foldName(entry.name)) ?? []
+          suggestions.push({
+            kind: 'new-character',
+            title: L(lang, `新人物：${entry.name}`, `New character: ${entry.name}`),
+            detail: why ?? entry.note ?? '',
+            ...(entry.chapters[0] !== undefined ? { chapterId: entry.chapters[0] } : {}),
+            payload: {
+              name: entry.name,
+              role: answer.role ?? 'minor',
+              ...(answer.tagline !== undefined || entry.note !== undefined ? { tagline: answer.tagline ?? entry.note } : {}),
+              ...(others.length > 0 ? { aliases: others } : {}),
+              ...(entry.chapters[0] !== undefined ? { firstAppearance: entry.chapters[0], lastAppearance: entry.chapters.at(-1) } : {}),
+            },
+            sifted: true,
+          })
+          verdict(entry, 'card', why)
+          result.cards.push(entry.name)
+        }
+      }
+      for (const id of stale) await project.takeSuggestion(id)
+      await project.addSuggestions(suggestions)
+      await noteVerdicts(project, verdicts)
+      result.looked += answers.size
+    } catch (error) {
+      if (task.signal?.aborted === true) throw error
+      result.failed.push({ step: `sift ${at + 1}/${rounds.length}`, error: error instanceof Error ? error.message : String(error) })
+    }
+  }
+  task.job?.progress(rounds.length, rounds.length)
+  if (result.looked > 0) {
+    await project.addActivity({
+      by: 'crew',
+      role: 'architect',
+      tool: 'sift',
+      summary: L(lang,
+        `策划看了 ${result.looked} 个还没有人物卡的名字：${result.cards.length} 个建议建卡${result.cards.length > 0 ? `（${clip(result.cards.join('、'), 80)}）` : ''}，${result.aliases.length} 个是别名，${result.walkOns} 个留作龙套`,
+        `The planner looked at ${result.looked} name(s) without a card: ${result.cards.length} proposed for a card${result.cards.length > 0 ? ` (${clip(result.cards.join(', '), 100)})` : ''}, ${result.aliases.length} another name of somebody, ${result.walkOns} left as walk-ons`),
+    }).catch(() => {})
+    project.touch()
+  }
+  task.job?.result({ looked: result.looked, cards: result.cards.length, aliases: result.aliases.length, walkOns: result.walkOns })
+  return result
+}
+
+const pendingSifts = new Map<string, ReturnType<typeof setTimeout>>()
+
+/**
+ * Have the names without a card looked through once digests have settled — in the background, a moment after the last
+ * of them, so that a batch of chapters is one look, and not while a book is still being taken in. Nothing is asked
+ * where no name is new and nobody has been seen in more chapters since they were looked at.
+ */
+export function scheduleSift(core: NovelCore, runtime: ProjectRuntime, task: Pick<TaskContext, 'origin' | 'agentRoute'>, wait = 4000): void {
+  if (core.currentSettings().siftCast === false) return
+  const root = runtime.project.root
+  const before = pendingSifts.get(root)
+  if (before !== undefined) clearTimeout(before)
+  const timer = setTimeout(() => {
+    pendingSifts.delete(root)
+    void (async () => {
+      const running = core.jobs.list(root).filter(job => job.status === 'running')
+      // Its own pass is on its way already; and while chapters are still being digested, or a book taken in, the list is not yet what it will be.
+      if (running.some(job => job.kind === 'bible' && job.title === 'sift cast')) return
+      if (running.some(job => job.kind === 'digest' || job.kind === 'import' || job.kind === 'batch')) {
+        scheduleSift(core, runtime, task, 6000)
+        return
+      }
+      if ((await siftDue(runtime)).length === 0) return
+      core.jobs.start({ kind: 'bible', title: 'sift cast', project: root, origin: task.origin }, async (job) => {
+        await siftCast(core, runtime, {}, { origin: task.origin, signal: job.signal, job, ...(task.agentRoute !== undefined ? { agentRoute: task.agentRoute } : {}) })
+      })
+    })().catch((error: unknown) => { core.log('could not start looking through the names without a card', error) })
+  }, wait)
+  timer.unref?.()
+  pendingSifts.set(root, timer)
 }

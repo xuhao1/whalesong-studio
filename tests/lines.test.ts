@@ -190,8 +190,8 @@ describe('lines of the plot', () => {
     const memory = await digestChapter(bed.core, bed.runtime, chapter.id, { origin: 'user' })
     expect(memory?.summary).toContain('渡口')
     // Dead on that line, not in the book: her life on the main line knows nothing of it, and no thread is planted there.
-    const suggestions = await project.suggestions()
-    expect(suggestions.map(item => item.kind)).toEqual(['new-character'])
+    // (Whoever the chapter names without a card is a walk-on until the planner says otherwise: a digest proposes nobody.)
+    expect(await project.suggestions()).toEqual([])
     expect((await project.outline()).threads).toHaveLength(0)
     expect((await project.findCharacter(card.id))!.lastAppearance).toBeUndefined()
     expect((await project.lives()).lives[card.id]).toBeUndefined()
@@ -200,7 +200,7 @@ describe('lines of the plot', () => {
     // Made the main line, what happened there is what happened: its memory is folded in then — and her death is read
     // off its digest like any other; nobody is asked to confirm a label, and none is written on her card.
     await applyOutlineOps(bed.runtime, [{ op: 'promote-line', line: line.id }])
-    expect((await project.suggestions()).map(item => item.kind)).toEqual(['new-character'])
+    expect(await project.suggestions()).toEqual([])
     expect((await project.lives()).lives[card.id]).toMatchObject({ death: 2 })
     expect((await project.presence()).find(entry => entry.character === card.id)?.death).toBe(2)
     expect((await project.findCharacter(card.id)) as unknown as Record<string, unknown>).not.toHaveProperty('status')

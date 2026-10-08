@@ -31,7 +31,11 @@ So there is no status to keep. When a death or a leaving is missing or wrong, th
 
 ## The people without a card
 
-A long book fills with people who are named once or twice: a clerk, a recruit, "that lady". `novel_manage action=walkons` lists everyone the page names who has no card — gathered from chapter memories, digest suggestions, audio scripts and the voice sheet — with where each turns up. Settle them (`action=settle_walkon`):
+A long book fills with people who are named once or twice: a clerk, a recruit, "that lady". `novel_manage action=walkons` lists everyone the page names who has no card — gathered from chapter memories, audio scripts and the voice sheet — with where each turns up and what the planner said of them.
+
+A digest proposes nobody for a card by itself. After chapters were digested the planner looks through the names it has not looked at yet (`novel_manage action=sift_walkons` runs the same pass on request; `fields.all=true` looks at every name again, `fields.direction` carries what the author asks) and says of each: worth a card — that waits among the suggestions with its reason, for the author to accept —, another name of somebody — a suggestion to fold it in —, or a walk-on, left on the list with why. Tell the author what it found; do not accept for them. A walk-on who turns up in more chapters is looked at again.
+
+Settle one yourself when the author says so (`action=settle_walkon`):
 
 - **A card** (`as: card`, `role: minor` or `cameo`) for those the story will come back to. They keep the voice the audio drama gave them, and their lines in the scripts go to the card.
 - **An alias** (`as: alias`, `of: <character>`) when the name is a known character under another name — the list says when it looks that way. Unsettled aliases split one person into two in memory and in the audio drama.

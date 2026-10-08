@@ -1601,7 +1601,7 @@ export class Project {
     let dropped = 0
     await this.updateState<Suggestion[]>(['suggestions.json'], [], current => current.filter((item) => {
       const name = typeof item.payload.name === 'string' ? item.payload.name : undefined
-      const settled = name !== undefined && ((item.kind === 'new-character' && carded(name)) || (item.kind === 'new-world' && entered(name)))
+      const settled = name !== undefined && (((item.kind === 'new-character' || item.kind === 'alias') && carded(name)) || (item.kind === 'new-world' && entered(name)))
       if (settled) dropped += 1
       return !settled
     }))

@@ -75,6 +75,7 @@ export const SUGGESTION_KIND: Record<Suggestion['kind'], Label> = {
   'new-thread': ['新线索', 'New thread'],
   'thread-status': ['线索状态', 'Thread status'],
   'bible-edit': ['修改设定', 'Bible change'],
+  'alias': ['别名', 'Another name'],
 }
 
 export const AMBIENCE: Record<AmbiencePreset, Label> = {

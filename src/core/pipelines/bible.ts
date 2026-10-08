@@ -10,6 +10,7 @@ import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { asArray, asList, asRecord, asText } from '../llm'
 import { assign } from '../crew'
 import { ProjectError } from '../project'
+import { settleWalkOn } from '../walkons'
 import { characterLifeTask, expandCharacterTask, expandWorldTask, styleExtractTask, styleSampleTask, tiesTask, worldTidyTask } from '../prompts'
 import { TIE_ENDS, TIE_KINDS, type Tie, type TieKind } from '../../shared/ties'
 import { groupOf } from '../../shared/world'
@@ -458,6 +459,10 @@ export async function acceptSuggestion(runtime: ProjectRuntime, id: string): Pro
   switch (suggestion.kind) {
     case 'new-character':
       await project.saveCharacter(payload as Partial<CharacterCard> & { name: string })
+      break
+    case 'alias':
+      // A name of the page that is somebody's other name: onto their card, and their lines in the audio scripts with it.
+      await settleWalkOn(project, { name: String(payload.name), action: 'alias', target: String(payload.target) })
       break
     case 'new-world':
       await project.saveWorld(payload as Partial<WorldEntry> & { name: string })

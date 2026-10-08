@@ -20,6 +20,7 @@ import { ProjectError } from '../project'
 import { arcTask, digestSystem, digestTask } from '../prompts'
 import { L, promptLanguage } from '../render'
 import { mapLimit } from '../util/async'
+import { scheduleSift } from './cast'
 
 const FACT_KINDS: FactKind[] = ['state', 'relationship', 'knowledge', 'item', 'world', 'event']
 const ENTITY_KINDS: EntityCandidate['kind'][] = ['character', 'location', 'item', 'faction', 'term']
@@ -144,6 +145,9 @@ export async function digestChapter(core: NovelCore, runtime: ProjectRuntime, re
   await applyMemory(runtime, chapter, memory, lang === 'zh')
   // What the plan leaves empty is filled from what the chapter turned out to be.
   await fillPlans(runtime, [chapter.plan.id]).catch(() => {})
+  // Whoever this chapter names that has no card is on the list of walk-ons by now: once the digests have settled,
+  // the planner looks through that list and says who is worth a card.
+  scheduleSift(core, runtime, task)
   return memory
 }
 
@@ -239,14 +243,10 @@ async function applyMemory(runtime: ProjectRuntime, chapter: LocatedChapter, mem
   const world = await project.world()
   for (const entity of memory.newEntities) {
     if (entity.kind === 'character') {
-      if (characters.some(card => sameName(card.name, entity.name) || card.aliases?.some(alias => sameName(alias, entity.name)) === true)) continue
-      suggestions.push({
-        kind: 'new-character',
-        title: zh ? `新人物：${entity.name}` : `New character: ${entity.name}`,
-        detail: entity.description,
-        chapterId: chapter.plan.id,
-        payload: { name: entity.name, tagline: entity.description, role: 'minor', firstAppearance: chapter.plan.id, lastAppearance: chapter.plan.id },
-      })
+      // A name is not proposed for a card because a chapter met it: a digest names everybody, the doorman as much as
+      // the rival. They are all on the list of walk-ons (read off the digests), and who among them is worth a card is
+      // the planner's to say once it sees them side by side (`siftCast`).
+      continue
     } else {
       if (world.some(entry => sameName(entry.name, entity.name) || entry.aliases?.some(alias => sameName(alias, entity.name)) === true)) continue
       const category = entity.kind === 'location' ? 'location' : entity.kind === 'item' ? 'item' : entity.kind === 'faction' ? 'faction' : 'term'

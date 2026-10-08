@@ -897,7 +897,7 @@ export class StudioController {
       const watched = before === 'running' || (before === undefined && Date.parse(job.startedAt) >= this.since - 2000)
       if (!watched || job.origin !== 'user' || this.followed.has(job.id)) continue
       if (job.status === 'failed') this.report(new Error(job.error ?? 'failed'))
-      else if (job.status === 'done' && (job.kind === 'audio' || job.kind === 'comic' || job.kind === 'batch' || (job.kind === 'review' && job.title === 'recheck issues'))) this.set({ jobEnded: { job, nonce: Date.now() } })
+      else if (job.status === 'done' && (job.kind === 'audio' || job.kind === 'comic' || job.kind === 'batch' || (job.kind === 'review' && job.title === 'recheck issues') || (job.kind === 'bible' && job.title === 'sift cast'))) this.set({ jobEnded: { job, nonce: Date.now() } })
     }
   }
 

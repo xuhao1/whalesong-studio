@@ -647,6 +647,56 @@ ${enShape}
 - Leave a field empty rather than invent.`)
 }
 
+/**
+ * The names the page uses for people who have no card: which of them is worth one. Asked after chapters were digested
+ * — a digest names everybody it meets, the doorman as much as the rival, and a card each would bury the cast.
+ * @param base.names - a line a name: where they are seen and what the digests say of them.
+ * @param base.known - who has a card, for recognizing other names.
+ */
+export function castSiftTask(base: Base & { names: string; known: string; direction?: string }): string {
+  const known = base.known.trim().length > 0 ? base.known : L(base.lang, '（还没有）', '(nobody yet)')
+  const direction = base.direction !== undefined && base.direction.trim().length > 0 ? L(base.lang, `\n【作者的要求】\n${base.direction.trim()}\n`, `\nWHAT THE AUTHOR ASKS\n${base.direction.trim()}\n`) : ''
+  return L(base.lang, `下面是小说《${bare(base.title)}》的正文里出现过、还没有人物卡的一批名字，以及各章的收录对每个人的记载。请逐个说明：这个名字该不该有一张人物卡。
+
+【这一批】
+${base.names}
+
+【已经有人物卡的人】只用来辨认别名
+${known}
+${direction}
+每个名字是下面三种之一：
+- card：值得一张人物卡。这个人在故事里有他自己的戏——有自己的言行和选择，推动了什么，或者和主要人物有说得出的关系；读者再遇到他时，得认得他是谁。
+- alias：其实是"已经有人物卡的人"里某一位、或者这一批里另一个名字的别的称呼。
+- walkon：龙套。场面上的人——门子、小厮、路人、被人提起一句的人。他留在龙套名单里，不建卡。
+
+只露过一面、书里还看不出后面有戏的人，是 walkon：他再出场时会再来问你。
+
+只输出 JSON：
+{"people": [{"name": "名单上的写法，原样照抄", "is": "card|alias|walkon", "why": "一句话，写给作者看：他做了什么、凭什么这么定", "role": "is=card 时：supporting 重要配角 | minor 次要人物 | cameo 露面的角色", "tagline": "is=card 时：一句话——是谁、和谁有关", "same_as": "is=alias 时：是谁（那个人的名字）"}]}
+
+- 名单上的每个名字都要有一项，一个也不要漏；不要添加名单之外的人。
+- 没有依据的字段留空，不要编造。`, `Below are names the text of the novel "${bare(base.title)}" uses for people who have no character card yet, with what the chapter digests say of each. Say of every one whether the name should have a card.
+
+THIS BATCH
+${base.names}
+
+WHO HAS A CARD ALREADY — for recognizing other names only
+${known}
+${direction}
+Every name is one of three:
+- card: worth a character card. This person has a part of their own in the story — things they say, do and choose, something they set going, or a tie to a leading character that can be named; a reader who meets them again has to know who they are.
+- alias: another name of somebody who has a card already, or of another name in this batch.
+- walkon: a walk-on. Somebody of the scene — a doorman, a servant, a passer-by, a person mentioned once. They stay in the list of walk-ons and get no card.
+
+Somebody seen once, of whom the book does not yet show more to come, is a walkon: when they turn up again you are asked again.
+
+Output JSON only:
+{"people": [{"name": "the name as listed, copied exactly", "is": "card|alias|walkon", "why": "one line, for the author: what they do, and why this", "role": "for is=card: supporting | minor | cameo", "tagline": "for is=card: one line — who they are, and to whom", "same_as": "for is=alias: who (that person's name)"}]}
+
+- One item for every name listed, none left out; nobody who is not listed.
+- Leave a field empty where nothing supports it; invent nothing.`)
+}
+
 /** The names on a cast list that stand for one person: asked once the cards are made, when every name can be seen beside every other. */
 export function castAliasTask(base: Base & { cast: string }): string {
   return L(base.lang, `下面是小说《${bare(base.title)}》人物表里所有人的名字——括号里是已经知道的别名，破折号后是一句话简介。其中有些其实是同一个人的不同称呼（比如"凤姐"和"王熙凤"、"史大姑娘"和"史湘云"）。请把它们找出来。

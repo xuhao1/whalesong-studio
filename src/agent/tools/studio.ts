@@ -9,6 +9,7 @@ import { audition, clearAudioScript, isSkipped, removeAudioLine, updateAudioLine
 import { soundSetup } from '../../core/media/sound'
 import { addCue, updateCue } from '../../core/pipelines/sound'
 import { listWalkOns, settleWalkOn } from '../../core/walkons'
+import { siftCast } from '../../core/pipelines/cast'
 import { artDirectionOf } from '../../core/pipelines/illustrate'
 import { clearComicBoard, removeComicPanel, updateComicPanel } from '../../core/pipelines/comic'
 import { rewindPlay, setPlayOutcome } from '../../core/pipelines/play'
@@ -336,7 +337,8 @@ export function studioTools(service: NovelService) {
         '- action=resolve_issue: mark review `issue` of `chapter` as dealt with (or reopen it with resolved=false). action=delete_review: throw the whole review of `chapter` away.',
         '- action=edit_line: change line `id` of the audio script of `chapter` — `fields` {text, kind: narration|dialogue|thought, speaker (character id, "" for the narrator), direction, voiced (false leaves the line unspoken, true has a speech tag spoken after all)}.',
         '- action=edit_cue / add_cue / delete_cue: the sound cues of the audio script of `chapter` — `id` is the cue (edit, delete), `fields` {kind: bed|effect|music, at (line id), caption (what the reader sees), prompt (what the sound model is asked for), ambience (the browser\'s stand-in bed), intensity 0-1}. A changed cue keeps its old clip until sound is made again (novel_audio action=sound cues=[id]).',
-        '- action=walkons: the people the page names who have no character card — where each turns up, the voice the audio drama gave them, and whether they look like an existing character under another name.',
+        '- action=walkons: the people the page names who have no character card — where each turns up, the voice the audio drama gave them, whether they look like an existing character under another name, and what the planner said of them when it last looked through the list.',
+        '- action=sift_walkons: have the planner look through those names and say of each whether it is worth a card (then it waits among the suggestions, with the reason), another name of somebody (a suggestion to fold it in), or a walk-on (left on the list, with why). A digest proposes nobody for a card by itself; this pass runs by itself after chapters were digested, on the names not looked at yet. `fields` {all: true — look at every name again, also those already judged or proposed; direction — what the author asks of the pass}. Nothing is made or folded by it: the author accepts.',
         '- action=settle_walkon: settle one of them by `name` — `fields` {as: "card" (give them a card; role: minor|cameo), "alias" (they are character `of` under another name), "ignore" (not worth tracking), "restore"}. A new card keeps the voice they already had, and their lines in the audio scripts go to it.',
         '- action=delete_line: take line `id` out of the audio script of `chapter` (sound cues that began at it move to the next line; a storyboard panel that showed only it goes too). action=delete_script: throw the whole audio script of `chapter` away — the takes already spoken stay on disk and are reused if the same lines come back.',
         '- action=edit_panel: change panel `id` of the storyboard of `chapter` — `fields` {prompt, description, camera}. action=delete_panel: take panel `id` out (its lines go to the panel before it). action=delete_storyboard: throw the whole storyboard of `chapter` away — its pictures stay in the gallery (delete_image removes one).',
@@ -348,7 +350,7 @@ export function studioTools(service: NovelService) {
       ].join('\n'),
       mutating: args => args.action !== 'find' && args.action !== 'list_images' && args.action !== 'show_image' && args.action !== 'walkons',
       parameters: {
-        action: { type: 'string', required: true, enum: ['find', 'restore_version', 'resolve_issue', 'delete_review', 'edit_line', 'delete_line', 'delete_script', 'edit_cue', 'add_cue', 'delete_cue', 'edit_panel', 'delete_panel', 'delete_storyboard', 'walkons', 'settle_walkon', 'audition', 'list_images', 'show_image', 'delete_image', 'rewind_interlude', 'keep_interlude', 'delete_interlude', 'lock_book', 'delete_book'] },
+        action: { type: 'string', required: true, enum: ['find', 'restore_version', 'resolve_issue', 'delete_review', 'edit_line', 'delete_line', 'delete_script', 'edit_cue', 'add_cue', 'delete_cue', 'edit_panel', 'delete_panel', 'delete_storyboard', 'walkons', 'sift_walkons', 'settle_walkon', 'audition', 'list_images', 'show_image', 'delete_image', 'rewind_interlude', 'keep_interlude', 'delete_interlude', 'lock_book', 'delete_book'] },
         chapter: { type: 'string' },
         id: { type: 'string', description: 'Line, cue, panel or image id (show_image also takes the picture\'s path).' },
         name: { type: 'string', description: 'settle_walkon: the name as the page writes it.' },
@@ -477,9 +479,24 @@ export function studioTools(service: NovelService) {
             const cards = await project.characters()
             const lines = shown.slice(0, 60).map((item) => {
               const near = item.near !== undefined ? cards.find(card => card.id === item.near)?.name : undefined
-              return `- ${item.name}: ${item.chapters.length} chapter(s)${item.lines > 0 ? `, ${item.lines} spoken lines` : ''}${item.voice !== undefined ? `, voice "${brief(item.voice, 40)}"` : ''}${near !== undefined ? ` — may be ${near} under another name` : ''}${item.suggestion !== undefined ? ' — a card was suggested by the digest' : ''}${item.note !== undefined ? ` — ${brief(item.note, 80)}` : ''}`
+              return `- ${item.name}: ${item.chapters.length} chapter(s)${item.lines > 0 ? `, ${item.lines} spoken lines` : ''}${item.voice !== undefined ? `, voice "${brief(item.voice, 40)}"` : ''}${near !== undefined ? ` — may be ${near} under another name` : ''}${item.suggestion !== undefined ? ' — a card is suggested' : ''}${item.verdict !== undefined ? ` — the planner: ${item.verdict.is === 'walkon' ? 'a walk-on' : item.verdict.is === 'alias' ? `another name of ${item.verdict.same ?? 'somebody'}` : 'worth a card'}${item.verdict.why !== undefined ? ` (${brief(item.verdict.why, 80)})` : ''}` : ' — not looked at by the planner yet'}${item.note !== undefined ? ` — ${brief(item.note, 80)}` : ''}`
             })
             return { text: `${shown.length} people on the page have no card${shown.length > lines.length ? ` (the ${lines.length} most present are listed)` : ''}:\n${lines.join('\n')}\nNot every passer-by needs one: give a card to those the story will come back to, fold other names of an existing character into their aliases (action=settle_walkon), and leave the rest.`, data: toJson(shown) }
+          }
+          case 'sift_walkons': {
+            const runtime = await env.project()
+            const done = await env.job('bible', 'sift cast', undefined, async task => await siftCast(env.core, runtime, { ...(fields.all === true ? { all: true } : {}), ...(text('direction') !== undefined ? { direction: text('direction')! } : {}) }, task))
+            if (done.looked === 0 && done.failed.length === 0) return { text: 'No name without a card is new since the planner last looked (fields.all=true looks at every one again).' }
+            return {
+              text: [
+                `The planner looked at ${done.looked} name(s) without a card.`,
+                done.cards.length > 0 ? `Worth a card (${done.cards.length}; each waits among the suggestions with the reason — tell the author, they accept): ${done.cards.join(', ')}.` : 'None of them is worth a card yet.',
+                done.aliases.length > 0 ? `Another name of somebody (${done.aliases.length}; each waits as a suggestion to fold it in): ${done.aliases.map(item => `${item.name} → ${item.of}`).join(', ')}.` : '',
+                `${done.walkOns} left as walk-ons — they stay on the list (action=walkons) with what the planner said of each, and are looked at again when they turn up in more chapters.`,
+                done.failed.length > 0 ? `Not done: ${done.failed.map(item => `${item.step} (${item.error})`).join('; ')}.` : '',
+              ].filter(line => line.length > 0).join('\n'),
+              data: toJson(done),
+            }
           }
           case 'settle_walkon': {
             const how = text('as') ?? 'card'

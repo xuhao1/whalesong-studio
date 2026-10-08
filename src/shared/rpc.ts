@@ -431,6 +431,8 @@ export interface NovelRpc {
   /** People on the page without a card. */
   'cast.walkons': { params: { root: string; ignored?: boolean }; result: { walkons: WalkOn[] } }
   /** Give a walk-on a card, fold them into a character as an alias, or take them off the list. */
+  /** Have the planner look through the names without a card and say who is worth one. `all`: every name again, also those already looked at or proposed. */
+  'cast.sift': { params: { root: string; all?: boolean; direction?: string }; result: JobStarted }
   'cast.settle': { params: { root: string; name: string; action: 'card' | 'alias' | 'ignore' | 'restore'; target?: string; role?: CharacterRole }; result: { walkons: WalkOn[]; card?: CharacterCard; lines: number } }
   'suggestion.accept': { params: { root: string; id: string }; result: { ok: boolean } }
   'suggestion.dismiss': { params: { root: string; id: string }; result: { ok: boolean } }

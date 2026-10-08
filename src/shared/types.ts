@@ -641,10 +641,15 @@ export function analysisSteps(schema: number | undefined): AnalyzeStep[] {
 
 export interface Suggestion {
   id: string
-  /** `bible-edit`: a field of a character card or a world entry should read otherwise — found while a problem was being traced through the book. */
-  kind: 'new-character' | 'new-world' | 'new-thread' | 'thread-status' | 'bible-edit'
+  /**
+   * `bible-edit`: a field of a character card or a world entry should read otherwise — found while a problem was being traced through the book.
+   * `alias`: a name the page uses is another name of somebody who has a card (`payload.name`, `payload.target`: the card's id).
+   */
+  kind: 'new-character' | 'new-world' | 'new-thread' | 'thread-status' | 'bible-edit' | 'alias'
   title: string
   detail: string
+  /** Put here by the planner after it looked through the names without a card: `detail` is its reason. */
+  sifted?: true
   /** Chapter that triggered it. */
   chapterId?: string
   /** Payload applied on accept. */
@@ -1044,6 +1049,8 @@ export interface NovelSettings {
   autoDigest: boolean
   /** After a proposal is accepted, have the reviewer look again at the issues still open in what changed. Unset: yes. */
   recheckIssues?: boolean
+  /** After chapters are digested, have the planner look through the names that have no card yet and say who is worth one. Unset: yes. */
+  siftCast?: boolean
   /** Manuscript revisions requested by the agent wait for review instead of applying directly. */
   reviewAgentRevisions: boolean
   /**
@@ -1732,6 +1739,23 @@ export interface WalkOn {
   near?: string
   /** The author took them off the list. */
   ignored?: boolean
+  /** What the planner made of them when it last looked through the names without a card. */
+  verdict?: WalkOnVerdict
+}
+
+/**
+ * What the planner said of a name the page uses for somebody without a card: worth a card (then a suggestion says
+ * so), another name of somebody (`same`), or a walk-on — left where they are, in the list of walk-ons, with why.
+ */
+export interface WalkOnVerdict {
+  is: 'card' | 'alias' | 'walkon'
+  /** The planner's reason, in a line. */
+  why?: string
+  /** `alias`: whose other name it is, as the planner named them. */
+  same?: string
+  at: Timestamp
+  /** In how many chapters they were seen when this was said: seen in more since, they are looked at again. */
+  seen: number
 }
 
 /**

@@ -5543,6 +5543,20 @@ button.nv-stat:hover {
   font-size: 12.5px;
 }
 
+/* What the planner said of a name when it looked through the list. */
+.nv-walkon-verdict {
+  color: var(--nv-text-3);
+  font-size: 12px;
+}
+
+/* The line above the suggestions that says what became of the names without a card. */
+.nv-sift {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .nv-walkon-chips {
   display: flex;
   flex-wrap: wrap;

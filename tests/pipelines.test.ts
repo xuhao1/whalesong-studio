@@ -8,6 +8,8 @@ import { acceptSuggestion } from '../src/core/pipelines/bible'
 import { digestChapter, digestPending } from '../src/core/pipelines/digest'
 import { exportBook, zipStore } from '../src/core/pipelines/export'
 import { decodeText, importManuscript, splitChapters } from '../src/core/pipelines/import'
+import { siftCast, siftDue } from '../src/core/pipelines/cast'
+import { listWalkOns } from '../src/core/walkons'
 import { deriveChapters } from '../src/core/pipelines/plot'
 import { fixIssue, fixIssues, acceptProposal, reviseSpan } from '../src/core/pipelines/revise'
 import { listReviews, noteIssue, recheckIssues } from '../src/core/pipelines/review'
@@ -201,10 +203,24 @@ describe('pipelines', () => {
     expect(card).toMatchObject({ firstAppearance: plan.id, lastAppearance: plan.id })
     const outline = await project.outline()
     expect(outline.threads[0]).toMatchObject({ title: '断剑的来历', auto: true, planted: [plan.id] })
+    // A new place is proposed; a new name is not — a digest names everybody a chapter meets. He is on the list of
+    // walk-ons, where the planner has yet to look at him.
+    expect((await project.suggestions()).map(item => item.kind)).toEqual(['new-world'])
+    expect((await listWalkOns(project)).map(item => [item.name, item.chapters.length, item.verdict])).toEqual([['顾七', 1, undefined]])
+    expect((await siftDue(bed.runtime)).map(item => item.name)).toEqual(['顾七'])
+    // The planner looks through the names and finds him worth a card: that waits as a suggestion, with its reason.
+    bed.llm.responder = () => JSON.stringify({ people: [{ name: '顾七', is: 'card', why: '在门外窥视断剑的人，后面必有戏。', role: 'supporting', tagline: '窥视旧居的黑衣人' }] })
+    const sifted = await siftCast(bed.core, bed.runtime, {}, { origin: 'user' })
+    expect(sifted).toMatchObject({ looked: 1, cards: ['顾七'], aliases: [], walkOns: 0 })
+    const asked = bed.llm.requests.at(-1)!.prompt
+    for (const part of ['还没有人物卡的一批名字', '- 顾七（出现在 1 章：第 1 章）：在门外窥视的黑衣人', '【已经有人物卡的人】', '沈璃', '只露过一面']) expect(asked, part).toContain(part)
     const suggestions = await project.suggestions()
     expect(suggestions.map(item => item.kind).sort()).toEqual(['new-character', 'new-world'])
+    expect(suggestions.find(item => item.kind === 'new-character')).toMatchObject({ title: '新人物：顾七', detail: '在门外窥视断剑的人，后面必有戏。', sifted: true, payload: { name: '顾七', role: 'supporting', tagline: '窥视旧居的黑衣人', firstAppearance: plan.id } })
+    // Looked at, he is not asked about again until he is seen in more chapters.
+    expect(await siftDue(bed.runtime)).toEqual([])
     await acceptSuggestion(bed.runtime, suggestions.find(item => item.kind === 'new-character')!.id)
-    expect((await project.findCharacter('顾七'))?.role).toBe('minor')
+    expect((await project.findCharacter('顾七'))?.role).toBe('supporting')
     expect((await project.chapterInfos())[0]!.digested).toBe(true)
     // Unchanged text is not digested twice.
     const calls = bed.llm.requests.length

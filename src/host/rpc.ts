@@ -37,6 +37,7 @@ import { clearReview, listReviews, noteIssue, recheckIssues, resolveIssue, revie
 import { fixIssue, fixIssues, acceptProposal, rejectProposal, reviseBook, reviseChapter, reviseSpan } from '../core/pipelines/revise'
 import { writeChapter } from '../core/pipelines/write'
 import { ProjectError } from '../core/project'
+import { siftCast } from '../core/pipelines/cast'
 import { listWalkOns, settleWalkOn } from '../core/walkons'
 import { checkPassword, readStub, VaultError } from '../core/util/vault'
 import type { DeepPartial } from '../core/settings'
@@ -419,6 +420,10 @@ export function createHandlers(service: NovelService): Handlers {
       return job(runtime, 'bible', 'style sample', undefined, async task => ({ text: await styleSample(core, runtime, { ...(style !== undefined ? { style } : {}), ...(draft !== undefined ? { draft } : {}), ...(scene !== undefined ? { scene } : {}) }, task) }))
     },
     'cast.walkons': async ({ root, ignored }) => ({ walkons: await listWalkOns((await open(root)).project, { ignored: ignored === true }) }),
+    'cast.sift': async ({ root, all, direction }) => {
+      const runtime = await open(root)
+      return job(runtime, 'bible', 'sift cast', undefined, async task => await siftCast(core, runtime, { ...(all === true ? { all: true } : {}), ...(typeof direction === 'string' && direction.trim().length > 0 ? { direction: direction.trim() } : {}) }, task))
+    },
     'cast.settle': async ({ root, name, action, target, role }) => {
       const { project } = await open(root)
       const settled = await settleWalkOn(project, { name: requireString(name, 'name'), action, ...(target !== undefined ? { target } : {}), ...(role !== undefined ? { role } : {}) })

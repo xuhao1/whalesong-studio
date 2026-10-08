@@ -105,11 +105,40 @@ function Suggestions() {
       }
     }
   })
+  // New people are not proposed chapter by chapter: the planner looks through the names without a card and says who
+  // is worth one. The rest are walk-ons — on their own list, with what the planner said of each. (A Host from before
+  // answers with an error: then this line is not shown.)
+  const names = useLoad(async signal => await controller.api.call('cast.walkons', { root }, signal).catch(() => undefined), [root, project.revision])
+  const sifting = useRunningJob(job => job.kind === 'bible' && job.title === 'sift cast') !== undefined
+  const walkOns = names.data?.walkons ?? []
+  const left = walkOns.filter(item => item.verdict?.is === 'walkon').length
+  const due = walkOns.filter(item => item.verdict === undefined || item.chapters.length > item.verdict.seen)
+  // Proposed chapter by chapter by an older version, and never looked at by the planner.
+  const unsifted = project.suggestions.filter(item => item.kind === 'new-character' && item.sifted !== true).length
+  const sift = (again: boolean): Promise<unknown> => controller.guard(async () => {
+    await controller.api.call('cast.sift', { root, ...(again ? { all: true } : {}) })
+    await controller.refreshJobs()
+  })
+  const people = names.data === undefined || (unsifted === 0 && due.length === 0 && left === 0) ? null : (
+    <div className="nv-note nv-sift">
+      <span>
+        {unsifted > 0 ? t(`${unsifted} 条"新人物"是以前逐章提的，没筛过。`, `${unsifted} "new character" suggestion(s) were made chapter by chapter and never looked through. `) : ''}
+        {due.length > 0 ? t(`${due.length} 个没立卡的名字策划还没看过。`, `${due.length} name(s) without a card have not been looked at. `) : ''}
+        {left > 0 ? t(`${left} 个名字被策划留作龙套。`, `${left} name(s) were left as walk-ons by the planner.`) : ''}
+      </span>
+      <span className="nv-spacer" />
+      {left > 0 || due.length > 0 ? <button type="button" className="nv-link nv-small" onClick={() => { controller.setCastTab('walkons'); controller.setView('cast') }}>{t('去龙套名单看', 'See the walk-ons')}</button> : null}
+      {unsifted > 0 || due.length > 0 ? <Button size="sm" icon="sparkles" busy={sifting} pending={t('策划在筛…', 'The planner is looking…')} onClick={() => sift(unsifted > 0)} title={t('策划逐个看：值得立卡的留在这里并写明理由，是别名的改成并入建议，其余回到龙套名单', 'The planner looks at each: worth a card stays here with the reason, another name becomes a suggestion to fold it in, the rest go back to the walk-ons')}>{t('让策划筛一遍', 'Have the planner look')}</Button> : null}
+    </div>
+  )
+  // What the planner put here after looking through the book comes first: it is what was asked for, and it has reasons.
+  const ordered = [...project.suggestions].sort((left, right) => Number(right.sifted === true) - Number(left.sifted === true))
   if (project.suggestions.length === 0) {
-    return <Empty icon="sparkles" title={t('没有待处理的设定建议', 'No bible suggestions waiting')}>{t('收录章节时发现的新人物、地点和线索会列在这里。', 'New people, places and threads found while digesting are listed here.')}</Empty>
+    return <>{people}<Empty icon="sparkles" title={t('没有待处理的设定建议', 'No bible suggestions waiting')}>{t('策划筛出的新人物、收录时发现的地点和线索会列在这里。', 'New people the planner finds worth a card, and places and threads found while digesting, are listed here.')}</Empty></>
   }
   return (
     <div className="nv-suggestions">
+      {people}
       <div className="nv-toolbar">
         <span className="nv-muted">{t('正文里有、设定里还没有的。采纳会写入设定或大纲。', 'In the text and not yet in the bible. Accepting writes it to the bible or the outline.')}</span>
         <span className="nv-spacer" />
@@ -117,7 +146,7 @@ function Suggestions() {
         <Button size="sm" variant="primary" icon="check" busy={busy} onClick={() => { settleAll(true) }}>{t('全部采纳', 'Accept all')}</Button>
       </div>
       <ul className="nv-suggestion-list">
-        {project.suggestions.map((suggestion) => {
+        {ordered.map((suggestion) => {
           const chapter = suggestion.chapterId !== undefined ? index.get(suggestion.chapterId) : undefined
           return (
             <li key={suggestion.id} className="nv-suggestion nv-card">
@@ -125,6 +154,7 @@ function Suggestions() {
                 <div className="nv-row-wrap">
                   <Chip tone={suggestion.kind.startsWith('new-') ? 'blue' : 'amber'}>{t(...SUGGESTION_KIND[suggestion.kind])}</Chip>
                   <strong>{suggestion.title}</strong>
+                  {suggestion.sifted === true ? <Chip tone="violet" title={t('策划看过全书里这个名字之后提的；下面是它的理由', 'Proposed by the planner after it looked at this name across the book; its reason is below')}>{t('策划筛出', 'planner')}</Chip> : null}
                   {chapter !== undefined ? <button type="button" className="nv-link nv-small" onClick={() => { controller.setView('read', chapter.id) }}>{t(`第 ${chapter.index} 章`, `Ch. ${chapter.index}`)}</button> : null}
                 </div>
                 <p>{suggestion.detail}</p>

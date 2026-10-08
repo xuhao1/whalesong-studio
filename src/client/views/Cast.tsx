@@ -12,7 +12,7 @@ import type { ChapterInfo, ChapterPlan, CharacterCard, WalkOn } from '../../shar
 import { Icon } from '../icons'
 import type { CastTab } from '../store'
 import {
-  Button, Chip, cx, Empty, Menu, SectionTitle, Select, Spinner, Tabs, useKept, useLoad, useProject, useQuote, useSnapshot, useStudio, useT, useMediaUrl,
+  Button, Chip, cx, Empty, Menu, SectionTitle, Select, Spinner, Tabs, useKept, useLoad, useProject, useQuote, useRunningJob, useSnapshot, useStudio, useT, useMediaUrl,
 } from '../ui'
 import { byWeight, CastFilterBar, MAIN_ROLES, matchesCast, sortCast, useCastFilter } from '../CharacterPicker'
 import { CardPhoto, CharacterCards, LIFE_MARK, ROLE_LABELS, type Lives } from './Characters'
@@ -571,6 +571,7 @@ function WalkOns({ cards }: { cards: CharacterCard[] }) {
   const { project, root } = useProject()
   const loaded = useLoad(signal => controller.api.call('cast.walkons', { root, ignored: true }, signal), [root, project.revision])
   const [showIgnored, setShowIgnored] = useState(false)
+  const sifting = useRunningJob(job => job.kind === 'bible' && job.title === 'sift cast') !== undefined
   const index = useMemo(() => new Map(project.chapters.map(chapter => [chapter.id, chapter.index])), [project.chapters])
   const light = cards.filter(card => card.role === 'minor' || card.role === 'cameo')
   if (loaded.data === undefined) {
@@ -579,6 +580,12 @@ function WalkOns({ cards }: { cards: CharacterCard[] }) {
   const all = loaded.data.walkons
   const listed = all.filter(item => item.ignored !== true)
   const ignored = all.filter(item => item.ignored === true)
+  // Whom the planner has yet to say something of: never looked at, or seen in more chapters since.
+  const due = listed.filter(item => item.verdict === undefined || item.chapters.length > item.verdict.seen)
+  const sift = (again: boolean): Promise<unknown> => controller.guard(async () => {
+    await controller.api.call('cast.sift', { root, ...(again ? { all: true } : {}) })
+    await controller.refreshJobs()
+  })
   const settle = (item: WalkOn, action: 'card' | 'alias' | 'ignore' | 'restore', extra: { target?: string; role?: 'minor' | 'cameo' } = {}): Promise<unknown> => controller.guard(async () => {
     const result = await controller.api.call('cast.settle', { root, name: item.name, action, ...extra })
     loaded.set({ walkons: result.walkons })
@@ -601,9 +608,16 @@ function WalkOns({ cards }: { cards: CharacterCard[] }) {
             {item.lines > 0 ? t(` · 有声脚本里 ${item.lines} 句台词`, ` · ${item.lines} lines in audio scripts`) : ''}
           </span>
           {item.note !== undefined ? <span className="nv-walkon-note">{item.note}</span> : null}
+          {item.verdict !== undefined ? (
+            <span className="nv-walkon-verdict">
+              {item.verdict.is === 'card' ? t('策划：值得立卡', 'Planner: worth a card') : item.verdict.is === 'alias' ? t(`策划：是「${item.verdict.same ?? '？'}」的另一个称呼`, `Planner: another name of ${item.verdict.same ?? '?'}`) : t('策划：龙套', 'Planner: a walk-on')}
+              {item.verdict.why !== undefined ? `${t('——', ' — ')}${item.verdict.why}` : ''}
+              {item.chapters.length > item.verdict.seen ? t('（之后又出场了，还没重看）', ' (seen again since; not looked at again yet)') : ''}
+            </span>
+          ) : null}
           <span className="nv-row-wrap">
             {item.voice !== undefined ? <Chip tone="violet" title={t('有声剧里给这个名字定下的声音；立卡后跟着卡走', 'The voice the audio drama gave this name; it follows the card once there is one')}>{t('声音：', 'voice: ')}{item.voice.length > 18 ? `${item.voice.slice(0, 18)}…` : item.voice}</Chip> : null}
-            {item.suggestion !== undefined ? <Chip tone="blue" title={t('收录记忆时，场记建议为他立卡', 'When memory was digested, continuity suggested a card for them')}>{t('场记的建议立卡', 'card suggested')}</Chip> : null}
+            {item.suggestion !== undefined ? <Chip tone="blue" onClick={() => { controller.setView('review') }} title={t('在"审校 → 设定建议"里等你采纳', 'Waits under Review → Suggestions')}>{t('已建议立卡', 'card suggested')}</Chip> : null}
             {near !== undefined ? <Chip tone="amber" onClick={() => { void settle(item, 'alias', { target: near.id }) }} title={t('点一下，把这个名字并入他的别名', 'Click to fold this name into their aliases')}>{t(`是「${near.name}」的另一个叫法？`, `Another name for ${near.name}?`)}</Chip> : null}
           </span>
         </div>
@@ -627,8 +641,11 @@ function WalkOns({ cards }: { cards: CharacterCard[] }) {
   return (
     <div className="nv-walkons">
       <section className="nv-card">
-        <SectionTitle actions={quote !== undefined && listed.length > 0 ? (
-          <Button size="sm" icon="quote" onClick={() => { quote(t(`这些名字在正文里出现了但还没有人物卡：${listed.slice(0, 20).map(item => item.name).join('、')}。请判断哪些值得立卡、哪些其实是已有人物的别名、哪些不用管，并替我处理。\n`, `These names are on the page without a character card: ${listed.slice(0, 20).map(item => item.name).join(', ')}. Decide which deserve a card, which are aliases of existing characters and which can be left alone, and settle them for me.\n`)) }}>{t('交给总编', 'Hand to the showrunner')}</Button>
+        <SectionTitle actions={listed.length > 0 ? (
+          <>
+            <Button size="sm" icon="sparkles" busy={sifting} pending={t('策划在筛…', 'The planner is looking…')} onClick={() => sift(due.length === 0)} title={due.length > 0 ? t('策划逐个看：值得立卡的进"设定建议"，是别名的建议并入，其余留在这里', 'The planner looks at each: worth a card goes to the suggestions, another name is proposed to be folded in, the rest stay here') : t('都看过了；再点是全部重看一遍', 'All looked at; this looks at every one again')}>{due.length > 0 ? t(`让策划筛一遍（${due.length}）`, `Have the planner look (${due.length})`) : t('全部重筛', 'Look at all again')}</Button>
+            {quote !== undefined ? <Button size="sm" icon="quote" onClick={() => { quote(t(`这些名字在正文里出现了但还没有人物卡：${listed.slice(0, 20).map(item => item.name).join('、')}。请判断哪些值得立卡、哪些其实是已有人物的别名、哪些不用管，并替我处理。\n`, `These names are on the page without a character card: ${listed.slice(0, 20).map(item => item.name).join(', ')}. Decide which deserve a card, which are aliases of existing characters and which can be left alone, and settle them for me.\n`)) }}>{t('交给总编', 'Hand to the showrunner')}</Button> : null}
+          </>
         ) : undefined}>{t(`正文里有名字、还没立卡的人（${listed.length}）`, `Named on the page, no card yet (${listed.length})`)}</SectionTitle>
         <p className="nv-muted nv-small">{t('值得跟踪的立卡，是别名的并进去，其余不用管。', 'Give a card to those worth following, fold aliases in, leave the rest.')}</p>
         {listed.length === 0 ? <Empty icon="users" title={t('没有漏掉的人', 'Nobody is missing a card')}>{t('写了新章节并收录记忆之后，新冒出来的名字会出现在这里。', 'New names show up here after new chapters are digested.')}</Empty> : <ul className="nv-walkon-list">{listed.map(row)}</ul>}

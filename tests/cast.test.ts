@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { isThinCard, mergeCast } from '../src/core/pipelines/cast'
+import { isThinCard, mergeCast, scheduleSift, siftCast, siftDue } from '../src/core/pipelines/cast'
+import { acceptSuggestion } from '../src/core/pipelines/bible'
+import { listWalkOns, settleWalkOn } from '../src/core/walkons'
 import { analyzeBook } from '../src/core/pipelines/import'
 import { hashText } from '../src/shared/text'
 import type { ChapterMemory } from '../src/shared/types'
@@ -214,5 +216,103 @@ describe('the cast of a book', () => {
     // A book written here, never imported: making its cast is making its cast.
     await analyzeBook(bed.core, bed.runtime, { steps: ['cast'] }, { origin: 'user' })
     expect((await project.state()).analysis).toBeUndefined()
+  })
+})
+
+describe('who is worth a card', () => {
+  let bed: TestBed
+  beforeEach(async () => { bed = await createTestBed() })
+  afterEach(async () => { await bed.cleanup() })
+
+  it('has the planner say who of the names without a card is worth one, and leaves the rest walk-ons', async () => {
+    const { project } = bed.runtime
+    await project.saveCharacter({ name: '王熙凤', role: 'deuteragonist', personality: '机关算尽' })
+    const ids: string[] = []
+    for (let n = 1; n <= 3; n++) ids.push((await project.addChapter({ title: `第${n}回` })).id)
+    const memory = (chapterId: string, names: [string, string][]) => ({ schema: 1 as const, chapterId, textHash: 'x', updatedAt: '', brief: '', summary: '', facts: [], threads: [], newEntities: [], characters: names.map(([name, role]) => ({ character: name, name, role })) })
+    await project.saveMemory(memory(ids[0]!, [['刘姥姥', '进荣国府打抽丰'], ['门子', '通报一声'], ['凤丫头', '被贾母这样叫']]))
+    await project.saveMemory(memory(ids[1]!, [['刘姥姥', '带着板儿见了凤姐'], ['周瑞家的', '引路'], ['板儿', '躲在姥姥身后']]))
+    // Proposed chapter by chapter by an older version: the backlog.
+    await project.addSuggestions([{ kind: 'new-character', title: '新人物：门子', detail: '通报的', payload: { name: '门子', role: 'minor' } }])
+    expect((await siftDue(bed.runtime)).map(item => item.name)).toEqual(['刘姥姥', '凤丫头', '周瑞家的', '板儿', '门子'])
+
+    bed.llm.responder = () => JSON.stringify({ people: [
+      { name: '刘姥姥', is: 'card', why: '两回都有她自己的戏：进府、见凤姐。', role: 'supporting', tagline: '乡下来打抽丰的老妇' },
+      { name: '板儿', is: 'alias', why: '书里没有这个人。', same_as: '查无此人' },
+      { name: '凤丫头', is: 'alias', why: '贾母对王熙凤的称呼。', same_as: '王熙凤' },
+      { name: '周瑞家的', is: 'walkon', why: '只引了一次路。' },
+      { name: '门子', is: 'walkon', why: '通报一声就没有了。' },
+      { name: '名单之外的人', is: 'card', why: '不该有' },
+    ] })
+    const done = await siftCast(bed.core, bed.runtime, {}, { origin: 'user' })
+    expect(done).toMatchObject({ looked: 5, cards: ['刘姥姥'], aliases: [{ name: '凤丫头', of: '王熙凤' }], walkOns: 3, failed: [] })
+    // What it was handed: every name with where it is seen and what the digests say, and who has a card.
+    const asked = bed.llm.requests.at(-1)!.prompt
+    for (const part of ['- 刘姥姥（出现在 2 章：第 1、2 章）：', '- 门子（出现在 1 章：第 1 章）', '【已经有人物卡的人】只用来辨认别名\n王熙凤', '龙套。场面上的人']) expect(asked, part).toContain(part)
+    // Worth a card: a suggestion with the reason. Another name of somebody: a suggestion to fold it in. A walk-on: no
+    // suggestion — the one an older version made for the doorman is gone — and what the planner said is kept with the name.
+    const suggestions = await project.suggestions()
+    expect(suggestions.map(item => [item.kind, item.title, item.sifted]).sort()).toEqual([['alias', '别名：「凤丫头」就是王熙凤？', true], ['new-character', '新人物：刘姥姥', true]])
+    const list = await listWalkOns(project)
+    expect(Object.fromEntries(list.map(item => [item.name, [item.verdict?.is, item.verdict?.why, item.verdict?.seen]]))).toEqual({
+      刘姥姥: ['card', '两回都有她自己的戏：进府、见凤姐。', 2],
+      凤丫头: ['alias', '贾母对王熙凤的称呼。', 1],
+      周瑞家的: ['walkon', '只引了一次路。', 1],
+      板儿: ['walkon', '书里没有这个人。 （策划认为是「查无此人」的另一个称呼，但书里没有这个人的卡）', 1],
+      门子: ['walkon', '通报一声就没有了。', 1],
+    })
+    // The doorman is on the list still, although the suggestion that was his only trace is gone.
+    await project.saveMemory(memory(ids[0]!, [['刘姥姥', '进荣国府打抽丰'], ['凤丫头', '被贾母这样叫']]))
+    expect((await listWalkOns(project)).find(item => item.name === '门子')).toMatchObject({ chapters: [], verdict: { is: 'walkon', why: '通报一声就没有了。' } })
+    await project.saveMemory(memory(ids[0]!, [['刘姥姥', '进荣国府打抽丰'], ['门子', '通报一声'], ['凤丫头', '被贾母这样叫']]))
+    // Nothing was made or folded: the cast is the author's. Accepting the other name folds it in.
+    expect((await project.characters()).map(card => card.name)).toEqual(['王熙凤'])
+    await acceptSuggestion(bed.runtime, suggestions.find(item => item.kind === 'alias')!.id)
+    expect((await project.findCharacter('王熙凤'))!.aliases).toEqual(['凤丫头'])
+    // Nobody is asked about twice — until they are seen in more chapters: a walk-on who comes back is looked at again.
+    const calls = bed.llm.requests.length
+    expect(await siftCast(bed.core, bed.runtime, {}, { origin: 'user' })).toMatchObject({ looked: 0 })
+    expect(bed.llm.requests.length).toBe(calls)
+    await project.saveMemory(memory(ids[2]!, [['周瑞家的', '替凤姐传话，又去送宫花']]))
+    expect((await siftDue(bed.runtime)).map(item => item.name)).toEqual(['周瑞家的'])
+    bed.llm.responder = () => JSON.stringify({ people: [{ name: '周瑞家的', is: 'card', why: '两回都在凤姐跟前办事。', role: 'minor' }] })
+    expect(await siftCast(bed.core, bed.runtime, {}, { origin: 'user' })).toMatchObject({ looked: 1, cards: ['周瑞家的'] })
+    expect(bed.llm.requests.at(-1)!.prompt).toContain('- 周瑞家的（出现在 2 章：第 2、3 章）')
+    expect(bed.llm.requests.at(-1)!.prompt).not.toContain('- 门子（')
+    // The whole list again, on the author's word — with what they ask of it.
+    bed.llm.responder = () => JSON.stringify({ people: [{ name: '门子', is: 'card', why: '作者要他。', role: 'cameo' }] })
+    const again = await siftCast(bed.core, bed.runtime, { all: true, direction: '门子后面要用' }, { origin: 'user' })
+    expect(bed.llm.requests.at(-1)!.prompt).toContain('【作者的要求】\n门子后面要用')
+    expect(again.cards).toEqual(['门子'])
+    // What the author took off the list is not asked about.
+    await settleWalkOn(project, { name: '板儿', action: 'ignore' })
+    expect((await siftDue(bed.runtime, true)).map(item => item.name)).not.toContain('板儿')
+    expect((await listWalkOns(project, { ignored: true })).find(item => item.name === '板儿')?.verdict?.is).toBe('walkon')
+  })
+
+  it('looks through the new names by itself once digests have settled, where the author lets it', async () => {
+    const { project } = bed.runtime
+    const chapter = await project.addChapter({ title: '第一回' })
+    await project.saveMemory({ schema: 1, chapterId: chapter.id, textHash: 'x', updatedAt: '', brief: '', summary: '', facts: [], threads: [], newEntities: [], characters: [{ character: '门子', name: '门子', role: '通报' }] })
+    bed.llm.responder = () => JSON.stringify({ people: [{ name: '门子', is: 'walkon', why: '通报一声。' }] })
+    const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+    // Switched off (as every other test has it): nothing is asked.
+    scheduleSift(bed.core, bed.runtime, { origin: 'user' }, 5)
+    await wait(60)
+    expect(bed.llm.requests).toHaveLength(0)
+    await bed.core.settings.update({ siftCast: true })
+    for (let n = 0; n < 40 && bed.core.currentSettings().siftCast !== true; n++) await wait(10)
+    // Asked twice in a row, it is one look.
+    scheduleSift(bed.core, bed.runtime, { origin: 'user' }, 5)
+    scheduleSift(bed.core, bed.runtime, { origin: 'user' }, 5)
+    for (let n = 0; n < 40 && (await listWalkOns(project))[0]?.verdict === undefined; n++) await wait(25)
+    expect(bed.llm.requests).toHaveLength(1)
+    expect((await listWalkOns(project))[0]!.verdict).toMatchObject({ is: 'walkon', why: '通报一声。' })
+    expect(bed.core.jobs.list(project.root).filter(job => job.title === 'sift cast')).toHaveLength(1)
+    // Nobody new: nothing is asked, and no job is started.
+    scheduleSift(bed.core, bed.runtime, { origin: 'user' }, 5)
+    await wait(60)
+    expect(bed.llm.requests).toHaveLength(1)
+    expect(bed.core.jobs.list(project.root).filter(job => job.title === 'sift cast')).toHaveLength(1)
   })
 })

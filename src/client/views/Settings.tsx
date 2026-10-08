@@ -233,6 +233,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
       crew: sectionPatch(view.settings.crew ?? {}, draft.crew ?? {}),
       textConcurrency: draft.textConcurrency ?? null,
       autoDigest: draft.autoDigest,
+      siftCast: draft.siftCast !== false,
       reviewAgentRevisions: draft.reviewAgentRevisions,
       agentFiles: draft.agentFiles ?? 'guide',
     }, Object.fromEntries(Object.values(typed).map(entry => [entry.url, entry.value.trim()])))
@@ -529,6 +530,10 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
         <label className="nv-check">
           <input type="checkbox" checked={draft.autoDigest} onChange={(event) => { update({ autoDigest: event.target.checked }) }} />
           <span>{t('写完或改完一章后自动收录', 'Digest a chapter once it is written or changed')}</span>
+        </label>
+        <label className="nv-check">
+          <input type="checkbox" checked={draft.siftCast !== false} onChange={(event) => { update({ siftCast: event.target.checked }) }} />
+          <span>{t('收录之后，让策划筛一遍没立卡的新名字', 'After digests, have the planner look through the new names without a card')}</span>
         </label>
         <label className="nv-check">
           <input type="checkbox" checked={draft.reviewAgentRevisions} onChange={(event) => { update({ reviewAgentRevisions: event.target.checked }) }} />
