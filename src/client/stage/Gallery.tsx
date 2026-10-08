@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { mergeAvoid, resolveArtStyle, splitAvoid, type ArtSource } from '../../shared/art'
 import type { IllustrationInfo, SheetsAsk } from '../../shared/types'
+import { PICTURE_KIND as KIND, PictureViewer } from '../PictureRecord'
 import {
   Button, Chip, Empty, Field, Modal, ProjectImage, Select, Spinner, TextArea, TextInput, useAction, useConfirm, useLoad, useProject, useSnapshot, useStudio, useT,
 } from '../ui'
@@ -10,18 +11,6 @@ import { ArtBatchDialog, batchOf } from '../Batch'
 import { sheetsDrawn } from '../labels'
 import { useSheetsAsk, type SheetsChoice } from '../SheetsAsk'
 import { NeedsSetup } from '../views/Settings'
-
-const KIND: Record<IllustrationInfo['kind'], [string, string]> = {
-  portrait: ['立绘', 'Portrait'],
-  sheet: ['人设图', 'Design sheet'],
-  scene: ['场景插图', 'Scene'],
-  location: ['场景设定图', 'Place art'],
-  item: ['物品设定图', 'Object art'],
-  cover: ['封面', 'Cover'],
-  panel: ['分镜', 'Panel'],
-  background: ['幕间背景', 'Background'],
-  sprite: ['表情差分', 'Sprite'],
-}
 
 type CreateKind = 'cover' | 'sheet' | 'portrait' | 'location' | 'custom'
 
@@ -118,68 +107,34 @@ export function Gallery() {
       )}
 
       {open !== undefined ? (
-        <Modal wide title={`${t(...KIND[open.kind])}${nameOf(open) !== undefined ? ` · ${nameOf(open)}` : ''}`} onClose={() => { setOpen(undefined) }} footer={(
-          <>
-            <a className="nv-link" href={controller.api.media(project.manifest.id, open.path, { download: true })}>{t('下载', 'Download')}</a>
-            <span className="nv-muted nv-small">{open.path}</span>
-            <span className="nv-spacer" />
-            {project.cover === open.path
-              ? <Chip tone="green">{t('这是封面', 'This is the cover')}</Chip>
-              : <Button icon="book" pending={t('正在设为封面…', 'Setting the cover…')} onClick={() => controller.guard(async () => { await controller.api.call('project.update', { root, patch: { cover: open.path } }); await controller.refreshProject(); controller.toast('success', t('已设为这本书的封面', 'This is the book\'s cover now')) })}>{t('设为封面', 'Make it the cover')}</Button>}
-            <Button variant="ghost" icon="trash" onClick={() => {
-              confirm.ask(t('删除这张图片？它是谁的立绘、人设图、设定图或"这时的样子"，会一并从那里取下；正文里插着它的地方不会自动移除。', 'Delete this picture? Where it is somebody\'s portrait or design sheet, a place\'s art or the picture of a turn of its course, it is taken off there too; where the text shows it, the text is not changed.'), () => {
-                void run(async () => {
-                  const done = await controller.api.call('image.delete', { root, id: open.id })
-                  setOpen(undefined)
-                  images.reload()
-                  const released = done.released ?? []
-                  if (released.length > 0) {
-                    await controller.refreshProject()
-                    controller.toast('info', t(`已删除。它原来是 ${released.join('、')} 的图，已从那里取下。`, `Deleted. It was the picture of ${released.join(', ')}: taken off there.`))
-                  }
+        <PictureViewer
+          path={open.path}
+          title={`${t(...KIND[open.kind])}${nameOf(open) !== undefined ? ` · ${nameOf(open)}` : ''}`}
+          onClose={() => { setOpen(undefined) }}
+          footer={() => (
+            <>
+              <a className="nv-link" href={controller.api.media(project.manifest.id, open.path, { download: true })}>{t('下载', 'Download')}</a>
+              <span className="nv-spacer" />
+              {project.cover === open.path
+                ? <Chip tone="green">{t('这是封面', 'This is the cover')}</Chip>
+                : <Button icon="book" pending={t('正在设为封面…', 'Setting the cover…')} onClick={() => controller.guard(async () => { await controller.api.call('project.update', { root, patch: { cover: open.path } }); await controller.refreshProject(); controller.toast('success', t('已设为这本书的封面', 'This is the book\'s cover now')) })}>{t('设为封面', 'Make it the cover')}</Button>}
+              <Button variant="ghost" icon="trash" onClick={() => {
+                confirm.ask(t('删除这张图片？它是谁的立绘、人设图、设定图或"这时的样子"，会一并从那里取下；正文里插着它的地方不会自动移除。', 'Delete this picture? Where it is somebody\'s portrait or design sheet, a place\'s art or the picture of a turn of its course, it is taken off there too; where the text shows it, the text is not changed.'), () => {
+                  void run(async () => {
+                    const done = await controller.api.call('image.delete', { root, id: open.id })
+                    setOpen(undefined)
+                    images.reload()
+                    const released = done.released ?? []
+                    if (released.length > 0) {
+                      await controller.refreshProject()
+                      controller.toast('info', t(`已删除。它原来是 ${released.join('、')} 的图，已从那里取下。`, `Deleted. It was the picture of ${released.join(', ')}: taken off there.`))
+                    }
+                  })
                 })
-              })
-            }}>{t('删除', 'Delete')}</Button>
-          </>
-        )}>
-          <ProjectImage className="nv-gallery-full" path={open.path} alt={open.prompt} />
-          {open.parts !== undefined ? (
-            <dl className="nv-parts">
-              <dt>{t('画面内容', 'Subject')}</dt>
-              <dd>{open.parts.subject}</dd>
-              {open.parts.style !== undefined ? (
-                <>
-                  <dt>{t('画风', 'Art direction')}{open.parts.styleSource !== undefined ? <Chip tone={open.parts.styleSource === 'book' ? 'green' : 'amber'}>{t(...SOURCE[open.parts.styleSource])}</Chip> : null}</dt>
-                  <dd>{open.parts.style}</dd>
-                </>
-              ) : null}
-              {open.parts.avoid !== undefined && open.parts.avoid.length > 0 ? (
-                <>
-                  <dt>{t('不要出现', 'Kept out')}</dt>
-                  <dd>{open.parts.avoid.join(t('、', ', '))}</dd>
-                </>
-              ) : null}
-              {open.parts.references !== undefined && open.parts.references.length > 0 ? (
-                <>
-                  <dt>{t('参考图', 'Reference images')}</dt>
-                  <dd className="nv-parts-refs">
-                    {open.parts.references.map(reference => (
-                      <figure key={reference.path}>
-                        <ProjectImage path={reference.path} alt={reference.label} />
-                        <figcaption>{reference.label}</figcaption>
-                      </figure>
-                    ))}
-                  </dd>
-                </>
-              ) : null}
-            </dl>
-          ) : null}
-          <details className="nv-parts-raw">
-            <summary>{t('发给绘图模型的完整提示词', 'The full prompt as sent to the image model')}</summary>
-            <p className="nv-muted nv-small">{open.prompt}</p>
-          </details>
-          <p className="nv-muted nv-small">{open.model} · {new Date(open.createdAt).toLocaleString()}</p>
-        </Modal>
+              }}>{t('删除', 'Delete')}</Button>
+            </>
+          )}
+        />
       ) : null}
 
       {creating ? (

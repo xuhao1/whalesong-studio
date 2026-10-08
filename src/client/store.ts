@@ -109,7 +109,7 @@ export interface StudioSnapshot {
    */
   lock?: { root: string; view?: LockView; /** Whether opening it was to move the conversation onto it as well. */ bind?: boolean }
   /** A card a link asked the bible to open: the cast board, a tool row, a name in a script. */
-  entity?: { kind: 'character' | 'world'; id: string; nonce: number }
+  entity?: { kind: 'character' | 'world' | 'art'; id: string; nonce: number }
   /** Tab of the cast view a link asked for. */
   castTab?: CastTab
   /** A place in the manuscript a view was asked to show (a search hit, a review quote). */
@@ -762,6 +762,13 @@ export class StudioController {
   openWorld(id: string): void {
     this.navigated = true
     this.set({ view: 'bible', entity: { kind: 'world', id, nonce: Date.now() } })
+  }
+
+  /** Open the look of the book's pictures: the art direction, a page of its bible. */
+  openArt(): void {
+    this.navigated = true
+    this.kept.set('bible.tab', 'art')
+    this.set({ view: 'bible', entity: { kind: 'art', id: '', nonce: Date.now() } })
   }
 
   /** Look at one thing in the viewer: somebody's page, or the page of a place, a house, a thing — from where the world is walked on. */

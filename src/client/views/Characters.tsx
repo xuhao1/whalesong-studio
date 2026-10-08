@@ -14,6 +14,7 @@ import type { CharacterCard, CharacterLook, CharacterRole, LifeMark, SortedNotes
 import { lifeEnd, lifeLine, type Life, type LifeEvent, type LifeStanding } from '../../shared/life'
 import { lines, options, useAssist } from '../forms'
 import { sheetsDrawn } from '../labels'
+import { PictureViewer, usePictures } from '../PictureRecord'
 import { useSheetsAsk, type SheetsChoice } from '../SheetsAsk'
 import { TiesBlock } from '../Ties'
 import { Icon } from '../icons'
@@ -468,6 +469,12 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
   const picture = pictures.find(item => item.key === picked) ?? pictures[0]
   const sheetBusy = drawing?.title === 'illustrate sheet'
   const portraitBusy = drawing?.title === 'illustrate portrait'
+  // What is on record of how each picture was made: shown with the picture when it is opened large — and read here
+  // for one thing, a portrait that was not drawn against the sheet in use (the sheet was drawn, or drawn again, after it).
+  const records = usePictures()
+  const portraitOf = draft.visual?.portrait !== undefined ? records.byPath.get(draft.visual.portrait) : undefined
+  const portraitBehind = portraitOf !== undefined && draft.visual?.sheet !== undefined && !(portraitOf.parts?.references ?? []).some(reference => reference.path === draft.visual!.sheet)
+  const anchorField = `nv-anchor-${card.id}`
 
   return (
     <div className={cx('nv-person-page', pictures.length === 0 && 'is-bare')}>
@@ -494,8 +501,9 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
         ) : null}
         <div className="nv-person-draw">
           <Button size="sm" variant={draft.visual?.portrait === undefined ? 'primary' : 'outline'} icon="image" disabled={dirty || (drawing !== undefined && !portraitBusy)} busy={portraitBusy} pending={t('正在画立绘…', 'Drawing the portrait…')} onClick={() => draw('portrait', t('立绘已生成', 'Portrait ready'))} title={dirty ? t('先保存当前修改', 'Save your edits first') : draft.visual?.sheet === undefined ? t('半身定妆照：列表、群像和这一页用的那张脸。还没有人设图，会先画人设图、再照着它画立绘', 'A half-length portrait: the face the lists and this page use. There is no design sheet yet: it is drawn first, and the portrait against it') : t('半身定妆照：列表、群像和这一页用的那张脸（照着人设图画）', 'A half-length portrait: the face the lists and this page use (drawn against the design sheet)')}>{draft.visual?.portrait !== undefined ? t('重画立绘', 'Redraw portrait') : t('画立绘', 'Draw portrait')}</Button>
-          <Button size="sm" variant="outline" icon="users" disabled={dirty || (drawing !== undefined && !sheetBusy)} busy={sheetBusy} pending={t('正在画人设图（约一两分钟）…', 'Drawing the sheet (a minute or two)…')} onClick={() => draw('sheet', t('人设图已生成', 'Design sheet ready'))} title={dirty ? t('先保存当前修改', 'Save your edits first') : t('正面、侧面、背面三视图：之后每张有此人的图都以它为参考，长相才一致', 'Front, side and back: every later picture of them is drawn with it as reference, which is what keeps the face the same')}>{draft.visual?.sheet !== undefined ? t('重画人设图', 'Redraw sheet') : t('生成人设图', 'Design sheet')}</Button>
+          <Button size="sm" variant="outline" icon="users" disabled={dirty || (drawing !== undefined && !sheetBusy)} busy={sheetBusy} pending={t('正在画人设图（约一两分钟）…', 'Drawing the sheet (a minute or two)…')} onClick={() => draw('sheet', t('人设图已生成', 'Design sheet ready'))} title={dirty ? t('先保存当前修改', 'Save your edits first') : draft.visual?.sheet !== undefined ? t('重画只照文字——下面"形象"里的视觉锚点、这本书的画风、你在下面写的想法——不看现在这张，也不看别的旧图。想让它变样，先改视觉锚点（或把想法写在下面）', 'Drawn again from the words alone — the visual anchor under "Looks" below, the book\'s art direction, the ideas you jot down below — not against this one or any other older picture. To change the look, change the anchor first (or jot the idea down below)') : t('正面、侧面、背面三视图：之后每张有此人的图都以它为参考，长相才一致。它自己只照文字画（视觉锚点和画风）', 'Front, side and back: every later picture of them is drawn with it as reference, which is what keeps the face the same. The sheet itself is drawn from the words alone (the visual anchor and the art direction)')}>{draft.visual?.sheet !== undefined ? t('重画人设图', 'Redraw sheet') : t('生成人设图', 'Design sheet')}</Button>
         </div>
+        {portraitBehind ? <p className="nv-muted nv-small">{t('立绘不是照现在这张人设图画的（人设图是在它之后画的，或者重画过）。想让两张是同一个人，重画立绘。', 'The portrait was not drawn against the sheet in use now (the sheet was drawn, or drawn again, after it). For the two to show the same person, redraw the portrait.')}</p> : null}
         {draft.visual?.sheet === undefined ? <p className="nv-muted nv-small">{t('人设图是之后所有图里这个人长相一致的依据：画立绘、插图、分镜画面之前，没有的会先画它（先问你一句）。', 'The design sheet is what keeps this face the same in every later picture: before a portrait, an illustration or a panel is drawn, one that is missing is drawn first (you are asked).')}</p> : null}
         <div className="nv-person-notes">
           <TextArea value={notes} minRows={2} maxRows={8} placeholder={t('随手写想法（可不填），混着写就行：\n左眉有道疤，常年穿灰布袍；这张要雪夜，回头看', 'Jot down ideas (optional), mixed as they come:\na scar through the left brow, always in a grey robe; this one on a snowy night, looking back')} onChange={(event) => { setNotes(event.target.value) }} />
@@ -595,7 +603,7 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
       <SectionTitle actions={<Button size="sm" icon="wand" disabled={dirty} busy={anchoring} pending={t('正在提炼…', 'Distilling…')} title={t('让场记把外貌改写成绘图模型画得稳的短语', 'Have continuity rewrite the appearance as phrases an image model draws consistently')} onClick={() => controller.guard(async () => { await controller.run('character.visual', { root, id: card.id }); controller.toast('success', t('视觉锚点已更新', 'Visual anchor updated')) })}>{t('提炼视觉锚点', 'Distill anchor')}</Button>}>{t('形象', 'Looks')}</SectionTitle>
       <Field label={t('外貌', 'Appearance')} hint={t('写给读者和写手看的', 'Written for readers and for the writer')}><TextArea {...text('appearance')} /></Field>
       <Field label={t('视觉锚点', 'Visual anchor')} hint={t('写给绘图模型看的：具体、看得见、可复用的短语（英文最稳），如发型的实际形状、衣料与颜色、随身标志物。每张有此人的图都会原样带上。不要写机构名、头衔这类词——模型会按现实里最常见的样子去画。', 'Written for the image model: concrete, visible, reusable phrases (English is steadiest) — the actual shape of the hair, fabric and colour, signature items. Restated as is in every picture of them. No names of institutions or titles: a model draws the commonest real-world version.')}>
-        <TextArea value={draft.visual?.prompt ?? ''} placeholder={t('留空时，生成人设图或立绘前会自动从"外貌"提炼', 'Left empty, it is distilled from "Appearance" before a sheet or portrait is drawn')} onChange={(event) => { set('visual', { ...draft.visual, prompt: event.target.value }) }} />
+        <TextArea id={anchorField} value={draft.visual?.prompt ?? ''} placeholder={t('留空时，生成人设图或立绘前会自动从"外貌"提炼', 'Left empty, it is distilled from "Appearance" before a sheet or portrait is drawn')} onChange={(event) => { set('visual', { ...draft.visual, prompt: event.target.value }) }} />
       </Field>
       <Field label={t('这个人物身上不要画出', 'Never drawn on them')} hint={t('逗号分隔；会并入每张有此人的图的"不要出现"', 'Comma-separated; joins the avoid list of every picture that shows them')}>
         <TextInput value={draft.visual?.negative ?? ''} placeholder={t('如：cross emblem, shoulder straps', 'e.g. cross emblem, shoulder straps')} onChange={(event) => { set('visual', { ...draft.visual, negative: event.target.value }) }} />
@@ -629,10 +637,21 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
       <TextArea {...text('notes')} minRows={3} maxRows={20} />
       </div>
       {viewing && picture !== undefined ? (
-        <Modal wide title={`${draft.name} · ${picture.label}`} onClose={() => { setViewing(false) }}>
-          <ProjectImage className="nv-person-large" path={picture.path} alt={`${draft.name} · ${picture.label}`} />
-          {picture.key !== 'portrait' ? <p className="nv-muted nv-small">{t('人设图（正面、侧面、背面）。之后每一张有此人的图，都会把它当参考图一起交给绘图模型。', 'Design sheet (front, side, back). Every later picture of them is drawn with it as a reference.')}</p> : null}
-        </Modal>
+        <PictureViewer
+          path={picture.path}
+          title={`${draft.name} · ${picture.label}`}
+          note={picture.key !== 'portrait' ? t('人设图（正面、侧面、背面）。之后每一张有此人的图，都会把它当参考图一起交给绘图模型。', 'Design sheet (front, side, back). Every later picture of them is drawn with it as a reference.') : undefined}
+          onClose={() => { setViewing(false) }}
+          onEditLook={(of) => {
+            // Their own anchor is on this page, under "Looks": the form scrolls to it.
+            if (of.kind === 'character' && of.id === card.id) {
+              const field = document.getElementById(anchorField)
+              field?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+              field?.focus({ preventScroll: true })
+            } else if (of.kind === 'character') controller.openCharacter(of.id)
+            else controller.openWorld(of.id)
+          }}
+        />
       ) : null}
       {confirm.element}
       {sheets.element}

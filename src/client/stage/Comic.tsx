@@ -58,6 +58,9 @@ export function ComicStage({ chapter }: { chapter: ChapterInfo | undefined }) {
     setDensity(saved?.density ?? 'balanced')
     setCeiling(saved?.maxPanels !== undefined ? String(saved.maxPanels) : '')
   }, [saved?.density, saved?.maxPanels])
+  // Asked for before the returns below, as every hook must be: a hook reached only once the chapter's script and
+  // storyboard have arrived is one more than the render before had, and React takes the whole Studio down for it.
+  const sheets = useSheetsAsk()
 
   if (chapter === undefined) return <Empty icon="film" title={t('还没有可以演出的章节', 'No chapter to perform yet')}>{t('先写出至少一章正文。', 'Write at least one chapter first.')}</Empty>
   if (board.data === undefined || audio.data === undefined) return <div className="nv-center">{board.error ?? audio.error ?? <Spinner />}</div>
@@ -75,7 +78,6 @@ export function ComicStage({ chapter }: { chapter: ChapterInfo | undefined }) {
   const voicedAll = lines.length > 0 && lines.filter(item => item.skip !== true).every(item => item.audio !== undefined)
   // Something of this chapter's motion comic is still to make.
   const unfinished = lines.length === 0 || panels.length === 0 || board.data.stale || drawn < panels.length || !voicedAll
-  const sheets = useSheetsAsk()
   /** Everything this chapter's motion comic needs, in one go: script, voices, sound, storyboard, pictures. */
   const makeAll = (): Promise<unknown> => run(async () => {
     player.stop()

@@ -10127,3 +10127,203 @@ button.nv-album-chapter:hover {
     grid-column: 1 / -1;
   }
 }
+
+/* ───────────── how a picture came to be ─────────────
+   A picture opened large, with all there is on record of its making beside it: the parts of its prompt in the order
+   they were sent, the pictures that went along, the words as the image service got them. */
+
+.nv-modal-picture {
+  width: min(1180px, 100%);
+}
+
+.nv-picture {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+  gap: 18px;
+  align-items: start;
+}
+
+/* The picture stays in sight while its record is read. */
+.nv-picture-stage {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.nv-picture-large {
+  display: block;
+  max-width: 100%;
+  max-height: calc(100cqh - 190px);
+  margin: 0 auto;
+  border-radius: var(--nv-radius-s);
+  object-fit: contain;
+}
+
+.nv-picture-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  align-self: flex-start;
+}
+
+.nv-picture-facts {
+  min-width: 0;
+}
+
+.nv-picture-record {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  font-size: 13px;
+}
+
+.nv-picture-record h4 {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
+  margin: 0 0 4px;
+  color: var(--nv-text-2);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.nv-picture-record h4 > .nv-muted {
+  font-weight: 400;
+}
+
+.nv-picture-record h4 > .nv-btn {
+  margin-left: auto;
+}
+
+.nv-picture-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.nv-picture-made {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  margin: -8px 0 0;
+  color: var(--nv-text-2);
+}
+
+.nv-picture-now {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.nv-picture-now li,
+.nv-picture-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  line-height: 1.5;
+}
+
+.nv-picture-now li > svg,
+.nv-picture-warn > svg {
+  flex: none;
+  margin-top: 3px;
+}
+
+.nv-picture-now li.is-ok > svg {
+  color: var(--nv-success);
+}
+
+.nv-picture-now li.is-warn > svg,
+.nv-picture-warn {
+  color: var(--nv-warn);
+}
+
+.nv-picture-now li.is-info > svg {
+  color: var(--nv-text-3);
+}
+
+.nv-picture-record .nv-parts {
+  margin: 0;
+}
+
+.nv-picture-record .nv-parts dt {
+  flex-direction: column;
+  gap: 3px;
+  max-width: 124px;
+  white-space: normal;
+}
+
+/* A reference picture: large enough to see what it handed on, and a way to its own record. */
+.nv-parts-refs .nv-parts-ref {
+  width: 168px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.nv-parts-refs button.nv-parts-ref {
+  cursor: pointer;
+}
+
+.nv-parts-refs .nv-parts-ref img {
+  width: 168px;
+  height: 112px;
+  object-position: top;
+}
+
+.nv-parts-refs button.nv-parts-ref:hover img {
+  border-color: var(--nv-brand);
+}
+
+.nv-parts-refs .nv-parts-ref figcaption {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.nv-picture-sent {
+  max-height: 280px;
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  border: 1px solid var(--nv-border);
+  border-radius: var(--nv-radius-s);
+  background: var(--nv-surface);
+  color: var(--nv-text);
+  font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.nv-picture-file {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+@container studio (max-width: 900px) {
+  .nv-picture {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .nv-picture-stage {
+    position: static;
+  }
+
+  .nv-picture-large {
+    max-height: 46cqh;
+  }
+}

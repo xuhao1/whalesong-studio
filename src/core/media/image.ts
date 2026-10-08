@@ -11,7 +11,7 @@
  */
 import { providerDefault } from '../../shared/recommended'
 import { compatibleBase, originOf } from '../../shared/services'
-import type { CodexBridgeKind, ImageProviderKind, ImageSettings } from '../../shared/types'
+import type { CodexBridgeKind, IllustrationSent, ImageProviderKind, ImageSettings } from '../../shared/types'
 import { download, postJson, ProviderError, requireKey, trimBase, type KeySource } from './http'
 
 /** A picture sent along with a prompt so the model keeps what it shows: a character's portrait, usually. */
@@ -37,6 +37,8 @@ export interface ImageResult {
   mime: string
   /** How many of the reference images actually went to the model. */
   referencesUsed?: number
+  /** What went to the model, word for word: the picture's record keeps it, so that what shaped a picture can be read afterwards. */
+  sent?: IllustrationSent
 }
 
 /** The most reference images a request is sent with, whatever was asked: no image model the Studio talks to takes more. How many a picture gets is the author's setting (`image.references`). */
@@ -151,23 +153,25 @@ class DashScopeImages implements ImageProvider {
   async generate(request: ImageRequest): Promise<ImageResult> {
     const origin = originOf(this.settings.baseURL) ?? 'https://dashscope.aliyuncs.com'
     const apiKey = await requireKey(this.keys, { ref: this.settings.apiKeyRef, endpoint: origin }, 'Image generation')
-    const negative = request.negativePrompt ?? this.settings.negativePrompt
+    const negative = (request.negativePrompt ?? this.settings.negativePrompt)?.slice(0, 500)
     const references = (request.references ?? []).slice(0, MAX_REFERENCES)
+    const prompt = request.prompt.slice(0, 2000)
+    const size = (request.size ?? this.settings.size ?? '1024x1024').replace(/[xX×]/, '*')
     const reply = await postJson<DashScopeImageReply>(`${origin}/api/v1/services/aigc/multimodal-generation/generation`, {
       model: this.model,
       // Reference pictures come first, the way the API reads "these, then what to do with them".
-      input: { messages: [{ role: 'user', content: [...references.map(reference => ({ image: dataUrl(reference) })), { text: request.prompt.slice(0, 2000) }] }] },
+      input: { messages: [{ role: 'user', content: [...references.map(reference => ({ image: dataUrl(reference) })), { text: prompt }] }] },
       parameters: {
-        size: (request.size ?? this.settings.size ?? '1024x1024').replace(/[xX×]/, '*'),
+        size,
         prompt_extend: false,
         watermark: false,
-        ...(negative !== undefined && negative.length > 0 ? { negative_prompt: negative.slice(0, 500) } : {}),
+        ...(negative !== undefined && negative.length > 0 ? { negative_prompt: negative } : {}),
       },
     }, { apiKey, ...signalOption(request.signal), timeoutMs: 300_000 })
     const url = reply.output?.choices?.[0]?.message?.content?.find(part => typeof part.image === 'string')?.image
     if (url === undefined) throw new ProviderError(`image generation returned no image${reply.message !== undefined ? `: ${reply.message}` : ''}`)
     const file = await download(url, signalOption(request.signal))
-    return { data: file.data, mime: file.mime.startsWith('image/') ? file.mime : 'image/png', referencesUsed: references.length }
+    return { data: file.data, mime: file.mime.startsWith('image/') ? file.mime : 'image/png', referencesUsed: references.length, sent: { prompt, ...(negative !== undefined && negative.length > 0 ? { negative } : {}), size } }
   }
 }
 
@@ -213,7 +217,7 @@ class OpenAiImages implements ImageProvider {
       const text = await response.text()
       if (!response.ok) throw new ProviderError(`${new URL(base).host} answered ${response.status}: ${text.slice(0, 300)}`, response.status)
       const reply = JSON.parse(text) as ImagesReply
-      return { ...await fromReply(reply.data?.[0], request.signal), referencesUsed: references.length }
+      return { ...await fromReply(reply.data?.[0], request.signal), referencesUsed: references.length, sent: { prompt, size } }
     }
     const reply = await postJson<ImagesReply>(`${base}/images/generations`, {
       model: this.model,
@@ -222,7 +226,7 @@ class OpenAiImages implements ImageProvider {
       n: 1,
       ...(quality !== undefined ? { quality } : {}),
     }, { apiKey, ...signalOption(request.signal), timeoutMs: 300_000 })
-    return { ...await fromReply(reply.data?.[0], request.signal), referencesUsed: 0 }
+    return { ...await fromReply(reply.data?.[0], request.signal), referencesUsed: 0, sent: { prompt, size } }
   }
 }
 
@@ -242,17 +246,20 @@ class OpenRouterImages implements ImageProvider {
     const wanted = request.size ?? this.settings.size ?? '1024x1024'
     // Models differ in the pixel sizes they take; a ratio and a tier are understood by all of them.
     const references = (request.references ?? []).slice(0, MAX_REFERENCES)
+    const prompt = withAvoid(request.prompt, request.negativePrompt ?? this.settings.negativePrompt, 8000)
+    const aspect = nearestAspect(wanted)
+    const resolution = resolutionTier(wanted)
     const reply = await postJson<ImagesReply>(`${base}/images`, {
       model: this.model,
-      prompt: withAvoid(request.prompt, request.negativePrompt ?? this.settings.negativePrompt, 8000),
-      aspect_ratio: nearestAspect(wanted),
-      resolution: resolutionTier(wanted),
+      prompt,
+      aspect_ratio: aspect,
+      resolution,
       output_format: 'png',
       n: 1,
       ...(this.settings.quality !== undefined && this.settings.quality.length > 0 ? { quality: this.settings.quality } : {}),
       ...(references.length > 0 ? { input_references: references.map(reference => ({ type: 'image_url', image_url: { url: dataUrl(reference) } })) } : {}),
     }, { apiKey, headers: { 'x-title': 'Novel Studio' }, ...signalOption(request.signal), timeoutMs: 300_000 })
-    return { ...await fromReply(reply.data?.[0], request.signal), referencesUsed: references.length }
+    return { ...await fromReply(reply.data?.[0], request.signal), referencesUsed: references.length, sent: { prompt, size: `${aspect} · ${resolution}` } }
   }
 }
 
@@ -273,7 +280,9 @@ class CodexImages implements ImageProvider {
     const framing = aspect === '1:1' ? 'Square 1:1 composition.' : aspect === '16:9' || aspect === '3:2' ? `Landscape ${aspect} composition.` : `Portrait ${aspect} composition.`
     const prompt = `${withAvoid(request.prompt, request.negativePrompt ?? this.settings.negativePrompt, 7000)}\n\n${framing}`
     const references = (request.references ?? []).slice(0, MAX_REFERENCES)
-    return await this.bridge(prompt, { bridge: this.settings.bridge ?? 'auto', ...(references.length > 0 ? { references } : {}), ...signalOption(request.signal) })
+    const drawn = await this.bridge(prompt, { bridge: this.settings.bridge ?? 'auto', ...(references.length > 0 ? { references } : {}), ...signalOption(request.signal) })
+    // A bridge that wraps the prompt in words of its own says so; otherwise what it was handed is what went.
+    return { ...drawn, sent: drawn.sent ?? { prompt } }
   }
 }
 

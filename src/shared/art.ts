@@ -28,6 +28,19 @@ export function resolveArtStyle(manifest: { artStyle?: string | undefined; langu
   return { text: builtinArtStyle(manifest.language), source: 'default' }
 }
 
+/** One part of a prompt without the punctuation it ended on, which would otherwise sit against the next part. */
+export const tidyPart = (text: string): string => text.trim().replace(/[，,；;、。.\s]+$/u, '')
+
+/**
+ * How somebody looks, in the words every picture of them restates: their visual
+ * anchor — written for an image model — or, lacking one, the prose of the card.
+ */
+export function lookWords(card: { visual?: { prompt?: string | undefined } | undefined; appearance?: string | undefined; gender?: string | undefined; age?: string | undefined }): string {
+  const anchor = card.visual?.prompt
+  const base = anchor !== undefined && anchor.length > 0 ? [anchor] : [card.appearance, card.gender, card.age]
+  return base.filter((value): value is string => value !== undefined && value.length > 0).join('，')
+}
+
 /** Split a free-form "keep these out" line into items: commas, semicolons, enumeration commas and line breaks all separate. */
 export function splitAvoid(text: string | readonly string[] | undefined): string[] {
   if (text === undefined) return []

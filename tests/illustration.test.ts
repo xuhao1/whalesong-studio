@@ -3,6 +3,7 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { pictureRecord } from '../src/agent/tools/studio'
 import { sheetsAhead } from '../src/core/pipelines/comic'
 import { artDirectionOf, deriveArtDirection, deriveLook, deriveVisual, illustrate, looksOf } from '../src/core/pipelines/illustrate'
 import { reconcileLooks, upsertLooks } from '../src/core/project'
@@ -198,13 +199,122 @@ describe('design sheets and looks', () => {
     const main = await illustrate(bed.core, bed.runtime, { kind: 'sheet', target: card.id }, task)
     await expect(illustrate(bed.core, bed.runtime, { kind: 'sheet', target: card.id, look: '丧服' }, task)).rejects.toThrow(/no look called/)
     const mourning = await illustrate(bed.core, bed.runtime, { kind: 'sheet', target: card.id, look: '丧服', prompt: 'plain black mourning robe, hair unbound' }, task)
-    // The look is drawn against the main sheet, so it is the same person in other clothes.
+    // The look is drawn against the main sheet, so it is the same person in other clothes — and the prompt says what the
+    // reference is for: the face from the picture, the clothes from the words. Never "whatever it shows must match".
     expect(images.calls.at(-1)!.references).toHaveLength(1)
-    expect(mourning.parts?.references).toEqual([{ path: main.path, label: '沈砚' }])
+    expect(mourning.parts?.references).toEqual([{ path: main.path, label: '沈砚的主造型' }])
     expect(mourning.parts?.subject).toContain('plain black mourning robe')
+    expect(mourning.parts?.referenceNote).toContain('脸、发色、体型照参考图画')
+    expect(mourning.parts?.referenceNote).toContain('一律照文字画')
+    expect(mourning.prompt).not.toContain('必须与各自的参考图一致')
     const saved = (await bed.runtime.project.findCharacter(card.id))!
     expect(saved.visual?.sheet).toBe(main.path)
     expect(saved.visual?.looks).toEqual([{ id: '丧服', name: '丧服', prompt: 'plain black mourning robe, hair unbound', sheet: mourning.path }])
+    // Drawn again, the look is held against the main sheet still — not against its own sheet of before.
+    const again = await illustrate(bed.core, bed.runtime, { kind: 'sheet', target: card.id, look: '丧服' }, task)
+    expect(again.parts?.references).toEqual([{ path: main.path, label: '沈砚的主造型' }])
+  })
+
+  it('draws the main sheet from the words alone, every time: drawn again, it takes no older picture of the person along', async () => {
+    const { bed, images } = await studio()
+    const { project } = bed.runtime
+    const card = await project.saveCharacter({ name: '宝玉', appearance: '面若中秋之月', visual: { prompt: 'boy of thirteen, hair in one thick queue' } })
+    const first = await illustrate(bed.core, bed.runtime, { kind: 'sheet', target: card.id }, task)
+    const portrait = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id }, task)
+    expect(portrait.parts?.references).toEqual([{ path: first.path, label: '宝玉' }])
+
+    // The author changes how they look, and has the sheet drawn again: the new words are all the picture is made of.
+    // Held against the old sheet — or against the portrait drawn from it — it would come back as the old sheet.
+    await project.saveCharacter({ id: card.id, visual: { prompt: 'boy of thirteen, hair bound in a topknot under a small gold crown' } })
+    const second = await illustrate(bed.core, bed.runtime, { kind: 'sheet', target: card.id }, task)
+    expect(images.calls.at(-1)!.references).toEqual([])
+    expect(second.parts?.references).toBeUndefined()
+    expect(second.parts?.referenceNote).toBeUndefined()
+    expect(second.prompt).not.toContain('参考图')
+    expect(second.prompt).toContain('topknot under a small gold crown')
+    expect(second.prompt).not.toContain('queue')
+    expect(second.path).not.toBe(first.path)
+    expect((await project.findCharacter(card.id))!.visual?.sheet).toBe(second.path)
+    // The sheet of before stays in the gallery, with its record: what the portrait was drawn against can still be seen.
+    expect((await project.illustrations()).map(item => item.path)).toEqual([first.path, portrait.path, second.path])
+    // The portrait is drawn against the sheet in use: drawn again, against the new one.
+    const redrawn = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id }, task)
+    expect(redrawn.parts?.references).toEqual([{ path: second.path, label: '宝玉' }])
+
+    // Somebody who has a portrait and no sheet — drawn before sheets came first, or the sheet was taken out of the
+    // gallery: their sheet too is drawn from the words, not from the portrait.
+    const other = await project.saveCharacter({ name: '秦钟', appearance: '眉清目秀', visual: { prompt: 'slight boy, fine brows', portrait: portrait.path } })
+    const theirs = await illustrate(bed.core, bed.runtime, { kind: 'sheet', target: other.id }, task)
+    expect(images.calls.at(-1)!.references).toEqual([])
+    expect(theirs.parts?.references).toBeUndefined()
+  })
+
+  it('keeps on record what a picture was made of, part by part, and what went to the image model word for word', async () => {
+    const { bed } = await studio()
+    const { project } = bed.runtime
+    await project.updateManifest({ artStyle: '淡彩水墨，建筑服饰是典型的明制。', artAvoid: ['现代服饰'] })
+    const card = await project.saveCharacter({ name: '沈砚', appearance: '高瘦', personality: '寡言', visual: { prompt: 'lean woman, black hair.', negative: 'halo' } })
+    const sheet = await illustrate(bed.core, bed.runtime, { kind: 'sheet', target: card.id, prompt: '袖口挽起' }, task)
+    // Every part, in the order it was sent, and what each was taken from.
+    expect(sheet.parts?.pieces?.map(piece => piece.of)).toEqual(['frame', 'look', 'ask'])
+    expect(sheet.parts?.pieces?.[1]).toEqual({ of: 'look', text: 'lean woman, black hair', from: 'anchor' })
+    expect(sheet.parts?.pieces?.[2]).toEqual({ of: 'ask', text: '袖口挽起' })
+    expect(sheet.parts?.subject).toBe(sheet.parts!.pieces!.map(piece => piece.text).join('，'))
+    expect(sheet.parts?.style).toBe('淡彩水墨，建筑服饰是典型的明制。')
+    expect(sheet.parts?.clipped).toBeUndefined()
+    // How it was drawn: the service, the size asked for.
+    expect(sheet.provider).toBe('codex')
+    expect(sheet.size).toBe('1536x1024')
+    // Word for word: what the Studio put together, and what the way to this model adds — the things to keep out, which
+    // it has no field for, and the shape of the frame, which it takes no size for.
+    expect(sheet.sent?.prompt.startsWith(sheet.prompt)).toBe(true)
+    expect(sheet.sent?.prompt).toContain('画风：淡彩水墨，建筑服饰是典型的明制')
+    expect(sheet.sent?.prompt).toContain('Avoid: 现代服饰、halo')
+    expect(sheet.sent?.prompt).toContain('Landscape 3:2 composition.')
+    expect(sheet.sent?.negative).toBeUndefined()
+
+    // A portrait: what kind of picture, the look, the expression, what was asked of this one — and the sheet it is held against.
+    const portrait = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id, prompt: '雪夜，回头看' }, task)
+    expect(portrait.parts?.pieces?.map(piece => piece.of)).toEqual(['frame', 'look', 'expression', 'ask'])
+    expect(portrait.parts?.pieces?.at(-1)?.text).toBe('雪夜，回头看')
+    expect(portrait.parts?.referenceNote).toContain('第1张是沈砚')
+    expect(portrait.sent?.prompt).toContain(portrait.parts!.referenceNote!)
+
+    // A place: its look as written on the entry — or, where nothing is written for an image model, its name and summary.
+    bed.llm.responder = () => { throw new Error('no model') }
+    const written = await project.saveWorld({ name: '咏礼庭', category: 'location', visualPrompt: '低矮的夯土圆厅' })
+    const bare = await project.saveWorld({ name: '渡口', category: 'location', summary: '河边的木栈桥' })
+    expect((await illustrate(bed.core, bed.runtime, { kind: 'location', target: written.id }, task)).parts?.pieces?.[1]).toEqual({ of: 'look', text: '低矮的夯土圆厅', from: 'anchor' })
+    expect((await illustrate(bed.core, bed.runtime, { kind: 'location', target: bare.id }, task)).parts?.pieces?.[1]).toEqual({ of: 'look', text: '渡口，河边的木栈桥', from: 'card' })
+    // Somebody without an anchor, and no model to write one: the prose of the card stands in, and the record says so.
+    const plain = await project.saveCharacter({ name: '阿棠', appearance: '圆脸，爱笑', gender: '女' })
+    expect((await illustrate(bed.core, bed.runtime, { kind: 'sheet', target: plain.id }, task)).parts?.pieces?.[1]).toEqual({ of: 'look', text: '圆脸，爱笑，女', from: 'card' })
+  })
+
+  it('tells the showrunner how a picture was made, so that a look nobody asked for can be traced', async () => {
+    const { bed } = await studio()
+    const { project } = bed.runtime
+    await project.updateManifest({ artStyle: '淡彩水墨，建筑服饰是典型的明制' })
+    const card = await project.saveCharacter({ name: '宝玉', appearance: '面若中秋之月', visual: { prompt: 'boy of thirteen, hair in one thick queue', negative: 'beard' } })
+    const sheet = await illustrate(bed.core, bed.runtime, { kind: 'sheet', target: card.id }, task)
+    const portrait = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id }, task)
+    // The sheet: where the braid comes from is there to be read — the anchor says it — and nothing went along with it.
+    const ofSheet = pictureRecord(sheet)
+    expect(ofSheet).toContain(`sheet of ${card.id} — ${sheet.path}`)
+    expect(ofSheet).toContain('how it looks (the visual anchor / the look written on the entry): boy of thirteen, hair in one thick queue')
+    expect(ofSheet).toContain('art direction (the book\'s own): 淡彩水墨，建筑服饰是典型的明制')
+    expect(ofSheet).toContain('kept out: beard')
+    expect(ofSheet).toContain('No reference picture went with it')
+    expect(ofSheet).toContain(sheet.sent!.prompt)
+    // The portrait: drawn against the sheet, which is named with its path so that it can be looked up in turn.
+    const ofPortrait = pictureRecord(portrait)
+    expect(ofPortrait).toContain(`#1 宝玉 — ${sheet.path}`)
+    expect(ofPortrait).toContain('what the references are for: 参考图：第1张是宝玉')
+    // A picture from before any of this was kept still says what there is of it.
+    const old = pictureRecord({ id: 'img_old', path: 'assets/images/old.png', prompt: 'a boy\n画风：水墨', kind: 'sheet', target: card.id, createdAt: '2026-10-08T12:00:00.000Z' })
+    expect(old).toContain('subject: (not recorded apart from the whole prompt below)')
+    expect(old).toContain('a boy\n画风：水墨')
+    expect(old).toContain('drawn before the words as sent were kept')
   })
 
   it('draws a scene against the sheets of the people in it and the art of the place', async () => {

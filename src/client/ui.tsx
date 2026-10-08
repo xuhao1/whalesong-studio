@@ -453,7 +453,7 @@ export function Progress({ done, total, label }: { done: number; total: number; 
 const OverlayRootContext = createContext<HTMLElement | null>(null)
 export const OverlayRootProvider = OverlayRootContext.Provider
 
-export function Modal({ title, onClose, children, footer, wide }: { title: string; onClose: () => void; children: ReactNode; footer?: ReactNode; wide?: boolean }) {
+export function Modal({ title, onClose, children, footer, wide, className }: { title: string; onClose: () => void; children: ReactNode; footer?: ReactNode; wide?: boolean; className?: string | undefined }) {
   const root = useContext(OverlayRootContext)
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
@@ -467,7 +467,7 @@ export function Modal({ title, onClose, children, footer, wide }: { title: strin
   }, [onClose])
   const node = (
     <div className="nv-modal-mask" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
-      <div className={cx('nv-modal', wide === true && 'nv-modal-wide')} role="dialog" aria-modal="true" aria-label={title}>
+      <div className={cx('nv-modal', wide === true && 'nv-modal-wide', className)} role="dialog" aria-modal="true" aria-label={title}>
         <header className="nv-modal-head">
           <h3>{title}</h3>
           <Button variant="ghost" size="sm" icon="x" onClick={onClose} aria-label="close" />

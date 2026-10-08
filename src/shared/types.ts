@@ -1484,10 +1484,28 @@ export interface PlaySession {
   novelizedLine?: string
 }
 
+/** One part of what a picture's subject was put together from. */
+export interface IllustrationPiece {
+  /**
+   * What the words are of. `frame`: what kind of picture it is and how it is laid out. `look`: how the person, the
+   * place or the thing looks. `outfit`: the look (outfit) worn, where it is not the main one. `expression`: what the
+   * face is to show. `ask`: what was asked of this one picture and of no other. `composed`: a description the director
+   * wrote for it, from the book.
+   */
+  of: 'frame' | 'look' | 'outfit' | 'expression' | 'ask' | 'composed'
+  text: string
+  /** `look` only — where the words were taken from: what is written for an image model (a visual anchor, a place's look), or, lacking that, the prose of the card. */
+  from?: 'anchor' | 'card'
+}
+
 /** What an image prompt was assembled from, so the history shows where every part came from. */
 export interface IllustrationParts {
   /** The picture itself, as asked for or composed. */
   subject: string
+  /** The subject part by part, for the kinds of picture that are put together from parts (a portrait, a sheet, design art, a cover). */
+  pieces?: IllustrationPiece[]
+  /** The subject was longer than fits beside the lines that keep a book's pictures alike, and was cut. */
+  clipped?: boolean
   /** The art direction that was added, if any. */
   style?: string
   styleSource?: 'book' | 'studio' | 'default'
@@ -1495,13 +1513,25 @@ export interface IllustrationParts {
   avoid?: string[]
   /** Reference images sent along: project-relative path and who it shows. */
   references?: { path: string; label: string }[]
+  /** What the prompt said of the reference images: who each one shows, and what they are there for. */
+  referenceNote?: string
+}
+
+/** What went to an image service for one picture, word for word. */
+export interface IllustrationSent {
+  /** The prompt as the model got it: what the Studio put together, and what the way to that model adds — things to keep out, where the service has no field for them; how the frame is shaped, where it takes no size. */
+  prompt: string
+  /** What to keep out, where the service takes it as a field of its own. */
+  negative?: string
+  /** The size or shape asked for, in the service's own terms. */
+  size?: string
 }
 
 export interface IllustrationInfo {
   id: string
   /** Project-relative path. */
   path: string
-  /** The prompt exactly as it was sent. */
+  /** The prompt as the Studio put it together: subject, reference images, art direction. What reached the model word for word is `sent`. */
   prompt: string
   parts?: IllustrationParts
   kind: 'portrait' | 'sheet' | 'scene' | 'location' | 'item' | 'cover' | 'panel' | 'background' | 'sprite'
@@ -1509,6 +1539,12 @@ export interface IllustrationInfo {
   target?: string
   createdAt: Timestamp
   model?: string
+  /** The image service it was drawn with. */
+  provider?: ImageProviderKind
+  /** The size the Studio asked for, `WIDTHxHEIGHT`. */
+  size?: string
+  /** What went to the image service, word for word. Pictures drawn before this was kept have none. */
+  sent?: IllustrationSent
 }
 
 // ───────────────────────────── working modes ─────────────────────────────

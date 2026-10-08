@@ -18,14 +18,19 @@
  *                   first: whoever has none gets one before their portrait,
  *                   and whoever comes back in the book gets one before the
  *                   first scene, panel or cover that shows them — and the
- *                   picture says which sheets were drawn for it.
+ *                   picture says which sheets were drawn for it. The sheet
+ *                   itself is drawn from the words alone, every time: drawn
+ *                   again against the one before, it would come back as the
+ *                   one before, whatever the anchor says by then.
  *   an avoid list   per Studio, per book, per character and per call, joined
  *                   and sent with every picture.
  *
- * Every picture records what its prompt was assembled from.
+ * Every picture records what its prompt was assembled from, part by part,
+ * which pictures went along with it, and what reached the image service word
+ * for word — so that a look nobody asked for can be traced to where it came from.
  */
-import { mergeAvoid, pictureSize, resolveArtStyle, splitAvoid, type ArtSource } from '../../shared/art'
-import type { CharacterCard, CharacterLook, IllustrationInfo, IllustrationParts, PromptLanguage, SortedNotes, WorldEntry, WorldEvent } from '../../shared/types'
+import { lookWords, mergeAvoid, pictureSize, resolveArtStyle, splitAvoid, tidyPart as tidy, type ArtSource } from '../../shared/art'
+import type { CharacterCard, CharacterLook, IllustrationInfo, IllustrationParts, IllustrationPiece, PromptLanguage, SortedNotes, WorldEntry, WorldEvent } from '../../shared/types'
 import { referencesOf } from '../../shared/types'
 import { clip, fuzzyFind, hashText, newId, sameName, slugify } from '../../shared/text'
 import { groupOf } from '../../shared/world'
@@ -220,9 +225,7 @@ export function lookOf(card: CharacterCard, ref: string | undefined): CharacterL
 
 /** How a character looks, as restated in image prompts: the anchor (or, lacking one, the prose of the card) plus the look worn. */
 export function looksOf(card: CharacterCard, look?: CharacterLook): string {
-  const anchor = card.visual?.prompt
-  const base = anchor !== undefined && anchor.length > 0 ? [anchor] : [card.appearance, card.gender, card.age]
-  return [...base, look?.prompt].filter((value): value is string => value !== undefined && value.length > 0).join('，')
+  return [lookWords(card), look?.prompt].filter((value): value is string => value !== undefined && value.length > 0).join('，')
 }
 
 /** What a character's wardrobe offers a scene, one line per look. */
@@ -560,6 +563,8 @@ async function turnLook(core: NovelCore, runtime: ProjectRuntime, entry: WorldEn
 export interface RenderInput {
   /** The picture itself, as asked for or composed. */
   subject: string
+  /** The subject part by part, where it was put together from parts ({@link compose}): kept with the picture. */
+  pieces?: IllustrationPiece[]
   kind: IllustrationInfo['kind']
   target?: string
   size?: string
@@ -576,11 +581,20 @@ export interface RenderInput {
   referenceNote?: string
 }
 
-/** Trailing punctuation of one part would otherwise sit against the next part's label. */
-const tidy = (text: string): string => text.trim().replace(/[，,；;、。.\s]+$/u, '')
-
 /** Join the parts of a subject into one line, each part without the punctuation it ended on. */
 const joinParts = (parts: readonly (string | undefined)[], comma: string): string => parts.filter((part): part is string => part !== undefined && part.trim().length > 0).map(tidy).join(comma)
+
+/** One part of a subject, where there are words for it. */
+const piece = (of: IllustrationPiece['of'], text: string | undefined, from?: IllustrationPiece['from']): IllustrationPiece | undefined => (text !== undefined && text.trim().length > 0 ? { of, text, ...(from !== undefined ? { from } : {}) } : undefined)
+
+/** Put a subject together from its parts — each without the punctuation it ended on — and keep the parts, for the record of the picture. */
+function compose(parts: readonly (IllustrationPiece | undefined)[], comma: string): Pick<RenderInput, 'subject' | 'pieces'> {
+  const pieces = parts.filter((part): part is IllustrationPiece => part !== undefined).map(part => ({ ...part, text: tidy(part.text) })).filter(part => part.text.length > 0)
+  return { subject: pieces.map(part => part.text).join(comma), pieces }
+}
+
+/** Where the words for how somebody looks are taken from: their visual anchor, or — lacking one — the prose of the card. */
+const lookFrom = (card: CharacterCard): NonNullable<IllustrationPiece['from']> => (card.visual?.prompt !== undefined && card.visual.prompt.length > 0 ? 'anchor' : 'card')
 
 /** Generate one image, store it under `assets/images/`, and record what its prompt was made of. */
 export async function renderImage(core: NovelCore, runtime: ProjectRuntime, input: RenderInput, task: TaskContext): Promise<IllustrationInfo> {
@@ -606,7 +620,8 @@ export async function renderImage(core: NovelCore, runtime: ProjectRuntime, inpu
   const avoid = art !== undefined || (input.avoid?.length ?? 0) > 0 ? mergeAvoid(art?.avoid, input.avoid) : []
   // The subject gives way before the lines that keep the book consistent do.
   const tail = [referenceLine, styleLine].filter((line): line is string => line !== undefined).join('\n')
-  const subject = clip(tidy(input.subject), Math.max(200, 1900 - tail.length), '…')
+  const whole = tidy(input.subject)
+  const subject = clip(whole, Math.max(200, 1900 - tail.length), '…')
   const prompt = tail.length > 0 ? `${subject}\n${tail}` : subject
   const result = await provider.generate({
     prompt,
@@ -620,9 +635,13 @@ export async function renderImage(core: NovelCore, runtime: ProjectRuntime, inpu
   const used = references.slice(0, result.referencesUsed ?? references.length)
   const parts: IllustrationParts = {
     subject,
+    ...(input.pieces !== undefined && input.pieces.length > 0 ? { pieces: input.pieces } : {}),
+    ...(subject !== whole ? { clipped: true } : {}),
     ...(art !== undefined ? { style: art.style, styleSource: art.source } : {}),
     ...(avoid.length > 0 ? { avoid } : {}),
     ...(used.length > 0 ? { references: used.map(reference => ({ path: reference.path, label: reference.label })) } : {}),
+    // Kept also where the pictures did not go — a way to the model that takes none: the prompt still spoke of them.
+    ...(referenceLine !== undefined ? { referenceNote: referenceLine } : {}),
   }
   const info: IllustrationInfo = {
     id: newId('img'),
@@ -633,6 +652,9 @@ export async function renderImage(core: NovelCore, runtime: ProjectRuntime, inpu
     ...(input.target !== undefined ? { target: input.target } : {}),
     createdAt: new Date().toISOString(),
     model: provider.model,
+    provider: provider.kind,
+    ...(input.size !== undefined ? { size: input.size } : {}),
+    ...(result.sent !== undefined ? { sent: result.sent } : {}),
   }
   if (input.record !== false) await project.addIllustration(info)
   return info
@@ -764,6 +786,11 @@ export async function sheetsBefore(core: NovelCore, runtime: ProjectRuntime, par
 
 // ───────────────────────────── the kinds of picture ─────────────────────────────
 
+/** How a place or a thing looks, for its design art: what is written down for an image model, or — lacking that — its name and what the entry says of it. */
+const entryLook = (entry: WorldEntry, comma: string): IllustrationPiece | undefined => (entry.visualPrompt !== undefined && entry.visualPrompt.length > 0
+  ? piece('look', entry.visualPrompt, 'anchor')
+  : piece('look', `${entry.name}${comma}${entry.summary ?? clip(entry.body ?? '', 200, '')}`, 'card'))
+
 /** Things a character's own card says must not be drawn on them. */
 const negativesOf = (cards: readonly CharacterCard[]): string[] => cards.flatMap(card => splitAvoid(card.visual?.negative))
 
@@ -851,18 +878,18 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
     const card = params.kind === 'portrait' ? (await sheeted([anchored], 'everyone'))[0]! : anchored
 
     if (params.kind === 'portrait') {
-      const subject = joinParts([
+      const composed = compose([
         // Asked for nothing in particular, a portrait faces the viewer on a plain ground; a direction of its own — a snowy
         // night, a look over the shoulder — takes the place of both.
-        direction !== undefined ? L(lang, '人物立绘，半身像', 'character portrait, waist-up') : L(lang, '人物立绘，半身像，面向镜头，纯净的浅色背景', 'character portrait, waist-up, facing the viewer, plain light background'),
-        looksOf(card),
-        card.personality !== undefined ? L(lang, `神态体现：${clip(card.personality, 60, '')}`, `expression showing: ${clip(card.personality, 80, '')}`) : undefined,
-        direction,
+        piece('frame', direction !== undefined ? L(lang, '人物立绘，半身像', 'character portrait, waist-up') : L(lang, '人物立绘，半身像，面向镜头，纯净的浅色背景', 'character portrait, waist-up, facing the viewer, plain light background')),
+        piece('look', looksOf(card), lookFrom(card)),
+        piece('expression', card.personality !== undefined ? L(lang, `神态体现：${clip(card.personality, 60, '')}`, `expression showing: ${clip(card.personality, 80, '')}`) : undefined),
+        piece('ask', direction),
       ], comma)
       // A portrait drawn after the sheet shows the same person as the sheet.
       const sheet = card.visual?.sheet !== undefined ? [{ path: card.visual.sheet, label: card.name }] : []
       if (first.drawn.length > 0) task.job?.note(L(lang, '人设图画好了，照着它画立绘…', 'The sheet is drawn; now the portrait, against it…'))
-      const info = await renderImage(core, runtime, { subject, kind: 'portrait', target: card.id, name: `portrait-${card.id}`, size: params.size ?? pictureSize(core.currentSettings().image, 'portrait'), art, avoid: [...(params.avoid ?? []), ...negativesOf([card])], references: sheet }, task)
+      const info = await renderImage(core, runtime, { ...composed, kind: 'portrait', target: card.id, name: `portrait-${card.id}`, size: params.size ?? pictureSize(core.currentSettings().image, 'portrait'), art, avoid: [...(params.avoid ?? []), ...negativesOf([card])], references: sheet }, task)
       await project.saveCharacter({ id: card.id, visual: { portrait: info.path } })
       return done(info)
     }
@@ -877,22 +904,31 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
     const look: CharacterLook | undefined = named
       ? { ...existing, id: existing?.id ?? (slugify(wanted, '') || newId('look')), name: existing?.name ?? wanted, ...(params.prompt !== undefined && params.prompt.trim().length > 0 ? { prompt: params.prompt.trim() } : {}) }
       : undefined
-    const base = card.visual?.sheet ?? card.visual?.portrait
-    const subject = joinParts([
-      L(lang, '人物设定图（三视图）：同一个人的全身站姿画三次——正面、侧面、背面，从左到右等距并排，比例与衣着完全一致，表情平静，纯净的浅色背景，不要任何文字与标注', 'character design sheet (turnaround): the same person drawn three times, full body, standing — front view, side view, back view — evenly spaced left to right, identical proportions and clothing, neutral expression, plain light background, no text or labels'),
-      looksOf(card, look),
-      look !== undefined && base !== undefined ? L(lang, '与参考图是同一个人：脸、发色、体型不变，只换成上面写的这身装束', 'the same person as in the reference: face, hair colour and build unchanged, only the outfit above differs') : undefined,
-      look === undefined ? direction : undefined,
-    ], comma)
+    // A look is drawn against the main sheet (lacking one, the portrait): the same person in other clothes. The main
+    // sheet is drawn from the words alone — the anchor, the art direction, what was asked of this picture — and never
+    // against an older picture of the person. It is what every other picture of them is held against; drawn again
+    // against the one before, it comes back as the one before, whatever the anchor and the art direction say by then.
+    const base = look !== undefined ? card.visual?.sheet ?? card.visual?.portrait : undefined
     const info = await renderImage(core, runtime, {
-      subject,
+      ...compose([
+        piece('frame', L(lang, '人物设定图（三视图）：同一个人的全身站姿画三次——正面、侧面、背面，从左到右等距并排，比例与衣着完全一致，表情平静，纯净的浅色背景，不要任何文字与标注', 'character design sheet (turnaround): the same person drawn three times, full body, standing — front view, side view, back view — evenly spaced left to right, identical proportions and clothing, neutral expression, plain light background, no text or labels')),
+        piece('look', looksOf(card), lookFrom(card)),
+        piece('outfit', look?.prompt),
+        piece('ask', look === undefined ? direction : undefined),
+      ], comma),
       kind: 'sheet',
       target: card.id,
       name: `sheet-${card.id}${look !== undefined ? `-${look.id}` : ''}`,
       size: params.size ?? pictureSize(core.currentSettings().image, 'sheet'),
       art,
       avoid: [...(params.avoid ?? []), ...negativesOf([card])],
-      references: base !== undefined ? [{ path: base, label: card.name }] : [],
+      ...(base !== undefined ? {
+        references: [{ path: base, label: L(lang, `${card.name}的主造型`, `${card.name} in their main look`) }],
+        // What the reference is for, said in the place of "whatever it shows must match": here the clothes must not.
+        referenceNote: L(lang,
+          '是同一个人：脸、发色、体型照参考图画；衣着、装备和头发的梳法以上面写的这身装束为准——和参考图不一样的地方，一律照文字画。',
+          'It is the same person: face, hair colour and build follow the reference; clothing, gear and how the hair is worn follow the outfit described above — wherever that differs from the reference, draw the description.'),
+      } : {}),
     }, task)
     if (look === undefined) await project.saveCharacter({ id: card.id, visual: { sheet: info.path } })
     else {
@@ -908,14 +944,13 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
     // What it looks like is written down first, from the book: then it is drawn, and drawn the same again.
     const entry = await withLook(core, runtime, found, task)
     const turn = params.event !== undefined ? await turnOf(project, entry, params.event) : undefined
-    const subject = joinParts([
-      L(lang, '场景设定图，无人物，远景，交代空间结构、材质与光线', 'environment design art, no people, wide shot showing layout, materials and light'),
-      // At a turn of its course: as the director writes it is then — the same place, changed by what happened.
-      turn !== undefined ? await turnLook(core, runtime, entry, turn, task) : entry.visualPrompt ?? `${entry.name}${comma}${entry.summary ?? clip(entry.body ?? '', 200, '')}`,
-      params.prompt,
-    ], comma)
     const info = await renderImage(core, runtime, {
-      subject,
+      ...compose([
+        piece('frame', L(lang, '场景设定图，无人物，远景，交代空间结构、材质与光线', 'environment design art, no people, wide shot showing layout, materials and light')),
+        // At a turn of its course: as the director writes it is then — the same place, changed by what happened.
+        turn !== undefined ? piece('composed', await turnLook(core, runtime, entry, turn, task)) : entryLook(entry, comma),
+        piece('ask', params.prompt),
+      ], comma),
       kind: 'location',
       target: entry.id,
       name: `location-${entry.id}${turn !== undefined ? `-${turn.chapter}-${turn.kind}` : ''}`,
@@ -937,13 +972,12 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
     const entry = await withLook(core, runtime, found, task)
     const turn = params.event !== undefined ? await turnOf(project, entry, params.event) : undefined
     // A thing is drawn as a thing: alone, whole, close enough to read what it is made of and what is written or carved on it.
-    const subject = joinParts([
-      L(lang, '关键物品设定图：只画这一件物品，完整入画，居中，干净的浅色素底；看得清形状、材质、纹饰与大小的感觉；没有人物，没有手，画面里不出现任何文字说明', 'design art of one key object: the object alone, whole and centred on a clean pale ground; its shape, material, ornament and sense of size readable; no people, no hands, no lettering'),
-      turn !== undefined ? await turnLook(core, runtime, entry, turn, task) : entry.visualPrompt ?? `${entry.name}${comma}${entry.summary ?? clip(entry.body ?? '', 200, '')}`,
-      params.prompt,
-    ], comma)
     const info = await renderImage(core, runtime, {
-      subject,
+      ...compose([
+        piece('frame', L(lang, '关键物品设定图：只画这一件物品，完整入画，居中，干净的浅色素底；看得清形状、材质、纹饰与大小的感觉；没有人物，没有手，画面里不出现任何文字说明', 'design art of one key object: the object alone, whole and centred on a clean pale ground; its shape, material, ornament and sense of size readable; no people, no hands, no lettering')),
+        turn !== undefined ? piece('composed', await turnLook(core, runtime, entry, turn, task)) : entryLook(entry, comma),
+        piece('ask', params.prompt),
+      ], comma),
       kind: 'item',
       target: entry.id,
       name: `item-${entry.id}${turn !== undefined ? `-${turn.chapter}-${turn.kind}` : ''}`,
@@ -986,12 +1020,11 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
     })
     const description = response.text.trim().replace(/^["“]|["”]$/g, '')
     if (description.length === 0) throw new ProjectError('novel/empty', 'the director returned no description for the cover')
-    const subject = joinParts([
-      L(lang, '小说封面插画，竖幅构图，画面上方留出标题空间，不要出现任何文字', 'novel cover illustration, portrait orientation, space left at the top for a title, no text at all'),
-      description,
-    ], comma)
     const info = await renderImage(core, runtime, {
-      subject,
+      ...compose([
+        piece('frame', L(lang, '小说封面插画，竖幅构图，画面上方留出标题空间，不要出现任何文字', 'novel cover illustration, portrait orientation, space left at the top for a title, no text at all')),
+        piece('composed', description),
+      ], comma),
       kind: 'cover',
       name: 'cover',
       size: params.size ?? pictureSize(core.currentSettings().image, 'cover'),
@@ -1055,7 +1088,7 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
   const references = place?.visualImage !== undefined
     ? [...people.slice(0, Math.max(0, most - 1)), { path: place.visualImage, label: place.category === 'item' ? L(lang, `物品「${place.name}」`, `the object "${place.name}"`) : L(lang, `场所「${place.name}」`, `the place "${place.name}"`) }]
     : people
-  const info = await renderImage(core, runtime, { subject: description, kind: 'scene', target: chapter.plan.id, name: `scene-${chapter.plan.id}`, size: params.size ?? pictureSize(core.currentSettings().image, 'scene'), art, avoid: extraAvoid, references }, task)
+  const info = await renderImage(core, runtime, { ...compose([piece('composed', description)], comma), kind: 'scene', target: chapter.plan.id, name: `scene-${chapter.plan.id}`, size: params.size ?? pictureSize(core.currentSettings().image, 'scene'), art, avoid: extraAvoid, references }, task)
   let inserted = false
   if (params.insert === true) {
     const current = await project.chapterText(chapter.plan.id)

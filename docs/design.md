@@ -239,6 +239,10 @@ So the look of a book is made of parts the author can read, and every picture re
 
 The order matters and the Studio says so: direction and avoid list, then anchors and sheets, then pictures.
 
+*Words lead, pictures follow.* A reference picture is the strongest thing a prompt carries: told to match one, an image model returns it. So which way references run is a decision, and it runs one way only — from the words to the sheet, from the sheet to everything else. The main sheet is drawn from the anchor and the art direction alone, never against an older picture of the person: a sheet held against the sheet before could not change, whatever the author changed, and nothing on the screen would say why. A portrait, a scene, a panel are held against the sheet; a look against the main sheet, with the prompt saying what the reference is for (the face, not the clothes). To change how somebody looks, change the words and draw the sheet again — then what was drawn against the old one says so.
+
+*A picture can be traced.* "Every picture records its parts" is worth what the author can do with it when a picture comes out wrong. Opened large, a picture is shown with its record beside it: the parts of its prompt in the order they were sent and where each is changed, the reference pictures that went with it — each opening its own record, so a look can be followed back from picture to picture —, the words the image model got, exactly, and how all of it stands against the book as it is now (an anchor or an art direction changed since; a portrait drawn against a sheet that has been drawn again). A braid nobody asked for is then a word in the anchor, a picture that was sent along, or the model's own habit — and the author can tell which without asking anyone.
+
 ### Interludes, and why this is not a role-play front end
 
 In a role-play tool the chat is the product and the story a by-product. Here it is the reverse: the story is the product and playing is a way to probe it — rehearse a confrontation before writing it, or try the branch where she never left.

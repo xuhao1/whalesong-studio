@@ -22,8 +22,49 @@ import { describeRow, rangeStart, summarize, type UsageRange } from '../../core/
 import type { NovelService } from '../../host/service'
 import { hostOf, PROJECT_HOMEPAGE, SERVICES, type ServiceId, type SetupPart } from '../../shared/services'
 import { FFMPEG_INSTALL } from '../../shared/text'
-import type { AmbiencePreset, CameraMove, ModelRoute, NovelSettings, ProjectManifest, SoundKind, TextRole } from '../../shared/types'
+import type { AmbiencePreset, CameraMove, IllustrationInfo, IllustrationPiece, ModelRoute, NovelSettings, ProjectManifest, SoundKind, TextRole } from '../../shared/types'
 import { brief, listOf, listParameter, novelTool, toJson } from './shared'
+
+/** What each part of a picture's subject is, said for the showrunner. */
+const PIECE_NAMES: Record<IllustrationPiece['of'], string> = {
+  frame: 'kind of picture',
+  look: 'how it looks',
+  outfit: 'the outfit worn',
+  expression: 'expression',
+  ask: 'asked of this one picture',
+  composed: 'composed by the director',
+}
+
+/** Everything on record of how one picture was made, in the order its prompt was sent. */
+export function pictureRecord(image: IllustrationInfo): string {
+  const parts = image.parts
+  const references = parts?.references ?? []
+  const made = [image.model, image.provider !== undefined ? `through ${image.provider}` : undefined, image.size !== undefined ? `asked for ${image.size}` : undefined].filter((part): part is string => part !== undefined)
+  const lines = [
+    `Picture ${image.id}: ${image.kind}${image.target !== undefined ? ` of ${image.target}` : ''} — ${image.path}`,
+    `Drawn ${image.createdAt}${made.length > 0 ? `, ${made.join(', ')}` : ''}.`,
+    'Its prompt was put together from, in the order sent:',
+    ...(parts?.pieces !== undefined && parts.pieces.length > 0
+      ? parts.pieces.map(piece => `- ${PIECE_NAMES[piece.of]}${piece.of === 'look' ? (piece.from === 'anchor' ? ' (the visual anchor / the look written on the entry)' : ' (the prose of the card: nothing is written for an image model yet)') : ''}: ${piece.text}`)
+      : [`- subject: ${parts?.subject ?? '(not recorded apart from the whole prompt below)'}`]),
+    ...(parts?.clipped === true ? ['- (the subject was too long and was cut to leave room for the lines after it)'] : []),
+    ...(parts?.referenceNote !== undefined ? [`- what the references are for: ${parts.referenceNote}`] : []),
+    parts?.style !== undefined ? `- art direction (${parts.styleSource === 'book' ? 'the book\'s own' : parts.styleSource === 'studio' ? 'the Studio-wide one' : 'the built-in starting point'}): ${parts.style}` : '- art direction: none (sent as written)',
+    `- kept out: ${parts?.avoid !== undefined && parts.avoid.length > 0 ? parts.avoid.join(', ') : 'nothing'}`,
+    references.length > 0
+      ? `Reference pictures that went with it: ${references.map((reference, index) => `#${index + 1} ${reference.label} — ${reference.path}`).join('; ')}. A picture drawn against a reference takes after it: look at that one's record too (action=show_image id=<its path>).`
+      : parts?.referenceNote !== undefined
+        ? 'The prompt speaks of reference pictures, but none went: this way to the image model takes no pictures.'
+        : 'No reference picture went with it: it was drawn from the words alone.',
+    image.sent !== undefined ? 'What the image model was sent, word for word:' : 'The prompt as the Studio put it together (drawn before the words as sent were kept; things to keep out were attached separately):',
+    '<<<',
+    image.sent?.prompt ?? image.prompt,
+    '>>>',
+    ...(image.sent?.negative !== undefined ? [`Negative prompt, in a field of its own: ${image.sent.negative}`] : []),
+    ...(image.sent?.size !== undefined ? [`Size sent to the service: ${image.sent.size}`] : []),
+  ]
+  return lines.join('\n')
+}
 
 const ROLES: TextRole[] = ['writer', 'analyst', 'architect', 'director', 'producer']
 const VIEWS = ['home', 'bible', 'outline', 'write', 'read', 'listen', 'cast', 'review', 'stage', 'settings', 'setup', 'usage'] as const
@@ -299,16 +340,16 @@ export function studioTools(service: NovelService) {
         '- action=delete_line: take line `id` out of the audio script of `chapter` (sound cues that began at it move to the next line; a storyboard panel that showed only it goes too). action=delete_script: throw the whole audio script of `chapter` away — the takes already spoken stay on disk and are reused if the same lines come back.',
         '- action=edit_panel: change panel `id` of the storyboard of `chapter` — `fields` {prompt, description, camera}. action=delete_panel: take panel `id` out (its lines go to the panel before it). action=delete_storyboard: throw the whole storyboard of `chapter` away — its pictures stay in the gallery (delete_image removes one).',
         '- action=audition: speak `text` so the author can hear a voice — `voice` (a voice id or description), or `character` to hear that character as their lines will sound; neither = the narrator (`direction` optional).',
-        '- action=list_images / delete_image (`id`).',
+        '- action=list_images / delete_image (`id`). action=show_image (`id`: a picture\'s id or its path): everything on record of how that picture was made — the parts its prompt was put together from, in the order sent (what kind of picture, the visual anchor or look restated, what was asked of this one, what the references are for, the art direction, what was kept out), which pictures went along as references, and the words the image model was sent. When the author asks why a picture came out as it did, read this before anything else: the answer is a word in the anchor, a reference picture, the art direction — or none of them.',
         '- action=rewind_interlude / keep_interlude (as a side story) / delete_interlude (`session`).',
         '- action=lock_book: lock the book in play (or `book`) when it is sealed — its key is forgotten, and it cannot be read by anyone, you included, until the author unlocks it in the Studio. You cannot unlock a book, seal one or take a seal off: those are done by the author on the Studio\'s screens, where the password is typed.',
         '- action=delete_book: take the book in play (or `book`) off the shelf. Its own files — manuscript, bible, outline, pictures, audio — are moved to the system trash, where the author can put them back; anything else in its folder stays. Only when the author asked for exactly this; they are asked to confirm.',
       ].join('\n'),
-      mutating: args => args.action !== 'find' && args.action !== 'list_images' && args.action !== 'walkons',
+      mutating: args => args.action !== 'find' && args.action !== 'list_images' && args.action !== 'show_image' && args.action !== 'walkons',
       parameters: {
-        action: { type: 'string', required: true, enum: ['find', 'restore_version', 'resolve_issue', 'delete_review', 'edit_line', 'delete_line', 'delete_script', 'edit_cue', 'add_cue', 'delete_cue', 'edit_panel', 'delete_panel', 'delete_storyboard', 'walkons', 'settle_walkon', 'audition', 'list_images', 'delete_image', 'rewind_interlude', 'keep_interlude', 'delete_interlude', 'lock_book', 'delete_book'] },
+        action: { type: 'string', required: true, enum: ['find', 'restore_version', 'resolve_issue', 'delete_review', 'edit_line', 'delete_line', 'delete_script', 'edit_cue', 'add_cue', 'delete_cue', 'edit_panel', 'delete_panel', 'delete_storyboard', 'walkons', 'settle_walkon', 'audition', 'list_images', 'show_image', 'delete_image', 'rewind_interlude', 'keep_interlude', 'delete_interlude', 'lock_book', 'delete_book'] },
         chapter: { type: 'string' },
-        id: { type: 'string', description: 'Line, cue, panel or image id.' },
+        id: { type: 'string', description: 'Line, cue, panel or image id (show_image also takes the picture\'s path).' },
         name: { type: 'string', description: 'settle_walkon: the name as the page writes it.' },
         version: { type: 'string' },
         issue: { type: 'string' },
@@ -488,7 +529,13 @@ export function studioTools(service: NovelService) {
           case 'list_images': {
             const images = await project.illustrations()
             if (images.length === 0) return { text: 'No illustrations yet.' }
-            return { text: images.map(image => `- ${image.id}: ${image.kind}${image.target !== undefined ? ` of ${image.target}` : ''} — ${image.path}`).join('\n'), data: toJson(images.map(image => ({ id: image.id, kind: image.kind, path: image.path }))) }
+            return { text: `${images.map(image => `- ${image.id}: ${image.kind}${image.target !== undefined ? ` of ${image.target}` : ''} — ${image.path}`).join('\n')}\nHow one of them was made — its prompt, its references: action=show_image id=<id>.`, data: toJson(images.map(image => ({ id: image.id, kind: image.kind, path: image.path }))) }
+          }
+          case 'show_image': {
+            const wanted = need(args.id, 'id').trim()
+            const image = (await project.illustrations()).find(item => item.id === wanted || item.path === wanted)
+            if (image === undefined) throw new ProjectError('novel/not-found', `no picture has the id or the path "${wanted}" — action=list_images lists them`)
+            return { text: pictureRecord(image), data: toJson(image), record: false }
           }
           case 'delete_image': {
             const released = await project.removeIllustration(need(args.id, 'id'))

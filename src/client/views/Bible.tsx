@@ -13,6 +13,7 @@ import { GROUP_CATEGORY, groupOf, WORLD_GROUPS, WORLD_WEIGHTS, worldOrder, world
 import { Icon, type IconName } from '../icons'
 import { WORLD_CATEGORY as CATEGORY_LABELS } from '../labels'
 import { MergeDialog, TidyDialog } from '../WorldTidy'
+import { PictureViewer, type LookOf } from '../PictureRecord'
 import { containment, type Nested } from '../../shared/ties'
 import { DERIVE_TIES_HINT, TiesBlock, TiesReport, useDeriveTies } from '../Ties'
 import {
@@ -52,6 +53,8 @@ export function BibleView() {
   // A link from elsewhere names an entry: its page is the one it is on.
   const entity = useSnapshot(snapshot => snapshot.entity)
   useEffect(() => {
+    // …or the look of the book's pictures, from where a picture's art direction is read.
+    if (entity?.kind === 'art') setTab('art')
     if (entity?.kind !== 'world') return
     const entry = project.world.find(candidate => candidate.id === entity.id)
     if (entry !== undefined) setTab(groupOf(entry.category))
@@ -308,6 +311,16 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
     await controller.run('image.create', { root, kind: picture ?? 'location', target: entry.id, event: `${event.chapter}:${event.kind}` })
     controller.toast('success', t('它这时的样子画好了', 'Drawn as it is then'))
   }))
+  // From a picture's record to the words it was drawn from: this entry's own are on this page.
+  const lookField = `nv-look-${entry.id}`
+  const editLook = (of: LookOf): void => {
+    if (of.kind === 'world' && of.id === entry.id) {
+      const field = document.getElementById(lookField)
+      field?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      field?.focus({ preventScroll: true })
+    } else if (of.kind === 'world') controller.openWorld(of.id)
+    else controller.openCharacter(of.id)
+  }
   const index = useMemo(() => new Map([...project.chapters, ...(project.lines ?? []).flatMap(line => line.chapters)].map(chapter => [chapter.id, chapter.index])), [project.chapters, project.lines])
   const where = seen.map(id => index.get(id)).filter((value): value is number => value !== undefined)
   return (
@@ -403,7 +416,7 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
             : t('这个地方实际的样子：结构、材质、新旧、光线。画到这里的图都会用它；别只写名字——绘图模型会按现实里同名的东西去画。', 'What the place actually looks like: layout, materials, age, light. Every picture set here uses it; a name alone is drawn as the commonest real thing of that name.')}
         >
           <div className="nv-row">
-            <TextArea value={draft.visualPrompt ?? ''} onChange={(event) => { set('visualPrompt', event.target.value) }} />
+            <TextArea id={lookField} value={draft.visualPrompt ?? ''} onChange={(event) => { set('visualPrompt', event.target.value) }} />
             <Button
               size="sm"
               icon="sparkles"
@@ -426,15 +439,21 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
         : null}
       {merging ? <MergeDialog entry={entry} onClose={() => { setMerging(false) }} /> : null}
       {viewing && shown !== undefined ? (
-        <Modal wide title={draft.name} onClose={() => { setViewing(false) }}>
-          <ProjectImage className="nv-person-large" path={shown} alt={draft.name} />
-          <p className="nv-muted nv-small">{t('它在轨迹里这一件事之后的样子。"观看 → 世界"里把时间轴拖到这一章之后，显示的就是这张；"不分时间"看的时候仍是它平常的设定图。', 'How it looks from this turn of its course on. In the viewer\'s World, with the slider at or past this chapter, this is the picture shown; looked at "whenever", it is still its design art.')}</p>
-        </Modal>
+        <PictureViewer
+          path={shown}
+          title={draft.name}
+          note={t('它在轨迹里这一件事之后的样子。"观看 → 世界"里把时间轴拖到这一章之后，显示的就是这张；"不分时间"看的时候仍是它平常的设定图。', 'How it looks from this turn of its course on. In the viewer\'s World, with the slider at or past this chapter, this is the picture shown; looked at "whenever", it is still its design art.')}
+          onClose={() => { setViewing(false) }}
+          onEditLook={editLook}
+        />
       ) : viewing && draft.visualImage !== undefined ? (
-        <Modal wide title={draft.name} onClose={() => { setViewing(false) }}>
-          <ProjectImage className="nv-person-large" path={draft.visualImage} alt={draft.name} />
-          <p className="nv-muted nv-small">{picture === 'item' ? t('物品设定图。画到这件东西的图会把它当参考图，所以每次都是同一件东西。', 'Object art. Pictures that show the thing are drawn with it as a reference, so it is the same thing every time.') : t('场景设定图。发生在这里的画面会把它当参考图。', 'Place art. Pictures set here are drawn with it as a reference image.')}</p>
-        </Modal>
+        <PictureViewer
+          path={draft.visualImage}
+          title={draft.name}
+          note={picture === 'item' ? t('物品设定图。画到这件东西的图会把它当参考图，所以每次都是同一件东西。', 'Object art. Pictures that show the thing are drawn with it as a reference, so it is the same thing every time.') : t('场景设定图。发生在这里的画面会把它当参考图。', 'Place art. Pictures set here are drawn with it as a reference image.')}
+          onClose={() => { setViewing(false) }}
+          onEditLook={editLook}
+        />
       ) : null}
       {confirm.element}
     </div>

@@ -279,6 +279,8 @@ describe('direct endpoints', () => {
     expect(sent.path).toBe('/v1/images')
     expect(sent.body).toMatchObject({ model: 'openai/gpt-image-2.5-sunburst', aspect_ratio: '16:9', resolution: '1K', n: 1 })
     expect(String(sent.body.prompt)).toContain('Avoid: text')
+    // What went is handed back word for word, for the record of the picture.
+    expect(image.sent).toEqual({ prompt: String(sent.body.prompt), size: '16:9 · 1K' })
   })
 
   it('speaks through an OpenRouter-style speech endpoint that answers raw PCM', async () => {
@@ -295,10 +297,14 @@ describe('direct endpoints', () => {
   it('asks a ChatGPT subscription for images through whatever bridge the Host provides', async () => {
     const asked: string[] = []
     const provider = createImageProvider({ provider: 'codex', size: '768x1152' }, keys, { codex: async (prompt) => { asked.push(prompt); return { data: utf8('img'), mime: 'image/png' } } })!
-    await provider.generate({ prompt: 'a lighthouse', negativePrompt: 'watermark' })
+    const drawn = await provider.generate({ prompt: 'a lighthouse', negativePrompt: 'watermark' })
     expect(asked[0]).toContain('a lighthouse')
     expect(asked[0]).toContain('Avoid: watermark')
     expect(asked[0]).toContain('Portrait 2:3')
+    // The words as sent are the record's: what the bridge was handed — or what it says it wrapped them in.
+    expect(drawn.sent).toEqual({ prompt: asked[0] })
+    const wrapping = createImageProvider({ provider: 'codex' }, keys, { codex: async prompt => ({ data: utf8('img'), mime: 'image/png', sent: { prompt: `Draw this.\n${prompt}` } }) })!
+    expect((await wrapping.generate({ prompt: 'a lighthouse' })).sent?.prompt.startsWith('Draw this.\na lighthouse')).toBe(true)
     await expect(createImageProvider({ provider: 'codex' }, keys)!.generate({ prompt: 'x' })).rejects.toMatchObject({ code: 'UNSUPPORTED' })
   })
 })
