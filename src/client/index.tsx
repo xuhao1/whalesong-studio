@@ -16,6 +16,7 @@
  */
 import { useEffect, useMemo, useSyncExternalStore } from 'react'
 import { createApi, type ConnectionLike, type NovelApi } from './api'
+import { bringBeside } from './beside'
 import { StudioGlyph } from './icons'
 import { noteOlderHost, type StageTab, type StudioView } from './store'
 import { Studio } from './Studio'
@@ -124,13 +125,70 @@ export function apply(ctx: ClientContext): void {
     }
   }
 
-  // A role's run is a one-shot child of the conversation that asked for it: the Harness shows it as such.
-  const openRun = (run: { session: string; parent: string }): void => {
+  /** Under which name a Studio keeps its place: one per conversation, one for the page (`store.ts`). */
+  const placeKey = (of: string): string => `novel-studio:place:${of}`
+  const noteFollowed = (sessionId: string): void => {
+    try {
+      globalThis.sessionStorage?.setItem(`novel-studio:followed:${sessionId}`, '1')
+    } catch {
+      // Without storage it is simply brought along once more.
+    }
+  }
+  /** Waits for a conversation to come on screen that were not over when the plugin was taken out. */
+  const waiting = new Set<() => void>()
+  ctx.effect(() => () => {
+    for (const stop of [...waiting]) stop()
+  }, 'novel: the Studio beside an agent (waiting)')
+
+  /** Put the Studio beside one conversation, at a place: once it is on screen, and until a Studio stands there (`beside.ts`). */
+  const bringStudio = (sessionId: string, target?: StudioTarget): void => {
+    const options = target !== undefined ? { params: target } : undefined
+    bringBeside(sessionId, {
+      onScreen: ctx.sidebarRight.mounted,
+      openIn: typeof ctx.sidebarRight.openTabIn === 'function' ? (id) => { ctx.sidebarRight.openTabIn!(id, TAB_KIND, options) } : undefined,
+      openHere: () => { ctx.sidebarRight.openTab(TAB_KIND, options) },
+      stands: id => beside.has(id),
+      waiting,
+    })
+  }
+
+  /**
+   * Step into a role's run — the conversation of an agent at work, or the record of one that is done — with the
+   * Studio kept in sight. A run is a one-shot child of the conversation that asked for it, and DSH shows it as such,
+   * with a column of its own on the right that has nothing in it: to the author who pressed "watch the planner" in the
+   * Studio, the Studio vanished. So the Studio is put beside the run, on the book and the page the author was on —
+   * every time it is asked from within a Studio, whether that Studio fills the main area or sits beside a conversation.
+   * @param from - whose place is taken along: `page`, or the conversation the asking Studio is beside.
+   */
+  const openRun = (run: { session: string; parent: string }, from: string): void => {
+    let target: StudioTarget | undefined
+    try {
+      const raw = globalThis.sessionStorage?.getItem(placeKey(from))
+      const place = raw !== null && raw !== undefined ? JSON.parse(raw) as { root?: string; shelf?: boolean; view?: StudioView; chapterId?: string; stageTab?: StageTab; readMode?: StudioTarget['mode'] } : undefined
+      if (raw !== null && raw !== undefined && place?.root !== undefined && place.shelf !== true) {
+        // A Studio that is put beside the run for the first time starts where this one is…
+        globalThis.sessionStorage?.setItem(placeKey(run.session), raw)
+        // …and one that is beside it already, from an earlier look, is taken to the same page.
+        if (place.view !== undefined) target = { view: place.view, ...(place.chapterId !== undefined ? { chapter: place.chapterId } : {}), ...(place.stageTab !== undefined ? { tab: place.stageTab } : {}), ...(place.readMode !== undefined ? { mode: place.readMode } : {}) }
+      }
+    } catch {
+      // Without a place kept, the Studio beside the run opens on the run's book as it would by itself.
+    }
+    // Brought here on purpose: the follower below has nothing left to do for this conversation.
+    noteFollowed(run.session)
+    if (from === 'page') {
+      try {
+        ctx.layout.selectPanel(null)
+      } catch {
+        // Opening the conversation shows it either way.
+      }
+    }
     try {
       workspaceUi()?.openSession?.({ parentSessionId: run.parent, childSessionId: run.session, mode: 'one-shot' })
     } catch {
       // It stays reachable from the conversation's header.
     }
+    bringStudio(run.session, target)
   }
 
   // One stylesheet for every Studio instance and tool row; removed when the plugin unloads.
@@ -146,7 +204,7 @@ export function apply(ctx: ClientContext): void {
   const pageHost: StudioHost = {
     where: 'page',
     pickDirectory,
-    openRun,
+    openRun: (run) => { openRun(run, 'page') },
     startChat: (workspace) => {
       try {
         ctx.layout.selectPanel(null)
@@ -267,7 +325,7 @@ export function apply(ctx: ClientContext): void {
     const host = useMemo<StudioHost>(() => ({
       where: 'tab',
       pickDirectory,
-      openRun,
+      openRun: (run) => { openRun(run, props.sessionId ?? 'page') },
       refreshSessions,
       // Beside a conversation, the author can still ask for another book's: the left side goes there, and the Studio is opened beside it.
       openChat: (sessionId: string) => {
@@ -298,16 +356,18 @@ export function apply(ctx: ClientContext): void {
           }
         },
       } : {}),
-    }), [actions, fullscreen])
+    }), [actions, fullscreen, props.sessionId])
     const initial = useMemo(() => (view !== undefined || chapter !== undefined || tab !== undefined ? { ...(view !== undefined ? { view } : {}), ...(chapter !== undefined ? { chapter } : {}), ...(tab !== undefined ? { tab } : {}), ...(mode !== undefined ? { mode } : {}), ...(revision !== undefined ? { nonce: revision } : {}) } : undefined), [view, chapter, tab, mode, revision])
     return <Studio api={api} locale={locale} host={host} {...(props.sessionId !== undefined ? { sessionId: props.sessionId } : {})} {...(initial !== undefined ? { initial } : {})} />
   }
   // ── the Studio stays beside the author when they step into one of the conversation's agents ──
-  // The column on the right is each conversation's own. Stepping from a conversation into a child of it — a role at
-  // work, opened from a progress bar or from DSH's own list of subagents — shows the child's column, which has no
-  // Studio in it: to the author the Studio vanished. So where the conversation they came from had the Studio beside
-  // it, and the one they arrive in is about the same book, the Studio is opened there too, on the same page. Once
-  // per conversation: a Studio the author then closes there stays closed.
+  // The column on the right is each conversation's own. Stepping from a conversation into a child of it shows the
+  // child's column, which has no Studio in it: to the author the Studio vanished. A step asked for from within the
+  // Studio — a progress bar pressed — takes the Studio along itself (`openRun`). This is for the steps the Studio
+  // knows nothing of: DSH's own list of subagents, the way back up by the conversation's header. Where the
+  // conversation the author comes from had the Studio beside it, and the one they arrive in is about the same book,
+  // the Studio is opened there too, on the same page. Once per conversation: nobody asked for it there, so a Studio
+  // the author then closes there stays closed.
   const mounted = ctx.sidebarRight.mounted
   if (mounted !== undefined && typeof ctx.sidebarRight.openTabIn === 'function') {
     let last = mounted.getSnapshot()
@@ -320,14 +380,14 @@ export function apply(ctx: ClientContext): void {
     }
     const follow = (from: string, to: string): void => {
       void (async () => {
-        const raw = globalThis.sessionStorage?.getItem(`novel-studio:place:${from}`)
+        const raw = globalThis.sessionStorage?.getItem(placeKey(from))
         const place = raw !== null && raw !== undefined ? JSON.parse(raw) as { root?: string } : undefined
         if (place?.root === undefined) return
         // The Host knows which book a conversation is about — a role's run is about the book it works on.
         const info = await api.call('workspace.info', { sessionId: to })
         if (info.active !== place.root || mounted.getSnapshot() !== to) return
-        globalThis.sessionStorage?.setItem(`novel-studio:place:${to}`, raw!)
-        globalThis.sessionStorage?.setItem(`novel-studio:followed:${to}`, '1')
+        globalThis.sessionStorage?.setItem(placeKey(to), raw!)
+        noteFollowed(to)
         ctx.sidebarRight.openTabIn!(to, TAB_KIND)
       })().catch(() => {
         // The author opens it from the column's own menu.
