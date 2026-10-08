@@ -18,6 +18,7 @@ import { DiffView, ProposalCard } from '../components/ProposalCard'
 import { Icon } from '../icons'
 import { jobKindLabel, jobPulse } from '../Studio'
 import { CHAPTER_STATUS, CHAPTER_STATUS_TONE, ISSUE_TYPE, SEVERITY, SEVERITY_TONE, sheetsDrawn } from '../labels'
+import { useSheetsAsk } from '../SheetsAsk'
 import { Derive } from './Outline'
 import {
   Button, Chip, cx, Empty, Menu, Modal, Progress, Select, Spinner, Tabs, TextInput, ThoughtButton, ThoughtPanel, useAction, useConfirm, useJobStream, useJobTail, useLoad, useProject,
@@ -404,11 +405,16 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
     if (quote.length === 0) return undefined
     return controller.guard(async () => {
       if (!(await settle())) return undefined
-      controller.toast('info', t('正在为这段文字配图，完成后会插入到这段之后。', 'Illustrating this passage; the picture is inserted after it when ready.'))
-      const job = await controller.run('image.create', { root, kind: 'scene', target: chapter.id, quote, insert: true })
-      if (sheetsDrawn(job, t).length > 0) controller.toast('info', `${t('插图已放进正文', 'The illustration is in the chapter')}${sheetsDrawn(job, t)}`)
+      // Whoever of the people in the passage comes back in the book and has no design sheet gets one first: asked, before anything is drawn.
+      await sheets.before([{ kind: 'scene', target: chapter.id, quote }], async (choice) => {
+        controller.toast('info', t('正在为这段文字配图，完成后会插入到这段之后。', 'Illustrating this passage; the picture is inserted after it when ready.'))
+        const job = await controller.run('image.create', { root, kind: 'scene', target: chapter.id, quote, insert: true, ...choice })
+        if (sheetsDrawn(job, t).length > 0) controller.toast('info', `${t('插图已放进正文', 'The illustration is in the chapter')}${sheetsDrawn(job, t)}`)
+      })
+      return undefined
     })
   }
+  const sheets = useSheetsAsk()
   const quoteSelection = (): void => {
     const passage = selected.trim()
     if (passage.length === 0 || quote === undefined) return
@@ -664,6 +670,7 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
 
       {viewing !== undefined ? <VersionModal chapterId={chapter.id} version={viewing} current={text} onClose={() => { setViewing(undefined) }} /> : null}
       {confirm.element}
+      {sheets.element}
     </>
   )
 }

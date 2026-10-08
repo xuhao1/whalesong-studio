@@ -3,6 +3,7 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { sheetsAhead } from '../src/core/pipelines/comic'
 import { artDirectionOf, deriveArtDirection, deriveLook, deriveVisual, illustrate, looksOf } from '../src/core/pipelines/illustrate'
 import { reconcileLooks, upsertLooks } from '../src/core/project'
 import { DEFAULT_SETTINGS } from '../src/core/settings'
@@ -482,6 +483,98 @@ describe('design sheets and looks', () => {
     expect(portrait.sheets).toBeUndefined()
     expect(images.calls).toHaveLength(before + 1)
     expect((await project.findCharacter(other.id))!.visual?.sheet).toBeUndefined()
+  })
+
+  it('sorts what the author jotted down: what is of the person goes into their look, what is of this one picture directs it and is kept nowhere', async () => {
+    const { bed, images } = await studio()
+    const { project } = bed.runtime
+    const card = await project.saveCharacter({ name: '沈砚', role: 'protagonist', appearance: '高瘦，黑发盘在脑后。', visual: { prompt: 'lean woman, black hair coiled at the nape', negative: 'halo' } })
+    const sheet = await project.writeAsset('images/sheet-kept.png', new Uint8Array([1]))
+    await project.saveCharacter({ id: card.id, visual: { sheet } })
+    bed.llm.responder = () => JSON.stringify({
+      anchor: 'lean woman, black hair coiled at the nape, a scar through the left brow, worn grey cloth robe',
+      negative: 'halo',
+      appearance: '左眉有一道旧疤，常年穿一件灰布袍。',
+      picture: '雪夜，回头看向身后',
+      kept: ['左眉有道疤', '常年灰布袍'],
+      once: ['雪夜', '回头看'],
+      unused: [],
+    })
+    const portrait = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id, notes: '左眉有道疤，常年穿灰布袍；这张要雪夜，回头看' }, task)
+    // The director was handed the notes, the anchor as it stood, and what kind of picture is about to be drawn.
+    const asked = bed.llm.requests.at(-1)!.prompt
+    for (const part of ['左眉有道疤，常年穿灰布袍；这张要雪夜，回头看', 'lean woman, black hair coiled at the nape', '立绘：半身像']) expect(asked, part).toContain(part)
+    expect(portrait.sorted).toEqual({ kept: ['左眉有道疤', '常年灰布袍'], once: ['雪夜', '回头看'], unused: [], picture: '雪夜，回头看向身后' })
+    // Of the person: in their look from now on — the anchor every picture restates, and the appearance the writer reads.
+    const after = (await project.findCharacter(card.id))!
+    expect(after.visual?.prompt).toBe('lean woman, black hair coiled at the nape, a scar through the left brow, worn grey cloth robe')
+    expect(after.appearance).toBe('高瘦，黑发盘在脑后。左眉有一道旧疤，常年穿一件灰布袍。')
+    expect(after.visual?.sheet).toBe(sheet)
+    // Of this picture: in this picture — and nowhere in the look.
+    expect(portrait.parts?.subject).toContain('雪夜，回头看向身后')
+    expect(portrait.parts?.subject).toContain('a scar through the left brow')
+    expect(portrait.parts?.subject).not.toContain('纯净的浅色背景')
+    expect(JSON.stringify(after)).not.toContain('雪夜')
+    // The next portrait, asked for nothing in particular, has the scar and no snow.
+    const plain = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id }, task)
+    expect(plain.sorted).toBeUndefined()
+    expect(plain.parts?.subject).toContain('a scar through the left brow')
+    expect(plain.parts?.subject).toContain('纯净的浅色背景')
+    expect(plain.parts?.subject).not.toContain('雪夜')
+
+    // A design sheet has no night and no snow: nothing of it is drawn, and it is said that it was not used.
+    bed.llm.responder = () => JSON.stringify({ anchor: after.visual!.prompt, negative: 'halo', appearance: '', picture: '', kept: [], once: [], unused: ['雪夜'] })
+    const drawn = await illustrate(bed.core, bed.runtime, { kind: 'sheet', target: card.id, notes: '这张要雪夜' }, task)
+    expect(bed.llm.requests.at(-1)!.prompt).toContain('人设图（三视图）')
+    expect(drawn.sorted).toEqual({ kept: [], once: [], unused: ['雪夜'] })
+    expect(drawn.parts?.subject).not.toContain('雪夜')
+    expect((await project.findCharacter(card.id))!.visual?.prompt).toBe(after.visual!.prompt)
+    expect((await project.findCharacter(card.id))!.appearance).toBe(after.appearance)
+
+    // Nobody to sort them: nothing is guessed — the notes direct this picture, the look stays as it is, and that is said.
+    bed.llm.responder = () => { throw new Error('the model is away') }
+    const calls = images.calls.length
+    const unsorted = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id, notes: '披一件红斗篷' }, task)
+    expect(unsorted.sorted).toEqual({ kept: [], once: ['披一件红斗篷'], unused: [], picture: '披一件红斗篷', unsorted: true })
+    expect(unsorted.parts?.subject).toContain('披一件红斗篷')
+    expect((await project.findCharacter(card.id))!.visual?.prompt).toBe(after.visual!.prompt)
+    expect(images.calls).toHaveLength(calls + 1)
+  })
+
+  it('says, before anything is drawn, whose design sheets a picture would draw first — and draws none where the author says not this time', async () => {
+    const { bed, images } = await studio()
+    const { project } = bed.runtime
+    const lead = await project.saveCharacter({ name: '沈砚', role: 'protagonist', appearance: '高瘦', visual: { prompt: 'lean woman, black hair' } })
+    const once = await project.saveCharacter({ name: '卖花人', role: 'cameo', appearance: '挎着竹篮', visual: { prompt: 'flower seller with a basket' } })
+    const blank = await project.saveCharacter({ name: '没写外貌的人', role: 'supporting' })
+    const chapter = await project.addChapter({ title: '码头' })
+    await project.saveChapterText(chapter.id, '沈砚在码头等船，卖花人从她身边走过，没写外貌的人站在远处。')
+    const quote = '沈砚在码头等船，卖花人从她身边走过，没写外貌的人站在远处。'
+    const names = async (asks: Parameters<typeof sheetsAhead>[2]) => (await sheetsAhead(bed.core, bed.runtime, asks)).people.map(person => person.name)
+    // A portrait: whoever it is of, when they have none. A scene, a cover: those who come back — and have a look to draw a sheet from.
+    expect(await names([{ kind: 'portrait', target: once.id }])).toEqual(['卖花人'])
+    expect(await names([{ kind: 'scene', target: chapter.id, quote }])).toEqual(['沈砚'])
+    expect(await names([{ kind: 'cover' }])).toEqual(['沈砚'])
+    expect(await names([{ kind: 'custom', characters: [lead.id, once.id, blank.id] }])).toEqual(['沈砚'])
+    // Asked together, somebody is named once; a chapter with no storyboard cannot be told yet.
+    const ahead = await sheetsAhead(bed.core, bed.runtime, [{ kind: 'scene', target: chapter.id, quote }, { kind: 'cover' }, { kind: 'portrait', target: once.id }, { kind: 'panels', chapter: chapter.id }])
+    expect(ahead).toEqual({ people: [{ id: lead.id, name: '沈砚' }, { id: once.id, name: '卖花人' }], unknown: 1 })
+    // Asking draws nothing.
+    expect(images.calls).toHaveLength(0)
+
+    // "Not this time": the picture is drawn from what there is.
+    bed.llm.responder = () => '码头上，一个高瘦的女人望着靠岸的船'
+    const scene = await illustrate(bed.core, bed.runtime, { kind: 'scene', target: chapter.id, quote, sheetFirst: false }, task)
+    expect(scene.sheets).toBeUndefined()
+    expect(images.calls).toHaveLength(1)
+    expect((await project.findCharacter(lead.id))!.visual?.sheet).toBeUndefined()
+    const portrait = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: lead.id, sheetFirst: false }, task)
+    expect(portrait.sheets).toBeUndefined()
+    expect(images.calls).toHaveLength(2)
+    // Asked again, she is still without one — and with the setting off nobody is.
+    expect(await names([{ kind: 'scene', target: chapter.id, quote }])).toEqual(['沈砚'])
+    await bed.core.settings.update({ image: { ...bed.core.currentSettings().image, sheetFirst: false } })
+    expect(await names([{ kind: 'scene', target: chapter.id, quote }, { kind: 'portrait', target: once.id }])).toEqual([])
   })
 
   it('draws a portrait after the sheet as the same person', async () => {

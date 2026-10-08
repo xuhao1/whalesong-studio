@@ -146,6 +146,10 @@ voiceProfile:
   designPrompt: description a designed voice is created from
 firstAppearance: ch001       # maintained by digest
 lastAppearance: ch002
+life: what they go through in the book, in a paragraph
+lifeMarks:                   # what the author wrote down of their life themselves; it holds over the digests
+  - { chapter: ch002, kind: exit, what: 说完旧事就走了 }   # kind: enter | return | exit | death — one mark a chapter
+  - { kind: death, what: 故事开始前就病故了 }               # no chapter: before the story begins (death or exit only)
 ---
 
 Free-form notes in Markdown.

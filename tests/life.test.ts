@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 /** A character's life read off the chapter digests, along one line of the plot. */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { lifeLine, lifeOf, lifeUntil, spanText, statusAt } from '../src/shared/life'
+import { lifeEnd, lifeLine, lifeOf, lifeUntil, spanText, statusAt } from '../src/shared/life'
 import type { ChapterMemory, CharacterMoment } from '../src/shared/types'
+import { packContext } from '../src/core/context'
 import { createTestBed, type TestBed } from './support/harness'
 
 const moment = (index: number, extra: Partial<CharacterMoment> = {}): { chapter: string; index: number; moment: CharacterMoment } => ({ chapter: `ch${String(index).padStart(3, '0')}`, index, moment: { character: 'x', name: 'x', ...extra } })
@@ -40,13 +41,59 @@ describe('a life on the page', () => {
     expect(early).toMatchObject({ first: 5, last: 6 })
     expect(early.death).toBeUndefined()
     expect(spanText(early.spans)).toEqual(['5–6'])
-    // A stretch is cut where the chapter cuts it; a leaving is the last word until the death is.
-    expect(spanText(lifeUntil(life, 7).spans)).toEqual(['5–7'])
+    // A stretch ends at the last chapter that had them by then — that they are in chapter 8 is not known at chapter 7; a
+    // leaving is the last word until the death is.
+    expect(spanText(lifeUntil(life, 7).spans)).toEqual(['5–6'])
+    expect(spanText(lifeUntil(life, 8).spans)).toEqual(['5–8'])
     expect(lifeUntil(life, 77)).toMatchObject({ exit: 77 })
     expect(lifeUntil(life, 77).death).toBeUndefined()
     expect(lifeUntil(life, 78)).toMatchObject({ death: 78 })
     expect(lifeUntil(life, 78).exit).toBeUndefined()
     expect(lifeUntil(life, 4)).toEqual({ events: [], spans: [] })
+  })
+
+  it('takes the author\'s word over the digest\'s: a mark on a chapter, with or without a digest of it', () => {
+    // The digest has her in chapter 3 and says nothing of a death; the author does.
+    const marked = lifeOf([moment(1), { ...moment(3, { role: '倒在渡口' }), mark: { chapter: 'ch003', kind: 'death' as const, what: '死在渡口' } }])
+    expect(marked.events.map(event => [event.index, event.kind, event.marked ?? false, event.what])).toEqual([[1, 'enter', false, undefined], [3, 'death', true, '死在渡口']])
+    expect(marked.death).toBe(3)
+    // A chapter no digest has them in: the mark is a chapter of their life all the same.
+    const added = lifeOf([moment(1), { chapter: 'ch007', index: 7, moment: {}, mark: { chapter: 'ch007', kind: 'exit' as const } }])
+    expect(added.events.map(event => [event.index, event.kind])).toEqual([[1, 'enter'], [7, 'exit']])
+    expect(added).toMatchObject({ exit: 7, last: 7 })
+    // A digest's death ends where they are seen again; the author's holds — a later chapter that has them remembers them.
+    const held = lifeOf([moment(1), { ...moment(2), mark: { chapter: 'ch002', kind: 'death' as const } }, moment(9), moment(10)])
+    expect(held.events.map(event => event.kind)).toEqual(['enter', 'death', 'seen', 'seen'])
+    expect(held.death).toBe(2)
+    expect([2, 9, 30].map(at => statusAt(held, at))).toEqual(['dead', 'dead', 'dead'])
+    // Until the author has them come back.
+    const back = lifeOf([moment(1), { ...moment(2), mark: { chapter: 'ch002', kind: 'death' as const } }, moment(9), { ...moment(10), mark: { chapter: 'ch010', kind: 'return' as const, what: '原来没有死' } }])
+    expect(back.events.map(event => event.kind)).toEqual(['enter', 'death', 'seen', 'return'])
+    expect(back.death).toBeUndefined()
+    expect([9, 10].map(at => statusAt(back, at))).toEqual(['dead', 'active'])
+    expect(lifeUntil(back, 9).death).toBe(2)
+    // The author can also say that the digest's death was none: they come back in that very chapter.
+    const undone = lifeOf([moment(1), { ...moment(2, { lifecycle: 'death' }), mark: { chapter: 'ch002', kind: 'return' as const } }])
+    expect(undone.death).toBeUndefined()
+  })
+
+  it('knows of somebody dead, or gone, before the story begins', () => {
+    const before = { chapter: '', index: 0, moment: {}, mark: { kind: 'death' as const, what: '宝玉出生前就去世了' } }
+    const never = lifeOf([before])
+    expect(never.events).toEqual([{ chapter: '', index: 0, kind: 'death', what: '宝玉出生前就去世了', marked: true }])
+    expect(never).toMatchObject({ death: 0, spans: [] })
+    expect(never.first).toBeUndefined()
+    expect([0, 1, 40].map(at => statusAt(never, at))).toEqual(['dead', 'dead', 'dead'])
+    expect(lifeLine(never, true)).toBe('故事开始之前已故')
+    expect(lifeEnd(never, true)).toEqual({ dead: true, at: 0, text: '故事开始之前已故' })
+    // Chapters that have them all the same — a memory, a story told — do not bring them back.
+    const remembered = lifeOf([before, moment(3), moment(4)])
+    expect(remembered.events.map(event => event.kind)).toEqual(['death', 'seen', 'seen'])
+    expect(remembered).toMatchObject({ death: 0, first: 3, last: 4 })
+    expect(lifeLine(remembered, true)).toBe('故事开始之前已故 · 正文里出现：第 3–4 章')
+    expect(lifeLine(lifeOf([{ chapter: '', index: 0, moment: {}, mark: { kind: 'exit' as const } }]), false)).toBe('gone before the story begins')
+    expect(lifeEnd(lifeOf([moment(1), moment(5, { lifecycle: 'exit' })]), true)).toEqual({ dead: false, at: 5, text: '第 5 章离开' })
+    expect(lifeEnd(lifeOf([moment(1)]), true)).toBeUndefined()
   })
 
   it('is said in one line of words: where they come on, the stretches they are in, how it ends', () => {
@@ -93,5 +140,52 @@ describe('everyone\'s life in a book', () => {
     expect(other.lives['阿棠']!.death).toBeUndefined()
     expect(other.lives['阿棠']!.events.map(event => [event.index, event.kind])).toEqual([[2, 'enter'], [3, 'seen']])
     expect(other.lives['沈蘅']!.last).toBe(1)
+  })
+
+  it('lets the author write a mark of their own into a life: over the digest, on every line that reads the chapter, and before the story', async () => {
+    const { project, index } = bed.runtime
+    const lead = await project.saveCharacter({ name: '沈蘅', role: 'protagonist' })
+    const friend = await project.saveCharacter({ name: '阿棠', role: 'supporting' })
+    const mother = await project.saveCharacter({ name: '沈母', role: 'minor' })
+    for (const title of ['一', '二', '三', '四']) await project.addChapter({ title })
+    const memory = (chapterId: string, names: string[]): ChapterMemory => ({ schema: 1, chapterId, textHash: 'x', updatedAt: new Date().toISOString(), brief: '', summary: '', facts: [], newEntities: [], threads: [], characters: names.map(name => ({ character: name, name })) })
+    await project.saveMemory(memory('ch001', ['沈蘅', '阿棠']))
+    await project.saveMemory(memory('ch002', ['沈蘅', '阿棠']))
+    await project.saveMemory(memory('ch003', ['沈蘅']))
+    // The digest of the second chapter missed that she died there: the author writes it down, by the chapter's number.
+    const marked = await project.markLife('阿棠', { chapter: 2, kind: 'death', what: '  死在渡口  ' })
+    expect(marked.lifeMarks).toEqual([{ chapter: 'ch002', kind: 'death', what: '死在渡口' }])
+    expect((await project.lives()).lives[friend.id]).toMatchObject({ death: 2 })
+    expect((await project.lives()).lives[friend.id]!.events.at(-1)).toMatchObject({ kind: 'death', marked: true, what: '死在渡口' })
+    expect((await project.presence()).find(entry => entry.character === friend.id)?.death).toBe(2)
+    // One mark a chapter: another for the same chapter replaces it; a mark for another chapter stands beside it.
+    await project.markLife(friend.id, { chapter: 'ch002', kind: 'exit' })
+    await project.markLife(friend.id, { chapter: 'ch004', kind: 'return', what: '回来了' })
+    expect((await project.findCharacter(friend.id))!.lifeMarks).toEqual([{ chapter: 'ch002', kind: 'exit' }, { chapter: 'ch004', kind: 'return', what: '回来了' }])
+    expect((await project.lives()).lives[friend.id]!.events.map(event => [event.index, event.kind])).toEqual([[1, 'enter'], [2, 'exit'], [4, 'return']])
+    expect((await project.lives()).lives[friend.id]!.exit).toBeUndefined()
+    // It holds where its chapter is read: a line that parts after the first chapter never comes to the second.
+    const line = await project.addLine({ title: '她没有上船', from: 'ch001' })
+    const side = await project.addChapter({ title: '另一个早晨' }, { line: line.id })
+    await project.saveMemory(memory(side.id, ['阿棠']))
+    expect((await project.lives(line.id)).lives[friend.id]!.events.map(event => [event.index, event.kind, event.marked ?? false])).toEqual([[1, 'enter', false], [2, 'seen', false]])
+    // Before the story begins: only somebody dead or gone — and on every line.
+    await expect(project.markLife(mother.id, { kind: 'enter' })).rejects.toThrow(/before the story/)
+    await project.markLife(mother.id, { kind: 'death', what: '沈蘅七岁那年病故' })
+    for (const told of [await project.lives(), await project.lives(line.id)]) expect(told.lives[mother.id]).toMatchObject({ death: 0 })
+    expect((await project.presence()).find(entry => entry.character === mother.id)).toMatchObject({ death: 0, chapters: [] })
+    // The writer of any chapter is told so — and of the leaving, from the chapter after it on.
+    const pack = async (id: string) => (await packContext(project, index, { purpose: 'draft', chapter: (await project.findChapter(id))!, textBudget: 50_000, sideBudget: 20_000, tailChars: 200 })).rest
+    expect(await pack('ch001')).toContain('已死亡（可以被提起，不能再以活人身份出场）：沈母（故事开始之前）')
+    expect(await pack('ch002')).not.toContain('阿棠（第2章）')
+    expect(await pack('ch003')).toContain('已离开故事（章纲没有安排，就不要让他们回来）：阿棠（第2章）')
+    // Taken back, the chapter goes by its digest again; a chapter nobody answers to is said.
+    await project.markLife(friend.id, { chapter: 'ch002' })
+    await project.markLife(friend.id, { chapter: 4 })
+    expect((await project.findCharacter(friend.id))!.lifeMarks).toBeUndefined()
+    expect((await project.lives()).lives[friend.id]!.events.map(event => event.kind)).toEqual(['enter', 'seen'])
+    await expect(project.markLife(friend.id, { chapter: '没有这一章', kind: 'death' })).rejects.toThrow(/no chapter matches/)
+    await expect(project.markLife('没有这个人', { chapter: 1, kind: 'death' })).rejects.toThrow(/no character matches/)
+    expect(lead.lifeMarks).toBeUndefined()
   })
 })

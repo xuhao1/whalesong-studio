@@ -19,7 +19,7 @@
  */
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from 'react'
 import { albumEmpty, entryImageAt, entryStateAt, standingAt, worldFront, type Album, type AlbumAt, type AlbumCounts, type AlbumEntry, type AlbumEvent, type AlbumPerson, type EntryState } from '../../shared/album'
-import type { LifeEvent, LifeStanding } from '../../shared/life'
+import { lifeLine, type LifeEvent, type LifeStanding } from '../../shared/life'
 import { layoutSpots, spotKey, type ScenePoint } from '../../shared/scene'
 import { neighbours, STANDINGS, tiesAt, trail, type Standing, type Tie, type TieEnd } from '../../shared/ties'
 import { MAIN_LINE, type CharacterRole } from '../../shared/types'
@@ -857,19 +857,19 @@ function PersonPage({ person, t, album, media, moment, time, rows, ties, go, set
             {life.spans.filter(stretch => moment === undefined || stretch.from <= moment).map(stretch => (
               <span key={stretch.from} className="nv-album-track-span" style={{ left: `${((stretch.from - first) / span) * 100}%`, width: `${((Math.min(stretch.to, moment ?? stretch.to) - stretch.from + 1) / span) * 100}%` }} />
             ))}
-            {life.death !== undefined && (moment === undefined || life.death <= moment) ? <span className="nv-album-track-end" style={{ left: `${((life.death - first + 0.5) / span) * 100}%` }} title={t(`第 ${life.death} 章死亡`, `Dies in chapter ${life.death}`)} /> : null}
+            {life.death !== undefined && life.death >= 1 && (moment === undefined || life.death <= moment) ? <span className="nv-album-track-end" style={{ left: `${((life.death - first + 0.5) / span) * 100}%` }} title={t(`第 ${life.death} 章死亡`, `Dies in chapter ${life.death}`)} /> : null}
             {moment !== undefined ? <span className="nv-album-track-now" style={{ left: `${((moment - first + 0.5) / span) * 100}%` }} /> : null}
           </div>
-          <p className="nv-muted nv-small">{t(`第 ${life.first} 章登场${life.death !== undefined ? `，第 ${life.death} 章死亡` : life.exit !== undefined ? `，第 ${life.exit} 章离开` : `，最后一次在第 ${life.last} 章`}；一共 ${life.events.length} 章有他。`, `Comes on in chapter ${life.first}${life.death !== undefined ? `, dies in chapter ${life.death}` : life.exit !== undefined ? `, leaves in chapter ${life.exit}` : `, last seen in chapter ${life.last}`}; in ${life.events.length} chapters in all.`)}</p>
+          <p className="nv-muted nv-small">{t(`${lifeLine(life, true) ?? ''}；一共 ${life.events.filter(event => event.index >= 1).length} 章有他。`, `${lifeLine(life, false) ?? ''}; in ${life.events.filter(event => event.index >= 1).length} chapters in all.`)}</p>
           {listed.length > 0 ? (
             <ol className="nv-album-events">
               {listed.flatMap((event, index) => {
                 const chapter = byIndex.get(event.index)
                 const row = (
-                  <li key={event.chapter} className={`is-${event.kind}`}>
+                  <li key={`${event.index}:${event.chapter}`} className={`is-${event.kind}`}>
                     {chapter !== undefined && onRead !== undefined
                       ? <button type="button" className="nv-album-event-at" onClick={() => { onRead(chapter.id) }} title={chapter.title}>{t(`第 ${event.index} 章`, `Ch. ${event.index}`)}</button>
-                      : <span className="nv-album-event-at">{t(`第 ${event.index} 章`, `Ch. ${event.index}`)}</span>}
+                      : <span className="nv-album-event-at">{event.index < 1 ? t('开始之前', 'Before') : t(`第 ${event.index} 章`, `Ch. ${event.index}`)}</span>}
                     <span className="nv-album-event-kind">{t(...EVENT_LABEL[event.kind])}</span>
                     <span className="nv-album-event-what">{[event.what, event.state].filter(Boolean).join(t('——', ' — '))}{event.where !== undefined ? <em> · {event.where}</em> : null}</span>
                   </li>

@@ -12,7 +12,7 @@
  * whatever the director does. A panel may begin and end inside a long line,
  * so a half-minute of narration is not one frozen picture.
  */
-import type { AudioLine, CameraMove, CharacterCard, ComicBoard, ComicPanel, StoryboardDensity } from '../../shared/types'
+import type { AudioLine, CameraMove, CharacterCard, ComicBoard, ComicPanel, StoryboardDensity, SheetsAsk } from '../../shared/types'
 import { PANEL_SECONDS, referencesOf, STORYBOARD_DENSITIES } from '../../shared/types'
 import { clip, hashText, newId, sameName } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
@@ -24,7 +24,7 @@ import { storyboardTask } from '../prompts'
 import { L, promptLanguage } from '../render'
 import { mapLimit, serializer } from '../util/async'
 import { buildAudioScript } from './audio'
-import { artDirectionOf, consistencyFor, looksOf, placeNamed, renderImage, requireImages, sheetsFirst } from './illustrate'
+import { artDirectionOf, consistencyFor, lackingSheets, looksOf, placeNamed, renderImage, requireImages, sheetsBefore, sheetsFirst } from './illustrate'
 import { pictureSize } from '../../shared/art'
 import { groupOf } from '../../shared/world'
 
@@ -322,7 +322,40 @@ export interface RenderPanelsResult {
 }
 
 /** Draw the panels of a chapter's storyboard that have no picture yet. */
-export async function renderPanels(core: NovelCore, runtime: ProjectRuntime, params: { chapter: string; panels?: string[]; force?: boolean; concurrency?: number }, task: TaskContext): Promise<RenderPanelsResult> {
+/**
+ * Whose design sheets a run of pictures would draw first — everything about
+ * to be started, asked in one go, before any of it is: so that the author can
+ * be told "this will first draw N design sheets" and say yes, or not this time.
+ * @returns `unknown`: how many of the asks cannot be told yet — panels of a chapter whose storyboard is not laid out.
+ */
+export async function sheetsAhead(core: NovelCore, runtime: ProjectRuntime, asks: readonly SheetsAsk[]): Promise<{ people: { id: string; name: string }[]; unknown: number }> {
+  const { project } = runtime
+  const people = new Map<string, string>()
+  let unknown = 0
+  for (const ask of asks) {
+    let cards: CharacterCard[]
+    if (ask.kind === 'panels') {
+      const chapter = await project.findChapter(ask.chapter)
+      const board = chapter !== undefined ? await project.comicBoard(chapter.plan.id) : undefined
+      if (board === undefined) {
+        // Who is in the panels is the storyboard's to say, and there is none yet.
+        unknown += 1
+        continue
+      }
+      const wanted = ask.panels !== undefined ? new Set(ask.panels) : undefined
+      const todo = board.panels.filter(panel => (wanted === undefined || wanted.has(panel.id)) && (ask.force === true || panel.image === undefined))
+      const all = await project.characters()
+      cards = await lackingSheets(core, runtime, [...new Set(todo.flatMap(panel => panel.characters ?? []))].map(id => all.find(card => card.id === id)).filter((card): card is CharacterCard => card !== undefined), 'returning')
+    } else {
+      // A picture that cannot be drawn says so when it is started; before that it is nothing to ask about.
+      cards = await sheetsBefore(core, runtime, ask).catch(() => [])
+    }
+    for (const card of cards) people.set(card.id, card.name)
+  }
+  return { people: [...people].map(([id, name]) => ({ id, name })), unknown }
+}
+
+export async function renderPanels(core: NovelCore, runtime: ProjectRuntime, params: { chapter: string; panels?: string[]; force?: boolean; concurrency?: number; /** `false`: this once, no design sheet is drawn first. */ sheetFirst?: boolean }, task: TaskContext): Promise<RenderPanelsResult> {
   const { project } = runtime
   await requireImages(core)
   let board = await buildStoryboard(core, runtime, { chapter: params.chapter }, task)
@@ -337,7 +370,7 @@ export async function renderPanels(core: NovelCore, runtime: ProjectRuntime, par
   // it, and without it each panel would invent the face anew.
   const cards = await project.characters()
   const inPanels = [...new Set(todo.flatMap(panel => panel.characters ?? []))].map(id => cards.find(card => card.id === id)).filter((card): card is CharacterCard => card !== undefined)
-  const first = await sheetsFirst(core, runtime, inPanels, 'returning', task)
+  const first = params.sheetFirst === false ? { drawn: [] as string[] } : await sheetsFirst(core, runtime, inPanels, 'returning', task)
   if (first.drawn.length > 0) task.job?.result({ sheets: first.drawn })
   const characters = first.drawn.length > 0 ? await project.characters() : cards
   const mostReferences = referencesOf((await core.settings.get()).image.references)

@@ -2,7 +2,7 @@
 /** Motion comic: how finely a chapter is cut into panels, and that the cut always covers the whole chapter. */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { LlmRequest } from '../src/core/llm'
-import { beatsOf, buildStoryboard, PANEL_SECONDS, planPanels, renderPanels } from '../src/core/pipelines/comic'
+import { beatsOf, buildStoryboard, PANEL_SECONDS, planPanels, renderPanels, sheetsAhead } from '../src/core/pipelines/comic'
 import type { AudioLine, AudioScript, ComicBoard } from '../src/shared/types'
 import { hashText, proseOnly } from '../src/shared/text'
 import { createTestBed, FakeImages, type TestBed } from './support/harness'
@@ -278,6 +278,33 @@ describe('drawing the panels', () => {
     expect(sheet).toBeDefined()
     for (const call of images.calls.slice(1)) expect(call.references.map(reference => reference.label)).toEqual(['沈璃'])
     expect((await project.findCharacter(passer.id))!.visual?.sheet).toBeUndefined()
+  })
+
+  it('can be asked first whose sheets the panels would draw — and told "not this time"', async () => {
+    const { project } = bed.runtime
+    const lead = await project.saveCharacter({ name: '沈璃', role: 'protagonist', appearance: '黑发，青衣', visual: { prompt: '青衣的年轻女子' } })
+    const chapter = await project.addChapter({ title: '渡口' })
+    await project.saveChapterText(chapter.id, '她把剑放回匣中。')
+    // No storyboard yet: who is in the panels cannot be told.
+    expect(await sheetsAhead(bed.core, bed.runtime, [{ kind: 'panels', chapter: chapter.id }])).toEqual({ people: [], unknown: 1 })
+    const textHash = hashText(proseOnly(await project.chapterText(chapter.id)))
+    await project.saveAudioScript({ schema: 1, chapterId: chapter.id, textHash, updatedAt: new Date().toISOString(), lines: [line('l1', '她把剑放回匣中。')], cues: [] } as never)
+    const panel = (id: string, extra: Record<string, unknown>) => ({ id, lines: ['l1'], description: '', prompt: '', camera: 'still', ...extra })
+    await project.saveComicBoard({ schema: 1, chapterId: chapter.id, textHash, updatedAt: new Date().toISOString(), style: '', panels: [
+      panel('p1', { description: '她站在渡口', prompt: 'a woman at a ferry', characters: [lead.id] }),
+      panel('p2', { description: '空的渡口', prompt: 'an empty ferry' }),
+    ] } as never)
+    expect(await sheetsAhead(bed.core, bed.runtime, [{ kind: 'panels', chapter: chapter.id }])).toEqual({ people: [{ id: lead.id, name: '沈璃' }], unknown: 0 })
+    // Only the panel nobody is in: nobody's sheet.
+    expect((await sheetsAhead(bed.core, bed.runtime, [{ kind: 'panels', chapter: chapter.id, panels: ['p2'] }])).people).toEqual([])
+    // Not this time: the panels are drawn from what there is.
+    const done = await renderPanels(bed.core, bed.runtime, { chapter: chapter.id, sheetFirst: false }, { origin: 'user' })
+    expect(done).toMatchObject({ rendered: 2, failed: 0 })
+    expect(done.sheets).toBeUndefined()
+    expect(images.calls).toHaveLength(2)
+    expect((await project.findCharacter(lead.id))!.visual?.sheet).toBeUndefined()
+    // Everything is drawn now: nothing is left to ask about.
+    expect((await sheetsAhead(bed.core, bed.runtime, [{ kind: 'panels', chapter: chapter.id }])).people).toEqual([])
   })
 })
 

@@ -20,7 +20,7 @@ import { basename, join } from 'node:path'
 import {
   analysisSteps, type AnalyzeStep,
   castOrder, chapterBudgetOf, MAIN_LINE,
-  type ActivityEntry, type BookShows, type CharacterLook, type CharacterMoment, type ShowCount,
+  type ActivityEntry, type BookShows, type CharacterLook, type CharacterMoment, type LifeMark, type ShowCount,
   type AudioScript, type CastPresence, type ChapterInfo, type ChapterMemory, type ChapterPlan, type ChapterReview, type ChapterStatus, type CharacterCard,
   type ComicBoard, type IllustrationInfo, type Outline, type PlaySession, type PlotLine, type PlotLineInfo, type PlotLineOrigin, type PlotThread, type ProjectManifest, type ProjectState, type ProjectStats, type Proposal, type RemovedChapter,
   type StyleProfile, type Suggestion, type VersionInfo, type VoiceCast, type Volume, type WorldEntry,
@@ -493,6 +493,29 @@ export class Project {
       await this.saveCard('characters', id, data, notes)
       return merged
     })
+  }
+
+  /**
+   * Write down something of a character's life — that they come on, come back, leave for good or die at a chapter — or
+   * take such a mark back. One mark a chapter: another for the same chapter replaces it. It holds over what the digest
+   * of that chapter says, on every line the chapter is read on.
+   * @param mark.chapter - the chapter, by id, title or number (along `line`); absent: before the story begins.
+   * @param mark.kind - absent: the mark of that chapter is taken back.
+   * @throws ProjectError `novel/not-found` for a character or a chapter nobody answers to; `novel/invalid` for a coming-on before the story.
+   */
+  async markLife(ref: string, mark: { chapter?: string | number; kind?: LifeMark['kind']; what?: string; line?: string }): Promise<CharacterCard> {
+    const card = await this.findCharacter(ref)
+    if (card === undefined) throw new ProjectError('novel/not-found', `no character matches "${ref}"`)
+    const chapter = mark.chapter !== undefined && String(mark.chapter).trim().length > 0 ? await this.findChapter(mark.chapter, mark.line) : undefined
+    if (mark.chapter !== undefined && String(mark.chapter).trim().length > 0 && chapter === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${mark.chapter}"`)
+    if (chapter === undefined && mark.kind !== undefined && mark.kind !== 'death' && mark.kind !== 'exit') {
+      throw new ProjectError('novel/invalid', 'before the story begins somebody can only be dead or gone — name the chapter they come on or come back in')
+    }
+    const id = chapter?.plan.id
+    const others = (card.lifeMarks ?? []).filter(other => other.chapter !== id)
+    const what = mark.what?.trim()
+    const next = mark.kind === undefined ? others : [...others, { ...(id !== undefined ? { chapter: id } : {}), kind: mark.kind, ...(what !== undefined && what.length > 0 ? { what } : {}) }]
+    return await this.saveCharacter({ id: card.id, lifeMarks: next })
   }
 
   async deleteCharacter(ref: string): Promise<boolean> {
@@ -1653,7 +1676,7 @@ export class Project {
     const path = await this.chapters(line)
     const memories = await this.memories(path)
     const digested = new Set(memories.map(entry => entry.chapter.plan.id))
-    return { chapters: path.map(chapter => ({ id: chapter.plan.id, index: chapter.index, title: chapter.plan.title, digested: digested.has(chapter.plan.id) })), lives: livesFrom(memories, await this.characters()) }
+    return { chapters: path.map(chapter => ({ id: chapter.plan.id, index: chapter.index, title: chapter.plan.title, digested: digested.has(chapter.plan.id) })), lives: livesFrom(memories, await this.characters(), path) }
   }
 
   /**
@@ -1795,7 +1818,7 @@ export class Project {
         byCharacter.set(card.id, list)
       }
     }
-    const told = livesFrom(memories, characters)
+    const told = livesFrom(memories, characters, await this.chapters())
     const presence = characters.map((card): CastPresence => {
       const chapters = byCharacter.get(card.id) ?? []
       const last = chapters.at(-1)
@@ -1960,12 +1983,16 @@ function stripUndefined<T extends object>(value: T): T {
 }
 
 /**
- * Everyone's life as a run of digests tells it: the chapters of one line of
- * the plot, or of that line as far as some chapter — what is handed in is all
- * that has happened.
+ * Everyone's life as a run of chapters tells it: what their digests noted, and
+ * over it what the author wrote down themselves (`CharacterCard.lifeMarks`).
+ * The chapters handed in are all that has happened — one line of the plot, or
+ * that line as far as some chapter.
+ * @param path - the chapters that count, in reading order: a mark holds where its chapter is among them, digested or not;
+ *   a mark with no chapter lies before the story, and holds on every line.
  */
-export function livesFrom(memories: readonly { chapter: LocatedChapter; memory: ChapterMemory }[], characters: readonly CharacterCard[]): Record<string, Life> {
-  const byCharacter = new Map<string, { chapter: string; index: number; moment: CharacterMoment }[]>()
+export function livesFrom(memories: readonly { chapter: LocatedChapter; memory: ChapterMemory }[], characters: readonly CharacterCard[], path: readonly LocatedChapter[]): Record<string, Life> {
+  type Noted = { chapter: string; index: number; moment: Pick<CharacterMoment, 'role' | 'stateAfter' | 'location' | 'lifecycle'>; mark?: LifeMark }
+  const byCharacter = new Map<string, Noted[]>()
   for (const { chapter, memory } of memories) {
     const here = new Set<string>()
     for (const moment of memory.characters) {
@@ -1974,6 +2001,20 @@ export function livesFrom(memories: readonly { chapter: LocatedChapter; memory: 
       if (card === undefined || here.has(card.id)) continue
       here.add(card.id)
       byCharacter.set(card.id, [...(byCharacter.get(card.id) ?? []), { chapter: chapter.plan.id, index: chapter.index, moment }])
+    }
+  }
+  // What the author wrote down themselves: on the digest's note of that chapter where there is one, a note of its own where there is none.
+  const indexOf = new Map(path.map(chapter => [chapter.plan.id, chapter.index]))
+  for (const card of characters) {
+    for (const mark of card.lifeMarks ?? []) {
+      const index = mark.chapter === undefined ? 0 : indexOf.get(mark.chapter)
+      // A chapter that is not on this line — or was taken out of the book — says nothing here.
+      if (index === undefined) continue
+      const noted = byCharacter.get(card.id) ?? []
+      const there = noted.find(item => item.index === index)
+      if (there !== undefined) there.mark = mark
+      else noted.push({ chapter: mark.chapter ?? '', index, moment: {}, mark })
+      byCharacter.set(card.id, noted)
     }
   }
   const lives: Record<string, Life> = {}

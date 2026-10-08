@@ -6,7 +6,8 @@ import { applyOutlineOps, type OutlineOp } from '../../core/pipelines/outline'
 import { buildFoundation, deriveBeats, deriveChapters, whatIf } from '../../core/pipelines/plot'
 import { ProjectError, upsertLooks } from '../../core/project'
 import { deriveLook, deriveVisual } from '../../core/pipelines/illustrate'
-import { promptLanguage, renderCharacter, renderWorld } from '../../core/render'
+import { L, promptLanguage, renderCharacter, renderWorld } from '../../core/render'
+import { lifeLine } from '../../shared/life'
 import type { NovelService } from '../../host/service'
 import { TIE_ENDS, TIE_KINDS, type Tie, type TieEnd, type TieKind } from '../../shared/ties'
 import { WORLD_EVENT_KINDS, withTurnPictures, type CharacterCard, type StyleProfile, type WorldEntry, type WorldEvent } from '../../shared/types'
@@ -39,6 +40,7 @@ export function bibleTools(service: NovelService): ToolDefinition[] {
         '- action=tie writes one down (or says one again, to set its chapters or note): fields {kind: within (a place in a place, a branch in a house) | seat (a house at a place) | member (a character of a house) | resides (a character at a place) | holds (a character holds a thing), from, to (names or ids), since, until (chapter ids or numbers; left out: from the start, for good), note}. action=untie takes one away: `ref` is its id, or fields {kind, from, to}.',
         '- action=derive_ties has the planner work the ties and the course of places and things out from the bible and the digests (`direction` steers it); ties that are there stay unless it finds them wrong. action=tidy (kind=world) has the planner look over the entries for the same thing written down twice and for entries in the wrong category: it proposes, nothing is changed — act on what you agree with by merge and save, after telling the author.',
         '- action=pin (kind=world) puts the mark of something that stands in a place onto that place\'s picture, as the viewer shows it: `ref` is the place (or house) whose picture it is, fields {mark: the place, house or character marked, x, y} with x and y from 0 (left, top) to 1 (right, bottom); fields {mark, clear: true} lets that mark be laid out by itself again, fields {clear: true} all of them. Marks are laid out by themselves until pinned.',
+        '- action=mark_life (kind=character) writes down something of a character\'s life the digests do not have, or have wrong: `ref` is the character, fields {chapter (id or number; left out: before the story begins — only for somebody dead or gone before the first page), kind: enter | return | exit (leaves the story for good) | death, what (a few words), line (the plot line a chapter number counts along; left out: the main one)}. It holds over what the digest of that chapter says, on every line that chapter is read on; one mark a chapter. fields {chapter, clear: true} takes a mark back. Use it for what the author tells you, not for what a digest would find by itself — digest the chapter for that.',
         '- action=expand lets the architect model flesh out a character or world entry in agreement with the written text (`direction` steers it).',
         '- action=derive_visual (kind=world) has the director write down how a place or a thing looks, from what the book says of it, and keeps it on the entry (visualPrompt): its design art is drawn from that, and it is done by itself the first time such art is drawn (`direction` steers it).',
         '- action=derive_visual (kind=character) distills the prose appearance of a character into a visual anchor and a negative list for image generation, and stores both on the card (`direction` steers it). Do this — or write fields.visual yourself — before drawing someone: an image model handed the prose of a card invents what the prose leaves open.',
@@ -51,7 +53,7 @@ export function bibleTools(service: NovelService): ToolDefinition[] {
       ].join('\n'),
       mutating: true,
       parameters: {
-        action: { type: 'string', required: true, enum: ['save', 'delete', 'merge', 'ties', 'tie', 'untie', 'derive_ties', 'tidy', 'pin', 'expand', 'derive_visual', 'learn_style', 'accept_suggestion', 'dismiss_suggestion'] },
+        action: { type: 'string', required: true, enum: ['save', 'delete', 'merge', 'ties', 'tie', 'untie', 'derive_ties', 'tidy', 'pin', 'mark_life', 'expand', 'derive_visual', 'learn_style', 'accept_suggestion', 'dismiss_suggestion'] },
         kind: { type: 'string', enum: ['character', 'world', 'style'], description: 'Required except for the suggestion actions and the actions on ties (ties, tie, untie, derive_ties).' },
         ref: { type: 'string', description: 'Entry id or name; the suggestion id for the suggestion actions.' },
         fields: { type: 'object', additionalProperties: true, description: 'Fields to set (save), or {sample, name} for learn_style.' },
@@ -175,6 +177,27 @@ export function bibleTools(service: NovelService): ToolDefinition[] {
           return { record: { summary: [`在《${place.name}》的画面上摆了「${name}」的位置`, `Pinned the mark of "${name}" on the picture of "${place.name}"`] }, text: `Pinned the mark of "${name}" at ${x}, ${y} of the picture of "${place.name}".${place.visualImage === undefined ? ' The place has no design art yet: the mark shows once it has (novel_illustrate kind=scene).' : ''}${stands ? '' : ` Nothing says "${name}" stands in "${place.name}" — a mark shows only for what is tied to the place (action=tie).`}` }
         }
 
+        if (args.action === 'mark_life') {
+          if (args.ref === undefined) throw new ProjectError('novel/invalid', 'action=mark_life needs `ref`: the character')
+          const kind = fields.kind === 'enter' || fields.kind === 'return' || fields.kind === 'exit' || fields.kind === 'death' ? fields.kind : undefined
+          if (kind === undefined && fields.clear !== true) throw new ProjectError('novel/invalid', 'fields.kind is enter, return, exit or death — or fields.clear: true takes the mark of that chapter back')
+          const chapter = typeof fields.chapter === 'string' || typeof fields.chapter === 'number' ? fields.chapter : undefined
+          const line = typeof fields.line === 'string' && fields.line.trim().length > 0 ? fields.line.trim() : undefined
+          const card = await project.markLife(args.ref, {
+            ...(chapter !== undefined && String(chapter).trim().length > 0 && String(chapter).trim() !== 'before' ? { chapter } : {}),
+            ...(kind !== undefined ? { kind } : {}),
+            ...(typeof fields.what === 'string' ? { what: fields.what } : {}),
+            ...(line !== undefined ? { line } : {}),
+          })
+          // Their life as it reads now, along the line the mark was counted on.
+          const now = lifeLine((await project.lives(line)).lives[card.id], lang === 'zh') ?? L(lang, '正文里还没有出场', 'not on the page yet')
+          const where = chapter !== undefined && String(chapter).trim() !== 'before' ? `chapter ${chapter}` : 'before the story begins'
+          return {
+            text: kind !== undefined ? `Written down for ${card.name}, ${where}: ${kind}. Their life now reads: ${now}` : `The mark for ${card.name}, ${where}, is taken back. Their life now reads: ${now}`,
+            data: toJson(card.lifeMarks ?? []),
+            record: { summary: kind !== undefined ? [`在「${card.name}」的履历里记了一笔`, `Wrote a mark into the life of ${card.name}`] : [`从「${card.name}」的履历里去掉了一笔`, `Took a mark out of the life of ${card.name}`] },
+          }
+        }
         if (args.action === 'save') {
           // `ref` selects the entry; a new entry takes its name from fields.name.
           if (args.kind === 'character') {

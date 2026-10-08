@@ -20,6 +20,7 @@ import { formatDuration, JobProgress, PlayerControls, usePlayerOptions } from '.
 import { place, secondsOf, Theater, useCurrentPanel } from '../reader/theater'
 import { useLinePlayer } from './player'
 import { chapterJob, inBatch, type ChapterJob } from '../Batch'
+import { useSheetsAsk } from '../SheetsAsk'
 import { VideoCard } from './Video'
 
 export function ComicStage({ chapter }: { chapter: ChapterInfo | undefined }) {
@@ -74,20 +75,25 @@ export function ComicStage({ chapter }: { chapter: ChapterInfo | undefined }) {
   const voicedAll = lines.length > 0 && lines.filter(item => item.skip !== true).every(item => item.audio !== undefined)
   // Something of this chapter's motion comic is still to make.
   const unfinished = lines.length === 0 || panels.length === 0 || board.data.stale || drawn < panels.length || !voicedAll
+  const sheets = useSheetsAsk()
   /** Everything this chapter's motion comic needs, in one go: script, voices, sound, storyboard, pictures. */
   const makeAll = (): Promise<unknown> => run(async () => {
     player.stop()
     if (density !== (saved?.density ?? 'balanced') || limit !== saved?.maxPanels) {
       await controller.api.call('project.update', { root, patch: { storyboard: { density, ...(limit !== undefined ? { maxPanels: limit } : {}) } } })
     }
-    await controller.api.call('batch.stage', {
-      root,
-      chapters: [chapter.id],
-      steps: ['script', ...(ready?.tts === true ? ['voice' as const] : []), ...(ready?.sound === true ? ['sound' as const] : []), 'storyboard', ...(ready?.image === true ? ['panels' as const] : [])],
-      density,
-      ...(limit !== undefined ? { maxPanels: limit } : {}),
+    // Whose design sheets the pictures would draw first is asked before anything is started — as far as a storyboard says who is in them.
+    await sheets.before(ready?.image === true ? [{ kind: 'panels', chapter: chapter.id }] : [], async (choice) => {
+      await controller.api.call('batch.stage', {
+        root,
+        chapters: [chapter.id],
+        steps: ['script', ...(ready?.tts === true ? ['voice' as const] : []), ...(ready?.sound === true ? ['sound' as const] : []), 'storyboard', ...(ready?.image === true ? ['panels' as const] : [])],
+        density,
+        ...(limit !== undefined ? { maxPanels: limit } : {}),
+        ...choice,
+      })
+      await controller.refreshJobs()
     })
-    await controller.refreshJobs()
   })
 
   /** Cut the chapter anew with what the controls say, and keep that as the book's setting. */
@@ -102,10 +108,13 @@ export function ComicStage({ chapter }: { chapter: ChapterInfo | undefined }) {
   const render = (params: { force?: boolean; panels?: string[] } = {}): Promise<unknown> | undefined => {
     // Drawing needs an image model; the storyboard itself does not.
     if (!controller.need('image')) return undefined
+    // Whoever of the people in these panels comes back in the book and has no design sheet gets one first: asked, before anything is drawn.
     return run(async () => {
-      player.stop()
-      await controller.api.call('comic.render', { root, chapter: chapter.id, ...params })
-      await controller.refreshJobs()
+      await sheets.before([{ kind: 'panels', chapter: chapter.id, ...params }], async (choice) => {
+        player.stop()
+        await controller.api.call('comic.render', { root, chapter: chapter.id, ...params, ...choice })
+        await controller.refreshJobs()
+      })
     })
   }
   // Only the button whose work is running says so; the others wait their turn.
@@ -222,6 +231,7 @@ export function ComicStage({ chapter }: { chapter: ChapterInfo | undefined }) {
 
       {editing !== undefined ? <PanelEditor chapterId={chapter.id} panel={editing} onClose={() => { setEditing(undefined) }} onSaved={() => { board.reload() }} /> : null}
       {confirm.element}
+      {sheets.element}
     </div>
   )
 }

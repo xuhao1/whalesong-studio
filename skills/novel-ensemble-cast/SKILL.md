@@ -17,7 +17,7 @@ What the writer receives follows from it, for the chapter in hand and on that ch
 - for those in the chapter: their state after their last chapter and a line of theirs from the text;
 - a list of who is out of the story **as of the chapters before this one** — the dead (may be mentioned, must not appear alive) and those who left for good (not to come back unless the outline brings them). Somebody who dies in chapter 16 is alive to the writer of chapter 5.
 
-So there is nothing to "mark". When a death or a leaving is missing or wrong, the digest of that chapter is what is wrong: digest the chapter again (`novel_digest`), or correct the text. A card's `life` field is a paragraph telling what they go through in the book — the author's to edit, continuity's to write from the digests.
+So there is no status to keep. When a death or a leaving is missing or wrong, the digest of that chapter is what is wrong: digest the chapter again (`novel_digest`), or correct the text. Where the author tells you something of a life that no digest has — "she died before the story begins", "he leaves for good in chapter 12, the digest missed it" — write it down as a mark: `novel_bible action=mark_life kind=character ref=<name> fields={chapter, kind: enter|return|exit|death, what}` (no chapter: before the story begins). A mark is an event with its chapter, not a state: it holds over the digest of that chapter, on every line that reads it. After a death or a leaving written down this way, later chapters that have the person only remember them; a `return` mark brings them back. A card's `life` field is a paragraph telling what they go through in the book — the author's to edit, continuity's to write from the digests.
 
 ## Reading the table
 

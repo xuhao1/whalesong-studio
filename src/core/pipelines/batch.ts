@@ -289,6 +289,8 @@ export interface StageBatchParams {
   maxPanels?: number
   /** What the author wants of the videos. */
   direction?: string
+  /** false: this once, the panels are drawn from what there is — no design sheet first. */
+  sheetFirst?: boolean
   /** false: videos without subtitles. Left out: with them. */
   subtitles?: boolean
 }
@@ -392,7 +394,7 @@ export async function stagePlan(core: NovelCore, runtime: ProjectRuntime, params
         after: after('storyboard'),
         skip: unavailable('panels'),
         async run(sub) {
-          const result = await renderPanels(core, runtime, { chapter: id, ...force }, sub)
+          const result = await renderPanels(core, runtime, { chapter: id, ...force, ...(params.sheetFirst === false ? { sheetFirst: false } : {}) }, sub)
           const note = L(lang, `绘制 ${result.rendered} 格，共 ${result.panels} 格`, `${result.rendered} drawn of ${result.panels}`)
           if (result.failed > 0) throw new Error(L(lang, `${result.failed} 格没有画出来（${note}）`, `${result.failed} panels were not drawn (${note})`))
           return note
@@ -604,6 +606,8 @@ export interface ArtBatchParams {
   insert?: boolean
   /** Draw again what is already there. */
   force?: boolean
+  /** false: this once, no design sheet is drawn first for whoever lacks one — not for a portrait, not for a scene, not for the cover. */
+  sheetFirst?: boolean
 }
 
 export async function artPlan(core: NovelCore, runtime: ProjectRuntime, params: ArtBatchParams): Promise<BatchPlan> {
@@ -642,7 +646,8 @@ export async function artPlan(core: NovelCore, runtime: ProjectRuntime, params: 
   for (const ref of params.sheets ?? []) sheet(await card(ref), force)
   // The sheet comes first: a portrait asked for somebody who has none puts their sheet on the table too, as a step that
   // is seen — not as something the portrait does on the side.
-  const sheetsToo = core.currentSettings().image.sheetFirst !== false
+  const sheetsToo = core.currentSettings().image.sheetFirst !== false && params.sheetFirst !== false
+  const asIs = params.sheetFirst === false ? { sheetFirst: false as const } : {}
   for (const ref of params.portraits ?? []) {
     const who = await card(ref)
     if (sheetsToo && who.visual?.sheet === undefined) sheet(who, false)
@@ -654,7 +659,7 @@ export async function artPlan(core: NovelCore, runtime: ProjectRuntime, params: 
       after: sheetOf.has(who.id) ? [sheetOf.get(who.id)!] : [],
       skip: async () => noImages ?? (!force && (await project.findCharacter(who.id))?.visual?.portrait !== undefined ? L(lang, '已有立绘', 'has a portrait') : undefined),
       async run(sub) {
-        await illustrate(core, runtime, { kind: 'portrait', target: who.id }, sub)
+        await illustrate(core, runtime, { kind: 'portrait', target: who.id, ...asIs }, sub)
         return undefined
       },
     })
@@ -714,7 +719,7 @@ export async function artPlan(core: NovelCore, runtime: ProjectRuntime, params: 
         after: references,
         skip: () => noImages ?? (!chapter.hasText ? L(lang, '这一章还没有正文', 'this chapter has no text yet') : !force && pictures.some(picture => picture.kind === 'scene' && picture.target === chapter.id) ? L(lang, '已有插图', 'has an illustration') : undefined),
         async run(sub) {
-          const result = await illustrate(core, runtime, { kind: 'scene', target: chapter.id, ...(params.insert === true ? { insert: true } : {}) }, sub)
+          const result = await illustrate(core, runtime, { kind: 'scene', target: chapter.id, ...(params.insert === true ? { insert: true } : {}), ...asIs }, sub)
           return result.inserted ? L(lang, '已放进正文', 'placed in the text') : undefined
         },
       })
@@ -728,7 +733,7 @@ export async function artPlan(core: NovelCore, runtime: ProjectRuntime, params: 
       after: [...sheetOf.values()],
       skip: async () => noImages ?? (!force && await project.cover() !== undefined ? L(lang, '已有封面', 'has a cover') : undefined),
       async run(sub) {
-        await illustrate(core, runtime, { kind: 'cover' }, sub)
+        await illustrate(core, runtime, { kind: 'cover', ...asIs }, sub)
         return undefined
       },
     })

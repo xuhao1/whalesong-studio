@@ -7933,6 +7933,111 @@ blockquote.nv-issue-quote {
   outline-offset: 1px;
 }
 
+/* Ideas jotted down beside the buttons that draw somebody, and how the director sorted the last of them. */
+.nv-person-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.nv-person-notes > p {
+  margin: 0;
+}
+
+.nv-person-sorted {
+  position: relative;
+  padding: 8px 10px;
+  border: 1px solid var(--nv-border);
+  border-radius: var(--nv-radius-s);
+  background: var(--nv-surface);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.nv-person-sorted > .nv-btn {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+}
+
+.nv-person-sorted > ul {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.nv-person-sorted > p {
+  margin: 4px 0 0;
+}
+
+.nv-person-sorted li > span {
+  display: inline-block;
+  margin-right: 8px;
+  color: var(--nv-text-3);
+}
+
+/* What the author wrote down of a life themselves: marked on the strip and in the table, listed with a way to change it. */
+.nv-life-tick.is-marked,
+.nv-lives td.is-marked {
+  box-shadow: inset 0 0 0 1.5px var(--nv-text);
+}
+
+.nv-life-marks {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12.5px;
+}
+
+.nv-life-marks > ul {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.nv-life-marks > ul > li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.nv-life-marks > ul > li > span:not(.nv-chip) {
+  flex: 1;
+  min-width: 0;
+}
+
+.nv-life-mark-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--nv-border);
+  border-radius: var(--nv-radius-s);
+  background: var(--nv-surface);
+}
+
+.nv-life-mark-form > .nv-select {
+  width: auto;
+  max-width: 220px;
+}
+
+.nv-life-mark-form > .nv-input:not(.nv-select) {
+  flex: 1 1 160px;
+  width: auto;
+}
+
+.nv-life-mark-form > p {
+  flex: 1 1 100%;
+  margin: 0;
+}
+
 .nv-life-line {
   margin: 0;
   font-size: 12.5px;

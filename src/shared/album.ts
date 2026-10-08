@@ -15,7 +15,7 @@
  *   albumCounts    how much there is of each kind, for a page that decides what to offer
  *   entryStateAt   how a place, a house or a thing stands at a chapter, by its course
  */
-import { statusAt, type Life } from './life'
+import { lifeUntil, statusAt, type Life } from './life'
 import type { Tie, TieEnd } from './ties'
 import type { CharacterRole, WorldCategory } from './types'
 import type { WorldGroup, WorldWeight } from './world'
@@ -206,18 +206,9 @@ export function cutAlbum(album: Album, upTo: number): Album {
   const indexOf = new Map(album.chapters.map(chapter => [chapter.id, chapter.index]))
   const lives: Record<string, Life> = {}
   for (const [id, life] of Object.entries(album.lives)) {
-    const events = life.events.filter(event => event.index <= upTo)
-    if (events.length === 0) continue
-    const spans = life.spans.filter(span => span.from <= upTo).map(span => ({ from: span.from, to: Math.min(span.to, upTo) }))
-    const last = events.at(-1)!
-    lives[id] = {
-      events,
-      spans,
-      first: events[0]!.index,
-      last: last.index,
-      ...(last.kind === 'death' ? { death: last.index } : {}),
-      ...(last.kind === 'exit' ? { exit: last.index } : {}),
-    }
+    const cut = lifeUntil(life, upTo)
+    // On the page by then; somebody known only by what lies before the story has not come on.
+    if (cut.first !== undefined) lives[id] = cut
   }
   const told = Object.keys(album.lives).length > 0
   const people = album.people.filter(person => !told || lives[person.id] !== undefined)

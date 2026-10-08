@@ -10,10 +10,11 @@
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { VoiceOption } from '../../shared/rpc'
-import type { CharacterCard, CharacterLook, CharacterRole } from '../../shared/types'
-import { lifeLine, spanText, type Life, type LifeEvent, type LifeStanding } from '../../shared/life'
+import type { CharacterCard, CharacterLook, CharacterRole, LifeMark, SortedNotes } from '../../shared/types'
+import { lifeEnd, lifeLine, type Life, type LifeEvent, type LifeStanding } from '../../shared/life'
 import { lines, options, useAssist } from '../forms'
 import { sheetsDrawn } from '../labels'
+import { useSheetsAsk, type SheetsChoice } from '../SheetsAsk'
 import { TiesBlock } from '../Ties'
 import { Icon } from '../icons'
 import {
@@ -160,9 +161,8 @@ export function CharacterCards({ shown, grouped, searching, lives }: { shown: Ch
   // being in the story is no news, and where the book has got to is no property of a person.
   const end = (item: CharacterCard): { dead: boolean; text: string } | undefined => {
     const life = lives?.lives[item.id]
-    if (life?.death !== undefined) return { dead: true, text: t(`第 ${life.death} 章死亡`, `dies in ch. ${life.death}`) }
-    if (life?.exit !== undefined) return { dead: false, text: t(`第 ${life.exit} 章离开`, `leaves in ch. ${life.exit}`) }
-    return undefined
+    const said = lifeEnd(life, true)
+    return said !== undefined ? { dead: said.dead, text: t(said.text, lifeEnd(life, false)!.text) } : undefined
   }
   const onLine = lives?.line !== undefined ? t(`（${lives.line.title}）`, ` (${lives.line.title})`) : ''
   const row = (item: CharacterCard): ReactNode => (mode === 'photos' ? (
@@ -236,16 +236,27 @@ export function CharacterCards({ shown, grouped, searching, lives }: { shown: Ch
 /** What a chapter is to a life, where it is more than one they are in. */
 export const LIFE_MARK: Record<LifeEvent['kind'], [string, string]> = { enter: ['登场', 'comes on'], seen: ['', ''], return: ['回归', 'returns'], exit: ['离开', 'leaves'], death: ['死亡', 'dies'] }
 
+/** What the author can write down of a life at a chapter, in the words of the form. */
+const MARK_KINDS: { value: LifeMark['kind']; label: [string, string] }[] = [
+  { value: 'enter', label: ['登场', 'comes on'] },
+  { value: 'return', label: ['回归', 'comes back'] },
+  { value: 'exit', label: ['离开故事', 'leaves the story'] },
+  { value: 'death', label: ['死亡', 'dies'] },
+]
+/** The chapter of a mark that lies before the story begins, as the form names it. */
+const BEFORE = ''
+
 /**
  * Somebody's life on the page: a strip of the line's chapters with the ones
- * they are in filled, a line saying where they come on, stay and leave, the
- * paragraph that tells it — the author's to edit, continuity's to write — and
- * every chapter's note behind a fold.
+ * they are in filled, a line saying where they come on, stay and leave, what
+ * the author wrote down of it themselves — over the digests, where a digest
+ * missed something or has it wrong —, the paragraph that tells it, and every
+ * chapter's note behind a fold.
  */
 function LifeBlock({ card, lives, value, dirty, onChange }: { card: CharacterCard; lives: Lives; value: string; dirty: boolean; onChange: (value: string) => void }) {
   const { controller } = useStudio()
   const t = useT()
-  const { root } = useProject()
+  const { project, root } = useProject()
   const [open, setOpen] = useState(false)
   const life = lives.lives[card.id]
   const writing = useRunningJob(job => job.kind === 'bible' && job.title.startsWith('life ') && job.target === card.id) !== undefined
@@ -256,10 +267,39 @@ function LifeBlock({ card, lives, value, dirty, onChange }: { card: CharacterCar
     await controller.run('ai.characterLife', { root, id: card.id, ...(lives.line !== undefined ? { line: lives.line.id } : {}) })
     controller.toast('success', t('履历写好了', 'The life is written'))
   })
+  // ── what the author writes down themselves ──
+  const marks = card.lifeMarks ?? []
+  const [marking, setMarking] = useState<{ chapter: string; kind: LifeMark['kind']; what: string } | undefined>()
+  const onLine = useMemo(() => new Map(lives.chapters.map(chapter => [chapter.id, chapter])), [lives.chapters])
+  // A chapter of another line of the plot, or one taken out of the book since: named as far as it can be.
+  const elsewhere = useMemo(() => new Map([...project.chapters, ...(project.lines ?? []).flatMap(line => line.chapters)].map(chapter => [chapter.id, chapter.title])), [project.chapters, project.lines])
+  const whereOf = (mark: LifeMark): string => {
+    if (mark.chapter === undefined) return t('故事开始之前', 'Before the story begins')
+    const here = onLine.get(mark.chapter)
+    if (here !== undefined) return t(`第 ${here.index} 章 ${here.title}`, `Ch. ${here.index} ${here.title}`)
+    const title = elsewhere.get(mark.chapter)
+    return title !== undefined ? t(`《${title}》（不在这条线上）`, `"${title}" (not on this line)`) : t('一章已经不在书里的章节', 'a chapter no longer in the book')
+  }
+  const saveMark = (chapter: string | undefined, kind: LifeMark['kind'] | undefined, what?: string): Promise<unknown> => controller.guard(async () => {
+    await controller.api.call('character.mark', { root, id: card.id, ...(chapter !== undefined && chapter !== BEFORE ? { chapter } : {}), ...(kind !== undefined ? { kind } : {}), ...(what !== undefined && what.trim().length > 0 ? { what: what.trim() } : {}) })
+    setMarking(undefined)
+    controller.toast('success', kind !== undefined ? t('记下了：履历已按它重读', 'Written down: the life is read with it') : t('去掉了这一笔', 'The mark is taken back'))
+  })
+  const start = (mark?: LifeMark): void => {
+    // Where the digests end is where something is most likely to be missing.
+    const latest = lives.chapters.filter(chapter => chapter.digested).at(-1) ?? lives.chapters.at(-1)
+    setMarking(mark !== undefined ? { chapter: mark.chapter ?? BEFORE, kind: mark.kind, what: mark.what ?? '' } : { chapter: latest?.id ?? BEFORE, kind: 'death', what: '' })
+  }
+  const told = lifeLine(life, true) !== undefined ? t(lifeLine(life, true)!, lifeLine(life, false)!) : undefined
+  const gone = lifeEnd(life, true)
+  const eventAt = (event: LifeEvent): string => (event.index < 1 ? t('故事开始之前', 'Before the story begins') : `${t(`第 ${event.index} 章`, `Ch. ${event.index}`)} ${titles.get(event.chapter) ?? ''}`)
   return (
     <section className="nv-life">
       <SectionTitle actions={(
-        <Button size="sm" icon="feather" disabled={dirty || life === undefined} busy={writing} pending={t('场记正在写…', 'Continuity is writing…')} onClick={write} title={dirty ? t('先保存当前修改', 'Save your edits first') : life === undefined ? t('还没有哪一章的收录里记到这个人', 'No chapter\'s digest names them yet') : t('让场记根据各章的收录，把这个人在书里的经历写成一段话', 'Have continuity tell their life in the book in a paragraph, from the chapter digests')}>{value.length > 0 ? t('重写一段', 'Write it again') : t('写成一段话', 'Tell it in a paragraph')}</Button>
+        <>
+          <Button size="sm" variant="ghost" icon="pen" onClick={() => { if (marking !== undefined) setMarking(undefined); else start() }} title={t('收录漏记或记错了——亲手记一笔：在某一章登场、回归、离开或死亡；也可以记"故事开始之前就已经不在了"。你记的盖过收录对那一章的说法', 'Where a digest missed something or has it wrong — write it down yourself: comes on, comes back, leaves or dies at a chapter; or was gone before the story begins. Your word holds over the digest\'s for that chapter')}>{t('记一笔', 'Write a mark')}</Button>
+          <Button size="sm" icon="feather" disabled={dirty || life === undefined} busy={writing} pending={t('场记正在写…', 'Continuity is writing…')} onClick={write} title={dirty ? t('先保存当前修改', 'Save your edits first') : life === undefined ? t('还没有哪一章的收录里记到这个人', 'No chapter\'s digest names them yet') : t('让场记根据各章的收录，把这个人在书里的经历写成一段话', 'Have continuity tell their life in the book in a paragraph, from the chapter digests')}>{value.length > 0 ? t('重写一段', 'Write it again') : t('写成一段话', 'Tell it in a paragraph')}</Button>
+        </>
       )}>{t('履历', 'Life on the page')}{lives.line !== undefined ? <span className="nv-muted"> · {lives.line.title}</span> : null}</SectionTitle>
       {lives.chapters.length > 0 ? (
         <div className="nv-life-strip" role="img" aria-label={t('各章是否在场', 'Presence, chapter by chapter')}>
@@ -269,24 +309,48 @@ function LifeBlock({ card, lives, value, dirty, onChange }: { card: CharacterCar
               <button
                 key={chapter.id}
                 type="button"
-                className={cx('nv-life-tick', event !== undefined && 'is-on', event !== undefined && event.kind !== 'seen' && `is-${event.kind}`, !chapter.digested && 'is-unread')}
-                title={`${t(`第 ${chapter.index} 章`, `Ch. ${chapter.index}`)} · ${chapter.title}${event !== undefined ? ` — ${event.kind !== 'seen' ? `${t(...LIFE_MARK[event.kind])}${event.what !== undefined ? '：' : ''}` : ''}${event.what ?? t('在场', 'present')}` : chapter.digested ? '' : t('（这一章还没有收录）', ' (not digested yet)')}`}
+                className={cx('nv-life-tick', event !== undefined && 'is-on', event !== undefined && event.kind !== 'seen' && `is-${event.kind}`, event?.marked === true && 'is-marked', !chapter.digested && event === undefined && 'is-unread')}
+                title={`${t(`第 ${chapter.index} 章`, `Ch. ${chapter.index}`)} · ${chapter.title}${event !== undefined ? ` — ${event.kind !== 'seen' ? `${t(...LIFE_MARK[event.kind])}${event.what !== undefined ? '：' : ''}` : ''}${event.what ?? (event.kind === 'seen' ? t('在场', 'present') : '')}${event.marked === true ? t('（你记的）', ' (your mark)') : ''}` : chapter.digested ? '' : t('（这一章还没有收录）', ' (not digested yet)')}`}
                 onClick={() => { controller.setView('read', chapter.id) }}
               />
             )
           })}
         </div>
       ) : null}
-      {life !== undefined && life.events.length > 0 ? (
+      {told !== undefined ? (
         <p className="nv-life-line">
-          {t(`第 ${life.first} 章登场`, `Comes on in chapter ${life.first}`)}
-          {t(` · 在场：第 ${spanText(life.spans).join('、')} 章`, ` · present: chapters ${spanText(life.spans).join(', ')}`)}
-          {life.death !== undefined ? <strong className="is-dead">{t(` · 第 ${life.death} 章死亡`, ` · dies in chapter ${life.death}`)}</strong> : life.exit !== undefined ? <strong>{t(` · 第 ${life.exit} 章离开`, ` · leaves in chapter ${life.exit}`)}</strong> : t(` · 最后一次在第 ${life.last} 章`, ` · last seen in chapter ${life.last}`)}
-          <span className="nv-muted">{t(`（共 ${life.events.length} 章；这条线已收录 ${digested} / ${lives.chapters.length} 章）`, ` (${life.events.length} chapters; ${digested} of this line's ${lives.chapters.length} digested)`)}</span>
+          <span className={cx(gone?.dead === true && 'is-dead')}>{told}</span>
+          <span className="nv-muted">{t(`（共 ${life!.events.filter(event => event.index >= 1).length} 章；这条线已收录 ${digested} / ${lives.chapters.length} 章）`, ` (${life!.events.filter(event => event.index >= 1).length} chapters; ${digested} of this line's ${lives.chapters.length} digested)`)}</span>
         </p>
       ) : (
         <p className="nv-muted nv-small">{digested === 0 ? t('这条线上还没有收录过的章节：履历是从各章的收录里读出来的。', 'No chapter of this line is digested yet: a life is read off the chapter digests.') : t(`已收录的 ${digested} 章里都没有记到这个人。`, `None of the ${digested} digested chapters names them.`)}</p>
       )}
+      {marks.length > 0 || marking !== undefined ? (
+        <div className="nv-life-marks">
+          {marks.length > 0 ? (
+            <ul>
+              {marks.map(mark => (
+                <li key={mark.chapter ?? BEFORE}>
+                  <Chip tone={mark.kind === 'death' ? 'red' : mark.kind === 'exit' ? 'amber' : 'green'}>{t('你记的', 'Your mark')}</Chip>
+                  <span>{whereOf(mark)} · {mark.chapter === undefined ? (mark.kind === 'death' ? t('已故', 'dead') : t('已离开', 'gone')) : t(...MARK_KINDS.find(kind => kind.value === mark.kind)!.label)}{mark.what !== undefined ? <span className="nv-muted"> — {mark.what}</span> : null}</span>
+                  <Button size="sm" variant="ghost" icon="pen" onClick={() => { start(mark) }} title={t('改这一笔', 'Change this mark')} />
+                  <Button size="sm" variant="ghost" icon="x" pending={t('正在去掉…', 'Taking it back…')} onClick={() => saveMark(mark.chapter, undefined)} title={t('去掉这一笔：这一章回到收录里的说法', 'Take this mark back: the chapter goes by its digest again')} />
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {marking !== undefined ? (
+            <div className="nv-life-mark-form">
+              <Select value={marking.chapter} options={[{ value: BEFORE, label: t('故事开始之前', 'Before the story begins') }, ...lives.chapters.map(chapter => ({ value: chapter.id, label: t(`第 ${chapter.index} 章 ${chapter.title}`, `Ch. ${chapter.index} ${chapter.title}`) }))]} onChange={(chapter) => { setMarking({ ...marking, chapter, ...(chapter === BEFORE && marking.kind !== 'death' && marking.kind !== 'exit' ? { kind: 'death' as const } : {}) }) }} />
+              <Select value={marking.kind} options={MARK_KINDS.filter(kind => marking.chapter !== BEFORE || kind.value === 'death' || kind.value === 'exit').map(kind => ({ value: kind.value, label: marking.chapter === BEFORE ? (kind.value === 'death' ? t('已故', 'dead') : t('已离开', 'gone')) : t(...kind.label) }))} onChange={(kind) => { setMarking({ ...marking, kind }) }} />
+              <TextInput value={marking.what} placeholder={t('发生了什么（可不填）', 'What happened (optional)')} onChange={(event) => { setMarking({ ...marking, what: event.target.value }) }} />
+              <Button size="sm" variant="primary" pending={t('正在记下…', 'Writing it down…')} onClick={() => saveMark(marking.chapter, marking.kind, marking.what)}>{t('记下', 'Write it down')}</Button>
+              <Button size="sm" variant="ghost" onClick={() => { setMarking(undefined) }}>{t('取消', 'Cancel')}</Button>
+              <p className="nv-muted nv-small">{t('你记的这一笔盖过收录对这一章的说法，在这一章所在的每条世界线上都算数；一章只记一笔。记了"死亡 / 离开"之后，后面的章节里再提到他只算被提起，要让他回来就再记一笔"回归"。', 'Your mark holds over what the digest says of that chapter, on every line of the plot the chapter is read on; one mark a chapter. After a death or a leaving of yours, later chapters that have them only remember them — to bring them back, write a return.')}</p>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       <Field label={t('履历（一段话）', 'The life, in a paragraph')} hint={t('这个人在书里实际经历了什么——和"人物弧光"（打算怎么写）不同。可以自己写，也可以让场记按收录写。', 'What they actually go through in the book — unlike the arc, which is the plan. Write it yourself, or have continuity write it from the digests.')}>
         <TextArea value={value} minRows={2} maxRows={10} onChange={(event) => { onChange(event.target.value) }} />
       </Field>
@@ -296,9 +360,10 @@ function LifeBlock({ card, lives, value, dirty, onChange }: { card: CharacterCar
           {open ? (
             <ol className="nv-life-events">
               {life.events.map(event => (
-                <li key={event.chapter} className={cx(event.kind !== 'seen' && `is-${event.kind}`)}>
-                  <button type="button" className="nv-link" onClick={() => { controller.setView('read', event.chapter) }}>{t(`第 ${event.index} 章`, `Ch. ${event.index}`)} {titles.get(event.chapter) ?? ''}</button>
+                <li key={`${event.index}:${event.chapter}`} className={cx(event.kind !== 'seen' && `is-${event.kind}`)}>
+                  {event.index >= 1 ? <button type="button" className="nv-link" onClick={() => { controller.setView('read', event.chapter) }}>{eventAt(event)}</button> : <span>{eventAt(event)}</span>}
                   {event.kind !== 'seen' ? <Chip tone={event.kind === 'death' ? 'red' : event.kind === 'exit' ? 'amber' : 'green'}>{t(...LIFE_MARK[event.kind])}</Chip> : null}
+                  {event.marked === true ? <Chip tone="neutral">{t('你记的', 'Your mark')}</Chip> : null}
                   <span>{event.what ?? ''}{event.state !== undefined ? <span className="nv-muted">{event.what !== undefined ? ' — ' : ''}{t('章末：', 'at its end: ')}{event.state}</span> : null}{event.where !== undefined ? <span className="nv-muted"> @ {event.where}</span> : null}</span>
                 </li>
               ))}
@@ -341,6 +406,8 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
     for (const key of ['tagline', 'gender', 'age', 'appearance', 'personality', 'background', 'motivation', 'flaw', 'arc', 'voice', 'abilities', 'secrets', 'notes', 'life']) {
       if (payload[key] === undefined) payload[key] = ''
     }
+    // What the author wrote down of their life has its own way in: a form opened before a mark was made would write an old list back.
+    delete payload.lifeMarks
     await controller.api.call('character.save', { root, card: payload as Partial<CharacterCard> })
     setDirty(false)
     controller.toast('success', t('已保存', 'Saved'))
@@ -368,12 +435,26 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
       void new Audio(mediaUrl(path, Date.now())).play().catch(() => {})
     })
   }
+  // Ideas jotted down beside the buttons, mixed as they come: the director sorts them when a picture is drawn —
+  // what is of the person into their look, what is of that one picture into that picture and nowhere else.
+  const [notes, setNotes] = useState('')
+  const [sorted, setSorted] = useState<{ kind: 'sheet' | 'portrait'; how: SortedNotes } | undefined>()
+  const sheets = useSheetsAsk()
   const draw = (kind: 'sheet' | 'portrait', done: string, look?: string): Promise<unknown> | undefined => {
     if (!controller.need('image')) return undefined
-    return controller.guard(async () => {
-      const job = await controller.run('image.create', { root, kind, target: card.id, ...(look !== undefined ? { look } : {}) })
+    // A look (outfit) is described on its own row; the ideas here are for the main sheet and the portrait.
+    const jotted = look === undefined ? notes.trim() : ''
+    const go = (choice: SheetsChoice): Promise<unknown> => controller.guard(async () => {
+      const job = await controller.run('image.create', { root, kind, target: card.id, ...(look !== undefined ? { look } : {}), ...(jotted.length > 0 ? { notes: jotted } : {}), ...choice })
+      const how = job.result?.sorted as SortedNotes | undefined
+      if (how !== undefined) {
+        setSorted({ kind, how })
+        setNotes('')
+      }
       controller.toast('success', `${done}${sheetsDrawn(job, t)}`)
     })
+    // A portrait of somebody without a design sheet draws the sheet first: asked, before anything is drawn.
+    return kind === 'portrait' ? sheets.before([{ kind: 'portrait', target: card.id }], go) : go({})
   }
 
   // The pictures there are of this person: the portrait, the design sheet, and a sheet per look.
@@ -415,7 +496,24 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
           <Button size="sm" variant={draft.visual?.portrait === undefined ? 'primary' : 'outline'} icon="image" disabled={dirty || (drawing !== undefined && !portraitBusy)} busy={portraitBusy} pending={t('正在画立绘…', 'Drawing the portrait…')} onClick={() => draw('portrait', t('立绘已生成', 'Portrait ready'))} title={dirty ? t('先保存当前修改', 'Save your edits first') : draft.visual?.sheet === undefined ? t('半身定妆照：列表、群像和这一页用的那张脸。还没有人设图，会先画人设图、再照着它画立绘', 'A half-length portrait: the face the lists and this page use. There is no design sheet yet: it is drawn first, and the portrait against it') : t('半身定妆照：列表、群像和这一页用的那张脸（照着人设图画）', 'A half-length portrait: the face the lists and this page use (drawn against the design sheet)')}>{draft.visual?.portrait !== undefined ? t('重画立绘', 'Redraw portrait') : t('画立绘', 'Draw portrait')}</Button>
           <Button size="sm" variant="outline" icon="users" disabled={dirty || (drawing !== undefined && !sheetBusy)} busy={sheetBusy} pending={t('正在画人设图（约一两分钟）…', 'Drawing the sheet (a minute or two)…')} onClick={() => draw('sheet', t('人设图已生成', 'Design sheet ready'))} title={dirty ? t('先保存当前修改', 'Save your edits first') : t('正面、侧面、背面三视图：之后每张有此人的图都以它为参考，长相才一致', 'Front, side and back: every later picture of them is drawn with it as reference, which is what keeps the face the same')}>{draft.visual?.sheet !== undefined ? t('重画人设图', 'Redraw sheet') : t('生成人设图', 'Design sheet')}</Button>
         </div>
-        {draft.visual?.sheet === undefined ? <p className="nv-muted nv-small">{t('人设图是之后所有图里这个人长相一致的依据：画立绘、插图、分镜画面之前，没有的会先画它。', 'The design sheet is what keeps this face the same in every later picture: before a portrait, an illustration or a panel is drawn, one that is missing is drawn first.')}</p> : null}
+        {draft.visual?.sheet === undefined ? <p className="nv-muted nv-small">{t('人设图是之后所有图里这个人长相一致的依据：画立绘、插图、分镜画面之前，没有的会先画它（先问你一句）。', 'The design sheet is what keeps this face the same in every later picture: before a portrait, an illustration or a panel is drawn, one that is missing is drawn first (you are asked).')}</p> : null}
+        <div className="nv-person-notes">
+          <TextArea value={notes} minRows={2} maxRows={8} placeholder={t('随手写想法（可不填），混着写就行：\n左眉有道疤，常年穿灰布袍；这张要雪夜，回头看', 'Jot down ideas (optional), mixed as they come:\na scar through the left brow, always in a grey robe; this one on a snowy night, looking back')} onChange={(event) => { setNotes(event.target.value) }} />
+          <p className="nv-muted nv-small">{t('点上面的按钮时，导演先把它们分开：说这个人本身的（疤、常穿的袍子）进"形象"，以后每张图都带上；只说这一张图的（雪夜、回头看）只用这一次。怎么分的，画完列在这里。', 'When a button above is pressed the director sorts them first: what is of the person (the scar, the robe they always wear) goes into "Looks" below and into every later picture; what is of this one picture (the snowy night, the look back) is used this once and kept nowhere. How they were sorted is listed here when the picture is done.')}</p>
+          {sorted !== undefined ? (
+            <div className="nv-person-sorted">
+              <strong>{t(`上一次（${sorted.kind === 'sheet' ? '人设图' : '立绘'}）是这样分的`, `Last time (${sorted.kind === 'sheet' ? 'sheet' : 'portrait'}) they were sorted so`)}</strong>
+              <Button size="sm" variant="ghost" icon="x" onClick={() => { setSorted(undefined) }} title={t('知道了', 'Got it')} />
+              {sorted.how.unsorted === true ? <p>{t('没能整理（导演没有答上来）：这次全部只当作这一张图的要求，形象没有动。', 'They could not be sorted (the director did not answer): all of it directed this one picture, and the look was left as it is.')}</p> : (
+                <ul>
+                  <li><span>{t('进了这个人的形象', 'Into how they look')}</span>{sorted.how.kept.length > 0 ? sorted.how.kept.join(t('；', '; ')) : t('没有', 'nothing')}</li>
+                  <li><span>{t('只用在这一张', 'This picture only')}</span>{sorted.how.once.length > 0 ? sorted.how.once.join(t('；', '; ')) : t('没有', 'nothing')}</li>
+                  {sorted.how.unused.length > 0 ? <li><span>{t('这张图用不上', 'No place in this picture')}</span>{sorted.how.unused.join(t('；', '; '))}</li> : null}
+                </ul>
+              )}
+            </div>
+          ) : null}
+        </div>
       </aside>
 
       <div className="nv-editor-form nv-person-main">
@@ -537,6 +635,7 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
         </Modal>
       ) : null}
       {confirm.element}
+      {sheets.element}
     </div>
   )
 }

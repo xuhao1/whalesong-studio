@@ -431,7 +431,7 @@ export async function readAlbum(runtime: ProjectRuntime, options: { all?: boolea
     }))
   const tied = new Set(ties.flatMap(tie => [tie.from, tie.to]).filter(end => end.type === 'world').map(end => end.id))
 
-  const shownCards = castOrder(cards, cast, infos.map(chapter => chapter.id)).filter(card => all || !anyLife || lives[card.id] !== undefined)
+  const shownCards = castOrder(cards, cast, infos.map(chapter => chapter.id)).filter(card => all || !anyLife || lives[card.id]?.first !== undefined)
   const here = new Set(shownCards.map(card => card.id))
   const people: AlbumPerson[] = shownCards.map((card) => {
     const looks = (card.visual?.looks ?? []).filter(look => look.sheet !== undefined).map(look => ({ name: look.name, ...(look.when !== undefined ? { when: look.when } : {}), sheet: look.sheet! }))

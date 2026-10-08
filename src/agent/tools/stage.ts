@@ -4,7 +4,7 @@ import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { stockVoices } from '../../core/media/voices'
 import { buildAudioScript, designCharacterVoice, exportChapterAudio, isSkipped, previewVoices, reshapeAudioScript, synthesizeChapter } from '../../core/pipelines/audio'
 import { renderSound } from '../../core/pipelines/sound'
-import { buildStoryboard, renderPanels } from '../../core/pipelines/comic'
+import { buildStoryboard, renderPanels, sheetsAhead } from '../../core/pipelines/comic'
 import { illustrate, type IllustrateParams } from '../../core/pipelines/illustrate'
 import { novelizePlay, playTurn, setPlayOutcome, startPlay } from '../../core/pipelines/play'
 import { ProjectError } from '../../core/project'
@@ -28,7 +28,7 @@ export function stageTools(service: NovelService): ToolDefinition[] {
       description: [
         'Generate an image with the configured image model and store it in the project.',
         '- kind=sheet: a character\'s design sheet — the same person from the front, the side and the back (`target` = character). It is the reference image every later picture of them is drawn against, so make it first. With `look` it draws one of their looks (outfits) instead, derived from the main sheet so it stays the same person; a look that does not exist yet is created from `prompt` (what the outfit is).',
-        '- kind=portrait: a bust portrait (`target` = character), used for avatars and the interlude stage. The sheet comes first by itself: somebody who has no design sheet gets one drawn before their portrait, and whoever comes back in the book (a part that carries it, or in two chapters or more) gets one before the first scene, panel or cover that shows them — one more image call each, named in the result. The author can turn this off (novel_settings image.sheetFirst=false).',
+        '- kind=portrait: a bust portrait (`target` = character), used for avatars and the interlude stage. The sheet comes first by itself: somebody who has no design sheet gets one drawn before their portrait, and whoever comes back in the book (a part that carries it, or in two chapters or more) gets one before the first scene, panel or cover that shows them — one more image call each, named in the result. The author is asked first: unless they already said to go ahead, call with sheet_first=ask, tell them whose sheets would be drawn ("this will first draw N design sheets: …"), and draw with sheet_first=draw — or skip — on their answer. The author can turn the whole thing off (novel_settings image.sheetFirst=false).',
         '- kind=scene: an illustration for a chapter (`target` = chapter). Quote the passage to illustrate in `quote`; insert=true embeds the picture in the chapter after that passage. The characters present are found in the passage; their sheets and the place\'s reference art go along as reference images. `looks` says what someone wears ({"name": "look"}) when the passage does not make it obvious.',
         '- kind=location / kind=item with `event`: the place or the thing as it is from one turn of its course on — just built, changed, in ruins, gone. The director writes what is there to be seen once it has happened (from its usual look and that chapter), and that is drawn without people: a change or a decline against its design art, a beginning or an end from the words alone. Kept with that turn; the viewer shows it when the story is looked at from that chapter on.',
         '- kind=location: reference art for a world entry (`target` = entry); scenes set there are drawn against it.   - kind=item: design art of a key object (`target` = a world entry that is a thing): the object alone, whole, on a plain ground; pictures that show it are drawn against it.   - kind=cover: a cover for the book.   - kind=custom: `prompt` is the whole picture; `characters` lists who is in it so their sheets go along; raw=true sends the prompt exactly as written.',
@@ -41,6 +41,8 @@ export function stageTools(service: NovelService): ToolDefinition[] {
         target: { type: 'string', description: 'Character, chapter or world entry.' },
         quote: { type: 'string', description: 'scene: the passage to illustrate.' },
         prompt: { type: 'string', description: 'Extra direction; the full prompt for kind=custom; what the outfit is for a new look.' },
+        notes: { type: 'string', description: 'portrait, sheet: what the author said they want, as they said it, mixed as it came. The director sorts it: what is of the person (a scar, the grey robe they always wear) is worked into their visual anchor and appearance and holds for every later picture; what is of this one picture (a snowy night, looking back) directs this picture only and is kept nowhere. The result says how it was sorted — pass that on. Use `prompt` instead for a direction you know is for this picture only.' },
+        sheet_first: { type: 'string', enum: ['ask', 'draw', 'skip'], description: 'What to do where somebody to be drawn has no design sheet. ask: draw nothing — say whose sheets this would draw first, so that you can put it to the author ("this will first draw N design sheets"). draw: draw them first, then the picture — the default; use it once the author has agreed, or where nobody lacks a sheet. skip: this once, draw from what there is.' },
         look: { type: 'string', description: 'sheet: name of the look (outfit) to draw, e.g. "丧服".' },
         looks: { type: 'object', additionalProperties: true, description: 'scene/cover/custom: what each character wears — {"character": "look name"}.' },
         characters: listParameter('custom: characters shown in the picture; their looks and design sheets go along.'),
@@ -58,6 +60,7 @@ export function stageTools(service: NovelService): ToolDefinition[] {
           ...(args.quote !== undefined ? { quote: args.quote } : {}),
           ...(args.prompt !== undefined ? { prompt: args.prompt } : {}),
           ...(args.look !== undefined ? { look: args.look } : {}),
+          ...(typeof args.notes === 'string' && args.notes.trim().length > 0 ? { notes: args.notes.trim() } : {}),
           ...(args.looks !== undefined ? { looks: Object.fromEntries(Object.entries(args.looks as Record<string, unknown>).filter((entry): entry is [string, string] => typeof entry[1] === 'string')) } : {}),
           ...(listOf(args.characters) !== undefined ? { characters: listOf(args.characters)! } : {}),
           ...(listOf(args.avoid) !== undefined ? { avoid: listOf(args.avoid)! } : {}),
@@ -66,6 +69,20 @@ export function stageTools(service: NovelService): ToolDefinition[] {
           ...(args.insert !== undefined ? { insert: args.insert } : {}),
           ...(typeof args.event === 'string' && args.event.trim().length > 0 ? { event: args.event.trim() } : {}),
         }
+        if (args.sheet_first === 'ask') {
+          // Nothing is drawn: who would get a sheet first is worked out, for the author to be asked.
+          const ahead = params.kind === 'portrait' || params.kind === 'scene' || params.kind === 'cover' || params.kind === 'custom'
+            ? await sheetsAhead(env.core, runtime, [{ kind: params.kind, ...(params.target !== undefined ? { target: params.target } : {}), ...(params.quote !== undefined ? { quote: params.quote } : {}), ...(params.characters !== undefined ? { characters: params.characters } : {}) }])
+            : { people: [], unknown: 0 }
+          return {
+            text: ahead.people.length > 0
+              ? `Nothing drawn yet. This picture would first draw ${ahead.people.length} design sheet${ahead.people.length === 1 ? '' : 's'} — of ${ahead.people.map(person => person.name).join(', ')} — because ${params.kind === 'portrait' ? 'they have none' : 'they come back in the book and have none'}: ${ahead.people.length} more image call${ahead.people.length === 1 ? '' : 's'}. Ask the author; then call again with sheet_first=draw, or sheet_first=skip to draw from what there is.`
+              : 'Nothing drawn yet. No design sheet would be drawn first for this picture: call again with sheet_first=draw.',
+            data: toJson(ahead),
+            record: false,
+          }
+        }
+        if (args.sheet_first === 'skip') params.sheetFirst = false
         const result = await env.job('illustrate', `illustrate ${args.kind}`, args.target, async task => await illustrate(env.core, runtime, params, task))
         const parts = result.parts
         const lines = [
@@ -74,6 +91,9 @@ export function stageTools(service: NovelService): ToolDefinition[] {
           parts?.style !== undefined ? `Art direction (${parts.styleSource === 'book' ? 'the book\'s own' : parts.styleSource === 'studio' ? 'the Studio-wide one' : 'the built-in starting point'}): ${parts.style}` : 'Art direction: none (sent as written).',
           `Kept out: ${parts?.avoid !== undefined && parts.avoid.length > 0 ? parts.avoid.join(', ') : 'nothing — the book has no avoid list (novel_settings action=book fields.artAvoid)'}`,
           `Reference images sent: ${parts?.references !== undefined && parts.references.length > 0 ? parts.references.map(reference => reference.label).join(', ') : 'none'}`,
+          ...(result.sorted !== undefined ? [result.sorted.unsorted === true
+            ? 'The notes could not be sorted (no model answered): all of them directed this picture, and nothing went into the character\'s look.'
+            : `The notes were sorted — into how they look from now on: ${result.sorted.kept.length > 0 ? result.sorted.kept.join('; ') : 'nothing'}. For this picture only: ${result.sorted.once.length > 0 ? result.sorted.once.join('; ') : 'nothing'}.${result.sorted.unused.length > 0 ? ` No place in this picture: ${result.sorted.unused.join('; ')}.` : ''} Tell the author.`] : []),
           // Never done behind the author's back: a sheet drawn for this picture is said with it.
           ...(result.sheets !== undefined ? [`Drawn first, because they had none: the design sheet of ${result.sheets.join(', ')} — one more image call each. Every later picture of them is held against it. Tell the author.`] : []),
           ...(result.sheetsFailed !== undefined ? [`Could not be drawn first: the design sheet of ${result.sheetsFailed.map(item => `${item.name} (${brief(item.error, 120)})`).join(', ')} — this picture was made from what there is of them.`] : []),
@@ -206,7 +226,7 @@ export function stageTools(service: NovelService): ToolDefinition[] {
       description: [
         'Turn a chapter into a motion comic.',
         '- action=storyboard: arrange the chapter\'s audio script into panels with image prompts (building the script first if needed). How finely it is cut is the author\'s call: `density` = sparse (a picture every 25 seconds or so), balanced (every 13), dense (every 6-7) or auto (the director decides where the picture should change); `max_panels` is a ceiling that holds whatever the density. Left out, both come from the book (novel_settings action=book fields.storyboard = {"density": …, "maxPanels": …}), else balanced with no ceiling. Every panel is a picture to draw, so say how many came out before rendering. A board that exists is kept unless force=true.',
-        '- action=render: draw the panels that have no picture yet.',
+        '- action=render: draw the panels that have no picture yet. Whoever is in them, comes back in the book and has no design sheet gets one drawn first (one more image call each): the author is asked first — unless they already said to go ahead, call with sheet_first=ask, tell them whose ("this will first draw N design sheets: …"), and render on their answer with sheet_first=draw or skip.',
         'The player in Novel Studio → Stage shows each panel while its lines are spoken.',
       ].join('\n'),
       mutating: true,
@@ -216,6 +236,7 @@ export function stageTools(service: NovelService): ToolDefinition[] {
         density: { type: 'string', enum: ['auto', 'sparse', 'balanced', 'dense'], description: 'storyboard: how finely to cut.' },
         max_panels: { type: 'integer', description: 'storyboard: the most panels the chapter may have.' },
         force: { type: 'boolean', description: 'Redo even when current.' },
+        sheet_first: { type: 'string', enum: ['ask', 'draw', 'skip'], description: 'What to do where somebody to be drawn has no design sheet. ask: draw nothing — render: say whose sheets the panels would draw first, so that you can put it to the author ("this will first draw N design sheets"). draw: draw them first, then the panels — the default; use it once the author has agreed, or where nobody lacks a sheet. skip: this once, draw from what there is.' },
       },
       async run(args, env) {
         const runtime = await env.project()
@@ -233,7 +254,17 @@ export function stageTools(service: NovelService): ToolDefinition[] {
             data: toJson({ chapterId: board.chapterId, panels: board.panels.length, density: board.density ?? 'balanced', ...(board.maxPanels !== undefined ? { maxPanels: board.maxPanels } : {}) }),
           }
         }
-        const result = await env.job('comic', 'draw panels', chapter, async task => await renderPanels(env.core, runtime, { chapter, ...(args.force !== undefined ? { force: args.force } : {}) }, task))
+        if (args.sheet_first === 'ask') {
+          const ahead = await sheetsAhead(env.core, runtime, [{ kind: 'panels', chapter, ...(args.force === true ? { force: true } : {}) }])
+          return {
+            text: ahead.unknown > 0 ? 'Nothing drawn yet. This chapter has no storyboard yet (action=storyboard): who is in its panels, and so whose design sheets they would draw first, is not known before it.'
+              : ahead.people.length > 0 ? `Nothing drawn yet. The panels would first draw ${ahead.people.length} design sheet${ahead.people.length === 1 ? '' : 's'} — of ${ahead.people.map(person => person.name).join(', ')} — because they come back in the book and have none: ${ahead.people.length} more image call${ahead.people.length === 1 ? '' : 's'}. Ask the author; then render with sheet_first=draw, or sheet_first=skip to draw from what there is.`
+                : 'Nothing drawn yet. No design sheet would be drawn first for these panels: render with sheet_first=draw.',
+            data: toJson(ahead),
+            record: false,
+          }
+        }
+        const result = await env.job('comic', 'draw panels', chapter, async task => await renderPanels(env.core, runtime, { chapter, ...(args.force !== undefined ? { force: args.force } : {}), ...(args.sheet_first === 'skip' ? { sheetFirst: false } : {}) }, task))
         return { text: `Panels for ${result.chapterId}: ${result.rendered} drawn, ${result.failed} failed, ${result.panels} in total.${result.sheets !== undefined ? ` Drawn first, because they come back in the book and had none: the design sheet of ${result.sheets.join(', ')} — tell the author.` : ''}`, data: toJson(result) }
       },
     }),

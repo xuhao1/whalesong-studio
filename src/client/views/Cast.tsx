@@ -93,7 +93,7 @@ export function CastView() {
       // A plan that puts the dead on stage is wrong whoever they are.
       const after = gone === undefined ? [] : planned.filter(plan => (info.get(plan.id)?.index ?? 0) > gone)
       if (gone !== undefined && after.length > 0) {
-        urgent.push({ tone: 'red', character: card.id, text: t(`${card.name}在第 ${gone} 章已经${seen?.death !== undefined ? '死亡' : '离开故事'}，但后面的章纲（第 ${after.map(plan => info.get(plan.id)?.index).join('、')} 章）还安排了出场。`, `${card.name} ${seen?.death !== undefined ? 'dies' : 'leaves the story'} in chapter ${gone}, yet planned chapters (${after.map(plan => info.get(plan.id)?.index).join(', ')}) still cast them.`) })
+        urgent.push({ tone: 'red', character: card.id, text: t(`${card.name}${gone === 0 ? '在故事开始之前' : `在第 ${gone} 章`}已经${seen?.death !== undefined ? '死亡' : '离开故事'}，但后面的章纲（第 ${after.map(plan => info.get(plan.id)?.index).join('、')} 章）还安排了出场。`, `${card.name} ${gone === 0 ? (seen?.death !== undefined ? 'is dead before the story begins' : 'is gone before the story begins') : `${seen?.death !== undefined ? 'dies' : 'leaves the story'} in chapter ${gone}`}, yet planned chapters (${after.map(plan => info.get(plan.id)?.index).join(', ')}) still cast them.`) })
       }
       // Somebody with a part who has gone missing is a question; a face in the crowd that is not seen again is how books are.
       if (gone === undefined && seen !== undefined && seen.chapters.length > 0 && seen.absentFor >= LIFE_AWAY && planned.length === 0 && MAIN_ROLES.includes(card.role)) {
@@ -262,12 +262,12 @@ function LifeTable({ shown, lives }: { shown: CharacterCard[]; lives: Lives }) {
                   const plan = planOf.get(chapter.id)
                   const written = infoOf.get(chapter.id)?.hasText === true
                   const planned = plan?.characters?.includes(card.id) === true
-                  const state = event !== undefined ? cx('is-on', event.kind !== 'seen' && `is-${event.kind}`)
+                  const state = event !== undefined ? cx('is-on', event.kind !== 'seen' && `is-${event.kind}`, event.marked === true && 'is-marked')
                     // Cast by the outline and not in the chapter: still to come while it is unwritten, missing once its digest is there.
                     : planned ? (written && chapter.digested ? 'is-missed' : 'is-planned')
                       : written && !chapter.digested ? 'is-unread' : undefined
                   const mark = event !== undefined && event.kind !== 'seen' ? `${t(...LIFE_MARK[event.kind])}${event.what !== undefined ? t('：', ': ') : ''}` : ''
-                  const says = event !== undefined ? ` — ${mark}${event.what ?? (mark.length === 0 ? t('在场', 'present') : '')}`
+                  const says = event !== undefined ? ` — ${mark}${event.what ?? (mark.length === 0 ? t('在场', 'present') : '')}${event.marked === true ? t('（作者记的）', ' (the author\'s mark)') : ''}`
                     : planned ? (written && chapter.digested ? t('（章纲安排了，正文没有出场）', ' (planned but absent from the text)') : t('（计划出场）', ' (planned)'))
                       : written && !chapter.digested ? t('（这一章还没有收录）', ' (not digested yet)') : ''
                   return (

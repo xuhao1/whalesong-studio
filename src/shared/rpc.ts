@@ -22,7 +22,7 @@ import type {
   PriceEntry,
   UsageSummary,
   TtsProviderKind,
-  AmbiencePreset, AudioCue, AudioLine, AudioScript, BookLock, ChapterMemory, ChapterPlan, ChapterReview, CharacterCard, CharacterRole, ComicBoard, ComicPanel,
+  AmbiencePreset, AudioCue, AudioLine, AudioScript, BookLock, ChapterMemory, ChapterPlan, ChapterReview, CharacterCard, CharacterRole, ComicBoard, ComicPanel, LifeMark, SheetsAsk,
   ChapterVideo, CrewRole, GateKind, GateState, IllustrationInfo, JobInfo, ModelRoute, NovelSettings, PlaySession, PlayTurn, ProjectManifest, ProjectRef, ProjectState, RecommendedState,
   Proposal, SearchHit, SearchSource, SoundKind, StageStatus, StageStep, StoryboardDensity, StyleProfile, TextRole, TextStep, VersionInfo, WalkOn, WorkMode, WorldEntry,
 } from './types'
@@ -388,6 +388,8 @@ export interface NovelRpc {
   // ── bible ──
   'character.save': { params: { root: string; card: Partial<CharacterCard> }; result: CharacterCard }
   'character.delete': { params: { root: string; id: string }; result: { deleted: boolean } }
+  /** Write down something of a character's life at a chapter (absent: before the story begins), over what its digest says; without `kind` the mark of that chapter is taken back. */
+  'character.mark': { params: { root: string; id: string; chapter?: string; kind?: LifeMark['kind']; what?: string }; result: CharacterCard }
   'character.expand': { params: { root: string; id: string; direction?: string }; result: JobStarted }
   /** Distill a character's appearance into a visual anchor for image generation. */
   'character.visual': { params: { root: string; id: string; direction?: string }; result: JobStarted }
@@ -479,11 +481,11 @@ export interface NovelRpc {
   /** Where the stage production of each written chapter stands, and what each step lacks to run at all. */
   'batch.overview': { params: { root: string; line?: string }; result: { chapters: StageStatus[]; missing: Partial<Record<StageStep, string>> } }
   /** Script, voices, sound, storyboard, panels, video — whichever are named — for the chapters named (all written ones when left out). */
-  'batch.stage': { params: { root: string; chapters?: string[]; line?: string; steps?: StageStep[]; force?: boolean; density?: StoryboardDensity; maxPanels?: number; direction?: string; subtitles?: boolean }; result: JobStarted }
+  'batch.stage': { params: { root: string; chapters?: string[]; line?: string; steps?: StageStep[]; force?: boolean; density?: StoryboardDensity; maxPanels?: number; direction?: string; subtitles?: boolean; sheetFirst?: boolean }; result: JobStarted }
   /** Beats, writing, memory, review for a run of chapters. Writing goes chapter after chapter; the rest side by side. */
   'batch.text': { params: { root: string; chapters?: string[]; count?: number; line?: string; steps: TextStep[]; brief?: string; words?: number; redo?: boolean; focus?: string }; result: JobStarted }
   /** Design sheets, portraits and voices for characters, reference art for places, design art for things, an illustration per chapter, a cover. */
-  'batch.art': { params: { root: string; sheets?: string[]; portraits?: string[]; voices?: string[]; places?: string[]; items?: string[]; scenes?: string[]; cover?: boolean; insert?: boolean; force?: boolean }; result: JobStarted }
+  'batch.art': { params: { root: string; sheets?: string[]; portraits?: string[]; voices?: string[]; places?: string[]; items?: string[]; scenes?: string[]; cover?: boolean; insert?: boolean; force?: boolean; sheetFirst?: boolean }; result: JobStarted }
 
   // ── jobs ──
   /** `gates`: the kinds of request that have work waiting or a service pushing back right now. */
@@ -493,7 +495,12 @@ export interface NovelRpc {
   'jobs.cancel': { params: { id: string }; result: { cancelled: boolean } }
 
   // ── stage: illustration ──
-  'image.create': { params: { root: string; kind: 'portrait' | 'sheet' | 'scene' | 'location' | 'item' | 'cover' | 'custom'; target?: string; quote?: string; prompt?: string; size?: string; insert?: boolean; /** Sheet: which look (outfit) to draw. */ look?: string; looks?: Record<string, string>; characters?: string[]; avoid?: string[]; raw?: boolean; /** Location, item: the turn of its course to draw it at (`<chapter>` or `<chapter>:<kind>`); the picture is kept with that turn. */ event?: string }; result: JobStarted }
+  'image.create': { params: { root: string; kind: 'portrait' | 'sheet' | 'scene' | 'location' | 'item' | 'cover' | 'custom'; target?: string; quote?: string; prompt?: string; size?: string; insert?: boolean; /** Portrait, sheet: the author's loose ideas — what is of the person goes into their look, what is of this picture directs it only. */ notes?: string; /** Sheet: which look (outfit) to draw. */ look?: string; looks?: Record<string, string>; characters?: string[]; avoid?: string[]; raw?: boolean; /** false: this once, no design sheet is drawn first. */ sheetFirst?: boolean; /** Location, item: the turn of its course to draw it at (`<chapter>` or `<chapter>:<kind>`); the picture is kept with that turn. */ event?: string }; result: JobStarted }
+  /**
+   * Whose design sheets what is about to be drawn would draw first — asked before any of it is started, so that the author
+   * can be told and say yes, or not this time. `unknown`: asks that cannot be told yet (panels with no storyboard).
+   */
+  'image.sheetsFirst': { params: { root: string; asks: SheetsAsk[] }; result: { people: { id: string; name: string }[]; unknown: number } }
   'image.list': { params: { root: string }; result: { images: IllustrationInfo[] } }
   /** `released`: whose picture it was — the cards and entries it was taken off, by name. Absent from a Host before the picture was taken off them. */
   'image.delete': { params: { root: string; id: string }; result: { ok: boolean; released?: string[] } }
@@ -523,7 +530,7 @@ export interface NovelRpc {
   // ── stage: motion comic ──
   'comic.board': { params: { root: string; chapter: string }; result: { board?: ComicBoard; stale: boolean } }
   'comic.build': { params: { root: string; chapter: string; force?: boolean; /** How finely to cut; the book's own setting when left out. */ density?: StoryboardDensity; maxPanels?: number }; result: JobStarted }
-  'comic.render': { params: { root: string; chapter: string; panels?: string[]; force?: boolean }; result: JobStarted }
+  'comic.render': { params: { root: string; chapter: string; panels?: string[]; force?: boolean; /** false: this once, no design sheet is drawn first. */ sheetFirst?: boolean }; result: JobStarted }
   'comic.updatePanel': { params: { root: string; chapter: string; panel: string; patch: Partial<Pick<ComicPanel, 'prompt' | 'description' | 'camera'>> }; result: ComicBoard }
   /** Take one panel out; its lines go to a neighbour. */
   'comic.removePanel': { params: { root: string; chapter: string; panel: string }; result: ComicBoard }

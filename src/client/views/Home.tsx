@@ -12,6 +12,7 @@ import { chapterBudgetOf, type AnalyzeStep, type ProjectManifest, type ProjectRe
 import { MAIN_ROLES } from '../CharacterPicker'
 import { Icon } from '../icons'
 import { sheetsDrawn } from '../labels'
+import { useSheetsAsk } from '../SheetsAsk'
 import { jobLabel, jobPulse } from '../Studio'
 import {
   Button, Chip, crewLabel, cx, Field, Modal, Progress, ProjectImage, SectionTitle, Select, TextArea, TextInput, useAction, useConfirm, useKept, useProject, useRunningJob,
@@ -618,13 +619,15 @@ export function HomeView() {
   })
   const { manifest, stats, chapters } = project
   const painting = useRunningJob(job => job.kind === 'illustrate' && job.title === 'illustrate cover') !== undefined
+  const sheets = useSheetsAsk()
   const paintCover = (): Promise<unknown> | undefined => {
     if (!controller.need('image')) return undefined
-    return controller.guard(async () => {
-      const job = await controller.run('image.create', { root, kind: 'cover' })
+    // The leads a cover shows get a design sheet first where they have none: asked, before anything is drawn.
+    return sheets.before([{ kind: 'cover' }], choice => controller.guard(async () => {
+      const job = await controller.run('image.create', { root, kind: 'cover', ...choice })
       await controller.refreshProject()
       controller.toast('success', `${t('封面画好了', 'The cover is ready')}${sheetsDrawn(job, t)}`)
-    })
+    }))
   }
   const next = chapters.find(chapter => !chapter.hasText)
   const nextPlan = project.outline.volumes.flatMap(volume => volume.chapters).find(plan => plan.id === next?.id)
@@ -799,6 +802,7 @@ export function HomeView() {
 
       {editing ? <ManifestEditor manifest={manifest} root={root} onClose={() => { setEditing(false) }} /> : null}
       {redigesting ? <RedigestDialog onClose={() => { setRedigesting(false) }} /> : null}
+      {sheets.element}
     </div>
   )
 }

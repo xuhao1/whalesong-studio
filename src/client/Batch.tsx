@@ -30,6 +30,7 @@ import {
   SectionTitle,
 } from './ui'
 import { CharacterPicker, defaultCastFilter, matchesCast, useCastFilter } from './CharacterPicker'
+import { useSheetsAsk } from './SheetsAsk'
 
 /** The batch a job carries, when it is one. */
 export function batchOf(job: JobInfo | undefined): BatchView | undefined {
@@ -307,18 +308,23 @@ export function ProductionBoard({ onOpen }: { onOpen: (chapterId: string) => voi
     else next.add(id)
     setPicked(next)
   }
+  const sheets = useSheetsAsk()
   const start = (params: { chapters: string[]; steps: StageStep[]; force: boolean }): Promise<unknown> => run(async () => {
-    setLast(params)
-    await controller.api.call('batch.stage', {
-      root,
-      chapters: params.chapters,
-      steps: params.steps,
-      ...(params.force ? { force: true } : {}),
-      ...(params.steps.includes('storyboard') ? { density, ...(saved?.maxPanels !== undefined ? { maxPanels: saved.maxPanels } : {}) } : {}),
-      ...(params.steps.includes('video') && direction.trim().length > 0 ? { direction: direction.trim() } : {}),
-      ...(params.steps.includes('video') && !subtitles ? { subtitles: false } : {}),
+    // Where pictures are among the steps: whose design sheets they would draw first is asked before anything is started.
+    await sheets.before(params.steps.includes('panels') ? params.chapters.map(chapter => ({ kind: 'panels' as const, chapter, ...(params.force ? { force: true } : {}) })) : [], async (choice) => {
+      setLast(params)
+      await controller.api.call('batch.stage', {
+        root,
+        chapters: params.chapters,
+        steps: params.steps,
+        ...(params.force ? { force: true } : {}),
+        ...(params.steps.includes('storyboard') ? { density, ...(saved?.maxPanels !== undefined ? { maxPanels: saved.maxPanels } : {}) } : {}),
+        ...(params.steps.includes('video') && direction.trim().length > 0 ? { direction: direction.trim() } : {}),
+        ...(params.steps.includes('video') && !subtitles ? { subtitles: false } : {}),
+        ...choice,
+      })
+      await controller.refreshJobs()
     })
-    await controller.refreshJobs()
   })
   if (overview.data === undefined) return <div className="nv-center">{overview.error ?? <Spinner />}</div>
   if (chapters.length === 0) return <div className="nv-card"><p className="nv-muted">{t('还没有写出正文的章节。先写出至少一章，这里就能把它搬上舞台。', 'No chapter has text yet. Write at least one, and it can be put on stage here.')}</p></div>
@@ -408,6 +414,7 @@ export function ProductionBoard({ onOpen }: { onOpen: (chapterId: string) => voi
           </table>
         </div>
       </section>
+      {sheets.element}
     </div>
   )
 }
@@ -598,8 +605,9 @@ export function ArtBatchDialog({ onClose }: { onClose: () => void }) {
   ]
   const ready = { image: settings?.ready.image === true, tts: settings?.ready.tts === true }
   const total = rows.filter(row => picked.has(row.key)).reduce((sum, row) => sum + row.count, 0)
+  const sheets = useSheetsAsk()
   const start = (): Promise<unknown> => run(async () => {
-    const params = {
+    const mine = {
       root,
       ...(picked.has('sheets') && lists.sheets.length > 0 ? { sheets: lists.sheets } : {}),
       ...(picked.has('portraits') && lists.portraits.length > 0 ? { portraits: lists.portraits } : {}),
@@ -609,10 +617,19 @@ export function ArtBatchDialog({ onClose }: { onClose: () => void }) {
       ...(picked.has('scenes') && lists.scenes.length > 0 ? { scenes: lists.scenes, ...(insert ? { insert: true } : {}) } : {}),
       ...(picked.has('cover') && noCover ? { cover: true } : {}),
     }
-    setLast(params)
-    await controller.api.call('batch.art', params)
-    setStarted(true)
-    await controller.refreshJobs()
+    // Whose design sheets the portraits, the chapters' pictures and the cover would draw first — beyond the sheets this
+    // batch lists as steps of its own — is asked before anything is started.
+    await sheets.before([
+      ...(mine.portraits ?? []).map(target => ({ kind: 'portrait' as const, target })),
+      ...(mine.scenes ?? []).map(target => ({ kind: 'scene' as const, target })),
+      ...(mine.cover === true ? [{ kind: 'cover' as const }] : []),
+    ], async (choice) => {
+      const params = { ...mine, ...choice }
+      setLast(params)
+      await controller.api.call('batch.art', params)
+      setStarted(true)
+      await controller.refreshJobs()
+    }, mine.sheets ?? [])
   })
   const again = last !== undefined ? () => run(async () => { await controller.api.call('batch.art', last); await controller.refreshJobs() }) : undefined
   return (
@@ -670,6 +687,7 @@ export function ArtBatchDialog({ onClose }: { onClose: () => void }) {
           ) : null}
         </>
       )}
+      {sheets.element}
     </Modal>
   )
 }

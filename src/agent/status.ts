@@ -3,6 +3,7 @@
 import type { ProjectRuntime } from '../core/core'
 import type { JobInfo, ProjectState, WorkMode } from '../shared/types'
 import { roleLabel, promptLanguage } from '../core/render'
+import { lifeEnd } from '../shared/life'
 
 const MODE_LABEL: Record<WorkMode, [string, string]> = {
   ideate: ['构思', 'ideate'],
@@ -126,8 +127,8 @@ export async function renderStatus(runtime: ProjectRuntime, mode: WorkMode, rela
     const presence = state.presence.find(entry => entry.character === card.id)
     // Where they are in the book, as the digests of the main line have it — a death or a leaving with its chapter, else how long they have been away.
     const on = presence !== undefined && presence.chapters.length > 0
-    const fate = presence?.death !== undefined ? (zh ? `，第 ${presence.death} 章死亡` : `, dies in chapter ${presence.death}`)
-      : presence?.exit !== undefined ? (zh ? `，第 ${presence.exit} 章离开` : `, leaves in chapter ${presence.exit}`)
+    const end = lifeEnd(presence, zh)
+    const fate = end !== undefined ? `${zh ? '，' : ', '}${end.text}`
         : on && presence.absentFor >= 5 ? (zh ? `，已 ${presence.absentFor} 章未出场` : `, absent for ${presence.absentFor} chapters`) : ''
     lines.push(`- ${card.name} [${card.id}] ${roleLabel(card.role, lang)}${on ? (zh ? `，出场 ${presence.chapters.length} 章` : `, in ${presence.chapters.length} chapters`) : (zh ? '，正文里还没有出场' : ', not on the page yet')}${fate}${card.tagline !== undefined ? ` — ${card.tagline}` : ''}`)
   }

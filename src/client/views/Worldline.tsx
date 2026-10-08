@@ -11,7 +11,7 @@
  */
 import { useMemo, useState } from 'react'
 import { MAIN_LINE } from '../../shared/types'
-import type { LifeStanding } from '../../shared/life'
+import { lifeEnd, type LifeStanding } from '../../shared/life'
 import { compareLines, type LinePerson, type LineThread, type LineWorld } from '../../shared/worldline'
 import { Chip, cx, Select, Spinner, useKept, useLoad, useProject, useStudio, useT, type Translate } from '../ui'
 import { STANDING_LABELS, STANDING_TONES } from './Characters'
@@ -21,9 +21,8 @@ const STANDINGS: readonly LifeStanding[] = ['active', 'offstage', 'retired', 'de
 /** How somebody stands at the end of a line, in a few words: where they were last seen, where it ended for them. */
 function standing(person: LinePerson | undefined, t: Translate): string {
   if (person === undefined) return t('这条线没有写到他', 'This line never comes to them')
-  const end = person.death !== undefined ? t(`第 ${person.death} 章死亡`, `dies in chapter ${person.death}`)
-    : person.exit !== undefined ? t(`第 ${person.exit} 章离开`, `leaves in chapter ${person.exit}`)
-      : t(`最后在第 ${person.last} 章`, `last seen in chapter ${person.last}`)
+  const end = lifeEnd(person, true) !== undefined ? t(lifeEnd(person, true)!.text, lifeEnd(person, false)!.text)
+    : t(`最后在第 ${person.last} 章`, `last seen in chapter ${person.last}`)
   return [end, person.where, person.state].filter((part): part is string => part !== undefined && part.length > 0).join(t(' · ', ' · '))
 }
 

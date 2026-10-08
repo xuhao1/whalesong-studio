@@ -13,7 +13,7 @@ import { addCue, renderSound, updateCue } from '../core/pipelines/sound'
 import { soundSetup } from '../core/media/sound'
 import { acceptSuggestion, dismissSuggestion, expandCharacter, expandWorld, extractStyle, styleSample, writeLife, deriveTies, tidyWorld } from '../core/pipelines/bible'
 import { artPlan, runBatch, stageOverview, stagePlan, stageReadiness, textPlan, type BatchPlan } from '../core/pipelines/batch'
-import { buildStoryboard, clearComicBoard, removeComicPanel, renderPanels, updateComicPanel } from '../core/pipelines/comic'
+import { buildStoryboard, clearComicBoard, removeComicPanel, renderPanels, sheetsAhead, updateComicPanel } from '../core/pipelines/comic'
 import { chapterVideoWithSubtitles, chapterVideo, findProgram, produceVideo, removeVideo, videoReadiness } from '../core/pipelines/video'
 import { CREW } from '../core/crew'
 import { contextBudgets } from '../core/context'
@@ -343,6 +343,11 @@ export function createHandlers(service: NovelService): Handlers {
     // ── bible ──
     'character.save': async ({ root, card }) => await (await open(root)).project.saveCharacter(card),
     'character.delete': async ({ root, id }) => ({ deleted: await (await open(root)).project.deleteCharacter(id) }),
+    'character.mark': async ({ root, id, chapter, kind, what }) => await (await open(root)).project.markLife(requireString(id, 'id'), {
+      ...(typeof chapter === 'string' && chapter.length > 0 ? { chapter } : {}),
+      ...(kind === 'enter' || kind === 'return' || kind === 'exit' || kind === 'death' ? { kind } : {}),
+      ...(typeof what === 'string' ? { what } : {}),
+    }),
     'character.expand': async ({ root, id, direction }) => {
       const runtime = await open(root)
       return job(runtime, 'bible', `expand ${id}`, id, async task => await expandCharacter(core, runtime, { character: id, ...(direction !== undefined ? { direction } : {}) }, task))
@@ -631,7 +636,7 @@ export function createHandlers(service: NovelService): Handlers {
       const [chapters, missing] = await Promise.all([stageOverview(core, runtime, typeof line === 'string' && line.length > 0 ? line : undefined), stageReadiness(core, runtime, await userTask(session, {}))])
       return { chapters, missing }
     },
-    'batch.stage': async ({ root, chapters, line, steps, force, density, maxPanels, direction, subtitles }) => {
+    'batch.stage': async ({ root, chapters, line, steps, force, density, maxPanels, direction, subtitles, sheetFirst }) => {
       const runtime = await open(root)
       const wanted = Array.isArray(steps) ? steps.filter((step): step is StageStep => STAGE_STEPS.includes(step)) : undefined
       return await batch(runtime, 'stage batch', async task => await stagePlan(core, runtime, {
@@ -643,6 +648,7 @@ export function createHandlers(service: NovelService): Handlers {
         ...(typeof maxPanels === 'number' && maxPanels > 0 ? { maxPanels } : {}),
         ...(typeof direction === 'string' && direction.trim().length > 0 ? { direction: direction.trim() } : {}),
         ...(subtitles === false ? { subtitles: false } : {}),
+        ...(sheetFirst === false ? { sheetFirst: false } : {}),
       }, task))
     },
     'batch.text': async ({ root, chapters, count, line, steps, brief, words, redo, focus }) => {
@@ -659,7 +665,7 @@ export function createHandlers(service: NovelService): Handlers {
         ...(typeof focus === 'string' && focus.trim().length > 0 ? { focus: focus.trim() } : {}),
       }))
     },
-    'batch.art': async ({ root, sheets, portraits, voices, places, items, scenes, cover, insert, force }) => {
+    'batch.art': async ({ root, sheets, portraits, voices, places, items, scenes, cover, insert, force, sheetFirst }) => {
       const runtime = await open(root)
       const list = (value: unknown): string[] | undefined => Array.isArray(value) && value.length > 0 ? value.filter((item): item is string => typeof item === 'string') : undefined
       return await batch(runtime, 'art batch', async () => await artPlan(core, runtime, {
@@ -672,6 +678,7 @@ export function createHandlers(service: NovelService): Handlers {
         ...(cover === true ? { cover: true } : {}),
         ...(insert === true ? { insert: true } : {}),
         ...(force === true ? { force: true } : {}),
+        ...(sheetFirst === false ? { sheetFirst: false } : {}),
       }))
     },
 
@@ -717,6 +724,7 @@ export function createHandlers(service: NovelService): Handlers {
       // A picture of one turn of a place's course says so: the page that asked marks that turn as being drawn.
       return job(runtime, 'illustrate', `illustrate ${params.kind}${params.event !== undefined ? ` at ${params.event}` : ''}`, params.target, async task => await illustrate(core, runtime, params, task))
     },
+    'image.sheetsFirst': async ({ root, asks }) => await sheetsAhead(core, await open(root), Array.isArray(asks) ? asks : []),
     'image.list': async ({ root }) => ({ images: (await (await open(root)).project.illustrations()).reverse() }),
     'image.delete': async ({ root, id }) => {
       const released = await (await open(root)).project.removeIllustration(id)
@@ -806,9 +814,9 @@ export function createHandlers(service: NovelService): Handlers {
         return { chapterId: board.chapterId, panels: board.panels.length, ...(board.note !== undefined ? { note: board.note } : {}) }
       })
     },
-    'comic.render': async ({ root, chapter, panels, force }) => {
+    'comic.render': async ({ root, chapter, panels, force, sheetFirst }) => {
       const runtime = await open(root)
-      return job(runtime, 'comic', 'draw panels', chapter, async task => await renderPanels(core, runtime, { chapter, ...(panels !== undefined ? { panels } : {}), ...(force !== undefined ? { force } : {}) }, task))
+      return job(runtime, 'comic', 'draw panels', chapter, async task => await renderPanels(core, runtime, { chapter, ...(panels !== undefined ? { panels } : {}), ...(force !== undefined ? { force } : {}), ...(sheetFirst === false ? { sheetFirst: false } : {}) }, task))
     },
     'comic.updatePanel': async ({ root, chapter, panel, patch }) => await updateComicPanel(await open(root), chapter, panel, patch),
     'comic.removePanel': async ({ root, chapter, panel }) => await removeComicPanel(await open(root), requireString(chapter, 'chapter'), requireString(panel, 'panel')),

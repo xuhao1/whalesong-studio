@@ -2,12 +2,13 @@
 /** Every picture made for the book, and a place to make more. */
 import { useEffect, useState } from 'react'
 import { mergeAvoid, resolveArtStyle, splitAvoid, type ArtSource } from '../../shared/art'
-import type { IllustrationInfo } from '../../shared/types'
+import type { IllustrationInfo, SheetsAsk } from '../../shared/types'
 import {
   Button, Chip, Empty, Field, Modal, ProjectImage, Select, Spinner, TextArea, TextInput, useAction, useConfirm, useLoad, useProject, useSnapshot, useStudio, useT,
 } from '../ui'
 import { ArtBatchDialog, batchOf } from '../Batch'
 import { sheetsDrawn } from '../labels'
+import { useSheetsAsk, type SheetsChoice } from '../SheetsAsk'
 import { NeedsSetup } from '../views/Settings'
 
 const KIND: Record<IllustrationInfo['kind'], [string, string]> = {
@@ -61,7 +62,15 @@ export function Gallery() {
   const ofCharacter = kind === 'portrait' || kind === 'sheet'
   const targets = ofCharacter ? project.characters.map(card => ({ value: card.id, label: card.name })) : kind === 'location' ? project.world.filter(entry => entry.category === 'location' || entry.category === 'setting').map(entry => ({ value: entry.id, label: entry.name })) : []
   const looks = ofCharacter ? project.characters.find(card => card.id === target)?.visual?.looks ?? [] : []
+  const sheets = useSheetsAsk()
   const create = (): Promise<unknown> => run(async () => {
+    // Whose design sheet this picture would draw first is asked before anything is drawn.
+    const asks: SheetsAsk[] = kind === 'portrait' || kind === 'cover' || kind === 'custom'
+      ? [{ kind, ...(target.length > 0 ? { target } : {}), ...(kind === 'custom' && cast.length > 0 ? { characters: cast } : {}) }]
+      : []
+    await sheets.before(asks, draw)
+  })
+  const draw = async (choice: SheetsChoice): Promise<void> => {
     setCreating(false)
     controller.toast('info', t('开始绘制…', 'Drawing…'))
     const extra = splitAvoid(avoid)
@@ -73,12 +82,13 @@ export function Gallery() {
       ...(ofCharacter && look.length > 0 ? { look } : {}),
       ...(kind === 'custom' && cast.length > 0 ? { characters: cast } : {}),
       ...(extra.length > 0 ? { avoid: extra } : {}),
+      ...choice,
     })
     if (sheetsDrawn(job, t).length > 0) controller.toast('info', `${t('画好了', 'The picture is ready')}${sheetsDrawn(job, t)}`)
     setPrompt('')
     setAvoid('')
     images.reload()
-  })
+  }
 
   return (
     <div className="nv-gallery">
@@ -208,6 +218,7 @@ export function Gallery() {
       ) : null}
       {batching ? <ArtBatchDialog onClose={() => { setBatching(false); images.reload() }} /> : null}
       {confirm.element}
+      {sheets.element}
     </div>
   )
 }

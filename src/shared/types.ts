@@ -160,6 +160,22 @@ export interface CharacterVoiceProfile {
   sample?: string
 }
 
+/**
+ * Something of a character's life the author wrote down themselves: that they
+ * come on, come back, leave for good or die at a chapter — where the digest
+ * of that chapter missed it, has it wrong, or was never made. It holds on
+ * every line of the plot the chapter is read on, and over what the digest
+ * says. Without a chapter it lies before the story begins: somebody dead, or
+ * gone, before the first page.
+ */
+export interface LifeMark {
+  /** The chapter it happens in. Absent: before the story begins (`death` and `exit` only). */
+  chapter?: string
+  kind: 'enter' | 'return' | 'exit' | 'death'
+  /** What happened, in a few words. */
+  what?: string
+}
+
 export interface CharacterCard {
   id: string
   name: string
@@ -190,6 +206,8 @@ export interface CharacterCard {
   lastAppearance?: string
   /** Their life on the page in a paragraph: where they come on, what they go through, how they leave — written from the chapter digests, and the author's to edit. */
   life?: string
+  /** What the author wrote down of their life themselves, one mark a chapter at most: it holds over the digests (`Project.markLife`). */
+  lifeMarks?: LifeMark[]
   visual?: CharacterVisual
   voiceProfile?: CharacterVoiceProfile
   /** Free-form Markdown body below the front matter. */
@@ -785,6 +803,29 @@ export interface ImageSettings {
    */
   sheetFirst?: boolean
 }
+
+/** How an author's loose notes on a picture of somebody were sorted. */
+export interface SortedNotes {
+  /** What went into how the person looks, for every picture from now on. */
+  kept: string[]
+  /** What holds for this one picture only. */
+  once: string[]
+  /** What the picture drawn had no place for: a design sheet has no snow and no night. */
+  unused: string[]
+  /** The direction this one picture was given. */
+  picture?: string
+  /** Nobody could be reached to sort them: all of it went to this one picture, and nothing into the look. */
+  unsorted?: true
+}
+
+/**
+ * Something about to be drawn, as far as the question "whose design sheet
+ * would it draw first" needs to know it: a picture by its kind and target, or
+ * the panels of a chapter's storyboard.
+ */
+export type SheetsAsk =
+  | { kind: 'portrait' | 'scene' | 'cover' | 'custom'; target?: string; quote?: string; characters?: string[] }
+  | { kind: 'panels'; chapter: string; panels?: string[]; force?: boolean }
 
 /** Reference images per picture when the author has set no number of their own, and the most that can be set. */
 export const REFERENCES_DEFAULT = 3

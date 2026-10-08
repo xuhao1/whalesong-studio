@@ -1163,6 +1163,78 @@ Rules:
 Output JSON only: {"prompt": "", "negative": ""}`)
 }
 
+/**
+ * Sort an author's loose notes on a character's picture: what is of the person
+ * goes into how they look from now on, what is of this one picture directs
+ * this picture and nothing else.
+ * @param base.picture - the picture about to be drawn: a portrait, or a design sheet (which has no setting to give).
+ * @param base.anchor - the visual anchor as it stands; absent when there is none yet, and one is to be written.
+ */
+export function lookNotesTask(base: Base & { card: string; anchor?: string; negative?: string; notes: string; picture: 'portrait' | 'sheet'; avoid?: string[] }): string {
+  const avoid = (base.avoid ?? []).join(', ')
+  const zhPicture = base.picture === 'sheet'
+    ? '人设图（三视图）：同一个人的全身站姿画三次——正面、侧面、背面，素底，表情平静。它没有背景、天气、时间、动作和镜头，这类想法这张图用不上。'
+    : '立绘：半身像，面向镜头。它可以有自己的背景、时间、天气、光线、姿势和神态。'
+  const enPicture = base.picture === 'sheet'
+    ? 'a design sheet (turnaround): the same person standing, full body, three times — front, side, back — on a plain ground, with a neutral expression. It has no setting, weather, time of day, action or camera: ideas of that kind have no place in it.'
+    : 'a portrait: waist-up, facing the viewer. It can have a setting, a time of day, weather, light, a pose and an expression of its own.'
+  return L(base.lang, `作者在给《${bare(base.title)}》的一个人物画图之前，随手写下了一些想法。它们混在一起：有的说的是这个人本身，有的只是这一张图想要的样子。请把它们分开。
+
+## 人物
+${base.card}
+
+## 这个人现在的视觉锚点（每一张有此人的图都会原样带上）
+${base.anchor !== undefined && base.anchor.length > 0 ? base.anchor : '（还没有——请根据上面人物卡里的外貌和作者的想法写出来）'}
+${base.negative !== undefined && base.negative.length > 0 ? `\n这个人身上不要画出：${base.negative}\n` : ''}
+## 现在要画的这一张
+${zhPicture}
+
+## 作者随手写的想法
+${base.notes}
+
+## 这本书的画面里不能出现
+${avoid.length > 0 ? avoid : '（无特别限制）'}
+
+怎么分：
+1. **属于这个人本身的**——以后每一张图里都该是这样：长相、年龄感、体型、肤色、发色与发型、疤痕胎记、平常的衣着（款式、材质、颜色、新旧）、随身的标志物。把它们融进视觉锚点：保留锚点里原有的内容，只改动作者这次说到的地方；和原来的写法冲突时，以作者这次说的为准。
+2. **只属于这一张图的**——换一张图就不一定是这样：时间、天气、季节、地点与背景、光线、姿势与动作、此刻的神态、构图与镜头、这一次临时穿戴或拿在手里的东西、气氛。它们不进视觉锚点，写进 picture。
+3. 分不清时看作者的说法："这张 / 这次 / 这幅 / 这里"说的是这一张图；"总是 / 平时 / 一直 / 常年"，或者没有限定、说的又是长相和平常衣着的，是这个人本身。
+4. 现在要画的这一张用不上的想法（见上面对这一张图的说明），不要硬塞进 picture，列进 unused。
+5. 作者没有说到的，不要替他添。
+
+anchor 的写法：英文，逗号分隔的短语，40-70 个词，只写看得见的；不写姓名、性格、身份、经历，不用机构名、教派、头衔之类的词（绘图模型会按现实里最常见的样子去画，要写成它实际的形状和材质）；不写动作、姿势、此刻的表情，不写画风、光线、镜头、画质。没有任何想法属于这个人本身、而锚点已经有了时，anchor 原样照抄。
+
+只输出 JSON：
+{"anchor": "分完之后的整段视觉锚点", "negative": "这个人身上不该画出的东西（英文，逗号分隔）；没有变化就照抄原来的，没有就留空", "appearance": "kept 里那几点当中，人物卡的外貌还没有写到的：用${base.language}写成一句短话，可以直接接在原有外貌后面。只写作者说的那几点——外貌里已经有的不重复，作者没说的材质、新旧、来历之类不要添。都已经有了就留空", "picture": "只属于这一张图的要求，写成给绘图模型的一句话；没有就留空", "kept": ["进了这个人形象的每一点，用作者的话，几个字一条"], "once": ["只用在这一张图上的每一点，几个字一条"], "unused": ["这一张图用不上的每一点，几个字一条"]}`, `Before a picture of a character of "${bare(base.title)}" is drawn, the author jotted down some ideas. They are mixed: some are about the person, some only about what this one picture should be. Sort them.
+
+## Character
+${base.card}
+
+## Their visual anchor as it stands (restated as is in every picture that shows them)
+${base.anchor !== undefined && base.anchor.length > 0 ? base.anchor : '(none yet — write one from the appearance on the card above and the author\'s ideas)'}
+${base.negative !== undefined && base.negative.length > 0 ? `\nNever drawn on them: ${base.negative}\n` : ''}
+## The picture about to be drawn
+${enPicture}
+
+## The author's ideas, as jotted down
+${base.notes}
+
+## Must not appear in this book's pictures
+${avoid.length > 0 ? avoid : '(nothing in particular)'}
+
+How to sort:
+1. **Of the person** — so in every picture from now on: face, apparent age, build, skin, hair colour and style, scars and marks, what they usually wear (cut, material, colour, wear), signature items. Work these into the visual anchor: keep what the anchor has, change only what the author speaks of now; where the two disagree, what the author says now holds.
+2. **Of this one picture** — not necessarily so in the next: time of day, weather, season, place and background, light, pose and action, a passing expression, composition and camera, what they wear or hold this once, mood. None of it goes into the anchor; it goes into picture.
+3. Where it is hard to tell, go by how the author put it: "in this one / this time / here" speaks of the picture; "always / usually / all year round", or no such word about looks and usual clothing, speaks of the person.
+4. An idea the picture about to be drawn has no place for (see what is said of it above) is not forced into picture: list it under unused.
+5. Add nothing the author did not speak of.
+
+The anchor: English, comma-separated phrases, 40-70 words, only what can be seen; no names, personality, role or history, no names of institutions, orders or titles (an image model draws the most common real-world version of such words — say its actual shape and material); no action, pose or passing expression, no art style, light, camera or image quality. Where no idea is of the person and there is an anchor already, copy the anchor as it is.
+
+Output JSON only:
+{"anchor": "the whole visual anchor once sorted", "negative": "what must not be drawn on them (English, comma-separated); copy what there is where nothing changes, leave empty where there is none", "appearance": "of the points under kept, those the card's appearance does not have yet: one short sentence in ${base.language} that can follow it directly. Only what the author said — nothing the appearance already says, and no material, wear or history the author did not speak of. Empty where it has them all", "picture": "what is asked of this one picture, as one line for the image model; empty where there is nothing", "kept": ["each point that went into how the person looks, in the author's words, a few words each"], "once": ["each point used for this one picture only, a few words each"], "unused": ["each point this picture has no place for, a few words each"]}`)
+}
+
 export function directorSystem(base: Base & { style: string; player?: string }): string {
   const role = base.player !== undefined
     ? L(base.lang, `玩家扮演「${base.player}」。你绝不替「${base.player}」说话、行动或做决定，也不描写其内心；只写其他人物和世界对玩家言行的反应。`, `The player is "${base.player}". Never speak, act, decide or think for "${base.player}"; write only how the other characters and the world respond.`)

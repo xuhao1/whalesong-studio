@@ -25,7 +25,7 @@
  * Every picture records what its prompt was assembled from.
  */
 import { mergeAvoid, pictureSize, resolveArtStyle, splitAvoid, type ArtSource } from '../../shared/art'
-import type { CharacterCard, CharacterLook, IllustrationInfo, IllustrationParts, PromptLanguage, WorldEntry, WorldEvent } from '../../shared/types'
+import type { CharacterCard, CharacterLook, IllustrationInfo, IllustrationParts, PromptLanguage, SortedNotes, WorldEntry, WorldEvent } from '../../shared/types'
 import { referencesOf } from '../../shared/types'
 import { clip, fuzzyFind, hashText, newId, sameName, slugify } from '../../shared/text'
 import { groupOf } from '../../shared/world'
@@ -36,11 +36,12 @@ import { assign } from '../crew'
 import { extensionOf, type ImageProvider, type ImageReference } from '../media/image'
 import { ProviderError } from '../media/http'
 import { ProjectError } from '../project'
-import { artDirectionTask, coverPromptTask, illustrationPromptTask, lookTask, turnLookTask, visualAnchorTask } from '../prompts'
+import { artDirectionTask, coverPromptTask, illustrationPromptTask, lookNotesTask, lookTask, turnLookTask, visualAnchorTask } from '../prompts'
 import { L, promptLanguage, renderCharacter, renderWorld } from '../render'
 import { isAbort } from '../util/async'
 
 export { DEFAULT_ART_STYLE } from '../../shared/art'
+export type { SortedNotes } from '../../shared/types'
 
 export interface IllustrateParams {
   kind: 'portrait' | 'sheet' | 'scene' | 'location' | 'item' | 'cover' | 'custom'
@@ -53,6 +54,12 @@ export interface IllustrateParams {
   size?: string
   /** For scenes: embed the image in the chapter text after the quoted passage. */
   insert?: boolean
+  /**
+   * Portrait, sheet: ideas the author jotted down, mixed as they came — what is of the person is worked into how they
+   * look from now on (the visual anchor, the appearance), what is of this one picture ("a snowy night") directs this
+   * picture and goes nowhere else ({@link sortNotes}).
+   */
+  notes?: string
   /** Sheet: which look (outfit) to draw; a name that does not exist yet creates the look. */
   look?: string
   /** Scene, cover, custom: what each character wears — character name or id → look name. */
@@ -63,6 +70,8 @@ export interface IllustrateParams {
   avoid?: string[]
   /** Custom: send the prompt exactly as written — no art direction, no avoid list. */
   raw?: boolean
+  /** `false`: this once, draw from what there is — no design sheet is drawn first for whoever lacks one (the author was asked, and said so). */
+  sheetFirst?: boolean
   /**
    * Location, item: draw it as it is from one turn of its course on — built, changed, in ruins — and keep the picture
    * with that turn, not as its design art. Named by the turn's chapter (id or number), or `<chapter>:<kind>` where a
@@ -271,6 +280,71 @@ export async function deriveVisual(core: NovelCore, runtime: ProjectRuntime, par
   const negative = asText(value.negative)
   const saved = await project.saveCharacter({ id: card.id, visual: { prompt, negative: negative ?? '' } })
   return { card: saved, prompt, ...(negative !== undefined ? { negative } : {}) }
+}
+
+/**
+ * Sort the ideas an author jotted down before a picture of somebody: the
+ * director says which are of the person — and works those into the visual
+ * anchor, and into the appearance where the card does not have them — and
+ * which are of this one picture, which direct it and are kept nowhere. What
+ * became of each idea is handed back, to be shown.
+ *
+ * Where no model can be reached nothing is guessed: the notes direct this
+ * picture, and the look stays as it is.
+ */
+export async function sortNotes(core: NovelCore, runtime: ProjectRuntime, card: CharacterCard, notes: string, picture: 'portrait' | 'sheet', task: TaskContext): Promise<{ card: CharacterCard; sorted: SortedNotes }> {
+  const { project } = runtime
+  const manifest = await project.manifest()
+  const lang = promptLanguage(manifest.language)
+  const art = await artDirectionOf(core, runtime)
+  const restore = task.job?.note(L(lang, '导演正在整理你写的想法…', 'The director is sorting your notes…'))
+  try {
+    const { value } = await assign(core, runtime, task, {
+      role: 'director',
+      label: L(lang, `整理想法 · ${card.name}`, `Notes · ${card.name}`),
+      tool: 'sort_notes',
+      // Everything is in the task: a look or two at the book at most, then the result.
+      maxSteps: 8,
+      what: L(lang, '作者的想法分成两类：进这个人形象的，和只用在这一张图上的', 'the author\'s ideas, sorted: those that go into how the person looks, and those for this one picture'),
+      prompt: lookNotesTask({
+        lang,
+        language: manifest.language,
+        title: manifest.title,
+        card: renderCharacter({ ...card, secrets: undefined, relationships: undefined, notes: undefined, life: undefined } as CharacterCard, lang),
+        ...(card.visual?.prompt !== undefined ? { anchor: card.visual.prompt } : {}),
+        ...(card.visual?.negative !== undefined ? { negative: card.visual.negative } : {}),
+        notes,
+        picture,
+        avoid: art.avoid,
+      }),
+      temperature: 0.2,
+      validate: (raw) => {
+        const record = asRecord(raw)
+        if (asText(record.anchor) === undefined && asText(record.picture) === undefined) throw new Error('both "anchor" and "picture" are empty: every idea is of the person, of this picture, or has no place in it')
+        return record
+      },
+    })
+    const kept = asList(value.kept)
+    const anchor = asText(value.anchor)
+    const negative = asText(value.negative)
+    const more = asText(value.appearance)
+    const pictureLine = asText(value.picture)
+    // The look changes only by what the author's ideas put there: an anchor handed back unchanged is left alone.
+    const visual: Record<string, string> = {}
+    if (anchor !== undefined && anchor !== card.visual?.prompt) visual.prompt = anchor
+    if (negative !== undefined && negative !== card.visual?.negative) visual.negative = negative
+    const appearance = more !== undefined && kept.length > 0 && !(card.appearance ?? '').includes(more) ? [card.appearance, more].filter((part): part is string => part !== undefined && part.length > 0).join(lang === 'zh' ? '' : ' ') : undefined
+    const saved = Object.keys(visual).length > 0 || appearance !== undefined
+      ? await project.saveCharacter({ id: card.id, ...(Object.keys(visual).length > 0 ? { visual } : {}), ...(appearance !== undefined ? { appearance } : {}) })
+      : card
+    return { card: saved, sorted: { kept, once: asList(value.once), unused: asList(value.unused), ...(pictureLine !== undefined ? { picture: pictureLine } : {}) } }
+  } catch (error) {
+    if (isAbort(error) || task.signal?.aborted === true) throw error
+    core.log(`could not sort the author's notes on ${card.name}; they direct this picture only`, error)
+    return { card, sorted: { kept: [], once: [notes], unused: [], picture: notes, unsorted: true } }
+  } finally {
+    restore?.()
+  }
 }
 
 /** Make sure a character has a visual anchor before it is drawn; without a model to write one, the prose of the card stands in. */
@@ -598,24 +672,34 @@ export interface SheetsFirst {
 }
 
 /**
+ * Whose design sheet would be drawn before a picture of these people: those
+ * who have none, have a look to draw one from, and — unless a portrait of
+ * them is what is asked for — come back in the book. Nobody, where the author
+ * turned this off (`image.sheetFirst`).
+ * @param who - `everyone`: each of them (a portrait is asked for). `returning`: those who come back in the book ({@link comingBack}).
+ */
+export async function lackingSheets(core: NovelCore, runtime: ProjectRuntime, people: readonly CharacterCard[], who: 'everyone' | 'returning'): Promise<CharacterCard[]> {
+  if (core.currentSettings().image.sheetFirst === false) return []
+  // Nothing says how they look: there is nothing to draw a sheet from, and a picture is made of what the passage gives.
+  const lacking = people.filter(card => card.visual?.sheet === undefined && looksOf(card).length > 0)
+  if (lacking.length === 0 || who === 'everyone') return lacking
+  const back = await comingBack(runtime.project, lacking)
+  return lacking.filter(card => back.has(card.id))
+}
+
+/**
  * Before somebody is drawn, see that they have a design sheet: the one
  * picture every later picture of them is held against. Without it a portrait,
  * a scene and a panel each invent the face anew.
- * @param who - `everyone`: each of them (a portrait is asked for). `returning`: those who come back in the book ({@link comingBack}).
  * @returns the people with their sheets, and which sheets this call drew; nothing is drawn where the author turned this off (`image.sheetFirst`).
  */
 export async function sheetsFirst(core: NovelCore, runtime: ProjectRuntime, people: readonly CharacterCard[], who: 'everyone' | 'returning', task: TaskContext): Promise<SheetsFirst> {
   const { project } = runtime
   const out: SheetsFirst = { cards: [...people], drawn: [], failed: [] }
-  if (core.currentSettings().image.sheetFirst === false) return out
-  const lacking = people.filter(card => card.visual?.sheet === undefined)
-  if (lacking.length === 0) return out
-  const back = who === 'everyone' ? undefined : await comingBack(project, lacking)
+  const todo = await lackingSheets(core, runtime, people, who)
+  if (todo.length === 0) return out
   const lang = promptLanguage((await project.manifest()).language)
-  for (const card of lacking) {
-    if (back !== undefined && !back.has(card.id)) continue
-    // Nothing says how they look: there is nothing to draw a sheet from, and the picture is made of what the passage gives.
-    if (looksOf(card).length === 0) continue
+  for (const card of todo) {
     task.signal?.throwIfAborted()
     const key = `${project.root}\n${card.id}`
     let underway = sheetsUnderway.get(key)
@@ -638,11 +722,44 @@ export async function sheetsFirst(core: NovelCore, runtime: ProjectRuntime, peop
     }
   }
   // As they are now: with the sheets just drawn, by this call or by one that ran beside it.
-  if (out.drawn.length > 0 || lacking.length > 0) {
-    const fresh = await project.characters()
-    out.cards = people.map(card => fresh.find(candidate => candidate.id === card.id) ?? card)
-  }
+  const fresh = await project.characters()
+  out.cards = people.map(card => fresh.find(candidate => candidate.id === card.id) ?? card)
   return out
+}
+
+/** The passage a scene is drawn of, and who is in it. */
+async function sceneOf(project: ProjectRuntime['project'], params: Pick<IllustrateParams, 'target' | 'quote'>, characters: readonly CharacterCard[]) {
+  const chapter = params.target !== undefined ? await project.findChapter(params.target) : undefined
+  if (chapter === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${params.target ?? ''}"`)
+  const text = await project.chapterText(chapter.plan.id)
+  const range = params.quote !== undefined && params.quote.trim().length > 0 ? fuzzyFind(text, params.quote.trim()) : undefined
+  const memory = await project.memory(chapter.plan.id)
+  const passage = range !== undefined
+    ? text.slice(Math.max(0, range.start - 200), Math.min(text.length, range.end + 200))
+    : params.quote ?? memory?.summary ?? chapter.plan.synopsis ?? clip(text, 800)
+  const present = detectCharacters(passage, [...characters])
+  const cast = (present.length > 0 ? present : characters.filter(card => chapter.plan.characters?.includes(card.id) === true)).slice(0, 5)
+  return { chapter, range, passage, cast }
+}
+
+/**
+ * Whose design sheet a picture would draw first — worked out without drawing
+ * anything, for the question put to the author before the picture is started.
+ * @returns nobody for a kind of picture that shows no people, and where the author turned sheets-first off.
+ */
+export async function sheetsBefore(core: NovelCore, runtime: ProjectRuntime, params: Pick<IllustrateParams, 'kind' | 'target' | 'quote' | 'characters'>): Promise<CharacterCard[]> {
+  const { project } = runtime
+  const characters = await project.characters()
+  const find = (ref: string): CharacterCard | undefined => characters.find(card => card.id === ref || sameName(card.name, ref) || (card.aliases ?? []).some(alias => sameName(alias, ref)))
+  if (params.kind === 'portrait') {
+    const card = params.target !== undefined ? await project.findCharacter(params.target) : undefined
+    // A card that says nothing of looks yet gets its anchor written when the picture is drawn; whether a sheet can follow is not known before.
+    return card !== undefined ? await lackingSheets(core, runtime, [card], 'everyone') : []
+  }
+  if (params.kind === 'custom') return await lackingSheets(core, runtime, (params.characters ?? []).map(find).filter((card): card is CharacterCard => card !== undefined), 'returning')
+  if (params.kind === 'cover') return await lackingSheets(core, runtime, (await bookSketch(runtime, promptLanguage((await project.manifest()).language))).leads, 'returning')
+  if (params.kind === 'scene') return await lackingSheets(core, runtime, (await sceneOf(project, params, characters)).cast, 'returning')
+  return []
 }
 
 // ───────────────────────────── the kinds of picture ─────────────────────────────
@@ -658,6 +775,8 @@ export interface IllustrateResult extends IllustrationInfo {
   sheets?: string[]
   /** Whose sheet could not be drawn first, and why. */
   sheetsFailed?: { name: string; error: string }[]
+  /** How the author's loose notes were sorted: into the person's look, into this picture, or nowhere. */
+  sorted?: SortedNotes
 }
 
 export async function illustrate(core: NovelCore, runtime: ProjectRuntime, params: IllustrateParams, task: TaskContext): Promise<IllustrateResult> {
@@ -676,9 +795,13 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
     ...(art !== false && art.pinned === true ? { pinnedStyle: art.style } : {}),
     ...(first.drawn.length > 0 ? { sheets: first.drawn } : {}),
     ...(first.failed.length > 0 ? { sheetsFailed: first.failed } : {}),
+    ...(sorted !== undefined ? { sorted } : {}),
   })
+  // What became of the ideas the author jotted down for this picture.
+  let sorted: SortedNotes | undefined
   /** These people with a sheet each, where they are to have one: drawn now if need be. */
   const sheeted = async (people: readonly CharacterCard[], who: 'everyone' | 'returning'): Promise<CharacterCard[]> => {
+    if (params.sheetFirst === false) return [...people]
     const made = await sheetsFirst(core, runtime, people, who, task)
     first.drawn.push(...made.drawn)
     first.failed.push(...made.failed)
@@ -710,17 +833,31 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
   if (params.kind === 'portrait' || params.kind === 'sheet') {
     const found = params.target !== undefined ? await project.findCharacter(params.target) : undefined
     if (found === undefined) throw new ProjectError('novel/not-found', `no character matches "${params.target ?? ''}"`)
-    const anchored = await withAnchor(core, runtime, found, task)
+    // Ideas jotted down beside the button: what is of the person goes into their look first — the picture is then drawn
+    // from that look —, what is of this picture directs it. A look (outfit) has its own words: `prompt`.
+    const notes = params.look === undefined ? params.notes?.trim() : undefined
+    let noted = found
+    let direction = params.prompt
+    if (notes !== undefined && notes.length > 0) {
+      const made = await sortNotes(core, runtime, found, notes, params.kind, task)
+      noted = made.card
+      sorted = made.sorted
+      task.job?.result({ sorted })
+      direction = [params.prompt, made.sorted.picture].filter((part): part is string => part !== undefined && part.trim().length > 0).join(comma) || undefined
+    }
+    const anchored = await withAnchor(core, runtime, noted, task)
     if (looksOf(anchored).length === 0) throw new ProjectError('novel/invalid', `${anchored.name} has no appearance yet — describe how they look first (or let novel_bible expand the card)`)
     // A portrait is drawn after the sheet, and against it: whoever has no sheet yet gets one first.
     const card = params.kind === 'portrait' ? (await sheeted([anchored], 'everyone'))[0]! : anchored
 
     if (params.kind === 'portrait') {
       const subject = joinParts([
-        L(lang, '人物立绘，半身像，面向镜头，纯净的浅色背景', 'character portrait, waist-up, facing the viewer, plain light background'),
+        // Asked for nothing in particular, a portrait faces the viewer on a plain ground; a direction of its own — a snowy
+        // night, a look over the shoulder — takes the place of both.
+        direction !== undefined ? L(lang, '人物立绘，半身像', 'character portrait, waist-up') : L(lang, '人物立绘，半身像，面向镜头，纯净的浅色背景', 'character portrait, waist-up, facing the viewer, plain light background'),
         looksOf(card),
         card.personality !== undefined ? L(lang, `神态体现：${clip(card.personality, 60, '')}`, `expression showing: ${clip(card.personality, 80, '')}`) : undefined,
-        params.prompt,
+        direction,
       ], comma)
       // A portrait drawn after the sheet shows the same person as the sheet.
       const sheet = card.visual?.sheet !== undefined ? [{ path: card.visual.sheet, label: card.name }] : []
@@ -745,7 +882,7 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
       L(lang, '人物设定图（三视图）：同一个人的全身站姿画三次——正面、侧面、背面，从左到右等距并排，比例与衣着完全一致，表情平静，纯净的浅色背景，不要任何文字与标注', 'character design sheet (turnaround): the same person drawn three times, full body, standing — front view, side view, back view — evenly spaced left to right, identical proportions and clothing, neutral expression, plain light background, no text or labels'),
       looksOf(card, look),
       look !== undefined && base !== undefined ? L(lang, '与参考图是同一个人：脸、发色、体型不变，只换成上面写的这身装束', 'the same person as in the reference: face, hair colour and build unchanged, only the outfit above differs') : undefined,
-      look === undefined ? params.prompt : undefined,
+      look === undefined ? direction : undefined,
     ], comma)
     const info = await renderImage(core, runtime, {
       subject,
@@ -866,18 +1003,11 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
   }
 
   // scene
-  const chapter = params.target !== undefined ? await project.findChapter(params.target) : undefined
-  if (chapter === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${params.target ?? ''}"`)
-  const text = await project.chapterText(chapter.plan.id)
-  const range = params.quote !== undefined && params.quote.trim().length > 0 ? fuzzyFind(text, params.quote.trim()) : undefined
-  const memory = await project.memory(chapter.plan.id)
-  const passage = range !== undefined
-    ? text.slice(Math.max(0, range.start - 200), Math.min(text.length, range.end + 200))
-    : params.quote ?? memory?.summary ?? chapter.plan.synopsis ?? clip(text, 800)
+  const scene = await sceneOf(project, params, characters)
+  const { chapter, range, passage } = scene
   if (passage.trim().length === 0) throw new ProjectError('novel/empty', `chapter ${chapter.index} has nothing to illustrate yet`)
-  const present = detectCharacters(passage, characters)
   // Whoever of them comes back in the book has a sheet before the scene is drawn: the scene is held against it.
-  const cast = await sheeted((present.length > 0 ? present : characters.filter(card => chapter.plan.characters?.includes(card.id) === true)).slice(0, 5), 'returning')
+  const cast = await sheeted(scene.cast, 'returning')
   // Places and things the passage names, as the bible says they look.
   const places = (await project.world()).filter(entry => [entry.name, ...(entry.aliases ?? [])].some(name => name.length >= 2 && passage.includes(name))).slice(0, 6)
   const wardrobe = cast.map(wardrobeOf).filter((line): line is string => line !== undefined)

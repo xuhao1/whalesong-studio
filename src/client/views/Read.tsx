@@ -33,6 +33,7 @@ import { Film, place, Theater, WatchChoice, type ChapterFilm } from '../reader/t
 import { chapterJob } from '../Batch'
 import { Icon } from '../icons'
 import { sheetsDrawn } from '../labels'
+import { useSheetsAsk } from '../SheetsAsk'
 import { IssueCard, issueMarks } from '../Issues'
 import { AudioDesk, ScriptTable, type ScriptView } from '../stage/Audio'
 import {
@@ -168,6 +169,7 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
   const [prefs, updatePrefs] = useReaderPrefs()
   const [options, updateOptions] = usePlayerOptions()
   const [picked, setPicked] = useState<{ text: string; offset: number; top: number; left: number } | undefined>()
+  const sheets = useSheetsAsk()
   const [flash, setFlash] = useState<number | undefined>()
   // What a review found, shown on the page where it was found — when the author asks to see it. Reading stays clean otherwise.
   const [annotate, setAnnotateState] = useState(() => {
@@ -554,12 +556,13 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
               <Button size="sm" icon="image" pending={t('正在为这段配图…', 'Illustrating…')} onClick={() => {
                 if (!controller.need('image')) return undefined
                 const chosen = picked.text
-                return controller.guard(async () => {
-                  const job = await controller.run('image.create', { root, kind: 'scene', target: chapter.id, quote: chosen, insert: true })
+                // Whoever of the people in the passage comes back in the book and has no design sheet gets one first: asked, before anything is drawn.
+                return sheets.before([{ kind: 'scene', target: chapter.id, quote: chosen }], choice => controller.guard(async () => {
+                  const job = await controller.run('image.create', { root, kind: 'scene', target: chapter.id, quote: chosen, insert: true, ...choice })
                   setPicked(undefined)
                   doc.reload()
                   controller.toast('success', `${t('插图已放进正文', 'The illustration is in the chapter')}${sheetsDrawn(job, t)}`)
-                })
+                }))
               }}>{t('配图', 'Illustrate')}</Button>
             </div>
           ) : null}
@@ -594,6 +597,7 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
         />
       ) : null}
       {sharing ? <ShareDialog onClose={() => { setSharing(false) }} /> : null}
+      {sheets.element}
     </div>
   )
 }
