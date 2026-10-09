@@ -21,12 +21,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { albumEmpty, type AlbumAt, type AlbumCounts } from '../../shared/album'
 import { fuzzyFind } from '../../shared/text'
-import { MAIN_LINE } from '../../shared/types'
+import { MAIN_LINE, ofLine } from '../../shared/types'
 import { blocksOf } from '../../shared/reader'
 import { groupOf } from '../../shared/world'
 import { AlbumView, ViewerTabs } from '../reader/album'
 import { PlayTranscript, SideList, type SideRef } from '../reader/sides'
-import { ListenBar, ModeSwitch, ReaderPage, ReaderSettings, usePlayerOptions, useReaderPrefs } from '../reader/parts'
+import { ListenBar, ModeSwitch, ReaderPage, ReaderSettings, usePlayerOptions, useReaderPrefs, type ReaderPerson } from '../reader/parts'
 import { useChapterPlayback } from '../reader/playback'
 import { ScriptPage } from '../reader/script'
 import { Film, place, Theater, WatchChoice, type ChapterFilm } from '../reader/theater'
@@ -244,6 +244,15 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
   const written = path.filter(chapter => chapter.hasText)
   const chapter = written.find(candidate => candidate.id === chapterId) ?? written[0]
   const plotLines = project.outline.lines ?? []
+  // Who the text may name: everyone the book has a card for — but for those kept to other lines of the plot — the
+  // weightiest first (that is the order the cards come in), each with the picture a reader knows them by.
+  const people = useMemo<ReaderPerson[]>(() => project.characters.filter(card => ofLine(card, lineId, undefined)).map(card => ({
+    id: card.id,
+    name: card.name,
+    ...(card.aliases !== undefined && card.aliases.length > 0 ? { aliases: card.aliases } : {}),
+    ...(card.tagline !== undefined ? { tagline: card.tagline } : {}),
+    ...((card.visual?.portrait ?? card.visual?.sheet) !== undefined ? { portrait: card.visual?.portrait ?? card.visual?.sheet } : {}),
+  })), [project.characters, lineId])
   // Where the story parts after this chapter: the lines that leave here and have a first chapter to read.
   const parting: ReturnType<typeof waysOn> = chapter === undefined ? { ways: [] } : waysOn(project, chapter, lineId)
   // A way is offered when its next chapter can be read: the reader is not sent past a gap.
@@ -541,6 +550,8 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
           flash={flash}
           scroller={scroller}
           onSelect={onSelect}
+          people={people}
+          onPerson={(id) => { controller.setAlbum({ section: 'people', end: { type: 'character', id } }) }}
           marks={annotate && !engaged ? notes.marks : undefined}
           openMark={noted?.id}
           onMark={(id, at) => {

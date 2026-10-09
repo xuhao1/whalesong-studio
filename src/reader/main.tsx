@@ -19,7 +19,7 @@ import { createRoot } from 'react-dom/client'
 import { Icon } from '../client/icons'
 import { AlbumView, ViewerTabs, type ViewerHalf } from '../client/reader/album'
 import { PlayTranscript, SideList, type SidePlay, type SideRef } from '../client/reader/sides'
-import { ListenBar, ModeSwitch, ReaderPage, ReaderSettings, setReaderDefaults, usePlayerOptions, useReaderPrefs, type ReadMode, type Translate } from '../client/reader/parts'
+import { ListenBar, ModeSwitch, ReaderPage, ReaderSettings, setReaderDefaults, usePlayerOptions, useReaderPrefs, type ReaderPerson, type ReadMode, type Translate } from '../client/reader/parts'
 import { useChapterPlayback } from '../client/reader/playback'
 import { ScriptPage } from '../client/reader/script'
 import { Film, place, Theater, WatchChoice, type ChapterFilm, type TheaterPanel } from '../client/reader/theater'
@@ -359,7 +359,7 @@ function BookScreen({ id, place, t }: { id: string; place: Place; t: Translate }
     const there = left !== undefined && left.chapter !== mine.chapter && (mine.at === undefined || left.at > mine.at) ? every.find(candidate => candidate.id === left.chapter) : undefined
     return <Contents book={book} chapters={chapters} counts={detail.data.album} sides={sides} lines={detail.data.lines} line={line} onLine={chooseLine} elsewhere={there !== undefined ? { chapter: there, by: left!.by } : undefined} t={t} />
   }
-  return <Chapter book={book} chapters={chapters} chapter={chapter} ways={ways} onLine={chooseLine} t={t} />
+  return <Chapter book={book} chapters={chapters} chapter={chapter} ways={ways} onLine={chooseLine} line={line?.id ?? MAIN} known={!albumEmpty(detail.data.album)} t={t} />
 }
 
 /** The halves of a book to change between, as this page goes to them. */
@@ -527,8 +527,18 @@ function Contents({ book, chapters, counts, sides, lines, line, onLine, elsewher
   )
 }
 
-function Chapter({ book, chapters, chapter, ways, onLine, t }: { book: Book; chapters: ChapterRef[]; chapter: ChapterRef; ways: Way[]; onLine: (line: string) => void; t: Translate }) {
+function Chapter({ book, chapters, chapter, ways, onLine, line, known, t }: { book: Book; chapters: ChapterRef[]; chapter: ChapterRef; ways: Way[]; onLine: (line: string) => void; /** The line of the plot being read. */ line: string; /** The book comes with an album: its people can be named in the text. */ known: boolean; t: Translate }) {
   const data = useLoad(signal => get<ChapterData>(`api/books/${encodeURIComponent(book.id)}/chapters/${encodeURIComponent(chapter.id)}`, signal), [book.id, chapter.id])
+  // Who the text may name: the people of the album — those a reader has met, as the line being read has them. Read
+  // once for the book; a book served without an album simply marks no names.
+  const cast = useLoad(async (signal) => {
+    if (!known) return [] as ReaderPerson[]
+    const base = `api/books/${encodeURIComponent(book.id)}/album`
+    let album: Album | undefined
+    if (line !== MAIN) album = await get<Album>(`${base}/${encodeURIComponent(line)}`, signal).catch(() => undefined)
+    album ??= await get<Album>(base, signal).catch(() => undefined)
+    return (album?.people ?? []).map((person): ReaderPerson => ({ id: person.id, name: person.name, ...(person.aliases !== undefined ? { aliases: person.aliases } : {}), ...(person.tagline !== undefined ? { tagline: person.tagline } : {}), ...(person.portrait ?? person.sheet) !== undefined ? { portrait: person.portrait ?? person.sheet } : {} }))
+  }, [book.id, line, known])
   const [prefs, updatePrefs] = useReaderPrefs()
   const [options, updateOptions] = usePlayerOptions()
   const [wanted, setWanted] = useState<ViewMode>(() => {
@@ -729,6 +739,8 @@ function Chapter({ book, chapters, chapter, ways, onLine, t }: { book: Book; cha
           pace={engaged ? pace : undefined}
           scroller={scroller}
           footer={turn}
+          people={cast.data}
+          onPerson={(id) => { go({ book: book.id, album: { section: 'people', end: { type: 'character', id } } }) }}
         />
       )}
       {mode !== 'watch' && !editing && script !== undefined ? (

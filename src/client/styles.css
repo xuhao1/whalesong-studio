@@ -10694,6 +10694,73 @@ button.nv-album-chapter:hover {
   gap: 4px;
 }
 
+/* ───────────── somebody's name in the text, and who they are ───────────── */
+
+/* Each person's own colour is set on the name and on the card; until one is, the Studio's. */
+.nv-name,
+.nv-namecard {
+  --nv-name: var(--nv-brand);
+}
+
+.nv-name {
+  border-radius: 2px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: var(--nv-name);
+  text-decoration-thickness: 0.09em;
+  text-underline-offset: 0.24em;
+}
+
+.nv-name:hover,
+.nv-name.is-open {
+  background: color-mix(in srgb, var(--nv-name) 20%, transparent);
+}
+
+.nv-namecard {
+  position: absolute;
+  z-index: 5;
+  display: flex;
+  gap: 10px;
+  width: 260px;
+  padding: 10px;
+  border: 1px solid var(--nv-border);
+  border-top: 3px solid var(--nv-name);
+  border-radius: var(--nv-radius);
+  background: var(--nv-surface);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
+  color: var(--nv-text);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.nv-namecard-face {
+  flex: none;
+  width: 72px;
+  height: 96px;
+  border-radius: var(--nv-radius-s);
+  object-fit: cover;
+  object-position: top;
+}
+
+.nv-namecard-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.nv-namecard-line {
+  color: var(--nv-text-2);
+}
+
+.nv-namecard-go {
+  display: flex;
+  gap: 12px;
+  margin-top: auto;
+  padding-top: 4px;
+}
+
 /* ───────────── a picture placed in a chapter's text ───────────── */
 
 .nv-place {
