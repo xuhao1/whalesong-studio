@@ -24,6 +24,7 @@ import { lookWords, pictureWords, resolveArtStyle, tidyPart, type ArtSource, sce
 import type { IllustrationInfo, IllustrationPiece } from '../shared/types'
 import { Button, Chip, cx, Modal, Spinner, TextArea, TextInput, useAction, useConfirm, useLoad, useMediaUrl, useProject, useSnapshot, useStudio, useT, plainEnter } from './ui'
 import { leftBehind } from './labels'
+import { PlacePicture } from './PlacePicture'
 import { Icon } from './icons'
 
 export const PICTURE_KIND: Record<IllustrationInfo['kind'], [string, string]> = {
@@ -59,6 +60,8 @@ const PIECE: Record<Exclude<IllustrationPiece['of'], 'look'>, [string, string]> 
   composed: ['导演写的画面', 'Composed by the director'],
   scene: ['名场面', 'Signature scene'],
   change: ['改哪一处', 'What to change'],
+  place: ['地点的样子', 'How the place looks'],
+  thing: ['物件的样子', 'How a thing looks'],
 }
 
 /** Every picture on record in the open book, by its path. */
@@ -354,7 +357,7 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
               const body = (
                 <>
                   <img alt={reference.label} loading="lazy" src={mediaUrl(reference.path)} />
-                  <figcaption>{t(`第 ${index + 1} 张 · ${reference.label}`, `#${index + 1} · ${reference.label}`)}<Chip tone={status.tone}>{status.label}</Chip></figcaption>
+                  <figcaption>{t(`第 ${index + 1} 张 · ${reference.label}`, `#${index + 1} · ${reference.label}`)}<Chip tone={status.tone}>{status.label}</Chip>{reference.front === true ? <Chip title={t('人设图上有正面、侧面、背面三个身影；整张发过去，绘图模型会照着画出三个人', 'A sheet shows front, side and back; sent whole, an image model draws three people')}>{t('只发了正面那个身影', 'Its front view only')}</Chip> : null}</figcaption>
                 </>
               )
               return known && onOpen !== undefined
@@ -482,6 +485,8 @@ export function PictureViewer({ path, title, note, footer, onClose, onEditLook, 
   // while which the form stays where it is.
   const [redraw, setRedraw] = useState<'words' | 'change' | undefined>()
   const [drawing, setDrawing] = useState(false)
+  // Putting it into a chapter's text: asked where.
+  const [placing, setPlacing] = useState(false)
   useEffect(() => { setRedraw(undefined) }, [at])
   const gone = (): void => {
     onChanged?.()
@@ -512,7 +517,8 @@ export function PictureViewer({ path, title, note, footer, onClose, onEditLook, 
         <a className="nv-link" href={controller.api.media(project.manifest.id, at, { download: true })}>{t('下载', 'Download')}</a>
         <span className="nv-spacer" />
         {footer !== undefined ? footer(image) : null}
-        {image !== undefined && image.kind !== 'panel' ? (
+        <Button variant="outline" icon="book" onClick={() => { setPlacing(true) }} title={t('把这张图插到某一章正文的某一段之后', 'Put this picture into a chapter, after a paragraph of your choosing')}>{t('插入正文…', 'Place in the text…')}</Button>
+        {image !== undefined ? (
           <>
             {/* Pressed again, a way stays open (a second click that closed it looked like nothing happening); its form has the way out. */}
             <Button variant={redraw === 'words' ? 'primary' : 'outline'} icon="type" disabled={drawing} onClick={() => { setRedraw('words') }} title={t('把这张图的提示词拿出来改，照改过的画一张', 'Rewrite this picture\'s words and draw it from them')}>{t('改提示词重画', 'Rewrite and redraw')}</Button>
@@ -542,6 +548,7 @@ export function PictureViewer({ path, title, note, footer, onClose, onEditLook, 
               : <div className="nv-center"><Spinner /></div>}
         </div>
       </div>
+      {placing ? <PlacePicture image={image} path={at} chapter={image !== undefined && (image.kind === 'scene' || image.kind === 'panel') ? image.target : undefined} onClose={() => { setPlacing(false) }} /> : null}
     </Modal>
   )
 }

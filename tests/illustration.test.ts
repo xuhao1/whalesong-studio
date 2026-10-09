@@ -1342,6 +1342,47 @@ describe('the pictures kept of somebody, and taking one away', () => {
     await expect(redrawPicture(bed.core, bed.runtime, { picture: 'assets/images/none.png', change: 'x' }, task)).rejects.toThrow(/no picture on record/)
   })
 
+  it('holds a picture of somebody against the front view of their sheet — one figure of the three — and a sheet against the sheet', async () => {
+    const { bed, images } = await studio()
+    const { project } = bed.runtime
+    const { cutPng } = await import('../src/core/media/png')
+    const { pixelsOf } = await import('../src/core/media/pixels')
+    // A sheet as a model draws one: a plain ground, three figures side by side.
+    const [width, height] = [900, 600]
+    const pixels = new Uint8Array(width * height * 3).fill(236)
+    for (const [from, to] of [[80, 260], [380, 520], [640, 820]] as const) for (let y = 50; y < 570; y++) for (let x = from; x < to; x++) pixels.set([70, 90, 96], (y * width + x) * 3)
+    const drawn = await cutPng({ width, height, kind: 2, each: 3, pixels }, { left: 0, top: 0, width, height })
+    const sheet = await project.writeAsset('images/sheet-yan.png', drawn)
+    const card = await project.saveCharacter({ name: '沈砚', role: 'protagonist', appearance: '高瘦', visual: { prompt: 'lean woman, black hair', sheet } })
+    // A portrait: what goes to the model is the first figure alone — a picture of its own, narrower than the sheet and
+    // as tall — so that the model has one person to draw from, not three. The record names the sheet, and says so.
+    const portrait = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id, plain: true }, task)
+    const sent = images.calls.at(-1)!.references
+    expect(sent).toHaveLength(1)
+    expect(pixelsOf(sent[0]!.data)).toMatchObject({ height: 600 })
+    expect(pixelsOf(sent[0]!.data)!.width).toBeLessThan(330)
+    expect(sent[0]!.mime).toBe('image/png')
+    expect(portrait.parts?.references).toEqual([{ path: sheet, label: '沈砚', sheet: true, front: true }])
+    expect(portrait.prompt).toContain('参考图：第1张是沈砚。')
+    // The same for a picture of the author's own prompt that names her…
+    const loose = await illustrate(bed.core, bed.runtime, { kind: 'custom', prompt: '她在渡口等船', characters: ['沈砚'] }, task)
+    expect(pixelsOf(images.calls.at(-1)!.references[0]!.data)!.width).toBeLessThan(330)
+    expect(loose.parts?.references).toEqual([{ path: sheet, label: '沈砚', sheet: true, front: true }])
+    // …and drawn again from its words, the front view goes again.
+    const { redrawPicture } = await import('../src/core/pipelines/illustrate')
+    const again = await redrawPicture(bed.core, bed.runtime, { picture: portrait.id, subject: '人物立绘，她坐在灯下' }, task)
+    expect(pixelsOf(images.calls.at(-1)!.references[0]!.data)!.width).toBeLessThan(330)
+    expect(again.parts?.references).toEqual([{ path: sheet, label: '沈砚', sheet: true, front: true }])
+    // The sheet of one of her looks is itself a sheet — three views are what is asked for: the main sheet goes whole.
+    const look = await illustrate(bed.core, bed.runtime, { kind: 'sheet', target: card.id, look: '丧服', prompt: '素白麻衣' }, task)
+    expect(Buffer.from(images.calls.at(-1)!.references[0]!.data).equals(Buffer.from(drawn))).toBe(true)
+    expect(look.parts?.references).toEqual([{ path: sheet, label: '沈砚的主造型', sheet: true }])
+    // A sheet nothing can be told apart in — here the one-pixel picture the test double draws as that look's sheet — goes as it is.
+    const worn = (await project.findCharacter(card.id))!.visual!.looks!.find(item => item.name === '丧服')!
+    const scene = await illustrate(bed.core, bed.runtime, { kind: 'custom', prompt: '她穿着丧服站在灵前', characters: ['沈砚'], looks: { 沈砚: '丧服' } }, task)
+    expect(scene.parts?.references).toEqual([{ path: worn.sheet, label: '沈砚（丧服）', sheet: true }])
+  })
+
   it('draws the design art of a house or an organisation as the picture that stands for it', async () => {
     const { bed, images } = await studio()
     const { project } = bed.runtime

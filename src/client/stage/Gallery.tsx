@@ -46,7 +46,7 @@ export function Gallery() {
     if (image.target === undefined) return undefined
     return project.characters.find(card => card.id === image.target)?.name
       ?? project.world.find(entry => entry.id === image.target)?.name
-      ?? project.chapters.find(chapter => chapter.id === image.target)?.title
+      ?? [...project.chapters, ...(project.lines ?? []).flatMap(line => line.chapters)].find(chapter => chapter.id === image.target)?.title
   }
   const ofCharacter = kind === 'portrait' || kind === 'sheet'
   const targets = ofCharacter ? project.characters.map(card => ({ value: card.id, label: card.name })) : kind === 'location' ? project.world.filter(entry => entry.category === 'location' || entry.category === 'setting').map(entry => ({ value: entry.id, label: entry.name })) : []

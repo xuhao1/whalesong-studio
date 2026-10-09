@@ -553,6 +553,11 @@ export interface NovelRpc {
   'image.redraw': { params: { root: string; picture: string; subject?: string; change?: string }; result: JobStarted }
   'image.sheetsFirst': { params: { root: string; asks: SheetsAsk[] }; result: { people: { id: string; name: string }[]; unknown: number; /** The sheets would be drawn after the portraits asked for, against them (`image.lead` is `portrait`). */ after?: boolean } }
   'image.list': { params: { root: string }; result: { images: IllustrationInfo[] } }
+  /**
+   * Put a picture the book has into a chapter's text: after its `after`-th paragraph (0: before everything), after the
+   * paragraph a `quote` ends in, or — neither said — at the end. Result: the chapter, and the paragraph it now follows.
+   */
+  'image.place': { params: { root: string; picture: string; chapter: string; after?: number; quote?: string; alt?: string }; result: { chapter: string; after: number } }
   /** `released`: whose picture it was — the cards and entries it was taken off, by name. Absent from a Host before the picture was taken off them. */
   /** Take a picture out of the book — by the id of its record, or by its path where it has none: its file, its record, and off every card and entry that shows it (`released`: whose it was). */
   'image.delete': { params: { root: string; id?: string; path?: string }; result: { ok: boolean; released?: string[] } }

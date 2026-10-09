@@ -1623,6 +1623,10 @@ export interface ComicPanel {
   camera: CameraMove
   characters?: string[]
   location?: string
+  /** What somebody in the panel wears, where it is not their usual look: character id → the name of one of their looks. */
+  looks?: Record<string, string>
+  /** Things of the bible the panel shows, by name — an object, a mark, a document: each is drawn as the bible says it looks. */
+  things?: string[]
   image?: string
   error?: string
 }
@@ -1701,8 +1705,9 @@ export interface IllustrationPiece {
    * face is to show. `ask`: what was asked of this one picture and of no other. `composed`: a description the director
    * wrote for it, from the book. `scene`: the moment of the book a portrait shows, as kept on the person's card.
    * `change`: what was to change in a picture that went along to be changed — with that picture, all that was said.
+   * `place`: how the place the picture is set in looks, as the bible has it. `thing`: how a thing it shows looks.
    */
-  of: 'frame' | 'look' | 'outfit' | 'expression' | 'ask' | 'composed' | 'scene' | 'change'
+  of: 'frame' | 'look' | 'outfit' | 'expression' | 'ask' | 'composed' | 'scene' | 'change' | 'place' | 'thing'
   text: string
   /**
    * Where the words were taken from. A `look`: what is written for an image model (`anchor` — a visual anchor, a
@@ -1729,9 +1734,10 @@ export interface IllustrationParts {
   avoid?: string[]
   /**
    * Reference images sent along: project-relative path and who it shows. `sheet`: it is somebody's design sheet — one
-   * person seen from several sides, which the prompt says, lest the sides be drawn as so many people.
+   * person seen from several sides. `front`: of that sheet only the front view went, cut out of it — handed all its
+   * figures, an image model draws as many people.
    */
-  references?: { path: string; label: string; sheet?: boolean }[]
+  references?: { path: string; label: string; sheet?: boolean; front?: boolean }[]
   /** What the prompt said of the reference images: who each one shows, and what they are there for. */
   referenceNote?: string
   /**

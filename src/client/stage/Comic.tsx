@@ -21,6 +21,7 @@ import { place, secondsOf, Theater, useCurrentPanel } from '../reader/theater'
 import { useLinePlayer } from './player'
 import { chapterJob, inBatch, type ChapterJob } from '../Batch'
 import { useSheetsAsk } from '../SheetsAsk'
+import { PictureViewer } from '../PictureRecord'
 import { VideoCard } from './Video'
 
 export function ComicStage({ chapter }: { chapter: ChapterInfo | undefined }) {
@@ -31,6 +32,8 @@ export function ComicStage({ chapter }: { chapter: ChapterInfo | undefined }) {
   const mediaUrl = useMediaUrl()
   const [options, updateOptions] = usePlayerOptions()
   const [editing, setEditing] = useState<ComicPanel | undefined>()
+  /** A panel's picture opened large: how it was made, and what can be done with a picture — as anywhere one is shown. */
+  const [viewing, setViewing] = useState<string | undefined>()
   /** Panels chosen to be acted on together. */
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const { busy, run } = useAction()
@@ -39,6 +42,12 @@ export function ComicStage({ chapter }: { chapter: ChapterInfo | undefined }) {
   // Work started here for this chapter, or the step of a running batch that is on it right now.
   const job: ChapterJob | undefined = jobs.find(item => item.status === 'running' && (item.kind === 'comic' || (item.kind === 'audio' && item.title !== 'audition')) && (item.target === chapter?.id || item.result?.chapterId === chapter?.id)) ?? chapterJob(jobs, chapter?.id, ['draw panels', 'storyboard', 'synthesize', 'sound', 'audio script'])
   const batch = inBatch(jobs, chapter?.id)
+  // Panels being drawn right now, by the drawings under way for this chapter. One drawing does not stand in another's
+  // way — a panel drawn again leaves every other panel free to be drawn again — while whatever makes the storyboard
+  // itself (cutting it anew, a batch working through the chapter) does: that changes which panels there are.
+  const draws = jobs.filter(item => item.status === 'running' && item.kind === 'comic' && item.title === 'draw panels' && (item.target === chapter?.id || item.result?.chapterId === chapter?.id))
+  const drawingNow = new Set(draws.flatMap(item => (Array.isArray(item.result?.drawing) ? (item.result.drawing as unknown[]).filter((id): id is string => typeof id === 'string') : [])))
+  const drawingAll = draws.some(item => item.result?.all === true)
   // What is set up decides which steps one click can do.
   const ready = useSnapshot(snapshot => snapshot.settings?.ready)
   const board = useLoad(async signal => chapter !== undefined ? await controller.api.call('comic.board', { root, chapter: chapter.id }, signal) : undefined, [root, chapter?.id, project.revision, job === undefined])
@@ -75,6 +84,8 @@ export function ComicStage({ chapter }: { chapter: ChapterInfo | undefined }) {
       : t(`约 ${Math.max(1, Math.min(limit ?? Infinity, Math.round(total / PANEL_SECONDS[density])))} 格`, `about ${Math.max(1, Math.min(limit ?? Infinity, Math.round(total / PANEL_SECONDS[density])))} panels`)
   const changed = density !== (board.data.board?.density ?? saved?.density ?? 'balanced') || limit !== (board.data.board?.maxPanels ?? saved?.maxPanels)
   const working = busy || job !== undefined || batch !== undefined
+  // The storyboard is being made or worked through: its panels are not to be drawn from here meanwhile.
+  const remaking = batch !== undefined || (job !== undefined && !draws.some(item => item.id === job.id))
   const voicedAll = lines.length > 0 && lines.filter(item => item.skip !== true).every(item => item.audio !== undefined)
   // Something of this chapter's motion comic is still to make.
   const unfinished = lines.length === 0 || panels.length === 0 || board.data.stale || drawn < panels.length || !voicedAll
@@ -121,6 +132,10 @@ export function ComicStage({ chapter }: { chapter: ChapterInfo | undefined }) {
   }
   // Only the button whose work is running says so; the others wait their turn.
   const storyboarding = job !== undefined && job.kind === 'comic' && job.title === 'storyboard'
+  // How far the drawing is: of every drawing under way here together, where there are several.
+  const counted = job !== undefined && !storyboarding && draws.length > 0 ? draws : job !== undefined ? [job] : []
+  const shownDone = counted.reduce((sum, item) => sum + (item.progress?.done ?? 0), 0)
+  const shownTotal = counted.reduce((sum, item) => sum + (item.progress?.total ?? 0), 0)
   const drawing = job !== undefined && job.kind === 'comic' && job.title !== 'storyboard'
   const voicing = job !== undefined && job.kind === 'audio'
 
@@ -151,8 +166,8 @@ export function ComicStage({ chapter }: { chapter: ChapterInfo | undefined }) {
         </div>
         {panels.length > 0 ? (
           <div className="nv-row-wrap">
-            <Button icon="image" busy={drawing} pending={t('正在绘制…', 'Drawing…')} disabled={working || drawn === panels.length} onClick={() => render()}>{drawn === 0 ? t(`绘制全部 ${panels.length} 格`, `Draw all ${panels.length} panels`) : drawn < panels.length ? t(`绘制剩余 ${panels.length - drawn} 格`, `Draw the other ${panels.length - drawn}`) : t('全部已绘', 'All drawn')}</Button>
-            {lines.some(item => item.audio === undefined) ? <Button icon="mic" busy={voicing} disabled={working} pending={t('正在合成配音…', 'Voicing…')} onClick={() => (!controller.need('tts') ? undefined : run(async () => { await controller.api.call('audio.synthesize', { root, chapter: chapter.id }); await controller.refreshJobs() }))}>{t('合成配音', 'Synthesize voices')}</Button> : null}
+            <Button icon="image" busy={drawingAll || (drawing && draws.length === 0)} pending={t('正在绘制…', 'Drawing…')} disabled={remaking || drawingAll || drawn === panels.length} onClick={() => render()}>{drawn === 0 ? t(`绘制全部 ${panels.length} 格`, `Draw all ${panels.length} panels`) : drawn < panels.length ? t(`绘制剩余 ${panels.length - drawn} 格`, `Draw the other ${panels.length - drawn}`) : t('全部已绘', 'All drawn')}</Button>
+            {lines.some(item => item.audio === undefined) ? <Button icon="mic" busy={voicing} disabled={remaking} pending={t('正在合成配音…', 'Voicing…')} onClick={() => (!controller.need('tts') ? undefined : run(async () => { await controller.api.call('audio.synthesize', { root, chapter: chapter.id }); await controller.refreshJobs() }))}>{t('合成配音', 'Synthesize voices')}</Button> : null}
             <Button variant="ghost" icon="headphones" onClick={() => { controller.openReader('listen', chapter.id) }}>{t('去"听"里制作配音', 'Voices are made under Listen')}</Button>
             <span className="nv-spacer" />
             <Button variant="ghost" icon="trash" disabled={working} onClick={() => { confirm.ask(t('删除这一章的分镜？画好的图还留在图库里。', 'Delete this chapter\'s storyboard? Pictures already drawn stay in the gallery.'), () => { void run(async () => { player.stop(); await controller.api.call('comic.clear', { root, chapter: chapter.id }); controller.toast('success', t('已删除这一章的分镜', 'The storyboard is deleted')); board.reload() }) }) }} title={t('删除这一章的分镜', 'Delete this chapter\'s storyboard')} />
@@ -166,11 +181,12 @@ export function ComicStage({ chapter }: { chapter: ChapterInfo | undefined }) {
           <div className="nv-jobprogress" role="status">
             <div className="nv-jobprogress-head">
               <Spinner size={13} />
-              <strong>{storyboarding ? t('正在编排分镜', 'Storyboarding') : t('正在绘制画面', 'Drawing the panels')}{job.progress !== undefined && job.progress.total > 0 ? `：${job.progress.done} / ${job.progress.total}` : '…'}</strong>
+              {/* Several drawings may be under way for this chapter: said as one, and stopped as one. */}
+              <strong>{storyboarding ? t('正在编排分镜', 'Storyboarding') : t('正在绘制画面', 'Drawing the panels')}{shownTotal > 0 ? `：${shownDone} / ${shownTotal}` : '…'}{!storyboarding && draws.length > 1 ? t(`（${draws.length} 个任务）`, ` (${draws.length} jobs)`) : ''}</strong>
               <span className="nv-spacer" />
-              <Button size="sm" variant="ghost" icon="stop" onClick={() => { void controller.cancelJob(job.id) }}>{t('停止', 'Stop')}</Button>
+              <Button size="sm" variant="ghost" icon="stop" onClick={() => { for (const item of (!storyboarding && draws.length > 0 ? draws : [job])) void controller.cancelJob(item.id).catch(() => {}) }}>{t('停止', 'Stop')}</Button>
             </div>
-            <Progress done={job.progress?.done ?? 0} total={job.progress?.total ?? 0} />
+            <Progress done={shownDone} total={shownTotal} />
             {job.thinking !== undefined ? <p className="nv-jobprogress-now">{t(`模型思考中（${job.thinking} 字）…`, `The model is thinking (${job.thinking} chars)…`)}</p> : job.progress?.label !== undefined ? <p className="nv-jobprogress-now">{job.progress.label}</p> : null}
           </div>
         ) : null}
@@ -192,7 +208,7 @@ export function ComicStage({ chapter }: { chapter: ChapterInfo | undefined }) {
             onPick={setPicked}
             actions={(
               <>
-                <Button size="sm" icon="refresh" disabled={job !== undefined || picked.size === 0} onClick={() => render({ panels: [...picked], force: true })} title={t('把选中的这些格重新画一遍', 'Draw the chosen panels again')}>{t(`重画选中的 ${picked.size} 格`, `Redraw the ${picked.size} chosen`)}</Button>
+                <Button size="sm" icon="refresh" disabled={remaking || [...picked].every(id => drawingNow.has(id))} onClick={() => render({ panels: [...picked].filter(id => !drawingNow.has(id)), force: true })} title={t('把选中的这些格重新画一遍', 'Draw the chosen panels again')}>{t(`重画选中的 ${picked.size} 格`, `Redraw the ${picked.size} chosen`)}</Button>
                 <Button size="sm" variant="danger" icon="trash" disabled={working || picked.size === 0} onClick={() => {
                   const ids = [...picked]
                   confirm.ask(t(`删除选中的 ${ids.length} 格？它们的台词并到相邻的格里。`, `Delete the ${ids.length} chosen panel(s)? Their lines join the neighbours.`), () => {
@@ -207,9 +223,10 @@ export function ComicStage({ chapter }: { chapter: ChapterInfo | undefined }) {
             )}
           >
             {placed.map(({ panel, from, seconds }, index) => (
-              <li key={panel.id} data-panel={panel.id} className={cx('nv-cpanel', panel.id === current?.panel.id && state.status !== 'idle' && 'is-current', picked.has(panel.id) && 'is-picked')}>
+              <li key={panel.id} data-panel={panel.id} className={cx('nv-cpanel', panel.id === current?.panel.id && state.status !== 'idle' && 'is-current', picked.has(panel.id) && 'is-picked', drawingNow.has(panel.id) && 'is-drawing')}>
                 <button type="button" className="nv-cpanel-thumb" onClick={() => { player.play(Math.floor(from)) }} title={t('从这一格播放', 'Play from this panel')}>
                   {panel.image !== undefined ? <ProjectImage path={panel.image} alt={panel.description} /> : <span className="nv-cpanel-empty">{index + 1}</span>}
+                  {drawingNow.has(panel.id) ? <span className="nv-cpanel-drawing"><Spinner size={14} />{t('正在画…', 'Drawing…')}</span> : null}
                 </button>
                 <div className="nv-cpanel-body">
                   <p>{panel.description}</p>
@@ -218,8 +235,9 @@ export function ComicStage({ chapter }: { chapter: ChapterInfo | undefined }) {
                     <span className="nv-muted nv-small">{t(`约 ${Math.max(1, Math.round(seconds))} 秒`, `about ${Math.max(1, Math.round(seconds))}s`)}</span>
                     {panel.error !== undefined ? <Chip tone="red" title={panel.error}>{t('绘制失败', 'failed')}</Chip> : null}
                     <span className="nv-spacer" />
+                    {panel.image !== undefined ? <Button size="sm" variant="ghost" icon="image" onClick={() => { setViewing(panel.image) }} title={t('看大图和它的来历；改提示词重画、照着这张改、删除都在里面', 'Open it large with the record of its making; rewriting, changing and deleting are there')} /> : null}
                     <Button size="sm" variant="ghost" icon="pen" onClick={() => { setEditing(panel) }} title={t('修改这一格', 'Edit this panel')} />
-                    <Button size="sm" variant="ghost" icon="refresh" disabled={job !== undefined} pending={t('正在开始重画…', 'Starting…')} onClick={() => render({ panels: [panel.id], force: true })} title={t('重画这一格', 'Draw this panel again')} />
+                    <Button size="sm" variant="ghost" icon="refresh" disabled={remaking || drawingNow.has(panel.id)} pending={t('正在开始重画…', 'Starting…')} onClick={() => render({ panels: [panel.id], force: true })} title={drawingNow.has(panel.id) ? t('这一格正在画', 'This panel is being drawn') : t('重画这一格', 'Draw this panel again')} />
                   </div>
                 </div>
               </li>
@@ -232,6 +250,15 @@ export function ComicStage({ chapter }: { chapter: ChapterInfo | undefined }) {
       {lines.length > 0 ? <VideoCard chapter={chapter} /> : null}
 
       {editing !== undefined ? <PanelEditor chapterId={chapter.id} panel={editing} onClose={() => { setEditing(undefined) }} onSaved={() => { board.reload() }} /> : null}
+      {viewing !== undefined ? (
+        <PictureViewer
+          path={viewing}
+          title={t(`第 ${Math.max(1, panels.findIndex(panel => panel.image === viewing) + 1)} 格`, `Panel ${Math.max(1, panels.findIndex(panel => panel.image === viewing) + 1)}`)}
+          onClose={() => { setViewing(undefined) }}
+          // Drawn again or taken away: the storyboard is read anew, and the viewer goes on with the picture now there.
+          onChanged={(now) => { board.reload(); if (now !== undefined) setViewing(now) }}
+        />
+      ) : null}
       {confirm.element}
       {sheets.element}
     </div>

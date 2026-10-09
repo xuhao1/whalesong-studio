@@ -3561,6 +3561,23 @@ button.nv-stat:hover {
   object-fit: cover;
 }
 
+/* A panel that is being drawn right now says so on itself: others beside it can be drawn again meanwhile. */
+.nv-cpanel-thumb {
+  position: relative;
+}
+
+.nv-cpanel-drawing {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  font-size: 12px;
+}
+
 .nv-cpanel-empty {
   color: var(--nv-text-3);
   font-size: 22px;
@@ -10675,6 +10692,93 @@ button.nv-album-chapter:hover {
   flex-wrap: wrap;
   align-items: center;
   gap: 4px;
+}
+
+/* ───────────── a picture placed in a chapter's text ───────────── */
+
+.nv-place {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.nv-place-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.nv-place-thumb {
+  width: 96px;
+  height: 64px;
+  border-radius: var(--nv-radius-s);
+  object-fit: cover;
+}
+
+.nv-place-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 46vh;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.nv-place-row,
+.nv-place-gap {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: var(--nv-radius-s);
+  background: transparent;
+  color: var(--nv-text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nv-place-gap {
+  color: var(--nv-text-3);
+  font-size: 12px;
+}
+
+.nv-place-row:hover,
+.nv-place-gap:hover {
+  background: var(--nv-hover);
+}
+
+/* The picture goes in under the row chosen: the line says where. */
+.nv-place-row.is-chosen,
+.nv-place-gap.is-chosen {
+  border-bottom-color: var(--nv-brand);
+  background: var(--nv-active);
+}
+
+.nv-place-index {
+  flex: none;
+  min-width: 20px;
+  color: var(--nv-text-3);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.nv-place-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nv-pick-grid {
+  max-height: 60vh;
+  margin-top: 10px;
+  overflow: auto;
 }
 
 .nv-picture-base {

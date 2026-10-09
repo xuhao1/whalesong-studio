@@ -877,8 +877,13 @@ Output JSON only:
 export function storyboardTask(base: Base & {
   /** The smallest pieces a panel may cover, one per row: index | speaker | seconds | text. */
   units: string
+  /** Who is in the chapter: who they are, how they look, and what else they have to wear. */
   cast: string
   locations: string
+  /** Things and terms of the bible the chapter names: what each is, and what there is of it to see. */
+  things?: string
+  /** The chapter itself: its title, where and when it is set, what happens in it. */
+  chapter?: string
   artStyle: string
   /** How many panels, in words: a number to aim for, or bounds within which the director decides. */
   count: string
@@ -886,15 +891,14 @@ export function storyboardTask(base: Base & {
   previous?: string
   avoid?: string[]
 }): string {
-  const avoid = (base.avoid ?? []).join(base.lang === 'zh' ? '、' : ', ')
   return L(base.lang, `你是有声漫画（动态漫）的分镜导演。下面是一章有声剧里连续的一段，已经切成最小的镜头单位（序号 | 说话人 | 约几秒 | 内容）。请把它们编成连续的分镜画面：每个画面覆盖若干连续的单位，在这些单位播放期间停留在屏幕上。
-
-## 人物外貌
+${base.chapter !== undefined && base.chapter.length > 0 ? `\n## 这一章\n${base.chapter}\n` : ''}
+## 人物（是谁、长什么样、还有哪几身造型）
 ${base.cast || '（无）'}
 
 ## 场景
 ${base.locations || '（无）'}
-
+${base.things !== undefined && base.things.length > 0 ? `\n## 物件与名词（它在这个故事里是什么、看上去什么样）\n${base.things}\n` : ''}
 ## 美术风格
 ${base.artStyle}
 ${base.previous !== undefined ? `\n## 上一个画面（这一段接在它后面）\n${base.previous}\n` : ''}
@@ -906,18 +910,20 @@ ${base.units}
 2. ${base.count}
 3. 什么时候换画面：动作变了、情绪转了、说话的人换了、视点或地点变了、出现了值得一看的新东西。大段对话用正反打和特写切换；长段叙述也要随内容换画面，不要让一张图从头停到尾。
 4. description 用一句话说明画面内容（给作者看）。
-5. prompt 是给绘图模型的完整画面描述：景别与构图（特写/中景/远景、机位）、在场人物的外貌与动作表情（外貌必须沿用"人物外貌"，每次都写全，不要用姓名指代）、环境与光线、氛围。不要出现文字、对白气泡、分格。60-120 字。只写眼睛看得见的东西：机构名、头衔、专有名词一律换成它在这个故事里实际的样子（材质、形状、新旧、颜色），否则绘图模型会按现实里最常见的样子去画。美术风格里对年代、形制有规定的（发式、服饰、建筑、器物属于哪个朝代、哪种式样），画面里这些东西照它写；正文的写法与它不一样时以美术风格为准。相邻画面不要只是同一张图换个说法——景别、机位或主体要有变化。${avoid.length > 0 ? `下列东西不能出现在任何画面里，也不要把这些词写进 prompt：${avoid}。` : ''}
-6. camera 从 still|zoom-in|zoom-out|pan-left|pan-right|pan-up|pan-down 里选一个缓慢的镜头运动。
+5. prompt 是给绘图模型的这一格画面：景别与构图（特写 / 中景 / 远景、机位），画面里每个人在哪、在做什么、什么神态（用上面的名字称呼他们），手里和身边有什么，这一格的环境、时间、光线与气氛。80–160 字，只写眼睛看得见的。**人物的长相和衣着、场景和物件的样子不用在这里重写**：画的时候会把 characters、wearing、location、things 里点到的每一项在设定里的样子原样接在 prompt 后面——所以这四栏要填全、名字照上面的写。这一格里某样东西和设定里平常的样子不同（淋湿了、撕开了、沾了血）才在 prompt 里写出来。机构名、头衔、没列在上面的专有名词，换成它在这个故事里实际看上去的样子。不要出现文字、对白气泡、分格。
+6. wearing：这一格里谁穿的不是平常那一身，就写 {"姓名": "造型名"}（造型名取自上面他的造型）；都穿平常的就留空。
+7. things：这一格画面里看得见的、列在"物件与名词"里的东西，写它们的名字；没有就留空。
+8. camera 从 still|zoom-in|zoom-out|pan-left|pan-right|pan-up|pan-down 里选一个缓慢的镜头运动。
 
 只输出 JSON：
-{"panels": [{"from": 0, "to": 3, "description": "", "prompt": "", "camera": "zoom-in", "characters": ["在场人物姓名"], "location": "地点"}]}`, `You are the storyboard director of a motion comic. Below is one continuous passage of a chapter's audio drama, already cut into the smallest units a shot may cover (index | speaker | seconds | text). Arrange them into consecutive panels: each panel covers a run of units and stays on screen while they play.
-
-## Character looks
+{"panels": [{"from": 0, "to": 3, "description": "", "prompt": "", "camera": "zoom-in", "characters": ["在场人物姓名"], "wearing": {}, "location": "地点", "things": []}]}`, `You are the storyboard director of a motion comic. Below is one continuous passage of a chapter's audio drama, already cut into the smallest units a shot may cover (index | speaker | seconds | text). Arrange them into consecutive panels: each panel covers a run of consecutive units and stays on screen while they play.
+${base.chapter !== undefined && base.chapter.length > 0 ? `\n## This chapter\n${base.chapter}\n` : ''}
+## People (who they are, how they look, what else they have to wear)
 ${base.cast || '(none)'}
 
 ## Locations
 ${base.locations || '(none)'}
-
+${base.things !== undefined && base.things.length > 0 ? `\n## Things and terms (what each is in this story, and what there is of it to see)\n${base.things}\n` : ''}
 ## Art direction
 ${base.artStyle}
 ${base.previous !== undefined ? `\n## The panel before this passage\n${base.previous}\n` : ''}
@@ -929,11 +935,13 @@ Rules:
 2. ${base.count}
 3. When to cut: the action changes, the mood turns, the speaker changes, the point of view or the place changes, something worth seeing appears. Long exchanges alternate shot / reverse shot and close-ups; long narration changes picture with its content too — no single picture should sit through all of it.
 4. description: one sentence on what the panel shows (for the author).
-5. prompt: the full picture for the image model — shot size and composition (close-up / medium / wide, angle), the looks, action and expression of everyone in frame (reuse "Character looks" in full every time; never refer to anyone by name), setting and light, mood. No text, speech balloons or panel borders. 40-80 words. Only what the eye can see: an institution, a title or a proper noun is written as what it looks like in this story. Where the art direction fixes a period or a form (which dynasty or fashion hair, dress, buildings and objects belong to), these are written in that form; where the text says otherwise, the art direction holds. Neighbouring panels must not be the same picture in other words — change the shot size, the angle or the subject.${avoid.length > 0 ? ` None of the following may appear in any panel, and none of these words belongs in a prompt: ${avoid}.` : ''}
-6. camera: one slow move from still|zoom-in|zoom-out|pan-left|pan-right|pan-up|pan-down.
+5. prompt: this panel's picture for the image model — shot size and composition (close-up / medium / wide, angle), where each person in frame is, what they do and how they look at it (call them by the names above), what they hold and what is beside them, the setting, hour, light and mood of this panel. 50-110 words, only what the eye can see. **How people look and dress, and how the place and the things look, is not to be written again here**: when the panel is drawn, the look the bible has for everything named under characters, wearing, location and things is put after the prompt as it stands — so fill those four in fully, with the names as written above. Write a look into the prompt only where, in this panel, it differs from the usual (soaked, torn open, bloodied). An institution, a title or a proper noun not listed above is written as what it looks like in this story. No text, speech balloons or panel borders.
+6. wearing: where somebody wears something other than their usual look in this panel, {"name": "look"} (a look listed for them above); empty when everyone is in their usual.
+7. things: the things listed under "Things and terms" that can be seen in this panel, by name; empty when none.
+8. camera: one slow move from still|zoom-in|zoom-out|pan-left|pan-right|pan-up|pan-down.
 
 Output JSON only:
-{"panels": [{"from": 0, "to": 3, "description": "", "prompt": "", "camera": "zoom-in", "characters": ["names of characters in frame"], "location": "place"}]}`)
+{"panels": [{"from": 0, "to": 3, "description": "", "prompt": "", "camera": "zoom-in", "characters": ["names of characters in frame"], "wearing": {}, "location": "place", "things": []}]}`)
 }
 
 /**

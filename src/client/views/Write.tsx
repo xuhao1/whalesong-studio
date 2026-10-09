@@ -20,6 +20,7 @@ import { jobKindLabel, jobPulse } from '../Studio'
 import { CHAPTER_STATUS, CHAPTER_STATUS_TONE, ISSUE_TYPE, SEVERITY, SEVERITY_TONE, sheetsDrawn } from '../labels'
 import { MoveChapters } from '../MoveChapters'
 import { useSheetsAsk } from '../SheetsAsk'
+import { PickPicture } from '../PlacePicture'
 import { Derive } from './Outline'
 import {
   Button, Chip, cx, Empty, Menu, Modal, Progress, Select, Spinner, Tabs, TextInput, ThoughtButton, ThoughtPanel, useAction, useConfirm, useJobStream, useJobTail, useLoad, useProject,
@@ -418,6 +419,16 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
     })
   }
   const sheets = useSheetsAsk()
+  // A picture the book already has, to go after the passage selected: the passage, while one is being chosen.
+  const [picking, setPicking] = useState<string | undefined>()
+  const placePicked = (image: { path: string; prompt: string }): Promise<unknown> => controller.guard(async () => {
+    const quote = picking
+    setPicking(undefined)
+    if (quote === undefined || !(await settle())) return
+    await controller.api.call('image.place', { root, picture: image.path, chapter: chapter.id, quote, alt: [...image.prompt.replace(/\s+/g, ' ')].slice(0, 40).join('') })
+    await controller.refreshProject()
+    controller.toast('success', t('图已插到这段之后', 'The picture is placed after this passage'))
+  })
   const quoteSelection = (): void => {
     const passage = selected.trim()
     if (passage.length === 0 || quote === undefined) return
@@ -585,6 +596,7 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
                 {PRESETS.map(preset => <Button key={preset.id} size="sm" onClick={() => { reviseSelection(t(...preset.instruction)) }}>{t(...preset.label)}</Button>)}
                 <Button size="sm" icon="pen" onClick={() => { setCustom('') }}>{t('按要求改…', 'Rewrite as…')}</Button>
                 <Button size="sm" icon="image" onClick={illustrateSelection}>{t('配图', 'Illustrate')}</Button>
+                <Button size="sm" icon="layers" onClick={() => { setPicking(selected.trim()) }} title={t('从这本书已有的图里选一张，插到这段之后', 'Choose one of the book\'s pictures to go after this passage')}>{t('插入已有的图…', 'Place a picture…')}</Button>
                 {quote !== undefined ? <Button size="sm" icon="quote" onClick={quoteSelection}>{t('和总编讨论', 'Discuss')}</Button> : null}
               </>
             ) : (
@@ -666,6 +678,7 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
       {moving ? <MoveChapters chapters={[chapter.id]} onClose={() => { setMoving(false) }} /> : null}
       {confirm.element}
       {sheets.element}
+      {picking !== undefined ? <PickPicture chapter={chapter.id} onPick={placePicked} onClose={() => { setPicking(undefined) }} /> : null}
     </>
   )
 }

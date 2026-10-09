@@ -5,7 +5,13 @@ import type { LlmRequest } from '../src/core/llm'
 import { beatsOf, buildStoryboard, PANEL_SECONDS, planPanels, renderPanels, sheetsAhead } from '../src/core/pipelines/comic'
 import type { AudioLine, AudioScript, ComicBoard } from '../src/shared/types'
 import { hashText, proseOnly } from '../src/shared/text'
+import type { JobContext } from '../src/core/jobs'
 import { createTestBed, FakeImages, type TestBed } from './support/harness'
+
+/** A job nobody watches. */
+function quietJob(): JobContext {
+  return { signal: new AbortController().signal, progress: () => {}, write: () => {}, rewrite: () => {}, result: () => {}, think: () => {}, crew: () => {}, note: () => () => {} } as unknown as JobContext
+}
 
 const line = (id: string, text: string, extra: Partial<AudioLine> = {}): AudioLine => ({ id, kind: 'narration', text, ...extra })
 
@@ -305,6 +311,141 @@ describe('drawing the panels', () => {
     expect((await project.findCharacter(lead.id))!.visual?.sheet).toBeUndefined()
     // Everything is drawn now: nothing is left to ask about.
     expect((await sheetsAhead(bed.core, bed.runtime, [{ kind: 'panels', chapter: chapter.id }])).people).toEqual([])
+  })
+
+  it('tells the director who wears what, what the chapter\'s things are and where it is set — and draws each panel with the bible\'s looks after the director\'s words', async () => {
+    const { project } = bed.runtime
+    const sheet = await project.writeAsset('images/sheet-a.png', new Uint8Array([1]))
+    const mourning = await project.writeAsset('images/sheet-a-mourning.png', new Uint8Array([2]))
+    const placeArt = await project.writeAsset('images/place.png', new Uint8Array([4]))
+    const lead = await project.saveCharacter({ name: '沈璃', role: 'protagonist', tagline: '替人写信的女校书', visual: { prompt: 'slender woman, low bun, grey qipao', sheet, negative: '辫子', looks: [{ id: 'm', name: '丧服', when: '守灵那几天', prompt: '素白麻衣，腰系草绳', sheet: mourning }] } })
+    await project.saveWorld({ name: '渡口', category: 'location', importance: 2, summary: '城南的旧渡口', visualPrompt: '青石阶伸进水里，一根系船的木桩，对岸是芦苇', visualImage: placeArt })
+    await project.saveWorld({ name: '情债簿', category: 'item', importance: 2, summary: '记着谁欠谁一封信的账', visualPrompt: '蓝布封皮的线装薄册，边角磨白，封面没有字' })
+    await project.saveWorld({ name: '寄死笔', category: 'rule', importance: 2, summary: '代笔人替死者写完最后一封信的规矩，写完那支笔要折断' })
+    await project.saveWorld({ name: '无关的山', category: 'location', importance: 1, summary: '这一章没有写到' })
+    const chapter = await project.addChapter({ title: '渡口', location: '渡口', time: '头七的清晨', synopsis: '沈璃穿着丧服到渡口，把情债簿交给摆渡人。' })
+    await project.saveChapterText(chapter.id, '沈璃把情债簿放在船板上。她说：寄死笔已经折了。')
+    const textHash = hashText(proseOnly(await project.chapterText(chapter.id)))
+    await project.saveAudioScript({ schema: 1, chapterId: chapter.id, textHash, updatedAt: new Date().toISOString(), lines: [line('l1', '沈璃把情债簿放在船板上。'), line('l2', '寄死笔已经折了。', { speaker: lead.id, speakerName: '沈璃', kind: 'dialogue' })], cues: [] } as never)
+    const asked: string[] = []
+    bed.llm.responder = (request) => {
+      asked.push(request.prompt)
+      return JSON.stringify({ panels: [
+        { from: 0, to: 0, description: '她把簿子放在船板上', prompt: '中景，沈璃蹲在船头，把情债簿平放在湿船板上，晨雾，冷光', camera: 'still', characters: ['沈璃'], wearing: { 沈璃: '丧服' }, location: '渡口', things: ['情债簿', '不在设定里的东西'] },
+        { from: 1, to: 1, description: '她抬头说话', prompt: '特写，沈璃抬眼，嘴唇微张', camera: 'zoom-in', characters: ['沈璃'], wearing: { 沈璃: '没有这一身' }, location: '渡口', things: [] },
+      ] })
+    }
+    const board = await buildStoryboard(bed.core, bed.runtime, { chapter: chapter.id }, { origin: 'user' })
+    // The director is told the chapter, who she is and what else she has to wear, the place, and what the chapter's things are — a rule of this world among them.
+    expect(asked[0]).toContain('## 这一章')
+    expect(asked[0]).toContain('地点：渡口')
+    expect(asked[0]).toContain('时间：头七的清晨')
+    expect(asked[0]).toContain('沈璃穿着丧服到渡口')
+    expect(asked[0]).toContain('沈璃（替人写信的女校书）: slender woman, low bun, grey qipao')
+    expect(asked[0]).toMatch(/造型：「丧服」（守灵那几天） 素白麻衣/)
+    expect(asked[0]).toContain('渡口: 青石阶伸进水里')
+    expect(asked[0]).toContain('## 物件与名词')
+    expect(asked[0]).toMatch(/情债簿（item）: 记着谁欠谁一封信的账；看上去：蓝布封皮/)
+    expect(asked[0]).toContain('寄死笔（rule）: 代笔人替死者写完最后一封信的规矩')
+    expect(asked[0]).not.toContain('无关的山')
+    // What a panel wears and shows is kept with it: a look she has, a thing the bible has — and nothing made up.
+    expect(board.panels[0]).toMatchObject({ characters: [lead.id], looks: { [lead.id]: '丧服' }, things: ['情债簿'], location: '渡口' })
+    expect(board.panels[1]!.looks).toBeUndefined()
+    expect(board.panels[1]!.things).toBeUndefined()
+
+    // Drawn: the director's words, then how she looks in what she wears there, how the place looks, how the thing looks — from the bible, in full.
+    const done = await renderPanels(bed.core, bed.runtime, { chapter: chapter.id, concurrency: 1 }, { origin: 'user' })
+    expect(done).toMatchObject({ rendered: 2, failed: 0 })
+    const first = images.calls[0]!.prompt
+    expect(first.indexOf('中景，沈璃蹲在船头')).toBe(0)
+    expect(first).toContain('沈璃（丧服）：slender woman, low bun, grey qipao，素白麻衣，腰系草绳')
+    expect(first).toContain('地点「渡口」：青石阶伸进水里，一根系船的木桩，对岸是芦苇')
+    expect(first).toContain('「情债簿」：蓝布封皮的线装薄册，边角磨白，封面没有字')
+    expect(first).toContain('Avoid: 辫子')
+    // Held against the sheet of the look worn, and the place's art.
+    expect(images.calls[0]!.references.map(reference => reference.label)).toEqual(['沈璃（丧服）', '场所「渡口」'])
+    // In her usual look where the storyboard names none.
+    expect(images.calls[1]!.prompt).toContain('沈璃：slender woman, low bun, grey qipao')
+    expect(images.calls[1]!.prompt).not.toContain('素白麻衣')
+    expect(images.calls[1]!.references.map(reference => reference.label)).toEqual(['沈璃', '场所「渡口」'])
+    // A panel is a picture of the book: on record, part by part, like any other.
+    const drawn = (await project.comicBoard(chapter.id))!.panels
+    const records = (await project.illustrations()).filter(item => item.kind === 'panel')
+    expect(records.map(item => item.path)).toEqual(drawn.map(panel => panel.image))
+    expect(records[0]).toMatchObject({ kind: 'panel', target: chapter.id })
+    expect(records[0]!.parts!.pieces!.map(piece => piece.of)).toEqual(['composed', 'look', 'place', 'thing'])
+    expect(records[0]!.parts!.references).toEqual([{ path: mourning, label: '沈璃（丧服）', sheet: true }, { path: placeArt, label: '场所「渡口」' }])
+  })
+
+  it('keeps a panel\'s picture among the book\'s pictures — one drawn before panels were on record too — and lets it be drawn again, changed and taken away like any other', async () => {
+    const { project } = bed.runtime
+    const { redrawPicture } = await import('../src/core/pipelines/illustrate')
+    const sheet = await project.writeAsset('images/sheet-a.png', new Uint8Array([1]))
+    const old = await project.writeAsset('images/panel-old.png', new Uint8Array([9]))
+    const lead = await project.saveCharacter({ name: '沈璃', role: 'protagonist', visual: { prompt: 'slender woman, low bun', sheet } })
+    const chapter = await project.addChapter({ title: '渡口' })
+    await project.saveChapterText(chapter.id, '她把剑放回匣中。')
+    const textHash = hashText(proseOnly(await project.chapterText(chapter.id)))
+    await project.saveAudioScript({ schema: 1, chapterId: chapter.id, textHash, updatedAt: new Date().toISOString(), lines: [line('l1', '她把剑放回匣中。')], cues: [] } as never)
+    await project.saveComicBoard({ schema: 1, chapterId: chapter.id, textHash, updatedAt: '2026-10-01T00:00:00.000Z', style: '', panels: [
+      { id: 'p1', lines: ['l1'], description: '她合上剑匣', prompt: '近景，她合上剑匣', camera: 'still', characters: [lead.id], image: old },
+      { id: 'p2', lines: ['l1'], description: '空镜', prompt: '空荡的渡口', camera: 'still' },
+    ] } as never)
+    // Not on record — it was drawn when panels were not — and listed all the same, with what is known of it.
+    expect(await project.illustrations()).toEqual([])
+    expect(await project.pictures()).toEqual([{ id: `panel:${chapter.id}:p1`, path: old, prompt: '近景，她合上剑匣', kind: 'panel', target: chapter.id, createdAt: '2026-10-01T00:00:00.000Z' }])
+    expect(await project.panelOf(old)).toMatchObject({ index: 0, panel: { id: 'p1' } })
+    // Its words rewritten: drawn from them, held against what the storyboard says is in the panel — her sheet — and
+    // the new picture is the panel's; the old one stays among the pictures.
+    const again = await redrawPicture(bed.core, bed.runtime, { picture: `panel:${chapter.id}:p1`, subject: '近景，她合上剑匣，手指停在铜扣上' }, { origin: 'user' })
+    expect(images.calls.at(-1)!.prompt).toContain('手指停在铜扣上')
+    expect(images.calls.at(-1)!.references.map(reference => reference.label)).toEqual(['沈璃'])
+    expect(again).toMatchObject({ kind: 'panel', target: chapter.id, replaced: ['渡口'] })
+    expect((await project.comicBoard(chapter.id))!.panels[0]).toMatchObject({ image: again.path, prompt: '近景，她合上剑匣' })
+    expect((await project.pictures()).map(item => item.path)).toEqual([again.path])
+    // One thing changed: the picture and the change alone, as for any picture.
+    const changed = await redrawPicture(bed.core, bed.runtime, { picture: again.id, change: '铜扣改成银的' }, { origin: 'user' })
+    expect(images.calls.at(-1)!.prompt.startsWith('铜扣改成银的')).toBe(true)
+    expect((await project.comicBoard(chapter.id))!.panels[0]!.image).toBe(changed.path)
+    // Taken away: the panel is a panel without a picture again; its neighbour is as it was.
+    expect(await project.removePicture({ path: changed.path })).toEqual(['渡口'])
+    const board = (await project.comicBoard(chapter.id))!
+    expect(board.panels[0]!.image).toBeUndefined()
+    expect(board.panels[0]).toMatchObject({ id: 'p1', prompt: '近景，她合上剑匣' })
+    expect(board.panels[1]).toMatchObject({ id: 'p2', prompt: '空荡的渡口' })
+  })
+
+  it('draws panels of one chapter in several drawings side by side, each keeping what it drew', async () => {
+    const { project } = bed.runtime
+    const chapter = await project.addChapter({ title: '渡口' })
+    await project.saveChapterText(chapter.id, '她把剑放回匣中。')
+    const textHash = hashText(proseOnly(await project.chapterText(chapter.id)))
+    await project.saveAudioScript({ schema: 1, chapterId: chapter.id, textHash, updatedAt: new Date().toISOString(), lines: [line('l1', '她把剑放回匣中。')], cues: [] } as never)
+    const panel = (id: string) => ({ id, lines: ['l1'], description: `画面 ${id}`, prompt: `panel ${id}`, camera: 'still', image: `assets/images/old-${id}.png` })
+    await project.saveComicBoard({ schema: 1, chapterId: chapter.id, textHash, updatedAt: new Date().toISOString(), style: '', panels: ['p1', 'p2', 'p3', 'p4'].map(panel) } as never)
+    // Three drawings asked for one after another while none has finished — a panel drawn again, another, two more —
+    // as three clicks on a page would. Each says which panels it is on.
+    const said: Record<string, unknown>[][] = [[], [], []]
+    const jobOf = (at: number) => ({ origin: 'user' as const, job: { ...quietJob(), result: (value: Record<string, unknown>) => { said[at]!.push(value) } } })
+    const results = await Promise.all([
+      renderPanels(bed.core, bed.runtime, { chapter: chapter.id, panels: ['p1'], force: true }, jobOf(0)),
+      renderPanels(bed.core, bed.runtime, { chapter: chapter.id, panels: ['p2'], force: true }, jobOf(1)),
+      renderPanels(bed.core, bed.runtime, { chapter: chapter.id, panels: ['p3', 'p4'], force: true }, jobOf(2)),
+    ])
+    expect(results.map(result => result.rendered)).toEqual([1, 1, 2])
+    expect(said[0]![0]).toEqual({ chapterId: chapter.id, drawing: ['p1'] })
+    expect(said[2]![0]).toEqual({ chapterId: chapter.id, drawing: ['p3', 'p4'] })
+    // Every one of the four is the new picture: no drawing wrote its own copy of the storyboard over what another had kept.
+    const board = (await project.comicBoard(chapter.id))!
+    for (const drawn of board.panels) expect(drawn.image).toMatch(/assets\/images\/panel-/)
+    expect(new Set(board.panels.map(drawn => drawn.image)).size).toBe(4)
+    // All of them, where no panels are named: said so, for the page's "draw all".
+    const all: Record<string, unknown>[] = []
+    await renderPanels(bed.core, bed.runtime, { chapter: chapter.id, force: true }, { origin: 'user', job: { ...quietJob(), result: (value) => { all.push(value) } } })
+    expect(all[0]).toEqual({ chapterId: chapter.id, drawing: ['p1', 'p2', 'p3', 'p4'], all: true })
+    // A panel that was taken out of the storyboard while it was being drawn is let be.
+    expect(await project.patchComicPanels(chapter.id, new Map([['gone', { image: 'x.png' }]]))).toMatchObject({ panels: [{ id: 'p1' }, { id: 'p2' }, { id: 'p3' }, { id: 'p4' }] })
+    expect(await project.patchComicPanels('ch999', new Map())).toBeUndefined()
   })
 })
 

@@ -40,7 +40,7 @@
  * for word — so that a look nobody asked for can be traced to where it came from.
  */
 import { lookWords, mergeAvoid, PICTURE_TO_CHANGE, pictureSize, pictureWords, resolveArtStyle, sceneFor, scenesOf, sceneWords, splitAvoid, tidyPart as tidy, type ArtSource } from '../../shared/art'
-import type { CharacterCard, CharacterLook, CharacterStage, IllustrationInfo, IllustrationParts, IllustrationPiece, IllustrationSent, PromptLanguage, SignatureScene, SortedNotes, WorldEntry, WorldEvent } from '../../shared/types'
+import type { CharacterCard, CharacterLook, CharacterStage, ComicPanel, IllustrationInfo, IllustrationParts, IllustrationPiece, IllustrationSent, PromptLanguage, SignatureScene, SortedNotes, WorldEntry, WorldEvent } from '../../shared/types'
 import { MAIN_LINE, referencesOf } from '../../shared/types'
 import { clip, fuzzyFind, hashText, newId, sameName, slugify } from '../../shared/text'
 import { leadOf, PROMPT_HEADROOM, promptTokens, type PictureLead } from '../../shared/images'
@@ -51,6 +51,7 @@ import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { asArray, asList, asRecord, asText, extractJson } from '../llm'
 import { assign } from '../crew'
 import { extensionOf, referencesRefused, type ImageProvider, type ImageReference } from '../media/image'
+import { frontView } from '../media/front'
 import { pixelsOf } from '../media/pixels'
 import { castAt } from './growth'
 import { keepNotedScenes } from './scenes'
@@ -263,7 +264,7 @@ export function looksOf(card: CharacterCard, look?: CharacterLook): string {
 }
 
 /** What a character's wardrobe offers a scene, one line per look. */
-function wardrobeOf(card: CharacterCard): string | undefined {
+export function wardrobeOf(card: CharacterCard): string | undefined {
   const looks = card.visual?.looks ?? []
   if (looks.length === 0) return undefined
   return `${card.name}: ${looks.map(look => `「${look.name}」${look.when !== undefined ? `（${look.when}）` : ''}${look.prompt !== undefined ? ` ${clip(look.prompt, 80, '…')}` : ''}`).join('；')}`
@@ -271,6 +272,23 @@ function wardrobeOf(card: CharacterCard): string | undefined {
 
 /** A picture that goes along with a prompt: where it lies, who or what it shows — and whether it is a design sheet, which shows one person several times over. */
 export interface Held { path: string; label: string; sheet?: boolean }
+
+/** The front views cut out of design sheets, by book, sheet and the sheet's size: a sheet is looked into once, however many pictures are held against it. */
+const fronts = new Map<string, Promise<Uint8Array | undefined>>()
+
+/** The front view of a sheet of this book; nothing where none can be told apart in it. */
+async function frontOf(root: string, path: string, sheet: Uint8Array, signal: AbortSignal | undefined): Promise<Uint8Array | undefined> {
+  const key = `${root}\n${path}\n${sheet.byteLength}`
+  let found = fronts.get(key)
+  if (found === undefined) {
+    found = frontView(sheet, signal).catch(() => undefined)
+    if (fronts.size >= 64) fronts.delete(fronts.keys().next().value!)
+    fronts.set(key, found)
+    // Stopped half-way, it is not known to have none.
+    void found.then(() => { if (signal?.aborted === true) fronts.delete(key) })
+  }
+  return await found
+}
 
 /** The picture that shows how a character looks: the sheet of the look worn, else the main sheet, else the portrait. */
 function referenceOf(card: CharacterCard, look?: CharacterLook): Held | undefined {
@@ -915,7 +933,7 @@ export async function renderImage(core: NovelCore, runtime: ProjectRuntime, inpu
   const { project } = runtime
   const provider = await requireImages(core, runtime)
   const zh = promptLanguage((await project.manifest()).language) === 'zh'
-  const references: (Held & { image: ImageReference })[] = []
+  const references: (Held & { front?: boolean; image: ImageReference })[] = []
   // How many pictures the way to the model takes, where it is known before one is sent — what the service says of the
   // model, or what an earlier picture found out. None: the prompt is written without a word of any (it would speak of
   // pictures that never arrive, and spend on them what little room some models have). Not known: they are sent.
@@ -925,13 +943,20 @@ export async function renderImage(core: NovelCore, runtime: ProjectRuntime, inpu
   const wanted = (input.references ?? []).filter((reference, at, all) => all.findIndex(other => other.path === reference.path) === at)
   // What the service's own measure keeps back, of those the author's setting would have sent: kept with the picture.
   /** As a record keeps it: where, who — and that it is a sheet, for the picture drawn again from that record. */
-  const kept = (reference: Held): Held => ({ path: reference.path, label: reference.label, ...(isSheet(reference) ? { sheet: true } : {}) })
-  let left: Held[] = taken === undefined ? [] : wanted.slice(taken, own).map(kept)
+  const stayed = (reference: Held): Held => ({ path: reference.path, label: reference.label, ...(isSheet(reference) ? { sheet: true } : {}) })
+  /** …and, of one that went, that it went as its front view. */
+  const kept = (reference: Held & { front?: boolean }): Held & { front?: boolean } => ({ ...stayed(reference), ...(reference.front === true ? { front: true } : {}) })
+  let left: Held[] = taken === undefined ? [] : wanted.slice(taken, own).map(stayed)
   for (const reference of wanted) {
     if (references.length >= most) break
     try {
       const data = await project.readFile(reference.path)
-      references.push({ ...reference, image: { data, mime: /\.jpe?g$/i.test(reference.path) ? 'image/jpeg' : /\.webp$/i.test(reference.path) ? 'image/webp' : 'image/png', label: reference.label } })
+      // A design sheet goes as its front view alone, wherever the picture asked for is not itself a sheet: handed all
+      // three figures a model draws three people, and no words about what a sheet is kept one from it (TODO #191).
+      const front = input.kind !== 'sheet' && isSheet(reference) ? await frontOf(project.root, reference.path, data, task.signal) : undefined
+      references.push(front !== undefined
+        ? { ...stayed(reference), front: true, image: { data: front, mime: 'image/png', label: reference.label } }
+        : { ...stayed(reference), image: { data, mime: /\.jpe?g$/i.test(reference.path) ? 'image/jpeg' : /\.webp$/i.test(reference.path) ? 'image/webp' : 'image/png', label: reference.label } })
     } catch {
       // A reference whose file is gone is simply not sent.
     }
@@ -958,9 +983,6 @@ export async function renderImage(core: NovelCore, runtime: ProjectRuntime, inpu
       })
       return { held: held.slice(0, 1), referenceLine: undefined, subject: prompt, prompt, fitted, result, changed: true }
     }
-    // (A design sheet that goes along shows its person three times, and a model handed one may draw three people. Told
-    // in words what a sheet is, the model the Studio is tried on drew three all the same — run for real, three
-    // wordings — so nothing is said of it here: the sheet's front view is to go in the sheet's place, TODO #191.)
     const referenceLine = held.length === 0 ? undefined : zh
       ? `参考图：${held.map((reference, index) => `第${index + 1}张是${reference.label}`).join('；')}。${input.referenceNote ?? '画面里出现的这些人物和场所必须与各自的参考图一致（脸、发型、体型、服装、结构与材质）；构图、动作与光线以本描述为准。'}`
       : `Reference images: ${held.map((reference, index) => `#${index + 1} shows ${reference.label}`).join('; ')}. ${input.referenceNote ?? 'Whoever and whatever they show must match their reference (face, hair, build, clothing, structure and materials); composition, action and light follow this description.'}`
@@ -991,7 +1013,7 @@ export async function renderImage(core: NovelCore, runtime: ProjectRuntime, inpu
     if (references.length === 0 || !referencesRefused(error)) throw error
     core.log(`the image service would not take the reference pictures; drawing from the words alone`, error)
     leftWhy = clip(error.message, 240, '…')
-    left = [...references.map(kept), ...left]
+    left = [...references.map(stayed), ...left]
     const restore = task.job?.note(zh ? '绘图服务没有收参考图，改成只照文字画…' : 'The image service would not take the reference pictures; drawing from the words alone…')
     try {
       drawn = await draw([])
@@ -1002,7 +1024,7 @@ export async function renderImage(core: NovelCore, runtime: ProjectRuntime, inpu
   // To be changed, and the way to the model took the words without the picture — which only the drawing showed: what
   // came back is the change and nothing of the picture. Drawn again, from the words that stand in for it.
   if (drawn.changed && drawn.result.referencesUsed === 0) {
-    left = [...references.map(kept), ...left]
+    left = [...references.map(stayed), ...left]
     const restore = task.job?.note(zh ? '绘图服务没有收原图，改成照文字画…' : 'The image service did not take the picture; drawing from the words…')
     try {
       drawn = await draw([])
@@ -1087,7 +1109,8 @@ export interface RedrawResult extends IllustrationInfo {
 export async function redrawPicture(core: NovelCore, runtime: ProjectRuntime, params: { picture: string; subject?: string; change?: string }, task: TaskContext): Promise<RedrawResult> {
   const { project } = runtime
   await requireImages(core)
-  const record = (await project.illustrations()).find(item => item.id === params.picture || item.path === params.picture)
+  // Any picture of the book: one on record, or a panel drawn before panels were kept on record.
+  const record = (await project.pictures()).find(item => item.id === params.picture || item.path === params.picture)
   if (record === undefined) throw new ProjectError('novel/not-found', `no picture on record matches "${params.picture}"`)
   const lang = promptLanguage((await project.manifest()).language)
   const comma = lang === 'zh' ? '，' : ', '
@@ -1095,7 +1118,16 @@ export async function redrawPicture(core: NovelCore, runtime: ProjectRuntime, pa
   const change = params.change?.trim() ?? ''
   if (subject.length === 0 && change.length === 0) throw new ProjectError('novel/invalid', 'say what to draw: the picture\'s words rewritten (`subject`), or what to change in it (`change`)')
   // What the picture shows in words — its own, or, where it is itself a picture changed, those kept of the one it came from.
-  const was = pictureWords(record)
+  let was = pictureWords(record)
+  // A panel of which nothing was kept but the director's words is held against what its storyboard says is in it —
+  // the sheets of the people, the art of the place and of a thing — as a panel drawn today is.
+  if (record.kind === 'panel' && record.parts === undefined) {
+    const at = await project.panelOf(record.path)
+    if (at !== undefined) {
+      const makings = panelMakings(at.panel, { characters: await castAt(runtime, at.board.chapterId, await project.characters()), world: await project.world(), most: referencesOf((await core.settings.get()).image.references), lang })
+      was = { ...was, subject: makings.subject, ...(makings.references.length > 0 ? { references: makings.references } : {}), ...(makings.avoid.length > 0 ? { avoid: makings.avoid } : {}) }
+    }
+  }
   // A picture drawn with no art direction — a prompt sent as written — gets none now.
   const art = was.art ? await artDirectionOf(core, runtime, { pin: true }) : false as const
   const words = change.length > 0
@@ -1765,6 +1797,48 @@ export function consistencyFor(cards: readonly CharacterCard[]): { references: H
     references: cards.map(card => referenceOf(card)).filter((reference): reference is { path: string; label: string } => reference !== undefined),
     avoid: negativesOf(cards),
   }
+}
+
+/**
+ * What one panel of a storyboard is drawn from. The director's words for it say what happens in the frame; after
+ * them go — as the bible has them *now*, in full, never as a storyboard once abridged them — how everyone in the
+ * panel looks, in what they wear there; how its place looks; how the things it shows look. And the pictures that go
+ * along: faces first, the place keeps its seat, a thing takes one where the people leave room.
+ * @param has.most - how many pictures a prompt goes with at most (the author's setting).
+ */
+export function panelMakings(panel: Pick<ComicPanel, 'prompt' | 'description' | 'characters' | 'location' | 'looks' | 'things'>, has: { characters: readonly CharacterCard[]; world: readonly WorldEntry[]; most: number; lang: PromptLanguage }): Pick<RenderInput, 'subject' | 'pieces'> & { references: Held[]; avoid: string[] } {
+  const { lang, world } = has
+  const comma = lang === 'zh' ? '，' : ', '
+  const shown = (panel.characters ?? []).map(id => has.characters.find(card => card.id === id)).filter((card): card is CharacterCard => card !== undefined)
+  // What somebody wears in this panel, where the storyboard says it is not their usual.
+  const worn = (card: CharacterCard): CharacterLook | undefined => {
+    const name = panel.looks?.[card.id]
+    return name === undefined ? undefined : (card.visual?.looks ?? []).find(look => sameName(look.name, name))
+  }
+  const place = placeNamed(world, panel.location)
+  // The things it shows: those the storyboard names, and any thing of the bible its words name that has art of its own.
+  const told = `${panel.description}\n${panel.prompt}`
+  const called = (entry: WorldEntry, among: readonly string[]): boolean => [entry.name, ...(entry.aliases ?? [])].some(name => name.trim().length > 1 && among.some(text => text.includes(name) || sameName(text, name)))
+  const things = world.filter(entry => entry.id !== place?.id && groupOf(entry.category) !== 'places'
+    && (called(entry, panel.things ?? []) || (groupOf(entry.category) === 'items' && entry.visualImage !== undefined && called(entry, [told])))).slice(0, 4)
+  const seen = (entry: WorldEntry): string | undefined => {
+    const words = entry.visualPrompt !== undefined && entry.visualPrompt.trim().length > 0 ? entry.visualPrompt : entry.summary
+    return words !== undefined && words.trim().length > 0 ? clip(words.trim(), 220, '…') : undefined
+  }
+  const composed = compose([
+    piece('composed', panel.prompt),
+    ...shown.map(card => (looksOf(card, worn(card)).length > 0 ? piece('look', `${card.name}${worn(card) !== undefined ? L(lang, `（${worn(card)!.name}）`, ` (${worn(card)!.name})`) : ''}${L(lang, '：', ': ')}${looksOf(card, worn(card))}`, lookFrom(card)) : undefined)),
+    place !== undefined && place.visualPrompt !== undefined && place.visualPrompt.trim().length > 0 ? piece('place', `${L(lang, `地点「${place.name}」：`, `The place "${place.name}": `)}${clip(place.visualPrompt.trim(), 260, '…')}`) : undefined,
+    ...things.map(entry => (seen(entry) !== undefined ? piece('thing', `${L(lang, `「${entry.name}」：`, `"${entry.name}": `)}${seen(entry)}`) : undefined)),
+  ], comma)
+  const people = shown.map(card => referenceOf(card, worn(card))).filter((reference): reference is Held => reference !== undefined)
+  const art = things.find(entry => entry.visualImage !== undefined)
+  const references: Held[] = [
+    ...people.slice(0, Math.max(0, has.most - (place?.visualImage !== undefined || art !== undefined ? 1 : 0))),
+    ...(place?.visualImage !== undefined ? [{ path: place.visualImage, label: L(lang, `场所「${place.name}」`, `the place "${place.name}"`) }] : []),
+  ]
+  if (art !== undefined && references.length < has.most) references.push({ path: art.visualImage!, label: L(lang, `物品「${art.name}」`, `the object "${art.name}"`) })
+  return { ...composed, references, avoid: negativesOf(shown) }
 }
 
 /** A place entry that matches a name the storyboard or a scene gave. */

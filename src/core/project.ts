@@ -22,14 +22,14 @@ import {
   belongsTo, castOrder, chapterBudgetOf, MAIN_LINE,
   type ActivityEntry, type BookShows, type CharacterLook, type CharacterMoment, type LifeMark, type ShowCount,
   type AudioScript, type CastPresence, type ChapterInfo, type ChapterMemory, type ChapterPlan, type ChapterReview, type ChapterStatus, type CharacterCard,
-  type ComicBoard, type IllustrationInfo, type Outline, type PlaySession, type PlotLine, type PlotLineInfo, type PlotLineOrigin, type PlotThread, type ProjectManifest, type ProjectState, type ProjectStats, type Proposal, type RemovedChapter,
+  type ComicBoard, type ComicPanel, type IllustrationInfo, type Outline, type PlaySession, type PlotLine, type PlotLineInfo, type PlotLineOrigin, type PlotThread, type ProjectManifest, type ProjectState, type ProjectStats, type Proposal, type RemovedChapter,
   type StyleProfile, type Suggestion, type ThreadTouch, type VersionInfo, type VoiceCast, type Volume, type WorldEntry,
 } from '../shared/types'
 import { lifeOf, statusAt, type Life } from '../shared/life'
 import type { LinePerson, LineThread, LineWorld } from '../shared/worldline'
 import { TIE_ENDS, TIE_KINDS, type Tie, type TieEnd } from '../shared/ties'
 import { worldPresence, type WorldPresence } from '../shared/world'
-import { countWords, hashText, newId, normalizeProse, proseOnly, sameName, slugify } from '../shared/text'
+import { countWords, hashText, newId, normalizeProse, proseOnly, sameName, slugify, fuzzyFind } from '../shared/text'
 import { KeyedMutex } from './util/async'
 import {
   containedPath, ensureDir, exists, listDir, mtimeOf, readJson, readText, relativePosix, removePath, writeAtomic, writeJson,
@@ -2001,6 +2001,35 @@ export class Project {
     await this.writeState(['comic', `${board.chapterId}.json`], board, notify)
   }
 
+  /**
+   * Change panels of a chapter's storyboard as it is *now*, under its lock: several drawings of one chapter — a panel
+   * drawn again here, three more there — each keep what they drew without writing over what another kept meanwhile.
+   * A panel the storyboard no longer has is let be.
+   * @returns the storyboard as it then stands; nothing where the chapter has none (it was taken away meanwhile).
+   */
+  async patchComicPanels(chapterId: string, updates: ReadonlyMap<string, Partial<ComicPanel>>): Promise<ComicBoard | undefined> {
+    const path = this.statePath('comic', `${chapterId}.json`)
+    return await this.mutex.run(path, async () => {
+      const current = await this.files.readJson<ComicBoard>(path)
+      if (current === undefined || current === null) return undefined
+      const next: ComicBoard = {
+        ...current,
+        updatedAt: new Date().toISOString(),
+        panels: current.panels.map((panel) => {
+          const update = updates.get(panel.id)
+          if (update === undefined) return panel
+          const merged = { ...panel, ...update }
+          // A picture takes the place of whatever went wrong before it; `image: undefined`, said outright, takes the picture off the panel.
+          if (update.image !== undefined) delete merged.error
+          else if ('image' in update) delete merged.image
+          return merged
+        }),
+      }
+      await this.writeDoc(path, next)
+      return next
+    })
+  }
+
   /** Take a chapter's storyboard away; the pictures drawn for it stay in the gallery. */
   async removeComicBoard(chapterId: string): Promise<boolean> {
     if ((await this.comicBoard(chapterId)) === undefined) return false
@@ -2069,6 +2098,42 @@ export class Project {
 
   async illustrations(): Promise<IllustrationInfo[]> {
     return (await this.readState<IllustrationInfo[]>('illustrations.json')) ?? []
+  }
+
+  /** Every chapter's storyboard the book has. */
+  async comicBoards(): Promise<ComicBoard[]> {
+    const names = (await this.files.listDir(this.statePath('comic')).catch(() => [] as string[])).filter(name => name.endsWith('.json'))
+    const boards = await Promise.all(names.map(name => this.readState<ComicBoard>('comic', name)))
+    return boards.filter((board): board is ComicBoard => board !== undefined && board !== null && Array.isArray(board.panels))
+  }
+
+  /**
+   * Every picture of the book, oldest first: those on record, and — a picture is a picture, whatever page made it —
+   * the panels of its storyboards that were drawn before panels were kept on record. Of such a panel what is known
+   * is said: its prompt, its chapter, when the storyboard was last touched; its id names the panel
+   * (`panel:<chapter>:<panel>`), since there is no record to name it by.
+   */
+  async pictures(): Promise<IllustrationInfo[]> {
+    const recorded = await this.illustrations()
+    const known = new Set(recorded.map(item => item.path))
+    const loose: IllustrationInfo[] = []
+    for (const board of await this.comicBoards()) {
+      for (const panel of board.panels) {
+        if (panel.image === undefined || known.has(panel.image)) continue
+        known.add(panel.image)
+        loose.push({ id: `panel:${board.chapterId}:${panel.id}`, path: panel.image, prompt: panel.prompt, kind: 'panel', target: board.chapterId, createdAt: board.updatedAt })
+      }
+    }
+    return loose.length === 0 ? recorded : [...recorded, ...loose].sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+  }
+
+  /** The panel a picture is the picture of, where it is one's: which chapter's storyboard, which panel of it, and where in the row. */
+  async panelOf(path: string): Promise<{ board: ComicBoard; panel: ComicPanel; index: number } | undefined> {
+    for (const board of await this.comicBoards()) {
+      const index = board.panels.findIndex(panel => panel.image === path)
+      if (index >= 0) return { board, panel: board.panels[index]!, index }
+    }
+    return undefined
   }
 
   /**
@@ -2147,6 +2212,13 @@ export class Project {
       })
       held.push(entry.name)
     }
+    // A panel of a storyboard that showed it is a panel without a picture again.
+    for (const board of await this.comicBoards()) {
+      const shown = board.panels.filter(panel => panel.image === gone)
+      if (shown.length === 0) continue
+      await this.patchComicPanels(board.chapterId, new Map(shown.map(panel => [panel.id, { image: undefined } as Partial<ComicPanel>])))
+      held.push((await this.findChapter(board.chapterId))?.plan.title ?? board.chapterId)
+    }
     const manifest = await this.manifest()
     if (manifest.cover === gone) {
       await this.updateManifest({ cover: '' })
@@ -2200,12 +2272,52 @@ export class Project {
       })
       held.push(entry.name)
     }
+    for (const board of await this.comicBoards()) {
+      const shown = board.panels.filter(panel => panel.image === old)
+      if (shown.length === 0) continue
+      await this.patchComicPanels(board.chapterId, new Map(shown.map(panel => [panel.id, { image: next }])))
+      held.push((await this.findChapter(board.chapterId))?.plan.title ?? board.chapterId)
+    }
     const manifest = await this.manifest()
     if (manifest.cover === old) {
       await this.updateManifest({ cover: next })
       held.push(manifest.title)
     }
     return held
+  }
+
+  /**
+   * Put a picture the book has into a chapter's text: after the paragraph so many from the top (`after`, counting
+   * from 1; 0 is before everything), after the paragraph a passage ends in (`quote`), or at the end. The text as it
+   * was is kept as a version.
+   * @returns where it went: the paragraph it now follows (0 for the top).
+   * @throws ProjectError `novel/not-found` for a chapter that is not there; `novel/invalid` for what is not a picture of the book.
+   */
+  async placePicture(chapterRef: string, path: string, where: { after?: number; quote?: string; alt?: string } = {}): Promise<{ chapter: string; after: number }> {
+    const chapter = await this.findChapter(chapterRef)
+    if (chapter === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${chapterRef}"`)
+    if (!/^assets\/[^\0]+\.(png|jpe?g|webp|gif)$/i.test(path) || path.split('/').includes('..') || !await this.has(path)) throw new ProjectError('novel/invalid', `"${path}" is not one of the book's pictures`)
+    const text = await this.chapterText(chapter.plan.id)
+    // Paragraphs as the text has them — runs of lines parted by blank ones — and where each ends. The text itself is
+    // not written anew: the picture goes in at one place, and everything else stays as its author left it.
+    const ends: number[] = []
+    let at = 0
+    for (const part of text.split(/(\n{2,})/)) {
+      at += part.length
+      if (part.trim().length > 0) ends.push(at)
+    }
+    let after = ends.length
+    if (where.quote !== undefined && where.quote.trim().length > 0) {
+      const found = fuzzyFind(text, where.quote.trim())
+      if (found !== undefined) after = Math.max(1, ends.findIndex(stop => stop >= found.end) + 1 || ends.length)
+    } else if (where.after !== undefined && Number.isFinite(where.after)) after = Math.max(0, Math.min(ends.length, Math.floor(where.after)))
+    const tag = `![${(where.alt ?? '').replace(/[\]\n]/g, ' ').trim()}](${path})`
+    const stop = after === 0 ? 0 : ends[after - 1]!
+    const before = text.slice(0, stop)
+    const rest = text.slice(stop).replace(/^\n+/, '')
+    const next = `${before}${before.length > 0 ? '\n\n' : ''}${tag}${rest.length > 0 ? `\n\n${rest}` : '\n'}`
+    await this.saveChapterText(chapter.plan.id, next, { reason: 'before-illustration' })
+    return { chapter: chapter.plan.id, after }
   }
 
   /** {@link removePicture}, by the id of a picture's record. */

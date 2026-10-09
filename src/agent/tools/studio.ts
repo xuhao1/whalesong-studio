@@ -36,6 +36,8 @@ const PIECE_NAMES: Record<IllustrationPiece['of'], string> = {
   composed: 'composed by the director',
   scene: 'the moment of the book the portrait shows (one of the signature scenes the card keeps under visual.scenes)',
   change: 'what to change in the picture that went along',
+  place: 'how the place it is set in looks, as the bible has it',
+  thing: 'how a thing it shows looks, as the bible has it',
 }
 
 /** Everything on record of how one picture was made, in the order its prompt was sent. */
@@ -81,7 +83,7 @@ export function pictureRecord(image: IllustrationInfo): string {
     parts?.style !== undefined ? `- art direction (${parts.styleSource === 'book' ? 'the book\'s own' : parts.styleSource === 'studio' ? 'the Studio-wide one' : 'the built-in starting point'}): ${parts.style}` : '- art direction: none (sent as written)',
     `- kept out: ${parts?.avoid !== undefined && parts.avoid.length > 0 ? parts.avoid.join(', ') : 'nothing'}`,
     references.length > 0
-      ? `Reference pictures that went with it: ${references.map((reference, index) => `#${index + 1} ${reference.label} — ${reference.path}`).join('; ')}. A picture drawn against a reference takes after it: look at that one's record too (action=show_image id=<its path>).`
+      ? `Reference pictures that went with it: ${references.map((reference, index) => `#${index + 1} ${reference.label} — ${reference.path}${reference.front === true ? ' (a design sheet: only its front view was sent — handed all three figures, an image model draws three people)' : ''}`).join('; ')}. A picture drawn against a reference takes after it: look at that one's record too (action=show_image id=<its path>).`
       : parts?.referenceNote !== undefined
         ? 'The prompt speaks of reference pictures, but none went: this way to the image model takes no pictures.'
         : 'No reference picture went with it: it was drawn from the words alone.',

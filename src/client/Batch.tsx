@@ -279,6 +279,10 @@ export function ProductionBoard({ onOpen }: { onOpen: (chapterId: string) => voi
   const { project, root } = useProject()
   const job = useBatchJob('stage')
   const running = job?.status === 'running'
+  // Every production under way — a batch started here, a chapter produced from its own page: each is shown, and none
+  // of them keeps another from being started for chapters it is not on.
+  const jobs = useSnapshot(snapshot => snapshot.jobs)
+  const under = jobs.filter(candidate => candidate.status === 'running' && batchOf(candidate)?.what === 'stage')
   // One line of the plot at a time: the main one, or another line's own chapters (what it shares with the line it parts from is that line's to produce).
   const plotLines = project.outline.lines ?? []
   const [line, setLine] = useBookLine()
@@ -311,7 +315,10 @@ export function ProductionBoard({ onOpen }: { onOpen: (chapterId: string) => voi
   const chosen = steps ?? new Set(STAGE_STEPS.filter(step => step !== 'video' && missing[step] === undefined))
   const todo = useMemo(() => new Set(chapters.filter(status => STAGE_STEPS.some(step => chosen.has(step) && (force || lacking(status, step, t)))).map(status => status.id)), [chapters, chosen, force, t])
   const selected = picked ?? todo
-  const count = chapters.filter(status => selected.has(status.id)).length
+  // A chapter a production is on right now waits for that one: it is not started a second time beside it.
+  const taken = new Set(chapters.filter(status => inBatch(jobs, status.id) !== undefined).map(status => status.id))
+  const going = chapters.filter(status => selected.has(status.id) && !taken.has(status.id))
+  const count = going.length
   const toggleStep = (step: StageStep): void => {
     const next = new Set(chosen)
     if (next.has(step)) next.delete(step)
@@ -359,7 +366,7 @@ export function ProductionBoard({ onOpen }: { onOpen: (chapterId: string) => voi
             const why = missing[step]
             return (
               <label key={step} className={cx('nv-step-pick', chosen.has(step) && 'is-on', why !== undefined && 'is-off')} title={why !== undefined ? why : t(...STAGE_STEP_HINT[step]!)}>
-                <input type="checkbox" checked={chosen.has(step)} disabled={running} onChange={() => { toggleStep(step) }} />
+                <input type="checkbox" checked={chosen.has(step)} onChange={() => { toggleStep(step) }} />
                 <span className="nv-step-name">{t(...BATCH_STEP[step]!)}</span>
                 <span className="nv-step-hint">{why !== undefined ? why : t(...STAGE_STEP_HINT[step]!)}</span>
               </label>
@@ -374,12 +381,12 @@ export function ProductionBoard({ onOpen }: { onOpen: (chapterId: string) => voi
             </label>
           ) : null}
           <label className="nv-check" title={t('已经做好的也重新做一遍', 'Do again what is already done')}>
-            <input type="checkbox" checked={force} disabled={running} onChange={(event) => { setForce(event.target.checked) }} />
+            <input type="checkbox" checked={force} onChange={(event) => { setForce(event.target.checked) }} />
             <span>{t('已有的也重做', 'Redo what is there')}</span>
           </label>
           <span className="nv-spacer" />
-          <span className="nv-muted nv-small">{t(`已选 ${count} 章`, `${count} chapters chosen`)}</span>
-          <Button variant="primary" icon="sparkles" busy={busy} disabled={running || count === 0 || order.length === 0} pending={t('正在开始…', 'Starting…')} onClick={() => start({ chapters: chapters.filter(status => selected.has(status.id)).map(status => status.id), steps: order, force })}>
+          <span className="nv-muted nv-small">{t(`已选 ${count} 章`, `${count} chapters chosen`)}{under.length > 0 ? t(` · ${under.length} 批在做，新的同时开始`, ` · ${under.length} under way; a new one starts beside them`) : ''}</span>
+          <Button variant="primary" icon="sparkles" busy={busy} disabled={count === 0 || order.length === 0} pending={t('正在开始…', 'Starting…')} onClick={() => start({ chapters: going.map(status => status.id), steps: order, force })}>
             {t(`一键制作 ${count} 章`, `Produce ${count} chapters`)}
           </Button>
         </div>
@@ -387,7 +394,7 @@ export function ProductionBoard({ onOpen }: { onOpen: (chapterId: string) => voi
           <Field label={t('对成片的要求', 'What to ask of the cut')}>
             <TextArea value={direction} minRows={1} maxRows={4} placeholder={t('例如：节奏慢一点，换画面用淡入淡出', 'For example: slower, with cross-fades between pictures')} onChange={(event) => { setDirection(event.target.value) }} />
             <label className="nv-check">
-              <input type="checkbox" checked={subtitles} disabled={running} onChange={(event) => { setSubtitles(event.target.checked) }} />
+              <input type="checkbox" checked={subtitles} onChange={(event) => { setSubtitles(event.target.checked) }} />
               <span>{t('成片带字幕', 'Subtitles in the cut')}</span>
             </label>
           </Field>
@@ -395,7 +402,9 @@ export function ProductionBoard({ onOpen }: { onOpen: (chapterId: string) => voi
         {order.some(step => missing[step] !== undefined) ? <p className="nv-note is-warn">{t('选中的步骤里有现在做不了的：', 'Some of the chosen steps cannot run right now: ')}{order.filter(step => missing[step] !== undefined).map(step => `${t(...BATCH_STEP[step]!)}（${missing[step]}）`).join(t('；', '; '))} <button type="button" className="nv-link" onClick={() => { controller.setView('settings') }}>{t('去设置', 'Open the settings')}</button></p> : null}
       </section>
 
-      {job !== undefined ? <section className="nv-card"><BatchMatrix job={job} onAgain={last !== undefined ? () => start(last) : undefined} /></section> : null}
+      {under.length > 0
+        ? under.map(candidate => <section key={candidate.id} className="nv-card"><BatchMatrix job={candidate} /></section>)
+        : job !== undefined ? <section className="nv-card"><BatchMatrix job={job} onAgain={last !== undefined ? () => start(last) : undefined} /></section> : null}
 
       <section className="nv-card">
         <div className="nv-row-wrap">
@@ -418,8 +427,9 @@ export function ProductionBoard({ onOpen }: { onOpen: (chapterId: string) => voi
                 <tr key={status.id}>
                   <th scope="row">
                     <label className="nv-check">
-                      <input type="checkbox" checked={selected.has(status.id)} disabled={running} onChange={() => { toggle(status.id) }} />
+                      <input type="checkbox" checked={selected.has(status.id) && !taken.has(status.id)} disabled={taken.has(status.id)} title={taken.has(status.id) ? t('这一章正在制作', 'This chapter is being produced') : undefined} onChange={() => { toggle(status.id) }} />
                       <button type="button" className="nv-link nv-production-title" onClick={() => { onOpen(status.id) }} title={t('打开这一章的有声漫', 'Open this chapter\'s motion comic')}>{status.index}. {status.title}</button>
+                      {taken.has(status.id) ? <Chip tone="blue">{t('在做', 'under way')}</Chip> : null}
                     </label>
                   </th>
                   {STAGE_STEPS.map((step) => {

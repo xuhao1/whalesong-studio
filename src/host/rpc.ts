@@ -794,12 +794,22 @@ export function createHandlers(service: NovelService): Handlers {
     },
     'image.redraw': async ({ root, picture, subject, change }) => {
       const runtime = await open(root)
-      const record = (await runtime.project.illustrations()).find(item => item.id === picture || item.path === picture)
+      const record = (await runtime.project.pictures()).find(item => item.id === picture || item.path === picture)
       // Named as the drawing of a picture of its kind is: the page that shows whose it is says that it is being drawn.
       return job(runtime, 'illustrate', `illustrate ${record?.kind ?? 'picture'}`, record?.target, async task => await redrawPicture(core, runtime, { picture, ...(subject !== undefined ? { subject } : {}), ...(change !== undefined ? { change } : {}) }, task))
     },
     'image.sheetsFirst': async ({ root, asks }) => await sheetsAhead(core, await open(root), Array.isArray(asks) ? asks : []),
-    'image.list': async ({ root }) => ({ images: (await (await open(root)).project.illustrations()).reverse() }),
+    // Every picture of the book, the newest first: those on record and the panels of its storyboards alike.
+    'image.list': async ({ root }) => ({ images: (await (await open(root)).project.pictures()).reverse() }),
+    'image.place': async ({ root, picture, chapter, after, quote, alt }) => {
+      const runtime = await open(root)
+      const placed = await runtime.project.placePicture(requireString(chapter, 'chapter'), requireString(picture, 'picture'), {
+        ...(typeof after === 'number' ? { after } : {}),
+        ...(typeof quote === 'string' && quote.trim().length > 0 ? { quote } : {}),
+        ...(typeof alt === 'string' ? { alt } : {}),
+      })
+      return placed
+    },
     'image.delete': async ({ root, id, path }) => {
       const released = await (await open(root)).project.removePicture({ ...(id !== undefined ? { id } : {}), ...(path !== undefined ? { path } : {}) })
       return { ok: true, released }

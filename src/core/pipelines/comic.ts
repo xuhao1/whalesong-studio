@@ -26,7 +26,7 @@ import { storyboardTask } from '../prompts'
 import { L, promptLanguage } from '../render'
 import { mapLimit, serializer } from '../util/async'
 import { buildAudioScript } from './audio'
-import { artDirectionOf, consistencyFor, lackingSheets, looksOf, placeNamed, renderImage, requireImages, sheetsBefore, sheetsFirst } from './illustrate'
+import { artDirectionOf, lackingSheets, looksOf, panelMakings, renderImage, requireImages, sheetsBefore, sheetsFirst, wardrobeOf } from './illustrate'
 import { pictureSize } from '../../shared/art'
 import { groupOf } from '../../shared/world'
 
@@ -130,6 +130,10 @@ interface DraftPanel {
   camera: CameraMove
   characters: string[]
   location?: string
+  /** Who wears what, where it is not their usual: name → look. */
+  wearing?: Record<string, string>
+  /** Things of the bible the panel shows, as the director named them. */
+  things?: string[]
 }
 
 export async function buildStoryboard(core: NovelCore, runtime: ProjectRuntime, params: { chapter: string; density?: StoryboardDensity; maxPanels?: number; force?: boolean }, task: TaskContext): Promise<ComicBoard> {
@@ -147,16 +151,44 @@ export async function buildStoryboard(core: NovelCore, runtime: ProjectRuntime, 
   const speakers = new Set(script.lines.map(line => line.speaker).filter((id): id is string => id !== undefined))
   const text = script.lines.map(line => line.text).join('\n')
   const cast = characters.filter(card => speakers.has(card.id) || text.includes(card.name))
-  const locations = world.filter(entry => entry.category === 'location' && text.includes(entry.name))
+  const located = await project.findChapter(script.chapterId)
+  const named = (entry: { name: string; aliases?: string[] }, among: string): boolean => [entry.name, ...(entry.aliases ?? [])].some(name => name.trim().length > 1 && among.includes(name))
+  // What the chapter is about, said outside its own words: its plan — the synopsis, each beat, where it is set — and
+  // what its digest noted. The text itself often says "the old pen" where the plan says which pen it is.
+  const outlinedAs = located?.plan
+  const noted = await project.memory(script.chapterId)
+  const about = [
+    text,
+    outlinedAs?.synopsis, outlinedAs?.purpose, outlinedAs?.location, outlinedAs?.notes,
+    ...(outlinedAs?.beats ?? []).flatMap(beat => [beat.summary, beat.location, beat.conflict, beat.outcome]),
+    noted?.summary, ...(noted?.locations ?? []), ...(noted?.facts ?? []).flatMap(fact => [fact.subject, fact.statement]),
+  ].filter((part): part is string => typeof part === 'string' && part.length > 0).join('\n')
+  // Where the chapter is set, by its plan as well as by its words.
+  const locations = world.filter(entry => groupOf(entry.category) === 'places' && named(entry, about))
+  // Whatever else of the bible the chapter has to do with — a thing, a house, a rule, a word of this world: the
+  // director is told what each is and what there is of it to see, where otherwise a name is all there would be to draw.
+  const things = world.filter(entry => groupOf(entry.category) !== 'places' && named(entry, about))
   // The call's own wish, else the book's, else a picture every dozen seconds or so.
   const wished = params.density ?? manifest.storyboard?.density
   const density: StoryboardDensity = wished !== undefined && STORYBOARD_DENSITIES.includes(wished) ? wished : 'balanced'
   const beats = beatsOf(script.lines)
   const plan = planPanels(beats, density, params.maxPanels ?? manifest.storyboard?.maxPanels)
   const total = beats.reduce((sum, beat) => sum + beat.seconds, 0)
-  const located = await project.findChapter(script.chapterId)
-  const castText = cast.map(card => `${card.name}: ${looksOf(card) || L(lang, '（未设定外貌）', '(no look defined)')}`).join('\n')
-  const placeText = locations.map(entry => `${entry.name}: ${entry.visualPrompt ?? entry.summary ?? ''}`).join('\n')
+  // Who each of them is, how they look, and what else they have to wear: a panel says which look is worn in it.
+  const castText = cast.map((card) => {
+    const wardrobe = wardrobeOf(card)
+    return `${card.name}${card.tagline !== undefined && card.tagline.trim().length > 0 ? L(lang, `（${clip(card.tagline.trim(), 50)}）`, ` (${clip(card.tagline.trim(), 80)})`) : ''}: ${looksOf(card) || L(lang, '（未设定外貌）', '(no look defined)')}${wardrobe !== undefined ? `\n  ${L(lang, '造型：', 'Looks: ')}${wardrobe.slice(wardrobe.indexOf(':') + 1).trim()}` : ''}`
+  }).join('\n')
+  const placeText = locations.map(entry => `${entry.name}: ${clip(entry.visualPrompt ?? entry.summary ?? '', 260)}`).join('\n')
+  const thingText = things.map(entry => `${entry.name}${L(lang, `（${entry.category}）`, ` (${entry.category})`)}: ${clip([entry.summary, entry.visualPrompt].filter((part): part is string => part !== undefined && part.trim().length > 0).join(L(lang, '；看上去：', '; to the eye: ')), 240)}`).join('\n')
+  // The chapter the passage is of: where and when it is set, what happens in it.
+  const outlined = located?.plan
+  const chapterText = outlined === undefined ? '' : [
+    L(lang, `第 ${located!.index} 章《${outlined.title}》`, `Chapter ${located!.index}, "${outlined.title}"`),
+    outlined.location !== undefined && outlined.location.trim().length > 0 ? L(lang, `地点：${outlined.location}`, `Where: ${outlined.location}`) : undefined,
+    outlined.time !== undefined && outlined.time.trim().length > 0 ? L(lang, `时间：${outlined.time}`, `When: ${outlined.time}`) : undefined,
+    outlined.synopsis !== undefined && outlined.synopsis.trim().length > 0 ? L(lang, `这一章：${clip(outlined.synopsis.trim(), 300)}`, `What happens: ${clip(outlined.synopsis.trim(), 400)}`) : undefined,
+  ].filter((part): part is string => part !== undefined).join('\n')
   const speakerOf = (line: AudioLine): string => line.kind === 'narration' ? L(lang, '旁白', 'narrator') : (line.speakerName ?? '?')
 
   // One window of the script per request; each is asked for its share of the panels.
@@ -203,6 +235,8 @@ export async function buildStoryboard(core: NovelCore, runtime: ProjectRuntime, 
           units: rest.map((beat, index) => `${index} | ${speakerOf(script.lines[beat.line]!)} | ${Math.max(1, Math.round(beat.seconds))}s | ${clip(beat.text, 140)}`).join('\n'),
           cast: castText,
           locations: placeText,
+          ...(thingText.length > 0 ? { things: thingText } : {}),
+          ...(chapterText.length > 0 ? { chapter: chapterText } : {}),
           artStyle: art,
           avoid: direction.avoid,
           count,
@@ -221,6 +255,8 @@ export async function buildStoryboard(core: NovelCore, runtime: ProjectRuntime, 
             const to = Math.max(at, Math.min(rest.length - 1, Number.isFinite(Number(item.to)) ? Number(item.to) : at))
             const camera = asText(item.camera) as CameraMove | undefined
             const location = asText(item.location)
+            const wearing = Object.fromEntries(Object.entries(asRecord(item.wearing)).map(([name, look]) => [name, asText(look)]).filter((pair): pair is [string, string] => pair[1] !== undefined))
+            const shows = asList(item.things)
             found.push({
               from: at,
               to,
@@ -229,6 +265,8 @@ export async function buildStoryboard(core: NovelCore, runtime: ProjectRuntime, 
               camera: camera !== undefined && CAMERAS.includes(camera) ? camera : 'zoom-in',
               characters: asList(item.characters),
               ...(location !== undefined ? { location } : {}),
+              ...(Object.keys(wearing).length > 0 ? { wearing } : {}),
+              ...(shows.length > 0 ? { things: shows } : {}),
             })
             at = to + 1
           }
@@ -269,14 +307,28 @@ export async function buildStoryboard(core: NovelCore, runtime: ProjectRuntime, 
       }
       const kept = drafts[best]!
       const gone = drafts[best + 1]!
-      drafts = [...drafts.slice(0, best), { ...kept, to: gone.to, characters: [...new Set([...kept.characters, ...gone.characters])] }, ...drafts.slice(best + 2)]
+      drafts = [...drafts.slice(0, best), {
+        ...kept,
+        to: gone.to,
+        characters: [...new Set([...kept.characters, ...gone.characters])],
+        ...(kept.wearing !== undefined || gone.wearing !== undefined ? { wearing: { ...gone.wearing, ...kept.wearing } } : {}),
+        ...(kept.things !== undefined || gone.things !== undefined ? { things: [...new Set([...(kept.things ?? []), ...(gone.things ?? [])])] } : {}),
+      }, ...drafts.slice(best + 2)]
     }
   }
 
   const panels: ComicPanel[] = drafts.map((draft) => {
     const first = beats[draft.from]!
     const last = beats[draft.to]!
-    const present = draft.characters.map(name => characters.find(card => sameName(card.name, name) || card.aliases?.some(alias => sameName(alias, name)) === true)?.id).filter((id): id is string => id !== undefined)
+    const who = (name: string): CharacterCard | undefined => characters.find(card => sameName(card.name, name) || card.aliases?.some(alias => sameName(alias, name)) === true)
+    const present = draft.characters.map(name => who(name)?.id).filter((id): id is string => id !== undefined)
+    // A look somebody wears here, where they have one of that name; a thing shown, by the name the bible has it under.
+    const looks = Object.fromEntries(Object.entries(draft.wearing ?? {}).map(([name, look]) => {
+      const card = who(name)
+      const has = card?.visual?.looks?.find(candidate => sameName(candidate.name, look))
+      return card !== undefined && has !== undefined ? [card.id, has.name] as const : undefined
+    }).filter((pair): pair is readonly [string, string] => pair !== undefined))
+    const shows = [...new Set((draft.things ?? []).map(name => world.find(entry => sameName(entry.name, name) || (entry.aliases ?? []).some(alias => sameName(alias, name)))?.name).filter((name): name is string => name !== undefined))]
     return {
       id: newId('pn'),
       lines: script.lines.slice(first.line, last.line + 1).map(line => line.id),
@@ -287,6 +339,8 @@ export async function buildStoryboard(core: NovelCore, runtime: ProjectRuntime, 
       camera: draft.camera,
       ...(present.length > 0 ? { characters: [...new Set(present)] } : {}),
       ...(draft.location !== undefined ? { location: draft.location } : {}),
+      ...(Object.keys(looks).length > 0 ? { looks } : {}),
+      ...(shows.length > 0 ? { things: shows } : {}),
     }
   })
   // Pictures already rendered for an identical prompt are kept across re-boards.
@@ -401,49 +455,34 @@ export async function renderPanels(core: NovelCore, runtime: ProjectRuntime, par
   let unheld = 0
   let done = 0
   task.job?.progress(0, todo.length, L(lang, '绘制画面', 'drawing panels'))
+  // Which panels this drawing is on: another may be started for the others meanwhile, and the page shows which is which.
+  task.job?.result({ chapterId: board.chapterId, drawing: todo.map(panel => panel.id), ...(wanted === undefined ? { all: true } : {}) })
   const updates = new Map<string, Partial<ComicPanel>>()
   const inOrder = serializer()
+  // Kept into the storyboard as it stands at that moment — not into the copy this drawing started from: another
+  // drawing of the same chapter may have kept its panels since.
   const flush = (): Promise<void> => inOrder(async () => {
     if (updates.size === 0) return
-    board = {
-      ...board,
-      updatedAt: new Date().toISOString(),
-      panels: board.panels.map((panel) => {
-        const update = updates.get(panel.id)
-        if (update === undefined) return panel
-        const next = { ...panel, ...update }
-        if (update.image !== undefined) delete next.error
-        return next
-      }),
-    }
+    const mine = new Map(updates)
     updates.clear()
-    await project.saveComicBoard(board)
+    board = await project.patchComicPanels(board.chapterId, mine) ?? board
   })
   await mapLimit(todo, Math.max(1, params.concurrency ?? core.parallel('image')), async (panel) => {
     try {
-      // Whoever is in the panel brings their design sheet, and the place its reference art.
-      const shown = (panel.characters ?? []).map(id => characters.find(card => card.id === id)).filter((card): card is CharacterCard => card !== undefined)
-      const consistency = consistencyFor(shown)
-      const place = placeNamed(world, panel.location)
-      // A thing the panel shows that has design art of its own: the same thing every time, where there is a seat left for it.
-      const shownText = `${panel.description}\n${panel.prompt}`
-      const thing = world.find(entry => groupOf(entry.category) === 'items' && entry.visualImage !== undefined && [entry.name, ...(entry.aliases ?? [])].some(name => name.trim().length > 1 && shownText.includes(name)))
-      // Faces first, and the place keeps its seat; the thing takes one when the people leave room, or there is no place.
-      const references = [
-        ...consistency.references.slice(0, Math.max(0, mostReferences - (place?.visualImage !== undefined || thing !== undefined ? 1 : 0))),
-        ...(place?.visualImage !== undefined ? [{ path: place.visualImage, label: L(lang, `场所「${place.name}」`, `the place "${place.name}"`) }] : []),
-      ]
-      if (thing !== undefined && references.length < mostReferences) references.push({ path: thing.visualImage!, label: L(lang, `物品「${thing.name}」`, `the object "${thing.name}"`) })
+      // What the director wrote for the panel, and after it how everyone in it looks in what they wear there, how its
+      // place and the things it shows look — as the bible has them now; with their design sheets and art along.
+      const makings = panelMakings(panel, { characters, world, most: mostReferences, lang })
       const info = await renderImage(core, runtime, {
-        subject: panel.prompt,
+        subject: makings.subject,
+        ...(makings.pieces !== undefined ? { pieces: makings.pieces } : {}),
         kind: 'panel',
         target: board.chapterId,
         size: pictureSize(core.currentSettings().image, 'panel'),
         name: `panel-${board.chapterId}-${hashText(panel.id).slice(0, 4)}`,
-        record: false,
+        // A panel is a picture of the book like any other: on record, in the gallery, drawn again and changed from there.
         art,
-        avoid: consistency.avoid,
-        references,
+        avoid: makings.avoid,
+        references: makings.references,
       }, task)
       updates.set(panel.id, { image: info.path })
       rendered += 1

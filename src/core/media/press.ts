@@ -127,6 +127,22 @@ export async function findPicturePress(): Promise<PicturePress | undefined> {
 }
 
 /**
+ * A picture of whatever kind as a PNG, its pixels unchanged — for looking into one that came as a JPEG or a WebP.
+ * @returns nothing where this computer has no ffmpeg, or it cannot read the picture.
+ */
+export async function asPng(picture: Uint8Array, signal?: AbortSignal): Promise<Uint8Array | undefined> {
+  const ffmpeg = await findProgram('ffmpeg')
+  if (ffmpeg === undefined) return undefined
+  try {
+    const png = await encode(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-nostdin', '-i', 'pipe:0', '-frames:v', '1', '-map_metadata', '-1', '-c:v', 'png', '-pix_fmt', 'rgb24', '-f', 'image2pipe', 'pipe:1'], picture, { timeoutMs: Math.max(30_000, Math.round(picture.byteLength / 64)), capture: true, ...(signal !== undefined ? { signal } : {}) })
+    return png.byteLength > 33 ? png : undefined
+  } catch (error) {
+    if (signal?.aborted === true) throw error
+    return undefined
+  }
+}
+
+/**
  * Run ffmpeg over bytes handed to it; an answer other than "done" is an error, with what it said.
  * @param options.capture - what it writes to its output is the result (it is told to write to `pipe:1`); otherwise nothing is.
  */
