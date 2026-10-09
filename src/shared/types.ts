@@ -873,6 +873,20 @@ export interface ImageSettings {
   model?: string
   /** `low`, `medium`, `high` or `auto`, for endpoints that take a quality. */
   quality?: string
+  /**
+   * `openai`: whether the endpoint is a server of the author's own — a model on their machine or their network behind
+   * `/v1/images/generations`. Such a server is asked for one picture at a time, at one of the sizes it draws (`sizes`),
+   * with a model, a prompt, a count of one and a size and nothing else; it is waited for as long as it says when it is
+   * busy (`429` with `Retry-After`), and needs no key unless it asks for one. Unset: judged by the address — this
+   * machine, a private network — unless the model is one of OpenAI's.
+   */
+  local?: boolean
+  /**
+   * `openai`: the sizes the endpoint draws, as `WIDTHxHEIGHT`; a picture is asked for at whichever is nearest in shape.
+   * Unset: for a server of the author's own, 768x768, 768x512 and 512x768; for GPT Image, its own three; for anything
+   * else, the size wanted as it is.
+   */
+  sizes?: string[]
   /** `codex` only: which bridge to the ChatGPT subscription to use. */
   bridge?: CodexBridgeKind
   /**

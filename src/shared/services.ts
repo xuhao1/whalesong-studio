@@ -86,6 +86,25 @@ export function keySlot(url: string | undefined): string | undefined {
   return slug.length > 0 ? `key-${slug}` : undefined
 }
 
+/**
+ * Whether an address is on this machine or on a network of the author's own
+ * rather than out on the net: loopback, the private ranges, the range a VPN of
+ * the Tailscale kind hands out (100.64/10), link-local, and names only a local
+ * network resolves.
+ */
+export function privateAddress(url: string | undefined): boolean {
+  const host = hostOf(url)
+  if (host === undefined) return false
+  const name = host.startsWith('[') ? host.slice(1, host.indexOf(']')) : host.replace(/:\d+$/, '')
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(name)
+  if (v4 !== null) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])]
+    return a === 127 || a === 10 || a === 0 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254)
+  }
+  if (name.includes(':')) return name === '::1' || /^f[cd]/.test(name) || /^fe[89ab]/.test(name)
+  return name === 'localhost' || !name.includes('.') || /\.(localhost|local|lan|internal|home\.arpa|ts\.net)$/.test(name)
+}
+
 /** Which known service an endpoint belongs to, judged by its host. */
 export function serviceOf(url: string | undefined): ServiceId {
   const host = hostOf(url)

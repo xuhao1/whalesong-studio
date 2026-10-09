@@ -14,6 +14,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import type { EndpointCheck, EndpointModel, KeyState, ModelKind, ModelOption, ProviderOption, SettingsView as SettingsData } from '../../shared/rpc'
 import type { ComfyCatalog } from '../../shared/types'
 import { ASPECTS, DEFAULT_ART_STYLE, KIND_ASPECT, PICTURE_KINDS, PICTURE_TIERS, pictureSize, pixelSize, type PictureKind, type PictureTier } from '../../shared/art'
+import { fittedSize, imageSizes, LOCAL_SIZES, localImages, sizeList } from '../../shared/images'
 import { FFMPEG_INSTALL } from '../../shared/text'
 import { OutsideHelp } from '../OutsideHelp'
 import { RecommendedCard } from '../Recommended'
@@ -480,8 +481,10 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
           <Field label={t('语音：同时合成几句', 'Speech: lines at once')}>
             <TextInput inputMode="numeric" value={draft.tts.concurrency !== undefined ? String(draft.tts.concurrency) : ''} placeholder={String(PARALLEL_DEFAULT)} onChange={(event) => { update({ tts: without(draft.tts, 'concurrency', parallel(event.target.value)) }) }} />
           </Field>
-          <Field label={t('图片：同时画几张', 'Images: pictures at once')}>
-            <TextInput inputMode="numeric" value={draft.image.concurrency !== undefined ? String(draft.image.concurrency) : ''} placeholder={String(PARALLEL_DEFAULT)} onChange={(event) => { update({ image: without(draft.image, 'concurrency', parallel(event.target.value)) }) }} />
+          <Field label={t('图片：同时画几张', 'Images: pictures at once')} hint={localImages(draft.image) ? t('你自己的服务一次画一张', 'A server of your own draws one at a time') : undefined}>
+            {localImages(draft.image)
+              ? <TextInput disabled value="1" />
+              : <TextInput inputMode="numeric" value={draft.image.concurrency !== undefined ? String(draft.image.concurrency) : ''} placeholder={String(PARALLEL_DEFAULT)} onChange={(event) => { update({ image: without(draft.image, 'concurrency', parallel(event.target.value)) }) }} />}
           </Field>
           <Field label={t('声音：同时生成几处', 'Sound: clips at once')} hint={(draft.sound?.provider ?? 'auto') === 'auto' ? t('声音沿用语音的模型时，和语音共用上面那个数', 'While sound rides on the speech model, it shares the speech number') : undefined}>
             <TextInput inputMode="numeric" value={draft.sound?.concurrency !== undefined ? String(draft.sound.concurrency) : ''} placeholder={String(PARALLEL_DEFAULT)} disabled={(draft.sound?.provider ?? 'auto') === 'auto'} onChange={(event) => { update({ sound: without<SoundDraft, 'concurrency'>(draft.sound ?? { provider: 'auto' }, 'concurrency', parallel(event.target.value)) }) }} />
@@ -615,7 +618,9 @@ function useKeyState(keys: KeyBag, endpoint: string | undefined, ref: string | u
 }
 
 function describeCheck(check: EndpointCheck, t: Translate): string {
-  if (check.ok) return t(`密钥可用${check.models !== undefined ? `（${check.models} 个模型）` : ''}`, `The key works${check.models !== undefined ? ` (${check.models} models)` : ''}`)
+  // The count is of text models; an endpoint that has none — an image server — is not said to have "0 models".
+  const models = check.models !== undefined && check.models > 0 ? check.models : undefined
+  if (check.ok) return t(`密钥可用${models !== undefined ? `（${models} 个模型）` : ''}`, `The key works${models !== undefined ? ` (${models} models)` : ''}`)
   const message = check.message ?? ''
   if (/refused/i.test(message)) return t('密钥被拒绝', 'The key was refused')
   if (/no key/i.test(message)) return t('还没有密钥', 'No key yet')
@@ -1030,9 +1035,14 @@ function PictureSizeFields({ value, onChange, t, advanced }: { value: ImageSetti
     const { aspects: _all, ...others } = value
     onChange(Object.keys(merged).length > 0 ? { ...others, aspects: merged } : others)
   }
+  // An endpoint that draws only some sizes: each kind of picture comes to the one nearest in shape.
+  const only = imageSizes(value)
+  const across = (size: string): string => size.replace('x', '×')
   return (
     <>
-      <Field label={t('清晰度', 'Fineness')} hint={tier === undefined
+      <Field label={t('清晰度', 'Fineness')} hint={only !== undefined
+        ? t(`这个接口只画 ${only.map(across).join('、')}：每类图片取形状最近的一种。`, `This endpoint draws ${only.map(across).join(', ')} only: each kind of picture gets the nearest in shape.`)
+        : tier === undefined
         ? t('默认：每类图片各用自己的常用尺寸。', 'Default: each kind of picture at its usual size.')
         : t(`所有图片共用，按各自的比例分配（16:9 就是 ${pixelSize('16:9', tier).replace('x', '×')}）。模型不支持时会报错，换低一档。`, `For every picture, shaped by its own ratio (16:9 is ${pixelSize('16:9', tier).replace('x', '×')}). A model that cannot do it says so: step down.`)}>
         <Select value={tier ?? ''} options={[{ value: '', label: t('默认（各类图片的常用尺寸）', 'Default (each kind\'s usual size)') }, ...PICTURE_TIERS.map(item => ({ value: item as string, label: t(...TIER_LABELS[item]) }))]} onChange={(next) => { onChange(without(value, 'resolution', next)) }} />
@@ -1044,7 +1054,7 @@ function PictureSizeFields({ value, onChange, t, advanced }: { value: ImageSetti
           const chosen = aspects[kind]
           const custom = chosen !== undefined && !(ASPECTS as readonly string[]).includes(chosen)
           return (
-            <Field key={kind} label={t(...KIND_LABELS[kind])} hint={custom ? t('宽x高，如 1600x900', 'WIDTHxHEIGHT, e.g. 1600x900') : pictureSize(value, kind).replace('x', ' × ')}>
+            <Field key={kind} label={t(...KIND_LABELS[kind])} hint={custom && only === undefined ? t('宽x高，如 1600x900', 'WIDTHxHEIGHT, e.g. 1600x900') : fittedSize(value, pictureSize(value, kind)).replace('x', ' × ')}>
               <Select value={custom ? 'custom' : chosen ?? ''} options={[{ value: '', label: t(`默认（${ASPECT_LABELS[KIND_ASPECT[kind]]![0]}）`, `Default (${ASPECT_LABELS[KIND_ASPECT[kind]]![1]})`) }, ...ASPECTS.map(item => ({ value: item as string, label: t(...ASPECT_LABELS[item]!) })), { value: 'custom', label: t('自己填像素…', 'Exact pixels…') }]} onChange={(next) => { setAspect(kind, next === 'custom' ? pictureSize(value, kind) : next === '' ? undefined : next) }} />
               {custom ? <TextInput value={chosen} placeholder="1600x900" onChange={(event) => { setAspect(kind, event.target.value.trim().length > 0 ? event.target.value : undefined) }} /> : null}
             </Field>
@@ -1184,6 +1194,26 @@ function ComfyFields({ value, onChange, t }: { value: ImageSettings; onChange: (
   )
 }
 
+/**
+ * The sizes an endpoint draws, typed as a list. What is typed stays as typed while it is typed — a comma is not taken
+ * away from under the cursor — and what it comes to goes into the settings.
+ */
+function SizeListField({ value, placeholder, onChange, t }: { value: string[] | undefined; placeholder: string; onChange: (sizes: string[] | undefined) => void; t: Translate }) {
+  const [text, setText] = useState(() => (value ?? []).join(', '))
+  const held = (value ?? []).join(',')
+  // Changed from elsewhere — another service chosen, the settings loaded again: show that.
+  useEffect(() => { setText(current => (sizeList(current).join(',') === held ? current : held.replace(/,/g, ', '))) }, [held])
+  return (
+    <Field label={t('它画得了的尺寸', 'The sizes it draws')} hint={t('每张图取形状最近的一种', 'Each picture gets the nearest in shape')}>
+      <TextInput value={text} spellCheck={false} placeholder={placeholder} onChange={(event) => {
+        setText(event.target.value)
+        const sizes = sizeList(event.target.value)
+        onChange(sizes.length > 0 ? sizes : undefined)
+      }} />
+    </Field>
+  )
+}
+
 function ImageSection({ value, keys, onChange, t, advanced }: { value: ImageSettings; keys: KeyBag; onChange: (value: ImageSettings) => void; t: Translate; advanced: boolean }) {
   const source = imageSourceOf(value)
   const { codex } = keys.view
@@ -1205,6 +1235,12 @@ function ImageSection({ value, keys, onChange, t, advanced }: { value: ImageSett
   const viaConnect = codex.connect && codex.connectSignedIn
   const viaCli = codex.cli && codex.cliSignedIn
   const ready = value.bridge === 'connect' ? viaConnect : value.bridge === 'cli' ? viaCli : viaConnect || viaCli
+  // A server of the author's own behind the custom endpoint: told by its address, and said outright where that misleads.
+  const own = localImages(value)
+  const setOwn = (next: boolean): void => {
+    const { local: _old, ...rest } = value
+    onChange(localImages(rest) === next ? rest : { ...rest, local: next })
+  }
   return (
     <>
       <div className="nv-form-grid">
@@ -1215,7 +1251,7 @@ function ImageSection({ value, keys, onChange, t, advanced }: { value: ImageSett
             { value: 'codex', label: t('ChatGPT 订阅（Codex，无需 key）', 'ChatGPT subscription (Codex, no key)') },
             { value: 'openai', label: t('OpenAI（GPT Image）', 'OpenAI (GPT Image)') },
             { value: 'bailian', label: t('阿里云百炼（Qwen-Image、万相、Z-Image）', 'Aliyun Bailian (Qwen-Image, Wan, Z-Image)') },
-            { value: 'custom', label: t('自定义接口（OpenAI 兼容 /images/generations）', 'Custom endpoint (OpenAI-compatible /images/generations)') },
+            { value: 'custom', label: t('自定义接口（OpenAI 兼容；也可以是你自己的服务器）', 'Custom endpoint (OpenAI-compatible; a server of your own too)') },
             { value: 'comfyui', label: t('ComfyUI（本机）', 'ComfyUI (this machine)') },
             { value: 'diffusers', label: t('Diffusers（本机的 Python）', 'Diffusers (this machine\'s Python)') },
           ]} onChange={pick} />
@@ -1252,6 +1288,15 @@ function ImageSection({ value, keys, onChange, t, advanced }: { value: ImageSett
             <ModelField label={t('模型', 'Model')} endpoint={endpoint} kind="image" value={value.model ?? ''} suggestions={suggestions} refName={value.apiKeyRef} keys={keys} t={t} onChange={(model) => { onChange(without(value, 'model', model)) }} />
           </>
         ) : null}
+        {source === 'custom' ? (
+          <>
+            <label className="nv-check">
+              <input type="checkbox" checked={own} onChange={(event) => { setOwn(event.target.checked) }} />
+              <span>{t('我自己的服务器（本机 / 局域网）：一次画一张，不带参考图', 'A server of my own (this machine or network): one picture at a time, no reference pictures')}</span>
+            </label>
+            <SizeListField value={value.sizes} placeholder={own ? LOCAL_SIZES.join(', ') : t('留空：要多大给多大', 'Empty: whatever size is wanted')} onChange={(sizes) => { onChange(without(value, 'sizes', sizes)) }} t={t} />
+          </>
+        ) : null}
         {value.provider !== 'none' ? <PictureSizeFields value={value} onChange={onChange} t={t} advanced={advanced} /> : null}
         {value.provider !== 'none' && advanced ? (
           <Field label={t('一张图带几张参考图', 'Reference pictures per image')} hint={t(`每张图最多带几张参考图。留空：${REFERENCES_DEFAULT}，最多 ${REFERENCES_MAX}。`, `How many reference pictures one picture may carry. Empty: ${REFERENCES_DEFAULT}; ${REFERENCES_MAX} at most.`)}>
@@ -1271,7 +1316,7 @@ function ImageSection({ value, keys, onChange, t, advanced }: { value: ImageSett
             <span>{t('立绘照名场面画（不勾：素底定妆照）', 'Portraits show the signature scene (unticked: a plain likeness)')}</span>
           </label>
         ) : null}
-        {value.provider === 'openai' || value.provider === 'openrouter' ? (
+        {(value.provider === 'openai' || value.provider === 'openrouter') && !own ? (
           <Field label={t('质量', 'Quality')}>
             <Select value={value.quality ?? ''} options={[{ value: '', label: t('模型默认', 'Model default') }, { value: 'low', label: t('低（快、省）', 'Low (fast, cheap)') }, { value: 'medium', label: t('中', 'Medium') }, { value: 'high', label: t('高', 'High') }]} onChange={(quality) => { onChange(without(value, 'quality', quality !== '' ? quality : undefined)) }} />
           </Field>

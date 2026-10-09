@@ -42,6 +42,7 @@ import { errorMessage } from '../core/util/async'
 import { displayPath, exists } from '../core/util/fs'
 import type { CodexStatus, EndpointCheck, EndpointModel, HelpPackage, HelpView, KeyState, LockView, ModelKind, ShareStatus, WorkspaceInfo } from '../shared/rpc'
 import { unlistedModels } from '../shared/recommended'
+import { localImages } from '../shared/images'
 import { compatibleBase, hostOf, originOf, recommendedSetup, SERVICES, serviceOf, setupPatch, speechProtocol, type ServiceId, type SetupPart } from '../shared/services'
 import type { ModelRoute, NovelSettings, ProjectRef, WorkMode } from '../shared/types'
 import { codexStatus, createCodexBridge } from './codex'
@@ -878,6 +879,8 @@ export class NovelService extends Service {
         // A model on this machine holds no key: a ComfyUI server is there or it is not, Diffusers needs its model named.
         : settings.image.provider === 'comfyui' ? true
           : settings.image.provider === 'diffusers' ? (settings.image.model ?? '').trim().length > 0
+            // A server of the author's own may take no key: it is ready once it is told which model to draw with.
+            : localImages(settings.image) ? (settings.image.model ?? '').trim().length > 0
             : settings.image.provider !== 'none' && this.hasKey(keys, settings.image.baseURL ?? defaultEndpoint(settings.image.provider), settings.image.apiKeyRef),
       tts: settings.tts.provider !== 'none' && this.hasKey(keys, settings.tts.baseURL ?? defaultEndpoint(settings.tts.provider), settings.tts.apiKeyRef),
     }

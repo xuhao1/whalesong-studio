@@ -6,6 +6,7 @@
  */
 import { mkdir, rename, rmdir, stat } from 'node:fs/promises'
 import { basename, dirname, join, relative, resolve } from 'node:path'
+import { imageParallel } from '../shared/images'
 import { parallelOf, type BookLock, type ModelRoute, type NovelSettings, type ProjectManifest, type ProjectRef, type TextRole } from '../shared/types'
 import { contextBudgets, packContext, type ContextPack, type PackOptions } from './context'
 import { currentJob, JobManager, type JobContext } from './jobs'
@@ -141,7 +142,8 @@ export class NovelCore {
       this.embedderCache = undefined
       this.gates.text.setCeiling(parallelOf(this.snapshot.textConcurrency))
       this.gates.speech.setCeiling(parallelOf(this.snapshot.tts.concurrency))
-      this.gates.image.setCeiling(parallelOf(this.snapshot.image.concurrency))
+      // A server of the author's own draws one picture at a time, whatever number is set.
+      this.gates.image.setCeiling(imageParallel(this.snapshot.image))
       this.gates.sound.setCeiling(parallelOf(this.snapshot.sound?.concurrency))
     } catch (error) {
       this.log('failed to load settings', error)

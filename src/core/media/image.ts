@@ -3,16 +3,18 @@
  * Image generation providers.
  *
  *   openrouter  OpenRouter's `/images` endpoint (GPT Image, Gemini image, Seedream, FLUX…).
- *   openai      Any OpenAI-compatible `/images/generations` endpoint (gpt-image-*, gateways).
+ *   openai      Any OpenAI-compatible `/images/generations` endpoint (gpt-image-*, gateways, and a
+ *               server of the author's own, which is asked the way such a server wants to be).
  *   dashscope   Aliyun Bailian multimodal generation (Qwen-Image, Z-Image, Wan image models).
  *   codex       The image generation of a ChatGPT subscription, through a bridge
  *               the Host provides (the Codex Connect plugin or the Codex CLI);
  *               it has no key of its own.
  */
+import { imageSizes, localImages, nearestSize, parseSize } from '../../shared/images'
 import { providerDefault } from '../../shared/recommended'
 import { compatibleBase, originOf } from '../../shared/services'
 import type { CodexBridgeKind, IllustrationSent, ImageProviderKind, ImageSettings } from '../../shared/types'
-import { download, postJson, ProviderError, requireKey, trimBase, type KeySource } from './http'
+import { download, findKey, postJson, ProviderError, requireKey, trimBase, type KeySource } from './http'
 import { ComfyImages, DiffusersImages } from './local'
 
 /** A picture sent along with a prompt so the model keeps what it shows: a character's portrait, usually. */
@@ -75,11 +77,7 @@ export function createImageProvider(settings: ImageSettings, keys: KeySource, br
 
 // ───────────────────────────── sizes ─────────────────────────────
 
-export function parseSize(size: string | undefined): { width: number; height: number } | undefined {
-  const match = /^\s*(\d{2,5})\s*[xX×*]\s*(\d{2,5})\s*$/.exec(size ?? '')
-  if (match === null) return undefined
-  return { width: Number(match[1]), height: Number(match[2]) }
-}
+export { parseSize }
 
 /** The closest of a few aspect ratios, as `W:H`. */
 export function nearestAspect(size: string | undefined, choices: readonly string[] = ['1:1', '16:9', '9:16', '4:3', '3:4']): string {
@@ -194,15 +192,21 @@ class OpenAiImages implements ImageProvider {
 
   async generate(request: ImageRequest): Promise<ImageResult> {
     const base = trimBase(this.settings.baseURL?.trim() || compatibleBase('openai'))
-    const apiKey = await requireKey(this.keys, { ref: this.settings.apiKeyRef, endpoint: base }, 'Image generation')
+    // A server of the author's own draws one picture at a time (the gate lets one through: `imageParallel`), at the
+    // sizes it has, from a model, a prompt, a count and a size: a field it does not know is a request it refuses. It
+    // may take no key, and when it is busy it says for how long.
+    const local = localImages(this.settings)
+    const credential = { ref: this.settings.apiKeyRef, endpoint: base }
+    const apiKey = local ? await findKey(this.keys, credential, 'Image generation') : await requireKey(this.keys, credential, 'Image generation')
     const wanted = request.size ?? this.settings.size ?? '1024x1024'
     const gpt = /^(gpt-image|dall-e|chatgpt-image)/i.test(this.model)
     const prompt = withAvoid(request.prompt, request.negativePrompt ?? this.settings.negativePrompt, 4000)
-    const size = gpt ? gptImageSize(wanted) : wanted
-    const quality = this.settings.quality !== undefined && this.settings.quality.length > 0 ? this.settings.quality : undefined
+    const sizes = imageSizes(this.settings)
+    const size = sizes !== undefined ? nearestSize(wanted, sizes) : gpt ? gptImageSize(wanted) : wanted
+    const quality = !local && this.settings.quality !== undefined && this.settings.quality.length > 0 ? this.settings.quality : undefined
     const references = (request.references ?? []).slice(0, MAX_REFERENCES)
     // Pictures to keep faithful to go through the edits endpoint, which is where GPT Image takes image input.
-    if (references.length > 0 && /^(gpt-image|chatgpt-image)/i.test(this.model)) {
+    if (!local && references.length > 0 && /^(gpt-image|chatgpt-image)/i.test(this.model)) {
       const form = new FormData()
       form.set('model', this.model)
       form.set('prompt', prompt)
@@ -212,7 +216,7 @@ class OpenAiImages implements ImageProvider {
       references.forEach((reference, index) => { form.append('image[]', new Blob([reference.data], { type: reference.mime }), `reference-${index + 1}.${extensionOf(reference.mime)}`) })
       let response: Response
       try {
-        response = await fetch(`${base}/images/edits`, { method: 'POST', headers: { authorization: `Bearer ${apiKey}` }, body: form, signal: request.signal ?? AbortSignal.timeout(300_000) })
+        response = await fetch(`${base}/images/edits`, { method: 'POST', headers: apiKey !== undefined ? { authorization: `Bearer ${apiKey}` } : {}, body: form, signal: request.signal ?? AbortSignal.timeout(300_000) })
       } catch (error) {
         if (request.signal?.aborted === true) throw error
         throw new ProviderError(`request to ${new URL(base).host} failed: ${error instanceof Error ? error.message : String(error)}`)
@@ -222,13 +226,24 @@ class OpenAiImages implements ImageProvider {
       const reply = JSON.parse(text) as ImagesReply
       return { ...await fromReply(reply.data?.[0], request.signal), referencesUsed: references.length, sent: { prompt, size } }
     }
-    const reply = await postJson<ImagesReply>(`${base}/images/generations`, {
-      model: this.model,
-      prompt,
-      size,
-      n: 1,
-      ...(quality !== undefined ? { quality } : {}),
-    }, { apiKey, ...signalOption(request.signal), timeoutMs: 300_000 })
+    let reply: ImagesReply
+    try {
+      reply = await postJson<ImagesReply>(`${base}/images/generations`, {
+        model: this.model,
+        prompt,
+        size,
+        n: 1,
+        ...(quality !== undefined ? { quality } : {}),
+        // A model that has to be loaded first takes its time over the first picture.
+      }, { ...(apiKey !== undefined ? { apiKey } : {}), ...signalOption(request.signal), ...(local ? { timeoutMs: 600_000, heedRetryAfter: true } : { timeoutMs: 300_000 }) })
+    } catch (error) {
+      // No key was sent because none is saved; the server turns out to want one.
+      if (local && apiKey === undefined && error instanceof ProviderError && (error.status === 401 || error.status === 403)) {
+        throw new ProviderError(`${error.message} — this server asks for a key: paste it in Novel Studio → Settings`, error.status, 'NO_CREDENTIAL')
+      }
+      throw error
+    }
+    // Whatever else the reply says — the model's build, how it was sampled, how long it took — is no part of the picture.
     return { ...await fromReply(reply.data?.[0], request.signal), referencesUsed: 0, sent: { prompt, size } }
   }
 }

@@ -4,10 +4,21 @@ import { conventionalEnv, hostOf } from '../../shared/services'
 import { anySignal } from '../util/async'
 
 export class ProviderError extends Error {
+  /** How long the service asked to be left alone (`Retry-After`), where whoever made the request asked to be told ({@link HttpOptions.heedRetryAfter}). A gate waits that long. */
+  retryAfterMs?: number
+
   constructor(message: string, readonly status?: number, readonly code?: string) {
     super(message)
     this.name = 'ProviderError'
   }
+}
+
+/** A `Retry-After` header in milliseconds: so many seconds, or until a date. Undefined where there is none to wait for. */
+export function retryAfterMs(headers: Headers, now: number = Date.now()): number | undefined {
+  const value = headers.get('retry-after')?.trim()
+  if (value === undefined || value.length === 0) return undefined
+  const wait = /^\d+(\.\d+)?$/.test(value) ? Number(value) * 1000 : Date.parse(value) - now
+  return Number.isFinite(wait) && wait > 0 ? Math.round(wait) : undefined
 }
 
 /** Finds the secret that opens an endpoint. */
@@ -44,6 +55,8 @@ export interface HttpOptions {
   headers?: Record<string, string>
   signal?: AbortSignal
   timeoutMs?: number
+  /** Read a refusal's `Retry-After` onto the error ({@link ProviderError.retryAfterMs}): for a server that says how long it is busy. */
+  heedRetryAfter?: boolean
 }
 
 function requestSignal(options: HttpOptions): AbortSignal | undefined {
@@ -81,7 +94,10 @@ export async function postJson<T>(url: string, body: unknown, options: HttpOptio
     parsed = undefined
   }
   if (!response.ok) {
-    throw new ProviderError(`${new URL(url).host} answered ${response.status}: ${providerMessage(parsed) ?? text.slice(0, 300)}`, response.status, providerCode(parsed))
+    const refusal = new ProviderError(`${new URL(url).host} answered ${response.status}: ${providerMessage(parsed) ?? text.slice(0, 300)}`, response.status, providerCode(parsed))
+    const wait = options.heedRetryAfter === true ? retryAfterMs(response.headers) : undefined
+    if (wait !== undefined) refusal.retryAfterMs = wait
+    throw refusal
   }
   if (parsed === undefined) throw new ProviderError(`${new URL(url).host} answered with a non-JSON body`, response.status)
   return parsed as T
@@ -106,7 +122,22 @@ function providerMessage(body: unknown): string | undefined {
     const message = (error as Record<string, unknown>).message
     if (typeof message === 'string') return message
   }
-  return typeof record.message === 'string' ? record.message : undefined
+  if (typeof record.message === 'string') return record.message
+  // FastAPI's way: a sentence, or — for a request it could not read — a list of what is wrong and where.
+  const detail = record.detail
+  if (typeof detail === 'string') return detail
+  if (Array.isArray(detail)) {
+    const lines = detail.map((item: unknown) => {
+      if (typeof item === 'string') return item
+      if (item === null || typeof item !== 'object') return undefined
+      const { loc, msg } = item as { loc?: unknown; msg?: unknown }
+      if (typeof msg !== 'string') return undefined
+      const where = Array.isArray(loc) ? loc.filter(part => part !== 'body').join('.') : ''
+      return where.length > 0 ? `${where}: ${msg}` : msg
+    }).filter((line): line is string => line !== undefined)
+    if (lines.length > 0) return lines.join('; ')
+  }
+  return undefined
 }
 
 function providerCode(body: unknown): string | undefined {
@@ -129,11 +160,12 @@ export interface KeyRequest {
 }
 
 /**
- * Resolve the key for an endpoint: the named credential when the slot names
- * one, else the key saved for the endpoint's host.
- * @throws ProviderError `NO_CREDENTIAL` with guidance when there is none.
+ * The key for an endpoint, where there is one: the named credential when the
+ * slot names one, else the key saved for the endpoint's host. For an endpoint
+ * that may well take none — a server of the author's own.
+ * @throws ProviderError `NO_CREDENTIAL` when the slot names a credential that is not set.
  */
-export async function requireKey(source: KeySource, request: KeyRequest, what: string): Promise<string> {
+export async function findKey(source: KeySource, request: KeyRequest, what: string): Promise<string | undefined> {
   const ref = request.ref?.trim()
   if (ref !== undefined && ref.length > 0) {
     const named = await source.named(ref)
@@ -141,7 +173,17 @@ export async function requireKey(source: KeySource, request: KeyRequest, what: s
     throw new ProviderError(`${what}: "${ref}" is not set — export it in the environment that starts Harness, or clear the name and paste the key in Novel Studio → Settings`, undefined, 'NO_CREDENTIAL')
   }
   const saved = await source.forEndpoint(request.endpoint)
-  if (saved !== undefined && saved.length > 0) return saved
+  return saved !== undefined && saved.length > 0 ? saved : undefined
+}
+
+/**
+ * Resolve the key for an endpoint: the named credential when the slot names
+ * one, else the key saved for the endpoint's host.
+ * @throws ProviderError `NO_CREDENTIAL` with guidance when there is none.
+ */
+export async function requireKey(source: KeySource, request: KeyRequest, what: string): Promise<string> {
+  const key = await findKey(source, request, what)
+  if (key !== undefined) return key
   throw new ProviderError(`${what}: no API key is saved for ${hostOf(request.endpoint) ?? request.endpoint} — paste it in Novel Studio → Settings`, undefined, 'NO_CREDENTIAL')
 }
 
