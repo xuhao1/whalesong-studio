@@ -155,7 +155,7 @@ export function Gallery() {
             </Field>
           ) : null}
           {kind === 'custom' && project.characters.length > 0 ? (
-            <Field label={t('画面里有谁', 'Who is in it')} hint={t('选中的人物会带上各自的视觉锚点和人设图', 'The chosen characters bring their visual anchors and design sheets')}>
+            <Field label={t('画面里有谁', 'Who is in it')} hint={t('他们的样子写进提示词，人设图作参考图', 'How they look goes into the prompt; their design sheets go along')}>
               <div className="nv-chips">
                 {project.characters.map(card => (
                   <Chip key={card.id} active={cast.includes(card.id)} tone={cast.includes(card.id) ? 'blue' : 'neutral'} onClick={() => { setCast(previous => (previous.includes(card.id) ? previous.filter(id => id !== card.id) : [...previous, card.id])) }}>{card.name}</Chip>

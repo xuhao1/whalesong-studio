@@ -121,6 +121,9 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
   }, [project.characters, project.world])
 
   const look = parts?.pieces?.find(piece => piece.of === 'look')
+  // Whose look a `look` is: somebody's — the person the picture is of, or the people a picture of the author's own
+  // prompt names (a scene; a place or a thing has a picture of its own kind).
+  const person = card !== undefined || image.kind === 'scene'
   // A sheet of a look (an outfit), not the main one: it is in use as one, its record has an outfit — or, from before
   // records had parts, its subject says what a look's always said.
   const worn = (card?.visual?.looks ?? []).find(candidate => candidate.sheet === image.path)
@@ -274,7 +277,7 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
         {parts !== undefined ? (
           <dl className="nv-parts">
             {parts.pieces !== undefined && parts.pieces.length > 0 ? parts.pieces.map((piece, index) => (
-              <PieceRow key={index} label={piece.of === 'look' ? (card !== undefined ? t('这个人的样子', 'How they look') : t('它的样子', 'How it looks')) : t(...PIECE[piece.of])} chip={piece.of === 'scene' ? (piece.from === 'asked' ? t('导演按这一张的要求挑的', 'picked by the director for this picture') : t('人物卡上的名场面', 'one of the card\'s signature scenes')) : piece.of !== 'look' ? undefined : card !== undefined
+              <PieceRow key={index} label={piece.of === 'look' ? (person ? t('这个人的样子', 'How they look') : t('它的样子', 'How it looks')) : t(...PIECE[piece.of])} chip={piece.of === 'scene' ? (piece.from === 'asked' ? t('导演按这一张的要求挑的', 'picked by the director for this picture') : t('人物卡上的名场面', 'one of the card\'s signature scenes')) : piece.of !== 'look' ? undefined : person
                 ? (piece.from === 'anchor' ? t('视觉锚点', 'visual anchor') : t('人物卡的外貌（还没有视觉锚点）', 'the card\'s appearance (no anchor yet)'))
                 : (piece.from === 'anchor' ? t('条目上的"样子"', 'the entry\'s look') : t('条目的名字和概括', 'the entry\'s name and summary'))}
               >

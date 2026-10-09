@@ -82,7 +82,7 @@ export interface IllustrateParams {
   look?: string
   /** Scene, cover, custom: what each character wears — character name or id → look name. */
   looks?: Record<string, string>
-  /** Custom: characters shown, so their sheets go along as references. */
+  /** Custom: characters shown — how each looks is written into the prompt, and their sheets go along as references. */
   characters?: string[]
   /** Kept out of this picture, on top of the book's own list. */
   avoid?: string[]
@@ -1138,8 +1138,15 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
   if (params.kind === 'custom') {
     if (params.prompt === undefined || params.prompt.trim().length === 0) throw new ProjectError('novel/invalid', 'a custom illustration needs a prompt')
     const shown = await sheeted((params.characters ?? []).map(find).filter((card): card is CharacterCard => card !== undefined), 'returning')
+    // Whoever is named is in the words as well as in the sheets sent along: a way to the model that takes no reference
+    // picture — a server of the author's own — has only the words to know them by, and "she" is anybody. As written,
+    // a prompt is sent as written.
+    const people = raw ? [] : shown.map((card) => {
+      const look = looksOf(card, worn(card))
+      return look.length > 0 ? piece('look', `${card.name}${lang === 'zh' ? '：' : ': '}${look}`, lookFrom(card)) : undefined
+    })
     const info = await renderImage(core, runtime, {
-      subject: params.prompt,
+      ...(people.some(part => part !== undefined) ? compose([piece('ask', params.prompt), ...people], comma) : { subject: params.prompt }),
       kind: 'scene',
       name: 'custom',
       art,

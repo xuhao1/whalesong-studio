@@ -109,6 +109,36 @@ describe('art direction', () => {
     for (const word of ['十字架', '哥特式教堂', 'halo']) expect(images.calls[0]!.prompt).toContain(word)
   })
 
+  it('writes whoever a picture of the author\'s own prompt names into the words, not only into the sheets sent along', async () => {
+    const { bed, images } = await studio()
+    const { project } = bed.runtime
+    const lead = await project.saveCharacter({ name: '沈砚', appearance: '高瘦，黑发盘在脑后', visual: { prompt: 'lean woman, black hair coiled at the nape, moon-white jacket', looks: [{ id: 'rain', name: '雨衣', prompt: 'oiled-paper rain cape' }] } })
+    const plain = await project.saveCharacter({ name: '阿棠', appearance: '圆脸，两条短辫' })
+    const blank = await project.saveCharacter({ name: '路人' })
+    const info = await illustrate(bed.core, bed.runtime, { kind: 'custom', prompt: '清晨的码头，她提着竹篮走下石阶。', characters: [lead.id, plain.id, blank.id], sheetFirst: false }, task)
+    // What was asked comes first; then each of them by name — the anchor where there is one, the card's prose where not.
+    expect(info.parts?.pieces).toEqual([
+      { of: 'ask', text: '清晨的码头，她提着竹篮走下石阶' },
+      { of: 'look', text: '沈砚：lean woman, black hair coiled at the nape, moon-white jacket', from: 'anchor' },
+      { of: 'look', text: '阿棠：圆脸，两条短辫', from: 'card' },
+    ])
+    const sent = images.calls.at(-1)!.prompt
+    expect(sent).toContain('清晨的码头，她提着竹篮走下石阶，沈砚：lean woman, black hair coiled at the nape, moon-white jacket，阿棠：圆脸，两条短辫')
+    // Somebody whose card says nothing of looks is not named for nothing.
+    expect(sent).not.toContain('路人')
+    // In the outfit the picture puts them in.
+    const worn = await illustrate(bed.core, bed.runtime, { kind: 'custom', prompt: '雨里的码头', characters: [lead.id], looks: { 沈砚: '雨衣' }, sheetFirst: false }, task)
+    expect(worn.parts?.pieces?.[1]?.text).toBe('沈砚：lean woman, black hair coiled at the nape, moon-white jacket，oiled-paper rain cape')
+    // Nobody named: the prompt is what was written, as before. Sent as written: no one is added to it.
+    const empty = await illustrate(bed.core, bed.runtime, { kind: 'custom', prompt: '空无一人的码头' }, task)
+    expect(empty.parts?.pieces).toBeUndefined()
+    expect(empty.parts?.subject).toBe('空无一人的码头')
+    const raw = await illustrate(bed.core, bed.runtime, { kind: 'custom', prompt: 'a pier at dawn', characters: [lead.id], raw: true, sheetFirst: false }, task)
+    expect(raw.parts?.subject).toBe('a pier at dawn')
+    expect(raw.parts?.pieces).toBeUndefined()
+    expect(images.calls.at(-1)!.prompt).not.toContain('lean woman')
+  })
+
   it('sends a raw prompt exactly as written', async () => {
     const { bed, images } = await studio({ negativePrompt: '文字' })
     const info = await illustrate(bed.core, bed.runtime, { kind: 'custom', prompt: 'a lighthouse', raw: true }, task)
