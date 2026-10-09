@@ -12,6 +12,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { VoiceOption } from '../../shared/rpc'
 import type { CharacterCard, CharacterLook, CharacterRole, CharacterStage, LifeMark, SignatureScene, SortedNotes } from '../../shared/types'
 import { sceneFor, scenesOf } from '../../shared/art'
+import { leadOf } from '../../shared/images'
 import { lifeEnd, lifeLine, type Life, type LifeEvent, type LifeStanding } from '../../shared/life'
 import { lines, options, useAssist } from '../forms'
 import { sceneOf, sheetsDrawn, type PortraitScene } from '../labels'
@@ -139,10 +140,11 @@ export function CharacterCards({ shown, grouped, searching, lives, picks }: { sh
     if (!controller.need('image')) return
     const todo = faceless.map(item => item.id)
     // The sheet comes first: whoever has none gets one before their portrait — said here, where the calls are counted.
-    const sheetless = settings?.settings.image.sheetFirst === false ? 0 : faceless.filter(item => item.visual?.sheet === undefined).length
+    const lead = settings !== undefined ? leadOf(settings.settings.image) : 'sheet'
+    const sheetless = lead === 'none' ? 0 : faceless.filter(item => item.visual?.sheet === undefined).length
     // So does their scene: whoever has none on their card has the director pick one from the book first.
     const sceneless = settings?.settings.image.portraitScene === false || !project.chapters.some(chapter => chapter.hasText) ? 0 : faceless.filter(item => scenesOf(item).length === 0).length
-    confirm.ask(t(`给 ${todo.length} 个还没有定妆照的人物各画一张？${sheetless > 0 ? `其中 ${sheetless} 人会先画人设图。` : ''}${sceneless > 0 ? `${sceneless} 人会先由导演找名场面。` : ''}`, `Draw a portrait for each of the ${todo.length} without one?${sheetless > 0 ? ` ${sheetless} get a design sheet first.` : ''}${sceneless > 0 ? ` For ${sceneless} the director finds their signature scenes first.` : ''}`), () => {
+    confirm.ask(t(`给 ${todo.length} 个还没有定妆照的人物各画一张？${sheetless > 0 ? (lead === 'portrait' ? `其中 ${sheetless} 人画完会照着立绘补人设图。` : `其中 ${sheetless} 人会先画人设图。`) : ''}${sceneless > 0 ? `${sceneless} 人会先由导演找名场面。` : ''}`, `Draw a portrait for each of the ${todo.length} without one?${sheetless > 0 ? (lead === 'portrait' ? ` ${sheetless} get a design sheet after it, drawn against it.` : ` ${sheetless} get a design sheet first.`) : ''}${sceneless > 0 ? ` For ${sceneless} the director finds their signature scenes first.` : ''}`), () => {
       void controller.guard(async () => {
         setBatch({ done: 0, total: todo.length })
         try {
@@ -512,7 +514,12 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
   // for one thing, a portrait that was not drawn against the sheet in use (the sheet was drawn, or drawn again, after it).
   const records = usePictures()
   const portraitOf = draft.visual?.portrait !== undefined ? records.byPath.get(draft.visual.portrait) : undefined
-  const portraitBehind = portraitOf !== undefined && draft.visual?.sheet !== undefined && !(portraitOf.parts?.references ?? []).some(reference => reference.path === draft.visual!.sheet)
+  // Which of the two leads says which may have fallen behind: the portrait, where it is drawn against the sheet; the
+  // sheet, where it is drawn against the portrait.
+  const lead = settings !== undefined ? leadOf(settings.settings.image) : 'sheet'
+  const sheetOf = draft.visual?.sheet !== undefined ? records.byPath.get(draft.visual.sheet) : undefined
+  const portraitBehind = lead === 'sheet' && portraitOf !== undefined && draft.visual?.sheet !== undefined && !(portraitOf.parts?.references ?? []).some(reference => reference.path === draft.visual!.sheet)
+  const sheetBehind = lead === 'portrait' && sheetOf !== undefined && draft.visual?.portrait !== undefined && !(sheetOf.parts?.references ?? []).some(reference => reference.path === draft.visual!.portrait)
   const anchorField = `nv-anchor-${card.id}`
   const sceneField = `nv-scene-${card.id}`
   const scenic = settings?.settings.image.portraitScene !== false
@@ -543,10 +550,11 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
           </div>
         ) : null}
         <div className="nv-person-draw">
-          <Button size="sm" variant={draft.visual?.portrait === undefined ? 'primary' : 'outline'} icon="image" disabled={dirty || (drawing !== undefined && !portraitBusy)} busy={portraitBusy} pending={t('正在画立绘…', 'Drawing the portrait…')} onClick={() => draw('portrait', t('立绘已生成', 'Portrait ready'))} title={dirty ? t('先保存当前修改', 'Save your edits first') : draft.visual?.sheet === undefined ? t('先画人设图，再照着它画立绘', 'The design sheet is drawn first, then the portrait against it') : t('照着人设图画', 'Drawn against the design sheet')}>{draft.visual?.portrait !== undefined ? t('重画立绘', 'Redraw portrait') : t('画立绘', 'Draw portrait')}</Button>
-          <Button size="sm" variant="outline" icon="users" disabled={dirty || (drawing !== undefined && !sheetBusy)} busy={sheetBusy} pending={t('正在画人设图…', 'Drawing the sheet…')} onClick={() => draw('sheet', t('人设图已生成', 'Design sheet ready'))} title={dirty ? t('先保存当前修改', 'Save your edits first') : t('三视图，只照文字画：视觉锚点、画风和下面写的想法', 'Three views, drawn from the words alone: the visual anchor, the art direction and the ideas below')}>{draft.visual?.sheet !== undefined ? t('重画人设图', 'Redraw sheet') : t('生成人设图', 'Design sheet')}</Button>
+          <Button size="sm" variant={draft.visual?.portrait === undefined ? 'primary' : 'outline'} icon="image" disabled={dirty || (drawing !== undefined && !portraitBusy)} busy={portraitBusy} pending={t('正在画立绘…', 'Drawing the portrait…')} onClick={() => draw('portrait', t('立绘已生成', 'Portrait ready'))} title={dirty ? t('先保存当前修改', 'Save your edits first') : lead === 'portrait' ? t('只照文字画', 'Drawn from the words alone') : draft.visual?.sheet === undefined ? (lead === 'none' ? t('只照文字画', 'Drawn from the words alone') : t('先画人设图，再照着它画立绘', 'The design sheet is drawn first, then the portrait against it')) : t('照着人设图画', 'Drawn against the design sheet')}>{draft.visual?.portrait !== undefined ? t('重画立绘', 'Redraw portrait') : t('画立绘', 'Draw portrait')}</Button>
+          <Button size="sm" variant="outline" icon="users" disabled={dirty || (drawing !== undefined && !sheetBusy)} busy={sheetBusy} pending={t('正在画人设图…', 'Drawing the sheet…')} onClick={() => draw('sheet', t('人设图已生成', 'Design sheet ready'))} title={dirty ? t('先保存当前修改', 'Save your edits first') : lead === 'portrait' && draft.visual?.portrait !== undefined ? t('三视图，照着立绘画', 'Three views, drawn against the portrait') : t('三视图，只照文字画：视觉锚点、画风和下面写的想法', 'Three views, drawn from the words alone: the visual anchor, the art direction and the ideas below')}>{draft.visual?.sheet !== undefined ? t('重画人设图', 'Redraw sheet') : t('生成人设图', 'Design sheet')}</Button>
         </div>
         {portraitBehind ? <p className="nv-muted nv-small">{t('立绘不是照现在这张人设图画的。', 'The portrait was not drawn against the sheet in use now.')}</p> : null}
+        {sheetBehind ? <p className="nv-muted nv-small">{t('人设图不是照现在这张立绘画的。', 'The sheet was not drawn against the portrait in use now.')}</p> : null}
         {scenic ? (
           <label className="nv-person-moment">
             <span>{t('立绘画', 'Portrait shows')}</span>

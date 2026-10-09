@@ -542,7 +542,7 @@ export interface NovelRpc {
    * Whose design sheets what is about to be drawn would draw first — asked before any of it is started, so that the author
    * can be told and say yes, or not this time. `unknown`: asks that cannot be told yet (panels with no storyboard).
    */
-  'image.sheetsFirst': { params: { root: string; asks: SheetsAsk[] }; result: { people: { id: string; name: string }[]; unknown: number; /** The image service takes no reference pictures: the sheets drawn first would not be sent with this picture. */ unheld?: boolean } }
+  'image.sheetsFirst': { params: { root: string; asks: SheetsAsk[] }; result: { people: { id: string; name: string }[]; unknown: number; /** The image service takes no reference pictures: the sheets drawn first would not be sent with this picture. */ unheld?: boolean; /** The sheets would be drawn after the portraits asked for, against them (`image.lead` is `portrait`). */ after?: boolean } }
   'image.list': { params: { root: string }; result: { images: IllustrationInfo[] } }
   /** `released`: whose picture it was — the cards and entries it was taken off, by name. Absent from a Host before the picture was taken off them. */
   'image.delete': { params: { root: string; id: string }; result: { ok: boolean; released?: string[] } }

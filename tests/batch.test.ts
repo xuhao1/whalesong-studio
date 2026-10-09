@@ -343,6 +343,20 @@ describe('batches of real work', () => {
       await bed.core.settings.update({ image: { ...bed.core.currentSettings().image, sheetFirst: false } })
       const other = await project.saveCharacter({ name: '摆渡人', role: 'minor', appearance: '蓑衣', visual: { prompt: '披蓑衣的老人' } })
       expect((await artPlan(bed.core, bed.runtime, { portraits: [other.id] })).columns).toEqual(['portrait'])
+      // Where the author has the portrait lead, the two change places: the portrait first, from the words alone, and
+      // the sheet after it, against it.
+      await bed.core.settings.update({ image: { ...bed.core.currentSettings().image, lead: 'portrait' } })
+      const third = await project.saveCharacter({ name: '柳先生', role: 'supporting', appearance: '长衫，圆框眼镜', visual: { prompt: '穿长衫戴圆框眼镜的老人' } })
+      const turned = await artPlan(bed.core, bed.runtime, { portraits: [third.id] })
+      expect(turned.steps.map(step => [step.op, step.after ?? []])).toEqual([['sheet', [`${third.id}:portrait`]], ['portrait', []]])
+      const before = images.calls.length
+      expect((await runBatch(turned, { origin: 'user' }, 'zh')).failed).toEqual([])
+      const his = images.calls.slice(before)
+      expect(his).toHaveLength(2)
+      expect(his[0]!.prompt).toContain('人物立绘')
+      expect(his[0]!.references).toHaveLength(0)
+      expect(his[1]!.prompt).toContain('人物设定图')
+      expect(his[1]!.references).toHaveLength(1)
     })
 
     it('draws the things that matter beside the places, each the object alone', async () => {

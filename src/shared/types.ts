@@ -955,6 +955,15 @@ export interface ImageSettings {
    */
   sheetFirst?: boolean
   /**
+   * Which picture of a person the others are held against, and so which is drawn first where one is missing.
+   * `sheet` (default): the design sheet — drawn from the words alone; a portrait, and every picture they are in, is
+   * drawn against it, and whoever lacks one gets it first. `portrait`: the portrait — drawn from the words alone and
+   * never against the sheet; the sheet is drawn against the portrait (after it, where there is none yet), and other
+   * pictures against the sheet. `none`: nothing is drawn for the sake of another picture; whatever there is goes
+   * along. Left out, `sheetFirst: false` reads as `none`.
+   */
+  lead?: 'sheet' | 'portrait' | 'none'
+  /**
    * A portrait asked for with nothing said of it shows the person in their signature scene, which the director picks
    * from the book and keeps on the card (`visual.scenes`). Unset: yes. `false`: such a portrait is plain — facing the
    * viewer, on a plain ground.

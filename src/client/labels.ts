@@ -336,5 +336,8 @@ export function sceneOf(job: { result?: Record<string, unknown> } | undefined): 
 
 export function sheetsDrawn(job: { result?: Record<string, unknown> } | undefined, t: (zh: string, en: string) => string): string {
   const names = Array.isArray(job?.result?.sheets) ? job.result.sheets.filter((name): name is string => typeof name === 'string') : []
+  // A portrait that leads has the sheet drawn after it, against it.
+  const after = Array.isArray(job?.result?.sheetsAfter) ? job.result.sheetsAfter.filter((name): name is string => typeof name === 'string') : []
+  if (after.length > 0) return t('（照着它补了人设图）', ' (and the design sheet, drawn against it)')
   return names.length > 0 ? t(`（先画了${names.map(name => `「${name}」`).join('、')}的人设图）`, ` (first drew the design sheet of ${names.join(', ')})`) : ''
 }

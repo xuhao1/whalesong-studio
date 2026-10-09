@@ -15,6 +15,7 @@
 import { castAt } from './growth'
 import type { AudioLine, CameraMove, CharacterCard, ComicBoard, ComicPanel, StoryboardDensity, SheetsAsk } from '../../shared/types'
 import { MAIN_LINE, PANEL_SECONDS, referencesOf, STORYBOARD_DENSITIES } from '../../shared/types'
+import { leadOf } from '../../shared/images'
 import { clip, hashText, newId, sameName } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { asArray, asList, asRecord, asText } from '../llm'
@@ -331,12 +332,20 @@ export interface RenderPanelsResult {
  * be told "this will first draw N design sheets" and say yes, or not this time.
  * @returns `unknown`: how many of the asks cannot be told yet — panels of a chapter whose storyboard is not laid out.
  */
-export async function sheetsAhead(core: NovelCore, runtime: ProjectRuntime, asks: readonly SheetsAsk[]): Promise<{ people: { id: string; name: string }[]; unknown: number; /** The way to the image model takes no reference pictures: the sheets would be drawn, and this picture not held against them. */ unheld?: true }> {
+export async function sheetsAhead(core: NovelCore, runtime: ProjectRuntime, asks: readonly SheetsAsk[]): Promise<{ people: { id: string; name: string }[]; unknown: number; /** The way to the image model takes no reference pictures: the sheets would be drawn, and this picture not held against them. */ unheld?: true; /** The sheets are drawn after the portraits asked for, against them: the portrait leads. */ after?: true }> {
   const { project } = runtime
   const people = new Map<string, string>()
   let unknown = 0
+  // Where the portrait leads, a portrait draws no sheet before it — it draws theirs after it, against it, where they have none.
+  const portraitLeads = leadOf(core.currentSettings().image) === 'portrait'
+  let following = 0
   for (const ask of asks) {
     let cards: CharacterCard[]
+    if (portraitLeads && ask.kind === 'portrait') {
+      const card = ask.target !== undefined ? await project.findCharacter(ask.target) : undefined
+      if (card !== undefined && card.visual?.sheet === undefined) { people.set(card.id, card.name); following += 1 }
+      continue
+    }
     if (ask.kind === 'panels') {
       const chapter = await project.findChapter(ask.chapter)
       const board = chapter !== undefined ? await project.comicBoard(chapter.plan.id) : undefined
@@ -358,7 +367,9 @@ export async function sheetsAhead(core: NovelCore, runtime: ProjectRuntime, asks
   // Sheets are drawn first so that the picture is held against them. Where the way to the model takes no picture, they
   // are drawn all the same — they are the person's design — but nothing is held against them: said with the answer.
   const unheld = people.size > 0 && (await (await core.imageProvider(runtime))?.prompting?.().catch(() => undefined))?.references === 0
-  return { people: [...people].map(([id, name]) => ({ id, name })), unknown, ...(unheld ? { unheld: true as const } : {}) }
+  // Every sheet asked about is one that follows a portrait: the question is then about what comes after, not before.
+  const after = following > 0 && following === people.size
+  return { people: [...people].map(([id, name]) => ({ id, name })), unknown, ...(unheld ? { unheld: true as const } : {}), ...(after ? { after: true as const } : {}) }
 }
 
 export async function renderPanels(core: NovelCore, runtime: ProjectRuntime, params: { chapter: string; panels?: string[]; force?: boolean; concurrency?: number; /** `false`: this once, no design sheet is drawn first. */ sheetFirst?: boolean }, task: TaskContext): Promise<RenderPanelsResult> {

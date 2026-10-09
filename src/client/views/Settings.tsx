@@ -14,7 +14,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import type { EndpointCheck, EndpointModel, KeyState, ModelKind, ModelOption, ProviderOption, SettingsView as SettingsData } from '../../shared/rpc'
 import type { ComfyCatalog } from '../../shared/types'
 import { ASPECTS, DEFAULT_ART_STYLE, KIND_ASPECT, PICTURE_KINDS, PICTURE_TIERS, pictureSize, pixelSize, type PictureKind, type PictureTier } from '../../shared/art'
-import { fittedSize, imageSizes, LOCAL_SIZES, localImages, sizeList, type ImageLimits } from '../../shared/images'
+import { fittedSize, imageSizes, leadOf, LOCAL_SIZES, localImages, sizeList, type ImageLimits, type PictureLead } from '../../shared/images'
 import { FFMPEG_INSTALL } from '../../shared/text'
 import { OutsideHelp } from '../OutsideHelp'
 import { RecommendedCard } from '../Recommended'
@@ -1337,10 +1337,17 @@ function ImageSection({ value, keys, onChange, t, advanced }: { value: ImageSett
         ) : null}
         {value.provider !== 'none' ? (
           // Shown outright, not only among the fine print: it decides how many pictures a click draws.
-          <label className="nv-check">
-            <input type="checkbox" checked={value.sheetFirst !== false} onChange={(event) => { const { sheetFirst: _old, ...rest } = value; onChange(event.target.checked ? rest : { ...rest, sheetFirst: false }) }} />
-            <span>{t('画人之前先补人设图', 'Draw a missing design sheet before a picture of the person')}</span>
-          </label>
+          <Field label={t('人物的图以哪张为准', 'Which picture of a person leads')} hint={leadOf(value) === 'portrait'
+            ? t('立绘只照文字画；人设图照着立绘画，没有的画完立绘就补；别的图照着人设图画。', 'A portrait is drawn from the words alone; the sheet is drawn against it — after it, where there is none — and other pictures against the sheet.')
+            : leadOf(value) === 'none'
+              ? t('不为了一张图先去画另一张；已有的人设图照旧带上。', 'Nothing is drawn for another picture\'s sake; a sheet that exists still goes along.')
+              : t('人设图只照文字画；立绘和别的图照着它画，没有的先补。', 'The sheet is drawn from the words alone; a portrait and every other picture is drawn against it, and whoever has none gets it first.')}>
+            <Select<PictureLead> value={leadOf(value)} options={[
+              { value: 'sheet', label: t('人设图为准：先人设图，再照着它画立绘', 'The design sheet: sheet first, the portrait against it') },
+              { value: 'portrait', label: t('立绘为准：先立绘，再照着它补人设图', 'The portrait: portrait first, the sheet against it') },
+              { value: 'none', label: t('各画各的：不自动补', 'Neither: nothing is drawn first') },
+            ]} onChange={(lead) => { const { sheetFirst: _old, lead: _lead, ...rest } = value; onChange(lead === 'sheet' ? rest : { ...rest, lead }) }} />
+          </Field>
         ) : null}
         {value.provider !== 'none' ? (
           <label className="nv-check">

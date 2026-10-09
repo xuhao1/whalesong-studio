@@ -188,3 +188,13 @@ export function fittedSize(settings: ImageSettings, wanted: string, limits?: Ima
 export function imageParallel(settings: ImageSettings): number {
   return localImages(settings) ? 1 : parallelOf(settings.concurrency)
 }
+
+/** Which picture of a person leads; see `ImageSettings.lead`. */
+export type PictureLead = 'sheet' | 'portrait' | 'none'
+
+/** Which picture of a person the others are held against: what the settings say, the design sheet where they say nothing. */
+export function leadOf(settings: Pick<ImageSettings, 'lead' | 'sheetFirst'>): PictureLead {
+  if (settings.lead === 'sheet' || settings.lead === 'portrait' || settings.lead === 'none') return settings.lead
+  return settings.sheetFirst === false ? 'none' : 'sheet'
+}
+

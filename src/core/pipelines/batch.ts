@@ -20,6 +20,7 @@ import {
   type ArtStep, type BatchKind, type BatchRowView, type CharacterCard, type BatchStepState, type BatchStepView, type BatchView, type PromptLanguage, type StageStatus, type StageStep,
   type StoryboardDensity, type TextStep,
 } from '../../shared/types'
+import { leadOf } from '../../shared/images'
 import { hashText, proseOnly } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import type { JobContext } from '../jobs'
@@ -637,6 +638,11 @@ export async function artPlan(core: NovelCore, runtime: ProjectRuntime, params: 
     if (found === undefined) throw new ProjectError('novel/not-found', `no character matches "${ref}"`)
     return found
   }
+  // Which of a person's two pictures waits for the other: the portrait for the sheet, unless the author has the
+  // portrait lead — then the sheet is drawn after it, and against it.
+  const lead = leadOf(core.currentSettings().image)
+  const portrayed = new Set<string>()
+  if (lead === 'portrait') for (const ref of params.portraits ?? []) portrayed.add((await card(ref)).id)
   const sheetOf = new Map<string, string>()
   const sheet = (who: CharacterCard, redo: boolean): void => {
     if (sheetOf.has(who.id)) return
@@ -645,6 +651,7 @@ export async function artPlan(core: NovelCore, runtime: ProjectRuntime, params: 
     steps.push({
       target: who.id,
       op: 'sheet',
+      after: portrayed.has(who.id) ? [key(who.id, 'portrait')] : [],
       skip: async () => noImages ?? (!redo && (await project.findCharacter(who.id))?.visual?.sheet !== undefined ? L(lang, '已有人设图', 'has a design sheet') : undefined),
       async run(sub) {
         await illustrate(core, runtime, { kind: 'sheet', target: who.id }, sub)
@@ -655,8 +662,9 @@ export async function artPlan(core: NovelCore, runtime: ProjectRuntime, params: 
   for (const ref of params.sheets ?? []) sheet(await card(ref), force)
   // The sheet comes first: a portrait asked for somebody who has none puts their sheet on the table too, as a step that
   // is seen — not as something the portrait does on the side.
-  const sheetsToo = core.currentSettings().image.sheetFirst !== false && params.sheetFirst !== false
-  const asIs = params.sheetFirst === false ? { sheetFirst: false as const } : {}
+  const sheetsToo = lead !== 'none' && params.sheetFirst !== false
+  // Where the portrait leads the sheet is a step of this batch, after the portrait: the portrait is not to draw one itself.
+  const asIs = params.sheetFirst === false || lead === 'portrait' ? { sheetFirst: false as const } : {}
   for (const ref of params.portraits ?? []) {
     const who = await card(ref)
     if (sheetsToo && who.visual?.sheet === undefined) sheet(who, false)
@@ -664,8 +672,8 @@ export async function artPlan(core: NovelCore, runtime: ProjectRuntime, params: 
     steps.push({
       target: who.id,
       op: 'portrait',
-      // Drawn against the sheet when this batch makes one: the same person in both.
-      after: sheetOf.has(who.id) ? [sheetOf.get(who.id)!] : [],
+      // Drawn against the sheet when this batch makes one: the same person in both. (The other way round where the portrait leads.)
+      after: lead !== 'portrait' && sheetOf.has(who.id) ? [sheetOf.get(who.id)!] : [],
       skip: async () => noImages ?? (!force && (await project.findCharacter(who.id))?.visual?.portrait !== undefined ? L(lang, '已有立绘', 'has a portrait') : undefined),
       async run(sub) {
         await illustrate(core, runtime, { kind: 'portrait', target: who.id, ...asIs }, sub)

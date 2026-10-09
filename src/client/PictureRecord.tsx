@@ -175,7 +175,11 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
       else standing.push({ tone: 'warn', text: left.length > 0 ? t('绘图服务不收参考图，人设图没有带上。', 'The image service takes no reference pictures: the design sheet did not go along.') : t('画的时候没有带人设图。', 'Drawn without a design sheet.') })
     }
     if (image.kind === 'sheet' && !ofLook && references.length > 0) {
-      standing.push({ tone: 'info', text: t('这张人设图是照着另一张图画的，所以和那张几乎一样。现在重画只照文字。', 'This sheet was drawn against another picture, so it is nearly the same. A redraw now goes by the words alone.') })
+      // Against their portrait: the portrait leads (or it was asked for this once). Against anything else: how sheets were redrawn once.
+      const portraits = new Set([card.visual?.portrait, ...(card.stages ?? []).map(stage => stage.visual?.portrait), ...scenesOf(card).map(scene => scene.portrait)].filter((path): path is string => path !== undefined))
+      if (references.some(reference => reference.path === card.visual?.portrait)) standing.push({ tone: 'ok', text: t('照着现在这张立绘画的。', 'Drawn against the portrait in use now.') })
+      else if (references.some(reference => portraits.has(reference.path) || /^portrait-|\/portrait-/.test(reference.path))) standing.push({ tone: 'warn', text: t('照着以前的一张立绘画的。', 'Drawn against an earlier portrait.') })
+      else standing.push({ tone: 'info', text: t('这张人设图是照着另一张图画的，所以和那张几乎一样。现在重画只照文字。', 'This sheet was drawn against another picture, so it is nearly the same. A redraw now goes by the words alone.') })
     }
   } else if (entry !== undefined) {
     const turn = (entry.events ?? []).find(event => event.image === image.path)
