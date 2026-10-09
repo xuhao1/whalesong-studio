@@ -13,7 +13,7 @@ import { JobBar } from './JobBar'
 import { RecommendedNotice } from './Recommended'
 import { Icon, type IconName } from './icons'
 import { BatchMatrix, batchOf, GateNotes } from './Batch'
-import { jobTarget, jobTitle, waitingLabel } from './labels'
+import { jobTarget, jobTitle, leftBehind, waitingLabel } from './labels'
 import { StudioController, type Capability, type ReadMode, type StageTab, type StudioView } from './store'
 import {
   Button, CrewRuns, cx, Empty, Menu, Modal, OverlayRootProvider, Popover, Progress, Spinner, StudioProvider, ThoughtButton, Toasts, useAction, useConfirm, useSnapshot, useStudio, useT,
@@ -209,7 +209,7 @@ function JobNotice() {
         ? t(`语音合成结束：新合成 ${output.rendered} 句，${failed} 句失败`, `Speech finished: ${output.rendered} new, ${failed} failed`)
         : t(`语音合成完成：新合成 ${output.rendered} 句${(output.cached ?? 0) > 0 ? `，${output.cached} 句沿用已有的` : ''}`, `Speech done: ${output.rendered} new lines${(output.cached ?? 0) > 0 ? `, ${output.cached} reused` : ''}`))
     } else if (ended.job.kind === 'audio') controller.toast('success', t('有声脚本已编排好', 'The audio script is ready'))
-    else controller.toast('success', t('有声漫这一步完成了', 'The motion-comic step is done'))
+    else controller.toast('success', `${t('有声漫这一步完成了', 'The motion-comic step is done')}${leftBehind(ended.job, t)}`)
   }, [controller, ended?.nonce])
   return null
 }

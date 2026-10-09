@@ -1090,6 +1090,50 @@ describe('which picture of a person leads', () => {
     expect((await project.illustrations()).at(-1)!.parts?.references).toEqual([{ path: kept, label: '沈砚的立绘' }])
   })
 
+  it('draws one portrait against the sheet, or from the words alone, as the author says for that one — whichever leads', async () => {
+    const { sheetsAhead } = await import('../src/core/pipelines/comic')
+    // The sheet leads; this one portrait is asked for from the words alone: no sheet before it, and hers stays behind.
+    {
+      const { bed, images } = await studio()
+      const { project } = bed.runtime
+      const bare = await project.saveCharacter({ name: '阿棠', role: 'supporting', appearance: '圆脸', visual: { prompt: 'round-faced girl, two short braids' } })
+      expect(await sheetsAhead(bed.core, bed.runtime, [{ kind: 'portrait', target: bare.id }])).toEqual({ people: [{ id: bare.id, name: '阿棠' }], unknown: 0 })
+      expect(await sheetsAhead(bed.core, bed.runtime, [{ kind: 'portrait', target: bare.id, from: 'words' }])).toEqual({ people: [], unknown: 0 })
+      const alone = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: bare.id, plain: true, from: 'words' }, task)
+      expect(images.calls).toHaveLength(1)
+      expect(images.calls[0]!.references).toHaveLength(0)
+      expect(alone.sheets).toBeUndefined()
+      expect((await project.findCharacter(bare.id))!.visual?.sheet).toBeUndefined()
+      // …and then the sheet against that portrait: the way from a portrait the author likes to a sheet that matches it.
+      await illustrate(bed.core, bed.runtime, { kind: 'sheet', target: bare.id, from: 'portrait' }, task)
+      expect(images.calls[1]!.references).toHaveLength(1)
+      expect((await project.illustrations()).at(-1)!.parts?.references).toEqual([{ path: alone.path, label: '阿棠的立绘' }])
+      // With a sheet there, "from the words" still leaves it behind.
+      await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: bare.id, plain: true, from: 'words' }, task)
+      expect(images.calls[2]!.references).toHaveLength(0)
+      await bed.cleanup()
+    }
+    // The portrait leads; this one is asked for against the sheet: hers is drawn first — from the words, not against
+    // the portrait she has, or the new portrait would only come back as the old — and nothing follows.
+    {
+      const { bed, images } = await studio({ lead: 'portrait' })
+      const { project } = bed.runtime
+      const kept = await project.writeAsset('images/portrait-kept.png', new Uint8Array([1]))
+      const card = await project.saveCharacter({ name: '沈砚', role: 'protagonist', appearance: '高瘦', visual: { prompt: 'lean woman, black hair', portrait: kept } })
+      expect(await sheetsAhead(bed.core, bed.runtime, [{ kind: 'portrait', target: card.id, from: 'sheet' }])).toEqual({ people: [{ id: card.id, name: '沈砚' }], unknown: 0 })
+      const portrait = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id, plain: true, from: 'sheet' }, task)
+      expect(images.calls).toHaveLength(2)
+      expect(images.calls[0]!.prompt).toContain('人物设定图')
+      expect(images.calls[0]!.references).toHaveLength(0)
+      expect(images.calls[1]!.prompt).toContain('人物立绘')
+      expect(images.calls[1]!.references).toHaveLength(1)
+      expect(portrait.sheets).toEqual(['沈砚'])
+      expect(portrait.sheetsAfter).toBeUndefined()
+      expect(portrait.parts?.references).toEqual([{ path: (await project.findCharacter(card.id))!.visual!.sheet, label: '沈砚' }])
+      await bed.cleanup()
+    }
+  })
+
   it('draws nothing for the sake of another picture where neither leads', async () => {
     const { bed, images } = await studio({ lead: 'none' })
     const { project } = bed.runtime

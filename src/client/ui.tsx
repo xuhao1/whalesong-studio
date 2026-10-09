@@ -234,10 +234,10 @@ export function TextArea({ className, minRows = 2, maxRows = 14, value, ...rest 
   return <textarea {...rest} ref={ref} value={value} className={cx('nv-input nv-textarea', className)} />
 }
 
-export function Select<T extends string>({ value, options, onChange, className, disabled }: { value: T; options: { value: T; label: string }[]; onChange: (value: T) => void; className?: string; disabled?: boolean }) {
+export function Select<T extends string>({ value, options, onChange, className, disabled }: { value: T; options: { value: T; label: string; /** Listed, and not to be chosen now. */ disabled?: boolean }[]; onChange: (value: T) => void; className?: string; disabled?: boolean }) {
   return (
     <select className={cx('nv-input nv-select', className)} value={value} disabled={disabled} onChange={(event) => { onChange(event.target.value as T) }}>
-      {options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+      {options.map(option => <option key={option.value} value={option.value} disabled={option.disabled}>{option.label}</option>)}
     </select>
   )
 }

@@ -4,7 +4,8 @@
  *
  *   openrouter  OpenRouter's `/images` endpoint (GPT Image, Gemini image, Seedream, FLUX…).
  *   openai      Any OpenAI-compatible `/images/generations` endpoint (gpt-image-*, gateways, and a
- *               server of the author's own, which is asked the way such a server wants to be).
+ *               server of the author's own, which is asked the way such a server wants to be);
+ *               with reference pictures, its `/images/edits`.
  *   dashscope   Aliyun Bailian multimodal generation (Qwen-Image, Z-Image, Wan image models).
  *   codex       The image generation of a ChatGPT subscription, through a bridge
  *               the Host provides (the Codex Connect plugin or the Codex CLI);
@@ -14,7 +15,7 @@ import { fittedSize, imageLimitsOf, imageSizes, LOCAL_SIZES, localImages, neares
 import { providerDefault } from '../../shared/recommended'
 import { compatibleBase, originOf } from '../../shared/services'
 import type { CodexBridgeKind, IllustrationSent, ImageProviderKind, ImageSettings } from '../../shared/types'
-import { download, findKey, getJson, postJson, ProviderError, requireKey, trimBase, type KeySource } from './http'
+import { download, findKey, getJson, postForm, postJson, ProviderError, requireKey, trimBase, type KeySource } from './http'
 import { ComfyImages, DiffusersImages } from './local'
 
 /** A picture sent along with a prompt so the model keeps what it shows: a character's portrait, usually. */
@@ -58,8 +59,10 @@ export interface PromptRoom {
   /** Things to keep out travel inside the prompt (the service has no field for them), and count against the room. */
   avoidInPrompt: boolean
   /**
-   * How many reference pictures go along at most, where that is known before drawing: `0` — none. The prompt is then
-   * written without a word of any, and none is read off the disk for it.
+   * How many reference pictures go along at most, where that is known before drawing: what the service says of the
+   * model, or what sending one found out. `0` — none: the prompt is then written without a word of any, and none is
+   * read off the disk for it. Left out: not known — they are sent, and a service that will not have them says so
+   * ({@link referencesRefused}).
    */
   references?: number
 }
@@ -233,6 +236,29 @@ async function ownLimits(base: string, model: string, apiKey: string | undefined
   }
 }
 
+/** The code of a refusal that is about the reference pictures: the endpoint, or the model on it, takes none. */
+export const REFERENCES_REFUSED = 'REFERENCES_REFUSED'
+
+/** A picture was asked for with reference pictures, and the service would not have them: drawn from the words alone, it may yet be drawn. */
+export function referencesRefused(error: unknown): error is ProviderError {
+  return error instanceof ProviderError && error.code === REFERENCES_REFUSED
+}
+
+/**
+ * Endpoints that turned out to have no way of taking a picture with a prompt, by base and model: found out by sending
+ * one, and held to for a while — not for good: a server of the author's own learns to.
+ */
+const withoutPictures = new Map<string, number>()
+const WITHOUT_PICTURES_MS = 30 * 60_000
+
+function takesNoPictures(base: string, model: string): boolean {
+  const since = withoutPictures.get(`${base}\n${model}`)
+  return since !== undefined && Date.now() - since < WITHOUT_PICTURES_MS
+}
+
+/** GPT Image takes pictures through the edits endpoint, as many as are sent. */
+const GPT_PICTURES = /^(gpt-image|chatgpt-image)/i
+
 class OpenAiImages implements ImageProvider {
   readonly kind = 'openai' as const
   readonly model: string
@@ -241,17 +267,19 @@ class OpenAiImages implements ImageProvider {
     this.model = settings.model ?? providerDefault('image', 'openai').model
   }
 
-  /** The author's figure; else, at a server of their own, what its model list says the model reads. */
+  /**
+   * The author's figure for the prompt; else, at a server of their own, what its model list says the model reads.
+   * How many reference pictures go along is what that list says of the model too — and where nothing says, it is not
+   * known before one is sent: no model is taken to draw from words alone for its name.
+   */
   async prompting(signal?: AbortSignal): Promise<PromptRoom> {
     const local = localImages(this.settings)
     const set = tokensSet(this.settings)
-    // Pictures go through the edits endpoint, which is GPT Image's: any other model on this path is sent the words alone.
-    if (!local) return { ...(set !== undefined ? { tokens: set } : {}), avoidInPrompt: true, ...(/^(gpt-image|chatgpt-image)/i.test(this.model) ? {} : { references: 0 }) }
     const base = trimBase(this.settings.baseURL?.trim() || compatibleBase('openai'))
-    const listed = set === undefined ? (await ownLimits(base, this.model, await findKey(this.keys, { ref: this.settings.apiKeyRef, endpoint: base }, 'Image generation').catch(() => undefined), signal))?.promptTokens : undefined
-    const tokens = set ?? listed
-    // Such a server takes no reference pictures.
-    return { ...(tokens !== undefined ? { tokens } : {}), avoidInPrompt: true, references: 0 }
+    const limits = local ? await ownLimits(base, this.model, await findKey(this.keys, { ref: this.settings.apiKeyRef, endpoint: base }, 'Image generation').catch(() => undefined), signal) : undefined
+    const tokens = set ?? limits?.promptTokens
+    const references = !local && GPT_PICTURES.test(this.model) ? undefined : limits?.references ?? (takesNoPictures(base, this.model) ? 0 : undefined)
+    return { ...(tokens !== undefined ? { tokens } : {}), avoidInPrompt: true, ...(references !== undefined ? { references: Math.min(MAX_REFERENCES, references) } : {}) }
   }
 
   async generate(request: ImageRequest): Promise<ImageResult> {
@@ -264,62 +292,66 @@ class OpenAiImages implements ImageProvider {
     const apiKey = local ? await findKey(this.keys, credential, 'Image generation') : await requireKey(this.keys, credential, 'Image generation')
     const wanted = request.size ?? this.settings.size ?? '1024x1024'
     const gpt = /^(gpt-image|dall-e|chatgpt-image)/i.test(this.model)
-    // Such a server is asked what its model takes: the largest picture, the longest prompt, whether it draws from a seed.
+    // (A server said to be the author's own is asked as one, whatever name its model goes by.)
+    const gptPictures = !local && GPT_PICTURES.test(this.model)
+    // Such a server is asked what its model takes: the largest picture, the longest prompt, whether it draws from a
+    // seed, how many pictures it takes with a prompt.
     const limits = local ? await ownLimits(base, this.model, apiKey, request.signal) : undefined
     const prompt = withAvoid(request.prompt, request.negativePrompt ?? this.settings.negativePrompt, Math.min(4000, limits?.promptChars ?? 4000))
     const sizes = imageSizes(this.settings)
     const within = local && limits !== undefined && sizeList(this.settings.sizes).length === 0
     let size = local ? fittedSize(this.settings, wanted, limits) : sizes !== undefined ? nearestSize(wanted, sizes) : gpt ? gptImageSize(wanted) : wanted
-    // From its own seed it draws the same picture every time it is asked the same: a picture drawn again is drawn from another.
-    const seed = limits?.seeded === true ? Math.floor(Math.random() * 2 ** 31) : undefined
     const quality = !local && this.settings.quality !== undefined && this.settings.quality.length > 0 ? this.settings.quality : undefined
-    const references = (request.references ?? []).slice(0, MAX_REFERENCES)
-    // Pictures to keep faithful to go through the edits endpoint, which is where GPT Image takes image input.
-    if (!local && references.length > 0 && /^(gpt-image|chatgpt-image)/i.test(this.model)) {
+    // Pictures to keep faithful to go through the edits endpoint (OpenAI's `images.edit()`): GPT Image's way, and the
+    // way of any server that speaks it. As many as the server's list says the model takes; none where sending one
+    // was refused a while ago.
+    const most = gptPictures ? MAX_REFERENCES : takesNoPictures(base, this.model) && limits?.references === undefined ? 0 : Math.min(MAX_REFERENCES, limits?.references ?? MAX_REFERENCES)
+    const references = (request.references ?? []).slice(0, most)
+    // From its own seed it draws the same picture every time it is asked the same: a picture drawn again is drawn from another.
+    const seed = (references.length > 0 ? limits?.editSeeded : limits?.seeded) === true ? Math.floor(Math.random() * 2 ** 31) : undefined
+    // A model that has to be loaded first takes its time over the first picture.
+    const http = { ...(apiKey !== undefined ? { apiKey } : {}), ...signalOption(request.signal), ...(local ? { timeoutMs: 600_000, heedRetryAfter: true } : { timeoutMs: 300_000 }) }
+    const ask = async (): Promise<ImagesReply> => {
+      if (references.length === 0) return await postJson<ImagesReply>(`${base}/images/generations`, { model: this.model, prompt, size, n: 1, ...(quality !== undefined ? { quality } : {}), ...(seed !== undefined ? { seed } : {}) }, http)
       const form = new FormData()
       form.set('model', this.model)
       form.set('prompt', prompt)
       form.set('size', size)
       form.set('n', '1')
       if (quality !== undefined) form.set('quality', quality)
-      references.forEach((reference, index) => { form.append('image[]', new Blob([reference.data], { type: reference.mime }), `reference-${index + 1}.${extensionOf(reference.mime)}`) })
-      let response: Response
-      try {
-        response = await fetch(`${base}/images/edits`, { method: 'POST', headers: apiKey !== undefined ? { authorization: `Bearer ${apiKey}` } : {}, body: form, signal: request.signal ?? AbortSignal.timeout(300_000) })
-      } catch (error) {
-        if (request.signal?.aborted === true) throw error
-        throw new ProviderError(`request to ${new URL(base).host} failed: ${error instanceof Error ? error.message : String(error)}`)
-      }
-      const text = await response.text()
-      if (!response.ok) throw new ProviderError(`${new URL(base).host} answered ${response.status}: ${text.slice(0, 300)}`, response.status)
-      const reply = JSON.parse(text) as ImagesReply
-      return { ...await fromReply(reply.data?.[0], request.signal), referencesUsed: references.length, sent: { prompt, size } }
+      if (seed !== undefined) form.set('seed', String(seed))
+      // One picture is `image`, several are `image[]` — as OpenAI's own client sends them. (GPT Image gets `image[]` either way, as it always has here.)
+      const field = gptPictures || references.length > 1 ? 'image[]' : 'image'
+      references.forEach((reference, index) => { form.append(field, new Blob([reference.data], { type: reference.mime }), `reference-${index + 1}.${extensionOf(reference.mime)}`) })
+      return await postForm<ImagesReply>(`${base}/images/edits`, form, http)
     }
-    const ask = async (): Promise<ImagesReply> => await postJson<ImagesReply>(`${base}/images/generations`, {
-      model: this.model,
-      prompt,
-      size,
-      n: 1,
-      ...(quality !== undefined ? { quality } : {}),
-      ...(seed !== undefined ? { seed } : {}),
-      // A model that has to be loaded first takes its time over the first picture.
-    }, { ...(apiKey !== undefined ? { apiKey } : {}), ...signalOption(request.signal), ...(local ? { timeoutMs: 600_000, heedRetryAfter: true } : { timeoutMs: 300_000 }) })
     let reply: ImagesReply
     try {
-      reply = await ask()
+      try {
+        reply = await ask()
+      } catch (error) {
+        // The size was worked out from the limits the server gave, and the server will not have it: one of the usual sizes, once.
+        const usual = nearestSize(wanted, LOCAL_SIZES)
+        if (!(within && usual !== size && error instanceof ProviderError && (error.status === 400 || error.status === 422) && /\bsize\b|dimension/i.test(error.message))) throw error
+        size = usual
+        reply = await ask()
+      }
     } catch (error) {
       // No key was sent because none is saved; the server turns out to want one.
       if (local && apiKey === undefined && error instanceof ProviderError && (error.status === 401 || error.status === 403)) {
         throw new ProviderError(`${error.message} — this server asks for a key: paste it in Novel Studio → Settings`, error.status, 'NO_CREDENTIAL')
       }
-      // The size was worked out from the limits the server gave, and the server will not have it: one of the usual sizes, once.
-      const usual = nearestSize(wanted, LOCAL_SIZES)
-      if (!(within && usual !== size && error instanceof ProviderError && (error.status === 400 || error.status === 422) && /\bsize\b|dimension/i.test(error.message))) throw error
-      size = usual
-      reply = await ask()
+      // Asked with pictures, and refused as a request it cannot take — not for the key, not for being busy, not for a
+      // fault of its own: it is the pictures. Whoever asked may ask again with the words alone. An endpoint that is
+      // not there at all is not asked a second time for a while.
+      if (references.length > 0 && !gptPictures && error instanceof ProviderError && error.status !== undefined && [400, 404, 405, 415, 422, 501].includes(error.status)) {
+        if ([404, 405, 501].includes(error.status)) withoutPictures.set(`${base}\n${this.model}`, Date.now())
+        throw new ProviderError(error.message, error.status, REFERENCES_REFUSED)
+      }
+      throw error
     }
     // Whatever else the reply says — the model's build, how it was sampled, how long it took — is no part of the picture.
-    return { ...await fromReply(reply.data?.[0], request.signal), referencesUsed: 0, sent: { prompt, size, ...(seed !== undefined ? { seed } : {}) } }
+    return { ...await fromReply(reply.data?.[0], request.signal), referencesUsed: references.length, sent: { prompt, size, ...(seed !== undefined ? { seed } : {}) } }
   }
 }
 
@@ -379,6 +411,7 @@ export function forgetImageListings(): void {
   listings.clear()
   learnt.clear()
   ownListings.clear()
+  withoutPictures.clear()
 }
 
 /** What the endpoint's listing says a model takes; undefined when the listing cannot be had or does not know the model. */

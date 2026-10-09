@@ -68,18 +68,18 @@ export function trimBase(url: string): string {
   return url.replace(/\/+$/, '')
 }
 
-/** POST JSON and parse the JSON reply. Non-2xx replies become a ProviderError carrying the provider's own message. */
-export async function postJson<T>(url: string, body: unknown, options: HttpOptions = {}): Promise<T> {
+/** POST a body and parse the JSON reply. Non-2xx replies become a ProviderError carrying the provider's own message. */
+async function post<T>(url: string, body: string | FormData, headers: Record<string, string>, options: HttpOptions): Promise<T> {
   let response: Response
   try {
     response = await fetch(url, {
       method: 'POST',
       headers: {
-        'content-type': 'application/json',
+        ...headers,
         ...(options.apiKey !== undefined ? { authorization: `Bearer ${options.apiKey}` } : {}),
         ...options.headers,
       },
-      body: JSON.stringify(body),
+      body,
       signal: requestSignal(options) ?? null,
     })
   } catch (error) {
@@ -101,6 +101,16 @@ export async function postJson<T>(url: string, body: unknown, options: HttpOptio
   }
   if (parsed === undefined) throw new ProviderError(`${new URL(url).host} answered with a non-JSON body`, response.status)
   return parsed as T
+}
+
+/** POST JSON and parse the JSON reply. Non-2xx replies become a ProviderError carrying the provider's own message. */
+export async function postJson<T>(url: string, body: unknown, options: HttpOptions = {}): Promise<T> {
+  return await post<T>(url, JSON.stringify(body), { 'content-type': 'application/json' }, options)
+}
+
+/** POST a form with files in it (`multipart/form-data`) and parse the JSON reply; refusals as {@link postJson} has them. */
+export async function postForm<T>(url: string, form: FormData, options: HttpOptions = {}): Promise<T> {
+  return await post<T>(url, form, {}, options)
 }
 
 /** Download bytes from a URL the provider handed back. */

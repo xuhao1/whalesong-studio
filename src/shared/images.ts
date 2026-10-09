@@ -98,13 +98,22 @@ export interface ImageLimits {
   seeded?: boolean
   /** How many steps it samples in when not told, for the author to read. */
   steps?: number
+  /**
+   * How many reference pictures it takes with a prompt (`reference_images.max_count`; none where it says it edits no
+   * image: `capabilities.image_edit: false`). Left out where the list does not say — it is then found out by sending one.
+   */
+  references?: number
+  /** With a reference picture it draws from a seed of its own unless sent one (`edit_defaults.seed`). */
+  editSeeded?: boolean
 }
 
 /** A model's row as a server lists it, read for what it says of pictures; undefined where it says nothing of their size. */
 export function imageLimitsOf(row: unknown): ImageLimits | undefined {
   if (row === null || typeof row !== 'object') return undefined
-  const { limits, defaults } = row as { limits?: Record<string, unknown>; defaults?: Record<string, unknown> }
+  const { limits, defaults, capabilities, reference_images: pictures, edit_defaults: edits } = row as { limits?: Record<string, unknown>; defaults?: Record<string, unknown>; capabilities?: Record<string, unknown>; reference_images?: Record<string, unknown>; edit_defaults?: Record<string, unknown> }
   const figure = (value: unknown): number | undefined => (typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined)
+  const count = typeof pictures?.max_count === 'number' && Number.isFinite(pictures.max_count) && pictures.max_count >= 0 ? Math.floor(pictures.max_count) : undefined
+  const references = capabilities?.image_edit === false ? 0 : count
   const maxWidth = figure(limits?.max_width)
   const maxHeight = figure(limits?.max_height)
   if (maxWidth === undefined || maxHeight === undefined) return undefined
@@ -120,6 +129,8 @@ export function imageLimitsOf(row: unknown): ImageLimits | undefined {
     ...(promptTokens !== undefined ? { promptTokens } : {}),
     ...(typeof defaults?.seed === 'number' ? { seeded: true } : {}),
     ...(steps !== undefined ? { steps } : {}),
+    ...(references !== undefined ? { references } : {}),
+    ...(typeof edits?.seed === 'number' ? { editSeeded: true } : {}),
   }
 }
 

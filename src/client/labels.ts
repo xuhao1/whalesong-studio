@@ -334,10 +334,28 @@ export function sceneOf(job: { result?: Record<string, unknown> } | undefined): 
   return typeof none === 'string' ? { none } : undefined
 }
 
+/**
+ * Said with a picture once it is there: reference pictures the image service did not take with it — none of them, or
+ * those over its measure. Said after, never before: what a service takes is shown by drawing. Empty where all went along.
+ */
+export function leftBehind(job: { result?: Record<string, unknown> } | undefined, t: (zh: string, en: string) => string): string {
+  const left = job?.result?.left
+  if (typeof left !== 'object' || left === null) return ''
+  const { names, taken } = left as { names?: unknown; taken?: unknown }
+  const who = Array.isArray(names) ? names.filter((name): name is string => typeof name === 'string') : []
+  if (who.length === 0) return ''
+  return typeof taken === 'number' && taken > 0
+    ? t(`（绘图服务一次只收 ${taken} 张参考图：${who.join('、')}的没带上）`, ` (the image service takes ${taken} reference picture${taken === 1 ? '' : 's'} at a time: ${who.join(', ')} stayed behind)`)
+    : t('（绘图服务没收参考图：只照文字画的）', ' (the image service took no reference picture: drawn from the words alone)')
+}
+
+/** What was drawn for a picture besides itself — a sheet first, or after — and what did not go along with it ({@link leftBehind}). */
 export function sheetsDrawn(job: { result?: Record<string, unknown> } | undefined, t: (zh: string, en: string) => string): string {
   const names = Array.isArray(job?.result?.sheets) ? job.result.sheets.filter((name): name is string => typeof name === 'string') : []
   // A portrait that leads has the sheet drawn after it, against it.
   const after = Array.isArray(job?.result?.sheetsAfter) ? job.result.sheetsAfter.filter((name): name is string => typeof name === 'string') : []
-  if (after.length > 0) return t('（照着它补了人设图）', ' (and the design sheet, drawn against it)')
-  return names.length > 0 ? t(`（先画了${names.map(name => `「${name}」`).join('、')}的人设图）`, ` (first drew the design sheet of ${names.join(', ')})`) : ''
+  const left = leftBehind(job, t)
+  // (Where the service took no picture, the sheet that followed was not drawn against the portrait: it is not said to be.)
+  if (after.length > 0) return `${left.length > 0 ? t('（补了人设图）', ' (and the design sheet)') : t('（照着它补了人设图）', ' (and the design sheet, drawn against it)')}${left}`
+  return `${names.length > 0 ? t(`（先画了${names.map(name => `「${name}」`).join('、')}的人设图）`, ` (first drew the design sheet of ${names.join(', ')})`) : ''}${left}`
 }

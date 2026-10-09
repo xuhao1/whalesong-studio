@@ -991,7 +991,7 @@ export interface SortedNotes {
  * the panels of a chapter's storyboard.
  */
 export type SheetsAsk =
-  | { kind: 'portrait' | 'scene' | 'cover' | 'custom'; target?: string; quote?: string; characters?: string[] }
+  | { kind: 'portrait' | 'scene' | 'cover' | 'custom'; target?: string; quote?: string; characters?: string[]; /** A portrait: what the author has it drawn against this once — their sheet (drawn first where there is none), or the words alone. */ from?: 'sheet' | 'words' }
   | { kind: 'panels'; chapter: string; panels?: string[]; force?: boolean }
 
 /** Reference images per picture when the author has set no number of their own, and the most that can be set. */
@@ -1693,10 +1693,12 @@ export interface IllustrationParts {
   /** What the prompt said of the reference images: who each one shows, and what they are there for. */
   referenceNote?: string
   /**
-   * The pictures it would have been held against, left behind: the way to the model takes none, and said so before
-   * anything was drawn. The prompt does not speak of them — it has the words alone to go by.
+   * The pictures it would have been held against, left behind by the image service: it takes none (all of them are
+   * here, and `references` is empty), or fewer than there were (the rest are here). The prompt does not speak of them.
    */
   left?: { path: string; label: string }[]
+  /** The service was sent them and would not have them: what it answered. The picture was then drawn from the words alone. */
+  leftWhy?: string
 }
 
 /** What went to an image service for one picture, word for word. */

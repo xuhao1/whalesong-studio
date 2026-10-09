@@ -1305,7 +1305,7 @@ function ImageSection({ value, keys, onChange, t, advanced }: { value: ImageSett
             <EndpointField value={value.baseURL ?? ''} placeholder={endpoint} hint={value.provider === 'dashscope' ? t('百炼的域名；专属域名也可以', 'The Bailian domain; a workspace domain works too') : undefined} t={t} onChange={(baseURL) => { onChange(without(value, 'baseURL', baseURL)) }} />
             <KeyField endpoint={endpoint} refName={value.apiKeyRef} keys={keys} t={t} onRef={(name) => { onChange(without(value, 'apiKeyRef', name)) }} />
             <ModelField label={t('模型', 'Model')} endpoint={endpoint} kind="image" value={value.model ?? ''} suggestions={suggestions} refName={value.apiKeyRef} keys={keys} t={t} eager={own} onModels={setListed}
-              describe={model => (model.image !== undefined ? t(`最大 ${model.image.maxWidth}×${model.image.maxHeight}${model.image.steps !== undefined ? ` · ${model.image.steps} 步` : ''}${model.image.promptTokens !== undefined ? ` · 读 ${model.image.promptTokens} 个 token` : ''}`, `up to ${model.image.maxWidth}×${model.image.maxHeight}${model.image.steps !== undefined ? ` · ${model.image.steps} steps` : ''}${model.image.promptTokens !== undefined ? ` · reads ${model.image.promptTokens} tokens` : ''}`) : undefined)}
+              describe={model => (model.image !== undefined ? t(`最大 ${model.image.maxWidth}×${model.image.maxHeight}${model.image.steps !== undefined ? ` · ${model.image.steps} 步` : ''}${model.image.promptTokens !== undefined ? ` · 读 ${model.image.promptTokens} 个 token` : ''}${model.image.references === undefined ? '' : model.image.references > 0 ? ` · 参考图 ${model.image.references} 张` : ' · 不收参考图'}`, `up to ${model.image.maxWidth}×${model.image.maxHeight}${model.image.steps !== undefined ? ` · ${model.image.steps} steps` : ''}${model.image.promptTokens !== undefined ? ` · reads ${model.image.promptTokens} tokens` : ''}${model.image.references === undefined ? '' : model.image.references > 0 ? ` · ${model.image.references} reference picture${model.image.references === 1 ? '' : 's'}` : ' · no reference pictures'}`) : undefined)}
               onChange={(model) => { onChange(without(value, 'model', model)) }} />
           </>
         ) : null}
@@ -1313,7 +1313,7 @@ function ImageSection({ value, keys, onChange, t, advanced }: { value: ImageSett
           <>
             <label className="nv-check">
               <input type="checkbox" checked={own} onChange={(event) => { setOwn(event.target.checked) }} />
-              <span>{t('我自己的服务器（本机 / 局域网）：一次画一张，不带参考图', 'A server of my own (this machine or network): one picture at a time, no reference pictures')}</span>
+              <span>{t('我自己的服务器（本机 / 局域网）：一次画一张', 'A server of my own (this machine or network): one picture at a time')}</span>
             </label>
             <SizeListField value={value.sizes} placeholder={own ? (limits !== undefined ? t(`留空：照服务器说的，最大 ${limits.maxWidth}×${limits.maxHeight}`, `Empty: as the server says, up to ${limits.maxWidth}×${limits.maxHeight}`) : LOCAL_SIZES.join(', ')) : t('留空：要多大给多大', 'Empty: whatever size is wanted')} onChange={(sizes) => { onChange(without(value, 'sizes', sizes)) }} t={t} />
           </>

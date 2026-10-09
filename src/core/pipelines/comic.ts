@@ -323,6 +323,8 @@ export interface RenderPanelsResult {
   failed: number
   /** Whose design sheet was drawn before the panels, for the panels to be held against: they come back in the book and had none. */
   sheets?: string[]
+  /** How many of the panels just drawn went without reference pictures they were to be held against: the image service did not take them. */
+  unheld?: number
 }
 
 /** Draw the panels of a chapter's storyboard that have no picture yet. */
@@ -332,7 +334,7 @@ export interface RenderPanelsResult {
  * be told "this will first draw N design sheets" and say yes, or not this time.
  * @returns `unknown`: how many of the asks cannot be told yet — panels of a chapter whose storyboard is not laid out.
  */
-export async function sheetsAhead(core: NovelCore, runtime: ProjectRuntime, asks: readonly SheetsAsk[]): Promise<{ people: { id: string; name: string }[]; unknown: number; /** The way to the image model takes no reference pictures: the sheets would be drawn, and this picture not held against them. */ unheld?: true; /** The sheets are drawn after the portraits asked for, against them: the portrait leads. */ after?: true }> {
+export async function sheetsAhead(core: NovelCore, runtime: ProjectRuntime, asks: readonly SheetsAsk[]): Promise<{ people: { id: string; name: string }[]; unknown: number; /** The sheets are drawn after the portraits asked for, against them: the portrait leads. */ after?: true }> {
   const { project } = runtime
   const people = new Map<string, string>()
   let unknown = 0
@@ -341,7 +343,8 @@ export async function sheetsAhead(core: NovelCore, runtime: ProjectRuntime, asks
   let following = 0
   for (const ask of asks) {
     let cards: CharacterCard[]
-    if (portraitLeads && ask.kind === 'portrait') {
+    // (…unless this one is asked for against the sheet: then theirs comes first, as where the sheet leads.)
+    if (portraitLeads && ask.kind === 'portrait' && ask.from !== 'sheet') {
       const card = ask.target !== undefined ? await project.findCharacter(ask.target) : undefined
       if (card !== undefined && card.visual?.sheet === undefined) { people.set(card.id, card.name); following += 1 }
       continue
@@ -364,12 +367,11 @@ export async function sheetsAhead(core: NovelCore, runtime: ProjectRuntime, asks
     }
     for (const card of cards) people.set(card.id, card.name)
   }
-  // Sheets are drawn first so that the picture is held against them. Where the way to the model takes no picture, they
-  // are drawn all the same — they are the person's design — but nothing is held against them: said with the answer.
-  const unheld = people.size > 0 && (await (await core.imageProvider(runtime))?.prompting?.().catch(() => undefined))?.references === 0
+  // (Whether the way to the model takes the sheets along is not said here: it is the service's to show, and is said
+  // with the picture once it is drawn — what a service takes changes, and is not always known before it is asked.)
   // Every sheet asked about is one that follows a portrait: the question is then about what comes after, not before.
   const after = following > 0 && following === people.size
-  return { people: [...people].map(([id, name]) => ({ id, name })), unknown, ...(unheld ? { unheld: true as const } : {}), ...(after ? { after: true as const } : {}) }
+  return { people: [...people].map(([id, name]) => ({ id, name })), unknown, ...(after ? { after: true as const } : {}) }
 }
 
 export async function renderPanels(core: NovelCore, runtime: ProjectRuntime, params: { chapter: string; panels?: string[]; force?: boolean; concurrency?: number; /** `false`: this once, no design sheet is drawn first. */ sheetFirst?: boolean }, task: TaskContext): Promise<RenderPanelsResult> {
@@ -394,6 +396,7 @@ export async function renderPanels(core: NovelCore, runtime: ProjectRuntime, par
   const mostReferences = referencesOf((await core.settings.get()).image.references)
   let rendered = 0
   let failed = 0
+  let unheld = 0
   let done = 0
   task.job?.progress(0, todo.length, L(lang, '绘制画面', 'drawing panels'))
   const updates = new Map<string, Partial<ComicPanel>>()
@@ -442,6 +445,7 @@ export async function renderPanels(core: NovelCore, runtime: ProjectRuntime, par
       }, task)
       updates.set(panel.id, { image: info.path })
       rendered += 1
+      if ((info.parts?.left?.length ?? 0) > 0) unheld += 1
     } catch (error) {
       if (task.signal?.aborted === true) throw error
       updates.set(panel.id, { error: error instanceof Error ? error.message : String(error) })
@@ -452,7 +456,7 @@ export async function renderPanels(core: NovelCore, runtime: ProjectRuntime, par
     await flush()
   }, task.signal)
   task.job?.result({ chapterId: board.chapterId, rendered, failed })
-  return { chapterId: board.chapterId, panels: board.panels.length, rendered, failed, ...(first.drawn.length > 0 ? { sheets: first.drawn } : {}) }
+  return { chapterId: board.chapterId, panels: board.panels.length, rendered, failed, ...(first.drawn.length > 0 ? { sheets: first.drawn } : {}), ...(unheld > 0 ? { unheld } : {}) }
 }
 
 /** Change one panel of a chapter's storyboard by hand; a new prompt drops the old picture. */

@@ -11,13 +11,19 @@ import type { AddressInfo } from 'node:net'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { namedKeySource, retryAfterMs } from '../src/core/media/http'
 import { listEndpointModels } from '../src/core/media/discovery'
-import { createImageProvider, forgetImageListings } from '../src/core/media/image'
+import { createImageProvider, forgetImageListings, referencesRefused } from '../src/core/media/image'
 import { fittedSize, imageLimitsOf, imageParallel, imageSizes, LOCAL_SIZES, localImages, nearestSize, sizeList, sizeWithin } from '../src/shared/images'
 import { privateAddress } from '../src/shared/services'
+import type { JobContext } from '../src/core/jobs'
 import type { ImageSettings } from '../src/shared/types'
 import { createTestBed, PIXEL } from './support/harness'
 
 const B64 = Buffer.from(PIXEL).toString('base64')
+
+/** A job nobody watches: what the work says of itself goes nowhere, unless a test listens for part of it. */
+function quietJob(): JobContext {
+  return { id: 'job-test', kind: 'illustrate', project: 'test', origin: 'user', signal: new AbortController().signal, progress() {}, write() {}, rewrite() {}, result() {}, think() {}, crew() {}, note: () => () => {} }
+}
 const keys = namedKeySource(name => (name === 'GOOD' ? 'good' : undefined))
 
 interface Seen {
@@ -69,6 +75,11 @@ describe('GPT Image through an OpenAI-compatible endpoint', () => {
         response.writeHead(429, { 'content-type': 'application/json', 'retry-after': '7' }).end(JSON.stringify({ error: { message: 'slow down', code: 'rate_limit_exceeded' } }))
         return
       }
+      // The edits endpoint is GPT Image's: asked of it for another model, OpenAI refuses the request.
+      if (path === '/v1/images/edits' && !/^(gpt-image|chatgpt-image)/.test(String(body.model))) {
+        response.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { message: `Invalid value: '${String(body.model)}'. Value must be 'gpt-image-2'.`, code: 'invalid_value' } }))
+        return
+      }
       // DALL·E answers with an address to fetch; GPT Image with the picture itself.
       const data = body.model === 'dall-e-3' ? [{ url: `${origin}/file.png`, revised_prompt: 'a small paper boat' }] : [{ b64_json: B64 }]
       response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ created: 1, data, usage: { total_tokens: 9 } }))
@@ -114,12 +125,32 @@ describe('GPT Image through an OpenAI-compatible endpoint', () => {
 
   it('fetches a picture that is answered as an address', async () => {
     const provider = createImageProvider({ provider: 'openai', baseURL: base, model: 'dall-e-3', apiKeyRef: 'GOOD' }, keys)!
-    const image = await provider.generate({ prompt: 'a paper boat', size: '1280x720', references: [{ data: PIXEL, mime: 'image/png' }] })
+    const image = await provider.generate({ prompt: 'a paper boat', size: '1280x720' })
     expect(Buffer.from(image.data).equals(Buffer.from(PIXEL))).toBe(true)
-    // DALL·E takes no picture: the reference stays behind, and the result says so.
     expect(seen[0]).toMatchObject({ path: '/v1/images/generations' })
     expect(seen[0]!.body).toEqual({ model: 'dall-e-3', prompt: 'a paper boat', size: '1536x1024', n: 1 })
     expect(image.referencesUsed).toBe(0)
+  })
+
+  it('does not tell by a model\'s name that it takes no picture: it is sent one, and the refusal is said to be about the picture', async () => {
+    const provider = createImageProvider({ provider: 'openai', baseURL: base, model: 'dall-e-3', apiKeyRef: 'GOOD' }, keys)!
+    // Nothing is known before one is sent.
+    expect(await provider.prompting!()).toEqual({ avoidInPrompt: true })
+    const refusal = await provider.generate({ prompt: 'her, in the rain', size: '1280x720', references: [{ data: PIXEL, mime: 'image/png' }] }).catch((error: unknown) => error)
+    expect(referencesRefused(refusal)).toBe(true)
+    expect(refusal).toMatchObject({ status: 400 })
+    expect((refusal as Error).message).toContain('Invalid value')
+    expect(seen).toHaveLength(1)
+    // One picture goes as `image`, the way OpenAI's own client sends one.
+    expect(seen[0]).toMatchObject({ path: '/v1/images/edits', type: 'multipart/form-data' })
+    expect(seen[0]!.body).toEqual({ model: 'dall-e-3', prompt: 'her, in the rain', size: '1536x1024', n: '1', files: { image: 1 } })
+    // A refusal that may have been about that one picture is not held against the next: it is tried again.
+    expect(await provider.prompting!()).toEqual({ avoidInPrompt: true })
+    // A refusal that is not about the picture — the service is busy — stays what it was.
+    const busy = createImageProvider({ provider: 'openai', baseURL: base, model: 'busy-model', apiKeyRef: 'GOOD', local: false }, keys)!
+    const slow = await busy.generate({ prompt: 'a boat', references: [{ data: PIXEL, mime: 'image/png' }] }).catch((error: unknown) => error)
+    expect(slow).toMatchObject({ status: 429, code: 'rate_limit_exceeded' })
+    expect(referencesRefused(slow)).toBe(false)
   })
 
   it('draws nothing without a key, and hands a refusal on as the service made it', async () => {
@@ -150,8 +181,10 @@ describe('an image server of the author\'s own', () => {
    * What the server holds its callers to; a test loosens what it is not about. `listing`: it says what its models take
    * (`GET /v1/models`, as the author's server does) and then takes any side from 256 to 768 in steps of 32, and a seed;
    * without it, the three sizes and no seed. `grid: false` with a listing: it lists limits and still takes only the three.
+   * `edits`: it takes one reference picture with a prompt (`POST /v1/images/edits`, a form), as the author's server came
+   * to on 2026-10-10 — and its list says so; without it there is no such endpoint, as there was none before.
    */
-  const rules = { key: 'good' as string | undefined, drawMs: 20, busyFirst: 0, retryAfter: '1', listing: false, grid: true }
+  const rules = { key: 'good' as string | undefined, drawMs: 20, busyFirst: 0, retryAfter: '1', listing: false, grid: true, edits: false }
   let listings = 0
   let drawing = 0
   let most = 0
@@ -168,22 +201,42 @@ describe('an image server of the author\'s own', () => {
       if (rules.listing && request.method === 'GET' && request.url === '/v1/models') {
         listings += 1
         // The rows of the author's server, as it gave them on 2026-10-10.
-        const row = (id: string, steps: number, most: number) => ({ id, object: 'model', owned_by: 'local', repo_id: 'Qwen/Qwen-Image-2.1', pipeline_class: 'QwenImage21Pipeline', defaults: { width: 768, height: 768, steps, seed: 42, true_cfg_scale: 1 }, limits: { max_width: 768, max_height: 768, max_pixels: 589824, max_steps: most, max_prompt_chars: 2000, max_prompt_tokens: 256 }, supported_n: [1], response_formats: ['b64_json'] })
+        const pictures = rules.edits ? { capabilities: { text_to_image: true, image_edit: true, mask: false, stream: false }, reference_images: { max_count: 1, formats: ['PNG', 'JPEG', 'WEBP'], max_bytes: 10485760, mask_supported: false }, edit_defaults: { width: 768, height: 768, seed: null, true_cfg_scale: 1 } } : {}
+        const row = (id: string, steps: number, most: number) => ({ id, object: 'model', owned_by: 'local', repo_id: 'Qwen/Qwen-Image-2.1', pipeline_class: 'QwenImage21Pipeline', defaults: { width: 768, height: 768, steps, seed: 42, true_cfg_scale: 1 }, limits: { max_width: 768, max_height: 768, max_pixels: 589824, max_steps: most, max_prompt_chars: 2000, max_prompt_tokens: 256 }, ...pictures, supported_n: [1], response_formats: ['b64_json'] })
         answer(200, { object: 'list', data: [row('qwen-image-2.1-nf4', 25, 40), row('qwen-image-2.1-turbo-nf4', 8, 8), { id: 'text-model', object: 'model' }] })
         return
       }
-      if (request.method !== 'POST' || request.url !== '/v1/images/generations') {
-        answer(request.url === '/v1/images/generations' ? 405 : 404, { detail: 'Not Found' })
+      const editing = rules.edits && request.url === '/v1/images/edits'
+      if (request.method !== 'POST' || (request.url !== '/v1/images/generations' && !editing)) {
+        answer(request.url === '/v1/images/generations' || editing ? 405 : 404, { detail: request.method === 'POST' ? 'Not Found' : 'Method Not Allowed' })
         return
       }
-      const body = JSON.parse(raw.toString('utf8')) as Record<string, unknown>
-      seen.push({ path: request.url, auth: request.headers.authorization, type: 'application/json', body })
-      const unknown = Object.keys(body).filter(key => !['model', 'prompt', 'n', 'size', ...(rules.listing ? ['seed'] : [])].includes(key))
+      const type = request.headers['content-type'] ?? ''
+      if (editing && !type.startsWith('multipart/form-data')) {
+        answer(415, { detail: 'Use multipart/form-data with image and prompt; OpenAI images.edit() handles this.' })
+        return
+      }
+      const body = editing ? formFields(raw, type) : JSON.parse(raw.toString('utf8')) as Record<string, unknown>
+      seen.push({ path: request.url!, auth: request.headers.authorization, type: editing ? 'multipart/form-data' : 'application/json', body })
+      if (editing) {
+        // As the author's server answered when it was asked with nothing to draw (2026-10-10).
+        const strange = Object.keys(body).filter(key => !['model', 'prompt', 'n', 'size', 'seed', 'steps', 'response_format', 'files'].includes(key))
+        if (strange.length > 0) {
+          answer(422, { detail: `Unsupported edit field: ${strange[0]!}` })
+          return
+        }
+        const files = Object.entries(body.files as Record<string, number>)
+        if (files.some(([name]) => name !== 'image' && name !== 'image[]') || files.reduce((sum, [, count]) => sum + count, 0) !== 1) {
+          answer(422, { detail: 'Exactly one reference image is supported.' })
+          return
+        }
+      }
+      const unknown = editing ? [] : Object.keys(body).filter(key => !['model', 'prompt', 'n', 'size', ...(rules.listing ? ['seed'] : [])].includes(key))
       if (unknown.length > 0) {
         answer(422, { detail: unknown.map(key => ({ type: 'extra_forbidden', loc: ['body', key], msg: 'Extra inputs are not permitted' })) })
         return
       }
-      if (body.n !== 1) {
+      if ((editing ? Number(body.n) : body.n) !== 1) {
         answer(422, { detail: [{ type: 'value_error', loc: ['body', 'n'], msg: 'Value error, Only integer n=1 is supported.', input: body.n }] })
         return
       }
@@ -225,7 +278,7 @@ describe('an image server of the author\'s own', () => {
   afterAll(async () => { await new Promise((resolve) => { server.close(resolve) }) })
   beforeEach(() => {
     seen.length = 0
-    Object.assign(rules, { key: 'good', drawMs: 20, busyFirst: 0, retryAfter: '1', listing: false, grid: true })
+    Object.assign(rules, { key: 'good', drawMs: 20, busyFirst: 0, retryAfter: '1', listing: false, grid: true, edits: false })
     most = 0
     refused = 0
     listings = 0
@@ -277,7 +330,7 @@ describe('an image server of the author\'s own', () => {
 
   it('is sent a model, a prompt, a count of one and a size it draws — and nothing else', async () => {
     const provider = createImageProvider(own({ quality: 'high', negativePrompt: 'text' }), keys)!
-    const image = await provider.generate({ prompt: '雨夜的码头，提灯的少女', size: '1280x720', references: [{ data: PIXEL, mime: 'image/png' }] })
+    const image = await provider.generate({ prompt: '雨夜的码头，提灯的少女', size: '1280x720' })
     expect(seen).toHaveLength(1)
     expect(seen[0]).toMatchObject({ path: '/v1/images/generations', auth: 'Bearer good' })
     expect(seen[0]!.body).toEqual({ model: 'qwen-image-2.1-nf4', prompt: '雨夜的码头，提灯的少女\n\nAvoid: text', n: 1, size: '768x512' })
@@ -288,7 +341,7 @@ describe('an image server of the author\'s own', () => {
     expect(image.sent).toEqual({ prompt: '雨夜的码头，提灯的少女\n\nAvoid: text', size: '768x512' })
     expect(image.referencesUsed).toBe(0)
     // A model with GPT's name on a server said to be the author's own is asked the same plain way.
-    await createImageProvider(own({ model: 'gpt-image-2', local: true, quality: 'high' }), keys)!.generate({ prompt: 'a face', size: '1024x1024', references: [{ data: PIXEL, mime: 'image/png' }] })
+    await createImageProvider(own({ model: 'gpt-image-2', local: true, quality: 'high' }), keys)!.generate({ prompt: 'a face', size: '1024x1024' })
     expect(seen[1]).toMatchObject({ path: '/v1/images/generations' })
     expect(seen[1]!.body).toEqual({ model: 'gpt-image-2', prompt: 'a face', n: 1, size: '768x768' })
   })
@@ -336,11 +389,11 @@ describe('an image server of the author\'s own', () => {
   it('says how much of a prompt its model reads, and has the director fit a longer one', async () => {
     rules.listing = true
     // The server's own figure; the author's, where they set one; nothing for a service on the net that names none.
-    expect(await createImageProvider(own({ model: 'qwen-image-2.1-turbo-nf4' }), keys)!.prompting!()).toEqual({ tokens: 256, avoidInPrompt: true, references: 0 })
-    expect(await createImageProvider(own({ model: 'qwen-image-2.1-turbo-nf4', promptTokens: 180 }), keys)!.prompting!()).toEqual({ tokens: 180, avoidInPrompt: true, references: 0 })
-    expect(await createImageProvider(own({ model: 'somebody-elses-model' }), keys)!.prompting!()).toEqual({ avoidInPrompt: true, references: 0 })
-    // A model that is not GPT Image is sent the words alone on this path, whoever serves it: only GPT Image has the edits endpoint.
-    expect(await createImageProvider(own({ local: false }), keys)!.prompting!()).toEqual({ avoidInPrompt: true, references: 0 })
+    // (Of reference pictures this list says nothing, and nothing is taken for known before one is sent.)
+    expect(await createImageProvider(own({ model: 'qwen-image-2.1-turbo-nf4' }), keys)!.prompting!()).toEqual({ tokens: 256, avoidInPrompt: true })
+    expect(await createImageProvider(own({ model: 'qwen-image-2.1-turbo-nf4', promptTokens: 180 }), keys)!.prompting!()).toEqual({ tokens: 180, avoidInPrompt: true })
+    expect(await createImageProvider(own({ model: 'somebody-elses-model' }), keys)!.prompting!()).toEqual({ avoidInPrompt: true })
+    expect(await createImageProvider(own({ local: false }), keys)!.prompting!()).toEqual({ avoidInPrompt: true })
     expect(await createImageProvider(own({ local: false, model: 'gpt-image-2' }), keys)!.prompting!()).toEqual({ avoidInPrompt: true })
     // ComfyUI takes pictures through a workflow of its own for them, and none without.
     expect(await createImageProvider({ provider: 'comfyui' }, keys)!.prompting!()).toEqual({ avoidInPrompt: false, references: 0 })
@@ -376,7 +429,7 @@ describe('an image server of the author\'s own', () => {
     }
   })
 
-  it('writes no word of reference pictures for a server that takes none, and says which stayed behind', async () => {
+  it('finds out by sending one that a server takes no reference picture, draws from the words alone, and says so once the picture is there', async () => {
     rules.listing = true
     rules.key = undefined
     const bed = await createTestBed({ settings: { image: { provider: 'openai', baseURL: base, model: 'qwen-image-2.1-turbo-nf4' } } })
@@ -386,10 +439,16 @@ describe('an image server of the author\'s own', () => {
       const { sheetsAhead } = await import('../src/core/pipelines/comic')
       await project.writeAsset('images/sheet-heng.png', PIXEL)
       const heng = await project.saveCharacter({ name: '沈蘅', role: 'protagonist', appearance: '清瘦，低髻', visual: { prompt: 'slender woman, low bun, grey qipao', sheet: 'assets/images/sheet-heng.png' } })
-      // A portrait is drawn after the sheet wherever the sheet can go along. Here it cannot: the prompt has the words
-      // for her and nothing about a picture that never arrives.
-      const portrait = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: heng.id, plain: true }, { origin: 'user' })
+      // Asked before drawing, nothing is said of what the service takes: it is not known, and it is the service's to show.
+      const tang = await project.saveCharacter({ name: '阿棠', role: 'supporting', appearance: '圆脸，两条短辫' })
+      expect(await sheetsAhead(bed.core, bed.runtime, [{ kind: 'portrait', target: tang.id }])).toEqual({ people: [{ id: tang.id, name: '阿棠' }], unknown: 0 })
+      expect(await sheetsAhead(bed.core, bed.runtime, [{ kind: 'portrait', target: heng.id }])).toEqual({ people: [], unknown: 0 })
+      // A portrait is drawn against the sheet. The sheet is sent — this server has nowhere to take it — and the portrait
+      // is drawn again from the words alone: written anew, with the words for her and nothing about a picture.
+      const said: Record<string, unknown>[] = []
+      const portrait = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: heng.id, plain: true }, { origin: 'user', job: { ...quietJob(), result: (value) => { said.push(value) } } })
       const sent = String(seen.at(-1)!.body.prompt)
+      expect(seen.at(-1)).toMatchObject({ path: '/v1/images/generations' })
       expect(sent).toContain('slender woman, low bun, grey qipao')
       expect(sent).not.toContain('参考图')
       expect(Object.keys(seen.at(-1)!.body).sort()).toEqual(['model', 'n', 'prompt', 'seed', 'size'])
@@ -397,13 +456,72 @@ describe('an image server of the author\'s own', () => {
       expect(portrait.parts?.referenceNote).toBeUndefined()
       expect(portrait.parts?.references).toBeUndefined()
       expect(portrait.parts?.left).toEqual([{ path: 'assets/images/sheet-heng.png', label: '沈蘅' }])
+      // What the server answered is kept with the picture, and said with the job now that the picture is there.
+      expect(portrait.parts?.leftWhy).toContain('404')
+      expect(said).toContainEqual({ left: { names: ['沈蘅'], taken: 0, why: portrait.parts!.leftWhy } })
+      // It is not asked the same a second time for a while: the next portrait is written without the picture from the start.
+      const calls = seen.length
+      const again = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: heng.id, plain: true }, { origin: 'user' })
+      expect(seen).toHaveLength(calls + 1)
+      expect(again.parts?.left).toEqual([{ path: 'assets/images/sheet-heng.png', label: '沈蘅' }])
+      expect(again.parts?.leftWhy).toBeUndefined()
       // A picture nothing would have gone along with says nothing of the kind.
       const alone = await illustrate(bed.core, bed.runtime, { kind: 'custom', prompt: '一只纸船' }, { origin: 'user' })
       expect(alone.parts?.left).toBeUndefined()
-      // Asked before drawing: a sheet would be drawn first for somebody who has none — and this picture not held against it.
-      const tang = await project.saveCharacter({ name: '阿棠', role: 'supporting', appearance: '圆脸，两条短辫' })
-      expect(await sheetsAhead(bed.core, bed.runtime, [{ kind: 'portrait', target: tang.id }])).toEqual({ people: [{ id: tang.id, name: '阿棠' }], unknown: 0, unheld: true })
-      expect(await sheetsAhead(bed.core, bed.runtime, [{ kind: 'portrait', target: heng.id }])).toEqual({ people: [], unknown: 0 })
+    } finally {
+      await bed.cleanup()
+    }
+  })
+
+  it('sends a reference picture to a server whose list says its model takes one — one, as the list says', async () => {
+    rules.listing = true
+    rules.edits = true
+    const provider = createImageProvider(own({ model: 'qwen-image-2.1-turbo-nf4' }), keys)!
+    expect(await provider.prompting!()).toEqual({ tokens: 256, avoidInPrompt: true, references: 1 })
+    expect(imageLimitsOf({ id: 'm', limits: { max_width: 768, max_height: 768 }, capabilities: { image_edit: true }, reference_images: { max_count: 1 }, edit_defaults: { seed: null } })).toMatchObject({ references: 1 })
+    expect(imageLimitsOf({ id: 'm', limits: { max_width: 768, max_height: 768 }, capabilities: { image_edit: false }, reference_images: { max_count: 4 } })).toMatchObject({ references: 0 })
+    expect(imageLimitsOf({ id: 'm', limits: { max_width: 768, max_height: 768 }, edit_defaults: { seed: 7 } })).toMatchObject({ editSeeded: true })
+    expect(imageLimitsOf({ id: 'm', limits: { max_width: 768, max_height: 768 } })?.references).toBeUndefined()
+    // Two are offered; the one the model takes goes, through the edits endpoint, as a file in a form — with a model, a
+    // prompt, a size and a count, and nothing this server does not know (no seed: with a picture it draws from a new one each time).
+    const image = await provider.generate({ prompt: 'her, in the rain', size: '1024x1024', references: [{ data: PIXEL, mime: 'image/png' }, { data: PIXEL, mime: 'image/jpeg' }] })
+    expect(seen).toHaveLength(1)
+    expect(seen[0]).toMatchObject({ path: '/v1/images/edits', auth: 'Bearer good', type: 'multipart/form-data' })
+    expect(seen[0]!.body).toEqual({ model: 'qwen-image-2.1-turbo-nf4', prompt: 'her, in the rain', size: '768x768', n: '1', files: { image: 1 } })
+    expect(image.referencesUsed).toBe(1)
+    expect(image.sent).toEqual({ prompt: 'her, in the rain', size: '768x768' })
+    // Busy, it says for how long here as well: the gate waits that long.
+    rules.busyFirst = 1
+    const busy = await provider.generate({ prompt: 'her', size: '768x768', references: [{ data: PIXEL, mime: 'image/png' }] }).catch((error: unknown) => error)
+    expect(busy).toMatchObject({ status: 429, retryAfterMs: 1000 })
+    expect(referencesRefused(busy)).toBe(false)
+
+    // Through the Studio: a portrait against her sheet says which picture is whose; two people in one picture, and the
+    // one the server has no room for stays behind — said with the picture.
+    rules.key = undefined
+    const bed = await createTestBed({ settings: { image: { provider: 'openai', baseURL: base, model: 'qwen-image-2.1-turbo-nf4' } } })
+    try {
+      const { project } = bed.runtime
+      const { illustrate } = await import('../src/core/pipelines/illustrate')
+      await project.writeAsset('images/sheet-heng.png', PIXEL)
+      await project.writeAsset('images/sheet-tang.png', PIXEL)
+      const heng = await project.saveCharacter({ name: '沈蘅', role: 'protagonist', appearance: '清瘦，低髻', visual: { prompt: 'slender woman, low bun, grey qipao', sheet: 'assets/images/sheet-heng.png' } })
+      await project.saveCharacter({ name: '阿棠', role: 'supporting', appearance: '圆脸，两条短辫', visual: { sheet: 'assets/images/sheet-tang.png' } })
+      const portrait = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: heng.id, plain: true }, { origin: 'user' })
+      expect(seen.at(-1)).toMatchObject({ path: '/v1/images/edits' })
+      expect(String(seen.at(-1)!.body.prompt)).toContain('参考图：第1张是沈蘅')
+      expect(portrait.parts?.references).toEqual([{ path: 'assets/images/sheet-heng.png', label: '沈蘅' }])
+      expect(portrait.parts?.left).toBeUndefined()
+      const said: Record<string, unknown>[] = []
+      const both = await illustrate(bed.core, bed.runtime, { kind: 'custom', prompt: '两人在柜台前对账', characters: ['沈蘅', '阿棠'] }, { origin: 'user', job: { ...quietJob(), result: (value) => { said.push(value) } } })
+      expect(seen.at(-1)).toMatchObject({ path: '/v1/images/edits' })
+      expect((seen.at(-1)!.body.files as Record<string, number>).image).toBe(1)
+      expect(String(seen.at(-1)!.body.prompt)).toContain('第1张是沈蘅')
+      expect(String(seen.at(-1)!.body.prompt)).not.toContain('第2张')
+      expect(both.parts?.references).toEqual([{ path: 'assets/images/sheet-heng.png', label: '沈蘅' }])
+      expect(both.parts?.left).toEqual([{ path: 'assets/images/sheet-tang.png', label: '阿棠' }])
+      expect(both.parts?.leftWhy).toBeUndefined()
+      expect(said).toContainEqual({ left: { names: ['阿棠'], taken: 1 } })
     } finally {
       await bed.cleanup()
     }

@@ -9,11 +9,22 @@ import { illustrate, type IllustrateParams } from '../../core/pipelines/illustra
 import { novelizePlay, playTurn, setPlayOutcome, startPlay } from '../../core/pipelines/play'
 import { ProjectError } from '../../core/project'
 import type { NovelService } from '../../host/service'
-import type { PlayTurn, StoryboardDensity } from '../../shared/types'
+import type { IllustrationParts, PlayTurn, StoryboardDensity } from '../../shared/types'
 import { brief, listOf, listParameter, novelTool, toJson } from './shared'
 
-/** Said with the answer to `sheet_first=ask` where the image service takes no reference pictures. */
-const UNHELD = 'Tell them too: the image service in use takes no reference pictures, so the sheets would be drawn but this picture not held against them — who it shows comes from the words alone. '
+/**
+ * Said with a picture once it is drawn: reference pictures the image service did not take. It is said after, never
+ * before — what a service takes changes, and is shown by drawing.
+ */
+function leftBehind(parts: IllustrationParts | undefined): string[] {
+  const left = parts?.left ?? []
+  if (left.length === 0) return []
+  const names = left.map(reference => reference.label).join(', ')
+  const sent = parts?.references?.length ?? 0
+  if (sent > 0) return [`The image service takes ${sent} reference picture${sent === 1 ? '' : 's'} with a prompt, so these stayed behind: ${names}. Whoever they show was drawn from the words alone. Tell the author.`]
+  if (parts?.leftWhy !== undefined) return [`The image service was sent the reference picture${left.length === 1 ? '' : 's'} (${names}) and would not take ${left.length === 1 ? 'it' : 'them'} — it answered: ${brief(parts.leftWhy, 200)}. The picture was then drawn from the words alone. Tell the author.`]
+  return [`The image service takes no reference pictures: ${names} did not go along, and the picture was drawn from the words alone. Tell the author.`]
+}
 
 function renderTurn(turn: PlayTurn): string {
   const parts: string[] = []
@@ -50,7 +61,7 @@ export function stageTools(service: NovelService): ToolDefinition[] {
         scene: { type: 'string', description: 'portrait: which of their signature scenes to draw — an id from the card\'s visual.scenes (novel_read what=character shows them). Left out: the one the card marks, else the first.' },
         stage: { type: 'string', description: 'portrait, sheet: which stretch of their life to draw — a stage id or title from the card (novel_bible action=derive_growth finds them). A stretch that looks different gets its own design sheet, drawn against the main one so that it stays the same person; a portrait of one of their signature scenes shows the stretch that scene falls in by itself.' },
         look: { type: 'string', description: 'sheet: name of the look (outfit) to draw, e.g. "丧服".' },
-        from: { type: 'string', enum: ['portrait', 'words'], description: 'sheet (the main one, or a stretch\'s): what it is drawn against. portrait: their portrait — the same person turned three ways, when the author likes the portrait and wants the sheet to match it. words: the words alone. Left out: by the author\'s setting (image.lead) — the portrait where the portrait leads and there is one, else the words.' },
+        from: { type: 'string', enum: ['portrait', 'sheet', 'words'], description: 'What this one picture of a person is drawn against, whatever the author\'s setting (image.lead) has. For kind=sheet (the main one, or a stretch\'s): portrait — their portrait: the same person turned three ways, when the author likes the portrait and wants the sheet to match it; words — the words alone. For kind=portrait: sheet — their design sheet (drawn first where they have none); words — the words alone: no sheet is drawn first and theirs does not go along. Left out: by the setting.' },
         looks: { type: 'object', additionalProperties: true, description: 'scene/cover/custom: what each character wears — {"character": "look name"}.' },
         characters: listParameter('custom: characters shown in the picture; their looks and design sheets go along.'),
         avoid: listParameter('Things that must not appear in this picture, on top of the book\'s list.'),
@@ -67,7 +78,7 @@ export function stageTools(service: NovelService): ToolDefinition[] {
           ...(args.quote !== undefined ? { quote: args.quote } : {}),
           ...(args.prompt !== undefined ? { prompt: args.prompt } : {}),
           ...(args.look !== undefined ? { look: args.look } : {}),
-          ...(args.from === 'portrait' || args.from === 'words' ? { from: args.from } : {}),
+          ...(args.from === 'portrait' || args.from === 'sheet' || args.from === 'words' ? { from: args.from } : {}),
           ...(typeof args.notes === 'string' && args.notes.trim().length > 0 ? { notes: args.notes.trim() } : {}),
           ...(args.looks !== undefined ? { looks: Object.fromEntries(Object.entries(args.looks as Record<string, unknown>).filter((entry): entry is [string, string] => typeof entry[1] === 'string')) } : {}),
           ...(listOf(args.characters) !== undefined ? { characters: listOf(args.characters)! } : {}),
@@ -83,11 +94,11 @@ export function stageTools(service: NovelService): ToolDefinition[] {
         if (args.sheet_first === 'ask') {
           // Nothing is drawn: who would get a sheet first is worked out, for the author to be asked.
           const ahead = params.kind === 'portrait' || params.kind === 'scene' || params.kind === 'cover' || params.kind === 'custom'
-            ? await sheetsAhead(env.core, runtime, [{ kind: params.kind, ...(params.target !== undefined ? { target: params.target } : {}), ...(params.quote !== undefined ? { quote: params.quote } : {}), ...(params.characters !== undefined ? { characters: params.characters } : {}) }])
+            ? await sheetsAhead(env.core, runtime, [{ kind: params.kind, ...(params.target !== undefined ? { target: params.target } : {}), ...(params.quote !== undefined ? { quote: params.quote } : {}), ...(params.characters !== undefined ? { characters: params.characters } : {}), ...(params.kind === 'portrait' && (params.from === 'sheet' || params.from === 'words') ? { from: params.from } : {}) }])
             : { people: [], unknown: 0 } as Awaited<ReturnType<typeof sheetsAhead>>
           return {
             text: ahead.people.length > 0
-              ? `Nothing drawn yet. This picture would first draw ${ahead.people.length} design sheet${ahead.people.length === 1 ? '' : 's'} — of ${ahead.people.map(person => person.name).join(', ')} — because ${params.kind === 'portrait' ? 'they have none' : 'they come back in the book and have none'}: ${ahead.people.length} more image call${ahead.people.length === 1 ? '' : 's'}. ${ahead.unheld === true ? UNHELD : ''}Ask the author; then call again with sheet_first=draw, or sheet_first=skip to draw from what there is.`
+              ? `Nothing drawn yet. This picture would first draw ${ahead.people.length} design sheet${ahead.people.length === 1 ? '' : 's'} — of ${ahead.people.map(person => person.name).join(', ')} — because ${params.kind === 'portrait' ? 'they have none' : 'they come back in the book and have none'}: ${ahead.people.length} more image call${ahead.people.length === 1 ? '' : 's'}. Ask the author; then call again with sheet_first=draw, or sheet_first=skip to draw from what there is.`
               : 'Nothing drawn yet. No design sheet would be drawn first for this picture: call again with sheet_first=draw.',
             data: toJson(ahead),
             record: false,
@@ -102,6 +113,7 @@ export function stageTools(service: NovelService): ToolDefinition[] {
           parts?.style !== undefined ? `Art direction (${parts.styleSource === 'book' ? 'the book\'s own' : parts.styleSource === 'studio' ? 'the Studio-wide one' : 'the built-in starting point'}): ${parts.style}` : 'Art direction: none (sent as written).',
           `Kept out: ${parts?.avoid !== undefined && parts.avoid.length > 0 ? parts.avoid.join(', ') : 'nothing — the book has no avoid list (novel_settings action=book fields.artAvoid)'}`,
           `Reference images sent: ${parts?.references !== undefined && parts.references.length > 0 ? parts.references.map(reference => reference.label).join(', ') : 'none'}`,
+          ...leftBehind(parts),
           ...(result.sorted !== undefined ? [result.sorted.unsorted === true
             ? 'The notes could not be sorted (no model answered): all of them directed this picture, and nothing went into the character\'s look.'
             : `The notes were sorted — into how they look from now on: ${result.sorted.kept.length > 0 ? result.sorted.kept.join('; ') : 'nothing'}. For this picture only: ${result.sorted.once.length > 0 ? result.sorted.once.join('; ') : 'nothing'}.${result.sorted.unused.length > 0 ? ` No place in this picture: ${result.sorted.unused.join('; ')}.` : ''} Tell the author.`] : []),
@@ -273,14 +285,14 @@ export function stageTools(service: NovelService): ToolDefinition[] {
           const ahead = await sheetsAhead(env.core, runtime, [{ kind: 'panels', chapter, ...(args.force === true ? { force: true } : {}) }])
           return {
             text: ahead.unknown > 0 ? 'Nothing drawn yet. This chapter has no storyboard yet (action=storyboard): who is in its panels, and so whose design sheets they would draw first, is not known before it.'
-              : ahead.people.length > 0 ? `Nothing drawn yet. The panels would first draw ${ahead.people.length} design sheet${ahead.people.length === 1 ? '' : 's'} — of ${ahead.people.map(person => person.name).join(', ')} — because they come back in the book and have none: ${ahead.people.length} more image call${ahead.people.length === 1 ? '' : 's'}. ${ahead.unheld === true ? UNHELD : ''}Ask the author; then render with sheet_first=draw, or sheet_first=skip to draw from what there is.`
+              : ahead.people.length > 0 ? `Nothing drawn yet. The panels would first draw ${ahead.people.length} design sheet${ahead.people.length === 1 ? '' : 's'} — of ${ahead.people.map(person => person.name).join(', ')} — because they come back in the book and have none: ${ahead.people.length} more image call${ahead.people.length === 1 ? '' : 's'}. Ask the author; then render with sheet_first=draw, or sheet_first=skip to draw from what there is.`
                 : 'Nothing drawn yet. No design sheet would be drawn first for these panels: render with sheet_first=draw.',
             data: toJson(ahead),
             record: false,
           }
         }
         const result = await env.job('comic', 'draw panels', chapter, async task => await renderPanels(env.core, runtime, { chapter, ...(args.force !== undefined ? { force: args.force } : {}), ...(args.sheet_first === 'skip' ? { sheetFirst: false } : {}) }, task))
-        return { text: `Panels for ${result.chapterId}: ${result.rendered} drawn, ${result.failed} failed, ${result.panels} in total.${result.sheets !== undefined ? ` Drawn first, because they come back in the book and had none: the design sheet of ${result.sheets.join(', ')} — tell the author.` : ''}`, data: toJson(result) }
+        return { text: `Panels for ${result.chapterId}: ${result.rendered} drawn, ${result.failed} failed, ${result.panels} in total.${result.sheets !== undefined ? ` Drawn first, because they come back in the book and had none: the design sheet of ${result.sheets.join(', ')} — tell the author.` : ''}${result.unheld !== undefined ? ` ${result.unheld} of the panels went without reference pictures they were to be held against — the image service did not take them: who they show came from the words alone. Tell the author.` : ''}`, data: toJson(result) }
       },
     }),
 

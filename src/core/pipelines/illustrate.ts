@@ -43,14 +43,14 @@ import { lookWords, mergeAvoid, pictureSize, resolveArtStyle, sceneFor, scenesOf
 import type { CharacterCard, CharacterLook, CharacterStage, IllustrationInfo, IllustrationParts, IllustrationPiece, IllustrationSent, PromptLanguage, SignatureScene, SortedNotes, WorldEntry, WorldEvent } from '../../shared/types'
 import { MAIN_LINE, referencesOf } from '../../shared/types'
 import { clip, fuzzyFind, hashText, newId, sameName, slugify } from '../../shared/text'
-import { leadOf, PROMPT_HEADROOM, promptTokens } from '../../shared/images'
+import { leadOf, PROMPT_HEADROOM, promptTokens, type PictureLead } from '../../shared/images'
 import { inStage, looksApart, stageAt } from '../../shared/stages'
 import { groupOf } from '../../shared/world'
 import { detectCharacters } from '../context'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { asArray, asList, asRecord, asText, extractJson } from '../llm'
 import { assign } from '../crew'
-import { extensionOf, type ImageProvider, type ImageReference } from '../media/image'
+import { extensionOf, referencesRefused, type ImageProvider, type ImageReference } from '../media/image'
 import { castAt } from './growth'
 import { ProviderError } from '../media/http'
 import { ProjectError } from '../project'
@@ -91,11 +91,14 @@ export interface IllustrateParams {
   /** `false`: this once, draw from what there is — no design sheet is drawn first for whoever lacks one, and none after a portrait that leads (the author was asked, and said so). */
   sheetFirst?: boolean
   /**
-   * Sheet (the main one, or a stretch's): what it is drawn against. `portrait`: their portrait — the same person, turned
-   * three ways on a plain ground; `words`: the words alone. Left out: the portrait where the portrait leads
-   * (`image.lead`) and there is one, else the words.
+   * What this picture of a person is drawn against, this once — whichever of the two leads by the author's setting
+   * (`image.lead`). Left out: by that setting.
+   * - a sheet (the main one, or a stretch's): `portrait` — their portrait: the same person, turned three ways on a
+   *   plain ground; `words` — the words alone.
+   * - a portrait: `sheet` — their design sheet (drawn first where they have none); `words` — the words alone: no
+   *   sheet is drawn first, and theirs does not go along.
    */
-  from?: 'portrait' | 'words'
+  from?: 'portrait' | 'sheet' | 'words'
   /**
    * Portrait: plain — facing the viewer on a plain ground — and not in their signature scene. What a portrait is where
    * the author turned scenes off (`image.portraitScene`), and what the interlude stage asks for: a figure to stand
@@ -888,15 +891,17 @@ export async function renderImage(core: NovelCore, runtime: ProjectRuntime, inpu
   const provider = await requireImages(core, runtime)
   const zh = promptLanguage((await project.manifest()).language) === 'zh'
   const references: { path: string; label: string; image: ImageReference }[] = []
-  // A way to the model that takes no pictures — a server of the author's own, an endpoint with a model that draws from
-  // words — says so before anything is drawn: the prompt is then written without a word of any (it would speak of
-  // pictures that never arrive, and spend on them what little room some models have), and which ones stayed behind
-  // is kept with the picture.
+  // How many pictures the way to the model takes, where it is known before one is sent — what the service says of the
+  // model, or what an earlier picture found out. None: the prompt is written without a word of any (it would speak of
+  // pictures that never arrive, and spend on them what little room some models have). Not known: they are sent.
   const taken = (await provider.prompting?.(task.signal).catch(() => undefined))?.references
-  const most = Math.min(referencesOf((await core.settings.get()).image.references), taken ?? Number.POSITIVE_INFINITY)
-  const left = taken !== 0 ? [] : (input.references ?? []).filter((reference, at, all) => all.findIndex(other => other.path === reference.path) === at).map(reference => ({ path: reference.path, label: reference.label }))
-  for (const reference of input.references ?? []) {
-    if (references.length >= most || references.some(known => known.path === reference.path)) continue
+  const own = referencesOf((await core.settings.get()).image.references)
+  const most = Math.min(own, taken ?? Number.POSITIVE_INFINITY)
+  const wanted = (input.references ?? []).filter((reference, at, all) => all.findIndex(other => other.path === reference.path) === at)
+  // What the service's own measure keeps back, of those the author's setting would have sent: kept with the picture.
+  let left = taken === undefined ? [] : wanted.slice(taken, own).map(reference => ({ path: reference.path, label: reference.label }))
+  for (const reference of wanted) {
+    if (references.length >= most) break
     try {
       const data = await project.readFile(reference.path)
       references.push({ ...reference, image: { data, mime: /\.jpe?g$/i.test(reference.path) ? 'image/jpeg' : /\.webp$/i.test(reference.path) ? 'image/webp' : 'image/png', label: reference.label } })
@@ -904,30 +909,57 @@ export async function renderImage(core: NovelCore, runtime: ProjectRuntime, inpu
       // A reference whose file is gone is simply not sent.
     }
   }
-  const referenceLine = references.length === 0 ? undefined : zh
-    ? `参考图：${references.map((reference, index) => `第${index + 1}张是${reference.label}`).join('；')}。${input.referenceNote ?? '画面里出现的这些人物和场所必须与各自的参考图一致（脸、发型、体型、服装、结构与材质）；构图、动作与光线以本描述为准。'}`
-    : `Reference images: ${references.map((reference, index) => `#${index + 1} shows ${reference.label}`).join('; ')}. ${input.referenceNote ?? 'Whoever and whatever they show must match their reference (face, hair, build, clothing, structure and materials); composition, action and light follow this description.'}`
   const art = input.art === false ? undefined : input.art
   const styleLine = art !== undefined ? `${zh ? '画风：' : 'Style: '}${tidy(art.style)}` : undefined
   const avoid = art !== undefined || (input.avoid?.length ?? 0) > 0 ? mergeAvoid(art?.avoid, input.avoid) : []
-  // The subject gives way before the lines that keep the book consistent do.
-  const tail = [referenceLine, styleLine].filter((line): line is string => line !== undefined).join('\n')
   const whole = tidy(input.subject)
-  const subject = clip(whole, Math.max(200, 1900 - tail.length), '…')
-  const prompt = tail.length > 0 ? `${subject}\n${tail}` : subject
-  // A model that reads less than this comes to gets the same picture in fewer words, written by the director.
-  const fitted = await fitPrompt(core, runtime, provider, { prompt, avoid, references: references.length }, task)
-  const result = await provider.generate({
-    prompt: fitted.prompt,
-    // What is kept out was worked into the prompt that fits: nothing is to be written after it again.
-    ...(fitted.folded ? { negativePrompt: '' } : avoid.length > 0 ? { negativePrompt: avoid.join(zh ? '、' : ', ') } : {}),
-    ...(input.size !== undefined ? { size: input.size } : {}),
-    ...(references.length > 0 ? { references: references.map(reference => reference.image) } : {}),
-    ...(task.signal !== undefined ? { signal: task.signal } : {}),
-  })
+  /** The picture, held against these. */
+  const draw = async (held: typeof references) => {
+    const referenceLine = held.length === 0 ? undefined : zh
+      ? `参考图：${held.map((reference, index) => `第${index + 1}张是${reference.label}`).join('；')}。${input.referenceNote ?? '画面里出现的这些人物和场所必须与各自的参考图一致（脸、发型、体型、服装、结构与材质）；构图、动作与光线以本描述为准。'}`
+      : `Reference images: ${held.map((reference, index) => `#${index + 1} shows ${reference.label}`).join('; ')}. ${input.referenceNote ?? 'Whoever and whatever they show must match their reference (face, hair, build, clothing, structure and materials); composition, action and light follow this description.'}`
+    // The subject gives way before the lines that keep the book consistent do.
+    const tail = [referenceLine, styleLine].filter((line): line is string => line !== undefined).join('\n')
+    const subject = clip(whole, Math.max(200, 1900 - tail.length), '…')
+    const prompt = tail.length > 0 ? `${subject}\n${tail}` : subject
+    // A model that reads less than this comes to gets the same picture in fewer words, written by the director.
+    const fitted = await fitPrompt(core, runtime, provider, { prompt, avoid, references: held.length }, task)
+    const result = await provider.generate({
+      prompt: fitted.prompt,
+      // What is kept out was worked into the prompt that fits: nothing is to be written after it again.
+      ...(fitted.folded ? { negativePrompt: '' } : avoid.length > 0 ? { negativePrompt: avoid.join(zh ? '、' : ', ') } : {}),
+      ...(input.size !== undefined ? { size: input.size } : {}),
+      ...(held.length > 0 ? { references: held.map(reference => reference.image) } : {}),
+      ...(task.signal !== undefined ? { signal: task.signal } : {}),
+    })
+    return { held, referenceLine, subject, prompt, fitted, result }
+  }
+  // Sent with its pictures, the service would not have them: nobody knew before. It is drawn from the words alone —
+  // written anew, without a word of the pictures — and what the service answered is kept with it, to be said once
+  // the picture is there.
+  let leftWhy: string | undefined
+  let drawn: Awaited<ReturnType<typeof draw>>
+  try {
+    drawn = await draw(references)
+  } catch (error) {
+    if (references.length === 0 || !referencesRefused(error)) throw error
+    core.log(`the image service would not take the reference pictures; drawing from the words alone`, error)
+    leftWhy = clip(error.message, 240, '…')
+    left = [...references.map(reference => ({ path: reference.path, label: reference.label })), ...left]
+    const restore = task.job?.note(zh ? '绘图服务没有收参考图，改成只照文字画…' : 'The image service would not take the reference pictures; drawing from the words alone…')
+    try {
+      drawn = await draw([])
+    } finally {
+      restore?.()
+    }
+  }
+  const { result, referenceLine, subject, prompt, fitted } = drawn
+  // Said with the picture, now that it is there: what the service did not take along. (Never before: what a service
+  // takes is the service's to show.)
+  if (left.length > 0) task.job?.result({ left: { names: left.map(reference => reference.label), taken: Math.min(drawn.held.length, result.referencesUsed ?? drawn.held.length), ...(leftWhy !== undefined ? { why: leftWhy } : {}) } })
   const file = `images/${input.name}-${hashText(prompt + Date.now()).slice(0, 8)}.${extensionOf(result.mime)}`
   const path = await project.writeAsset(file, result.data)
-  const used = references.slice(0, result.referencesUsed ?? references.length)
+  const used = drawn.held.slice(0, result.referencesUsed ?? drawn.held.length)
   const parts: IllustrationParts = {
     subject,
     ...(input.pieces !== undefined && input.pieces.length > 0 ? { pieces: input.pieces } : {}),
@@ -935,9 +967,11 @@ export async function renderImage(core: NovelCore, runtime: ProjectRuntime, inpu
     ...(art !== undefined ? { style: art.style, styleSource: art.source } : {}),
     ...(avoid.length > 0 ? { avoid } : {}),
     ...(used.length > 0 ? { references: used.map(reference => ({ path: reference.path, label: reference.label })) } : {}),
-    // Kept also where the pictures did not go — a way to the model that takes none: the prompt still spoke of them.
+    // Kept also where the pictures did not go though the prompt spoke of them — a way to the model that takes none and
+    // says so only by drawing without them.
     ...(referenceLine !== undefined ? { referenceNote: referenceLine } : {}),
     ...(left.length > 0 ? { left } : {}),
+    ...(leftWhy !== undefined ? { leftWhy } : {}),
   }
   const info: IllustrationInfo = {
     id: newId('img'),
@@ -996,8 +1030,7 @@ export interface SheetsFirst {
  * turned this off (`image.sheetFirst`).
  * @param who - `everyone`: each of them (a portrait is asked for). `returning`: those who come back in the book ({@link comingBack}).
  */
-export async function lackingSheets(core: NovelCore, runtime: ProjectRuntime, people: readonly CharacterCard[], who: 'everyone' | 'returning'): Promise<CharacterCard[]> {
-  const lead = leadOf(core.currentSettings().image)
+export async function lackingSheets(core: NovelCore, runtime: ProjectRuntime, people: readonly CharacterCard[], who: 'everyone' | 'returning', lead: PictureLead = leadOf(core.currentSettings().image)): Promise<CharacterCard[]> {
   // Nothing is drawn for another picture's sake; and where the portrait leads, nothing comes before a portrait.
   if (lead === 'none' || (lead === 'portrait' && who === 'everyone')) return []
   // Nothing says how they look: there is nothing to draw a sheet from, and a picture is made of what the passage gives.
@@ -1013,10 +1046,10 @@ export async function lackingSheets(core: NovelCore, runtime: ProjectRuntime, pe
  * a scene and a panel each invent the face anew.
  * @returns the people with their sheets, and which sheets this call drew; nothing is drawn where the author turned this off (`image.sheetFirst`).
  */
-export async function sheetsFirst(core: NovelCore, runtime: ProjectRuntime, people: readonly CharacterCard[], who: 'everyone' | 'returning', task: TaskContext): Promise<SheetsFirst> {
+export async function sheetsFirst(core: NovelCore, runtime: ProjectRuntime, people: readonly CharacterCard[], who: 'everyone' | 'returning', task: TaskContext, lead?: PictureLead): Promise<SheetsFirst> {
   const { project } = runtime
   const out: SheetsFirst = { cards: [...people], drawn: [], failed: [] }
-  const todo = await lackingSheets(core, runtime, people, who)
+  const todo = await lackingSheets(core, runtime, people, who, lead)
   if (todo.length === 0) return out
   const lang = promptLanguage((await project.manifest()).language)
   for (const card of todo) {
@@ -1026,7 +1059,9 @@ export async function sheetsFirst(core: NovelCore, runtime: ProjectRuntime, peop
     const mine = underway === undefined
     if (underway === undefined) {
       const restore = task.job?.note(L(lang, `先画「${card.name}」的人设图…`, `First the design sheet of ${card.name}…`))
-      underway = illustrate(core, runtime, { kind: 'sheet', target: card.id }, task).then(() => undefined).finally(() => {
+      // Drawn for a portrait that is to be held against it, it is drawn from the words: against the portrait there is,
+      // the new one would only come back as the old.
+      underway = illustrate(core, runtime, { kind: 'sheet', target: card.id, ...(lead === 'sheet' ? { from: 'words' as const } : {}) }, task).then(() => undefined).finally(() => {
         sheetsUnderway.delete(key)
         restore?.()
       })
@@ -1067,14 +1102,16 @@ async function sceneOf(project: ProjectRuntime['project'], params: Pick<Illustra
  * anything, for the question put to the author before the picture is started.
  * @returns nobody for a kind of picture that shows no people, and where the author turned sheets-first off.
  */
-export async function sheetsBefore(core: NovelCore, runtime: ProjectRuntime, params: Pick<IllustrateParams, 'kind' | 'target' | 'quote' | 'characters'>): Promise<CharacterCard[]> {
+export async function sheetsBefore(core: NovelCore, runtime: ProjectRuntime, params: Pick<IllustrateParams, 'kind' | 'target' | 'quote' | 'characters' | 'from'>): Promise<CharacterCard[]> {
   const { project } = runtime
   const characters = await project.characters()
   const find = (ref: string): CharacterCard | undefined => characters.find(card => card.id === ref || sameName(card.name, ref) || (card.aliases ?? []).some(alias => sameName(alias, ref)))
   if (params.kind === 'portrait') {
     const card = params.target !== undefined ? await project.findCharacter(params.target) : undefined
     // A card that says nothing of looks yet gets its anchor written when the picture is drawn; whether a sheet can follow is not known before.
-    return card !== undefined ? await lackingSheets(core, runtime, [card], 'everyone') : []
+    // Asked for from the words alone, no sheet comes before it; asked for against the sheet, one does whatever the setting has.
+    if (card === undefined || params.from === 'words') return []
+    return await lackingSheets(core, runtime, [card], 'everyone', params.from === 'sheet' ? 'sheet' : undefined)
   }
   if (params.kind === 'custom') return await lackingSheets(core, runtime, (params.characters ?? []).map(find).filter((card): card is CharacterCard => card !== undefined), 'returning')
   if (params.kind === 'cover') return await lackingSheets(core, runtime, (await bookSketch(runtime, promptLanguage((await project.manifest()).language))).leads, 'returning')
@@ -1140,9 +1177,9 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
   // The moment of the book a portrait asked for nothing shows.
   let shown: IllustrateResult['scene']
   /** These people with a sheet each, where they are to have one: drawn now if need be. */
-  const sheeted = async (people: readonly CharacterCard[], who: 'everyone' | 'returning'): Promise<CharacterCard[]> => {
+  const sheeted = async (people: readonly CharacterCard[], who: 'everyone' | 'returning', lead?: PictureLead): Promise<CharacterCard[]> => {
     if (params.sheetFirst === false) return [...people]
-    const made = await sheetsFirst(core, runtime, people, who, task)
+    const made = await sheetsFirst(core, runtime, people, who, task, lead)
     first.drawn.push(...made.drawn)
     first.failed.push(...made.failed)
     if (made.drawn.length > 0) task.job?.result({ sheets: first.drawn })
@@ -1264,7 +1301,12 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
       stage = stageOf(anchored, stage.id)
     }
     const lead = leadOf(core.currentSettings().image)
-    if (stage !== undefined && params.kind === 'portrait' && looksApart(stage) && stage.visual?.sheet === undefined && params.sheetFirst !== false && lead === 'sheet') {
+    // What this portrait is held against, where the author said so for this one: the sheet, or nothing but the words.
+    // Otherwise the setting has it — the sheet, unless the portrait leads.
+    const against = params.kind === 'portrait' && (params.from === 'sheet' || params.from === 'words') ? params.from : undefined
+    const sheetComesFirst = against === 'sheet' || (against === undefined && lead === 'sheet')
+    const sheetGoesAlong = against === 'sheet' || (against === undefined && lead !== 'portrait')
+    if (stage !== undefined && params.kind === 'portrait' && looksApart(stage) && stage.visual?.sheet === undefined && params.sheetFirst !== false && sheetComesFirst) {
       const restore = task.job?.note(L(lang, `先画「${anchored.name}」${stage.title}时的人设图…`, `First the design sheet of ${anchored.name} in "${stage.title}"…`))
       try {
         await illustrate(core, runtime, { kind: 'sheet', target: anchored.id, stage: stage.id }, { origin: task.origin, ...(task.signal !== undefined ? { signal: task.signal } : {}), ...(task.agentRoute !== undefined ? { agentRoute: task.agentRoute } : {}) })
@@ -1276,7 +1318,7 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
     }
     // Where the sheet leads, a portrait is drawn after it and against it: whoever has no sheet yet gets one first.
     // Where the portrait leads it is drawn from the words alone, and the sheet after it ({@link sheetAfter}).
-    const whole = params.kind === 'portrait' ? (await sheeted([anchored], 'everyone'))[0]! : anchored
+    const whole = params.kind === 'portrait' && against !== 'words' ? (await sheeted([anchored], 'everyone', against === 'sheet' ? 'sheet' : undefined))[0]! : anchored
     const card = stage !== undefined ? inStage(whole, stageOf(whole, stage.id)) : whole
 
     if (params.kind === 'portrait') {
@@ -1301,7 +1343,7 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
       // place as its design art has it.
       // …unless the portrait leads: held against the sheet it would only come back as the sheet has them, and the
       // sheet is the one to follow.
-      const sheet = card.visual?.sheet !== undefined && lead !== 'portrait' ? [{ path: card.visual.sheet, label: card.name }] : []
+      const sheet = card.visual?.sheet !== undefined && sheetGoesAlong ? [{ path: card.visual.sheet, label: card.name }] : []
       const told = scene ?? ''
       const place = told.length === 0 ? undefined : (await project.world()).find(entry => entry.visualImage !== undefined && entry.category !== 'item' && [entry.name, ...(entry.aliases ?? [])].some(name => name.length >= 2 && told.includes(name)))
       if (place?.visualImage !== undefined) sheet.push({ path: place.visualImage, label: L(lang, `场所「${place.name}」`, `the place "${place.name}"`) })
@@ -1316,7 +1358,7 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
         await project.saveCharacter({ id: card.id, visual: { ...(whole.visual?.portrait === undefined ? { portrait: info.path } : {}), ...(scenes !== undefined ? { scenes } : {}) } })
       } else await project.saveCharacter({ id: card.id, visual: { portrait: info.path, ...(scenes !== undefined ? { scenes } : {}) } })
       // The portrait leads, and they have no sheet: it is drawn now, against the portrait — unless the author said not this time.
-      if (lead === 'portrait' && params.sheetFirst !== false && stage === undefined && whole.visual?.sheet === undefined) {
+      if (lead === 'portrait' && against !== 'sheet' && params.sheetFirst !== false && stage === undefined && whole.visual?.sheet === undefined) {
         const restore = task.job?.note(L(lang, `立绘画好了，照着它补「${card.name}」的人设图…`, `The portrait is drawn; now the design sheet of ${card.name}, against it…`))
         try {
           await illustrate(core, runtime, { kind: 'sheet', target: card.id, from: 'portrait' }, { origin: task.origin, ...(task.signal !== undefined ? { signal: task.signal } : {}), ...(task.agentRoute !== undefined ? { agentRoute: task.agentRoute } : {}), ...(task.job !== undefined ? { job: task.job } : {}) })
@@ -1352,7 +1394,7 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
     // …except where the author has the portrait lead (or asks for it this once): the portrait is then what says how they
     // look, and the sheet is that person turned three ways. It runs one way there too — such a portrait is never
     // drawn against the sheet.
-    const portrait = look === undefined && (params.from ?? (lead === 'portrait' ? 'portrait' : 'words')) === 'portrait' ? card.visual?.portrait : undefined
+    const portrait = look === undefined && (params.from === 'portrait' || (params.from === undefined && lead === 'portrait')) ? card.visual?.portrait : undefined
     // The sheet of another stretch of their life is a design sheet like the card's own: drawn from the words alone —
     // that stretch's anchor, which the director wrote starting from the card's, so that it is the same person in words.
     // Held against the card's sheet it comes back as the card's sheet, whatever age the words give (tried: it did).
@@ -1373,8 +1415,10 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
         references: [{ path: portrait, label: L(lang, `${card.name}的立绘`, `the portrait of ${card.name}`) }],
         // What the reference is for: who they are — not where they stand, how, or in what light.
         referenceNote: L(lang,
-          '是同一个人：脸、发型、体型和衣着照参考图画。参考图里的背景、姿势、手里拿的东西、光线和构图都不要带过来——这里要的是素净背景上的三视图。',
-          'It is the same person: face, hair, build and clothing follow the reference. Leave its background, pose, whatever is held, light and composition behind — what is wanted here is a turnaround on a plain ground.'),
+          // (Said as what is there, too — hands empty, standing straight: told only what to leave out, a model that takes
+          // a picture along brought the umbrella she held in it into all three views.)
+          '是同一个人：脸、发型、体型和衣着照参考图画。这里要的是素净背景上的三视图：站直，两手空着、自然垂在身侧。参考图里的背景、姿势、手里拿的东西、光线和构图都不要带过来。',
+          'It is the same person: face, hair, build and clothing follow the reference. What is wanted here is a turnaround on a plain ground: standing straight, both hands empty and at the sides. Leave the reference\'s background, pose, whatever is held, light and composition behind.'),
       } : {}),
       ...(base !== undefined ? {
         references: [{ path: base, label: L(lang, `${card.name}的主造型`, `${card.name} in their main look`) }],
