@@ -8119,7 +8119,7 @@ blockquote.nv-issue-quote {
 }
 
 .nv-scene-row.is-first {
-  border-color: var(--nv-accent);
+  border-color: var(--nv-brand);
 }
 
 .nv-scene-thumb {
@@ -8881,7 +8881,7 @@ span.nv-scene-thumb {
 }
 
 .nv-album-way select:focus-visible {
-  outline: 2px solid var(--nv-accent);
+  outline: 2px solid var(--nv-brand);
   outline-offset: 2px;
   border-radius: 4px;
 }
@@ -10619,6 +10619,67 @@ button.nv-album-chapter:hover {
 }
 
 .nv-line-pick > .nv-chip.is-on {
-  border-color: var(--nv-accent);
-  color: var(--nv-accent);
+  border-color: var(--nv-brand);
+  color: var(--nv-brand);
+}
+
+/* A batch being picked in a list, to be filed under lines of the plot. */
+.nv-pick-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: 4px 0 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--nv-border);
+  border-radius: 8px;
+  background: var(--nv-surface-2, transparent);
+}
+
+.nv-pick-mark {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--nv-border);
+  border-radius: 4px;
+  color: transparent;
+}
+
+.nv-pick-mark.is-on {
+  border-color: var(--nv-brand);
+  background: var(--nv-brand);
+  color: var(--nv-on-accent);
+}
+
+.nv-list-row.is-picked {
+  background: color-mix(in srgb, var(--nv-brand) 10%, transparent);
+}
+
+.nv-photo-card.is-picked {
+  outline: 2px solid var(--nv-brand);
+  outline-offset: -2px;
+}
+
+.nv-photo-pick {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  background: var(--nv-surface, #fff);
+}
+
+/* The bible's lists: which line of the plot is listed. */
+.nv-bible-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin: 2px 0 8px;
+}
+
+.nv-bible-line .nv-select {
+  width: auto;
+  max-width: 100%;
+  flex: 1 1 140px;
 }

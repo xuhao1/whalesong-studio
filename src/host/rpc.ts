@@ -627,6 +627,8 @@ export function createHandlers(service: NovelService): Handlers {
       return job(runtime, 'bible', 'art direction', undefined, async task => await deriveArtDirection(core, runtime, typeof direction === 'string' && direction.trim().length > 0 ? { direction: direction.trim() } : {}, task))
     },
     'lines.seen': async ({ root }) => await (await open(root)).project.seenOn(),
+    'lines.assign': async ({ root, lines, byText, characters, world }) => await (await open(root)).project.assignLines({ lines: Array.isArray(lines) ? lines.map(String) : [], ...(byText === true ? { byText: true } : {}), ...(Array.isArray(characters) ? { characters: characters.map(String) } : {}), ...(Array.isArray(world) ? { world: world.map(String) } : {}) }),
+    'world.presence': async ({ root, line }) => await (await open(root)).project.worldPresence(typeof line === 'string' ? line : undefined),
     'line.import': async ({ root, title, premise, text, file, digest }) => {
       const runtime = await open(root)
       let manuscript = typeof text === 'string' ? text : ''

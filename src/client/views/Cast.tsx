@@ -6,6 +6,7 @@
  * about; the notes on the ensemble sit above it all, as large as the author
  * wants them: whole, one line, or out of the way.
  */
+import { LinePickBar, useLinePicks } from '../LinesField'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { layoutAround, layoutGraph, RELATION_KINDS, relationKind, type GraphNode, type Point, type RelationKind } from '../../shared/relations'
 import type { ChapterInfo, ChapterPlan, CharacterCard, WalkOn } from '../../shared/types'
@@ -67,6 +68,7 @@ export function CastView() {
   // out, and lives are read along the line in hand.
   const [bookLine, setBookLine] = useBookLine()
   const [everyone, setEveryone] = useKept<boolean>('cast.everyone', false)
+  const picks = useLinePicks()
   const chosen = everyone && plotLines.length > 0 ? EVERY_LINE : bookLine
   const line = bookLine
   const setLine = (next: string): void => {
@@ -216,10 +218,12 @@ export function CastView() {
             { value: EVERY_LINE, label: t(`所有线（${cards.length} 人）`, `Every line (${cards.length})`) },
           ]} onChange={setLine} />
           {chosen !== EVERY_LINE && here.length < cards.length ? <span className="nv-muted nv-small">{t(`另有 ${cards.length - here.length} 人只在别的线上`, `${cards.length - here.length} more are of other lines only`)}</span> : null}
+          {tab === 'cards' && !picks.on ? <LinePickBar picks={picks} listed={shown.map(card => card.id)} kind="characters" /> : null}
         </div>
       ) : null}
+      {tab === 'cards' && plotLines.length > 0 && picks.on ? <LinePickBar picks={picks} listed={shown.map(card => card.id)} kind="characters" /> : null}
 
-      {tab === 'cards' ? <CharacterCards shown={shown} grouped={(filter.sort ?? 'weight') === 'weight'} searching={filter.query.trim().length > 0} lives={lives} /> : null}
+      {tab === 'cards' ? <CharacterCards shown={shown} grouped={(filter.sort ?? 'weight') === 'weight'} searching={filter.query.trim().length > 0} lives={lives} picks={picks} /> : null}
 
       {tab === 'lives' ? (
         lives !== undefined ? <LifeTable shown={shown} lives={lives} />

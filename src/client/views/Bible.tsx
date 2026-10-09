@@ -5,9 +5,10 @@
  * its own — and how the book is written and how it is drawn. The people of
  * the book have a page of their own (`views/Cast.tsx`).
  */
-import { LinesField, LineTags } from '../LinesField'
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import type { NarrativePov, StyleProfile, WorldCategory, WorldEntry, WorldEvent } from '../../shared/types'
+import { LinePickBar, LinesField, LineTags, useLinePicks, useLines } from '../LinesField'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { MAIN_LINE, type NarrativePov, type StyleProfile, type WorldCategory, type WorldEntry, type WorldEvent } from '../../shared/types'
+import { pathOfLine } from '../../shared/lines'
 import { ArtPage } from '../ArtPage'
 import { lines, options, useAssist } from '../forms'
 import { GROUP_CATEGORY, groupOf, WORLD_GROUPS, WORLD_WEIGHTS, worldOrder, worldWeight, type WorldGroup, type WorldWeight } from '../../shared/world'
@@ -18,9 +19,13 @@ import { PictureViewer, type LookOf } from '../PictureRecord'
 import { containment, type Nested } from '../../shared/ties'
 import { DERIVE_TIES_HINT, TiesBlock, TiesReport, useDeriveTies } from '../Ties'
 import {
-  Button, Chip, cx, Empty, Field, Modal, ProjectImage, SectionTitle, Select, Tabs, TextArea, TextInput, useAction, useConfirm, useKept, useLoad,
+  Button, Chip, cx, Empty, Field, Modal, ProjectImage, SectionTitle, Select, Tabs, TextArea, TextInput, useAction, useBookLine, useConfirm, useKept, useLoad,
   useProject, useRunningJob, useSnapshot, useStudio, useT,
 } from '../ui'
+
+/** The bible's own choices beside the line in hand: every line at once, and what is filed under no line. */
+const EVERY_LINE = '*'
+const NO_LINE = '-'
 
 const POV_LABELS: Record<NarrativePov, [string, string]> = {
   'first': ['第一人称', 'First person'],
@@ -95,10 +100,44 @@ function World({ group }: { group: WorldGroup }) {
   const entity = useSnapshot(snapshot => snapshot.entity)
   const ties = useDeriveTies()
   const [tidying, setTidying] = useState(false)
-  const written = project.chapters.filter(chapter => chapter.hasText).length + (project.lines ?? []).reduce((sum, line) => sum + line.chapters.filter(chapter => chapter.hasText).length, 0)
-  const presence = project.worldPresence ?? []
+  // A world may hold several stories. What is listed is the line in hand's: what is filed under it — by the author, or
+  // because a digest of that line found it — with what the lines share (filed under none) in a group of its own below.
+  // Every line at once, and what is filed under none alone, are this page's own choices beside the line in hand.
+  const plotLines = useLines()
+  const [bookLine, setBookLine] = useBookLine()
+  const [view, setView] = useKept<'line' | typeof EVERY_LINE | typeof NO_LINE>('bible.lineView', 'line')
+  const chosen = plotLines.length === 0 ? undefined : view === 'line' ? bookLine : view
+  const setLine = (next: string): void => {
+    setView(next === EVERY_LINE || next === NO_LINE ? next : 'line')
+    if (next !== EVERY_LINE && next !== NO_LINE) setBookLine(next)
+  }
+  // Where the text names each entry: said beside one that is filed nowhere. (A Host from before knows nothing of it.)
+  const where = useLoad(async signal => (plotLines.length > 0 ? await controller.api.call('lines.seen', { root }, signal).catch(() => undefined) : undefined), [root, project.revision, plotLines.length])
+  const lastWhere = useRef<Record<string, string[]> | undefined>(undefined)
+  if (where.data?.world !== undefined) lastWhere.current = where.data.world
+  const namedOn = where.data?.world ?? lastWhere.current
+  // Along a line beside the main one, the chapters that name an entry are that line's: asked for, where the page shows one.
+  const along = chosen !== undefined && chosen !== EVERY_LINE && chosen !== MAIN_LINE ? chosen : undefined
+  const read = useLoad(async signal => (along !== undefined ? await controller.api.call('world.presence', { root, line: along }, signal).catch(() => undefined) : undefined), [root, along, project.revision])
+  const lastRead = useRef<{ line: string; data: NonNullable<typeof read.data> } | undefined>(undefined)
+  if (read.data !== undefined && along !== undefined) lastRead.current = { line: along, data: read.data }
+  const alongData = along === undefined ? undefined : read.data ?? (lastRead.current?.line === along ? lastRead.current.data : undefined)
+  const textOf = useMemo(() => new Map([...project.chapters, ...(project.lines ?? []).flatMap(line => line.chapters)].map(chapter => [chapter.id, chapter.hasText])), [project.chapters, project.lines])
+  const written = alongData?.written ?? (chosen === EVERY_LINE
+    ? project.chapters.filter(chapter => chapter.hasText).length + (project.lines ?? []).reduce((sum, line) => sum + line.chapters.filter(chapter => chapter.hasText).length, 0)
+    : pathOfLine(project, MAIN_LINE).filter(id => textOf.get(id) === true).length)
+  const presence = alongData?.presence ?? project.worldPresence ?? []
   const seen = useMemo(() => new Map(presence.map(item => [item.entry, item.chapters.length])), [presence])
-  const mine = useMemo(() => project.world.filter(entry => groupOf(entry.category) === group), [project.world, group])
+  const everything = useMemo(() => project.world.filter(entry => groupOf(entry.category) === group), [project.world, group])
+  const lineIds = useMemo(() => new Set(plotLines.map(line => line.id)), [plotLines])
+  /** The lines an entry is filed under, of those the book still has. */
+  const filedOf = (entry: WorldEntry): string[] => (entry.lines ?? []).filter(id => lineIds.has(id))
+  const unfiled = useMemo(() => everything.filter(entry => (entry.lines ?? []).filter(id => lineIds.has(id)).length === 0), [everything, lineIds])
+  const mine = useMemo(() => (chosen === undefined || chosen === EVERY_LINE ? everything : chosen === NO_LINE ? unfiled : everything.filter(entry => (entry.lines ?? []).includes(chosen))),
+    [everything, unfiled, chosen])
+  // Beside a line's own: what the lines share, which that line knows as well.
+  const shared = chosen !== undefined && chosen !== EVERY_LINE && chosen !== NO_LINE ? unfiled : []
+  const picks = useLinePicks()
   // Ideas are ordered by how they travel to a model, as they always were; whatever is somewhere or something, by its weight in the story.
   const weighed = group !== 'ideas'
   const ordered = useMemo(() => (weighed ? worldOrder(mine, presence, written) : [...mine].sort((left, right) => left.importance - right.importance)), [mine, presence, written, weighed])
@@ -120,8 +159,17 @@ function World({ group }: { group: WorldGroup }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity?.nonce])
   const visible = ordered.filter(entry => category === 'all' || entry.category === category)
-  const entry = mine.find(candidate => candidate.id === selected)
-  const used = [...new Set(mine.map(item => item.category))]
+  const sharedOrdered = useMemo(() => (weighed ? worldOrder(shared, presence, written) : [...shared].sort((left, right) => left.importance - right.importance)).filter(entry => category === 'all' || entry.category === category),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [shared, presence, written, weighed, category])
+  // Open while the line has nothing of its own: a page with everything folded away says nothing.
+  const sharedOpen = !(folded.shared ?? mine.length > 0)
+  // An entry opened from elsewhere stays open though the line in hand is not its own.
+  const entry = everything.find(candidate => candidate.id === selected)
+  const used = [...new Set([...mine, ...shared].map(item => item.category))]
+  const lineName = (id: string): string => plotLines.find(line => line.id === id)?.title ?? id
+  // What the list shows now, in its order: what "all" picks.
+  const listedIds = [...visible, ...(sharedOpen ? sharedOrdered : [])].map(item => item.id)
   const weightOf = (item: WorldEntry): WorldWeight => worldWeight(item, seen.get(item.id) ?? 0, written)
   const create = (): Promise<unknown> => run(async () => {
     const created = await controller.api.call('world.save', { root, entry: { name: name.trim(), category: group === 'ideas' && category !== 'all' ? category : GROUP_CATEGORY[group], importance: 2 } })
@@ -133,12 +181,16 @@ function World({ group }: { group: WorldGroup }) {
   const undrawn = group === 'places' || group === 'items' ? ordered.filter(item => item.visualImage === undefined && (weightOf(item) === 'core' || weightOf(item) === 'major')) : []
   const row = (item: WorldEntry): ReactNode => (
     <li key={item.id}>
-      <button type="button" className={cx('nv-list-row nv-entry-row', item.id === selected && 'is-active')} onClick={() => { setSelected(item.id) }}>
+      <button type="button" className={cx('nv-list-row nv-entry-row', item.id === selected && !picks.on && 'is-active', picks.on && picks.ids.has(item.id) && 'is-picked')} aria-pressed={picks.on ? picks.ids.has(item.id) : undefined} onClick={() => { if (picks.on) picks.toggle(item.id); else setSelected(item.id) }}>
+        {picks.on ? <span className={cx('nv-pick-mark', picks.ids.has(item.id) && 'is-on')} aria-hidden="true"><Icon name="check" size={11} /></span> : null}
         {group === 'places' || group === 'items' ? <EntryThumb entry={item} icon={labels.icon} /> : null}
         <span className="nv-person-text">
           <span className="nv-list-title">{item.importance === 1 ? '★ ' : ''}{item.name}</span>
           <span className="nv-list-meta">
             {weighed ? ((seen.get(item.id) ?? 0) > 0 ? t(`${seen.get(item.id)} 章`, `${seen.get(item.id)} ch.`) : t('正文里还没写到', 'not in the text yet')) : t(...CATEGORY_LABELS[item.category])}
+            {plotLines.length === 0 ? '' : filedOf(item).length > 0
+              ? (chosen === EVERY_LINE || filedOf(item).length > 1 ? ` · ${t(`仅 ${filedOf(item).map(lineName).join('、')}`, `${filedOf(item).map(lineName).join(', ')} only`)}` : '')
+              : (namedOn?.[item.id] ?? []).length > 0 && (namedOn![item.id]!.length < plotLines.length) ? ` · ${t(`出现在 ${namedOn![item.id]!.map(lineName).join('、')}`, `seen on ${namedOn![item.id]!.map(lineName).join(', ')}`)}` : ''}
             {item.summary !== undefined ? ` · ${item.summary}` : ''}
           </span>
         </span>
@@ -166,6 +218,17 @@ function World({ group }: { group: WorldGroup }) {
           {project.world.length > 1 ? <Button size="sm" icon="sparkles" variant="ghost" onClick={() => { setTidying(true) }} title={t('让策划找出记重了的条目和放错类别的', 'Have the planner find entries kept twice and ones filed wrongly')}>{t('整理', 'Tidy')}</Button> : null}
           <Button size="sm" icon="plus" variant="primary" onClick={() => { setCreating(true) }}>{t(...labels.create)}</Button>
         </div>
+        {chosen !== undefined ? (
+          <div className="nv-bible-line">
+            <Select value={chosen} options={[
+              ...plotLines.map(line => ({ value: line.id, label: `${line.id === MAIN_LINE ? '★ ' : ''}${line.title}（${everything.filter(item => (item.lines ?? []).includes(line.id)).length}）` })),
+              { value: NO_LINE, label: t(`没归线的（${unfiled.length}）`, `Filed under none (${unfiled.length})`) },
+              { value: EVERY_LINE, label: t(`所有线（${everything.length}）`, `Every line (${everything.length})`) },
+            ]} onChange={setLine} />
+            {!picks.on ? <LinePickBar picks={picks} listed={listedIds} kind="world" /> : null}
+          </div>
+        ) : null}
+        {chosen !== undefined && picks.on ? <LinePickBar picks={picks} listed={listedIds} kind="world" /> : null}
         {undrawn.length > 0 ? (
           <p className="nv-note nv-small">
             {group === 'places'
@@ -205,7 +268,17 @@ function World({ group }: { group: WorldGroup }) {
             </div>
           )
         }) : <ul className="nv-list">{visible.map(row)}</ul>}
-        {mine.length === 0 ? <p className="nv-muted nv-pad">{t(...labels.empty)}</p> : null}
+        {mine.length === 0 && shared.length === 0 ? <p className="nv-muted nv-pad">{everything.length === 0 ? t(...labels.empty) : chosen === NO_LINE ? t('都归了线。', 'Everything is filed.') : t('这条线上还没有。', 'None on this line yet.')}</p> : null}
+        {shared.length > 0 ? (
+          <div className="nv-people-group nv-shared-group">
+            <button type="button" className="nv-group-head" aria-expanded={sharedOpen} onClick={() => { setFolded(previous => ({ ...previous, shared: sharedOpen })) }} title={t('没归到哪条线的：每条线写作时都能用到', 'Filed under no line: every line may be told of them')}>
+              <Icon name={sharedOpen ? 'chevronDown' : 'chevronRight'} size={12} />
+              <span>{t('几条线共用的', 'Shared by the lines')}</span>
+              <span className="nv-muted">{sharedOrdered.length}</span>
+            </button>
+            {sharedOpen ? <ul className="nv-list">{sharedOrdered.map(row)}</ul> : null}
+          </div>
+        ) : null}
       </aside>
       <section className="nv-split-detail">
         {entry !== undefined

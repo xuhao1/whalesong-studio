@@ -18,7 +18,7 @@ import { sceneOf, sheetsDrawn, type PortraitScene } from '../labels'
 import { PictureViewer, usePictures } from '../PictureRecord'
 import { useSheetsAsk, type SheetsChoice } from '../SheetsAsk'
 import { TiesBlock } from '../Ties'
-import { LinesField, LineTags } from '../LinesField'
+import { LinesField, LineTags, type LinePicks } from '../LinesField'
 import { Icon } from '../icons'
 import {
   Button, Chip, cx, Empty, Field, Modal, ProjectImage, SectionTitle, Select, TextArea, TextInput, useAction, useConfirm, useLoad, useMediaUrl,
@@ -99,7 +99,7 @@ export interface Lives {
   lives: Record<string, Life>
 }
 
-export function CharacterCards({ shown, grouped, searching, lives }: { shown: CharacterCard[]; grouped: boolean; searching: boolean; lives?: Lives | undefined }) {
+export function CharacterCards({ shown, grouped, searching, lives, picks }: { shown: CharacterCard[]; grouped: boolean; searching: boolean; lives?: Lives | undefined; /** A batch being picked from the list: a click on a row picks it instead of opening it. */ picks?: LinePicks | undefined }) {
   const { controller } = useStudio()
   const t = useT()
   const { project, root } = useProject()
@@ -192,8 +192,9 @@ export function CharacterCards({ shown, grouped, searching, lives }: { shown: Ch
   const onLine = lives?.line !== undefined ? t(`（${lives.line.title}）`, ` (${lives.line.title})`) : ''
   const row = (item: CharacterCard): ReactNode => (mode === 'photos' ? (
     <li key={item.id}>
-      <button type="button" className={cx('nv-photo-card', item.id === selected && 'is-active')} onClick={() => { setSelected(item.id) }} title={[item.tagline, end(item) !== undefined ? `${end(item)!.text}${onLine}` : undefined].filter(Boolean).join('\n')}>
+      <button type="button" className={cx('nv-photo-card', item.id === selected && picks?.on !== true && 'is-active', picks?.on === true && picks.ids.has(item.id) && 'is-picked')} onClick={() => { if (picks?.on === true) picks.toggle(item.id); else setSelected(item.id) }} title={[item.tagline, end(item) !== undefined ? `${end(item)!.text}${onLine}` : undefined].filter(Boolean).join('\n')}>
         <CardPhoto card={item} />
+        {picks?.on === true ? <span className={cx('nv-pick-mark nv-photo-pick', picks.ids.has(item.id) && 'is-on')} aria-hidden="true"><Icon name="check" size={11} /></span> : null}
         {end(item) !== undefined ? <span className={cx('nv-photo-end', end(item)!.dead && 'is-dead')}>{end(item)!.text}</span> : null}
         <span className="nv-photo-name">{item.name}</span>
         <span className="nv-photo-meta">{t(...ROLE_LABELS[item.role])}</span>
@@ -201,7 +202,8 @@ export function CharacterCards({ shown, grouped, searching, lives }: { shown: Ch
     </li>
   ) : (
     <li key={item.id}>
-      <button type="button" className={cx('nv-list-row nv-person', item.id === selected && 'is-active')} onClick={() => { setSelected(item.id) }}>
+      <button type="button" className={cx('nv-list-row nv-person', item.id === selected && picks?.on !== true && 'is-active', picks?.on === true && picks.ids.has(item.id) && 'is-picked')} onClick={() => { if (picks?.on === true) picks.toggle(item.id); else setSelected(item.id) }}>
+        {picks?.on === true ? <span className={cx('nv-pick-mark', picks.ids.has(item.id) && 'is-on')} aria-hidden="true"><Icon name="check" size={11} /></span> : null}
         <span className="nv-avatar nv-avatar-empty">{item.name.slice(0, 1)}</span>
         <span className="nv-person-text">
           <span className="nv-list-title">{item.name}</span>

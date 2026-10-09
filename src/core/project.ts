@@ -87,7 +87,11 @@ export interface LineScope {
   reads: (chapterId: string) => boolean
   /** Whether somebody is one of its people: as the author said, else as the chapters have them (`ofLine`). */
   has: (card: Pick<CharacterCard, 'id' | 'lines'>) => boolean
-  /** Whether something of the world is its to know: all of the world, but for what the author kept to other lines. */
+  /**
+   * Whether something of the world is its to know: all of the world, but for what is filed under other lines — by the
+   * author, or because a digest of another line found it there. (Not by where the text happens to name it: an entry the
+   * whole book stands on may be spelled out on one line only.)
+   */
   knows: (entry: Pick<WorldEntry, 'lines'>) => boolean
   /** The threads that are its own — planted, taken up or planned on it, or touched by no line yet — and whether each still waits at its end. */
   threads: { thread: PlotThread; open: boolean }[]
@@ -853,7 +857,7 @@ export class Project {
    * On which lines of the plot each character is seen — read off the digests along each line. What the page shows
    * beside a name where the author has not said which lines somebody belongs to.
    */
-  async seenOn(): Promise<{ lines: { id: string; title: string }[]; people: Record<string, string[]> }> {
+  async seenOn(): Promise<{ lines: { id: string; title: string }[]; people: Record<string, string[]>; world: Record<string, string[]> }> {
     const outline = await this.outline()
     const lines = [{ id: MAIN_LINE, title: '' }, ...(outline.lines ?? []).map(line => ({ id: line.id, title: line.title }))]
     const { people: where } = await this.whereabouts()
@@ -862,7 +866,83 @@ export class Project {
       const path = new Set(linePath(outline, lineOf(outline, line.id)).map(entry => entry.plan.id))
       for (const [id, chapters] of where) if ([...chapters].some(chapter => path.has(chapter))) people[id] = [...(people[id] ?? []), line.id]
     }
-    return { lines, people }
+    // The bible's entries: on which lines the text names them. A hint for the author and what "file by the text" goes
+    // by — not what decides whose an entry is (`LineScope.knows`).
+    const named = await this.worldLines()
+    const world: Record<string, string[]> = {}
+    for (const line of lines) for (const [id, on] of named) if (on.has(line.id)) world[id] = [...(world[id] ?? []), line.id]
+    return { lines, people, world }
+  }
+
+  private worldAt: { revision: number; lines: Map<string, Set<string>> } | undefined
+
+  /**
+   * On which lines of the plot each entry of the bible is named — by the text of the chapters each line reads, and by
+   * what their digests wrote down. Shown beside an entry nobody filed, and what a batch is filed by when the author
+   * says "by the text".
+   */
+  private async worldLines(): Promise<Map<string, Set<string>>> {
+    const revision = this.revisionValue
+    if (this.worldAt?.revision === revision) return this.worldAt.lines
+    const outline = await this.outline()
+    const lines = new Map<string, Set<string>>()
+    for (const id of [MAIN_LINE, ...(outline.lines ?? []).map(line => line.id)]) {
+      for (const item of (await this.worldPresence(id)).presence) {
+        if (item.chapters.length === 0) continue
+        const on = lines.get(item.entry) ?? new Set<string>()
+        on.add(id)
+        lines.set(item.entry, on)
+      }
+    }
+    if (this.revisionValue === revision) this.worldAt = { revision, lines }
+    return lines
+  }
+
+  /**
+   * File a batch of cards and entries under lines of the plot at once: they belong to these lines and to no other — or,
+   * with no line named, to every line again.
+   * @param input.byText - instead of naming lines: each is filed under the lines it is found on — an entry where the
+   *   text names it, a person where the chapters have them. What is found on every line, or on none, is left unfiled:
+   *   it is everybody's.
+   * @returns who and what was filed, under which lines where they were named, and what `byText` left as it was.
+   * @throws ProjectError `novel/not-found` for a line the book does not have.
+   */
+  async assignLines(input: { lines?: readonly string[]; byText?: boolean; characters?: readonly string[]; world?: readonly string[] }): Promise<{ characters: string[]; world: string[]; lines: string[]; left?: string[] }> {
+    const outline = await this.outline()
+    const every = [MAIN_LINE, ...(outline.lines ?? []).map(line => line.id)]
+    const known = new Set(every)
+    const lines = [...new Set((input.lines ?? []).map(id => id.trim()).filter(id => id.length > 0))]
+    const unknown = lines.find(id => !known.has(id))
+    if (unknown !== undefined) throw new ProjectError('novel/not-found', `no line of the plot has the id "${unknown}" — the lines: ${every.join(', ')}`)
+    const found = input.byText === true ? await this.seenOn() : undefined
+    const left: string[] = []
+    // By the text: the lines it is found on, in the book's order — unless that is all of them, or none.
+    const under = (on: readonly string[] | undefined, name: string): string[] | undefined => {
+      if (found === undefined) return lines
+      const here = every.filter(id => on?.includes(id) === true)
+      if (here.length > 0 && here.length < every.length) return here
+      left.push(name)
+      return undefined
+    }
+    const characters: string[] = []
+    for (const ref of input.characters ?? []) {
+      const card = await this.findCharacter(ref)
+      if (card === undefined) continue
+      const filed = under(found?.people[card.id], card.name)
+      if (filed === undefined) continue
+      await this.saveCharacter({ id: card.id, lines: filed })
+      characters.push(card.name)
+    }
+    const world: string[] = []
+    for (const ref of input.world ?? []) {
+      const entry = await this.findWorld(ref)
+      if (entry === undefined) continue
+      const filed = under(found?.world[entry.id], entry.name)
+      if (filed === undefined) continue
+      await this.saveWorld({ id: entry.id, lines: filed })
+      world.push(entry.name)
+    }
+    return { characters, world, lines: found === undefined ? lines : [], ...(found !== undefined ? { left } : {}) }
   }
 
   /**
@@ -1957,7 +2037,12 @@ export class Project {
     const written = chapters.filter(chapter => chapter.hasText)
     const texts = await Promise.all(written.map(async chapter => ({ id: chapter.id, text: await this.chapterText(chapter.id) })))
     const noted = new Map<string, readonly string[]>()
-    for (const { chapter, memory } of await this.memories(line !== undefined ? await this.chapters(line) : undefined)) if (memory.locations !== undefined) noted.set(chapter.plan.id, memory.locations)
+    // What a chapter's digest wrote down is there, whether the text spells the name out or only points at it: where it
+    // happens, and whatever it met for the first time.
+    for (const { chapter, memory } of await this.memories(line !== undefined ? await this.chapters(line) : undefined)) {
+      const names = [...(memory.locations ?? []), ...(memory.newEntities ?? []).filter(entity => entity.kind !== 'character').map(entity => entity.name)]
+      if (names.length > 0) noted.set(chapter.plan.id, names)
+    }
     const value = worldPresence(world, texts, noted)
     // Kept for the state of the book it was read from: something may have been written while the manuscript was gone through.
     if (this.seenAt.revision === revision) this.seenAt.lines.set(line ?? MAIN_LINE, value)

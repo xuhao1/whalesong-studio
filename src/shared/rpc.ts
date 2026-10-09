@@ -485,7 +485,14 @@ export interface NovelRpc {
   /** Have the director settle the look of the book's pictures from the book itself; `direction` is what the author wants of it. The look is written into the book (`novel.json`: `artStyle`, `artAvoid`). */
   'ai.artDirection': { params: { root: string; direction?: string }; result: JobStarted }
   /** On which lines of the plot each character is seen, read off the digests along each line. */
-  'lines.seen': { params: { root: string }; result: { lines: { id: string; title: string }[]; people: Record<string, string[]> } }
+  'lines.seen': { params: { root: string }; result: { lines: { id: string; title: string }[]; people: Record<string, string[]>; /** The bible's entries the same way: the lines whose text names each. Not sent by a Host from before. */ world?: Record<string, string[]> } }
+  /**
+   * File a batch of cards and entries under lines of the plot: these and no other; no line named — every line again.
+   * `byText`: each under the lines it is found on (what is on all of them, or on none, is `left` as it was).
+   */
+  'lines.assign': { params: { root: string; lines?: string[]; byText?: boolean; characters?: string[]; world?: string[] }; result: { characters: string[]; world: string[]; lines: string[]; left?: string[] } }
+  /** Where each entry of the bible is named along a line, and how many written chapters the line has to name it in. */
+  'world.presence': { params: { root: string; line?: string }; result: { presence: { entry: string; chapters: string[] }[]; written: number } }
   /**
    * Import a manuscript as another line of this book's plot: a story different from its first chapter, in the same
    * world. The line begins where the story begins; its chapters are digested unless `digest` is false. A job.

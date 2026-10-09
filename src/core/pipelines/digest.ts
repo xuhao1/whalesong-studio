@@ -241,6 +241,7 @@ async function applyMemory(runtime: ProjectRuntime, chapter: LocatedChapter, mem
   }
 
   const world = await project.world()
+  const lineTitle = chapter.line !== undefined ? ((await project.outline()).lines ?? []).find(line => line.id === chapter.line)?.title ?? chapter.line : undefined
   for (const entity of memory.newEntities) {
     if (entity.kind === 'character') {
       // A name is not proposed for a card because a chapter met it: a digest names everybody, the doorman as much as
@@ -250,12 +251,14 @@ async function applyMemory(runtime: ProjectRuntime, chapter: LocatedChapter, mem
     } else {
       if (world.some(entry => sameName(entry.name, entity.name) || entry.aliases?.some(alias => sameName(alias, entity.name)) === true)) continue
       const category = entity.kind === 'location' ? 'location' : entity.kind === 'item' ? 'item' : entity.kind === 'faction' ? 'faction' : 'term'
+      // Found on a line beside the main one, it is that line's: filed there when it is taken up, and not handed to
+      // whoever writes the other lines. (Found on the main line it stays unfiled — the world the lines share.)
       suggestions.push({
         kind: 'new-world',
         title: zh ? `新设定：${entity.name}` : `New world entry: ${entity.name}`,
-        detail: entity.description,
+        detail: lineTitle !== undefined ? (zh ? `${entity.description}（在“${lineTitle}”这条线上发现，采纳后归到这条线）` : `${entity.description} (found on the line "${lineTitle}"; filed under it when accepted)`) : entity.description,
         chapterId: chapter.plan.id,
-        payload: { name: entity.name, category, summary: entity.description, importance: 3 },
+        payload: { name: entity.name, category, summary: entity.description, importance: 3, ...(chapter.line !== undefined ? { lines: [chapter.line] } : {}) },
       })
     }
   }

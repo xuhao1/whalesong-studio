@@ -2,6 +2,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { packContext } from '../src/core/context'
 import { bookTools } from '../src/core/crew'
+import { acceptSuggestion } from '../src/core/pipelines/bible'
+import { digestChapter } from '../src/core/pipelines/digest'
 import { deriveChapters } from '../src/core/pipelines/plot'
 import { listReviews } from '../src/core/pipelines/review'
 import { fixIssues } from '../src/core/pipelines/revise'
@@ -128,6 +130,91 @@ describe('a line of the plot reads itself', () => {
     expect(stay).toContain('代笔人沈蘅写出的信会让收信人死去')
     expect(stay).toContain('信还在袖子里')
     for (const part of ['周衡', '陆掌柜', '报馆']) expect(stay, part).not.toContain(part)
+  })
+
+  it('keeps the world shared until it is filed: by a line\'s own digest, by the author in a batch, or by the text', async () => {
+    const { project, index } = bed.runtime
+    const book = await world(bed)
+    const pier = await project.saveWorld({ name: '码头', category: 'location', importance: 1, summary: '等船的地方' })
+    const press = await project.saveWorld({ name: '报馆', category: 'location', importance: 2, summary: '登报的地方' })
+    const shop = await project.saveWorld({ name: '铺子', category: 'location', importance: 1, summary: '城南的代笔铺' })
+    const ledger = await project.saveWorld({ name: '账本', category: 'item', importance: 2, summary: '少了一页' })
+    const rule = await project.saveWorld({ name: '七日之期', category: 'rule', importance: 2, summary: '写下名字七日后' })
+    const knows = async (line?: string): Promise<string[]> => {
+      const scope = await project.lineScope(line)
+      return (await project.world()).filter(entry => scope.knows(entry)).map(entry => entry.name).sort()
+    }
+    const all = ['七日之期', '寄死笔', '报馆', '码头', '账本', '铺子'].sort()
+    // Nobody filed anything: the world is every line's, whatever each line's text happens to spell out — an entry the
+    // whole book stands on may be named on one line only.
+    for (const line of [undefined, book.stay.id, book.south.id]) expect(await knows(line)).toEqual(all)
+    // Where the text names each is known all the same: said beside an entry, and what "by the text" goes by.
+    const named = async (): Promise<Record<string, string[]>> => (await project.seenOn()).world
+    expect((await named())[pier.id]).toEqual([MAIN_LINE, book.stay.id])
+    expect((await named())[press.id]).toEqual([MAIN_LINE])
+    expect((await named())[shop.id]).toEqual([book.south.id])
+    expect((await named())[rule.id]).toBeUndefined()
+
+    // A digest of the other story finds a place: the suggestion says whose it is, and taken up it is filed there.
+    await project.saveChapterText(book.c2.id, '陆掌柜盘了一夜的账，后堂暗格里少了一页。')
+    bed.llm.responder = () => JSON.stringify({ brief: '盘账', summary: '陆掌柜盘账。', characters: [{ name: '陆掌柜', role: '盘账' }], facts: [], threads: [], newEntities: [{ name: '后堂暗格', kind: 'location', description: '柜台后面的暗格' }] })
+    await digestChapter(bed.core, bed.runtime, book.c2.id, { origin: 'user' })
+    const found = (await project.suggestions()).find(item => item.kind === 'new-world')!
+    expect(found.payload).toMatchObject({ name: '后堂暗格', lines: [book.south.id] })
+    expect(found.detail).toContain('在“城南的铺子”这条线上发现')
+    await acceptSuggestion(bed.runtime, found.id)
+    expect((await project.findWorld('后堂暗格'))!.lines).toEqual([book.south.id])
+    expect(await knows()).not.toContain('后堂暗格')
+    expect(await knows(book.stay.id)).not.toContain('后堂暗格')
+    expect(await knows(book.south.id)).toContain('后堂暗格')
+    // Found on the main line, a place stays the world's: the lines share it.
+    bed.llm.responder = () => JSON.stringify({ brief: '登报', summary: '周衡登报。', characters: [{ name: '周衡', role: '登报' }], facts: [], threads: [], newEntities: [{ name: '排字房', kind: 'location', description: '报馆后面的排字房' }] })
+    await digestChapter(bed.core, bed.runtime, book.m2.id, { origin: 'user' }, { force: true })
+    const shared = (await project.suggestions()).find(item => item.kind === 'new-world')!
+    expect(shared.payload).toMatchObject({ name: '排字房' })
+    expect(shared.payload.lines).toBeUndefined()
+    expect(shared.detail).toBe('报馆后面的排字房')
+
+    // A batch, filed at once under the lines the author names: those and no other.
+    const filed = await project.assignLines({ lines: [MAIN_LINE, book.south.id], world: [press.id, '账本'], characters: [book.zhou.id, '阿棠'] })
+    expect(filed).toEqual({ characters: ['周衡', '阿棠'], world: ['报馆', '账本'], lines: [MAIN_LINE, book.south.id] })
+    expect(await knows(book.stay.id)).not.toContain('账本')
+    expect(await knows(book.south.id)).toContain('报馆')
+    const stay = await project.lineScope(book.stay.id)
+    expect((await project.characters()).filter(card => stay.has(card)).map(card => card.name)).not.toContain('阿棠')
+    // Filed under none again: the world's again.
+    await project.assignLines({ lines: [], world: [press.id, ledger.id], characters: [book.zhou.id, book.tang.id] })
+    expect(await knows(book.stay.id)).toContain('账本')
+
+    // By the text: each under the lines it is found on — what every line has, or none yet, is left as it was.
+    const byText = await project.assignLines({ byText: true, world: [press.id, shop.id, pier.id, rule.id, '寄死笔'], characters: [book.lu.id, book.heng.id, book.tang.id] })
+    expect(byText.world).toEqual(['报馆', '铺子', '码头'])
+    expect(byText.characters).toEqual(['陆掌柜', '沈蘅'])
+    expect(byText.left).toEqual(['陆掌柜', '沈蘅', '阿棠', '报馆', '铺子', '码头', '七日之期', '寄死笔'].filter(name => !['陆掌柜', '沈蘅', '报馆', '铺子', '码头'].includes(name)))
+    expect((await project.findWorld(press.id))!.lines).toEqual([MAIN_LINE])
+    expect((await project.findWorld(shop.id))!.lines).toEqual([book.south.id])
+    expect((await project.findWorld(pier.id))!.lines).toEqual([MAIN_LINE, book.stay.id])
+    expect((await project.findWorld(rule.id))!.lines ?? []).toEqual([])
+    expect((await project.findCharacter(book.lu.id))!.lines).toEqual([book.south.id])
+    // Now whoever writes the main line is not handed the other story's shop — core canon though it is — and has the dock.
+    const pack = async (chapter: string): Promise<string> => {
+      const made = await packContext(project, index, { purpose: 'draft', chapter: (await project.findChapter(chapter))!, textBudget: 50_000, sideBudget: 20_000, tailChars: 200 })
+      return `${made.stable}\n${made.rest}`
+    }
+    const main = await pack(book.m2.id)
+    expect(main).toContain('等船的地方')
+    expect(main).not.toContain('城南的代笔铺')
+    const south = await pack(book.c2.id)
+    expect(south).toContain('城南的代笔铺')
+    expect(south).not.toContain('等船的地方')
+
+    // A line the book does not have is refused; a name nobody answers to is passed over.
+    await expect(project.assignLines({ lines: ['no-such-line'], world: [press.id] })).rejects.toMatchObject({ code: 'novel/not-found' })
+    expect(await project.assignLines({ lines: [MAIN_LINE], world: ['没有这一条'] })).toMatchObject({ world: [], characters: [] })
+    // Along a line of its own, the chapters that name an entry are that line's.
+    const along = await project.worldPresence(book.south.id)
+    expect(along.presence.find(item => item.entry === shop.id)?.chapters).toEqual([book.c1.id])
+    expect(along.written).toBe(2)
   })
 
   it('reads and searches for a role along the line its work is on, numbered along it', async () => {
