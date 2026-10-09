@@ -16,6 +16,7 @@ import { MAIN_LINE, type ChapterInfo, type ChapterPlan, type PlotLine, type Plot
 import {
   Button, Chip, cx, Field, Modal, Select, TextArea, TextInput, useAction, useConfirm, useProject, useStudio, useT, type Translate,
 } from '../ui'
+import { MoveChapters } from '../MoveChapters'
 import { Derive } from './Outline'
 import { readBase64 } from './Home'
 import { LineWorldPanel } from './Worldline'
@@ -144,6 +145,13 @@ export function PlotGraph() {
     if (failed !== undefined) throw new Error(failed.message)
     await controller.refreshProject()
   }
+  // Chapters being moved to another place in the plot: one, or one with those that follow it on its line.
+  const [moving, setMoving] = useState<{ chapters: string[]; fresh?: boolean } | undefined>()
+  const runFrom = (from: Station): string[] => {
+    const own = from.line !== undefined ? (project.outline.lines ?? []).find(line => line.id === from.line)?.chapters ?? [] : project.outline.volumes.flatMap(volume => volume.chapters)
+    const at = own.findIndex(plan => plan.id === from.plan.id)
+    return at < 0 ? [from.plan.id] : own.slice(at).map(plan => plan.id)
+  }
   const station = picked?.kind === 'chapter' ? graph.stations.get(picked.id) : undefined
   const track = picked?.kind === 'line' ? graph.tracks.find(candidate => candidate.id === picked.id) : station !== undefined ? graph.tracks.find(candidate => candidate.id === (station.line ?? MAIN_LINE)) : undefined
   const width = PAD_X + graph.columns * STEP_X + 40
@@ -245,6 +253,8 @@ export function PlotGraph() {
           <div className="nv-row-wrap">
             <Button size="sm" icon={station.info?.hasText === true ? 'pen' : 'feather'} onClick={() => { controller.setView('write', station.plan.id) }}>{station.info?.hasText === true ? t('打开正文', 'Open the text') : t('写这一章', 'Write it')}</Button>
             <Button size="sm" icon="tree" onClick={() => { controller.setView('outline', station.plan.id) }}>{t('改章纲', 'Edit its outline')}</Button>
+            <Button size="sm" variant="outline" icon="branch" onClick={() => { setMoving({ chapters: [station.plan.id] }) }} title={t('把这一章移到另一条线，或这条线里的另一个位置', 'Onto another line, or elsewhere on this one')}>{t('移到…', 'Move to…')}</Button>
+            <Button size="sm" variant="outline" icon="branch" onClick={() => { setMoving({ chapters: runFrom(station), fresh: true }) }} title={t('这一章和它后面的章节另成一条线：从哪一章分出，你来定', 'This chapter and those after it become a line of their own, leaving where you say')}>{t('把这一章及之后分成一条线…', 'Part this chapter and what follows into a line…')}</Button>
             <span className="nv-spacer" />
             <Button size="sm" icon="branch" onClick={() => { setDeriving({ ...(station.line !== undefined ? { line: station.line } : {}), after: station.plan.id, mode: 'branch' }) }} title={t('这一章之后原来的走向保留；策划另外推演一条不同的线', 'What follows this chapter stays; the planner derives another way on, as a line of its own')}>{t('从这里另开一条线', 'Open a line from here')}</Button>
             <Button size="sm" icon="refresh" onClick={() => { setDeriving({ ...(station.line !== undefined ? { line: station.line } : {}), after: station.plan.id, mode: 'replace' }) }} title={t('换掉这一章之后的大纲；写了正文的章节留成搁置的线', 'Replace the outline after this chapter; written chapters are kept as a shelved line')}>{t('重写这之后的大纲', 'Rewrite the outline after it')}</Button>
@@ -293,6 +303,7 @@ export function PlotGraph() {
         </Modal>
       ) : null}
       {editing !== undefined ? <LineEditor line={editing === 'new' ? undefined : editing} stations={graph.stations} labelOf={labelOf} onClose={() => { setEditing(undefined) }} onSave={async (ops) => { await apply(ops) }} /> : null}
+      {moving !== undefined ? <MoveChapters chapters={moving.chapters} preset={{ ...(moving.fresh === true ? { fresh: true } : {}) }} onClose={() => { setMoving(undefined) }} /> : null}
       {joining !== undefined ? <JoinDialog line={joining} graph={graph} labelOf={labelOf} onClose={() => { setJoining(undefined) }} onSave={async (ops) => { await apply(ops) }} /> : null}
       {confirm.element}
     </div>
@@ -316,17 +327,15 @@ function LineEditor({ line, stations, labelOf, onClose, onSave }: { line: PlotLi
   const save = (): Promise<unknown> => run(async () => {
     await onSave([line === undefined
       ? { op: 'add-line', title, ...(from.length > 0 ? { from } : {}), ...(choice.trim().length > 0 ? { choice } : {}), ...(premise.trim().length > 0 ? { premise } : {}) }
-      : { op: 'update-line', line: line.id, title, choice, premise }])
+      : { op: 'update-line', line: line.id, title, choice, premise, ...(from !== (line.from ?? '') ? { from: from.length > 0 ? from : null } : {}) }])
     onClose()
   })
   return (
     <Modal title={line === undefined ? t('开一条新线', 'Open a line') : t('这条线的名字和说明', 'The line\'s name and what it says of itself')} onClose={onClose} footer={<Button variant="primary" busy={busy} disabled={title.trim().length === 0} pending={t('正在保存…', 'Saving…')} onClick={save}>{t('保存', 'Save')}</Button>}>
       <Field label={t('这条线叫什么', 'What the line is called')}><TextInput autoFocus value={title} placeholder={t('例：她没有烧掉那封信', 'e.g. She keeps the letter')} onChange={(event) => { setTitle(event.target.value) }} /></Field>
-      {line === undefined ? (
-        <Field label={t('从哪一章之后分出', 'The chapter it leaves after')} hint={t('不选：从故事开头就走另一条路。', 'None: another road from the very start.')}>
-          <Select value={from} options={[{ value: '', label: t('（故事开头）', '(the start of the story)') }, ...options]} onChange={setFrom} />
-        </Field>
-      ) : null}
+      <Field label={t('从哪一章之后分出', 'The chapter it leaves after')} hint={line === undefined ? t('不选：从故事开头就走另一条路。', 'None: another road from the very start.') : t('改这里就是把这条线接到别处；不选：从头就是另一个故事。', 'Changing it joins the line on elsewhere; none: another story from its first page.')}>
+        <Select value={from} options={[{ value: '', label: t('（故事开头）', '(the start of the story)') }, ...options]} onChange={setFrom} />
+      </Field>
       <Field label={t('分叉处的抉择（可不填）', 'What is decided there (optional)')} hint={t('谁在那里做了什么决定。读者在分叉处看到的就是它。', 'Who decided what there. It is what a reader sees at the fork.')}>
         <TextInput value={choice} onChange={(event) => { setChoice(event.target.value) }} />
       </Field>

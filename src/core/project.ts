@@ -1309,6 +1309,47 @@ export class Project {
     })
   }
 
+  /**
+   * Move chapters — one, or a run of them — to another place: elsewhere on their line, onto another line, or onto a
+   * line just opened for them. They keep their order, and everything made from them stays with them: a chapter is
+   * found by its id, wherever it lies. A line that leaves after one of them, or arrives at one, goes where it goes —
+   * that is how the plot is wired anew. What must not come of it is a knot — a line that leaves after one of its own
+   * chapters, or a way round in a circle: then nothing is moved.
+   * @param where - as for one chapter: beside another (`before` / `after`), else at the end of `line`, else (the main
+   *   line) at the end of `volume`. Nothing said: the end of the line the first of them is on.
+   * @throws ProjectError `novel/invalid` when the plot would no longer be a way through; `novel/not-found` for a chapter that is not there.
+   */
+  async moveChapters(refs: readonly string[], where: ChapterPlace = {}): Promise<LocatedChapter[]> {
+    const found: LocatedChapter[] = []
+    for (const ref of refs) {
+      const chapter = await this.findChapter(ref)
+      if (chapter === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${ref}"`)
+      if (!found.some(known => known.plan.id === chapter.plan.id)) found.push(chapter)
+    }
+    if (found.length === 0) return []
+    const moved = new Set(found.map(chapter => chapter.plan.id))
+    if ((where.before !== undefined && moved.has(where.before)) || (where.after !== undefined && moved.has(where.after))) throw new ProjectError('novel/invalid', 'a chapter cannot be put beside itself')
+    await this.updateOutline((draft) => {
+      for (const holder of holders(draft)) holder.chapters = holder.chapters.filter(chapter => !moved.has(chapter.id))
+      const first = found[0]!
+      const said = where.before !== undefined || where.after !== undefined || where.line !== undefined || where.volume !== undefined
+      const place: ChapterPlace = said ? where : first.line !== undefined ? { line: first.line } : { volume: first.volume.id }
+      let last: string | undefined
+      for (const chapter of found) {
+        insertChapter(draft, chapter.plan, last !== undefined ? { after: last } : place)
+        last = chapter.plan.id
+      }
+      const knot = knotIn(draft)
+      if (knot !== undefined) throw new ProjectError('novel/invalid', knot)
+    })
+    const out: LocatedChapter[] = []
+    for (const chapter of found) {
+      const now = await this.findChapter(chapter.plan.id)
+      if (now !== undefined) out.push(now)
+    }
+    return out
+  }
+
   /** Remove a chapter from the outline; its text is snapshotted, then deleted. */
   /**
    * Take a chapter out of the book. It is kept — plan, place and text — among
@@ -2755,6 +2796,25 @@ function linePath(outline: Outline, line: PlotLine | undefined, seen: ReadonlySe
     }
   }
   return out
+}
+
+/**
+ * What is wrong with the plot as a way through, where something is: a line that leaves after, or arrives at, one of
+ * its own chapters; a line whose way leads back into itself. Undefined where every line can be read from its start
+ * to its end with each of its chapters met once.
+ */
+function knotIn(outline: Outline): string | undefined {
+  for (const line of outline.lines ?? []) {
+    const own = new Set(line.chapters.map(chapter => chapter.id))
+    if (line.from !== undefined && own.has(line.from)) return `the line "${line.title}" would leave after one of its own chapters — say first where it leaves (update-line from)`
+    if (line.into !== undefined && own.has(line.into)) return `the line "${line.title}" would arrive at one of its own chapters — say first where it arrives (update-line into)`
+    const path = linePath(outline, line)
+    const there = (id: string | undefined): boolean => id === undefined || homeOf(outline, id) === undefined || path.some(entry => entry.plan.id === id)
+    if (line.chapters.some(chapter => path.filter(entry => entry.plan.id === chapter.id).length !== 1) || !there(line.from) || !there(line.into)) {
+      return `that would make the line "${line.title}" go round in a circle: it leaves after a chapter that comes after it`
+    }
+  }
+  return undefined
 }
 
 function located(path: Placed[]): LocatedChapter[] {

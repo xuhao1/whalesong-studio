@@ -5,7 +5,7 @@
  * the same validation. The lines of the plot are edited with the same
  * vocabulary: opened, renamed, joined to another, made the main one, removed.
  */
-import { MAIN_LINE, type Beat, type ChapterPlan, type ChapterStatus, type PlotThread, type ThreadKind, type ThreadStatus } from '../../shared/types'
+import { MAIN_LINE, type Beat, type ChapterPlan, type ChapterStatus, type PlotLine, type PlotThread, type ThreadKind, type ThreadStatus } from '../../shared/types'
 import { newId, sameName } from '../../shared/text'
 import type { ProjectRuntime } from '../core'
 import { ProjectError, type ChapterPlace } from '../project'
@@ -20,6 +20,12 @@ export type OutlineOp =
   | ({ op: 'add-chapter'; title: string; volume?: string; before?: string; after?: string; /** The line it is added to, when that is not the main one. */ line?: string } & ChapterFields)
   | ({ op: 'update-chapter'; chapter: string; title?: string } & ChapterFields)
   | { op: 'move-chapter'; chapter: string; volume?: string; before?: string; after?: string; line?: string }
+  /**
+   * Move a run of chapters, in their order, to another place — elsewhere on their line, onto another line (`line`;
+   * `main` for the main one), or onto a line opened for them (`line: "new"`, with its `title` and, where it parts from
+   * the story, the chapter it leaves after: `from`). `before` / `after` say where among the chapters there; left out: the end.
+   */
+  | { op: 'move-chapters'; chapters: string[]; line?: string; volume?: string; before?: string; after?: string; title?: string; from?: string; choice?: string; premise?: string }
   | { op: 'remove-chapter'; chapter: string }
   /** Put back a chapter that was removed: where it stood, with its text. */
   | { op: 'restore-chapter'; chapter: string }
@@ -196,6 +202,45 @@ export async function applyOutlineOps(runtime: ProjectRuntime, ops: OutlineOp[])
           await project.moveChapter(chapter.plan.id, where)
           const located = await project.findChapter(chapter.plan.id)
           results.push({ op: op.op, ok: true, id: chapter.plan.id, message: `moved "${chapter.plan.title}" to position ${located?.index ?? '?'}` })
+          break
+        }
+        case 'move-chapters': {
+          const refs = Array.isArray(op.chapters) ? op.chapters.filter((ref): ref is string => typeof ref === 'string' && ref.trim().length > 0) : []
+          if (refs.length === 0) throw new ProjectError('novel/invalid', 'name the chapters to move')
+          const where: ChapterPlace = {}
+          let opened: PlotLine | undefined
+          if (op.line === 'new') {
+            if ((op.title ?? '').trim().length === 0) throw new ProjectError('novel/invalid', 'a line needs a name')
+            let from: string | undefined
+            if (op.from !== undefined && op.from.trim().length > 0) {
+              const leaves = await project.findChapter(op.from)
+              if (leaves === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${op.from}"`)
+              from = leaves.plan.id
+            }
+            opened = await project.addLine({ title: op.title!, ...(from !== undefined ? { from } : {}), ...(op.choice !== undefined ? { choice: op.choice } : {}), ...(op.premise !== undefined ? { premise: op.premise } : {}), origin: 'author' })
+            where.line = opened.id
+          } else {
+            if (op.volume !== undefined) where.volume = await findVolume(op.volume)
+            if (op.line !== undefined && op.line !== MAIN_LINE) where.line = await findLine(op.line)
+            for (const side of ['before', 'after'] as const) {
+              const ref = op[side]
+              if (ref === undefined) continue
+              const anchor = await project.findChapter(ref, where.line)
+              if (anchor === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${ref}"`)
+              where[side] = anchor.plan.id
+            }
+            // Onto the main line with nothing more said: its end.
+            if (op.line === MAIN_LINE && where.before === undefined && where.after === undefined && where.volume === undefined) where.volume = (await project.outline()).volumes.at(-1)!.id
+          }
+          let moved: Awaited<ReturnType<typeof project.moveChapters>>
+          try {
+            moved = await project.moveChapters(refs, where)
+          } catch (error) {
+            // The line opened for them is not left behind empty.
+            if (opened !== undefined) await project.removeLine(opened.id).catch(() => undefined)
+            throw error
+          }
+          results.push({ op: op.op, ok: true, ...(opened !== undefined ? { id: opened.id } : {}), message: `moved ${moved.length} chapter(s)${opened !== undefined ? ` onto the new line "${opened.title}" (${opened.id})` : ''}: ${moved.map(chapter => `"${chapter.plan.title}" → ${chapter.index}`).join(', ')}` })
           break
         }
         case 'remove-chapter': {

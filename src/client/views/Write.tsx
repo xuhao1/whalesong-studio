@@ -18,6 +18,7 @@ import { DiffView, ProposalCard } from '../components/ProposalCard'
 import { Icon } from '../icons'
 import { jobKindLabel, jobPulse } from '../Studio'
 import { CHAPTER_STATUS, CHAPTER_STATUS_TONE, ISSUE_TYPE, SEVERITY, SEVERITY_TONE, sheetsDrawn } from '../labels'
+import { MoveChapters } from '../MoveChapters'
 import { useSheetsAsk } from '../SheetsAsk'
 import { Derive } from './Outline'
 import {
@@ -255,6 +256,8 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
   const jump = useSnapshot(snapshot => snapshot.jump)
   const revision = project.revision
   const doc = useLoad<ChapterDocument>(signal => controller.api.call('chapter.read', { root, id: chapter.id }, signal), [root, chapter.id, revision])
+  // Moving this chapter to another place in the plot, while the author says where.
+  const [moving, setMoving] = useState(false)
   const [text, setText] = useState<string | undefined>()
   const baseline = useRef<string | undefined>(undefined)
   const [external, setExternal] = useState<string | undefined>()
@@ -567,6 +570,7 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
             { label: t('批量写作…', 'Write a run of chapters…'), icon: 'layers', onSelect: () => { onBatch(['beats', 'write', 'digest']) } },
             { label: t('批量推演节拍…', 'Beats for many chapters…'), icon: 'layers', onSelect: () => { onBatch(['beats']) } },
             { label: t('批量收录 / 审校…', 'Memory and reviews for many chapters…'), icon: 'layers', onSelect: () => { onBatch(['digest', 'review']) } },
+            { label: t('移到另一条线…', 'Move to another line…'), icon: 'branch', onSelect: () => { setMoving(true) } },
             'separator',
             { label: t('删除这一章', 'Delete this chapter'), icon: 'trash', danger: true, onSelect: onRemove },
           ]} />
@@ -659,6 +663,7 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
       {panelInline ? side : panelOpen ? <div className="nv-drawer-mask" onMouseDown={(event) => { if (event.target === event.currentTarget) setPanelOpen(false) }}>{side}</div> : null}
 
       {viewing !== undefined ? <VersionModal chapterId={chapter.id} version={viewing} current={text} onClose={() => { setViewing(undefined) }} /> : null}
+      {moving ? <MoveChapters chapters={[chapter.id]} onClose={() => { setMoving(false) }} /> : null}
       {confirm.element}
       {sheets.element}
     </>

@@ -6,6 +6,7 @@ import { formatCount, sameName } from '../../shared/text'
 import { chapterBudgetOf, MAIN_LINE, type Beat, type ChapterInfo, type ChapterMemory, type ChapterPlan, type ChapterStatus, type CharacterCard, type PlotLine, type PlotThread, type ThreadKind, type ThreadStatus, type Volume } from '../../shared/types'
 import { byWeight, CharacterPicker, useCastFilter } from '../CharacterPicker'
 import { Icon } from '../icons'
+import { MoveChapters } from '../MoveChapters'
 import { PlotGraph } from './PlotGraph'
 import { CHAPTER_STATUS, CHAPTER_STATUS_TONE, THREAD_KIND, THREAD_STATUS, THREAD_STATUS_TONE } from '../labels'
 import {
@@ -98,6 +99,8 @@ function Chapters({ onGraph }: { onGraph: () => void }) {
   // ── taking chapters out: one by its row, several by ticking them — and back again ──
   const [choosing, setChoosing] = useState(false)
   const [ticked, setTicked] = useState<Set<string>>(new Set())
+  // The chapters being moved to another place in the plot, while the author says where.
+  const [moving, setMoving] = useState<string[] | undefined>()
   const removed = project.removed ?? []
   const [showRemoved, setShowRemoved] = useState(false)
   const whereToFind = t('可以在这一页最下面恢复。', 'It can be restored at the bottom of this page.')
@@ -168,6 +171,7 @@ function Chapters({ onGraph }: { onGraph: () => void }) {
               <span className="nv-muted nv-small">{t(`已选 ${ticked.size} 章`, `${ticked.size} chosen`)}</span>
               <span className="nv-spacer" />
               <Button size="sm" variant="ghost" onClick={() => { setTicked(new Set(plans.map(plan => plan.id))) }}>{t('全选这条线', 'All of this line')}</Button>
+              <Button size="sm" variant="outline" icon="branch" disabled={ticked.size === 0} onClick={() => { setMoving(plans.filter(plan => ticked.has(plan.id)).map(plan => plan.id)) }} title={t('移到另一条线，或另开成一条线', 'Onto another line, or a line of their own')}>{t('移到…', 'Move to…')}</Button>
               <Button size="sm" variant="danger" icon="trash" disabled={ticked.size === 0} onClick={() => { remove([...ticked]) }}>{t(`删除选中的 ${ticked.size} 章`, `Delete the ${ticked.size} chosen`)}</Button>
               <Button size="sm" variant="ghost" onClick={() => { setChoosing(false); setTicked(new Set()) }}>{t('取消', 'Cancel')}</Button>
             </>
@@ -181,7 +185,7 @@ function Chapters({ onGraph }: { onGraph: () => void }) {
               ) : <span className="nv-muted nv-small">{t(`${everything.length} 章`, `${everything.length} chapters`)}</span>}
               <span className="nv-spacer" />
               <Button size="sm" variant={deriving ? 'primary' : 'outline'} icon="sparkles" onClick={() => { setDeriving(!deriving) }} title={t('让策划排出这条线接下来的章纲，或问一个"如果"', 'Have the planner plot what comes next on this line, or ask a what-if')}>{t('推演', 'Derive')}</Button>
-              {own.length > 1 ? <Button size="sm" variant="ghost" icon="check" onClick={() => { setChoosing(true) }} title={t('勾选几章，一起删除', 'Tick several chapters and delete them together')}>{t('多选', 'Choose several')}</Button> : null}
+              {own.length > 1 ? <Button size="sm" variant="ghost" icon="check" onClick={() => { setChoosing(true) }} title={t('勾选几章，一起移到别的线或删除', 'Tick several chapters to move or delete them together')}>{t('多选', 'Choose several')}</Button> : null}
             </>
           )}
         </div>
@@ -274,6 +278,7 @@ function Chapters({ onGraph }: { onGraph: () => void }) {
           : <Empty icon="tree" title={t('这条线还没有章节', 'No chapters on this line yet')}>{t('在左侧添加章节，或点"推演"让策划排出来。', 'Add a chapter on the left, or have the planner plot them with Derive.')}</Empty>}
       </section>
       {editingVolume !== undefined ? <VolumeEditor volume={editingVolume === 'new' ? undefined : editingVolume} onClose={() => { setEditingVolume(undefined) }} /> : null}
+      {moving !== undefined ? <MoveChapters chapters={moving} onClose={() => { setMoving(undefined) }} onMoved={() => { setTicked(new Set()); setChoosing(false) }} /> : null}
       {confirm.element}
     </div>
   )
@@ -462,6 +467,13 @@ function ChapterPlanEditor({ plan, index, plans }: { plan: ChapterPlan; index: n
   const chapter = project.chapters.find(candidate => candidate.id === plan.id) ?? (project.lines ?? []).flatMap(line => line.chapters).find(candidate => candidate.id === plan.id)
   const onLine = (project.outline.lines ?? []).find(line => line.chapters.some(candidate => candidate.id === plan.id))
   const bookBudget = chapterBudgetOf(project.manifest)
+  // Moving it to another place in the plot: itself, or with every chapter of its line that follows it.
+  const [moving, setMoving] = useState<{ chapters: string[]; fresh?: boolean } | undefined>()
+  const fromHere = (): string[] => {
+    const own = onLine !== undefined ? onLine.chapters : project.outline.volumes.flatMap(volume => volume.chapters)
+    const at = own.findIndex(candidate => candidate.id === plan.id)
+    return at < 0 ? [plan.id] : own.slice(at).map(candidate => candidate.id)
+  }
 
   const save = (): Promise<unknown> => run(async () => {
     await apply([{
@@ -510,6 +522,8 @@ function ChapterPlanEditor({ plan, index, plans }: { plan: ChapterPlan; index: n
               ...(onLine === undefined && project.outline.volumes.length > 1 ? project.outline.volumes.filter(volume => !volume.chapters.some(candidate => candidate.id === plan.id)).map(volume => ({
                 label: t(`移到「${volume.title}」`, `Move to "${volume.title}"`), icon: 'folder' as const, onSelect: () => { void run(async () => { await apply([{ op: 'move-chapter', chapter: plan.id, volume: volume.id }]) }) },
               })) : []),
+              { label: t('移到另一条线…', 'Move to another line…'), icon: 'branch', onSelect: () => { setMoving({ chapters: [plan.id] }) } },
+              { label: t('把这一章及之后分成一条线…', 'Part this chapter and what follows into a line…'), icon: 'branch', onSelect: () => { setMoving({ chapters: fromHere(), fresh: true }) } },
               'separator',
               { label: t('删除章节', 'Delete chapter'), icon: 'trash', danger: true, onSelect: () => { confirm.ask(t(`删除第 ${index} 章「${plan.title}」？可以在这一页最下面恢复。`, `Delete chapter ${index}, "${plan.title}"? It can be restored at the bottom of this page.`), () => { void run(async () => { await apply([{ op: 'remove-chapter', chapter: plan.id }]) }) }) } },
             ]}
@@ -571,6 +585,7 @@ function ChapterPlanEditor({ plan, index, plans }: { plan: ChapterPlan; index: n
 
       <SectionTitle>{t('给写手的备注', 'Notes for the writer')}</SectionTitle>
       <TextArea value={draft.notes ?? ''} minRows={2} onChange={(event) => { set('notes', event.target.value) }} />
+      {moving !== undefined ? <MoveChapters chapters={moving.chapters} preset={{ ...(moving.fresh === true ? { fresh: true } : {}) }} onClose={() => { setMoving(undefined) }} /> : null}
       {confirm.element}
     </div>
   )

@@ -282,6 +282,55 @@ describe('a line of the plot reads itself', () => {
     expect(await project.linesReading(one.id)).toEqual({ lines: [MAIN_LINE, other.id], every: true })
   })
 
+  it('moves chapters to another place in the plot — onto another line, onto a line of their own — and ties no line into a knot', async () => {
+    const { project } = bed.runtime
+    const book = await world(bed)
+    const { applyOutlineOps } = await import('../src/core/pipelines/outline')
+    const m3 = await project.addChapter({ title: '番外·旧事' })
+    const m4 = await project.addChapter({ title: '番外·又一年' })
+    const m5 = await project.addChapter({ title: '第三天' })
+    await project.saveChapterText(m3.id, '很多年前的一个雨夜。')
+    await project.saveMemory({ schema: 1, chapterId: m3.id, textHash: 'x', updatedAt: '', brief: '', summary: '旧事。', facts: [], newEntities: [], threads: [], characters: [] })
+    const main = async (): Promise<string[]> => (await project.chapters()).map(chapter => chapter.plan.title)
+    const along = async (line: string): Promise<string[]> => (await project.chapters(line)).map(chapter => `${chapter.index}.${chapter.plan.title}`)
+    expect(await main()).toEqual(['码头', '报馆', '番外·旧事', '番外·又一年', '第三天'])
+    // A side story that sits among the main line's chapters is parted from it: a line of its own, leaving where the
+    // author says — here after the second chapter. They keep their order; the main line reads on without them.
+    const [parted] = await applyOutlineOps(bed.runtime, [{ op: 'move-chapters', chapters: [m3.id, m4.id], line: 'new', title: '番外', from: book.m2.id }])
+    expect(parted).toMatchObject({ ok: true })
+    const side = (await project.outline()).lines!.find(line => line.title === '番外')!
+    expect(side).toMatchObject({ from: book.m2.id, origin: 'author' })
+    expect(side.chapters.map(plan => plan.id)).toEqual([m3.id, m4.id])
+    expect(await main()).toEqual(['码头', '报馆', '第三天'])
+    expect(await along(side.id)).toEqual(['1.码头', '2.报馆', '3.番外·旧事', '4.番外·又一年'])
+    // What was made from a chapter went with it: its text and its digest are where its id is.
+    expect(await project.chapterText(m3.id)).toBe('很多年前的一个雨夜。')
+    expect((await project.memory(m3.id))?.summary).toBe('旧事。')
+    // One of them back onto the main line, before the last chapter there; and onto another line, at its end.
+    expect((await applyOutlineOps(bed.runtime, [{ op: 'move-chapters', chapters: [m4.id], line: MAIN_LINE, before: m5.id }]))[0]).toMatchObject({ ok: true })
+    expect(await main()).toEqual(['码头', '报馆', '番外·又一年', '第三天'])
+    expect((await applyOutlineOps(bed.runtime, [{ op: 'move-chapters', chapters: [m4.id], line: book.south.id }]))[0]).toMatchObject({ ok: true })
+    expect((await project.outline()).lines!.find(line => line.id === book.south.id)!.chapters.map(plan => plan.title)).toEqual(['开张', '盘账', '番外·又一年'])
+    // A line follows the chapter it leaves after: moved onto the other story, the chapter takes the side line's start with it.
+    expect((await applyOutlineOps(bed.runtime, [{ op: 'move-chapters', chapters: [book.m2.id], line: book.south.id, after: book.c1.id }]))[0]).toMatchObject({ ok: true })
+    expect(await along(side.id)).toEqual(['1.开张', '2.报馆', '3.番外·旧事'])
+    // No knot: the chapter a line leaves after cannot be moved onto that very line — nothing is moved, and it says why.
+    const [knot] = await applyOutlineOps(bed.runtime, [{ op: 'move-chapters', chapters: [book.m1.id], line: book.stay.id }])
+    expect(knot).toMatchObject({ ok: false })
+    expect(knot!.message).toContain('leave after one of its own chapters')
+    expect(await main()).toEqual(['码头', '第三天'])
+    // …nor onto a line opened for it that would leave after itself: the line is not left behind empty.
+    const lines = (await project.outline()).lines!.length
+    const [self] = await applyOutlineOps(bed.runtime, [{ op: 'move-chapters', chapters: [m5.id], line: 'new', title: '自己接自己', from: m5.id }])
+    expect(self).toMatchObject({ ok: false })
+    expect((await project.outline()).lines).toHaveLength(lines)
+    expect(await main()).toEqual(['码头', '第三天'])
+    // Where a line leaves is said again: joined on elsewhere, or a story of its own from the first page.
+    expect((await applyOutlineOps(bed.runtime, [{ op: 'update-line', line: side.id, from: null }]))[0]).toMatchObject({ ok: true })
+    expect(await along(side.id)).toEqual(['1.番外·旧事'])
+    expect((await project.seenOn()).lines.find(line => line.id === side.id)?.story).toBe(side.id)
+  })
+
   it('reads aright what older digests took for one person across stories: who is on a line, a life, the walk-ons, a plan\'s cast', async () => {
     const { project } = bed.runtime
     const book = await world(bed)

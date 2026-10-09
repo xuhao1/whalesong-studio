@@ -54,7 +54,8 @@ export function CastView() {
   const setTab = (next: CastTab): void => { controller.setCastTab(next) }
   const cards = useMemo(() => [...project.characters].sort(byWeight), [project.characters])
   // The cards, the table of lives and the ties are about the people chosen here; the notes above them weigh everybody.
-  const [filter, setFilter] = useCastFilter('cast', project.characters)
+  // Everyone the book has, in the order of their weight: the page narrows only when the author asks it to.
+  const [filter, setFilter] = useCastFilter('cast', project.characters, true)
   const chapterIndex = useMemo(() => new Map([...project.chapters, ...(project.lines ?? []).flatMap(line => line.chapters)].map(chapter => [chapter.id, chapter.index])), [project.chapters, project.lines])
   const [allAdvice, setAllAdvice] = useState(false)
   const [notes, setNotesMode] = useState<NotesMode>(storedNotes)

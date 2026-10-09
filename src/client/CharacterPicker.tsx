@@ -53,11 +53,15 @@ export function sortCast(cards: readonly CharacterCard[], sort: CastSort | undef
   return [...cards].sort(byWeight)
 }
 
-/** What a screen shows before anybody has chosen: everyone in a small cast, those who carry the story in a large one. */
-export function defaultCastFilter(cards: readonly CharacterCard[]): CastFilter {
+/**
+ * What a screen shows before anybody has chosen: everyone in a small cast, those who carry the story in a large one.
+ * @param everyone - everyone, however large the cast: for the page that is the list of the book's people — it is
+ *   ordered by their weight, and nobody is left off it unasked.
+ */
+export function defaultCastFilter(cards: readonly CharacterCard[], everyone = false): CastFilter {
   const present = ROLE_ORDER.filter(role => cards.some(card => card.role === role))
   const main = present.filter(role => MAIN_ROLES.includes(role))
-  return { roles: cards.length > LARGE_CAST && main.length > 0 ? main : present, query: '' }
+  return { roles: !everyone && cards.length > LARGE_CAST && main.length > 0 ? main : present, query: '' }
 }
 
 export function matchesCast(card: CharacterCard, filter: CastFilter): boolean {
@@ -70,9 +74,10 @@ export function matchesCast(card: CharacterCard, filter: CastFilter): boolean {
 /**
  * The filter of one screen, kept while the Studio is open.
  * @param key - names the screen; two screens with the same key share their filter.
+ * @param everyone - it starts with everyone listed, however many there are ({@link defaultCastFilter}).
  */
-export function useCastFilter(key: string, cards: readonly CharacterCard[]): [CastFilter, (next: CastFilter) => void] {
-  const initial = useMemo(() => defaultCastFilter(cards), [cards])
+export function useCastFilter(key: string, cards: readonly CharacterCard[], everyone = false): [CastFilter, (next: CastFilter) => void] {
+  const initial = useMemo(() => defaultCastFilter(cards, everyone), [cards, everyone])
   const [kept, setKept] = useKept<CastFilter | undefined>(`cast-filter.${key}`, undefined)
   // A part that has nobody in it any more is not something to be filtering by.
   const value = useMemo((): CastFilter => {
