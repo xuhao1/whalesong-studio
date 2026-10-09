@@ -123,6 +123,12 @@ export interface SignatureScene {
   why?: string
   /** Project-relative path of the portrait drawn of it. */
   portrait?: string
+  /**
+   * `digest`: put together from what the chapters' digests noted (`ChapterMemory.scenes`), nobody having looked the
+   * list over. A list that is all of this kind is brought up to date as chapters are digested; a moment the author
+   * changed, or the director found, is not of this kind any more, and the list is then theirs.
+   */
+  from?: 'digest'
 }
 
 export interface CharacterVisual {
@@ -145,6 +151,12 @@ export interface CharacterVisual {
   looks?: CharacterLook[]
   /** Project-relative path of the bust portrait (avatars, the interlude stage); the reference when there is no sheet. */
   portrait?: string
+  /**
+   * Every portrait kept of them, in the author's order; the first is `portrait` — their face in the lists and on the
+   * stage. A portrait newly drawn is put first and the ones before it stay: the author orders them, and removes what
+   * they do not want. Absent on a card nobody has more than one of yet.
+   */
+  portraits?: string[]
   /**
    * The moments of the book a reader remembers them by, the most their own first — each written as the picture a
    * portrait of it would be. The director finds them in the book; the author reads, rewrites, reorders, adds and
@@ -591,6 +603,23 @@ export interface CharacterMoment {
   lifecycle?: 'enter' | 'exit' | 'death' | 'return'
 }
 
+/**
+ * A moment of a chapter a reader would remember somebody by, as the chapter's digest noted it in passing: what a
+ * person's signature scenes are put together from, without the book being read again for each of them.
+ */
+export interface SceneNote {
+  /** Character id when resolved, otherwise the name as written — as on a {@link CharacterMoment}, with `by` the same. */
+  character: string
+  name: string
+  by?: 'story' | 'over'
+  /** What the moment is called, in a few words. */
+  title: string
+  /** The moment as a picture: where, doing what, holding what, the light. */
+  text: string
+  /** How much theirs it is: 3 — a moment the whole book would remember them by; 2 — worth a picture; 1 — at a stretch. */
+  weight: 1 | 2 | 3
+}
+
 export interface EntityCandidate {
   name: string
   kind: 'character' | 'location' | 'item' | 'faction' | 'term'
@@ -625,6 +654,8 @@ export interface ChapterMemory {
   locations?: string[]
   facts: MemoryFact[]
   characters: CharacterMoment[]
+  /** Moments of the chapter somebody would be remembered by; absent in digests made before these were noted. */
+  scenes?: SceneNote[]
   newEntities: EntityCandidate[]
   threads: ThreadTouch[]
   openQuestions?: string[]

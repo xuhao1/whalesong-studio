@@ -426,6 +426,8 @@ export class Project {
         if (typeof wanted === 'number' && wanted > 0) next.chapterBudget = Math.round(wanted)
         else delete next.chapterBudget
       }
+      // A cover named as nothing is no cover named: the latest one drawn stands in again.
+      if (typeof next.cover === 'string' && next.cover.trim().length === 0) delete next.cover
       await this.writeDoc(path, next)
       return next
     })
@@ -533,6 +535,24 @@ export class Project {
         const kept = reconcileLooks(looks, existing?.visual?.looks)
         if (kept.length > 0) merged.visual.looks = kept
         else delete merged.visual.looks
+      }
+      // Their portraits are kept together, the face first. A list handed in is the author's order; a portrait named
+      // alone is a new one — it goes first, and those before it stay — or, named as nothing, the face taken away:
+      // the next one is the face then.
+      const pictures = isPlainRecord(input.visual) ? input.visual as { portrait?: unknown; portraits?: unknown } : undefined
+      if (pictures !== undefined && (Array.isArray(pictures.portraits) || typeof pictures.portrait === 'string' || pictures.portrait === null)) {
+        const before = existing?.visual?.portraits ?? (existing?.visual?.portrait !== undefined ? [existing.visual.portrait] : [])
+        const named = typeof pictures.portrait === 'string' ? pictures.portrait.trim() : ''
+        const list = Array.isArray(pictures.portraits)
+          ? [...new Set(pictures.portraits.filter((path): path is string => typeof path === 'string' && path.trim().length > 0).map(path => path.trim()))]
+          : named.length > 0 ? [named, ...before.filter(path => path !== named)] : before.filter(path => path !== existing?.visual?.portrait)
+        const visual: NonNullable<CharacterCard['visual']> = merged.visual ?? {}
+        if (list.length > 0) visual.portrait = list[0]!
+        else delete visual.portrait
+        if (list.length > 1) visual.portraits = list
+        else delete visual.portraits
+        if (Object.keys(visual).length > 0) merged.visual = visual
+        else delete merged.visual
       }
       const { notes, ...data } = merged
       await this.saveCard('characters', id, data, notes)
@@ -2026,21 +2046,23 @@ export class Project {
   }
 
   /**
-   * Take a picture out of the gallery: its record, its file — and off whoever
-   * held it up as theirs: a portrait, a design sheet, a look's sheet, the design
-   * art of a place or a thing, the picture of a turn of its course. Left pointing
-   * at a file that is gone, each of those shows a broken picture. Where the text
-   * itself shows it, it stays written there: prose is the author's. (A cover that
-   * is gone is no cover: `cover()`.)
-   * @returns whose picture it was, by name; empty when it was nobody's.
+   * Take a picture out of the book: its file, its record in the gallery where it has one, and every place that
+   * shows it — a card's portraits, its design sheet, a look's or a stretch's pictures, the portrait of a moment; an
+   * entry's design art, the picture of a turn of its course; the cover. Text that embeds it is let be.
+   * @param ref - the picture, by the id of its record or by its path (one drawn before records were kept, or copied in).
+   * @returns whose picture it was, by name — nobody where it hung nowhere.
+   * @throws ProjectError `novel/invalid` for a path that is not one of the book's pictures.
    */
-  async removeIllustration(id: string): Promise<string[]> {
-    let path: string | undefined
+  async removePicture(ref: { id?: string; path?: string }): Promise<string[]> {
+    let path: string | undefined = ref.path?.trim()
     await this.updateState<IllustrationInfo[]>(['illustrations.json'], [], (current) => {
-      path = current.find(item => item.id === id)?.path
-      return current.filter(item => item.id !== id)
+      const record = ref.id !== undefined ? current.find(item => item.id === ref.id) : current.find(item => item.path === path)
+      if (record === undefined) return current
+      path = record.path
+      return current.filter(item => item !== record)
     })
-    if (path === undefined) return []
+    if (path === undefined || path.length === 0) return []
+    if (!/^assets\/[^\0]+\.(png|jpe?g|webp|gif)$/i.test(path) || path.split('/').includes('..')) throw new ProjectError('novel/invalid', `"${path}" is not one of the book's pictures`)
     const gone: string = path
     await this.remove(this.path(gone))
     const held: string[] = []
@@ -2048,12 +2070,29 @@ export class Project {
       const visual = card.visual
       const looks = visual?.looks ?? []
       const dressed = looks.some(look => look.sheet === gone)
-      if (visual === undefined || (visual.portrait !== gone && visual.sheet !== gone && !dressed)) continue
-      await this.saveCharacter({ id: card.id, visual: {
-        ...(visual.portrait === gone ? { portrait: '' } : {}),
-        ...(visual.sheet === gone ? { sheet: '' } : {}),
-        ...(dressed ? { looks: looks.map(look => (look.sheet === gone ? { ...look, sheet: '' } : look)) } : {}),
-      } })
+      const scenes = visual?.scenes ?? []
+      const staged = scenes.some(scene => scene.portrait === gone)
+      const portraits = visual?.portraits ?? (visual?.portrait !== undefined ? [visual.portrait] : [])
+      const faced = portraits.includes(gone)
+      const stages = card.stages ?? []
+      const aged = stages.some(stage => stage.visual?.sheet === gone || stage.visual?.portrait === gone)
+      if (!(faced || visual?.sheet === gone || dressed || staged || aged)) continue
+      await this.saveCharacter({
+        id: card.id,
+        ...(faced || visual?.sheet === gone || dressed || staged ? { visual: {
+          ...(faced ? { portraits: portraits.filter(item => item !== gone) } : {}),
+          ...(visual?.sheet === gone ? { sheet: '' } : {}),
+          ...(dressed ? { looks: looks.map(look => (look.sheet === gone ? { ...look, sheet: '' } : look)) } : {}),
+          ...(staged ? { scenes: scenes.map(({ portrait, ...scene }) => (portrait === undefined || portrait === gone ? scene : { ...scene, portrait })) } : {}),
+        } } : {}),
+        ...(aged ? { stages: stages.map((stage) => {
+          if (stage.visual?.sheet !== gone && stage.visual?.portrait !== gone) return stage
+          const { sheet, portrait, ...rest } = stage.visual
+          const kept = { ...rest, ...(sheet !== undefined && sheet !== gone ? { sheet } : {}), ...(portrait !== undefined && portrait !== gone ? { portrait } : {}) }
+          const { visual: _was, ...bare } = stage
+          return Object.keys(kept).length > 0 ? { ...bare, visual: kept } : bare
+        }) } : {}),
+      })
       held.push(card.name)
     }
     for (const entry of await this.world()) {
@@ -2067,7 +2106,70 @@ export class Project {
       })
       held.push(entry.name)
     }
+    const manifest = await this.manifest()
+    if (manifest.cover === gone) {
+      await this.updateManifest({ cover: '' })
+      held.push(manifest.title)
+    }
     return held
+  }
+
+  /**
+   * A picture drawn again takes the place of the one it was drawn from, wherever that one hangs: a card's design
+   * sheet, a look's sheet, a stretch's pictures, the portrait of a moment; an entry's design art, the picture of a
+   * turn of its course; the cover. Among somebody's portraits it is put before the old one, which stays — portraits
+   * are kept side by side. The old picture itself, its file and its record, is let be: the gallery has both.
+   * @returns whose picture it is now, by name — nobody where the old one hung nowhere.
+   */
+  async replacePicture(old: string, next: string): Promise<string[]> {
+    const held: string[] = []
+    for (const card of await this.characters()) {
+      const visual = card.visual
+      const looks = visual?.looks ?? []
+      const dressed = looks.some(look => look.sheet === old)
+      const scenes = visual?.scenes ?? []
+      const staged = scenes.some(scene => scene.portrait === old)
+      const portraits = visual?.portraits ?? (visual?.portrait !== undefined ? [visual.portrait] : [])
+      const faced = portraits.includes(old)
+      const stages = card.stages ?? []
+      const aged = stages.some(stage => stage.visual?.sheet === old || stage.visual?.portrait === old)
+      if (!(faced || visual?.sheet === old || dressed || staged || aged)) continue
+      await this.saveCharacter({
+        id: card.id,
+        ...(faced || visual?.sheet === old || dressed || staged ? { visual: {
+          ...(faced ? { portraits: portraits.flatMap(item => (item === old ? [next, old] : [item])) } : {}),
+          ...(visual?.sheet === old ? { sheet: next } : {}),
+          ...(dressed ? { looks: looks.map(look => (look.sheet === old ? { ...look, sheet: next } : look)) } : {}),
+          ...(staged ? { scenes: scenes.map(scene => (scene.portrait === old ? { ...scene, portrait: next } : scene)) } : {}),
+        } } : {}),
+        ...(aged ? { stages: stages.map(stage => (stage.visual?.sheet === old || stage.visual?.portrait === old
+          ? { ...stage, visual: { ...stage.visual, ...(stage.visual.sheet === old ? { sheet: next } : {}), ...(stage.visual.portrait === old ? { portrait: next } : {}) } }
+          : stage)) } : {}),
+      })
+      held.push(card.name)
+    }
+    for (const entry of await this.world()) {
+      const turns = entry.events ?? []
+      const turned = turns.some(turn => turn.image === old)
+      if (entry.visualImage !== old && !turned) continue
+      await this.saveWorld({
+        id: entry.id,
+        ...(entry.visualImage === old ? { visualImage: next } : {}),
+        ...(turned ? { events: turns.map(turn => (turn.image === old ? { ...turn, image: next } : turn)) } : {}),
+      })
+      held.push(entry.name)
+    }
+    const manifest = await this.manifest()
+    if (manifest.cover === old) {
+      await this.updateManifest({ cover: next })
+      held.push(manifest.title)
+    }
+    return held
+  }
+
+  /** {@link removePicture}, by the id of a picture's record. */
+  async removeIllustration(id: string): Promise<string[]> {
+    return await this.removePicture({ id })
   }
 
   // ───────────── aggregate ─────────────

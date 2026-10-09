@@ -26,7 +26,7 @@ import { findPicturePress, findSoundPress } from '../core/media/press'
 import { publishSite, siteChaptersUpTo, siteDefaults, siteFolder } from '../core/pipelines/site'
 import { listChapters, listLines, listSides, readAlbum, readPosition, readSide, savePosition } from '../core/reader'
 import { albumCounts, albumEmpty } from '../shared/album'
-import { deriveArtDirection, deriveLook, deriveScenes, deriveVisual, illustrate } from '../core/pipelines/illustrate'
+import { deriveArtDirection, deriveLook, deriveScenes, deriveVisual, illustrate, redrawPicture } from '../core/pipelines/illustrate'
 import { analyzeBook, importManuscript, readBookFile, importLine } from '../core/pipelines/import'
 import { applyOutlineOps, type OutlineOp } from '../core/pipelines/outline'
 import {
@@ -792,10 +792,16 @@ export function createHandlers(service: NovelService): Handlers {
       // A picture of one turn of a place's course says so: the page that asked marks that turn as being drawn.
       return job(runtime, 'illustrate', `illustrate ${params.kind}${params.event !== undefined ? ` at ${params.event}` : ''}`, params.target, async task => await illustrate(core, runtime, params, task))
     },
+    'image.redraw': async ({ root, picture, subject, change }) => {
+      const runtime = await open(root)
+      const record = (await runtime.project.illustrations()).find(item => item.id === picture || item.path === picture)
+      // Named as the drawing of a picture of its kind is: the page that shows whose it is says that it is being drawn.
+      return job(runtime, 'illustrate', `illustrate ${record?.kind ?? 'picture'}`, record?.target, async task => await redrawPicture(core, runtime, { picture, ...(subject !== undefined ? { subject } : {}), ...(change !== undefined ? { change } : {}) }, task))
+    },
     'image.sheetsFirst': async ({ root, asks }) => await sheetsAhead(core, await open(root), Array.isArray(asks) ? asks : []),
     'image.list': async ({ root }) => ({ images: (await (await open(root)).project.illustrations()).reverse() }),
-    'image.delete': async ({ root, id }) => {
-      const released = await (await open(root)).project.removeIllustration(id)
+    'image.delete': async ({ root, id, path }) => {
+      const released = await (await open(root)).project.removePicture({ ...(id !== undefined ? { id } : {}), ...(path !== undefined ? { path } : {}) })
       return { ok: true, released }
     },
 

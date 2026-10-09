@@ -133,6 +133,8 @@ export async function recheckIssues(core: NovelCore, runtime: ProjectRuntime, pa
     try {
       const { value } = await assign(core, runtime, task, {
         role: 'analyst',
+        // All of it is in the task: asked in one request, whatever the role is set to.
+        plain: true,
         label: L(lang, `第${review.index}章 · 核对审校意见`, `Ch. ${review.index} · issues looked at again`),
         line: await project.lineOf(review.chapterId),
         tool: 'file_recheck',

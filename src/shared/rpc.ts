@@ -542,10 +542,18 @@ export interface NovelRpc {
    * Whose design sheets what is about to be drawn would draw first — asked before any of it is started, so that the author
    * can be told and say yes, or not this time. `unknown`: asks that cannot be told yet (panels with no storyboard).
    */
+  /**
+   * Draw a picture again from its record — whatever kind it is. `subject`: its words as the author rewrote them (the
+   * art direction, what it kept out and its references go along as before). `change`: the picture itself is sent
+   * along, to be drawn again with this one thing changed. The new picture takes the old one's place wherever it
+   * hangs; the old one stays in the gallery. A job; its result names whose picture the new one is (`replaced`).
+   */
+  'image.redraw': { params: { root: string; picture: string; subject?: string; change?: string }; result: JobStarted }
   'image.sheetsFirst': { params: { root: string; asks: SheetsAsk[] }; result: { people: { id: string; name: string }[]; unknown: number; /** The sheets would be drawn after the portraits asked for, against them (`image.lead` is `portrait`). */ after?: boolean } }
   'image.list': { params: { root: string }; result: { images: IllustrationInfo[] } }
   /** `released`: whose picture it was — the cards and entries it was taken off, by name. Absent from a Host before the picture was taken off them. */
-  'image.delete': { params: { root: string; id: string }; result: { ok: boolean; released?: string[] } }
+  /** Take a picture out of the book — by the id of its record, or by its path where it has none: its file, its record, and off every card and entry that shows it (`released`: whose it was). */
+  'image.delete': { params: { root: string; id?: string; path?: string }; result: { ok: boolean; released?: string[] } }
 
   // ── stage: audio drama ──
   'audio.script': { params: { root: string; chapter: string }; result: { script?: AudioScript; stale: boolean; /** The voice each speaker of this chapter has, or will get, in the audio drama. */ cast?: { characters: Record<string, string>; extras: Record<string, string> }; /** What can make sound for this book, when something can. */ sound?: { model: string; shared: boolean; beds: 'generate' | 'browser' } } }

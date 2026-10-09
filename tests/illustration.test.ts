@@ -922,6 +922,55 @@ describe('design sheets and looks', () => {
     expect(failed.prompt).toContain('面向镜头，纯净的浅色背景')
   })
 
+  it('puts a person\'s signature scenes together from what the digests noted, and reads the book again for nobody', async () => {
+    const { bed, images } = await studio({ sheetFirst: false })
+    const { project } = bed.runtime
+    const { digestChapter } = await import('../src/core/pipelines/digest')
+    const card = await project.saveCharacter({ name: '林黛玉', role: 'protagonist', appearance: '怯弱', visual: { prompt: 'slight girl of fifteen, pale, dark hair' } })
+    const other = await project.saveCharacter({ name: '贾宝玉', role: 'protagonist', appearance: '少年', visual: { prompt: 'boy of fifteen, jade pendant' } })
+    const first = await project.addChapter({ title: '共读' })
+    const second = await project.addChapter({ title: '葬花' })
+    await project.saveChapterText(first.id, '宝玉在沁芳闸桥边桃花底下看书，黛玉走来。')
+    await project.saveChapterText(second.id, '黛玉肩上担着花锄，到花冢前葬花。')
+    const notes = (scenes: unknown[]) => () => JSON.stringify({ brief: '一章', summary: '一章。', characters: [{ name: '林黛玉', role: '在场' }, { name: '贾宝玉', role: '在场' }], facts: [], threads: [], newEntities: [], scenes })
+    // The digest of a chapter notes, as it reads it, a moment somebody would be remembered by: the task asks for it.
+    bed.llm.responder = notes([{ name: '林黛玉', title: '共读西厢', picture: '桃花树下，她接过书坐在石上，落红成阵。', weight: 2 }, { name: '路人', title: '过桥', picture: '一个路人走过石桥，没有回头。', weight: 1 }])
+    await digestChapter(bed.core, bed.runtime, first.id, task, { force: true })
+    expect(bed.llm.requests.at(-1)!.prompt).toContain('"scenes": [')
+    expect(bed.llm.requests.at(-1)!.prompt).toContain('多数章节一幕也没有')
+    expect((await project.memory(first.id))!.scenes).toEqual([
+      { character: card.id, name: '林黛玉', by: 'story', title: '共读西厢', text: '桃花树下，她接过书坐在石上，落红成阵。', weight: 2 },
+      { character: '路人', name: '路人', title: '过桥', text: '一个路人走过石桥，没有回头。', weight: 1 },
+    ])
+    // It is on her card at once — nobody was asked for it.
+    expect(scenesOf((await project.findCharacter(card.id))!)).toEqual([{ id: `noted-${first.id}`, title: '共读西厢', chapter: first.id, text: '桃花树下，她接过书坐在石上，落红成阵。', from: 'digest' }])
+    expect(scenesOf((await project.findCharacter(other.id))!)).toEqual([])
+    // A later chapter has the one the book remembers her by: it comes first.
+    bed.llm.responder = notes([{ name: '林黛玉', title: '葬花', picture: '她肩担花锄，独自立在花冢前，落花满地。', weight: 3 }, { name: '贾宝玉', title: '听吟', picture: '他躲在山坡后，怀里兜着落花，听得痴了。', weight: 2 }])
+    await digestChapter(bed.core, bed.runtime, second.id, task, { force: true })
+    expect(scenesOf((await project.findCharacter(card.id))!).map(scene => [scene.title, scene.chapter, scene.from])).toEqual([['葬花', second.id, 'digest'], ['共读西厢', first.id, 'digest']])
+    expect(scenesOf((await project.findCharacter(other.id))!).map(scene => scene.title)).toEqual(['听吟'])
+    // A portrait asked for nothing shows the first of them — and no director is asked to find anything.
+    const asks = bed.llm.requests.length
+    const portrait = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id }, task)
+    expect(bed.llm.requests.length).toBe(asks)
+    expect(portrait.prompt).toContain('肩担花锄')
+    expect(portrait.scene).toMatchObject({ title: '葬花', chapter: second.id })
+    expect(images.calls).toHaveLength(1)
+    // The portrait drawn of a moment stays with it when the list is brought up to date…
+    bed.llm.responder = notes([{ name: '林黛玉', title: '共读西厢', picture: '桃花树下，她接过书坐在石上，落红成阵。', weight: 2 }, { name: '林黛玉', title: '回头', picture: '她在桥头回头看了一眼。', weight: 1 }])
+    await digestChapter(bed.core, bed.runtime, first.id, task, { force: true })
+    const kept = scenesOf((await project.findCharacter(card.id))!)
+    expect(kept.map(scene => scene.title)).toEqual(['葬花', '共读西厢', '回头'])
+    expect(kept[0]!.portrait).toBe(portrait.path)
+    // …for as long as nobody has taken the list in hand. A moment the author rewrote is theirs: the list is let be.
+    await project.saveCharacter({ id: card.id, visual: { scenes: [{ id: kept[0]!.id, title: '葬花', chapter: second.id, text: '黄昏，她荷锄立在花冢前。', portrait: portrait.path }, { ...kept[1]! }] } })
+    bed.llm.responder = notes([{ name: '林黛玉', title: '焚稿', picture: '她把诗稿一张张投进火盆。', weight: 3 }])
+    await digestChapter(bed.core, bed.runtime, second.id, task, { force: true })
+    expect(scenesOf((await project.findCharacter(card.id))!).map(scene => scene.title)).toEqual(['葬花', '共读西厢'])
+    expect(scenesOf((await project.findCharacter(card.id))!)[0]!.text).toBe('黄昏，她荷锄立在花冢前。')
+  })
+
   it('reads how a person grows along the book, and draws and tells them as the chapter has them', async () => {
     const { bed, images } = await studio()
     const { project, index } = bed.runtime
@@ -1148,6 +1197,132 @@ describe('which picture of a person leads', () => {
     await illustrate(bed.core, bed.runtime, { kind: 'sheet', target: card.id }, task)
     await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id, plain: true }, task)
     expect(images.calls.at(-1)!.references).toHaveLength(1)
+  })
+})
+
+describe('the pictures kept of somebody, and taking one away', () => {
+  it('keeps every portrait drawn, the newest first; the author orders them and removes what they do not want', async () => {
+    const { bed } = await studio({ sheetFirst: false })
+    const { project } = bed.runtime
+    const card = await project.saveCharacter({ name: '沈砚', role: 'protagonist', appearance: '高瘦', visual: { prompt: 'lean woman, black hair' } })
+    const first = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id, plain: true }, task)
+    // One portrait is one portrait: no list is kept for it.
+    expect((await project.findCharacter(card.id))!.visual).toMatchObject({ portrait: first.path })
+    expect((await project.findCharacter(card.id))!.visual!.portraits).toBeUndefined()
+    const second = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id, plain: true }, task)
+    const third = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id, plain: true }, task)
+    // Drawn again, the one before stays: the newest is first, and is their face.
+    expect((await project.findCharacter(card.id))!.visual).toMatchObject({ portrait: third.path, portraits: [third.path, second.path, first.path] })
+    // The author's order: the first of it is the face.
+    await project.saveCharacter({ id: card.id, visual: { portraits: [first.path, third.path, second.path] } })
+    expect((await project.findCharacter(card.id))!.visual).toMatchObject({ portrait: first.path, portraits: [first.path, third.path, second.path] })
+    // One taken away — the face itself: its file and its record go, and the next one is the face.
+    expect(await project.removePicture({ path: first.path })).toEqual(['沈砚'])
+    expect((await project.findCharacter(card.id))!.visual).toMatchObject({ portrait: third.path, portraits: [third.path, second.path] })
+    expect((await project.illustrations()).map(item => item.path)).not.toContain(first.path)
+    await expect(readFile(join(project.root, first.path))).rejects.toThrow()
+    // By the id of its record, as the gallery names it; down to one, the list is not kept.
+    const record = (await project.illustrations()).find(item => item.path === second.path)!
+    expect(await project.removeIllustration(record.id)).toEqual(['沈砚'])
+    expect((await project.findCharacter(card.id))!.visual).toMatchObject({ portrait: third.path })
+    expect((await project.findCharacter(card.id))!.visual!.portraits).toBeUndefined()
+    // The last one: nobody's face is a file that is gone.
+    await project.removePicture({ path: third.path })
+    expect((await project.findCharacter(card.id))!.visual?.portrait).toBeUndefined()
+  })
+
+  it('takes a picture off everything that shows it — a moment\'s portrait, a stretch\'s sheet, an entry\'s art, the cover — and no file that is not a picture', async () => {
+    const { bed } = await studio()
+    const { project } = bed.runtime
+    const picture = async (name: string): Promise<string> => await project.writeAsset(`images/${name}.png`, new Uint8Array([1]))
+    const [moment, aged, art, turn, cover] = [await picture('moment'), await picture('aged'), await picture('art'), await picture('turn'), await picture('cover')]
+    const chapter = await project.addChapter({ title: '第一章' })
+    const card = await project.saveCharacter({ name: '林黛玉', role: 'protagonist', visual: { portrait: moment, scenes: [{ id: 's1', title: '葬花', text: '她荷锄立在花冢前。', portrait: moment }] }, stages: [{ id: 'young', title: '幼年', visual: { sheet: aged, portrait: aged } } as CharacterStage] })
+    const house = await project.saveWorld({ name: '贾府', category: 'faction', importance: 2, visualImage: art, events: [{ chapter: chapter.id, kind: 'decline', what: '抄家', image: turn }] })
+    await project.updateManifest({ cover })
+    expect(await project.removePicture({ path: moment })).toEqual(['林黛玉'])
+    const after = (await project.findCharacter(card.id))!
+    expect(after.visual?.portrait).toBeUndefined()
+    expect(scenesOf(after)).toEqual([{ id: 's1', title: '葬花', text: '她荷锄立在花冢前。' }])
+    expect(await project.removePicture({ path: aged })).toEqual(['林黛玉'])
+    expect((await project.findCharacter(card.id))!.stages![0]!.visual).toBeUndefined()
+    expect(await project.removePicture({ path: art })).toEqual(['贾府'])
+    expect(await project.removePicture({ path: turn })).toEqual(['贾府'])
+    const entry = (await project.findWorld(house.id))!
+    expect(entry.visualImage).toBeUndefined()
+    expect(entry.events).toEqual([{ chapter: chapter.id, kind: 'decline', what: '抄家' }])
+    expect(await project.removePicture({ path: cover })).toHaveLength(1)
+    expect((await project.manifest()).cover).toBeUndefined()
+    // Not a way to remove any file of the book.
+    await expect(project.removePicture({ path: 'novel.json' })).rejects.toThrow(/not one of the book's pictures/)
+    await expect(project.removePicture({ path: 'assets/../outline.json' })).rejects.toThrow(/not one of the book's pictures/)
+    await expect(project.removePicture({ path: `manuscript/${chapter.id}.md` })).rejects.toThrow(/not one of the book's pictures/)
+  })
+
+  it('draws a picture again from its record: its words rewritten, or the picture itself with one thing changed', async () => {
+    const { bed, images } = await studio()
+    const { project } = bed.runtime
+    const { redrawPicture } = await import('../src/core/pipelines/illustrate')
+    await project.updateManifest({ artStyle: '水墨淡彩', artAvoid: ['文字'] })
+    const card = await project.saveCharacter({ name: '沈砚', role: 'protagonist', appearance: '高瘦', visual: { prompt: 'lean woman, black hair' } })
+    // A portrait drawn after her sheet: held against it.
+    const portrait = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id, plain: true }, task)
+    const sheet = (await project.findCharacter(card.id))!.visual!.sheet!
+    expect(portrait.parts?.references).toEqual([{ path: sheet, label: '沈砚' }])
+    // Its words rewritten: what she wrote is the picture; the art direction, what is kept out and the sheet go along as before.
+    const calls = images.calls.length
+    const reworded = await redrawPicture(bed.core, bed.runtime, { picture: portrait.id, subject: '人物立绘，她侧身站在窗前，手里一卷书' }, task)
+    expect(images.calls).toHaveLength(calls + 1)
+    expect(images.calls.at(-1)!.prompt).toContain('她侧身站在窗前，手里一卷书')
+    expect(images.calls.at(-1)!.prompt).not.toContain('面向镜头')
+    expect(images.calls.at(-1)!.prompt).toContain('画风：水墨淡彩')
+    expect(images.calls.at(-1)!.references).toHaveLength(1)
+    expect(reworded).toMatchObject({ kind: 'portrait', target: card.id, replaced: ['沈砚'] })
+    expect(reworded.parts?.references).toEqual([{ path: sheet, label: '沈砚' }])
+    // It is her face now, and the one before stays beside it.
+    expect((await project.findCharacter(card.id))!.visual).toMatchObject({ portrait: reworded.path, portraits: [reworded.path, portrait.path] })
+    // One thing changed: the picture itself goes along, with what to change and what to leave as it is.
+    const changed = await redrawPicture(bed.core, bed.runtime, { picture: reworded.path, change: '背景换成雪夜' }, task)
+    expect(images.calls.at(-1)!.prompt).toContain('只改这一处：背景换成雪夜')
+    expect(images.calls.at(-1)!.prompt).toContain('她侧身站在窗前')
+    expect(images.calls.at(-1)!.prompt).toContain('第1张是要改的原图')
+    expect(images.calls.at(-1)!.prompt).toContain('只按上面说的改')
+    expect(changed.parts?.references).toEqual([{ path: reworded.path, label: '要改的原图' }])
+    expect((await project.findCharacter(card.id))!.visual!.portraits).toEqual([changed.path, reworded.path, portrait.path])
+    // The same for a design sheet — the new one takes the sheet's place, the old one stays in the gallery — …
+    const record = (await project.illustrations()).find(item => item.path === sheet)!
+    const resheet = await redrawPicture(bed.core, bed.runtime, { picture: record.id, change: '袖口加一圈白边' }, task)
+    expect(resheet).toMatchObject({ kind: 'sheet', replaced: ['沈砚'] })
+    expect((await project.findCharacter(card.id))!.visual!.sheet).toBe(resheet.path)
+    expect((await project.illustrations()).map(item => item.path)).toContain(sheet)
+    // …for the art of a place, and for a picture that hangs nowhere: it is in the gallery.
+    const yard = await project.saveWorld({ name: '后院', category: 'location', importance: 2, visualPrompt: '青砖小院，一口井' })
+    const art = await illustrate(bed.core, bed.runtime, { kind: 'location', target: yard.id }, task)
+    const reyard = await redrawPicture(bed.core, bed.runtime, { picture: art.id, subject: '场景设定图，青砖小院，井边一株老槐' }, task)
+    expect(reyard.replaced).toEqual(['后院'])
+    expect((await project.findWorld(yard.id))!.visualImage).toBe(reyard.path)
+    const loose = await illustrate(bed.core, bed.runtime, { kind: 'custom', prompt: '一只纸船' }, task)
+    const reloose = await redrawPicture(bed.core, bed.runtime, { picture: loose.id, subject: '两只纸船' }, task)
+    expect(reloose.replaced).toEqual([])
+    expect((await project.illustrations()).map(item => item.path)).toEqual(expect.arrayContaining([loose.path, reloose.path]))
+    // Nothing to draw from: it says so.
+    await expect(redrawPicture(bed.core, bed.runtime, { picture: loose.id }, task)).rejects.toThrow(/say what to draw/)
+    await expect(redrawPicture(bed.core, bed.runtime, { picture: 'assets/images/none.png', change: 'x' }, task)).rejects.toThrow(/no picture on record/)
+  })
+
+  it('draws the design art of a house or an organisation as the picture that stands for it', async () => {
+    const { bed, images } = await studio()
+    const { project } = bed.runtime
+    bed.llm.responder = () => JSON.stringify({ look: '朱漆大门，门楣悬"敕造荣国府"匾，石狮蹲在阶前。' })
+    const house = await project.saveWorld({ name: '贾府', category: 'faction', importance: 2, summary: '金陵四大家族之首' })
+    const info = await illustrate(bed.core, bed.runtime, { kind: 'location', target: house.id }, task)
+    // The director writes what can be seen of it — its seat, its emblem, its people as a body — and it is drawn as that.
+    expect(bed.llm.requests.at(-1)!.prompt).toContain('这个家族或组织')
+    expect(bed.llm.requests.at(-1)!.prompt).toContain('徽记、旗号或匾额')
+    expect(images.calls[0]!.prompt).toContain('家族或组织的设定图')
+    expect(images.calls[0]!.prompt).toContain('朱漆大门')
+    expect(images.calls[0]!.prompt).not.toContain('场景设定图，无人物')
+    expect((await project.findWorld(house.id))!.visualImage).toBe(info.path)
   })
 })
 

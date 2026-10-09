@@ -111,27 +111,12 @@ export function Gallery() {
           path={open.path}
           title={`${t(...KIND[open.kind])}${nameOf(open) !== undefined ? ` · ${nameOf(open)}` : ''}`}
           onClose={() => { setOpen(undefined) }}
+          onChanged={() => { images.reload() }}
           footer={() => (
             <>
-              <a className="nv-link" href={controller.api.media(project.manifest.id, open.path, { download: true })}>{t('下载', 'Download')}</a>
-              <span className="nv-spacer" />
               {project.cover === open.path
                 ? <Chip tone="green">{t('这是封面', 'This is the cover')}</Chip>
                 : <Button icon="book" pending={t('正在设为封面…', 'Setting the cover…')} onClick={() => controller.guard(async () => { await controller.api.call('project.update', { root, patch: { cover: open.path } }); await controller.refreshProject(); controller.toast('success', t('已设为这本书的封面', 'This is the book\'s cover now')) })}>{t('设为封面', 'Make it the cover')}</Button>}
-              <Button variant="ghost" icon="trash" onClick={() => {
-                confirm.ask(t('删除这张图？用它的人物卡和条目会取下它；正文里插着它的地方不会自动移除。', 'Delete this picture? Cards and entries using it let go of it; where it sits in the text it is not removed.'), () => {
-                  void run(async () => {
-                    const done = await controller.api.call('image.delete', { root, id: open.id })
-                    setOpen(undefined)
-                    images.reload()
-                    const released = done.released ?? []
-                    if (released.length > 0) {
-                      await controller.refreshProject()
-                      controller.toast('info', t(`已删除，并从 ${released.join('、')} 取下`, `Deleted, and taken off ${released.join(', ')}`))
-                    }
-                  })
-                })
-              }}>{t('删除', 'Delete')}</Button>
             </>
           )}
         />

@@ -208,16 +208,13 @@ describe('the crew', () => {
     expect(stepLine({ tool: 'bash', args: { command: 'ffmpeg -version' }, ok: false, result: 'not found' })).toBe('› bash ffmpeg -version — ✗ not found\n')
   })
 
-  it('runs the pipelines through the crew: a digest and a review by the continuity keeper', async () => {
+  it('asks in one request what has everything in its task — a digest — and runs through the crew what reads the book — a review', async () => {
     const id = await withChapter(bed)
     bed.roles.enabled = true
+    // A chapter's digest goes by the chapter in its task and nothing else: one request, whatever the role is set to —
+    // no tools, no steps, nowhere to wander.
+    bed.llm.responder = () => JSON.stringify({ brief: '沈蘅留下一封不寄的信。', summary: '雨夜，沈蘅把最后一封信压在砚台下，决定不寄，等他自己来取；阿棠把门闩推紧。', characters: [{ name: '沈蘅', role: '留下信', stateAfter: '决意等待' }], facts: [{ subject: '最后一封信', statement: '压在砚台下面，没有寄出', kind: 'item' }], newEntities: [], threads: [], openQuestions: ['他会来取吗？'] })
     bed.roles.script = async (task, call) => {
-      if (task.tools.some(tool => tool.name === 'record_memory')) {
-        expect(task.label).toBe('场记 · 第1章《不寄的信》 · 收录记忆')
-        expect(task.maxSteps).toBe(12)
-        expect(await call('record_memory', { result: { brief: '沈蘅留下一封不寄的信。', summary: '雨夜，沈蘅把最后一封信压在砚台下，决定不寄，等他自己来取；阿棠把门闩推紧。', characters: [{ name: '沈蘅', role: '留下信', stateAfter: '决意等待' }], facts: [{ subject: '最后一封信', statement: '压在砚台下面，没有寄出', kind: 'item' }], newEntities: [], threads: [], openQuestions: ['他会来取吗？'] } })).toBe('收到，已通过检查。')
-        return ''
-      }
       expect(task.label).toBe('场记 · 第1章 · 审校')
       await call('book_read', { what: 'memory', ref: '1' })
       await call('file_review', { result: { verdict: '完成度高。', issues: [{ severity: 'low', type: 'style', quote: '雨下了一夜', explanation: '开头平。', suggestion: '换一个动作起笔。' }] } })
@@ -226,10 +223,13 @@ describe('the crew', () => {
     const memory = await digestChapter(bed.core, bed.runtime, id, { origin: 'user' })
     expect(memory?.summary).toContain('压在砚台下')
     expect(memory?.facts).toEqual([{ subject: '最后一封信', statement: '压在砚台下面，没有寄出', kind: 'item' }])
+    expect(bed.roles.tasks).toHaveLength(0)
+    expect(bed.llm.requests).toHaveLength(1)
+    expect(bed.llm.requests[0]!.prompt).toContain('雨下了一夜')
     const review = await reviewChapter(bed.core, bed.runtime, { chapter: id }, { origin: 'user' })
     expect(review.issues).toHaveLength(1)
     expect(review.issues[0]).toMatchObject({ severity: 'low', type: 'style', quote: '雨下了一夜' })
-    expect(bed.roles.tasks).toHaveLength(2)
-    expect(bed.llm.requests).toHaveLength(0)
+    expect(bed.roles.tasks).toHaveLength(1)
+    expect(bed.llm.requests).toHaveLength(1)
   })
 })

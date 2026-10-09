@@ -15,7 +15,7 @@ import { GROUP_CATEGORY, groupOf, WORLD_GROUPS, WORLD_WEIGHTS, worldOrder, world
 import { Icon, type IconName } from '../icons'
 import { WORLD_CATEGORY as CATEGORY_LABELS } from '../labels'
 import { MergeDialog, TidyDialog } from '../WorldTidy'
-import { PictureViewer, type LookOf } from '../PictureRecord'
+import { DeletePicture, PictureViewer, type LookOf } from '../PictureRecord'
 import { containment, type Nested } from '../../shared/ties'
 import { DERIVE_TIES_HINT, TiesBlock, TiesReport, useDeriveTies } from '../Ties'
 import {
@@ -204,7 +204,7 @@ function World({ group }: { group: WorldGroup }) {
     <li key={item.id}>
       <button type="button" className={cx('nv-list-row nv-entry-row', item.id === selected && !picks.on && 'is-active', picks.on && picks.ids.has(item.id) && 'is-picked')} aria-pressed={picks.on ? picks.ids.has(item.id) : undefined} onClick={() => { if (picks.on) picks.toggle(item.id); else setSelected(item.id) }}>
         {picks.on ? <span className={cx('nv-pick-mark', picks.ids.has(item.id) && 'is-on')} aria-hidden="true"><Icon name="check" size={11} /></span> : null}
-        {group === 'places' || group === 'items' ? <EntryThumb entry={item} icon={labels.icon} /> : null}
+        {group === 'places' || group === 'items' || (group === 'factions' && item.visualImage !== undefined) ? <EntryThumb entry={item} icon={labels.icon} /> : null}
         <span className="nv-person-text">
           <span className="nv-list-title">{item.importance === 1 ? '★ ' : ''}{item.name}</span>
           <span className="nv-list-meta">
@@ -405,8 +405,10 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
     controller.toast('success', t('已保存', 'Saved'))
   })
   const group = groupOf(draft.category)
-  // What can be drawn of it: a place as somewhere to stand, a thing as the thing itself.
-  const picture: 'location' | 'item' | undefined = draft.category === 'location' || draft.category === 'setting' ? 'location' : draft.category === 'item' ? 'item' : undefined
+  // What can be drawn of it: a place as somewhere to stand, a thing as the thing itself, a house or an organisation as
+  // the one picture that stands for it (asked for as a place is; drawn as what it is).
+  const picture: 'location' | 'item' | undefined = draft.category === 'location' || draft.category === 'setting' ? 'location' : draft.category === 'item' ? 'item' : group === 'factions' ? 'location' : undefined
+  const house = group === 'factions'
   const drawingJob = useRunningJob(job => job.kind === 'illustrate' && job.target === entry.id)
   const drawing = drawingJob !== undefined
   // Which turn of its course is being drawn, when it is one: the job says so in its title.
@@ -415,7 +417,7 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
   const looking = useRunningJob(job => job.kind === 'bible' && job.target === entry.id && job.title.startsWith('look ')) !== undefined
   const draw = (): Promise<unknown> | undefined => (!controller.need('image') ? undefined : controller.guard(async () => {
     await controller.run('image.create', { root, kind: picture ?? 'location', target: entry.id })
-    controller.toast('success', picture === 'item' ? t('物品设定图已生成', 'Object art ready') : t('场景设定图已生成', 'Place art ready'))
+    controller.toast('success', house ? t('设定图已生成', 'Design art ready') : picture === 'item' ? t('物品设定图已生成', 'Object art ready') : t('场景设定图已生成', 'Place art ready'))
   }))
   const drawTurn = (event: WorldEvent): Promise<unknown> | undefined => (!controller.need('image') ? undefined : controller.guard(async () => {
     await controller.run('image.create', { root, kind: picture ?? 'location', target: entry.id, event: `${event.chapter}:${event.kind}` })
@@ -521,10 +523,12 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
       <Field label={t('详细设定', 'Details')}><TextArea value={draft.body ?? ''} minRows={8} maxRows={30} onChange={(event) => { set('body', event.target.value) }} /></Field>
       {picture !== undefined ? (
         <Field
-          label={picture === 'item' ? t('这件东西的样子', 'What the thing looks like') : t('场景视觉描述', 'Visual description')}
-          hint={picture === 'item'
-            ? t('它实际的样子：形状、大小、材质、颜色、新旧。画到它的图都用这段。', 'How it really looks: shape, size, material, colour, wear. Every picture of it uses this.')
-            : t('这个地方实际的样子：结构、材质、新旧、光线。画到这里的图都用这段。', 'How the place really looks: structure, materials, age, light. Every picture of it uses this.')}
+          label={house ? t('它的样子', 'What it looks like') : picture === 'item' ? t('这件东西的样子', 'What the thing looks like') : t('场景视觉描述', 'Visual description')}
+          hint={house
+            ? t('看得见的样子：门庭、徽记旗号、它的人的衣着和排场。设定图照这段画。', 'What can be seen of it: its seat, its emblem and banner, how its people dress and gather. Its design art is drawn from this.')
+            : picture === 'item'
+              ? t('它实际的样子：形状、大小、材质、颜色、新旧。画到它的图都用这段。', 'How it really looks: shape, size, material, colour, wear. Every picture of it uses this.')
+              : t('这个地方实际的样子：结构、材质、新旧、光线。画到这里的图都用这段。', 'How the place really looks: structure, materials, age, light. Every picture of it uses this.')}
         >
           <div className="nv-row">
             <TextArea id={lookField} value={draft.visualPrompt ?? ''} onChange={(event) => { set('visualPrompt', event.target.value) }} />
@@ -539,9 +543,10 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
             >
               {(draft.visualPrompt ?? '').trim().length > 0 ? t('让导演重写', 'Have the director rewrite') : t('让导演照正文写', 'Have the director write it')}
             </Button>
-            <Button size="sm" icon="image" disabled={dirty || drawing} busy={drawing && turning === undefined} pending={picture === 'item' ? t('正在画物品设定图…', 'Drawing the object…') : t('正在画场景设定图…', 'Drawing the place…')} onClick={draw} title={dirty ? t('先保存当前修改', 'Save your edits first') : undefined}>
-              {draft.visualImage !== undefined ? t('重画设定图', 'Redraw') : picture === 'item' ? t('画物品设定图', 'Draw the object') : t('画场景设定图', 'Draw the place')}
+            <Button size="sm" icon="image" disabled={dirty || drawing} busy={drawing && turning === undefined} pending={house ? t('正在画设定图…', 'Drawing it…') : picture === 'item' ? t('正在画物品设定图…', 'Drawing the object…') : t('正在画场景设定图…', 'Drawing the place…')} onClick={draw} title={dirty ? t('先保存当前修改', 'Save your edits first') : undefined}>
+              {draft.visualImage !== undefined ? t('重画设定图', 'Redraw') : house ? t('画设定图', 'Draw its design art') : picture === 'item' ? t('画物品设定图', 'Draw the object') : t('画场景设定图', 'Draw the place')}
             </Button>
+            {draft.visualImage !== undefined ? <DeletePicture bare path={draft.visualImage} disabled={dirty || drawing} /> : null}
           </div>
         </Field>
       ) : null}
@@ -561,7 +566,7 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
         <PictureViewer
           path={draft.visualImage}
           title={draft.name}
-          note={picture === 'item' ? t('物品设定图，画到它的图以此为参考。', 'The thing\'s art: pictures showing it are drawn against this.') : t('场景设定图。发生在这里的画面会把它当参考图。', 'Place art. Pictures set here are drawn with it as a reference image.')}
+          note={house ? t('这个家族 / 组织的设定图。', 'The design art of this house or organisation.') : picture === 'item' ? t('物品设定图，画到它的图以此为参考。', 'The thing\'s art: pictures showing it are drawn against this.') : t('场景设定图。发生在这里的画面会把它当参考图。', 'Place art. Pictures set here are drawn with it as a reference image.')}
           onClose={() => { setViewing(false) }}
           onEditLook={editLook}
         />

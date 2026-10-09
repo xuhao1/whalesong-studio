@@ -22,7 +22,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { lookWords, resolveArtStyle, tidyPart, type ArtSource, scenesOf, sceneWords } from '../shared/art'
 import type { IllustrationInfo, IllustrationPiece } from '../shared/types'
-import { Button, Chip, cx, Modal, Spinner, useLoad, useMediaUrl, useProject, useSnapshot, useStudio, useT } from './ui'
+import { Button, Chip, cx, Modal, Spinner, TextArea, TextInput, useAction, useConfirm, useLoad, useMediaUrl, useProject, useSnapshot, useStudio, useT } from './ui'
+import { leftBehind } from './labels'
 import { Icon } from './icons'
 
 export const PICTURE_KIND: Record<IllustrationInfo['kind'], [string, string]> = {
@@ -71,6 +72,78 @@ export function usePictures(): Pictures {
   const { project, root } = useProject()
   const images = useLoad(signal => controller.api.call('image.list', { root }, signal), [root, project.revision])
   return useMemo(() => ({ byPath: new Map((images.data?.images ?? []).map(image => [image.path, image])), loaded: images.data !== undefined || images.error !== undefined }), [images.data, images.error])
+}
+
+/**
+ * The way to take a picture out of the book, wherever one is shown: its file, its record, and off every card and
+ * entry that holds it up — asked first, and said afterwards whose it was. One control for every picture: a portrait,
+ * a design sheet, the art of a place, the picture of a moment.
+ * @param onDone - called once it is gone (the dialog that showed it closes).
+ * @param bare - the icon alone, for beside a thumbnail.
+ */
+export function DeletePicture({ path, onDone, bare, disabled }: { path: string; onDone?: ((released: string[]) => void) | undefined; bare?: boolean; disabled?: boolean }) {
+  const { controller } = useStudio()
+  const t = useT()
+  const { root } = useProject()
+  const confirm = useConfirm()
+  const { busy, run } = useAction()
+  return (
+    <>
+      <Button size={bare === true ? 'sm' : undefined} variant="ghost" icon="trash" busy={busy} disabled={disabled} title={t('删除这张图', 'Delete this picture')} onClick={() => {
+        confirm.ask(t('删除这张图？用它的人物卡和条目会取下它；正文里插着它的地方不会自动移除。', 'Delete this picture? Cards and entries using it let go of it; where it sits in the text it is not removed.'), () => {
+          void run(async () => {
+            // By its path: a picture drawn before records were kept, or copied in, has no record to name it by.
+            const done = await controller.api.call('image.delete', { root, path })
+            await controller.refreshProject()
+            const released = done.released ?? []
+            controller.toast('info', released.length > 0 ? t(`已删除，并从 ${released.join('、')} 取下`, `Deleted, and taken off ${released.join(', ')}`) : t('已删除', 'Deleted'))
+            onDone?.(released)
+          })
+        })
+      }}>{bare === true ? null : t('删除', 'Delete')}</Button>
+      {confirm.element}
+    </>
+  )
+}
+
+/**
+ * A picture drawn again from where it is shown: its words rewritten, or the picture itself changed in one thing.
+ * The new picture takes this one's place wherever it hangs; this one stays in the gallery.
+ */
+function RedrawPicture({ image, mode, onDone }: { image: IllustrationInfo; mode: 'words' | 'change'; onDone: () => void }) {
+  const { controller } = useStudio()
+  const t = useT()
+  const { root } = useProject()
+  const [words, setWords] = useState(image.parts?.subject ?? image.prompt)
+  const [change, setChange] = useState('')
+  const { busy, run } = useAction()
+  const ready = mode === 'words' ? words.trim().length > 0 : change.trim().length > 0
+  const go = (): void => {
+    if (!ready || busy || !controller.need('image')) return
+    void run(async () => {
+      const job = await controller.run('image.redraw', { root, picture: image.id, ...(mode === 'words' ? { subject: words.trim() } : { change: change.trim() }) })
+      await controller.refreshProject()
+      const replaced = Array.isArray(job.result?.replaced) ? job.result.replaced.filter((name): name is string => typeof name === 'string') : []
+      controller.toast('success', `${replaced.length > 0 ? t(`画好了，换到了 ${replaced.join('、')} 上；原来那张还在图库里`, `Drawn, and put in its place on ${replaced.join(', ')}; the one before is still in the gallery`) : t('画好了：新的一张在图库里', 'Drawn: the new picture is in the gallery')}${leftBehind(job, t)}`)
+      onDone()
+    })
+  }
+  return (
+    <div className="nv-picture-redraw">
+      {mode === 'words' ? (
+        <>
+          <TextArea autoFocus value={words} minRows={4} maxRows={14} onChange={(event) => { setWords(event.target.value) }} />
+          <p className="nv-muted nv-small">{t('这张图的画面部分。画风、不要出现和它原来带的参考图照旧附上。', 'What the picture shows. The art direction, what to keep out and the references it had go along as before.')}</p>
+        </>
+      ) : (
+        <>
+          <TextInput autoFocus value={change} placeholder={t('改成什么样：背景换成雪夜；头发放下来', 'What to change: a snowy night behind her; her hair down')} onChange={(event) => { setChange(event.target.value) }} onKeyDown={(event) => { if (event.key === 'Enter') go() }} />
+          <p className="nv-muted nv-small">{t('这张图会发给绘图模型，照着它重画，只改这一处。', 'The picture goes to the image model, to be drawn again with this one change.')}</p>
+        </>
+      )}
+      <Button variant="primary" icon="image" busy={busy} disabled={!ready} pending={t('正在画…', 'Drawing…')} onClick={go}>{mode === 'words' ? t('照这段重画', 'Draw from these words') : t('照着它改', 'Draw it changed')}</Button>
+    </div>
+  )
 }
 
 /** Whose look a picture restates: somebody's, or that of a place or a thing. */
@@ -353,7 +426,14 @@ function PieceRow({ label, chip, tone = 'neutral', children }: { label: string; 
  * @param footer - what can be done with the picture looked at (the gallery: make it the cover, delete it).
  * @param onEditLook - where the page that opened it has the words for a look itself; left out, the card or the entry is opened.
  */
-export function PictureViewer({ path, title, note, footer, onClose, onEditLook }: { path: string; title?: string | undefined; note?: ReactNode; footer?: ((image: IllustrationInfo | undefined) => ReactNode) | undefined; onClose: () => void; onEditLook?: ((of: LookOf) => void) | undefined }) {
+/**
+ * A picture opened large, with the record of its making beside it — and what can be done with a picture, the same
+ * wherever one is shown: keep a copy of it, draw it again (its words rewritten, or the picture changed in one
+ * thing), take it out of the book.
+ * @param footer - what else the page that shows it can do with it, put before those.
+ * @param onChanged - the picture was drawn again or removed: whatever lists pictures reads them anew.
+ */
+export function PictureViewer({ path, title, note, footer, onClose, onEditLook, onChanged }: { path: string; title?: string | undefined; note?: ReactNode; footer?: ((image: IllustrationInfo | undefined) => ReactNode) | undefined; onClose: () => void; onEditLook?: ((of: LookOf) => void) | undefined; onChanged?: (() => void) | undefined }) {
   const { controller } = useStudio()
   const t = useT()
   const { project } = useProject()
@@ -366,6 +446,13 @@ export function PictureViewer({ path, title, note, footer, onClose, onEditLook }
   const image = pictures.byPath.get(at)
   const [natural, setNatural] = useState<{ path: string; width: number; height: number } | undefined>()
   const first = at === path
+  // Drawing it again: which of the two ways is open under the picture.
+  const [redraw, setRedraw] = useState<'words' | 'change' | undefined>()
+  useEffect(() => { setRedraw(undefined) }, [at])
+  const gone = (): void => {
+    onChanged?.()
+    onClose()
+  }
   const nameOf = (record: IllustrationInfo): string | undefined => (record.target === undefined ? undefined
     : project.characters.find(card => card.id === record.target)?.name
       ?? project.world.find(entry => entry.id === record.target)?.name
@@ -379,12 +466,26 @@ export function PictureViewer({ path, title, note, footer, onClose, onEditLook }
   }
   const heading = first && title !== undefined ? title : image !== undefined ? `${t(...PICTURE_KIND[image.kind])}${nameOf(image) !== undefined ? ` · ${nameOf(image)}` : ''}` : title ?? t('图片', 'Picture')
   return (
-    <Modal wide className="nv-modal-picture" title={heading} onClose={onClose} footer={footer !== undefined && first ? footer(image) : undefined}>
+    <Modal wide className="nv-modal-picture" title={heading} onClose={onClose} footer={first ? (
+      <>
+        <a className="nv-link" href={controller.api.media(project.manifest.id, at, { download: true })}>{t('下载', 'Download')}</a>
+        <span className="nv-spacer" />
+        {footer !== undefined ? footer(image) : null}
+        {image !== undefined && image.kind !== 'panel' ? (
+          <>
+            <Button variant={redraw === 'words' ? 'primary' : 'outline'} icon="type" onClick={() => { setRedraw(redraw === 'words' ? undefined : 'words') }} title={t('把这张图的提示词拿出来改，照改过的画一张', 'Rewrite this picture\'s words and draw it from them')}>{t('改提示词重画', 'Rewrite and redraw')}</Button>
+            <Button variant={redraw === 'change' ? 'primary' : 'outline'} icon="wand" onClick={() => { setRedraw(redraw === 'change' ? undefined : 'change') }} title={t('把这张图发给绘图模型，照着它只改一处', 'Send this picture along and have one thing changed in it')}>{t('照着这张改', 'Change this picture')}</Button>
+          </>
+        ) : null}
+        <DeletePicture path={at} onDone={gone} />
+      </>
+    ) : undefined}>
       <div className="nv-picture">
         <div className="nv-picture-stage">
           {!first ? <button type="button" className="nv-link nv-small nv-picture-back" onClick={() => { setTrail(previous => previous.slice(0, -1)) }}><Icon name="chevronLeft" size={12} />{t('回到上一张', 'Back to the picture before')}</button> : null}
           <img className="nv-picture-large" alt={heading} src={mediaUrl(at)} onLoad={(event) => { setNatural({ path: at, width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight }) }} />
-          {first && note !== undefined ? <div className="nv-muted nv-small">{note}</div> : null}
+          {first && note !== undefined && redraw === undefined ? <div className="nv-muted nv-small">{note}</div> : null}
+          {first && image !== undefined && redraw !== undefined ? <RedrawPicture key={redraw} image={image} mode={redraw} onDone={gone} /> : null}
         </div>
         <div className={cx('nv-picture-facts', image === undefined && 'is-bare')}>
           {image !== undefined

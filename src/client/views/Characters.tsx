@@ -16,7 +16,7 @@ import { leadOf } from '../../shared/images'
 import { lifeEnd, lifeLine, type Life, type LifeEvent, type LifeStanding } from '../../shared/life'
 import { lines, options, useAssist } from '../forms'
 import { sceneOf, sheetsDrawn, type PortraitScene } from '../labels'
-import { PictureViewer, usePictures } from '../PictureRecord'
+import { DeletePicture, PictureViewer, usePictures } from '../PictureRecord'
 import { useSheetsAsk, type SheetsChoice } from '../SheetsAsk'
 import { TiesBlock } from '../Ties'
 import { LinesField, LineTags, type LinePicks } from '../LinesField'
@@ -508,9 +508,21 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
     return kind === 'portrait' ? sheets.before([{ kind: 'portrait', target: card.id, ...(from === 'sheet' || from === 'words' ? { from } : {}) }], go) : go({})
   }
 
-  // The pictures there are of this person: the portrait, the design sheet, and a sheet per look.
+  // What is on record of how each picture was made: shown with the picture when it is opened large — and read here
+  // for one thing, a portrait that was not drawn against the sheet in use (the sheet was drawn, or drawn again, after it).
+  const records = usePictures()
+  // Every portrait kept of them, the face first — and those the gallery still has of them that are on no list yet
+  // (drawn before portraits were kept side by side): shown after the others, to be ordered in or removed.
+  const listed = draft.visual?.portraits ?? (draft.visual?.portrait !== undefined ? [draft.visual.portrait] : [])
+  const ofStages = new Set((draft.stages ?? []).map(stage => stage.visual?.portrait).filter((path): path is string => path !== undefined))
+  const earlier = [...records.byPath.values()]
+    .filter(image => image.kind === 'portrait' && image.target === card.id && !listed.includes(image.path) && !ofStages.has(image.path))
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+    .map(image => image.path)
+  const portraits = [...listed, ...earlier]
+  // The pictures there are of this person: their portraits, the design sheet, and a sheet per look.
   const pictures: { key: string; label: string; path: string; wide: boolean }[] = [
-    ...(draft.visual?.portrait !== undefined ? [{ key: 'portrait', label: t('立绘', 'Portrait'), path: draft.visual.portrait, wide: false }] : []),
+    ...portraits.map((path, index) => ({ key: `portrait:${path}`, label: index === 0 ? t('立绘', 'Portrait') : t(`立绘 ${index + 1}`, `Portrait ${index + 1}`), path, wide: false })),
     ...(draft.visual?.sheet !== undefined ? [{ key: 'sheet', label: t('人设图', 'Design sheet'), path: draft.visual.sheet, wide: true }] : []),
     ...(draft.visual?.looks ?? []).filter(look => look.sheet !== undefined).map(look => ({ key: `look:${look.id}`, label: look.name.length > 0 ? look.name : t('造型', 'Look'), path: look.sheet!, wide: true })),
   ]
@@ -520,9 +532,6 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
   const picture = pictures.find(item => item.key === picked) ?? pictures[0]
   const sheetBusy = drawing?.title === 'illustrate sheet'
   const portraitBusy = drawing?.title === 'illustrate portrait'
-  // What is on record of how each picture was made: shown with the picture when it is opened large — and read here
-  // for one thing, a portrait that was not drawn against the sheet in use (the sheet was drawn, or drawn again, after it).
-  const records = usePictures()
   const portraitOf = draft.visual?.portrait !== undefined ? records.byPath.get(draft.visual.portrait) : undefined
   // Which of the two leads says which may have fallen behind: the portrait, where it is drawn against the sheet; the
   // sheet, where it is drawn against the portrait.
@@ -535,6 +544,16 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
   const sheetAgainst: 'portrait' | 'words' = hasPortrait ? sheetFrom ?? (lead === 'portrait' ? 'portrait' : 'words') : 'words'
   const portraitBehind = portraitAgainst === 'sheet' && portraitOf !== undefined && hasSheet && !(portraitOf.parts?.references ?? []).some(reference => reference.path === draft.visual!.sheet)
   const sheetBehind = sheetAgainst === 'portrait' && sheetOf !== undefined && hasPortrait && !(sheetOf.parts?.references ?? []).some(reference => reference.path === draft.visual!.portrait)
+  // Where the portrait shown stands among their portraits, and the way to another place: the first is their face.
+  const placed = picture !== undefined && picture.key.startsWith('portrait:') ? portraits.indexOf(picture.path) : -1
+  const place = (to: number): Promise<unknown> => controller.guard(async () => {
+    if (placed < 0 || to < 0 || to >= portraits.length) return
+    const next = portraits.filter((_, index) => index !== placed)
+    next.splice(to, 0, portraits[placed]!)
+    await controller.api.call('character.save', { root, card: { id: card.id, visual: { portraits: next } } })
+    // Shown at once: the order is what was just asked for.
+    await controller.refreshProject()
+  })
   const anchorField = `nv-anchor-${card.id}`
   const sceneField = `nv-scene-${card.id}`
   const scenic = settings?.settings.image.portraitScene !== false
@@ -554,6 +573,21 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
             <em>{t('还没有画像', 'No picture yet')}</em>
           </div>
         )}
+        {picture !== undefined ? (
+          <div className="nv-person-picture-tools">
+            {placed >= 0 && portraits.length > 1 ? (
+              <>
+                <Button size="sm" variant="ghost" icon="chevronLeft" disabled={dirty || placed === 0} title={dirty ? t('先保存当前修改', 'Save your edits first') : t('往前排', 'Move it forward')} onClick={() => place(placed - 1)} />
+                <Button size="sm" variant="ghost" icon="chevronRight" disabled={dirty || placed === portraits.length - 1} title={dirty ? t('先保存当前修改', 'Save your edits first') : t('往后排', 'Move it back')} onClick={() => place(placed + 1)} />
+                {placed === 0
+                  ? <span className="nv-muted nv-small">{t('第一张：列表和头像用它', 'The first: their face in the lists')}</span>
+                  : <Button size="sm" variant="ghost" disabled={dirty} title={dirty ? t('先保存当前修改', 'Save your edits first') : undefined} onClick={() => place(0)}>{t('设为第一张', 'Make it the first')}</Button>}
+                <span className="nv-spacer" />
+              </>
+            ) : null}
+            <DeletePicture bare path={picture.path} disabled={dirty} onDone={() => { setPicked(undefined) }} />
+          </div>
+        ) : null}
         {pictures.length > 1 ? (
           <div className="nv-person-thumbs" role="group" aria-label={t('这个人物的图', 'Pictures of this character')}>
             {pictures.map(item => (
@@ -919,10 +953,13 @@ function ScenesPanel({ id, card, value, marked, dirty, off, busy, onChange, onDr
   const [wish, setWish] = useState('')
   const finding = useRunningJob(job => job.kind === 'bible' && job.title.startsWith('signature scenes') && job.target === card.id) !== undefined
   const chapters = useMemo(() => new Map([...project.chapters, ...(project.lines ?? []).flatMap(line => line.chapters)].map(chapter => [chapter.id, chapter])), [project.chapters, project.lines])
-  const patch = (scene: string, change: Partial<SignatureScene>): void => { onChange(value.map(item => (item.id === scene ? { ...item, ...change } : item)), marked) }
+  // A list the author changes — a word of a moment, which comes first, one added, one removed — is theirs from then
+  // on: it is no longer brought up to date from what the digests note.
+  const own = (scenes: SignatureScene[]): SignatureScene[] => scenes.map(({ from: _noted, ...scene }) => scene)
+  const patch = (scene: string, change: Partial<SignatureScene>): void => { onChange(own(value.map(item => (item.id === scene ? { ...item, ...change } : item))), marked) }
   return (
     <div className="nv-scenes" id={id} tabIndex={-1}>
-      <SectionTitle actions={<Button size="sm" variant="ghost" icon="plus" onClick={() => { onChange([...value, { id: `scene-${Date.now().toString(36)}`, title: '', text: '' }], marked) }}>{t('添加', 'Add')}</Button>}>{t('名场面', 'Signature scenes')}{value.length > 0 ? ` · ${value.length}` : ''}</SectionTitle>
+      <SectionTitle actions={<Button size="sm" variant="ghost" icon="plus" onClick={() => { onChange(own([...value, { id: `scene-${Date.now().toString(36)}`, title: '', text: '' }]), marked) }}>{t('添加', 'Add')}</Button>}>{t('名场面', 'Signature scenes')}{value.length > 0 ? ` · ${value.length}` : ''}</SectionTitle>
       {off ? <p className="nv-muted nv-small">{t('“立绘照名场面画”已在设置里关掉。', 'Portraits in their scene are turned off in Settings.')}</p> : null}
       <div className="nv-assist">
         <TextInput value={wish} placeholder={t('想要哪一幕、不要哪一类', 'A moment you want, a kind you do not')} onChange={(event) => { setWish(event.target.value) }} />
@@ -948,12 +985,12 @@ function ScenesPanel({ id, card, value, marked, dirty, off, busy, onChange, onDr
               <div className="nv-scene-head">
                 <TextInput value={scene.title} placeholder={t('哪一幕', 'Which moment')} onChange={(event) => { patch(scene.id, { title: event.target.value }) }} />
                 {chapter !== undefined ? <button type="button" className="nv-link nv-small" onClick={() => { controller.openReader('read', chapter.id) }}>{t(`第 ${chapter.index} 章`, `Ch. ${chapter.index}`)}</button> : null}
-                {first ? <Chip>{t('立绘默认', 'Default')}</Chip> : <button type="button" className="nv-link nv-small" onClick={() => { onChange(value, scene.id) }}>{t('设为默认', 'Make default')}</button>}
+                {first ? <Chip>{t('立绘默认', 'Default')}</Chip> : <button type="button" className="nv-link nv-small" onClick={() => { onChange(own(value), scene.id) }}>{t('设为默认', 'Make default')}</button>}
                 <Button size="sm" variant="outline" icon="image" disabled={dirty || busy || scene.text.trim().length === 0} title={dirty ? t('先保存当前修改', 'Save your edits first') : undefined} onClick={() => onDraw(scene)}>{scene.portrait !== undefined ? t('重画', 'Redraw') : t('画这一幕', 'Draw it')}</Button>
-                <Button size="sm" variant="ghost" icon="trash" title={t('删除', 'Delete')} onClick={() => { onChange(value.filter(item => item.id !== scene.id), marked === scene.id ? undefined : marked) }} />
+                <Button size="sm" variant="ghost" icon="trash" title={t('删除', 'Delete')} onClick={() => { onChange(own(value.filter(item => item.id !== scene.id)), marked === scene.id ? undefined : marked) }} />
               </div>
               <TextArea value={scene.text} minRows={2} maxRows={8} placeholder={t('写成画面：在哪里、在做什么、手里拿着什么、光线', 'As a picture: where, doing what, holding what, the light')} onChange={(event) => { patch(scene.id, { text: event.target.value }) }} />
-              {scene.why !== undefined ? <p className="nv-muted nv-small">{scene.why}</p> : null}
+              {scene.why !== undefined ? <p className="nv-muted nv-small">{scene.why}</p> : scene.from === 'digest' ? <p className="nv-muted nv-small">{t('收录这一章时场记记下的', 'Noted by the digest of this chapter')}</p> : null}
             </div>
           </div>
         )

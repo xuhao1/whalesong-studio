@@ -52,6 +52,7 @@ import { asArray, asList, asRecord, asText, extractJson } from '../llm'
 import { assign } from '../crew'
 import { extensionOf, referencesRefused, type ImageProvider, type ImageReference } from '../media/image'
 import { castAt } from './growth'
+import { keepNotedScenes } from './scenes'
 import { ProviderError } from '../media/http'
 import { ProjectError } from '../project'
 import { artDirectionTask, compactPromptTask, coverPromptTask, illustrationPromptTask, lookNotesTask, lookTask, portraitSceneTask, portraitScenesTask, turnLookTask, visualAnchorTask } from '../prompts'
@@ -358,6 +359,8 @@ export async function sortNotes(core: NovelCore, runtime: ProjectRuntime, card: 
       label: L(lang, `整理想法 · ${card.name}`, `Notes · ${card.name}`),
       tool: 'sort_notes',
       // Everything is in the task: a look or two at the book at most, then the result.
+      // All of it is in the task: asked in one request, whatever the role is set to.
+      plain: true,
       maxSteps: 8,
       what: L(lang, '作者的想法分成两类：进这个人形象的，和只用在这一张图上的', 'the author\'s ideas, sorted: those that go into how the person looks, and those for this one picture'),
       prompt: lookNotesTask({
@@ -614,7 +617,7 @@ export async function deriveLook(core: NovelCore, runtime: ProjectRuntime, param
       lang,
       language: manifest.language,
       title: manifest.title,
-      kind: group === 'items' ? 'thing' : 'place',
+      kind: group === 'items' ? 'thing' : group === 'factions' ? 'house' : 'place',
       entry: renderWorld({ ...entry, visualPrompt: undefined } as WorldEntry, lang),
       passages: passages.join('\n'),
       avoid: art.avoid,
@@ -856,6 +859,8 @@ async function fitPrompt(core: NovelCore, runtime: ProjectRuntime, provider: Ima
       label: L(lang, '压缩提示词', 'Fitting a prompt'),
       tool: 'fit_prompt',
       // Everything is in the task; a try or two at the length.
+      // All of it is in the task: asked in one request, whatever the role is set to.
+      plain: true,
       maxSteps: 6,
       what: L(lang, `同一张图的提示词，不超过 ${limit} 个 token`, `the same picture's prompt, in no more than ${limit} tokens`),
       prompt: compactPromptTask({ lang, language: manifest.language, title: manifest.title, prompt: input.prompt, avoid: input.avoid, tokens: limit, estimate: from, model: provider.model, references: input.references > 0 && room.references !== 0, avoidInPrompt: room.avoidInPrompt }),
@@ -988,6 +993,75 @@ export async function renderImage(core: NovelCore, runtime: ProjectRuntime, inpu
   }
   if (input.record !== false) await project.addIllustration(info)
   return info
+}
+
+// ───────────────────────────── a picture, drawn again ─────────────────────────────
+
+/** What a picture drawn again says of itself, beside what any picture does. */
+export interface RedrawResult extends IllustrationInfo {
+  /** Whose picture the new one is now, by name: it took the old one's place there. Empty: it is in the gallery, and hangs nowhere. */
+  replaced: string[]
+}
+
+/**
+ * Draw a picture again from its record — whatever kind it is: a portrait, a design sheet, the art of a place or a
+ * thing, a scene, a cover, a picture of the author's own prompt.
+ *
+ * Two ways, and both start from the one picture. Its *words rewritten*: what the author made of its subject takes
+ * the subject's place, and the rest goes along as it did — the art direction as the book has it now (none, for a
+ * picture that had none), what it kept out, the pictures it was held against. Or *one thing changed*: the picture
+ * itself goes to the model as what to draw again, with what to change in it — for a picture that is right but for
+ * one thing; that needs an image service that takes reference pictures (where it takes none, the record of the new
+ * picture says so).
+ *
+ * The new picture takes the old one's place wherever it hangs (`Project.replacePicture`); the old one stays in the
+ * gallery, and among somebody's portraits.
+ * @param params.picture - the picture: the id of its record, or its path.
+ * @throws ProjectError `novel/not-found` for a picture with no record — nothing says what it was drawn from.
+ */
+export async function redrawPicture(core: NovelCore, runtime: ProjectRuntime, params: { picture: string; subject?: string; change?: string }, task: TaskContext): Promise<RedrawResult> {
+  const { project } = runtime
+  await requireImages(core)
+  const record = (await project.illustrations()).find(item => item.id === params.picture || item.path === params.picture)
+  if (record === undefined) throw new ProjectError('novel/not-found', `no picture on record matches "${params.picture}"`)
+  const lang = promptLanguage((await project.manifest()).language)
+  const comma = lang === 'zh' ? '，' : ', '
+  const subject = params.subject?.trim() ?? ''
+  const change = params.change?.trim() ?? ''
+  if (subject.length === 0 && change.length === 0) throw new ProjectError('novel/invalid', 'say what to draw: the picture\'s words rewritten (`subject`), or what to change in it (`change`)')
+  const was = record.parts?.subject ?? record.prompt
+  // A picture drawn with no art direction — a prompt sent as written — gets none now.
+  const art = record.parts !== undefined && record.parts.style === undefined ? false as const : await artDirectionOf(core, runtime, { pin: true })
+  const words = change.length > 0
+    ? compose([piece('composed', subject.length > 0 ? subject : was), piece('ask', L(lang, `照参考图把这一张重画一遍，只改这一处：${change}`, `Draw the reference again, changing this and nothing else: ${change}`))], comma)
+    : compose([piece('ask', subject)], comma)
+  const info = await renderImage(core, runtime, {
+    ...words,
+    kind: record.kind,
+    ...(record.target !== undefined ? { target: record.target } : {}),
+    // The file is named as the one it comes after.
+    name: record.path.split('/').pop()!.replace(/-[0-9a-f]{8}\.[a-z]+$/i, '').replace(/\.[a-z]+$/i, ''),
+    ...(record.size !== undefined ? { size: record.size } : {}),
+    art,
+    avoid: record.parts?.avoid ?? [],
+    references: change.length > 0
+      ? [{ path: record.path, label: L(lang, '要改的原图', 'the picture to change') }]
+      : [...(record.parts?.references ?? []), ...(record.parts?.left ?? [])],
+    ...(change.length > 0 ? { referenceNote: L(lang,
+      '这是要改的原图：画里的人和物、构图、背景和光线都照它，只按上面说的改。',
+      'This is the picture to change: whoever and whatever it shows, its composition, setting and light stay as they are — change only what is said above.') } : {}),
+  }, task)
+  const replaced = await project.replacePicture(record.path, info.path)
+  // A portrait that hung nowhere — an earlier one, out of the gallery — is a portrait of theirs all the same: it joins the others, first.
+  if (replaced.length === 0 && record.kind === 'portrait' && record.target !== undefined) {
+    const card = await project.findCharacter(record.target)
+    if (card !== undefined) {
+      await project.saveCharacter({ id: card.id, visual: { portrait: info.path } })
+      replaced.push(card.name)
+    }
+  }
+  task.job?.result({ replaced })
+  return { ...info, replaced }
 }
 
 // ───────────────────────────── the sheet first ─────────────────────────────
@@ -1247,6 +1321,11 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
       const written = (await project.chapterInfos()).some(chapter => chapter.hasText)
       let found: number | undefined
       let none: string | undefined
+      // What the digests noted of them as the chapters were read comes first: nobody reads the book again for it.
+      if (scenesOf(anchored).length === 0 && written && (await keepNotedScenes(runtime, [anchored.id]).catch(() => [])).length > 0) {
+        anchored = (await project.findCharacter(anchored.id))!
+        found = scenesOf(anchored).length
+      }
       if (scenesOf(anchored).length === 0 && written) {
         try {
           const looked = await deriveScenes(core, runtime, { character: anchored.id }, task)
@@ -1445,7 +1524,10 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
     const turn = params.event !== undefined ? await turnOf(project, entry, params.event) : undefined
     const info = await renderImage(core, runtime, {
       ...compose([
-        piece('frame', L(lang, '场景设定图，无人物，远景，交代空间结构、材质与光线', 'environment design art, no people, wide shot showing layout, materials and light')),
+        // A place as somewhere to stand; a house or an organisation as the one picture that stands for it.
+        groupOf(entry.category) === 'factions'
+          ? piece('frame', L(lang, '家族或组织的设定图：一幅代表它的画面——它的门庭、徽记旗号，或它的人聚在一处的场面，照下面的描述；不要任何文字', 'design art of a house or an organisation: the one picture that stands for it — its seat, its emblem and banner, or its people gathered — as described below; no text at all'))
+          : piece('frame', L(lang, '场景设定图，无人物，远景，交代空间结构、材质与光线', 'environment design art, no people, wide shot showing layout, materials and light')),
         // At a turn of its course: as the director writes it is then — the same place, changed by what happened.
         turn !== undefined ? piece('composed', await turnLook(core, runtime, entry, turn, task)) : entryLook(entry, comma),
         piece('ask', params.prompt),

@@ -8085,6 +8085,31 @@ blockquote.nv-issue-quote {
 }
 
 /* Which of their moments the next portrait shows. */
+/* A picture drawn again, under the picture it is drawn from: its words to rewrite, or what to change in it. */
+.nv-picture-redraw {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.nv-picture-redraw > .nv-btn {
+  align-self: flex-end;
+}
+
+/* Under the picture shown: where it stands among their portraits, and the way to be rid of it. */
+.nv-person-picture-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 28px;
+}
+
+.nv-person-picture-tools > .nv-spacer {
+  flex: 1;
+}
+
 .nv-person-moment {
   display: flex;
   align-items: center;

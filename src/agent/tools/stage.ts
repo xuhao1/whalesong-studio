@@ -5,7 +5,7 @@ import { stockVoices } from '../../core/media/voices'
 import { buildAudioScript, designCharacterVoice, exportChapterAudio, isSkipped, previewVoices, reshapeAudioScript, synthesizeChapter } from '../../core/pipelines/audio'
 import { renderSound } from '../../core/pipelines/sound'
 import { buildStoryboard, renderPanels, sheetsAhead } from '../../core/pipelines/comic'
-import { illustrate, type IllustrateParams } from '../../core/pipelines/illustrate'
+import { illustrate, redrawPicture, type IllustrateParams } from '../../core/pipelines/illustrate'
 import { novelizePlay, playTurn, setPlayOutcome, startPlay } from '../../core/pipelines/play'
 import { ProjectError } from '../../core/project'
 import type { NovelService } from '../../host/service'
@@ -52,6 +52,9 @@ export function stageTools(service: NovelService): ToolDefinition[] {
       mutating: true,
       parameters: {
         kind: { type: 'string', required: true, enum: ['sheet', 'portrait', 'scene', 'location', 'item', 'cover', 'custom'] },
+        redraw: { type: 'string', description: 'Draw an existing picture again from its record, whatever kind it is — the picture\'s id or path (novel_manage action=show_image shows what it was made of; pass its kind as `kind`). With `subject`: its words as rewritten — they take the subject\'s place, and the art direction, what it kept out and the references it had go along as before. With `change`: the picture itself is sent to the image model and drawn again with that one thing changed (for a picture that is right but for one thing; needs an image service that takes reference pictures). The new picture takes the old one\'s place wherever it hangs — a card\'s sheet, an entry\'s art, the cover; among somebody\'s portraits it goes before the old one — and the old one stays in the gallery.' },
+        subject: { type: 'string', description: 'With `redraw`: the picture\'s own words, rewritten.' },
+        change: { type: 'string', description: 'With `redraw`: the one thing to change in the picture.' },
         target: { type: 'string', description: 'Character, chapter or world entry.' },
         quote: { type: 'string', description: 'scene: the passage to illustrate.' },
         prompt: { type: 'string', description: 'Extra direction; the full prompt for kind=custom; what the outfit is for a new look.' },
@@ -72,6 +75,19 @@ export function stageTools(service: NovelService): ToolDefinition[] {
       },
       async run(args, env) {
         const runtime = await env.project()
+        const again = typeof args.redraw === 'string' ? args.redraw.trim() : ''
+        if (again.length > 0) {
+          const redrawn = await env.job('illustrate', `illustrate ${args.kind}`, args.target, async task => await redrawPicture(env.core, runtime, { picture: again, ...(typeof args.subject === 'string' ? { subject: args.subject } : {}), ...(typeof args.change === 'string' ? { change: args.change } : {}) }, task))
+          return {
+            text: [
+              `Drawn again and saved to ${redrawn.path}.`,
+              redrawn.replaced.length > 0 ? `It took the old picture's place on: ${redrawn.replaced.join(', ')}. The old one is still in the gallery.` : 'The picture it was drawn from hung nowhere: the new one is in the gallery.',
+              `Reference images sent: ${redrawn.parts?.references !== undefined && redrawn.parts.references.length > 0 ? redrawn.parts.references.map(reference => reference.label).join(', ') : 'none'}`,
+              ...leftBehind(redrawn.parts),
+            ].join('\n'),
+            data: toJson(redrawn),
+          }
+        }
         const params: IllustrateParams = {
           kind: args.kind as IllustrateParams['kind'],
           ...(args.target !== undefined ? { target: args.target } : {}),

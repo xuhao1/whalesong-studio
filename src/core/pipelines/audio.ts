@@ -354,6 +354,8 @@ export async function buildAudioScript(core: NovelCore, runtime: ProjectRuntime,
         line: chapter.line ?? MAIN_LINE,
         tool: 'submit_script',
         // The material is all in the task: a few looks at the book at most, then the result.
+        // All of it is in the task: asked in one request, whatever the role is set to.
+        plain: true,
         maxSteps: 10,
         what: L(lang, '这一段的有声脚本：逐句的台词、旁白和声音提示', 'the audio script of this passage: its lines, narration and sound cues'),
         prompt: audioScriptTask({ lang, language: manifest.language, title: manifest.title, text: block, cast: castText, ambience: ambienceText, effects: sounds.effects, music: sounds.music }),

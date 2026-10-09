@@ -12,6 +12,7 @@ import { chapterBudgetOf, type AnalyzeStep, type ProjectManifest, type ProjectRe
 import { MAIN_ROLES } from '../CharacterPicker'
 import { Icon } from '../icons'
 import { sheetsDrawn } from '../labels'
+import { DeletePicture } from '../PictureRecord'
 import { useSheetsAsk } from '../SheetsAsk'
 import { jobLabel, jobPulse } from '../Studio'
 import {
@@ -658,9 +659,12 @@ export function HomeView() {
               ? <ProjectImage path={project.cover} alt={t(`《${manifest.title}》的封面`, `Cover of "${manifest.title}"`)} version={project.revision} />
               : <span className="nv-hero-blank"><Icon name="book" size={26} /><em>{manifest.title}</em></span>}
           </button>
-          <Button size="sm" variant={project.cover === undefined ? 'primary' : 'outline'} icon="image" busy={painting} pending={t('绘制中…', 'Painting…')} onClick={paintCover} title={t('画一张封面', 'Draw a cover')}>
-            {project.cover === undefined ? t('生成封面', 'Paint a cover') : t('重画', 'Repaint')}
-          </Button>
+          <div className="nv-row">
+            <Button size="sm" variant={project.cover === undefined ? 'primary' : 'outline'} icon="image" busy={painting} pending={t('绘制中…', 'Painting…')} onClick={paintCover} title={t('画一张封面', 'Draw a cover')}>
+              {project.cover === undefined ? t('生成封面', 'Paint a cover') : t('重画', 'Repaint')}
+            </Button>
+            {project.cover !== undefined ? <DeletePicture bare path={project.cover} disabled={painting} /> : null}
+          </div>
         </div>
         <div className="nv-hero-text">
           <h1>{stats.chaptersWithText > 0

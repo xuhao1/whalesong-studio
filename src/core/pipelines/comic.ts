@@ -192,6 +192,8 @@ export async function buildStoryboard(core: NovelCore, runtime: ProjectRuntime, 
         ...(located !== undefined ? { line: located.line ?? MAIN_LINE } : {}),
         tool: 'submit_storyboard',
         // The material is all in the task: a few looks at the book at most, then the result.
+        // All of it is in the task: asked in one request, whatever the role is set to.
+        plain: true,
         maxSteps: 12,
         what: L(lang, '这一段的分镜：每一格画什么、配哪几句', 'the storyboard of this passage: what each panel shows and which lines it carries'),
         prompt: storyboardTask({

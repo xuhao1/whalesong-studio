@@ -7,10 +7,10 @@
  * ensemble-cast lifecycle (first/last appearance, who has been away too long).
  */
 import type {
-  ChapterMemory, ChapterPlan, CharacterCard, CharacterMoment, EntityCandidate, FactKind, MemoryFact, Outline, Suggestion, ThreadTouch,
+  ChapterMemory, ChapterPlan, CharacterCard, CharacterMoment, EntityCandidate, FactKind, MemoryFact, Outline, SceneNote, Suggestion, ThreadTouch,
 } from '../../shared/types'
 import { MAIN_LINE } from '../../shared/types'
-import { hashText, sameName } from '../../shared/text'
+import { clip, hashText, sameName } from '../../shared/text'
 import type { ArcSummary } from '../context'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { asArray, asList, asRecord, asText } from '../llm'
@@ -21,6 +21,7 @@ import { arcTask, digestSystem, digestTask } from '../prompts'
 import { L, promptLanguage } from '../render'
 import { mapLimit } from '../util/async'
 import { scheduleSift } from './cast'
+import { keepNotedScenes } from './scenes'
 
 const FACT_KINDS: FactKind[] = ['state', 'relationship', 'knowledge', 'item', 'world', 'event']
 const ENTITY_KINDS: EntityCandidate['kind'][] = ['character', 'location', 'item', 'faction', 'term']
@@ -63,6 +64,8 @@ export async function digestChapter(core: NovelCore, runtime: ProjectRuntime, re
     line: chapter.line ?? MAIN_LINE,
     tool: 'record_memory',
     // The material is all in the task: a few looks at the book at most, then the result.
+    // All of it is in the task: asked in one request, whatever the role is set to.
+    plain: true,
     maxSteps: 12,
     what: L(lang, '这一章的场记：摘要、人物状态、事实、线索', 'the continuity notes of this chapter: summary, character states, facts, threads'),
     system: digestSystem(lang),
@@ -143,6 +146,26 @@ export async function digestChapter(core: NovelCore, runtime: ProjectRuntime, re
       ...(lifecycle === 'enter' || lifecycle === 'exit' || lifecycle === 'death' || lifecycle === 'return' ? { lifecycle } : {}),
     })
   }
+  // Moments somebody would be remembered by, noted as the chapter was read: what their signature scenes are put
+  // together from. Whose each is goes as for the notes above.
+  const scenes: SceneNote[] = []
+  for (const raw of asArray(value.scenes)) {
+    const item = asRecord(raw)
+    const said = asText(item.name)
+    const text = asText(item.picture) ?? asText(item.text)
+    if (said === undefined || text === undefined || text.length < 8) continue
+    const name = keptAs(said)
+    const settled = settle(name)
+    const weight = Math.round(Number(item.weight))
+    scenes.push({
+      character: settled?.id ?? name,
+      name,
+      ...(settled !== undefined ? { by: settled.by } : {}),
+      title: clip(asText(item.title) ?? '', 16, ''),
+      text: clip(text, 400, '…'),
+      weight: weight === 3 || weight === 1 ? weight : 2,
+    })
+  }
   const facts: MemoryFact[] = []
   for (const raw of asArray(value.facts)) {
     const item = asRecord(raw)
@@ -187,12 +210,15 @@ export async function digestChapter(core: NovelCore, runtime: ProjectRuntime, re
     ...(locations.length > 0 ? { locations } : {}),
     facts,
     characters: moments,
+    ...(scenes.length > 0 ? { scenes } : {}),
     newEntities,
     threads,
     ...(openQuestions.length > 0 ? { openQuestions } : {}),
   }
   await project.saveMemory(memory)
   await applyMemory(runtime, chapter, memory, lang === 'zh')
+  // Whoever has a moment noted here gets it among their signature scenes, where nobody has taken that list in hand.
+  await keepNotedScenes(runtime, scenes.filter(note => note.by !== undefined).map(note => note.character)).catch((error: unknown) => { core.log('could not bring the signature scenes up to date', error) })
   // What the plan leaves empty is filled from what the chapter turned out to be.
   await fillPlans(runtime, [chapter.plan.id]).catch(() => {})
   // Whoever this chapter names that has no card is on the list of walk-ons by now: once the digests have settled,

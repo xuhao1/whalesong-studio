@@ -333,6 +333,12 @@ export interface Assignment<T> {
   tools?: RoleTool[]
   maxSteps?: number
   /**
+   * Everything this piece of work goes by is in its task — a chapter to cut into lines, a prompt to shorten, notes to
+   * sort — and there is nothing in the book to look up for it: it is asked in one request, whatever the role is set
+   * to. An agent's loop would add its tools and its steps to every such request, and room to wander, for nothing.
+   */
+  plain?: boolean
+  /**
    * The line of the plot the work is on, by id (`main` for the main one): what the role reads with its own tools is
    * that line's, and nothing of the book's other lines. Left out only for work that is about the whole book.
    */
@@ -394,7 +400,7 @@ async function assignNow<T>(core: NovelCore, runtime: ProjectRuntime, task: Task
   }
 
   const roles = core.roles
-  if (plan.mode === 'call') return await byCall()
+  if (plan.mode === 'call' || work.plain === true) return await byCall()
   if (roles === undefined || !roles.can(route)) {
     return await byCall(L(lang, `${name}的模型 ${route.model} 是工坊直连的接口，进不了 Harness 的 agent 循环，所以这次是一次普通调用：没有工具，也不会出现在对话的 agent 列表里。想让${name}作为 agent 工作，在“设置 → 班底”里给它选一个 Harness「设置 → 模型」里的模型。`, `${name}'s model ${route.model} is an endpoint the Studio calls directly and cannot run on the Harness's agent loop, so this was one plain call: no tools, and not in the conversation's list of agents. To have ${name} work as an agent, give it a model from the Harness's Settings → Models in Settings → Crew.`))
   }

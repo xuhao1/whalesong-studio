@@ -452,6 +452,8 @@ export async function analyzeBook(core: NovelCore, runtime: ProjectRuntime, para
         const room = Math.max(20_000, Math.floor((window ?? 200_000) / 2))
         const { value } = await assign(core, runtime, task, {
           role: 'architect',
+          // All of it is in the task: asked in one request, whatever the role is set to.
+          plain: true,
           label: L(lang, '分卷与梗概', 'Volumes and premise'),
           tool: 'submit_volumes',
           what: L(lang, '分卷、各卷梗概和全书的故事核', 'the volumes, their synopses and the premise of the book'),

@@ -273,6 +273,8 @@ export async function writeLife(core: NovelCore, runtime: ProjectRuntime, params
     label: L(lang, `履历 · ${card.name}`, `Life · ${card.name}`),
     tool: 'write_life',
     // Everything it is to go by is in the task; a look or two at the text to check a chapter, then the paragraph.
+    // All of it is in the task: asked in one request, whatever the role is set to.
+    plain: true,
     maxSteps: 8,
     what: L(lang, '这个人物在书里的履历：一段话', 'this character\'s life in the book: one paragraph'),
     prompt: characterLifeTask({
@@ -409,6 +411,8 @@ export async function extractStyle(core: NovelCore, runtime: ProjectRuntime, par
     label: L(lang, '提炼文风', 'Learning a style'),
     tool: 'record_style',
     // The material is all in the task: a few looks at the book at most, then the result.
+    // All of it is in the task: asked in one request, whatever the role is set to.
+    plain: true,
     maxSteps: 8,
     what: L(lang, '从样章里提炼出的文风档案', 'the style profile learned from the sample'),
     prompt: styleExtractTask({ lang, sample: clip(params.sample, 6000), ...(params.name !== undefined ? { name: params.name } : {}) }),

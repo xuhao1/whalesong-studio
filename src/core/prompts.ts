@@ -243,6 +243,9 @@ ${base.text}
   "facts": [
     {"subject": "主体", "statement": "本章确立、今后必须保持一致的事实", "kind": "state|relationship|knowledge|item|world|event"}
   ],
+  "scenes": [
+    {"name": "人物姓名（同上）", "title": "这一幕叫什么，两到四个字", "picture": "写成一幅定格的画面，60-140字：在哪里、在做什么、手里拿着什么、光线与气氛；这个人是画面的主体，别人只作陪衬", "weight": "3、2 或 1：3 是读者一想起这个人就会想起的一幕，2 是值得画下来的一幕，1 是勉强算"}
+  ],
 ${zhNamesShape.replace(/^\n/, '')}${zhNamesShape.length > 0 ? '\n' : ''}  "newEntities": [
     {"name": "名称", "kind": "character|location|item|faction|term", "description": "正文中首次出现、值得建档的人物/地点/物品/组织/专有名词，一句话说明"${zhScope}}
   ],
@@ -251,7 +254,7 @@ ${zhNamesShape.replace(/^\n/, '')}${zhNamesShape.length > 0 ? '\n' : ''}  "newEn
   ],
   "openQuestions": ["读者此刻会追问的问题"]
 }
-facts 只收对后文有约束力的硬事实（8-15条），不要把情节复述成事实。只输出 JSON。`, `Below is ${base.chapterLabel} of the novel "${bare(base.title)}". Take continuity notes.
+facts 只收对后文有约束力的硬事实（8-15条），不要把情节复述成事实。scenes 只收这一章里确有的、读者会靠它记住某个人的一幕——多数章节一幕也没有，那就是空数组；未成年的人物不写亲热和裸露的画面。只输出 JSON。`, `Below is ${base.chapterLabel} of the novel "${bare(base.title)}". Take continuity notes.
 
 ## Characters on file (name | aliases)
 ${base.knownCharacters || '(none)'}
@@ -279,6 +282,9 @@ Output JSON (every field present; use empty arrays or strings when there is noth
   "facts": [
     {"subject": "who or what", "statement": "a fact established here that later chapters must respect", "kind": "state|relationship|knowledge|item|world|event"}
   ],
+  "scenes": [
+    {"name": "the person's name (as above)", "title": "what the moment is called, in a few words", "picture": "the moment as one frozen picture, 40-90 words: where, doing what, holding what, the light and the mood; this person is its subject, others only beside them", "weight": "3, 2 or 1: 3 — a moment a reader thinks of when they think of this person; 2 — worth a picture; 1 — at a stretch"}
+  ],
 ${enNamesShape.replace(/^\n/, '')}${enNamesShape.length > 0 ? '\n' : ''}  "newEntities": [
     {"name": "name", "kind": "character|location|item|faction|term", "description": "a person/place/object/group/term that first appears here and deserves a bible entry, one sentence"${enScope}}
   ],
@@ -287,7 +293,7 @@ ${enNamesShape.replace(/^\n/, '')}${enNamesShape.length > 0 ? '\n' : ''}  "newEn
   ],
   "openQuestions": ["questions a reader is asking right now"]
 }
-Keep facts to the 8-15 hard facts that bind later chapters; do not restate the plot as facts. Output JSON only.`)
+Keep facts to the 8-15 hard facts that bind later chapters; do not restate the plot as facts. scenes holds only a moment this chapter really has that a reader would remember somebody by — most chapters have none, and the list is then empty; for a character who is a minor, no picture of intimacy or nudity. Output JSON only.`)
 }
 
 export function arcTask(base: Base & { range: string; summaries: string }): string {
@@ -1180,10 +1186,11 @@ Output JSON only: {"look": ""}`)
  * @param base.kind - `place` or `thing`: a house or an organization is drawn as the place it has its seat at.
  * @param base.passages - where the text names it, a few lines each, with the chapter.
  */
-export function lookTask(base: Base & { kind: 'place' | 'thing'; entry: string; passages: string; avoid?: string[]; direction?: string; artStyle?: string }): string {
+export function lookTask(base: Base & { kind: 'place' | 'thing' | 'house'; entry: string; passages: string; avoid?: string[]; direction?: string; artStyle?: string }): string {
   const avoid = (base.avoid ?? []).join(base.lang === 'zh' ? '、' : ', ')
-  const place = base.kind === 'place'
-  return L(base.lang, `请把《${base.title}》里的这${place ? '个地方' : '件东西'}写成一段"它长什么样"：它的设定图照这段话画，以后凡是画到它的图也都带着这段话，所以要具体、稳定、画得出来。
+  /** One wording for a place, one for a thing, one for a house or an organisation. */
+  const pick = (place: string, thing: string, house: string): string => (base.kind === 'place' ? place : base.kind === 'thing' ? thing : house)
+  return L(base.lang, `请把《${base.title}》里的这${pick('个地方', '件东西', '个家族或组织')}写成一段"它长什么样"：它的设定图照这段话画，以后凡是画到它的图也都带着这段话，所以要具体、稳定、画得出来。
 
 ## 设定里怎么写它
 ${base.entry}
@@ -1196,12 +1203,12 @@ ${avoid.length > 0 ? avoid : '（无特别限制）'}
 
 要求：
 1. 用这本书的语言写，80–160 字，一段话，不分条。
-2. 只写看得见的、不随情节变的：${place ? '格局与规模（几进院落、有没有水、地势高低）、主要的建筑和它们的样式、材质与颜色、草木与陈设、年代与地域的感觉' : '形状与大小、材质、颜色、纹饰或刻着的字样（照原文）、新旧与磨损、拿在手里或摆着时的样子'}。
-3. 以正文为准：正文写了的照着写，不要改；正文没写的可以补全，但要与这本书的时代、地域、身份相称，一旦写下就是定论。只有一样例外：画风里对年代、地域和形制有规定的（${place ? '建筑、陈设、器物' : '器物、纹饰、做工'}属于哪个朝代、哪种式样），是这本书的定论——把它写成那种形制下具体的样子（${place ? '屋顶、梁柱、门窗、院墙怎么样' : '器形、纹样、工艺怎么样'}）。正文的写法与它冲突时以画风为准：它自己的${place ? '格局、规模和特征' : '形状、大小和特征'}留着，形制换成画风规定的。
-4. 不写人物、不写事件、不写某一场戏里的情形；不写气味、声音、寓意这类画不出来的东西；画风里说"怎么画"的部分（画种、笔触、用色、光线）、镜头和画质都不写——那些由全书的画风统一附上。
-5. 不要用只有读过这本书才懂的名字来代替描述：${place ? '"某某的住处"要写成它实际的样子' : '"那面镜子"要写成它实际的样子'}。
+2. 只写看得见的、不随情节变的：${pick('格局与规模（几进院落、有没有水、地势高低）、主要的建筑和它们的样式、材质与颜色、草木与陈设、年代与地域的感觉', '形状与大小、材质、颜色、纹饰或刻着的字样（照原文）、新旧与磨损、拿在手里或摆着时的样子', '它的门庭与所在（宅邸、堂口、山门是什么样）、徽记、旗号或匾额、它的人平常的衣着和聚在一处时的样子、排场的大小、年代与地域的感觉')}。
+3. 以正文为准：正文写了的照着写，不要改；正文没写的可以补全，但要与这本书的时代、地域、身份相称，一旦写下就是定论。只有一样例外：画风里对年代、地域和形制有规定的（${pick('建筑、陈设、器物', '器物、纹饰、做工', '建筑、衣冠、徽记')}属于哪个朝代、哪种式样），是这本书的定论——把它写成那种形制下具体的样子（${pick('屋顶、梁柱、门窗、院墙怎么样', '器形、纹样、工艺怎么样', '门庭、衣冠、旗号怎么样')}）。正文的写法与它冲突时以画风为准：它自己的${pick('格局、规模和特征', '形状、大小和特征', '排场、规模和特征')}留着，形制换成画风规定的。
+4. ${pick('不写人物', '不写人物', '不写具体的哪一个人（它的人作为一群是什么样可以写）')}、不写事件、不写某一场戏里的情形；不写气味、声音、寓意这类画不出来的东西；画风里说"怎么画"的部分（画种、笔触、用色、光线）、镜头和画质都不写——那些由全书的画风统一附上。
+5. 不要用只有读过这本书才懂的名字来代替描述：${pick('"某某的住处"要写成它实际的样子', '"那面镜子"要写成它实际的样子', '"某某一党"要写成看得见的样子')}。
 
-只输出 JSON：{"look": ""}`, `Write down what this ${place ? 'place' : 'thing'} of "${base.title}" looks like: its design art is drawn from this paragraph, and every later picture that shows it carries it along — so it has to be concrete, stable and drawable.
+只输出 JSON：{"look": ""}`, `Write down what this ${pick('place', 'thing', 'house or organisation')} of "${base.title}" looks like: its design art is drawn from this paragraph, and every later picture that shows it carries it along — so it has to be concrete, stable and drawable.
 
 ## What the bible says of it
 ${base.entry}
@@ -1214,9 +1221,9 @@ ${avoid.length > 0 ? avoid : '(nothing in particular)'}
 
 Rules:
 1. In the language of the book, 50–110 words, one paragraph, no list.
-2. Only what can be seen and does not change with the plot: ${place ? 'its layout and size (courts, water, the lie of the land), its main buildings and how they are built, materials and colours, what grows and what is kept there, the feel of its time and region' : 'its shape and size, material, colour, ornament or what is written on it (as the text has it), its age and wear, how it sits in a hand or on a table'}.
-3. The text is law: what it says, say as it says it; what it leaves open may be filled in, in keeping with the book's time, region and the standing of whoever owns it — once written it is canon. With one exception: where the art direction fixes a period, a region or a form (which dynasty or fashion ${place ? 'buildings, furnishings and objects' : 'objects, ornament and workmanship'} belong to), that is settled for this book — write it as it is in that form (${place ? 'roofs, posts and beams, doors and windows, walls' : 'its shape, its patterns, how it is made'}). Where the text says otherwise the art direction holds: keep what is its own (${place ? 'layout, size, what marks it out' : 'shape, size, what marks it out'}) and put it into the form the art direction fixes.
-4. No people, no events, nothing of one particular scene; nothing that cannot be drawn (smell, sound, meaning); nothing of how to paint (medium, brushwork, palette, light), of camera or of image quality — the book's art direction adds those to every picture.
+2. Only what can be seen and does not change with the plot: ${pick('its layout and size (courts, water, the lie of the land), its main buildings and how they are built, materials and colours, what grows and what is kept there, the feel of its time and region', 'its shape and size, material, colour, ornament or what is written on it (as the text has it), its age and wear, how it sits in a hand or on a table', 'its seat and where it stands (the house, the hall, the gate), its emblem, banner or name-board, how its people dress and how they look gathered, how grand it is, the feel of its time and region')}.
+3. The text is law: what it says, say as it says it; what it leaves open may be filled in, in keeping with the book's time, region and the standing of whoever owns it — once written it is canon. With one exception: where the art direction fixes a period, a region or a form (which dynasty or fashion ${pick('buildings, furnishings and objects', 'objects, ornament and workmanship', 'buildings, dress and emblems')} belong to), that is settled for this book — write it as it is in that form (${pick('roofs, posts and beams, doors and windows, walls', 'its shape, its patterns, how it is made', 'its gate, its dress, its banner')}). Where the text says otherwise the art direction holds: keep what is its own (${pick('layout, size, what marks it out', 'shape, size, what marks it out', 'its state, its size, what marks it out')}) and put it into the form the art direction fixes.
+4. ${pick('No people', 'No people', 'No one person in particular (what its people look like as a body may be said)')}, no events, nothing of one particular scene; nothing that cannot be drawn (smell, sound, meaning); nothing of how to paint (medium, brushwork, palette, light), of camera or of image quality — the book's art direction adds those to every picture.
 5. Do not put a name only a reader of the book understands in place of a description.
 
 Output JSON only: {"look": ""}`)

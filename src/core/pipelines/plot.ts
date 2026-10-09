@@ -441,6 +441,8 @@ export async function buildFoundation(core: NovelCore, runtime: ProjectRuntime, 
   task.job?.progress(0, 3, L(lang, '构思中', 'developing the idea'))
   const { value } = await assign(core, runtime, task, {
     role: 'architect',
+    // All of it is in the task: asked in one request, whatever the role is set to.
+    plain: true,
     label: L(lang, '搭建新书的地基', 'Laying the foundation of a new book'),
     tool: 'submit_foundation',
     what: L(lang, '这本书的地基：故事核、人物、世界、文风、开篇大纲', 'the foundation of the book: premise, cast, world, style, opening outline'),
