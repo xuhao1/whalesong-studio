@@ -25,7 +25,7 @@ import type {
   TtsProviderKind,
   AmbiencePreset, AudioCue, AudioLine, AudioScript, BookLock, ChapterMemory, ChapterPlan, ChapterReview, IssueSeverity, CharacterCard, CharacterRole, ComicBoard, ComicPanel, LifeMark, SheetsAsk,
   ChapterVideo, CrewRole, GateKind, GateState, IllustrationInfo, JobInfo, ModelRoute, NovelSettings, PlaySession, PlayTurn, ProjectManifest, ProjectRef, ProjectState, RecommendedState,
-  Proposal, SearchHit, SearchSource, SoundKind, StageStatus, StageStep, StoryboardDensity, StyleProfile, TextRole, TextStep, VersionInfo, WalkOn, WorkMode, WorldEntry, HistoryKind, HistoryVersion,
+  Proposal, SearchHit, SearchSource, SoundKind, StageStatus, StageStep, StoryboardDensity, StyleProfile, TextRole, TextStep, VersionInfo, WalkOn, WorkMode, WorldEntry, HistoryKind, HistoryVersion, GlossaryTerm, ChapterTranslation,
 } from './types'
 
 /**
@@ -500,7 +500,17 @@ export interface NovelRpc {
    * world. The line begins where the story begins; its chapters are digested unless `digest` is false. A job.
    */
   'line.import': { params: { root: string; title?: string; premise?: string; text?: string; file?: { name: string; data: string }; digest?: boolean }; result: JobStarted }
-  'ai.import': { params: { root: string; text?: string; /** A book file to read on the Host (EPUB); `data` is base64. */ file?: { name: string; data: string }; analyze?: boolean }; result: JobStarted }
+  'ai.import': { params: { root: string; text?: string; /** A book file to read on the Host (EPUB); `data` is base64. */ file?: { name: string; data: string }; analyze?: boolean; /** The manuscript is in another language than the book is to be in: translate it as it comes in (`to` the book's language). */ translate?: { to: string; from?: string; direction?: string } }; result: JobStarted }
+  /** Translate chapters into a language: the names settled first where none are, each chapter by the glossary, its original kept as a version. Left without `chapters`: every chapter of `line` that has text. */
+  'ai.translate': { params: { root: string; to: string; chapters?: string[]; line?: string; /** What the text is in; `auto` lets the translator tell. Left out: what each chapter is in now. */ from?: string; settle?: boolean; direction?: string }; result: JobStarted }
+  /** Settle how the book's names are written in a language, before anything is translated: off the cards, and out of the text with `scan`. Adds; writes over nothing. */
+  'ai.settleTerms': { params: { root: string; to: string; from?: string; scan?: boolean; direction?: string }; result: JobStarted }
+  /** The book's glossaries by language, and which chapters are translations. */
+  'glossary.read': { params: { root: string }; result: { glossaries: Record<string, GlossaryTerm[]>; translations: Record<string, ChapterTranslation> } }
+  /** The glossary of a language as the author leaves it: what they changed or added is theirs, and no pass writes over it. */
+  'glossary.save': { params: { root: string; to: string; terms: GlossaryTerm[] }; result: { terms: GlossaryTerm[] } }
+  /** Put a translated chapter's original back as its text. */
+  'chapter.untranslate': { params: { root: string; id: string }; result: { ok: boolean } }
   'ai.foundation': { params: { root: string; idea: string }; result: JobStarted }
   'ai.index': { params: { root: string }; result: JobStarted }
   'proposal.accept': { params: { root: string; id: string }; result: Proposal }

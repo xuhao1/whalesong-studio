@@ -11,7 +11,7 @@ import { PROJECT_AUTHOR, PROJECT_AUTHOR_HOME, PROJECT_HOMEPAGE } from '../../sha
 import { chapterBudgetOf, type AnalyzeStep, type ProjectManifest, type ProjectRef } from '../../shared/types'
 import { MAIN_ROLES } from '../CharacterPicker'
 import { Icon } from '../icons'
-import { sheetsDrawn } from '../labels'
+import { LANGUAGES, sheetsDrawn } from '../labels'
 import { DeletePicture } from '../PictureRecord'
 import { HistoryButton } from '../History'
 import { useSheetsAsk } from '../SheetsAsk'
@@ -51,13 +51,9 @@ async function removeBook(controller: StudioController, t: Translate, book: { ro
   })
 }
 
-const LANGUAGES = [
-  { value: 'zh', label: '简体中文' },
-  { value: 'zh-TW', label: '繁體中文' },
-  { value: 'en', label: 'English' },
-  { value: 'ja', label: '日本語' },
-  { value: 'ko', label: '한국어' },
-]
+/** The manuscript's language, as the import form has it: the book's own, or another the translator is to tell. */
+const SAME = ''
+const TELL = 'auto'
 
 /** Read a text file the way novels are usually encoded: UTF-8 first, then GB18030. */
 async function readTextFile(file: File): Promise<string> {
@@ -368,6 +364,8 @@ function NewBook({ onBack }: { onBack: () => void }) {
   const [importFile, setImportFile] = useKept<{ name: string; size: number; data: string } | undefined>('onboard.importFile', undefined)
   const [importName, setImportName] = useKept('onboard.importName', '')
   const [analyze, setAnalyze] = useKept('onboard.analyze', true)
+  // What the manuscript is written in, where that is not what the book is to be in: it is then translated as it comes in.
+  const [written, setWritten] = useState<string>(SAME)
   // Sealing from the first file on: the password is typed here and nowhere else.
   const [seal, setSeal] = useKept('onboard.seal', false)
   const [password, setPassword] = useKept('onboard.password', '')
@@ -424,6 +422,7 @@ function NewBook({ onBack }: { onBack: () => void }) {
         const started = await controller.api.call('ai.import', {
           root: created.root,
           analyze,
+          ...(written !== SAME && written !== language ? { translate: { to: language, ...(written !== TELL ? { from: written } : {}) } } : {}),
           ...(importFile !== undefined ? { file: { name: importFile.name, data: importFile.data } } : { text: importText }),
         })
         await follow(started.jobId, analyze ? t('正在导入并分析整本书…', 'Importing and analyzing the book…') : t('正在导入并拆分章节…', 'Importing and splitting chapters…'))
@@ -480,6 +479,11 @@ function NewBook({ onBack }: { onBack: () => void }) {
           <Field label={t('正文语言', 'Language')}>
             <Select value={language} options={LANGUAGES} onChange={setLanguage} />
           </Field>
+          {mode === 'import' ? (
+            <Field label={t('书稿的语言', 'The manuscript is in')} hint={written !== SAME ? t(`导入时译成${LANGUAGES.find(item => item.value === language)?.label ?? language}：先定译名，再逐章翻译；每章的原文留在它的“版本”里`, `Translated into ${LANGUAGES.find(item => item.value === language)?.label ?? language} as it comes in: the names first, then chapter by chapter; each chapter's original stays among its versions`) : undefined}>
+              <Select value={written} options={[{ value: SAME, label: t('和正文语言一样（不翻译）', 'The same (no translation)') }, { value: TELL, label: t('别的语言：让译者自己判断', 'Another: let the translator tell') }, ...LANGUAGES.filter(item => item.value !== language)]} onChange={setWritten} />
+            </Field>
+          ) : null}
           {mode === 'new' ? (
             <Field label={t('类型', 'Genre')}>
               <TextInput value={genre} placeholder={t('如：悬疑、科幻、武侠、言情…', 'e.g. mystery, sci-fi, romance…')} onChange={(event) => { setGenre(event.target.value) }} />

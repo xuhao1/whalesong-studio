@@ -25,7 +25,10 @@ import { asArray, asList, asRecord, asText } from '../llm'
 import { assign } from '../crew'
 import { ProjectError } from '../project'
 import { architectSystem, volumesTask, worldMergeTask } from '../prompts'
-import { L, promptLanguage } from '../render'
+import { L, languageName, promptLanguage } from '../render'
+import { errorMessage } from '../util/async'
+import type { JobContext } from '../jobs'
+import { translateChapters } from './translate'
 import { deriveTies, extractStyle } from './bible'
 import { mergeCast } from './cast'
 import { digestPending, updateArcs } from './digest'
@@ -92,6 +95,12 @@ export interface ImportParams {
   analyze?: boolean
   /** Learn a style profile from the text. Default true. */
   style?: boolean
+  /**
+   * The manuscript is in another language than the book is to be in: translate it as it comes in — `to` the book's
+   * language (what the book is then read, digested and analysed in), `from` what the manuscript is in where that is
+   * known. The names are settled out of the text first; each chapter's original is kept as a version of it.
+   */
+  translate?: { to: string; from?: string; direction?: string }
 }
 
 export interface ImportResult {
@@ -109,6 +118,22 @@ export interface ImportResult {
   growth?: { people: number; stages: number }
   /** How the chapters were found: by the editor agent or by rule, and what there is to say about it. */
   structure: { by: 'agent' | 'rules'; bySize: boolean; note?: string; steps?: number }
+  /** What became of the translation, where the manuscript was translated as it came in. */
+  translated?: { to: string; chapters: number; failed: number; terms: number }
+}
+
+/** A job as a step inside it sees it: what the step says of its own progress is shown as a note, and what it would make the job's result or its text is left out. */
+function within(job: JobContext): JobContext {
+  return {
+    id: job.id, kind: job.kind, project: job.project, origin: job.origin, signal: job.signal,
+    progress: (_done, _total, label) => { if (label !== undefined) job.note(label) },
+    write: (delta) => { job.write(delta) },
+    rewrite: () => {},
+    result: () => {},
+    think: (delta) => { job.think(delta) },
+    crew: (run) => { job.crew(run) },
+    note: label => job.note(label),
+  }
 }
 
 const CATEGORIES: WorldCategory[] = ['setting', 'location', 'faction', 'system', 'item', 'history', 'culture', 'rule', 'term', 'other']
@@ -120,7 +145,9 @@ export async function importManuscript(core: NovelCore, runtime: ProjectRuntime,
   const zh = lang === 'zh'
   const failed: ImportResult['failed'] = []
   // Finding the chapters, writing them down, and every pass of the analysis.
-  const steps = params.analyze === false ? 2 : 2 + ANALYZE_STEPS.length
+  const translating = params.translate !== undefined && params.translate.to.trim().length > 0
+  const before = translating ? 3 : 2
+  const steps = params.analyze === false ? before : before + ANALYZE_STEPS.length
   let step = 0
   const advance = (label: string): void => { task.job?.progress(step++, steps, label) }
 
@@ -179,13 +206,31 @@ export async function importManuscript(core: NovelCore, runtime: ProjectRuntime,
     failed,
     structure: { by: structure.by, bySize: structure.bySize, ...(structure.note !== undefined ? { note: structure.note } : {}), ...(structure.steps !== undefined ? { steps: structure.steps } : {}) },
   }
+  // ── 3. translate it, where it came in another language: everything after reads the translation ──
+  if (translating) {
+    const { to, from, direction } = params.translate!
+    advance(L(lang, `翻译成${languageName(to)}`, `translating into ${languageName(to)}`))
+    // The book is in the language it is translated into; what it came in is what its chapters are noted as translated from.
+    if (from !== undefined && from !== to) await project.updateManifest({ language: from })
+    try {
+      // Its progress is this step's: said where the import's is, without moving the import along.
+      const inside = task.job !== undefined ? { ...task, job: within(task.job) } : task
+      const made = await translateChapters(core, runtime, { chapters: created, to, ...(from !== undefined ? {} : { from: 'auto' }), settle: true, scan: true, ...(direction !== undefined ? { direction } : {}) }, inside)
+      result.translated = { to, chapters: made.translated.length, failed: made.failed.length, terms: made.terms.total }
+      for (const item of made.failed) failed.push({ step: 'translate', error: `${item.chapter}: ${item.error}` })
+    } catch (error) {
+      if (task.signal?.aborted === true) throw error
+      failed.push({ step: 'translate', error: errorMessage(error) })
+    }
+    await project.updateManifest({ language: to, ...(from !== undefined && from !== to ? { translatedFrom: from } : {}) })
+  }
   if (params.analyze === false) {
     task.job?.progress(steps, steps)
     return result
   }
 
   // The text's own volumes stand; a book that named none, imported into an empty outline, may be divided by the planner.
-  const analysis = await analyzeBook(core, runtime, { ...(params.style !== undefined ? { style: params.style } : {}), divide: !explicitVolumes && !hadChapters, fresh: true }, task, { from: 2, total: steps })
+  const analysis = await analyzeBook(core, runtime, { ...(params.style !== undefined ? { style: params.style } : {}), divide: !explicitVolumes && !hadChapters, fresh: true }, task, { from: before, total: steps })
   result.digested = analysis.digested
   result.characters = analysis.characters
   result.worldEntries = analysis.worldEntries

@@ -8,11 +8,12 @@ import { analyzeBook, importManuscript, readBookFile, importLine } from '../../c
 import { reviewChapter } from '../../core/pipelines/review'
 import { acceptProposal, rejectProposal, fixIssues, mendInTurn, reviseBook, reviseChapter, reviseSpan } from '../../core/pipelines/revise'
 import { writeChapter } from '../../core/pipelines/write'
+import { settleTerms, translateChapters, untranslateChapter } from '../../core/pipelines/translate'
 import { ProjectError } from '../../core/project'
 import { containedPath } from '../../core/util/fs'
 import type { NovelService } from '../../host/service'
 import { clip } from '../../shared/text'
-import { ANALYZE_STEPS } from '../../shared/types'
+import { ANALYZE_STEPS, GLOSSARY_KINDS } from '../../shared/types'
 import { brief, listOf, listParameter, novelTool, toJson } from './shared'
 
 export function manuscriptTools(service: NovelService): ToolDefinition[] {
@@ -284,6 +285,92 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
     }),
 
     novelTool(service, {
+      name: 'novel_translate',
+      description: [
+        'Translate the book\'s chapters into another language with the writer model, so that the whole of it says one thing one way. What keeps a long translation consistent is the glossary: how every name and every word of the book\'s own is written in the other language. It is settled before anything is translated (off the cards — who somebody is decides how their name and their forms of address come out — and out of the text where the book has no cards), the terms a chapter uses go along with that chapter, a translation that meets a name without a rendering settles one and adds it, and afterwards the cards take the translated names as other names they go by.',
+        '- action=chapters (default): translate `chapters` (ids or numbers; left out: every chapter of `line` that has text) into `to` (a language tag: en, zh, ja, ko, fr, de, es, ru…). A chapter\'s translation takes the place of its text; the text it was made from is kept as a version of the chapter and can be put back (action=original). Chapters already in `to`, and empty ones, are left alone. `from`: what the text is in — left out, what each chapter is in now; "auto" lets the translator tell. `direction`: what the author asks of the translation (spelling, register, how to treat honorifics). When every chapter with text is in `to`, that becomes the book\'s language. Say afterwards what was translated, what failed, and how many terms the glossary has.',
+        '- action=terms: the glossary of `to` as it stands. With `settle=true`: first settle a rendering for every person and entry of the bible that has none (and, with `scan=true`, for the proper names found in the text) — what is settled already is never written over. Show the author the renderings of the people who matter before a long translation: a name is cheap to change now and dear after.',
+        '- action=set_terms: set or correct renderings by hand — `terms` [{source, target, kind: person|place|house|thing|term, note: what it is, for the translator}]; a term with an empty `target` is taken out. These are the author\'s, and no later pass writes over them. Chapters translated before a rendering changed keep the old one until they are translated again from their original.',
+        '- action=original: put the original of `chapters` back as their text (the translation is then a version in its turn).',
+      ].join('\n'),
+      mutating: args => !(args.action === 'terms' && args.settle !== true),
+      parameters: {
+        action: { type: 'string', enum: ['chapters', 'terms', 'set_terms', 'original'], description: 'chapters (default); terms to read or settle the glossary; set_terms to correct it; original to put a chapter\'s original back.' },
+        to: { type: 'string', description: 'The language translated into, as a tag (en, zh, ja…). Required but for action=original.' },
+        from: { type: 'string', description: 'chapters: what the text is in; "auto" lets the translator tell. Left out: what each chapter is in now.' },
+        chapters: listParameter('chapters, original: which chapters. chapters without it: every chapter of the line that has text.'),
+        line: { type: 'string', description: 'chapters: the line of the plot meant (left out: the main one).' },
+        direction: { type: 'string', description: 'What the author asks of the translation, or of the renderings.' },
+        settle: { type: 'boolean', description: 'terms: settle what has no rendering yet. chapters: false translates by the glossary as it is (default: the names are settled first where there are none).' },
+        scan: { type: 'boolean', description: 'terms with settle: also read the text for proper names that have no card.' },
+        terms: { type: 'array', items: { type: 'object', additionalProperties: true }, description: 'set_terms: [{source, target, kind, note}].' },
+      },
+      async run(args, env) {
+        const runtime = await env.project()
+        const { project } = runtime
+        const action = args.action ?? 'chapters'
+        if (action === 'original') {
+          const refs = listOf(args.chapters) ?? []
+          if (refs.length === 0) throw new ProjectError('novel/invalid', 'action=original needs `chapters`')
+          const back: string[] = []
+          for (const ref of refs) back.push((await untranslateChapter(runtime, ref)).chapter)
+          return { text: `The original is the text again of: ${back.join(', ')}. The translation of each is kept among its versions.`, data: toJson({ chapters: back }) }
+        }
+        const to = args.to?.trim() ?? ''
+        if (to.length === 0) throw new ProjectError('novel/invalid', `action=${action} needs \`to\`: the language, as a tag (en, zh, ja…)`)
+        const listed = (terms: { source: string; target: string; kind?: string; note?: string; by?: string }[]): string => terms.map(term => `- ${term.source} → ${term.target}${term.kind !== undefined ? ` [${term.kind}]` : ''}${term.note !== undefined ? ` — ${term.note}` : ''}${term.by === 'author' ? ' (the author\'s)' : ''}`).join('\n')
+        if (action === 'terms') {
+          let settled: Awaited<ReturnType<typeof settleTerms>> | undefined
+          if (args.settle === true) {
+            settled = await env.job('bible', 'settle terms', undefined, async task => await settleTerms(env.core, runtime, { to, ...(args.from !== undefined && args.from !== 'auto' ? { from: args.from } : {}), ...(args.scan === true ? { scan: true } : {}), ...(args.direction !== undefined ? { direction: args.direction } : {}) }, task))
+          }
+          const glossary = await project.glossary(to)
+          if (glossary.length === 0) return { text: `No names are settled for ${to} yet. action=terms settle=true settles them off the bible (scan=true reads the text too); a translation settles them first by itself.`, record: false }
+          return {
+            text: `${settled !== undefined ? `Settled ${settled.added.length} more${settled.failed.length > 0 ? ` (${settled.failed.length} pass(es) came back with nothing usable: ${clip(settled.failed.join('; '), 300)})` : ''}. ` : ''}The glossary for ${to}, ${glossary.length} term(s):\n${listed(glossary)}`,
+            data: toJson(glossary),
+            ...(settled === undefined ? { record: false as const } : { record: { summary: [`定译名（${to}）：新定 ${settled.added.length} 条，共 ${glossary.length} 条`, `Settled names for ${to}: ${settled.added.length} more, ${glossary.length} in all`] as [string, string] } }),
+          }
+        }
+        if (action === 'set_terms') {
+          const given = (Array.isArray(args.terms) ? args.terms as unknown[] : []).filter((item): item is Record<string, unknown> => item !== null && typeof item === 'object' && typeof (item as Record<string, unknown>).source === 'string')
+          if (given.length === 0) throw new ProjectError('novel/invalid', 'action=set_terms needs `terms`: [{source, target, kind, note}]')
+          const after = await project.updateGlossary(to, (current) => {
+            const next = [...current]
+            for (const item of given) {
+              const source = String(item.source).trim()
+              const at = next.findIndex(term => term.source.toLowerCase() === source.toLowerCase())
+              const target = typeof item.target === 'string' ? item.target.trim() : ''
+              if (target.length === 0) { if (at >= 0) next.splice(at, 1); continue }
+              const kind = GLOSSARY_KINDS.find(kind => kind === item.kind)
+              const note = typeof item.note === 'string' && item.note.trim().length > 0 ? item.note.trim() : undefined
+              const term = { ...(at >= 0 ? next[at]! : {}), source, target, ...(kind !== undefined ? { kind } : {}), ...(note !== undefined ? { note } : {}), by: 'author' as const }
+              if (at >= 0) next[at] = term
+              else next.push(term)
+            }
+            return next
+          })
+          return { text: `The glossary for ${to} has ${after.length} term(s) now. What you set:\n${listed(after.filter(term => given.some(item => String(item.source).trim().toLowerCase() === term.source.toLowerCase())))}\nChapters translated before this keep the renderings they were translated with.`, data: toJson(after) }
+        }
+        const refs = listOf(args.chapters) ?? []
+        const result = await env.job('write', 'translate', refs.length === 1 ? refs[0] : undefined, async task => await translateChapters(env.core, runtime, {
+          to,
+          ...(refs.length > 0 ? { chapters: refs } : {}),
+          ...(args.line !== undefined ? { line: args.line } : {}),
+          ...(args.from !== undefined ? { from: args.from } : {}),
+          ...(args.settle !== undefined ? { settle: args.settle } : {}),
+          ...(args.direction !== undefined ? { direction: args.direction } : {}),
+        }, task))
+        const same = result.skipped.filter(item => item.why === 'same').length
+        return {
+          text: `Translated ${result.translated.length} chapter(s) into ${to}${result.translated.length > 0 ? `: ${clip(result.translated.map(item => `"${item.title}"`).join(', '), 400)}` : ''}.${same > 0 ? ` ${same} were in ${to} already.` : ''}${result.skipped.length - same > 0 ? ` ${result.skipped.length - same} have no text.` : ''}${result.failed.length > 0 ? ` ${result.failed.length} failed and are as they were: ${clip(result.failed.map(item => `${item.chapter} — ${item.error}`).join('; '), 400)}.` : ''} The glossary has ${result.terms.total} term(s)${result.terms.added > 0 ? ` (${result.terms.added} settled now)` : ''}; ${result.named} card(s) took the name they go by in the translation.${result.language !== undefined ? ` Every chapter with text is in ${result.language} now: it is the book's language.` : ''} Each chapter's original is kept among its versions (action=original puts it back). The digests of these chapters were made of the original: have them digested again (novel_digest force=true) before more is written after them.`,
+          data: toJson(result),
+          record: { summary: [`翻译成 ${to}：${result.translated.length} 章${result.failed.length > 0 ? `，${result.failed.length} 章没成` : ''}`, `Translated into ${to}: ${result.translated.length} chapter(s)${result.failed.length > 0 ? `, ${result.failed.length} failed` : ''}`] },
+        }
+      },
+    }),
+
+    novelTool(service, {
       name: 'novel_import',
       description: [
         'Import an existing book into the project, so it can be continued, revised or staged: an editor agent reads the text and finds its real chapters and volumes (headings written any way, a table of contents, site navigation left by a web page — it sorts them out and reports what it did), then the book is analysed — every chapter digested, the people the chapters name given their cards (the leads whole cards, those who come back a line, other names of the same person folded together, whoever passes once left a walk-on), the world entries collected, chapter synopses, a logline and a premise written, the style learned from the text. Give `path` (a .txt, .md, .epub or .docx file inside the workspace; UTF-8, UTF-16 and GB18030 are detected) or the text itself. A long book takes a long time.',
@@ -298,6 +385,7 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
         path: { type: 'string', description: 'File inside the session workspace.' },
         text: { type: 'string', description: 'The manuscript text, when it is not in a file.' },
         analyze: { type: 'boolean', description: 'import: false only splits into chapters and skips the analysis passes (default true).' },
+        translate_from: { type: 'string', description: 'import: the manuscript is in another language than the book is to be in — the language it is in (a tag: en, ja, zh…), or "auto" to let the translator tell. It is then translated into the book\'s language as it comes in: the names settled out of the text first (the glossary), each chapter translated by them, its original kept as a version; everything after — digests, cards, outline — is read off the translation.' },
         steps: listParameter('analyze: the passes to run, out of digest, cast, growth (how the people of the book change along it: ages, the points where they turn), world, ties (how people, places, houses and things stand to each other, and the course of the places), outline, style, art. Leave out to finish what an analysis left undone.'),
       },
       async run(args, env) {
@@ -362,9 +450,12 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
           }
         }
         if (text.trim().length === 0) throw new ProjectError('novel/invalid', 'give `path` or `text`')
-        const result = await env.job('import', 'import', undefined, async task => await importManuscript(env.core, runtime, { text, ...(args.analyze !== undefined ? { analyze: args.analyze } : {}) }, task))
+        const into = (await runtime.project.manifest()).language
+        const written = args.translate_from?.trim()
+        const translate = written !== undefined && written.length > 0 && written !== into ? { to: into, ...(written !== 'auto' ? { from: written } : {}) } : undefined
+        const result = await env.job('import', 'import', undefined, async task => await importManuscript(env.core, runtime, { text, ...(args.analyze !== undefined ? { analyze: args.analyze } : {}), ...(translate !== undefined ? { translate } : {}) }, task))
         return {
-          text: `Imported ${result.chapters} chapters (${result.words} words) in ${result.volumes} volume(s): ${result.digested} digested, ${result.characters} character cards, ${result.worldEntries} world entries${result.style !== undefined ? `, style "${result.style}" learned` : ''}.${result.failed.length > 0 ? `\nSteps that failed and can be redone: ${result.failed.map(item => `${item.step} (${item.error})`).join('; ')}` : ''}\n${result.structure.by === 'agent' ? `The chapters were found by the editor agent in ${result.structure.steps ?? 0} steps${result.structure.bySize ? ' — it found no chapter marks and cut the text by length' : ''}.` : 'The chapters were cut by rule, not by the editor agent.'}${result.structure.note !== undefined ? ` Its account, for the author: ${result.structure.note}` : ''}\nReview the cast and outline with the author (novel_status detail=full).`,
+          text: `Imported ${result.chapters} chapters (${result.words} words) in ${result.volumes} volume(s)${result.translated !== undefined ? `, translated into ${result.translated.to} as they came in (${result.translated.chapters} chapters by a glossary of ${result.translated.terms} terms${result.translated.failed > 0 ? `; ${result.translated.failed} could not be translated and are still in the original — novel_translate does them again` : ''}; each chapter's original is a version of it)` : ''}: ${result.digested} digested, ${result.characters} character cards, ${result.worldEntries} world entries${result.style !== undefined ? `, style "${result.style}" learned` : ''}.${result.failed.length > 0 ? `\nSteps that failed and can be redone: ${result.failed.map(item => `${item.step} (${item.error})`).join('; ')}` : ''}\n${result.structure.by === 'agent' ? `The chapters were found by the editor agent in ${result.structure.steps ?? 0} steps${result.structure.bySize ? ' — it found no chapter marks and cut the text by length' : ''}.` : 'The chapters were cut by rule, not by the editor agent.'}${result.structure.note !== undefined ? ` Its account, for the author: ${result.structure.note}` : ''}\nReview the cast and outline with the author (novel_status detail=full).`,
           data: toJson(result),
           // The import puts its own entry on the book's record, with the editor's account of how the book was cut.
           record: false,

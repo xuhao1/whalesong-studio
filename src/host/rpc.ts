@@ -47,7 +47,8 @@ import { sleep } from '../core/util/async'
 import type { ContextView, CrewView, FindMatch, ModelKind, NovelRpc, RpcMethod, RpcParams, RpcResult, SettingsView, SitePlan } from '../shared/rpc'
 import { PROJECT_HOMEPAGE, type SetupPart } from '../shared/services'
 import { hashText, proseOnly } from '../shared/text'
-import { ANALYZE_STEPS, CREW_ROLES, MAIN_LINE, STAGE_STEPS, STORYBOARD_DENSITIES, TEXT_STEPS, type JobKind, type NovelSettings, type StageStep, type TextRole, type TextStep, type WorkMode, type HistoryKind } from '../shared/types'
+import { ANALYZE_STEPS, CREW_ROLES, GLOSSARY_KINDS, MAIN_LINE, STAGE_STEPS, STORYBOARD_DENSITIES, TEXT_STEPS, type GlossaryTerm, type JobKind, type NovelSettings, type StageStep, type TextRole, type TextStep, type WorkMode, type HistoryKind } from '../shared/types'
+import { settleTerms, translateChapters, untranslateChapter } from '../core/pipelines/translate'
 import { recommendedView, settleRecommended } from './recommended'
 import type { NovelService } from './service'
 
@@ -653,7 +654,7 @@ export function createHandlers(service: NovelService): Handlers {
       if (named.length === 0) throw new ProjectError('novel/bad-request', 'the line needs a name')
       return job(runtime, 'import', 'import line', undefined, async task => await importLine(core, runtime, { text: manuscript, title: named, ...(typeof premise === 'string' && premise.trim().length > 0 ? { premise } : {}), ...(digest === false ? { digest: false } : {}) }, task))
     },
-    'ai.import': async ({ root, text, file, analyze }) => {
+    'ai.import': async ({ root, text, file, analyze, translate }) => {
       const runtime = await open(root)
       let manuscript = typeof text === 'string' ? text : ''
       if (file !== undefined) {
@@ -673,7 +674,61 @@ export function createHandlers(service: NovelService): Handlers {
         })
       }
       if (manuscript.trim().length === 0) throw new ProjectError('novel/bad-request', 'there is no text to import')
-      return job(runtime, 'import', 'import', undefined, async task => await importManuscript(core, runtime, { text: manuscript, ...(analyze !== undefined ? { analyze } : {}) }, task))
+      const into = translate !== undefined && typeof translate.to === 'string' && translate.to.trim().length > 0
+        ? { to: translate.to.trim(), ...(typeof translate.from === 'string' && translate.from.trim().length > 0 ? { from: translate.from.trim() } : {}), ...(typeof translate.direction === 'string' && translate.direction.trim().length > 0 ? { direction: translate.direction.trim() } : {}) }
+        : undefined
+      return job(runtime, 'import', 'import', undefined, async task => await importManuscript(core, runtime, { text: manuscript, ...(analyze !== undefined ? { analyze } : {}), ...(into !== undefined ? { translate: into } : {}) }, task))
+    },
+    'ai.translate': async ({ root, to, chapters, line, from, settle, direction }) => {
+      const runtime = await open(root)
+      const picked = Array.isArray(chapters) ? chapters.filter((item): item is string => typeof item === 'string' && item.length > 0) : undefined
+      return job(runtime, 'write', 'translate', picked?.length === 1 ? picked[0] : undefined, async task => await translateChapters(core, runtime, {
+        to: requireString(to, 'to').trim(),
+        ...(picked !== undefined && picked.length > 0 ? { chapters: picked } : {}),
+        ...(typeof line === 'string' && line.length > 0 ? { line } : {}),
+        ...(typeof from === 'string' && from.trim().length > 0 ? { from: from.trim() } : {}),
+        ...(typeof settle === 'boolean' ? { settle } : {}),
+        ...(typeof direction === 'string' && direction.trim().length > 0 ? { direction: direction.trim() } : {}),
+      }, task))
+    },
+    'ai.settleTerms': async ({ root, to, from, scan, direction }) => {
+      const runtime = await open(root)
+      return job(runtime, 'bible', 'settle terms', undefined, async task => await settleTerms(core, runtime, {
+        to: requireString(to, 'to').trim(),
+        ...(typeof from === 'string' && from.trim().length > 0 ? { from: from.trim() } : {}),
+        ...(scan === true ? { scan: true } : {}),
+        ...(typeof direction === 'string' && direction.trim().length > 0 ? { direction: direction.trim() } : {}),
+      }, task))
+    },
+    'glossary.read': async ({ root }) => {
+      const { project } = await open(root)
+      return { glossaries: await project.glossaries(), translations: await project.translations() }
+    },
+    'glossary.save': async ({ root, to, terms }) => {
+      const { project } = await open(root)
+      const given = (Array.isArray(terms) ? terms : []).filter((term): term is GlossaryTerm => term !== null && typeof term === 'object' && typeof term.source === 'string' && typeof term.target === 'string')
+      // What the author changed or added is theirs: marked, so that no later pass over the names writes over it.
+      const saved = await project.updateGlossary(requireString(to, 'to').trim(), (current) => {
+        const was = new Map(current.map(term => [term.source.trim().toLowerCase(), term]))
+        return given.map((term) => {
+          const old = was.get(term.source.trim().toLowerCase())
+          const kind = GLOSSARY_KINDS.find(item => item === term.kind)
+          const note = typeof term.note === 'string' && term.note.trim().length > 0 ? term.note.trim() : undefined
+          const same = old !== undefined && old.target === term.target.trim() && (old.note ?? '') === (note ?? '') && old.kind === kind
+          return {
+            source: term.source, target: term.target,
+            ...(kind !== undefined ? { kind } : {}),
+            ...(note !== undefined ? { note } : {}),
+            ...(old?.of !== undefined ? { of: old.of } : {}),
+            ...(same ? (old.by !== undefined ? { by: old.by } : {}) : { by: 'author' as const }),
+          }
+        })
+      })
+      return { terms: saved }
+    },
+    'chapter.untranslate': async ({ root, id }) => {
+      await untranslateChapter(await open(root), requireString(id, 'id'))
+      return { ok: true }
     },
     'ai.foundation': async ({ root, idea }) => {
       const runtime = await open(root)

@@ -20,7 +20,7 @@ import { basename, join } from 'node:path'
 import {
   analysisSteps, type AnalyzeStep,
   belongsTo, castOrder, chapterBudgetOf, MAIN_LINE,
-  type ActivityEntry, type BookShows, type HistoryKind, type HistoryVersion, type Timestamp, type CharacterLook, type CharacterMoment, type LifeMark, type ShowCount,
+  type ActivityEntry, type BookShows, type ChapterTranslation, type GlossaryTerm, type HistoryKind, type HistoryVersion, type Timestamp, type CharacterLook, type CharacterMoment, type LifeMark, type ShowCount,
   type AudioScript, type CastPresence, type ChapterInfo, type ChapterMemory, type ChapterPlan, type ChapterReview, type ChapterStatus, type CharacterCard,
   type ComicBoard, type ComicPanel, type IllustrationInfo, type Outline, type PlaySession, type PlotLine, type PlotLineInfo, type PlotLineOrigin, type PlotThread, type ProjectManifest, type ProjectState, type ProjectStats, type Proposal, type RemovedChapter,
   type StyleProfile, type Suggestion, type ThreadTouch, type VersionInfo, type VoiceCast, type Volume, type WorldEntry,
@@ -43,6 +43,7 @@ export const MANIFEST_FILE = 'novel.json'
 const OUTLINE_FILE = 'outline.json'
 /** The ties between the things of the book's world, kept with the bible. */
 const TIES_FILE = 'relations.json'
+const GLOSSARY_FILE = 'glossary.json'
 /** Chapters taken out of the book, kept so they can be put back. */
 const REMOVED_FILE = 'removed.json'
 const STATE_DIR = '.novel'
@@ -829,6 +830,64 @@ export class Project {
       const next = mutate(await this.ties())
       await this.writeDoc(path, { schema: 1, relations: next })
       return next
+    })
+  }
+
+  // ───────────── the glossary: what the book's names are in another language ─────────────
+
+  /** Every glossary the book has, by the language it renders the book's names in (`bible/glossary.json`). */
+  async glossaries(): Promise<Record<string, GlossaryTerm[]>> {
+    const path = this.path('bible', GLOSSARY_FILE)
+    return await this.cached(path, async () => {
+      const stored = await this.files.readJson<{ to?: unknown }>(path)
+      const out: Record<string, GlossaryTerm[]> = {}
+      if (stored?.to === null || typeof stored?.to !== 'object') return out
+      for (const [language, list] of Object.entries(stored.to as Record<string, unknown>)) {
+        if (!Array.isArray(list)) continue
+        out[language] = list.filter((item): item is GlossaryTerm => item !== null && typeof item === 'object' && typeof (item as GlossaryTerm).source === 'string' && typeof (item as GlossaryTerm).target === 'string' && (item as GlossaryTerm).source.trim().length > 0 && (item as GlossaryTerm).target.trim().length > 0)
+      }
+      return out
+    })
+  }
+
+  /** The book's names and terms as they are to be written in a language; none where nothing was settled for it. */
+  async glossary(to: string): Promise<GlossaryTerm[]> {
+    return (await this.glossaries())[to] ?? []
+  }
+
+  /**
+   * Change the glossary of a language. One rendering a word: of two terms with the same source, the first stands.
+   * @returns the glossary as it is after.
+   */
+  async updateGlossary(to: string, mutate: (current: GlossaryTerm[]) => GlossaryTerm[]): Promise<GlossaryTerm[]> {
+    const path = this.path('bible', GLOSSARY_FILE)
+    return await this.mutex.run(path, async () => {
+      const all = { ...(await this.glossaries()) }
+      const seen = new Set<string>()
+      const next = mutate(all[to] ?? []).map(term => ({ ...term, source: term.source.trim(), target: term.target.trim() })).filter((term) => {
+        const key = term.source.toLowerCase()
+        if (term.source.length === 0 || term.target.length === 0 || seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
+      if (next.length > 0) all[to] = next
+      else delete all[to]
+      if (Object.keys(all).length > 0) await this.writeDoc(path, { schema: 1, to: all })
+      else await this.remove(path)
+      return next
+    })
+  }
+
+  /** Which chapters' text is a translation, and of what (`.novel/translations.json`). */
+  async translations(): Promise<Record<string, ChapterTranslation>> {
+    return (await this.readState<Record<string, ChapterTranslation>>('translations.json')) ?? {}
+  }
+
+  /** Note that a chapter's text is now a translation — or, with nothing, that it is the original again. */
+  async noteTranslation(chapterId: string, note?: ChapterTranslation): Promise<void> {
+    await this.updateState<Record<string, ChapterTranslation>>(['translations.json'], {}, (current) => {
+      const { [chapterId]: _was, ...others } = current
+      return note !== undefined ? { ...others, [chapterId]: note } : others
     })
   }
 
@@ -2746,6 +2805,7 @@ export class Project {
     ])
     const presence = cast.presence
     const graph = await this.graphPlaces()
+    const translations = await this.translations()
     const lines: PlotLineInfo[] = []
     for (const line of outline.lines ?? []) {
       const path = await this.chapterInfos(line.id)
@@ -2785,6 +2845,7 @@ export class Project {
       worldPresence: await this.worldSeen(world, chapters),
       ties: await this.ties(),
       ...(Object.keys(graph).length > 0 ? { graph } : {}),
+      ...(Object.keys(translations).length > 0 ? { translations } : {}),
     }
   }
 

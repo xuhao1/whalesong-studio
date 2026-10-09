@@ -134,6 +134,19 @@ Retrieval is hybrid: BM25 over CJK bigrams and Latin words, optional embeddings,
 
 Shared rules: changes are **proposals** with a diff (revisions started in the Studio always; the showrunner's apply directly unless you ask to review them); the previous text is **snapshotted** before anything applies; a passage proposal goes **stale** when its target text has since changed — better that than pasting a rewrite in the wrong place; mutating tools **ask first** in read-only sessions.
 
+### Translation: the names first, then chapter by chapter
+
+Hand a model a book of several hundred thousand words a chapter at a time, and the first thing to break is not the prose but the **names**: one person is Shen Heng in chapter three and Shen Hang in chapter forty; one thing has two renderings. A model does not remember, so nothing is left to its memory:
+
+- **A glossary is what a translation goes by** (`bible/glossary.json`, one a language): people's names and what they are called, places, houses and organisations, things, the book's own words — one rendering each.
+- **Settled first, translated after.** Where the book has cards, continuity settles the names off them — **who somebody is decides how their name and their forms of address come out** (a man or a woman; a nickname or a name). A book with no cards yet (a manuscript just brought in) has its proper names found in the text. What is settled stands: every pass only adds.
+- **A chapter is sent with the terms it uses**, each with what it is — not with the whole glossary. A translator (the writer model) that meets a name without a rendering settles one and hands it back; it is added, and later chapters go by it.
+- **Afterwards the cards learn their names**: the rendering becomes another name the card goes by. The digests, the marks on names in the text, the context of the next chapter all tell people by a card's names — so Shen Heng in the translation is still 沈蘅.
+- **The author has the last word**: the glossary is read and corrected in the translate dialog; what they set is marked theirs, and no later pass writes over it. A name rendered badly is corrected in the glossary, not in a chapter.
+- **The translation takes the text's place and the original is kept**: as a version of the chapter (*before it was translated*); the chapter says *From …* beside its title, and its menu puts the original back, title and all. A picture's path in the text is not touched.
+- **Two ways in**: *Translate…* in a chapter's menu on the writing page (this chapter, or every written chapter of the line; a long chapter goes stretch by stretch, each in the voice the one before ends in; several chapters at a time), and *The manuscript is in* on the import form — a manuscript in another language is translated into the book's as it comes in, and digested, carded and outlined from the translation.
+- When every written chapter is in the language, it is the book's language (what it was is kept on record).
+
 ### What was changed is kept: versions of everything written
 
 A chapter's text always had versions; a character card, an entry of the bible, a style, a chapter's plan, a thread, the book's own info had none — the showrunner changed a card, the director rewrote an anchor, a field was cleared by a slip, and how it was before was gone. They now keep versions one way:

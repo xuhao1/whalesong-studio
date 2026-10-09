@@ -7,6 +7,22 @@ import type {
 } from '../shared/types'
 
 type Label = [zh: string, en: string]
+
+/** The languages a book is written in, or translated from and into — each by its own name. */
+export const LANGUAGES: { value: string; label: string }[] = [
+  { value: 'zh', label: '简体中文' },
+  { value: 'zh-TW', label: '繁體中文' },
+  { value: 'en', label: 'English' },
+  { value: 'ja', label: '日本語' },
+  { value: 'ko', label: '한국어' },
+  { value: 'fr', label: 'Français' },
+  { value: 'de', label: 'Deutsch' },
+  { value: 'es', label: 'Español' },
+  { value: 'ru', label: 'Русский' },
+]
+
+/** A language by its own name; its tag where it is none the Studio lists. */
+export const languageLabel = (tag: string): string => LANGUAGES.find(item => item.value === tag)?.label ?? LANGUAGES.find(item => tag.toLowerCase().startsWith(item.value.toLowerCase()))?.label ?? tag
 type Tone = 'neutral' | 'blue' | 'amber' | 'green' | 'red' | 'violet'
 
 /** The kinds an entry of the bible is filed under. */
@@ -208,6 +224,8 @@ export function waitingLabel(method: RpcMethod): Label {
 /** A running job by the technical title its pipeline gave it. */
 const JOB_TITLES: [RegExp, Label][] = [
   [/^write$/, ['写作', 'Writing']],
+  [/^translate$/, ['翻译', 'Translating']],
+  [/^settle terms$/, ['定译名', 'Settling the names']],
   [/^publish site$/, ['发布成网站', 'Publishing the site']],
   [/^life /, ['写履历', 'Writing a life']],
   [/^ties$/, ['理清关系', 'Working out the ties']],

@@ -11131,3 +11131,47 @@ button.nv-album-chapter:hover {
     max-height: 22vh;
   }
 }
+
+/* ── translating: the glossary a translation goes by ── */
+
+.nv-glossary-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--nv-border);
+}
+
+.nv-glossary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.nv-glossary-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 38vh;
+  overflow: auto;
+}
+
+.nv-glossary-row {
+  display: grid;
+  grid-template-columns: minmax(80px, 1fr) auto minmax(80px, 1fr) 110px minmax(100px, 1.4fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+
+@container studio (max-width: 640px) {
+  .nv-glossary-row {
+    grid-template-columns: minmax(70px, 1fr) auto minmax(70px, 1fr) auto;
+  }
+
+  .nv-glossary-row > select,
+  .nv-glossary-row > .nv-glossary-note {
+    display: none;
+  }
+}

@@ -57,6 +57,8 @@ export interface ProjectManifest {
   artAvoid?: string[]
   /** Project-relative path of the picture shown as the book's cover; the latest cover drawn stands in while unset. */
   cover?: string
+  /** The language the book was written in, where what is read here is a translation of it (`language` is then what it was translated into). */
+  translatedFrom?: string
   /** How finely this book's motion comics are cut into panels. */
   storyboard?: StoryboardSettings
   /** This book's own models: a role named here runs on it for this book, whatever the Studio-wide settings say. */
@@ -698,6 +700,38 @@ export interface Suggestion {
   /** Payload applied on accept. */
   payload: Record<string, unknown>
   createdAt: Timestamp
+}
+
+/**
+ * A name or a term of the book and what it is called in another language: what keeps a translation saying one thing
+ * one way from the first chapter to the last. Settled before chapters are translated, sent along with every chapter
+ * that has the word in it, and added to when a translation meets a name it has no rendering for.
+ */
+export interface GlossaryTerm {
+  /** As the book writes it. */
+  source: string
+  /** As the translation is to write it. */
+  target: string
+  kind?: 'person' | 'place' | 'house' | 'thing' | 'term'
+  /** What it is, in a few words: what a translator has to know to render it and what stands around it (a woman; a title, not a name). */
+  note?: string
+  /** The card or the entry it is a name of: `character:<id>`, `world:<id>`. */
+  of?: string
+  /** `author`: set by hand — no pass over the names writes over it. */
+  by?: 'author'
+}
+
+export const GLOSSARY_KINDS: readonly NonNullable<GlossaryTerm['kind']>[] = ['person', 'place', 'house', 'thing', 'term']
+
+/** That a chapter's text is a translation: from what into what, when, and the version that holds what it was translated from. */
+export interface ChapterTranslation {
+  from?: string
+  to: string
+  at: Timestamp
+  /** The version of the chapter's text taken before it was translated: the original. */
+  version?: string
+  /** What the chapter was called before: the original's title. */
+  title?: string
 }
 
 /** What a history is kept of: a card, an entry of the bible, a style, a chapter's plan, a thread, what the book says of itself. (A chapter's text has versions of its own.) */
@@ -1989,6 +2023,8 @@ export interface ProjectState {
   suggestions: Suggestion[]
   proposals: Proposal[]
   presence: CastPresence[]
+  /** The chapters whose text is a translation made here, by id: what each was translated from and into. Left out where there is none. */
+  translations?: Record<string, ChapterTranslation>
   /** Project-relative path of the cover picture, when the book has one. */
   cover?: string
   /** What changed the book lately, newest first. Absent on a Host from before this was kept. */

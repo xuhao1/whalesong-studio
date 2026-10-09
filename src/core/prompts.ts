@@ -1738,3 +1738,80 @@ Rules:
 STYLE
 ${base.style}`)
 }
+
+// ───────────────────────────── translating ─────────────────────────────
+
+/** A language as a translator is told of it; `undefined`: whatever the text is in. */
+const tongue = (lang: PromptLanguage, language: string | undefined): string => (language !== undefined ? languageName(language) : L(lang, '原文的语言（看正文）', 'the language the text is in'))
+
+/**
+ * The translator's standing instructions: the same for every chapter of a book being translated one way, so the
+ * head of every request is the same and a provider can keep it.
+ */
+export function translatorSystem(base: { lang: PromptLanguage; title: string; from?: string; to: string; direction?: string }): string {
+  const [from, to] = [tongue(base.lang, base.from), languageName(base.to)]
+  return L(base.lang, `你是一位文学译者，正在把长篇小说《${bare(base.title)}》从${from}译成${to}。编辑每次给你一章（或一章的一段）、这一章用到的译名和它们是什么，你交回可以直接付印的译文。
+
+【译文的规矩】
+1. 只输出译文。给了标题时，第一行是标题的译文，以“# ”开头，空一行后是正文；没给标题就直接是正文。不要译注、解释、括号说明，也不要“以下是译文”之类的话。
+2. 原文的每一段都译出来，段落照原文分；不增、不删、不概括，不改动发生了什么、谁说了什么。
+3. 译文读起来是用${to}写成的小说：语序、标点、称谓、度量和习语照${to}的习惯；人物各自说话的口吻、叙述的节奏、原文的文风留着。
+4. 译名表里的词照表译，每一次都一样。表里注明了这个人是谁、这样东西是什么——代词、敬称、上下文里的说法要和它对得上。
+5. 表里没有的专名（人名、地名、家族与组织、器物、这本书自己的说法）：定一个译法，全章一致；译文结束后另起一行写“=====TERMS=====”，下面给一个 JSON 数组列出它们：[{"source":"原文里的写法","target":"译法","kind":"person|place|house|thing|term","note":"是什么，几个字"}]。没有新的就不写这一段。
+6. 原文里的 Markdown 原样保留：空行分段、分隔线；图片行（![说明](路径)）留在原处，括号里的路径一个字都不改，方括号里的说明照译。${base.direction !== undefined && base.direction.trim().length > 0 ? `\n\n【作者对译文的要求】\n${base.direction.trim()}` : ''}`, `You are a literary translator, translating the novel "${bare(base.title)}" from ${from} into ${to}. Your editor hands you a chapter at a time (or a stretch of one) with the renderings of the names it uses and what each of them is; you hand back a translation that could go to print as it is.
+
+RULES
+1. Output the translation only. Where a title is given, the first line is the title translated, beginning with "# ", then a blank line, then the text; where none is given, the text at once. No translator's notes, no explanations, no bracketed asides, no lead-in.
+2. Every paragraph of the original is translated, and paragraphs fall where the original's do. Nothing added, nothing left out, nothing summed up; what happens and who says what is not changed.
+3. It reads as a novel written in ${to}: word order, punctuation, forms of address, measures and idiom are ${to}'s; each person's way of speaking, the pace of the telling and the manner of the original are kept.
+4. A word in the glossary is rendered as the glossary has it, every time. The glossary says who a person is and what a thing is — pronouns, honorifics and how they are spoken of go by that.
+5. A proper name the glossary does not have (a person, a place, a house or an organisation, a thing, a word of this book's own): settle a rendering and keep to it through the chapter; after the translation, on a line of its own, write "=====TERMS=====" and under it a JSON array of them: [{"source":"as the original writes it","target":"the rendering","kind":"person|place|house|thing|term","note":"what it is, in a few words"}]. Leave the section out where there is none.
+6. The original's Markdown is kept as it is: blank lines between paragraphs, rules; a picture's line (![caption](path)) stays where it is — the path in the round brackets is not changed by a letter, the caption in the square ones is translated.${base.direction !== undefined && base.direction.trim().length > 0 ? `\n\nWHAT THE AUTHOR ASKS OF THE TRANSLATION\n${base.direction.trim()}` : ''}`)
+}
+
+/** One chapter — or one stretch of a long one — to translate. */
+export function translateTask(base: {
+  lang: PromptLanguage
+  /** The chapter's title, where this stretch begins the chapter. */
+  title?: string
+  text: string
+  /** The glossary's terms that occur in this stretch, one a line. */
+  terms: string
+  /** How the translation ran until here: the end of the chapter before, or of the stretch before. */
+  before?: string
+  /** `k/n` where the chapter comes in stretches. */
+  part?: string
+}): string {
+  return L(base.lang, `${base.terms.length > 0 ? `## 译名表（这一段用到的）\n${base.terms}\n\n` : ''}${base.before !== undefined && base.before.length > 0 ? `## 译文到这里为止的结尾（接着它的口吻往下译，不要重复它）\n${base.before}\n\n` : ''}## 要译的${base.part !== undefined ? `（这一章的第 ${base.part} 段${base.title === undefined ? '；标题已经译过，不要再写标题' : ''}）` : ''}
+${base.title !== undefined ? `标题：${base.title}\n\n` : ''}${base.text}`, `${base.terms.length > 0 ? `## Glossary (the terms this stretch uses)\n${base.terms}\n\n` : ''}${base.before !== undefined && base.before.length > 0 ? `## How the translation ends so far (go on in its voice; do not repeat it)\n${base.before}\n\n` : ''}## To translate${base.part !== undefined ? ` (stretch ${base.part} of this chapter${base.title === undefined ? '; the title is translated already — write none' : ''})` : ''}
+${base.title !== undefined ? `Title: ${base.title}\n\n` : ''}${base.text}`)
+}
+
+/** Settling how the book's names are to be written in another language, before a line of it is translated. */
+export function termsSystem(base: { lang: PromptLanguage; title: string; from?: string; to: string }): string {
+  const [from, to] = [tongue(base.lang, base.from), languageName(base.to)]
+  return L(base.lang, `你在为长篇小说《${bare(base.title)}》的${to}译本定译名（原文：${from}）。译名一旦定下，全书每一章都照它译，所以要定得住。
+
+【怎么定】
+1. 人名照${to}读者读这类小说时习惯的写法：有通行译法的用通行的；没有的，只是名字的就照读音转写（一家人的姓一个写法），有意思的绰号、外号、称谓按意思译。
+2. 地名、家族与组织、器物、这本书自己的说法：意思要紧的按意思译，只是个名字的照读音；一样东西一个译法。
+3. 别名、称呼各算一条，和本名的译法对得上（本名怎么写，带着它的称呼里就怎么写）。
+4. 已经定下的照旧，不要再给；只给还没定的。
+5. note 写给译者看：这是谁、是男是女、是什么东西——几个字。
+
+只输出 JSON：{"terms":[{"source":"原文里的写法，一字不差","target":"译法","kind":"person|place|house|thing|term","note":""}]}`, `You are settling the names for the ${to} translation of the novel "${bare(base.title)}" (original: ${from}). A rendering, once settled, is what every chapter of the book is translated by — so it has to hold.
+
+HOW
+1. People's names as readers of such novels in ${to} are used to seeing them: the accepted rendering where there is one; otherwise a name that is only a name is written by its sound (one spelling for a family's name), and a nickname, epithet or form of address that means something is rendered by its meaning.
+2. Places, houses and organisations, things, the book's own words: by meaning where the meaning matters, by sound where it is only a name; one rendering a thing.
+3. Another name or a form of address is a term of its own, and agrees with the rendering of the name it goes with.
+4. What is settled already stands and is not given again; only what is not settled yet.
+5. The note is for the translator: who this is, a man or a woman, what kind of thing — a few words.
+
+Output JSON only: {"terms":[{"source":"as the original writes it, to the letter","target":"the rendering","kind":"person|place|house|thing|term","note":""}]}`)
+}
+
+/** What is to be given a rendering: names off the book's cards, or a stretch of its text to find the names in. */
+export function termsTask(base: { lang: PromptLanguage; settled: string; names?: string; text?: string; direction?: string }): string {
+  return L(base.lang, `${base.settled.length > 0 ? `## 已经定下的（和它们保持一致，不要再给）\n${base.settled}\n\n` : ''}${base.direction !== undefined && base.direction.trim().length > 0 ? `## 作者的要求\n${base.direction.trim()}\n\n` : ''}${base.names !== undefined ? `## 要定译名的（设定里的人物和条目；“又叫”的每个写法也各给一条）\n${base.names}` : `## 一段正文：找出里面还没定译名的专名（人名和称呼、地名、家族与组织、器物、这本书自己的说法），各定一个\n${base.text ?? ''}`}`, `${base.settled.length > 0 ? `## Settled already (agree with these; do not give them again)\n${base.settled}\n\n` : ''}${base.direction !== undefined && base.direction.trim().length > 0 ? `## The author asks\n${base.direction.trim()}\n\n` : ''}${base.names !== undefined ? `## To settle (people and entries of the bible; each spelling under "also" gets a term of its own)\n${base.names}` : `## A stretch of the text: find the proper names in it that have no rendering yet (people and what they are called, places, houses and organisations, things, the book's own words) and settle one for each\n${base.text ?? ''}`}`)
+}

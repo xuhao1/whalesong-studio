@@ -15,9 +15,10 @@ import { countWords, formatCount, fuzzyFind, normalizeProse, proseOnly } from '.
 import { MAIN_LINE, type ChapterInfo, type JobInfo, type ReviewIssue, type TextStep, type VersionInfo } from '../../shared/types'
 import { BatchMatrix, chapterJob, TextBatchDialog, useBatchJob } from '../Batch'
 import { DiffView, ProposalCard } from '../components/ProposalCard'
+import { TranslateDialog } from '../Translate'
 import { Icon } from '../icons'
 import { jobKindLabel, jobPulse } from '../Studio'
-import { CHAPTER_STATUS, CHAPTER_STATUS_TONE, ISSUE_TYPE, SEVERITY, SEVERITY_TONE, sheetsDrawn } from '../labels'
+import { CHAPTER_STATUS, CHAPTER_STATUS_TONE, ISSUE_TYPE, languageLabel, SEVERITY, SEVERITY_TONE, sheetsDrawn } from '../labels'
 import { MoveChapters } from '../MoveChapters'
 import { useSheetsAsk } from '../SheetsAsk'
 import { PickPicture } from '../PlacePicture'
@@ -46,6 +47,7 @@ function versionReason(reason: string, t: Translate): string {
     'before-redraft': ['重新起草前', 'before a redraft'],
     'before-continue': ['续写前', 'before continuing'],
     'before-restore': ['恢复版本前', 'before a restore'],
+    'before-translate': ['翻译之前（原文）', 'before it was translated (the original)'],
     'before-import': ['导入前', 'before an import'],
     'before-remove': ['删除章节前', 'before removal'],
     'manual': ['手动存档', 'manual'],
@@ -259,6 +261,9 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
   const doc = useLoad<ChapterDocument>(signal => controller.api.call('chapter.read', { root, id: chapter.id }, signal), [root, chapter.id, revision])
   // Moving this chapter to another place in the plot, while the author says where.
   const [moving, setMoving] = useState(false)
+  const [translating, setTranslating] = useState(false)
+  /** That this chapter's text is a translation made here, and of what. */
+  const translated = project.translations?.[chapter.id]
   const [text, setText] = useState<string | undefined>()
   const baseline = useRef<string | undefined>(undefined)
   const [external, setExternal] = useState<string | undefined>()
@@ -568,6 +573,7 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
             <Select className="nv-chapter-select" value={chapter.id} options={path.map(item => ({ value: item.id, label: `${item.index}. ${item.title}` }))} onChange={(value) => { controller.focusChapter(value) }} />
           ) : <h2 className="nv-write-title"><span className="nv-muted">{chapter.index}</span> {chapter.title}</h2>}
           <Chip tone={CHAPTER_STATUS_TONE[chapter.status]}>{t(...CHAPTER_STATUS[chapter.status])}</Chip>
+          {translated !== undefined ? <Chip tone="violet" title={t('这一章是译文；原文在“版本”里，章节菜单里可以恢复', 'This chapter is a translation; its original is among the versions, and the chapter menu puts it back')}>{translated.from !== undefined ? t(`译自${languageLabel(translated.from)}`, `From ${languageLabel(translated.from)}`) : t('译文', 'Translated')}</Chip> : null}
           <span className="nv-muted nv-small" title={chapter.budget !== undefined ? t(`建议字数 ${chapter.budget}`, `Suggested length ${chapter.budget}`) : t('没有设建议字数，由写手判断', 'No suggested length: the writer judges')}>{formatCount(words, locale)}{chapter.budget !== undefined ? ` / ${formatCount(chapter.budget, locale)}` : ''}{t(' 字', ' words')}</span>
           <span className={cx('nv-save-state', `is-${saveState}`)}>{saveState === 'saving' ? t('保存中…', 'Saving…') : saveState === 'dirty' ? t('未保存', 'Unsaved') : t('已保存', 'Saved')}</span>
           <span className="nv-spacer" />
@@ -582,6 +588,8 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
             { label: t('批量推演节拍…', 'Beats for many chapters…'), icon: 'layers', onSelect: () => { onBatch(['beats']) } },
             { label: t('批量收录 / 审校…', 'Memory and reviews for many chapters…'), icon: 'layers', onSelect: () => { onBatch(['digest', 'review']) } },
             { label: t('移到另一条线…', 'Move to another line…'), icon: 'branch', onSelect: () => { setMoving(true) } },
+            { label: t('翻译…', 'Translate…'), icon: 'globe', onSelect: () => { void save().then(() => { setTranslating(true) }) } },
+            ...(translated?.version !== undefined ? [{ label: t('恢复原文（译文存入版本）', 'Put the original back (the translation is versioned)'), icon: 'undo' as const, onSelect: () => { void controller.guard(async () => { await controller.api.call('chapter.untranslate', { root, id: chapter.id }); await controller.refreshProject(); controller.toast('info', t('已恢复原文', 'The original is back')) }) } }] : []),
             'separator',
             { label: t('删除这一章', 'Delete this chapter'), icon: 'trash', danger: true, onSelect: onRemove },
           ]} />
@@ -676,6 +684,7 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
 
       {viewing !== undefined ? <VersionModal chapterId={chapter.id} version={viewing} current={text} onClose={() => { setViewing(undefined) }} /> : null}
       {moving ? <MoveChapters chapters={[chapter.id]} onClose={() => { setMoving(false) }} /> : null}
+      {translating ? <TranslateDialog chapters={[chapter.id]} line={lineId} onClose={() => { setTranslating(false) }} /> : null}
       {confirm.element}
       {sheets.element}
       {picking !== undefined ? <PickPicture chapter={chapter.id} onPick={placePicked} onClose={() => { setPicking(undefined) }} /> : null}
