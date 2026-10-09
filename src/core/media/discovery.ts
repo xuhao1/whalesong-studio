@@ -70,8 +70,8 @@ export async function listEndpointModels(url: string, kind: ModelKind, apiKey: s
   const options = { ...(apiKey !== undefined ? { apiKey } : {}), ...(signal !== undefined ? { signal } : {}), timeoutMs: 30_000 }
   let rows: ModelRow[]
   if (serviceOf(url) === 'openrouter') {
-    // OpenRouter files models by what they produce.
-    const path = kind === 'embedding' ? '/embeddings/models' : kind === 'image' ? '/models?output_modalities=image' : kind === 'speech' ? '/models?output_modalities=speech' : '/models'
+    // OpenRouter files models by what they produce; the ones its images endpoint draws with have a listing of their own.
+    const path = kind === 'embedding' ? '/embeddings/models' : kind === 'image' ? '/images/models' : kind === 'speech' ? '/models?output_modalities=speech' : '/models'
     rows = rowsOf(await getJson<unknown>(`${base}${path}`, options))
     if (kind === 'text') rows = rows.filter(row => !Array.isArray(row.architecture?.output_modalities) || row.architecture.output_modalities.includes('text'))
   } else {

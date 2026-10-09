@@ -14,7 +14,7 @@ import { imageSizes, localImages, nearestSize, parseSize } from '../../shared/im
 import { providerDefault } from '../../shared/recommended'
 import { compatibleBase, originOf } from '../../shared/services'
 import type { CodexBridgeKind, IllustrationSent, ImageProviderKind, ImageSettings } from '../../shared/types'
-import { download, findKey, postJson, ProviderError, requireKey, trimBase, type KeySource } from './http'
+import { download, findKey, getJson, postJson, ProviderError, requireKey, trimBase, type KeySource } from './http'
 import { ComfyImages, DiffusersImages } from './local'
 
 /** A picture sent along with a prompt so the model keeps what it shows: a character's portrait, usually. */
@@ -250,6 +250,166 @@ class OpenAiImages implements ImageProvider {
 
 // ───────────────────────────── OpenRouter ─────────────────────────────
 
+/**
+ * What an image model takes, parameter by parameter, as OpenRouter lists it
+ * (`GET /images/models`): the values of a choice, the most of a count. A
+ * parameter that is not in the record is one the model does not take; one that
+ * is there with nothing said takes whatever is sent.
+ */
+export type ImageTakes = Record<string, { values?: string[]; max?: number }>
+
+/** What is sent to a model nothing is known of: the parameters most of them take. What it refuses is learnt from the refusal. */
+const ASSUMED: ImageTakes = { aspect_ratio: {}, resolution: {}, quality: {}, n: {}, input_references: {} }
+/** The shapes nearly every model has. */
+const COMMON_ASPECTS = ['1:1', '16:9', '9:16', '4:3', '3:4']
+
+interface ListedImageModel {
+  id?: unknown
+  supported_parameters?: Record<string, { type?: unknown; values?: unknown; max?: unknown } | undefined>
+}
+
+function takesOf(row: ListedImageModel): ImageTakes {
+  const takes: ImageTakes = {}
+  for (const [name, spec] of Object.entries(row.supported_parameters ?? {})) {
+    if (spec === undefined || spec === null) continue
+    takes[name] = {
+      ...(Array.isArray(spec.values) ? { values: spec.values.filter((value): value is string => typeof value === 'string') } : {}),
+      ...(typeof spec.max === 'number' ? { max: spec.max } : {}),
+    }
+  }
+  return takes
+}
+
+/** The listing of an endpoint, asked for once in a while: models come and go, and what they take changes with them. */
+const listings = new Map<string, { at: number; byId: Promise<Map<string, ImageTakes>> }>()
+/**
+ * What a model turned out to take when it was asked, where that is less than its listing says (an account's own rules
+ * leave some of a model's providers out): per parameter the values taken, or `null` where it is not taken at all.
+ */
+const learnt = new Map<string, Record<string, string[] | null>>()
+
+/** What a model takes, less what it has since refused. */
+function narrowed(takes: ImageTakes, told: Record<string, string[] | null>): ImageTakes {
+  const next: ImageTakes = {}
+  for (const [name, spec] of Object.entries(takes)) {
+    const accepted = told[name]
+    if (accepted === undefined) next[name] = spec
+    else if (accepted !== null) next[name] = { ...spec, values: accepted }
+  }
+  return next
+}
+
+/** Forget what was listed and learnt. For tests, and for nothing else: both are found again by asking. */
+export function forgetImageListings(): void {
+  listings.clear()
+  learnt.clear()
+}
+
+/** What the endpoint's listing says a model takes; undefined when the listing cannot be had or does not know the model. */
+async function listedTakes(base: string, model: string, apiKey: string, signal: AbortSignal | undefined): Promise<ImageTakes | undefined> {
+  const cached = listings.get(base)
+  if (cached === undefined || Date.now() - cached.at > 30 * 60_000) {
+    // What refusals taught goes with the listing it corrected: an account's rules change too.
+    for (const key of [...learnt.keys()]) if (key.startsWith(`${base}|`)) learnt.delete(key)
+    const byId = getJson<{ data?: ListedImageModel[] }>(`${base}/images/models`, { apiKey, timeoutMs: 20_000 })
+      .then(reply => new Map((reply.data ?? []).filter((row): row is ListedImageModel & { id: string } => typeof row.id === 'string').map(row => [row.id, takesOf(row)])))
+    // A listing that could not be had is asked for again, not remembered as empty.
+    byId.catch(() => { if (listings.get(base)?.byId === byId) listings.delete(base) })
+    listings.set(base, { at: Date.now(), byId })
+  }
+  try {
+    const byId = await listings.get(base)!.byId
+    // A variant of a model (`…:free`) takes what the model takes.
+    return byId.get(model) ?? byId.get(model.replace(/:[^/:]+$/, ''))
+  } catch (error) {
+    if (signal?.aborted === true) throw error
+    return undefined
+  }
+}
+
+/** How many pixels a side a fineness is named after: `512`, `768`, `1K`, `1.5K`, `2K`, `4K`. */
+function tierSide(tier: string): number | undefined {
+  const match = /^(\d+(?:\.\d+)?)(k?)$/i.exec(tier.trim())
+  return match === null ? undefined : Number(match[1]) * (match[2] !== '' ? 1024 : 1)
+}
+
+/** The fineness a size asks for where the model has it; else the one it has that is nearest in pixels — the lesser of two equally near. */
+function fittedTier(wanted: string | undefined, has: readonly string[]): string | undefined {
+  const tier = resolutionTier(wanted)
+  if (has.includes(tier)) return tier
+  const parsed = parseSize(wanted)
+  const pixels = parsed !== undefined ? parsed.width * parsed.height : (tierSide(tier) ?? 1024) ** 2
+  let best: string | undefined
+  let distance = Number.POSITIVE_INFINITY
+  for (const candidate of [...has].sort((left, right) => (tierSide(left) ?? 0) - (tierSide(right) ?? 0))) {
+    const side = tierSide(candidate)
+    if (side === undefined) continue
+    const delta = Math.abs(Math.log(side * side / pixels))
+    if (delta < distance - 1e-3) {
+      best = candidate
+      distance = delta
+    }
+  }
+  return best
+}
+
+export interface OpenRouterAsk {
+  body: Record<string, unknown>
+  /** The shape and the fineness asked for, in the service's terms, for the picture's record. */
+  size?: string
+  /** How many of the reference pictures go along. */
+  references: number
+}
+
+/**
+ * What a model is asked for a picture: only the parameters it takes, each at a
+ * value it takes. A model that has no fineness to choose is not sent one; a
+ * shape or a fineness it does not have becomes the nearest it has; a quality
+ * it does not know and reference pictures beyond what it holds stay behind.
+ */
+export function openRouterAsk(input: { model: string; prompt: string; wanted: string | undefined; quality?: string | undefined; references: readonly ImageReference[] }, takes: ImageTakes = ASSUMED): OpenRouterAsk {
+  const shapes = takes.aspect_ratio?.values?.filter(value => /^\d+(\.\d+)?:\d+(\.\d+)?$/.test(value))
+  const aspect = takes.aspect_ratio === undefined ? undefined : nearestAspect(input.wanted, shapes !== undefined && shapes.length > 0 ? shapes : COMMON_ASPECTS)
+  const resolution = takes.resolution === undefined ? undefined : takes.resolution.values !== undefined ? fittedTier(input.wanted, takes.resolution.values) : resolutionTier(input.wanted)
+  const quality = input.quality !== undefined && input.quality.length > 0 && takes.quality !== undefined && (takes.quality.values === undefined || takes.quality.values.includes(input.quality)) ? input.quality : undefined
+  const references = takes.input_references === undefined ? [] : input.references.slice(0, Math.min(MAX_REFERENCES, takes.input_references.max ?? MAX_REFERENCES))
+  return {
+    body: {
+      model: input.model,
+      prompt: input.prompt,
+      ...(aspect !== undefined ? { aspect_ratio: aspect } : {}),
+      ...(resolution !== undefined ? { resolution } : {}),
+      // Asked for only of a model that has formats to choose from; the others answer in the one they have.
+      ...(takes.output_format?.values?.includes('png') === true ? { output_format: 'png' } : {}),
+      ...(takes.n !== undefined ? { n: 1 } : {}),
+      ...(quality !== undefined ? { quality } : {}),
+      ...(references.length > 0 ? { input_references: references.map(reference => ({ type: 'image_url', image_url: { url: dataUrl(reference) } })) } : {}),
+    },
+    ...(aspect !== undefined || resolution !== undefined ? { size: [aspect, resolution].filter(part => part !== undefined).join(' · ') } : {}),
+    references: references.length,
+  }
+}
+
+/**
+ * What a refusal says of the parameters it refused: for each, the values that
+ * would have been taken, or `null` where it is not taken at all. OpenRouter
+ * words it "Provider rejections: Google: resolution: not supported. Accepted:
+ * 1K, 2K; aspect_ratio: not supported. Accepted: 1:1, 2:3".
+ */
+export function refusedParameters(message: string): Record<string, string[] | null> {
+  const told: Record<string, string[] | null> = {}
+  const at = message.indexOf('Provider rejections:')
+  if (at < 0) return told
+  for (const match of message.slice(at).matchAll(/([a-z_]+): not supported(?:\.\s*Accepted:\s*([^;\n|]+))?/gi)) {
+    const name = match[1]!
+    const accepted = match[2]?.split(',').map(value => value.trim().replace(/^"|"$/g, '')).filter(value => value.length > 0)
+    // Several providers of one model: whatever any of them would take is worth asking for.
+    const before = told[name]
+    told[name] = accepted !== undefined && accepted.length > 0 ? [...new Set([...(before ?? []), ...accepted])] : before ?? null
+  }
+  return told
+}
+
 class OpenRouterImages implements ImageProvider {
   readonly kind = 'openrouter' as const
   readonly model: string
@@ -262,23 +422,36 @@ class OpenRouterImages implements ImageProvider {
     const base = trimBase(this.settings.baseURL?.trim() || compatibleBase('openrouter'))
     const apiKey = await requireKey(this.keys, { ref: this.settings.apiKeyRef, endpoint: base }, 'Image generation')
     const wanted = request.size ?? this.settings.size ?? '1024x1024'
-    // Models differ in the pixel sizes they take; a ratio and a tier are understood by all of them.
-    const references = (request.references ?? []).slice(0, MAX_REFERENCES)
     const prompt = withAvoid(request.prompt, request.negativePrompt ?? this.settings.negativePrompt, 8000)
-    const aspect = nearestAspect(wanted)
-    const resolution = resolutionTier(wanted)
-    const reply = await postJson<ImagesReply>(`${base}/images`, {
-      model: this.model,
-      prompt,
-      aspect_ratio: aspect,
-      resolution,
-      output_format: 'png',
-      n: 1,
-      ...(this.settings.quality !== undefined && this.settings.quality.length > 0 ? { quality: this.settings.quality } : {}),
-      ...(references.length > 0 ? { input_references: references.map(reference => ({ type: 'image_url', image_url: { url: dataUrl(reference) } })) } : {}),
-    }, { apiKey, headers: { 'x-title': 'Novel Studio' }, ...signalOption(request.signal), timeoutMs: 300_000 })
-    return { ...await fromReply(reply.data?.[0], request.signal), referencesUsed: references.length, sent: { prompt, size: `${aspect} · ${resolution}` } }
+    const input = { model: this.model, prompt, wanted, quality: this.settings.quality, references: request.references ?? [] }
+    // Models differ in what they take — a shape and a fineness, a shape alone, a quality, one reference picture or
+    // sixteen — and are refused what they do not: the endpoint is asked what this one takes, and only that is sent.
+    const known = `${base}|${this.model}`
+    const listed = await listedTakes(base, this.model, apiKey, request.signal) ?? ASSUMED
+    let told = learnt.get(known) ?? {}
+    for (let round = 0; ; round++) {
+      const ask = openRouterAsk(input, narrowed(listed, told))
+      try {
+        const reply = await postJson<ImagesReply>(`${base}/images`, ask.body, { apiKey, headers: { 'x-title': 'Novel Studio' }, ...signalOption(request.signal), timeoutMs: 300_000 })
+        return { ...await fromReply(reply.data?.[0], request.signal), referencesUsed: ask.references, sent: { prompt, ...(ask.size !== undefined ? { size: ask.size } : {}) } }
+      } catch (error) {
+        if (!(error instanceof ProviderError)) throw error
+        // The listing speaks for the model; the providers an account may use can take less. What they say they take is
+        // asked for next — a refusal costs nothing — and is kept for the pictures after this one.
+        const news = round < 2 && error.status === 400 ? Object.entries(refusedParameters(error.message)).filter(([name]) => name in ask.body) : []
+        if (news.length === 0) throw explained(error)
+        told = { ...told, ...Object.fromEntries(news) }
+        learnt.set(known, told)
+      }
+    }
   }
+}
+
+/** A refusal that is about the account rather than the request, with what to do about it. */
+function explained(error: ProviderError): ProviderError {
+  if (!/guardrail restrictions and data policy/i.test(error.message)) return error
+  const said = error.message.replace(/\s*\n\s*/g, ' ')
+  return new ProviderError(`${said} — the privacy settings of this OpenRouter account leave out every provider of this model: allow them at https://openrouter.ai/settings/privacy, or choose another model`, error.status, error.code)
 }
 
 // ───────────────────────────── ChatGPT subscription ─────────────────────────────

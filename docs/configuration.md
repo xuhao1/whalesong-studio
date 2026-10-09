@@ -259,9 +259,18 @@ Settings files saved by earlier versions carry budgets nobody chose (48,000, lat
 | `image.portraitScene` | `false`: portraits are plain — facing the viewer, on a plain ground — and what is asked of one is drawn as asked. Unset: a portrait shows the person in their signature scene, and what is asked of it guides the director's pick (see *Portraits in their scene*) |
 | `image.apiKeyRef` | read the key from this variable instead of the saved one |
 
-How sizes travel: OpenRouter gets the nearest aspect ratio and a resolution tier, which every model there understands; GPT Image models on an OpenAI endpoint get the nearest of their three classic sizes; other models get the size as written; a subscription gets the framing in words, because its endpoint takes a prompt and nothing else.
+How sizes travel: OpenRouter gets what the model in use takes (see *What OpenRouter's image models take* below) — a shape, and a fineness where the model has one to choose; GPT Image models on an OpenAI endpoint get the nearest of their three classic sizes; other models get the size as written; a subscription gets the framing in words, because its endpoint takes a prompt and nothing else.
 
 Generated images are downloaded into the book (`assets/images/`), so a book never depends on an expiring URL.
+
+**What OpenRouter's image models take.** The models behind `POST /images` do not take the same request. Of the 59 listed on 2026-10-09, 23 have a fineness to choose (`resolution`) and no two families the same tiers — Gemini `512, 1K, 2K, 4K`, Seedream `1K, 2K`, FLUX `768, 1K, 1.5K, 2K, 4K` — while 36, GPT Image among them, have none and take a shape alone; shapes (`aspect_ratio`) run from five to eighteen; nine know a `quality`, fourteen an `output_format`; and they hold one reference picture, or four, or sixteen. A model that is sent what it does not take refuses the request (*No provider for … supports the requested parameter(s) … resolution: not supported. Accepted: 512, 1K, 2K, 4K*). So the Studio asks: OpenRouter lists what every image model takes (`GET /images/models`, read once in half an hour), and a picture is asked for with those parameters only, each at a value the model has —
+
+- the **shape** nearest to the size wanted, of the shapes the model has;
+- the **fineness** the size asks for where the model has it (`512` up to 640 pixels a side, `768`, `1K` up to 1300, `1.5K`, `2K` up to 3000, `4K`), else the one it has that is nearest in pixel count, the lesser of two equally near — a design sheet (1536×1024) is drawn at `1K` on Gemini, a 1080p frame at `2K`; no fineness at all for a model that has none to choose;
+- `image.quality` only where the model knows that quality; `output_format: png` only where it has formats to choose from (the others answer in the one they have — Seedream in JPEG — and the picture is kept as it comes);
+- as many reference pictures as the model holds; the picture's record says how many went.
+
+The listing speaks for the model, and the providers an account may use can take less (an account that allows only zero-retention providers is left one provider of Gemini 3 Pro, and that one stops at `2K`). What a refusal says is taken — *Accepted: 1K, 2K* — is asked for next, twice at most; a refusal costs nothing, and what was learnt is kept for the pictures after it. A model the listing does not know, and any model while the listing cannot be had, is asked for what most models take and learns the same way. Where an account's privacy settings leave a model no provider at all (`404`: *0 endpoints … matching your guardrail restrictions and data policy*), no request can be shaped to pass: the message says so, with where the setting is (openrouter.ai/settings/privacy).
 
 ### A character's life
 
