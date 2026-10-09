@@ -9,6 +9,7 @@
  * to be an alias, or left alone.
  */
 import type { CharacterCard, CharacterRole, WalkOn, WalkOnVerdict } from '../shared/types'
+import { MAIN_LINE } from '../shared/types'
 import { ProjectError, type Project } from './project'
 
 interface WalkOnFile {
@@ -23,6 +24,8 @@ const FILE = 'walkons.json'
 
 const clean = (name: string): string => name.trim().replace(/^["'“”‘’「」『』《》\s]+|["'“”‘’「」『』《》\s]+$/gu, '')
 const fold = (name: string): string => clean(name).toLowerCase().replace(/[\s·・.．-]+/gu, '')
+/** What a walk-on goes by in the lists: the name, and — beside the main line's story — the story it is of. */
+const keyOf = (name: string, story?: string): string => (story === undefined || story === MAIN_LINE ? fold(name) : `${fold(name)}\u0000${story}`)
 
 /** Names that are a role in the telling rather than a person. */
 const NOT_A_PERSON = new Set(['旁白', '叙述者', '叙述', 'narrator', 'narration', '众人', '所有人', 'all', 'everyone', '画外音', '系统', '未知', 'unknown', '?', '？'])
@@ -33,10 +36,18 @@ async function ignoredNames(project: Project): Promise<string[]> {
 
 /** Everyone on the page without a card, most present first. */
 export async function listWalkOns(project: Project, options: { ignored?: boolean } = {}): Promise<WalkOn[]> {
-  const [cards, memories, suggestions, cast, ignored, chapters, sifted] = await Promise.all([
-    project.characters(), project.memories(), project.suggestions(), project.voiceCast(), ignoredNames(project), project.chapters(),
-    project.readState<WalkOnFile>(FILE).then(file => file?.sifted ?? {}),
+  const [cards, suggestions, cast, ignored, main, outline, sifted, who] = await Promise.all([
+    project.characters(), project.suggestions(), project.voiceCast(), ignoredNames(project), project.chapters(), project.outline(),
+    project.readState<WalkOnFile>(FILE).then(file => file?.sifted ?? {}), project.castResolver(),
   ])
+  // Every line's chapters: the main line's, then each other line's own (those it shares with the line it parted from
+  // are that line's). Somebody without a card in another story is a walk-on like any.
+  const chapters = [...main]
+  for (const line of outline.lines ?? []) {
+    const own = new Set(line.chapters.map(plan => plan.id))
+    for (const chapter of await project.chapters(line.id)) if (own.has(chapter.plan.id) && !chapters.some(known => known.plan.id === chapter.plan.id)) chapters.push(chapter)
+  }
+  const memories = await project.memories(chapters)
   const carded = new Map<string, CharacterCard>()
   for (const card of cards) {
     carded.set(fold(card.name), card)
@@ -49,11 +60,17 @@ export async function listWalkOns(project: Project, options: { ignored?: boolean
   const see = (raw: string | undefined, chapter?: string, note?: string): WalkOn | undefined => {
     if (raw === undefined) return undefined
     const name = clean(raw)
-    const key = fold(name)
-    if (key.length === 0 || name.length > 24 || NOT_A_PERSON.has(key) || carded.has(key)) return undefined
+    const plain = fold(name)
+    if (plain.length === 0 || name.length > 24 || NOT_A_PERSON.has(plain)) return undefined
+    // Seen in a chapter, a name has a card where somebody of that chapter's story bears it — a namesake in another
+    // story does not make them carded. Named with no chapter (a voice, an old verdict), any card by the name does.
+    if (chapter !== undefined && order.has(chapter) ? who.resolve(name, chapter).id !== undefined : carded.has(plain)) return undefined
+    const story = chapter !== undefined && order.has(chapter) ? who.story(chapter) : undefined
+    // With no chapter to say which story: whoever is listed by that name already, else the main story's.
+    const key = story !== undefined ? keyOf(name, story) : [...found.keys()].find(known => known === plain || known.startsWith(`${plain}\u0000`)) ?? plain
     let entry = found.get(key)
     if (entry === undefined) {
-      entry = { name, chapters: [], lines: 0 }
+      entry = { name, chapters: [], lines: 0, ...(story !== undefined && story !== MAIN_LINE ? { story } : {}) }
       found.set(key, entry)
     }
     if (chapter !== undefined && order.has(chapter) && !entry.chapters.includes(chapter)) entry.chapters.push(chapter)
@@ -92,12 +109,14 @@ export async function listWalkOns(project: Project, options: { ignored?: boolean
     entry.chapters.sort((left, right) => (order.get(left) ?? 0) - (order.get(right) ?? 0))
     // A name that sits inside a card's name is likely that character under another name; so is one that only adds a
     // little to it ("老周" → "老周头"). "沈蘅的妹妹" is someone else: a relation of the character, named by them.
+    const plain = fold(entry.name)
     const near = cards.find((card) => {
       const known = fold(card.name)
-      if (known.length < 2 || key.length < 2) return false
-      if (known.includes(key)) return true
-      const at = key.indexOf(known)
-      return at >= 0 && key.length - known.length <= 2 && key[at + known.length] !== '的'
+      // Somebody of the same name in another story is not "them under another name".
+      if (known.length < 2 || plain.length < 2 || known === plain) return false
+      if (known.includes(plain)) return true
+      const at = plain.indexOf(known)
+      return at >= 0 && plain.length - known.length <= 2 && plain[at + known.length] !== '的'
     })
     if (near !== undefined) entry.near = near.id
     const said = sifted[key]
@@ -105,7 +124,7 @@ export async function listWalkOns(project: Project, options: { ignored?: boolean
       const { name: _written, ...verdict } = said
       entry.verdict = verdict
     }
-    if (hidden.has(key)) {
+    if (hidden.has(plain)) {
       if (options.ignored !== true) continue
       entry.ignored = true
     }
@@ -119,7 +138,7 @@ export async function noteVerdicts(project: Project, verdicts: readonly (WalkOnV
   if (verdicts.length === 0) return
   await project.updateState<WalkOnFile>([FILE], { schema: 1, ignored: [] }, (current) => {
     const sifted = { ...(current.sifted ?? {}) }
-    for (const verdict of verdicts) sifted[fold(verdict.name)] = verdict
+    for (const verdict of verdicts) sifted[keyOf(verdict.name, verdict.story)] = verdict
     return { ...current, sifted }
   })
 }
@@ -129,6 +148,8 @@ export const foldName = (name: string): string => fold(name)
 
 export interface SettleInput {
   name: string
+  /** Which of two walk-ons by the same name: the story they are of (see `WalkOn.story`). Left out: the first by that name. */
+  story?: string
   /**
    * card: give them a character card. alias: they are an existing character
    * under another name. ignore / restore: take them off the list, or put them back.
@@ -170,7 +191,7 @@ export async function settleWalkOn(project: Project, input: SettleInput): Promis
     })
     return { lines: 0 }
   }
-  const entry = (await listWalkOns(project, { ignored: true })).find(item => fold(item.name) === key)
+  const entry = (await listWalkOns(project, { ignored: true })).find(item => fold(item.name) === key && (input.story === undefined || (item.story ?? MAIN_LINE) === input.story))
   const suggestion = entry?.suggestion !== undefined ? await project.takeSuggestion(entry.suggestion) : undefined
   const cast = await project.voiceCast()
   const voice = cast !== undefined ? Object.entries(cast.extras).find(([extra]) => fold(extra) === key) : undefined

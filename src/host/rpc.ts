@@ -435,9 +435,9 @@ export function createHandlers(service: NovelService): Handlers {
       const runtime = await open(root)
       return job(runtime, 'bible', 'sift cast', undefined, async task => await siftCast(core, runtime, { ...(all === true ? { all: true } : {}), ...(typeof direction === 'string' && direction.trim().length > 0 ? { direction: direction.trim() } : {}) }, task))
     },
-    'cast.settle': async ({ root, name, action, target, role }) => {
+    'cast.settle': async ({ root, name, story, action, target, role }) => {
       const { project } = await open(root)
-      const settled = await settleWalkOn(project, { name: requireString(name, 'name'), action, ...(target !== undefined ? { target } : {}), ...(role !== undefined ? { role } : {}) })
+      const settled = await settleWalkOn(project, { name: requireString(name, 'name'), action, ...(typeof story === 'string' ? { story } : {}), ...(target !== undefined ? { target } : {}), ...(role !== undefined ? { role } : {}) })
       return { walkons: await listWalkOns(project, { ignored: true }), lines: settled.lines, ...(settled.card !== undefined ? { card: settled.card } : {}) }
     },
     'suggestion.accept': async ({ root, id }) => {

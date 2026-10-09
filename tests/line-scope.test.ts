@@ -273,6 +273,81 @@ describe('a line of the plot reads itself', () => {
     expect(await project.linesReading(one.id)).toEqual({ lines: [MAIN_LINE, other.id], every: true })
   })
 
+  it('keeps the namesakes of different stories apart: a narrator\'s 我, and a name the digest is asked about', async () => {
+    const { project } = bed.runtime
+    const book = await world(bed)
+    const { listWalkOns, settleWalkOn } = await import('../src/core/walkons')
+    const task = { origin: 'user' as const }
+    const notes = (characters: { name: string; role: string }[], extra: Record<string, unknown> = {}) => () => JSON.stringify({ brief: '一章', summary: '一章。', characters, facts: [], threads: [], newEntities: [], ...extra })
+    const first = async (chapter: string) => (await project.memory(chapter))!.characters[0]!
+    const onFile = (): string[] => /## 已建档人物[^\n]*\n([\s\S]*?)\n\n## /.exec(bed.llm.requests.at(-1)!.prompt)![1]!.split('\n')
+    // The main story is told by 我, who has a card.
+    const me = await project.saveCharacter({ name: '我', role: 'protagonist', personality: '寡言', firstAppearance: book.m1.id })
+    bed.llm.responder = notes([{ name: '我', role: '登报' }])
+    await digestChapter(bed.core, bed.runtime, book.m2.id, task, { force: true })
+    expect(await first(book.m2.id)).toMatchObject({ character: me.id, name: '我' })
+    // A line that parts from the main one tells its story on: the same 我.
+    await project.saveChapterText(book.s1.id, '我从码头折了回去。')
+    bed.llm.responder = notes([{ name: '我', role: '折回' }])
+    await digestChapter(bed.core, bed.runtime, book.s1.id, task, { force: true })
+    expect((await first(book.s1.id)).character).toBe(me.id)
+    expect(onFile()).toContain('我')
+    // A story of its own from the first page: its 我 is somebody else. The main story's is not on file for it, and the
+    // narrator is kept under a name that says whose story it is.
+    await project.saveChapterText(book.c2.id, '我盘了一夜的账。沈蘅来过铺子。')
+    bed.llm.responder = notes([{ name: '我', role: '盘账' }])
+    await digestChapter(bed.core, bed.runtime, book.c2.id, task, { force: true })
+    expect(onFile()).toContain('陆掌柜')
+    expect(onFile()).toContain('阿棠')
+    expect(onFile()).not.toContain('我')
+    expect(onFile()).not.toContain('沈蘅')
+    expect(await first(book.c2.id)).toMatchObject({ character: '我（城南的铺子）', name: '我（城南的铺子）' })
+    expect((await project.seenOn()).people[me.id]).toEqual([MAIN_LINE, book.stay.id])
+    // They are a walk-on of that story, and given a card it is a card of their own.
+    const walk = (await listWalkOns(project)).find(entry => entry.name === '我（城南的铺子）')!
+    expect(walk).toMatchObject({ story: book.south.id, chapters: [book.c2.id] })
+    const made = (await settleWalkOn(project, { name: walk.name, story: walk.story!, action: 'card' })).card!
+    expect(made.id).not.toBe(me.id)
+    expect((await project.characters()).filter(card => card.name.startsWith('我')).map(card => card.name).sort()).toEqual(['我', '我（城南的铺子）'])
+    // The next digest of that story finds its own narrator on file, and the main story still finds its own.
+    bed.llm.responder = notes([{ name: '我', role: '又盘了一夜' }])
+    await digestChapter(bed.core, bed.runtime, book.c2.id, task, { force: true })
+    expect((await first(book.c2.id)).character).toBe(made.id)
+    expect(onFile()).toContain('我（城南的铺子）')
+    await digestChapter(bed.core, bed.runtime, book.m2.id, task, { force: true })
+    expect((await first(book.m2.id)).character).toBe(me.id)
+    expect((await project.seenOn()).people[made.id]).toEqual([book.south.id])
+
+    // A card asked for under a name somebody of another story bears — a suggestion made for whoever first appears in
+    // this story's chapter — is a card of their own, under the name with the story after it.
+    const other = await project.saveCharacter({ name: '陆掌柜', role: 'minor', tagline: '码头上另一位姓陆的掌柜', firstAppearance: book.m1.id })
+    expect(other.id).not.toBe(book.lu.id)
+    expect(other.name).toBe('陆掌柜（主线）')
+    expect((await project.findCharacter(book.lu.id))!.tagline).toBeUndefined()
+
+    // A proper name: 沈蘅 is on file in the main story, and this story's text spells her name. The digest is asked
+    // whether it is she, come over, or somebody else of the name.
+    bed.llm.responder = notes([{ name: '沈蘅', role: '来过铺子' }], { namesakes: [{ name: '沈蘅', same: false, why: '是铺子里的学徒' }] })
+    await digestChapter(bed.core, bed.runtime, book.c2.id, task, { force: true })
+    const asked = bed.llm.requests.at(-1)!.prompt
+    expect(asked).toContain('## 别的故事线上同名的人')
+    expect(asked).toMatch(/- 沈蘅｜主线/)
+    expect(asked).toContain('"namesakes"')
+    expect(await first(book.c2.id)).toMatchObject({ character: '沈蘅（城南的铺子）', name: '沈蘅（城南的铺子）' })
+    expect((await project.seenOn()).people[book.heng.id]).not.toContain(book.south.id)
+    // The same person: she is noted under her card, and is of this story too from here on — and nobody is asked again.
+    bed.llm.responder = notes([{ name: '沈蘅', role: '来过铺子' }], { namesakes: [{ name: '沈蘅', same: true, why: '就是那位代笔人' }] })
+    await digestChapter(bed.core, bed.runtime, book.c2.id, task, { force: true })
+    expect((await first(book.c2.id)).character).toBe(book.heng.id)
+    expect((await project.seenOn()).people[book.heng.id]).toContain(book.south.id)
+    bed.llm.responder = notes([{ name: '沈蘅', role: '又来' }])
+    await digestChapter(bed.core, bed.runtime, book.c2.id, task, { force: true })
+    expect(bed.llm.requests.at(-1)!.prompt).not.toContain('别的故事线上同名的人')
+    expect(onFile()).toContain('沈蘅')
+    // Asked each time this story's text spelt her name while she was not of it — four digests of that chapter — and never since.
+    expect(bed.llm.requests.filter(request => request.prompt.includes('别的故事线上同名的人'))).toHaveLength(4)
+  })
+
   it('reads and searches for a role along the line its work is on, numbered along it', async () => {
     const { project } = bed.runtime
     const book = await world(bed)

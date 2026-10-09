@@ -16,7 +16,7 @@ import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { asArray, asList, asRecord, asText } from '../llm'
 import { assign } from '../crew'
 import type { LocatedChapter } from '../project'
-import { ProjectError } from '../project'
+import { ProjectError, selfNamed } from '../project'
 import { arcTask, digestSystem, digestTask } from '../prompts'
 import { L, promptLanguage } from '../render'
 import { mapLimit } from '../util/async'
@@ -49,6 +49,14 @@ export async function digestChapter(core: NovelCore, runtime: ProjectRuntime, re
   const manifest = await project.manifest()
   const lang = promptLanguage(manifest.language)
   const [characters, world, outline] = await Promise.all([project.characters(), project.world(), project.outline()])
+  // Who a name is goes by the story the chapter is of: the people on file for this chapter are that story's (and
+  // whoever no story has yet). Somebody of another story whose name the text spells is asked about — the same person
+  // come over, or a namesake — and a narrator's "我" is never anybody else's.
+  const { resolve, story } = await project.castResolver()
+  const mine = characters.filter(card => [card.name, ...(card.aliases ?? [])].some(name => resolve(name, chapter.plan.id).id === card.id))
+  const namesakes = characters.filter(card => !mine.includes(card) && [card.name, ...(card.aliases ?? [])].some(name => name.trim().length >= 2 && text.includes(name) && resolve(name, chapter.plan.id).elsewhere?.some(other => other.id === card.id) === true))
+  const lineTitles = (card: CharacterCard, seenOn: Record<string, string[]>): string => (seenOn[card.id] ?? []).map(id => lineName(outline, id, lang === 'zh')).join(lang === 'zh' ? '、' : ', ')
+  const seenOn = namesakes.length > 0 ? (await project.seenOn()).people : {}
   const { value } = await assign(core, runtime, task, {
     role: 'analyst',
     label: `${chapterLabel(chapter, lang === 'zh')} · ${L(lang, '收录记忆', 'memory')}`,
@@ -64,7 +72,8 @@ export async function digestChapter(core: NovelCore, runtime: ProjectRuntime, re
       title: manifest.title,
       chapterLabel: chapterLabel(chapter, lang === 'zh'),
       text,
-      knownCharacters: characters.map(card => `${card.name}${card.aliases !== undefined && card.aliases.length > 0 ? ` | ${card.aliases.join('/')}` : ''}`).join('\n'),
+      knownCharacters: mine.map(card => `${card.name}${card.aliases !== undefined && card.aliases.length > 0 ? ` | ${card.aliases.join('/')}` : ''}`).join('\n'),
+      ...(namesakes.length > 0 ? { namesakes: namesakes.map(card => `- ${card.name}${lang === 'zh' ? '｜' : ' | '}${lineTitles(card, seenOn) || L(lang, '别的故事线', 'another line')}${card.tagline !== undefined ? `${lang === 'zh' ? '｜' : ' | '}${card.tagline}` : ''}`).join('\n') } : {}),
       knownWorld: world.map(entry => entry.name).join(lang === 'zh' ? '、' : ', '),
       openThreads: outline.threads.filter(thread => thread.status === 'open').map(thread => `- ${thread.title}`).join('\n'),
       // A book of several stories: the digest says of each new thing whether it is this story's or the world's.
@@ -78,12 +87,38 @@ export async function digestChapter(core: NovelCore, runtime: ProjectRuntime, re
     },
   })
 
-  const resolveCharacter = (name: string): string | undefined => characters.find(card => sameName(card.name, name) || card.aliases?.some(alias => sameName(alias, name)) === true)?.id
+  // Of the namesakes asked about, those the digest said are the same person: they have come over into this story.
+  const cameOver = new Set(asArray(value.namesakes).map(asRecord).filter(item => item.same === true).map(item => asText(item.name)).filter((name): name is string => name !== undefined))
+  const resolveCharacter = (name: string): string | undefined => {
+    const who = resolve(name, chapter.plan.id)
+    if (who.id !== undefined) return who.id
+    return who.elsewhere?.find(card => [card.name, ...(card.aliases ?? [])].some(known => [...cameOver].some(said => sameName(said, known))))?.id
+  }
+  /**
+   * The name somebody is kept under. One who is nobody on file in this story, and whose name another story's person
+   * already bears — a namesake the digest told apart, or a narrator's "我", which is a different person in every
+   * story — is kept under the name with their story after it ("我（城南的铺子）"): the card made for them is then a
+   * card of their own, and nothing that goes by names takes the two for one. In a story beside the main one a
+   * narrator is kept so from the first, whether or not the main story has its "我" on file yet.
+   */
+  const home = story(chapter.plan.id)
+  const homeTitle = lineName(outline, home, lang === 'zh')
+  const renamed = new Map<string, string>()
+  const keptAs = (name: string): string => {
+    if (resolveCharacter(name) !== undefined) return name
+    const borne = characters.some(card => sameName(card.name, name) || card.aliases?.some(alias => sameName(alias, name)) === true)
+    const apart = selfNamed(name) ? home !== MAIN_LINE || borne : resolve(name, chapter.plan.id).elsewhere !== undefined
+    if (!apart) return name
+    const kept = lang === 'zh' ? `${name}（${homeTitle}）` : `${name} (${homeTitle})`
+    renamed.set(name, kept)
+    return kept
+  }
   const moments: CharacterMoment[] = []
   for (const raw of asArray(value.characters)) {
     const item = asRecord(raw)
-    const name = asText(item.name)
-    if (name === undefined) continue
+    const said = asText(item.name)
+    if (said === undefined) continue
+    const name = keptAs(said)
     const lifecycle = asText(item.lifecycle)
     const stateAfter = asText(item.stateAfter)
     const role = asText(item.role)
@@ -119,7 +154,8 @@ export async function digestChapter(core: NovelCore, runtime: ProjectRuntime, re
     const kind = asText(item.kind) as EntityCandidate['kind'] | undefined
     if (name === undefined || kind === undefined || !ENTITY_KINDS.includes(kind)) continue
     const scope = asText(item.scope)
-    newEntities.push({ name, kind, description: asText(item.description) ?? '', ...(scope === 'line' || scope === 'world' ? { scope } : {}) })
+    // A person among them goes by the name they are kept under above.
+    newEntities.push({ name: kind === 'character' ? renamed.get(name) ?? keptAs(name) : name, kind, description: asText(item.description) ?? '', ...(scope === 'line' || scope === 'world' ? { scope } : {}) })
   }
   const threads: ThreadTouch[] = []
   for (const raw of asArray(value.threads)) {

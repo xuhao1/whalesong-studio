@@ -189,12 +189,27 @@ export function digestSystem(lang: PromptLanguage): string {
  *   says of each new thing whether it is that story's alone or the world's. Left out for a book of one line, whose
  *   task reads as it always did.
  */
-export function digestTask(base: Base & { chapterLabel: string; text: string; knownCharacters: string; knownWorld: string; openThreads: string; line?: string }): string {
+export function digestTask(base: Base & { chapterLabel: string; text: string; knownCharacters: string; knownWorld: string; openThreads: string; line?: string; namesakes?: string }): string {
   const zhLine = base.line !== undefined ? `## 故事线
 这本书在同一个世界里有不止一条故事线，各讲各的故事。这一章在「${bare(base.line)}」这条线上。
 
 ` : ''
   const zhScope = base.line !== undefined ? ', "scope": "line|world —— line：只是这条故事线里的（这个故事自己的铺子、物件、小团体、只在这里有意义的说法）；world：这个世界本身的，别的故事线上的人也会遇到（城市与地域、朝代与制度、世界的规则、通行的名词）"' : ''
+  // People on file in other stories of this world whose names this chapter spells: the same person, or a namesake?
+  const zhNames = base.namesakes !== undefined ? `## 别的故事线上同名的人
+下面这些人物已经建档，但都是别的故事线上的；本章正文里出现了同样的名字。
+${base.namesakes}
+
+` : ''
+  const zhNamesShape = base.namesakes !== undefined ? `
+  "namesakes": [{"name": "上面列出的名字", "same": "true：本章里叫这个名字的就是那个人，从那条线走到了这里；false：是这条线上另一个同名的人", "why": "一句话依据"}],` : ''
+  const enNames = base.namesakes !== undefined ? `## People of the same name on other lines
+These people are on file, but on other lines of the plot; this chapter's text spells the same names.
+${base.namesakes}
+
+` : ''
+  const enNamesShape = base.namesakes !== undefined ? `
+  "namesakes": [{"name": "a name listed above", "same": "true: whoever bears the name here is that very person, come over from that line; false: somebody else of the same name, of this line", "why": "one sentence"}],` : ''
   const enLine = base.line !== undefined ? `## Lines of the plot
 This book tells more than one story in the same world. This chapter is on the line "${bare(base.line)}".
 
@@ -211,7 +226,7 @@ ${base.knownWorld || '（暂无）'}
 ## 尚未回收的线索
 ${base.openThreads || '（暂无）'}
 
-${zhLine}## 正文
+${zhNames}${zhLine}## 正文
 """
 ${base.text}
 """
@@ -228,7 +243,7 @@ ${base.text}
   "facts": [
     {"subject": "主体", "statement": "本章确立、今后必须保持一致的事实", "kind": "state|relationship|knowledge|item|world|event"}
   ],
-  "newEntities": [
+${zhNamesShape.replace(/^\n/, '')}${zhNamesShape.length > 0 ? '\n' : ''}  "newEntities": [
     {"name": "名称", "kind": "character|location|item|faction|term", "description": "正文中首次出现、值得建档的人物/地点/物品/组织/专有名词，一句话说明"${zhScope}}
   ],
   "threads": [
@@ -247,7 +262,7 @@ ${base.knownWorld || '(none)'}
 ## Open threads
 ${base.openThreads || '(none)'}
 
-${enLine}## Text
+${enNames}${enLine}## Text
 """
 ${base.text}
 """
@@ -264,7 +279,7 @@ Output JSON (every field present; use empty arrays or strings when there is noth
   "facts": [
     {"subject": "who or what", "statement": "a fact established here that later chapters must respect", "kind": "state|relationship|knowledge|item|world|event"}
   ],
-  "newEntities": [
+${enNamesShape.replace(/^\n/, '')}${enNamesShape.length > 0 ? '\n' : ''}  "newEntities": [
     {"name": "name", "kind": "character|location|item|faction|term", "description": "a person/place/object/group/term that first appears here and deserves a bible entry, one sentence"${enScope}}
   ],
   "threads": [

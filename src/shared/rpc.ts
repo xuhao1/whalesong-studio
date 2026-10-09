@@ -442,7 +442,7 @@ export interface NovelRpc {
   'image.comfyTake': { params: { baseURL?: string; path: string }; result: { workflow: string; model?: string; nodes: string[]; images: number } }
   /** Have the planner look through the names without a card and say who is worth one. `all`: every name again, also those already looked at or proposed. */
   'cast.sift': { params: { root: string; all?: boolean; direction?: string }; result: JobStarted }
-  'cast.settle': { params: { root: string; name: string; action: 'card' | 'alias' | 'ignore' | 'restore'; target?: string; role?: CharacterRole }; result: { walkons: WalkOn[]; card?: CharacterCard; lines: number } }
+  'cast.settle': { params: { root: string; name: string; /** Which of two walk-ons by one name: the story they are of. */ story?: string; action: 'card' | 'alias' | 'ignore' | 'restore'; target?: string; role?: CharacterRole }; result: { walkons: WalkOn[]; card?: CharacterCard; lines: number } }
   'suggestion.accept': { params: { root: string; id: string }; result: { ok: boolean } }
   'suggestion.dismiss': { params: { root: string; id: string }; result: { ok: boolean } }
 

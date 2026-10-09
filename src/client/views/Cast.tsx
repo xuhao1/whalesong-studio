@@ -597,7 +597,7 @@ function WalkOns({ cards }: { cards: CharacterCard[] }) {
     await controller.refreshJobs()
   })
   const settle = (item: WalkOn, action: 'card' | 'alias' | 'ignore' | 'restore', extra: { target?: string; role?: 'minor' | 'cameo' } = {}): Promise<unknown> => controller.guard(async () => {
-    const result = await controller.api.call('cast.settle', { root, name: item.name, action, ...extra })
+    const result = await controller.api.call('cast.settle', { root, name: item.name, ...(item.story !== undefined ? { story: item.story } : {}), action, ...extra })
     loaded.set({ walkons: result.walkons })
     if (action === 'card' && result.card !== undefined) controller.toast('success', t(`已为「${item.name}」立卡${result.lines > 0 ? `，有声脚本里的 ${result.lines} 句台词归到了这张卡` : ''}`, `Card created for ${item.name}${result.lines > 0 ? `; ${result.lines} script lines now belong to it` : ''}`))
     if (action === 'alias') controller.toast('success', t(`「${item.name}」已并入「${cards.find(card => card.id === extra.target)?.name ?? ''}」的别名`, `"${item.name}" is now an alias of ${cards.find(card => card.id === extra.target)?.name ?? ''}`))
@@ -610,9 +610,10 @@ function WalkOns({ cards }: { cards: CharacterCard[] }) {
   const row = (item: WalkOn) => {
     const near = item.near !== undefined ? cards.find(card => card.id === item.near) : undefined
     return (
-      <li key={item.name} className={cx('nv-walkon', item.ignored === true && 'is-ignored')}>
+      <li key={`${item.name}\u0000${item.story ?? ''}`} className={cx('nv-walkon', item.ignored === true && 'is-ignored')}>
         <div className="nv-walkon-main">
           <span className="nv-list-title">{item.name}</span>
+          {item.story !== undefined ? <span className="nv-muted nv-small">{project.outline.lines?.find(line => line.id === item.story)?.title ?? ''}</span> : null}
           <span className="nv-list-meta">
             {where(item)}
             {item.lines > 0 ? t(` · 有声脚本里 ${item.lines} 句台词`, ` · ${item.lines} lines in audio scripts`) : ''}

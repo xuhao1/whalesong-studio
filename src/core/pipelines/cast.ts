@@ -372,11 +372,21 @@ export async function siftDue(runtime: ProjectRuntime, all = false): Promise<Wal
 export async function siftCast(core: NovelCore, runtime: ProjectRuntime, params: { all?: boolean; direction?: string }, task: TaskContext): Promise<SiftResult> {
   const { project } = runtime
   const manifest = await project.manifest()
+  const outline = await project.outline()
   const lang = promptLanguage(manifest.language)
   const zh = lang === 'zh'
   const result: SiftResult = { looked: 0, cards: [], aliases: [], walkOns: 0, failed: [] }
-  const due = await siftDue(runtime, params.all === true)
+  // Two stories may each have somebody without a card by the same name; the planner answers by name, so one of them
+  // is asked about at a time — the other at the next pass, which follows by itself while names are due.
+  const asked = new Set<string>()
+  const due = (await siftDue(runtime, params.all === true)).filter((entry) => {
+    const key = foldName(entry.name)
+    if (asked.has(key)) return false
+    asked.add(key)
+    return true
+  })
   if (due.length === 0) return result
+  const storyTitle = (id: string): string => (outline.lines ?? []).find(line => line.id === id)?.title ?? id
   const located = await project.chapters()
   const indexOf = new Map(located.map(chapter => [chapter.plan.id, chapter.index]))
   const rounds: WalkOn[][] = []
@@ -391,7 +401,11 @@ export async function siftCast(core: NovelCore, runtime: ProjectRuntime, params:
       const names = round.map((entry) => {
         const where = entry.chapters.map(id => indexOf.get(id)).filter((index): index is number => index !== undefined)
         const near = entry.near !== undefined ? cards.find(card => card.id === entry.near)?.name : undefined
+        // Somebody on file by this very name is of another story: said, so that the two are not taken for one.
+        const namesake = cards.some(card => sameName(card.name, entry.name) || card.aliases?.some(alias => sameName(alias, entry.name)) === true)
         return `- ${entry.name}（${[
+          entry.story !== undefined ? L(lang, `在「${storyTitle(entry.story)}」这条故事线上`, `on the line "${storyTitle(entry.story)}"`) : undefined,
+          namesake ? L(lang, '已建档的同名人物是别的故事线上的另一个人', 'the character on file by this name is somebody else, of another line') : undefined,
           where.length > 0 ? L(lang, `出现在 ${where.length} 章：第 ${where.join('、')} 章`, `in ${where.length} chapter(s): ${where.join(', ')}`) : L(lang, '只被提到', 'only mentioned'),
           entry.lines > 0 ? L(lang, `有声脚本里 ${entry.lines} 句台词`, `${entry.lines} spoken line(s) in the audio scripts`) : undefined,
           near !== undefined ? L(lang, `名字和「${near}」相近`, `the name is close to "${near}"`) : undefined,
@@ -432,11 +446,17 @@ export async function siftCast(core: NovelCore, runtime: ProjectRuntime, params:
       const suggestions: Omit<Suggestion, 'id' | 'createdAt'>[] = []
       const stale: string[] = []
       const verdict = (entry: WalkOn, is: WalkOnVerdict['is'], why?: string, same?: string): void => {
-        verdicts.push({ name: entry.name, is, ...(why !== undefined ? { why } : {}), ...(same !== undefined ? { same } : {}), at: now, seen: entry.chapters.length })
+        verdicts.push({ name: entry.name, is, ...(why !== undefined ? { why } : {}), ...(same !== undefined ? { same } : {}), at: now, seen: entry.chapters.length, ...(entry.story !== undefined ? { story: entry.story } : {}) })
       }
       for (const answer of answers.values()) {
         if (answer.is !== 'alias') continue
         const { entry, why, same } = answer
+        // "Another name of" the card that bears this very name: that card is the namesake of another story — who a
+        // name is was settled before it came here. They are somebody of their own, worth a card.
+        if (same !== undefined && sameName(same, entry.name)) {
+          answer.is = 'card'
+          continue
+        }
         if (entry.suggestion !== undefined) stale.push(entry.suggestion)
         const target = same !== undefined ? cards.find(card => sameName(card.name, same) || card.aliases?.some(alias => sameName(alias, same)) === true) : undefined
         const fellow = same !== undefined && target === undefined ? [...answers.values()].find(other => other.is === 'card' && foldName(other.entry.name) === foldName(same)) : undefined

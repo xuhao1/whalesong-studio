@@ -1799,6 +1799,12 @@ export interface CastPresence {
  */
 export interface WalkOn {
   name: string
+  /**
+   * The story they are of, where the book tells more than one: the line that story begins on. Absent for the main
+   * line's story. Two stories may each have somebody without a card by the same name — a narrator's "我" — and they
+   * are two walk-ons.
+   */
+  story?: string
   /** What the page says of them, in a line. */
   note?: string
   /** Chapters they were seen in, in reading order. */
@@ -1851,6 +1857,8 @@ export interface WalkOnVerdict {
   at: Timestamp
   /** In how many chapters they were seen when this was said: seen in more since, they are looked at again. */
   seen: number
+  /** The story the name was looked at in (see `WalkOn.story`); absent for the main line's. */
+  story?: string
 }
 
 /**

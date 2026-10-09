@@ -502,7 +502,24 @@ export class Project {
     // Whoever still sends the one-word label of older versions (a page not reloaded yet, a suggestion made before) is not refused: it is left out.
     const { status: _label, ...input } = given as Partial<CharacterCard> & { name?: string; status?: unknown }
     return await this.mutex.run('characters', async () => {
-      const existing = input.id !== undefined ? await this.findCharacter(input.id) : input.name !== undefined ? await this.findCharacter(input.name) : undefined
+      let existing = input.id !== undefined ? await this.findCharacter(input.id) : input.name !== undefined ? await this.findCharacter(input.name) : undefined
+      // A card made for somebody met in a chapter (a suggestion taken up names where they first appear) is the card
+      // of whoever bears the name in that chapter's story — not of a namesake in another story, whom the name alone
+      // would find. Where that story has nobody by the name yet, it is a new card.
+      if (input.id === undefined && existing !== undefined && input.name !== undefined && input.firstAppearance !== undefined) {
+        const where = await this.whereabouts()
+        const who = where.resolve(input.name, input.firstAppearance).id
+        existing = who === existing.id ? existing : who !== undefined ? await this.findCharacter(who) : undefined
+        if (existing === undefined) {
+          // A namesake of somebody in another story: their card goes by the name with their story after it, as a
+          // digest keeps them — two cards of one name would be told apart by nothing that goes by names.
+          const home = where.story(input.firstAppearance)
+          const wide = /[\u3400-\u9fff]/u.test(input.name)
+          const title = home === MAIN_LINE ? (wide ? '主线' : 'main line') : ((await this.outline()).lines ?? []).find(line => line.id === home)?.title ?? home
+          input.name = wide ? `${input.name.trim()}（${title}）` : `${input.name.trim()} (${title})`
+          existing = await this.findCharacter(input.name)
+        }
+      }
       if (existing === undefined && (input.name === undefined || input.name.trim().length === 0)) {
         throw new ProjectError('novel/invalid', 'a new character needs a name')
       }
@@ -968,41 +985,94 @@ export class Project {
     return theirs.length === 0 || theirs.includes(MAIN_LINE) ? MAIN_LINE : theirs[0]!
   }
 
-  private whereAt: { revision: number; people: Map<string, Set<string>>; threads: Map<string, Map<string, ThreadTouch['action'] | 'plan'>> } | undefined
+  private whereAt: { revision: number; people: Map<string, Set<string>>; threads: Map<string, Map<string, ThreadTouch['action'] | 'plan'>>; resolve: WhoIs; story: (chapterId: string | undefined) => string } | undefined
 
   /**
    * In which chapters each character is found — by the chapter's digest, or cast by its plan — and each thread is
    * touched, on whichever line: read off every chapter once for a state of the book. What says whose a character or a thread is without anybody saying.
    */
-  private async whereabouts(): Promise<{ people: Map<string, Set<string>>; threads: Map<string, Map<string, ThreadTouch['action'] | 'plan'>> }> {
+  private async whereabouts(): Promise<{ people: Map<string, Set<string>>; threads: Map<string, Map<string, ThreadTouch['action'] | 'plan'>>; resolve: WhoIs; story: (chapterId: string | undefined) => string }> {
     const revision = this.revisionValue
     if (this.whereAt?.revision === revision) return this.whereAt
     const [outline, cards] = await Promise.all([this.outline(), this.characters()])
     const key = (name: string): string => name.normalize('NFKC').replace(/\s+/g, '').toLowerCase()
-    const byName = new Map<string, string>()
-    for (const card of cards) for (const name of [card.name, ...(card.aliases ?? [])]) if (!byName.has(key(name))) byName.set(key(name), card.id)
+    // Cards by a name: several where stories that are apart from their first page each have somebody called so.
+    const byName = new Map<string, CharacterCard[]>()
+    for (const card of cards) for (const name of [card.name, ...(card.aliases ?? [])]) byName.set(key(name), [...(byName.get(key(name)) ?? []).filter(other => other.id !== card.id), card])
     const ids = new Set(cards.map(card => card.id))
     const people = new Map<string, Set<string>>()
     const threads = new Map<string, Map<string, ThreadTouch['action'] | 'plan'>>()
-    const seen = (card: string, chapter: string): void => { people.set(card, (people.get(card) ?? new Set()).add(chapter)) }
     const touched = (thread: string, chapter: string, how: ThreadTouch['action'] | 'plan'): void => { threads.set(thread, (threads.get(thread) ?? new Map()).set(chapter, how)) }
     const known = new Set<string>()
-    for (const holder of holders(outline)) {
-      for (const plan of holder.chapters) {
-        known.add(plan.id)
-        for (const thread of plan.threads ?? []) touched(thread, plan.id, 'plan')
-        // Cast by a chapter's plan, somebody is that line's before a word of the chapter is written.
-        for (const ref of [plan.pov, ...(plan.characters ?? []), ...(plan.beats ?? []).flatMap(beat => beat.characters ?? [])]) {
-          if (ref === undefined || ref.length === 0) continue
-          const card = ids.has(ref) ? ref : byName.get(key(ref))
-          if (card !== undefined) seen(card, plan.id)
-        }
-        const memory = await this.memory(plan.id)
-        if (memory === undefined) continue
-        for (const moment of memory.characters) {
-          const card = ids.has(moment.character) ? moment.character : byName.get(key(moment.name))
-          if (card !== undefined) seen(card, plan.id)
-        }
+    // The story a chapter is of: the line it is on, followed back to where that line began. A line that parts from
+    // another tells that one's story on; a line of its own from the first page is a story of its own.
+    const storyOfLine = storiesOf(outline)
+    const home = new Map<string, string>()
+    for (const volume of outline.volumes) for (const plan of volume.chapters) home.set(plan.id, MAIN_LINE)
+    for (const line of outline.lines ?? []) for (const plan of line.chapters) home.set(plan.id, storyOfLine(line.id))
+    const story = (chapterId: string | undefined): string => (chapterId !== undefined ? home.get(chapterId) : undefined) ?? MAIN_LINE
+    // Which stories each card is of — by what does not go by a name: the lines its card names, where it first and last
+    // appeared, the chapters that cast it or noted it by its id, what the author wrote of its life.
+    const stories = new Map<string, Set<string>>()
+    const seen = (card: string, chapter: string): void => {
+      people.set(card, (people.get(card) ?? new Set()).add(chapter))
+      stories.set(card, (stories.get(card) ?? new Set()).add(story(chapter)))
+    }
+    for (const card of cards) {
+      const of = stories.get(card.id) ?? new Set<string>()
+      for (const line of card.lines ?? []) of.add(storyOfLine(line))
+      for (const chapter of [card.firstAppearance, card.lastAppearance]) if (chapter !== undefined && home.has(chapter)) of.add(story(chapter))
+      if (of.size > 0) stories.set(card.id, of)
+    }
+    /**
+     * Who a name in a chapter is. Somebody of that chapter's story by that name; else a card no story has yet (the
+     * author made it ahead). A card of another story is another person where the name is only how a narrator calls
+     * themself ("我"), or where the author filed that card under lines of its own; for a proper name it is given back
+     * as `elsewhere` — the same person crossing over, or a namesake: whoever reads the chapter says.
+     */
+    const resolve: WhoIs = (name, chapterId) => {
+      const named = byName.get(key(name)) ?? []
+      if (named.length === 0) return {}
+      const here = story(chapterId)
+      const mine = named.filter(card => stories.get(card.id)?.has(here) === true)
+      if (mine.length > 0) return { id: (mine.find(card => sameName(card.name, name)) ?? mine[0]!).id }
+      const free = named.filter(card => (stories.get(card.id)?.size ?? 0) === 0)
+      if (free.length > 0) return { id: free[0]!.id }
+      if (selfNamed(name)) return {}
+      const elsewhere = named.filter(card => (card.lines ?? []).length === 0)
+      return elsewhere.length > 0 ? { elsewhere } : {}
+    }
+    const plans: ChapterPlan[] = []
+    for (const holder of holders(outline)) for (const plan of holder.chapters) plans.push(plan)
+    // First what names a card by its id; then, with every card's stories known from that, what names it by a name.
+    const later: { name: string; chapter: string }[] = []
+    for (const plan of plans) {
+      known.add(plan.id)
+      for (const thread of plan.threads ?? []) touched(thread, plan.id, 'plan')
+      // Cast by a chapter's plan, somebody is that line's before a word of the chapter is written.
+      for (const ref of [plan.pov, ...(plan.characters ?? []), ...(plan.beats ?? []).flatMap(beat => beat.characters ?? [])]) {
+        if (ref === undefined || ref.length === 0) continue
+        if (ids.has(ref)) seen(ref, plan.id)
+        else later.push({ name: ref, chapter: plan.id })
+      }
+    }
+    const memories = new Map<string, ChapterMemory>()
+    for (const plan of plans) {
+      const memory = await this.memory(plan.id)
+      if (memory === undefined) continue
+      memories.set(plan.id, memory)
+      for (const moment of memory.characters) {
+        if (ids.has(moment.character)) seen(moment.character, plan.id)
+        else later.push({ name: moment.name, chapter: plan.id })
+      }
+    }
+    for (const { name, chapter } of later) {
+      const card = resolve(name, chapter).id
+      if (card !== undefined) seen(card, chapter)
+    }
+    for (const plan of plans) {
+      const memory = memories.get(plan.id)
+      if (memory !== undefined) {
         for (const touch of memory.threads) {
           const thread = outline.threads.find(candidate => candidate.id === touch.threadId) ?? outline.threads.find(candidate => sameName(candidate.title, touch.title))
           // What the chapter did to it says more than that its plan named it.
@@ -1018,9 +1088,20 @@ export class Project {
         for (const chapter of chapters ?? []) if (known.has(chapter) && threads.get(thread.id)?.has(chapter) !== true) touched(thread.id, chapter, how)
       }
     }
-    const value = { revision, people, threads }
+    const value = { revision, people, threads, resolve, story }
     if (this.revisionValue === revision) this.whereAt = value
     return value
+  }
+
+  /**
+   * Who a name is in a chapter, told by the story the chapter is of — so that two stories in one world that each call
+   * somebody "我", or each have a 小李, do not find themselves sharing a card. See `resolve` in {@link whereabouts}.
+   * @returns `resolve` (the card, or the namesakes of other stories for whoever reads the chapter to judge) and
+   *   `story` (the line a chapter's story begins on).
+   */
+  async castResolver(): Promise<{ resolve: WhoIs; story: (chapterId: string | undefined) => string }> {
+    const { resolve, story } = await this.whereabouts()
+    return { resolve, story }
   }
 
   /**
@@ -2421,6 +2502,37 @@ function normalizeChapter(chapter: ChapterPlan): ChapterPlan {
 }
 
 /** Every list of chapters an outline has: each volume's, each line's. */
+/** Who a name in a chapter is: the card's id; or, for a proper name borne only by cards of other stories, those cards. */
+export type WhoIs = (name: string, chapterId: string | undefined) => { id?: string; elsewhere?: CharacterCard[] }
+
+/** How a narrator calls themself: a word that names whoever tells the story, a different person in each. */
+const SELF_WORDS = new Set(['我', '吾', '俺', '咱', '余', '本人', '在下', '鄙人', '叙述者', '叙事者', 'i', 'me', 'myself', 'narrator', 'thenarrator'])
+export function selfNamed(name: string): boolean {
+  return SELF_WORDS.has(name.normalize('NFKC').replace(/[\s"'“”‘’「」『』（）()]+/gu, '').toLowerCase())
+}
+
+/** For each line, the line its story begins on: itself, or the one it parted from, and so on back; the main line for a line the book does not have. */
+function storiesOf(outline: Outline): (line: string | undefined) => string {
+  const found = new Map<string, string>()
+  const walk = (id: string, guard: Set<string>): string => {
+    if (id === MAIN_LINE) return MAIN_LINE
+    const known = found.get(id)
+    if (known !== undefined) return known
+    const line = (outline.lines ?? []).find(candidate => candidate.id === id)
+    if (line === undefined) return MAIN_LINE
+    let root = id
+    if (line.from !== undefined && !guard.has(id)) {
+      guard.add(id)
+      const parent = homeOf(outline, line.from)
+      // Parted from a chapter of the main line, or of another line; a chapter that is gone leaves the line a story of its own.
+      if (parent !== undefined) root = parent === null ? MAIN_LINE : walk(parent.id, guard)
+    }
+    found.set(id, root)
+    return root
+  }
+  return line => walk(line ?? MAIN_LINE, new Set())
+}
+
 function holders(outline: Outline): { chapters: ChapterPlan[] }[] {
   return [...outline.volumes, ...(outline.lines ?? [])]
 }
