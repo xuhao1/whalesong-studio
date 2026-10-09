@@ -190,7 +190,7 @@ Everything is in *Novel Studio → Settings*, and the showrunner can do all of i
 - **Recommended setup** — which models each service is used with is published with every version as `recommended.json`, not written into the code. Settings that are a recommendation follow the next issue (and the Studio says what moved, with a way to take it back) — or not, if you switch following off.
 - **Context** — `auto` (an outline of what came before plus a window of the text; the whole manuscript while it fits), `retrieval`, or `full`; the budget for the text (unset: half of the model's window); how much preceding text is carried verbatim. The page shows, per role, how much its model reads and how much text it will be given.
 - **How many at once** — requests out at the same time for speech, pictures, sound and text: 8 by default, up to 256, one place for the whole Studio.
-- **Images** (optional) — OpenRouter's `/images` (GPT Image, Gemini, Seedream, FLUX…), any OpenAI-compatible `/images/generations`, Aliyun Bailian (Qwen-Image, Wan, Z-Image), or a ChatGPT subscription.
+- **Images** (optional) — OpenRouter's `/images` (GPT Image, Gemini, Grok, Seedream, FLUX…), any OpenAI-compatible `/images/generations`, Aliyun Bailian (Qwen-Image, Wan, Z-Image), or a ChatGPT subscription.
 - **Speech** (optional) — Bailian audio generation `qwen-audio-3.1-tts-next` (voices are described in words; one reference clip per character keeps them steady), Qwen Omni realtime, Bailian Qwen-TTS (voice design), OpenRouter's `/audio/speech`, or any OpenAI-compatible `/audio/speech`.
 - **Semantic retrieval** (optional) — any OpenAI-compatible `/embeddings` endpoint, fused with keyword search.
 

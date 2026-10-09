@@ -1,10 +1,10 @@
 {
   "schema": 1,
-  "version": 1,
-  "date": "2026-10-08",
+  "version": 2,
+  "date": "2026-10-09",
   "notes": {
-    "zh": "第 1 版：初版。",
-    "en": "Issue 1: the first."
+    "zh": "第 2 版：OpenRouter 的生图推荐加入 Gemini 3.1 Flash Image、Grok Imagine Image 2.0、Grok Imagine Image Quality；默认仍是 GPT Image 2.5。",
+    "en": "Issue 2: Gemini 3.1 Flash Image, Grok Imagine Image 2.0 and Grok Imagine Image Quality join the image models recommended on OpenRouter; GPT Image 2.5 stays the default."
   },
   "services": {
     "bailian": {
@@ -36,7 +36,7 @@
         "provider": "openrouter",
         "model": "openai/gpt-image-2.5-sunburst",
         "size": "1536x1024",
-        "suggestions": ["openai/gpt-image-2.5-sunburst", "openai/gpt-image-2.5-flare", "openai/gpt-image-2", "google/gemini-3-pro-image", "bytedance-seed/seedream-5-0-pro", "qwen/qwen-image-3-pro"],
+        "suggestions": ["openai/gpt-image-2.5-sunburst", "google/gemini-3-pro-image", "google/gemini-3.1-flash-image", "x-ai/grok-imagine-image-2.0", "x-ai/grok-imagine-image-quality", "openai/gpt-image-2.5-flare", "bytedance-seed/seedream-5-0-pro", "openai/gpt-image-2", "qwen/qwen-image-3-pro"],
         "label": "GPT Image 2.5"
       },
       "tts": {

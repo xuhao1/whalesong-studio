@@ -194,7 +194,7 @@ npm pack        # 生成 dsh-novel-writer-<版本>.tgz
 - **推荐配置**——各家服务用哪个模型不写在代码里，而是随每个版本发布的 `recommended.json`。原先就是推荐值的设置会跟着新一版走（工坊会说明换了什么，可以改回去）；不想跟随，关掉开关即可。
 - **上下文**——`自动`（前情梗概 + 窗口里的原文，装得下就是全文）、`只用检索` 或 `用满窗口`；原文预算（不填 = 模型窗口的一半）；续写时原样携带多少前文。页面上直接显示每个角色的模型窗口多大、会带多少原文。
 - **并发**——语音、图片、声音、文字各自同时发出多少个请求：默认 8，最多 256，全局一处。
-- **图像**（可选）——OpenRouter 的 `/images`（GPT Image、Gemini、Seedream、FLUX…）、OpenAI 兼容的 `/images/generations`、阿里云百炼（Qwen-Image、万相、Z-Image），或者 ChatGPT 订阅。
+- **图像**（可选）——OpenRouter 的 `/images`（GPT Image、Gemini、Grok、Seedream、FLUX…）、OpenAI 兼容的 `/images/generations`、阿里云百炼（Qwen-Image、万相、Z-Image），或者 ChatGPT 订阅。
 - **语音**（可选）——百炼音频生成 `qwen-audio-3.1-tts-next`（用文字描述音色，为每个人物生成并沿用一段参考音）、Qwen Omni 实时接口、百炼 Qwen-TTS（可设计声线）、OpenRouter 的 `/audio/speech`，或 OpenAI 兼容的 `/audio/speech`。
 - **语义检索**（可选）——任意 OpenAI 兼容的 `/embeddings` 接口，与关键词检索混合排序。
 
