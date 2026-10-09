@@ -10,6 +10,7 @@ You need Node.js 22 or later. DeepSeek Harness itself is a dev dependency, so no
 npm install        # installs dependencies and builds lib/
 npm run check      # typecheck (host + browser), unit tests, build into .dev/stage (what `npm run dev` runs)
 npm run release    # the same checks, then lib/ is updated in place — what an installed or linked copy runs
+npm run push       # after a release is committed: main goes to GitHub, fast-forward only, looked over for credentials first
 ```
 
 ## Running it
