@@ -84,6 +84,8 @@ export function CastView() {
   const here = useMemo(() => (plotLines.length === 0 || chosen === EVERY_LINE || seenOn === undefined ? cards : cards.filter(card => ofLine(card, chosen, seenOn[card.id]))),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [cards, chosen, seenOn, plotLines.length])
+  // Of those listed on a line: the ones no chapter has yet, who are every line's until one writes them.
+  const unplaced = seenOn === undefined ? 0 : here.filter(card => (card.lines ?? []).length === 0 && (seenOn[card.id] ?? []).length === 0).length
   const peopleOf = (id: string): number => (seenOn === undefined ? cards.length : cards.filter(card => ofLine(card, id, seenOn[card.id])).length)
   const shown = useMemo(() => sortCast(here.filter(card => matchesCast(card, filter)), filter.sort, chapterIndex, locale), [here, filter, chapterIndex, locale])
   const read = useLoad(async signal => await controller.api.call('cast.lives', { root, ...(line !== MAIN_LINE ? { line } : {}) }, signal), [root, line, project.revision])
@@ -218,6 +220,7 @@ export function CastView() {
             { value: EVERY_LINE, label: t(`所有线（${cards.length} 人）`, `Every line (${cards.length})`) },
           ]} onChange={setLine} />
           {chosen !== EVERY_LINE && here.length < cards.length ? <span className="nv-muted nv-small">{t(`另有 ${cards.length - here.length} 人只在别的线上`, `${cards.length - here.length} more are of other lines only`)}</span> : null}
+          {chosen !== EVERY_LINE && unplaced > 0 ? <span className="nv-muted nv-small" title={t('卡上没写属于哪条线，哪一章也还没有他：每条线都列着，写到谁就是谁的', 'No line named on the card and no chapter has them yet: listed on every line, and a line\'s once it writes them')}>{t(`其中 ${unplaced} 人还没出场`, `${unplaced} of these are in no chapter yet`)}</span> : null}
           {tab === 'cards' && !picks.on ? <LinePickBar picks={picks} listed={shown.map(card => card.id)} kind="characters" /> : null}
         </div>
       ) : null}

@@ -308,19 +308,25 @@ export async function foldAliases(core: NovelCore, runtime: ProjectRuntime, task
 export async function relinkMemories(runtime: ProjectRuntime): Promise<void> {
   const { project } = runtime
   const characters = await project.characters()
-  const find = (name: string): CharacterCard | undefined => characters.find(card => card.id === name || sameName(card.name, name) || card.aliases?.some(alias => sameName(alias, name)) === true)
+  const ids = new Set(characters.map(card => card.id))
+  // Whose a note is goes by the story its chapter is of: a world may hold several stories, each with somebody of the
+  // same name — or with a narrator who is "我" in each. On every line: a card made from a line beside the main one is
+  // found in that line's chapters.
+  const { whose } = await project.castResolver()
   const first = new Map<string, string>()
   const last = new Map<string, string>()
-  for (const { chapter, memory } of await project.memories()) {
+  const outline = await project.outline()
+  const chapters = [...await project.chapters(), ...(await Promise.all((outline.lines ?? []).map(async line => (await project.chapters(line.id)).filter(chapter => chapter.line === line.id)))).flat()]
+  for (const { chapter, memory } of await project.memories(chapters)) {
     let changed = false
     const moments = memory.characters.map((moment) => {
-      const card = find(moment.character) ?? find(moment.name)
-      if (card === undefined) return moment
-      if (!first.has(card.id)) first.set(card.id, chapter.plan.id)
-      last.set(card.id, chapter.plan.id)
-      if (moment.character === card.id) return moment
+      const card = whose(moment, chapter.plan.id)
+      if (card === undefined || !ids.has(card)) return moment
+      if (!first.has(card)) first.set(card, chapter.plan.id)
+      last.set(card, chapter.plan.id)
+      if (moment.character === card && moment.by !== undefined) return moment
       changed = true
-      return { ...moment, character: card.id }
+      return { ...moment, character: card, by: moment.by ?? 'story' as const }
     })
     if (changed) await project.saveMemory({ ...memory, characters: moments })
   }

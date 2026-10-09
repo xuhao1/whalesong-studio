@@ -451,7 +451,7 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
   // Who is out of the story by now: on this chapter's own line, and as far as the chapters before it — somebody who dies
   // in chapter 16 is alive to whoever writes chapter 5 again, and alive on a line that parted before. Named whatever the
   // scene: the cheapest guard against a resurrection.
-  const told = livesFrom(priorMemories, characters, before)
+  const told = livesFrom(priorMemories, characters, before, (await project.castResolver()).whose)
   const goneBy = (how: 'death' | 'exit'): string => ranked
     .flatMap((card) => {
       const when = told[card.id]?.[how]

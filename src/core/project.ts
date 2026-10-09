@@ -885,9 +885,10 @@ export class Project {
    * On which lines of the plot each character is seen — read off the digests along each line. What the page shows
    * beside a name where the author has not said which lines somebody belongs to.
    */
-  async seenOn(): Promise<{ lines: { id: string; title: string }[]; people: Record<string, string[]>; world: Record<string, string[]> }> {
+  async seenOn(): Promise<{ lines: { id: string; title: string; /** The line its story begins on: its own id for a story of its own, the line it parted from — followed back — otherwise. */ story: string }[]; people: Record<string, string[]>; world: Record<string, string[]> }> {
     const outline = await this.outline()
-    const lines = [{ id: MAIN_LINE, title: '' }, ...(outline.lines ?? []).map(line => ({ id: line.id, title: line.title }))]
+    const storyOf = storiesOf(outline)
+    const lines = [{ id: MAIN_LINE, title: '', story: MAIN_LINE }, ...(outline.lines ?? []).map(line => ({ id: line.id, title: line.title, story: storyOf(line.id) }))]
     const { people: where } = await this.whereabouts()
     const people: Record<string, string[]> = {}
     for (const line of lines) {
@@ -985,13 +986,17 @@ export class Project {
     return theirs.length === 0 || theirs.includes(MAIN_LINE) ? MAIN_LINE : theirs[0]!
   }
 
-  private whereAt: { revision: number; people: Map<string, Set<string>>; threads: Map<string, Map<string, ThreadTouch['action'] | 'plan'>>; resolve: WhoIs; story: (chapterId: string | undefined) => string } | undefined
+  private whereAt: { revision: number; people: Map<string, Set<string>>; threads: Map<string, Map<string, ThreadTouch['action'] | 'plan'>>; resolve: WhoIs; whose: WhoseMoment; story: (chapterId: string | undefined) => string } | undefined
 
   /**
    * In which chapters each character is found — by the chapter's digest, or cast by its plan — and each thread is
    * touched, on whichever line: read off every chapter once for a state of the book. What says whose a character or a thread is without anybody saying.
+   *
+   * Who a digest's "somebody" is goes by the story the chapter is of ({@link WhoseMoment}): a world may hold several
+   * stories that each have a narrator, a mother, a boss — and a digest of an older day took whoever bore the name,
+   * in whichever story, for the same card. That is not undone by digesting the book again; it is read aright here.
    */
-  private async whereabouts(): Promise<{ people: Map<string, Set<string>>; threads: Map<string, Map<string, ThreadTouch['action'] | 'plan'>>; resolve: WhoIs; story: (chapterId: string | undefined) => string }> {
+  private async whereabouts(): Promise<{ people: Map<string, Set<string>>; threads: Map<string, Map<string, ThreadTouch['action'] | 'plan'>>; resolve: WhoIs; whose: WhoseMoment; story: (chapterId: string | undefined) => string }> {
     const revision = this.revisionValue
     if (this.whereAt?.revision === revision) return this.whereAt
     const [outline, cards] = await Promise.all([this.outline(), this.characters()])
@@ -1011,18 +1016,63 @@ export class Project {
     for (const volume of outline.volumes) for (const plan of volume.chapters) home.set(plan.id, MAIN_LINE)
     for (const line of outline.lines ?? []) for (const plan of line.chapters) home.set(plan.id, storyOfLine(line.id))
     const story = (chapterId: string | undefined): string => (chapterId !== undefined ? home.get(chapterId) : undefined) ?? MAIN_LINE
-    // Which stories each card is of — by what does not go by a name: the lines its card names, where it first and last
-    // appeared, the chapters that cast it or noted it by its id, what the author wrote of its life.
+    const plans: ChapterPlan[] = []
+    for (const holder of holders(outline)) for (const plan of holder.chapters) plans.push(plan)
+    const memories = new Map<string, ChapterMemory>()
+    for (const plan of plans) {
+      const memory = await this.memory(plan.id)
+      if (memory !== undefined) memories.set(plan.id, memory)
+    }
+    const castOf = (plan: ChapterPlan): string[] => [plan.pov, ...(plan.characters ?? []), ...(plan.beats ?? []).flatMap(beat => beat.characters ?? [])].filter((ref): ref is string => ref !== undefined && ref.length > 0)
+
+    // ── which stories each card is of ──
+    // What does not go by a name alone says so: the lines the author filed the card under (and then those only); the
+    // chapter it first appeared in — where it was made from —, or, with none on it, the story that speaks of it most;
+    // a digest that settled who it is as it read the chapter (`CharacterMoment.by`); the plan of a chapter nobody has
+    // digested yet (the planner, or the author, put them there); what the author wrote of their life at a chapter.
+    // Not: an older digest's bare id in another story, nor a plan's cast copied from such a digest — an id is made of
+    // the name, and both took whoever bore it for the card.
     const stories = new Map<string, Set<string>>()
-    const seen = (card: string, chapter: string): void => {
-      people.set(card, (people.get(card) ?? new Set()).add(chapter))
-      stories.set(card, (stories.get(card) ?? new Set()).add(story(chapter)))
+    const of = (card: string, which: string): void => { stories.set(card, (stories.get(card) ?? new Set<string>()).add(which)) }
+    const spoken = new Map<string, Map<string, number>>()
+    for (const plan of plans) {
+      const memory = memories.get(plan.id)
+      const here = new Set<string>()
+      for (const moment of memory?.characters ?? []) {
+        if (!ids.has(moment.character)) continue
+        here.add(moment.character)
+        if (moment.by !== undefined) of(moment.character, story(plan.id))
+      }
+      for (const ref of castOf(plan)) {
+        if (!ids.has(ref)) continue
+        here.add(ref)
+        if (memory === undefined) of(ref, story(plan.id))
+      }
+      for (const id of here) {
+        const counts = spoken.get(id) ?? new Map<string, number>()
+        counts.set(story(plan.id), (counts.get(story(plan.id)) ?? 0) + 1)
+        spoken.set(id, counts)
+      }
     }
     for (const card of cards) {
-      const of = stories.get(card.id) ?? new Set<string>()
-      for (const line of card.lines ?? []) of.add(storyOfLine(line))
-      for (const chapter of [card.firstAppearance, card.lastAppearance]) if (chapter !== undefined && home.has(chapter)) of.add(story(chapter))
-      if (of.size > 0) stories.set(card.id, of)
+      if ((card.lines ?? []).length > 0) {
+        stories.set(card.id, new Set(card.lines!.map(line => storyOfLine(line))))
+        continue
+      }
+      for (const mark of card.lifeMarks ?? []) if (mark.chapter !== undefined && home.has(mark.chapter)) of(card.id, story(mark.chapter))
+      if (card.firstAppearance !== undefined && home.has(card.firstAppearance)) {
+        of(card.id, story(card.firstAppearance))
+        continue
+      }
+      const counts = [...(spoken.get(card.id) ?? [])]
+      if (counts.length === 0) continue
+      const most = Math.max(...counts.map(([, times]) => times))
+      // (Equal: the first in reading order — the main story before a line beside it.)
+      of(card.id, counts.find(([, times]) => times === most)![0])
+    }
+    const seen = (card: string, chapter: string): void => {
+      people.set(card, (people.get(card) ?? new Set()).add(chapter))
+      of(card, story(chapter))
     }
     /**
      * Who a name in a chapter is. Somebody of that chapter's story by that name; else a card no story has yet (the
@@ -1042,27 +1092,30 @@ export class Project {
       const elsewhere = named.filter(card => (card.lines ?? []).length === 0)
       return elsewhere.length > 0 ? { elsewhere } : {}
     }
-    const plans: ChapterPlan[] = []
-    for (const holder of holders(outline)) for (const plan of holder.chapters) plans.push(plan)
-    // First what names a card by its id; then, with every card's stories known from that, what names it by a name.
+    const whose: WhoseMoment = (moment, chapterId) => {
+      if (ids.has(moment.character)) {
+        // Settled as the chapter was digested: it stands.
+        if (moment.by !== undefined) return moment.character
+        // An older digest's word holds within the card's own stories.
+        if (stories.get(moment.character)?.has(story(chapterId)) === true) return moment.character
+      }
+      return resolve(moment.name, chapterId).id
+    }
+    // First what stands by itself; then, with every card's stories known from that, what goes by a name.
     const later: { name: string; chapter: string }[] = []
     for (const plan of plans) {
       known.add(plan.id)
       for (const thread of plan.threads ?? []) touched(thread, plan.id, 'plan')
-      // Cast by a chapter's plan, somebody is that line's before a word of the chapter is written.
-      for (const ref of [plan.pov, ...(plan.characters ?? []), ...(plan.beats ?? []).flatMap(beat => beat.characters ?? [])]) {
-        if (ref === undefined || ref.length === 0) continue
-        if (ids.has(ref)) seen(ref, plan.id)
-        else later.push({ name: ref, chapter: plan.id })
+      const memory = memories.get(plan.id)
+      // Cast by a chapter's plan, somebody is that line's before a word of the chapter is written. Once it is
+      // digested, who is in it is the digest's to say — but for those of the chapter's own story, whom the plan may
+      // have and the chapter not.
+      for (const ref of castOf(plan)) {
+        if (!ids.has(ref)) later.push({ name: ref, chapter: plan.id })
+        else if (memory === undefined || stories.get(ref)?.has(story(plan.id)) === true) seen(ref, plan.id)
       }
-    }
-    const memories = new Map<string, ChapterMemory>()
-    for (const plan of plans) {
-      const memory = await this.memory(plan.id)
-      if (memory === undefined) continue
-      memories.set(plan.id, memory)
-      for (const moment of memory.characters) {
-        if (ids.has(moment.character)) seen(moment.character, plan.id)
+      for (const moment of memory?.characters ?? []) {
+        if (ids.has(moment.character) && (moment.by !== undefined || stories.get(moment.character)?.has(story(plan.id)) === true)) seen(moment.character, plan.id)
         else later.push({ name: moment.name, chapter: plan.id })
       }
     }
@@ -1088,7 +1141,7 @@ export class Project {
         for (const chapter of chapters ?? []) if (known.has(chapter) && threads.get(thread.id)?.has(chapter) !== true) touched(thread.id, chapter, how)
       }
     }
-    const value = { revision, people, threads, resolve, story }
+    const value = { revision, people, threads, resolve, whose, story }
     if (this.revisionValue === revision) this.whereAt = value
     return value
   }
@@ -1096,12 +1149,13 @@ export class Project {
   /**
    * Who a name is in a chapter, told by the story the chapter is of — so that two stories in one world that each call
    * somebody "我", or each have a 小李, do not find themselves sharing a card. See `resolve` in {@link whereabouts}.
-   * @returns `resolve` (the card, or the namesakes of other stories for whoever reads the chapter to judge) and
-   *   `story` (the line a chapter's story begins on).
+   * @returns `resolve` (the card a name is, or the namesakes of other stories for whoever reads the chapter to judge),
+   *   `whose` (the card a digest's note on somebody is of — every reading of a digest goes by it) and `story` (the
+   *   line a chapter's story begins on).
    */
-  async castResolver(): Promise<{ resolve: WhoIs; story: (chapterId: string | undefined) => string }> {
-    const { resolve, story } = await this.whereabouts()
-    return { resolve, story }
+  async castResolver(): Promise<{ resolve: WhoIs; whose: WhoseMoment; story: (chapterId: string | undefined) => string }> {
+    const { resolve, whose, story } = await this.whereabouts()
+    return { resolve, whose, story }
   }
 
   /**
@@ -2028,7 +2082,7 @@ export class Project {
     const path = await this.chapters(line)
     const memories = await this.memories(path)
     const digested = new Set(memories.map(entry => entry.chapter.plan.id))
-    return { chapters: path.map(chapter => ({ id: chapter.plan.id, index: chapter.index, title: chapter.plan.title, digested: digested.has(chapter.plan.id) })), lives: livesFrom(memories, await this.characters(), path) }
+    return { chapters: path.map(chapter => ({ id: chapter.plan.id, index: chapter.index, title: chapter.plan.title, digested: digested.has(chapter.plan.id) })), lives: livesFrom(memories, await this.characters(), path, (await this.castResolver()).whose) }
   }
 
   /**
@@ -2047,10 +2101,11 @@ export class Project {
     const end = Math.max(0, ...memories.map(entry => entry.chapter.index))
     // What each came to know, chapter by chapter, as the digests noted it.
     const learned = new Map<string, NonNullable<LinePerson['learned']>>()
+    const { whose } = await this.castResolver()
     for (const { chapter, memory } of memories) {
       for (const moment of memory.characters) {
         if (moment.learned === undefined || moment.learned.length === 0) continue
-        const card = cards.find(candidate => candidate.id === moment.character) ?? cards.find(candidate => sameName(candidate.name, moment.name) || candidate.aliases?.some(alias => sameName(alias, moment.name)) === true)
+        const card = cards.find(candidate => candidate.id === whose(moment, chapter.plan.id))
         if (card === undefined) continue
         const known = learned.get(card.id) ?? []
         for (const what of moment.learned) if (what.trim().length > 0 && !known.some(item => item.what === what.trim())) known.push({ index: chapter.index, chapter: chapter.plan.id, what: what.trim() })
@@ -2157,10 +2212,11 @@ export class Project {
     const digested = memories.map(entry => entry.chapter.plan.id)
     const byCharacter = new Map<string, string[]>()
     const strangers = new Map<string, { name: string; chapters: number }>()
+    const { whose } = await this.castResolver()
     for (const { chapter, memory } of memories) {
       const here = new Set<string>()
       for (const moment of memory.characters) {
-        const card = characters.find(candidate => candidate.id === moment.character) ?? characters.find(candidate => sameName(candidate.name, moment.name) || candidate.aliases?.some(alias => sameName(alias, moment.name)) === true)
+        const card = characters.find(candidate => candidate.id === whose(moment, chapter.plan.id))
         if (card === undefined) {
           const key = moment.name.trim().toLowerCase()
           if (key.length === 0 || key.length > 24 || here.has(key)) continue
@@ -2175,7 +2231,7 @@ export class Project {
         byCharacter.set(card.id, list)
       }
     }
-    const told = livesFrom(memories, characters, await this.chapters())
+    const told = livesFrom(memories, characters, await this.chapters(), whose)
     const presence = characters.map((card): CastPresence => {
       const chapters = byCharacter.get(card.id) ?? []
       const last = chapters.at(-1)
@@ -2347,13 +2403,16 @@ function stripUndefined<T extends object>(value: T): T {
  * @param path - the chapters that count, in reading order: a mark holds where its chapter is among them, digested or not;
  *   a mark with no chapter lies before the story, and holds on every line.
  */
-export function livesFrom(memories: readonly { chapter: LocatedChapter; memory: ChapterMemory }[], characters: readonly CharacterCard[], path: readonly LocatedChapter[]): Record<string, Life> {
+export function livesFrom(memories: readonly { chapter: LocatedChapter; memory: ChapterMemory }[], characters: readonly CharacterCard[], path: readonly LocatedChapter[], whose?: WhoseMoment): Record<string, Life> {
   type Noted = { chapter: string; index: number; moment: Pick<CharacterMoment, 'role' | 'stateAfter' | 'location' | 'lifecycle'>; mark?: LifeMark }
   const byCharacter = new Map<string, Noted[]>()
   for (const { chapter, memory } of memories) {
     const here = new Set<string>()
     for (const moment of memory.characters) {
-      const card = characters.find(candidate => candidate.id === moment.character) ?? characters.find(candidate => sameName(candidate.name, moment.name) || candidate.aliases?.some(alias => sameName(alias, moment.name)) === true)
+      // Whose note it is goes by the chapter's story where the book can say (`Project.castResolver`); by the id and the name alone otherwise.
+      const card = whose !== undefined
+        ? characters.find(candidate => candidate.id === whose(moment, chapter.plan.id))
+        : characters.find(candidate => candidate.id === moment.character) ?? characters.find(candidate => sameName(candidate.name, moment.name) || candidate.aliases?.some(alias => sameName(alias, moment.name)) === true)
       // One note per character and chapter: a digest that names somebody twice (by name and by an alias) says one thing.
       if (card === undefined || here.has(card.id)) continue
       here.add(card.id)
@@ -2504,6 +2563,14 @@ function normalizeChapter(chapter: ChapterPlan): ChapterPlan {
 /** Every list of chapters an outline has: each volume's, each line's. */
 /** Who a name in a chapter is: the card's id; or, for a proper name borne only by cards of other stories, those cards. */
 export type WhoIs = (name: string, chapterId: string | undefined) => { id?: string; elsewhere?: CharacterCard[] }
+
+/**
+ * Whose card a digest's note on somebody is, in the chapter it was made of — or nobody's on file. What a digest
+ * settled as it read the chapter stands (`CharacterMoment.by`); an older digest's id holds within the stories its card
+ * is of, and beyond them the note goes by its name, as the chapter's own story has it. Every reading of a digest —
+ * who is on a line, a life, who is a walk-on — asks this, so that they agree.
+ */
+export type WhoseMoment = (moment: Pick<CharacterMoment, 'character' | 'name' | 'by'>, chapterId: string) => string | undefined
 
 /** How a narrator calls themself: a word that names whoever tells the story, a different person in each. */
 const SELF_WORDS = new Set(['我', '吾', '俺', '咱', '余', '本人', '在下', '鄙人', '叙述者', '叙事者', 'i', 'me', 'myself', 'narrator', 'thenarrator'])

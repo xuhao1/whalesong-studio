@@ -80,7 +80,8 @@ export async function listWalkOns(project: Project, options: { ignored?: boolean
   }
   for (const { chapter, memory } of memories) {
     for (const entity of memory.newEntities) if (entity.kind === 'character') see(entity.name, chapter.plan.id, entity.description)
-    for (const moment of memory.characters) if (!cardIds.has(moment.character)) see(moment.name, chapter.plan.id, moment.role)
+    // Whose a note is goes by the chapter's story: one an older digest put under another story's card is nobody's on file here.
+    for (const moment of memory.characters) if (who.whose(moment, chapter.plan.id) === undefined) see(moment.name, chapter.plan.id, moment.role)
   }
   for (const suggestion of suggestions) {
     if (suggestion.kind !== 'new-character') continue

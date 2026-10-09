@@ -570,6 +570,13 @@ export interface CharacterMoment {
   /** Character id when resolved, otherwise the name as written. */
   character: string
   name: string
+  /**
+   * Who settled that `character` is that card, as the chapter was digested: `story` — it is somebody of the chapter's
+   * own story (or a card no story had yet); `over` — a card of another story, of whom the digest was asked and said
+   * it is the same person, come over. Absent where nobody is on file — and in digests made before this was kept:
+   * their id is a name's, and holds only within the stories the card is of (`Project.castResolver`).
+   */
+  by?: 'story' | 'over'
   /** What they did or went through in the chapter. */
   role?: string
   /** Condition at chapter end: injuries, mood, resources, resolve. */

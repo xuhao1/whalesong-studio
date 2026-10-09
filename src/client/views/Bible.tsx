@@ -116,6 +116,10 @@ function World({ group }: { group: WorldGroup }) {
   const lastWhere = useRef<Record<string, string[]> | undefined>(undefined)
   if (where.data?.world !== undefined) lastWhere.current = where.data.world
   const namedOn = where.data?.world ?? lastWhere.current
+  // The story each line tells: lines that parted from one another tell one, and what one of them names is not "another line's" to the others.
+  const lastStories = useRef<Map<string, string> | undefined>(undefined)
+  if (where.data?.lines !== undefined) lastStories.current = new Map(where.data.lines.map(line => [line.id, line.story ?? line.id]))
+  const storyOf = (id: string): string => lastStories.current?.get(id) ?? id
   // Along a line beside the main one, the chapters that name an entry are that line's: asked for, where the page shows one.
   const along = chosen !== undefined && chosen !== EVERY_LINE && chosen !== MAIN_LINE ? chosen : undefined
   const read = useLoad(async signal => (along !== undefined ? await controller.api.call('world.presence', { root, line: along }, signal).catch(() => undefined) : undefined), [root, along, project.revision])
@@ -135,8 +139,16 @@ function World({ group }: { group: WorldGroup }) {
   const unfiled = useMemo(() => everything.filter(entry => (entry.lines ?? []).filter(id => lineIds.has(id)).length === 0), [everything, lineIds])
   const mine = useMemo(() => (chosen === undefined || chosen === EVERY_LINE ? everything : chosen === NO_LINE ? unfiled : everything.filter(entry => (entry.lines ?? []).includes(chosen))),
     [everything, unfiled, chosen])
-  // Beside a line's own: what the lines share, which that line knows as well.
-  const shared = chosen !== undefined && chosen !== EVERY_LINE && chosen !== NO_LINE ? unfiled : []
+  // Beside a line's own: what the lines share, which that line knows as well — what its text names, and what no
+  // line's text names yet. What is filed nowhere while only other lines' text names it is theirs in all but the filing:
+  // it is kept apart, folded, with the way to file it. (A Host that cannot say where things are named: all are shared.)
+  const onLine = chosen !== undefined && chosen !== EVERY_LINE && chosen !== NO_LINE
+  const namedHere = (item: WorldEntry): boolean => {
+    const on = namedOn?.[item.id] ?? []
+    return on.length === 0 || on.some(id => storyOf(id) === storyOf(chosen!))
+  }
+  const shared = !onLine ? [] : namedOn === undefined ? unfiled : unfiled.filter(namedHere)
+  const elsewhere = onLine && namedOn !== undefined ? unfiled.filter(item => !namedHere(item)) : []
   const picks = useLinePicks()
   // Ideas are ordered by how they travel to a model, as they always were; whatever is somewhere or something, by its weight in the story.
   const weighed = group !== 'ideas'
@@ -162,14 +174,23 @@ function World({ group }: { group: WorldGroup }) {
   const sharedOrdered = useMemo(() => (weighed ? worldOrder(shared, presence, written) : [...shared].sort((left, right) => left.importance - right.importance)).filter(entry => category === 'all' || entry.category === category),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [shared, presence, written, weighed, category])
+  const elsewhereOrdered = useMemo(() => [...elsewhere].sort((left, right) => left.name.localeCompare(right.name)).filter(entry => category === 'all' || entry.category === category),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [elsewhere.map(item => item.id).join('\n'), category])
   // Open while the line has nothing of its own: a page with everything folded away says nothing.
   const sharedOpen = !(folded.shared ?? mine.length > 0)
+  const elsewhereOpen = folded.elsewhere === false
   // An entry opened from elsewhere stays open though the line in hand is not its own.
   const entry = everything.find(candidate => candidate.id === selected)
-  const used = [...new Set([...mine, ...shared].map(item => item.category))]
+  const used = [...new Set([...mine, ...shared, ...elsewhere].map(item => item.category))]
   const lineName = (id: string): string => plotLines.find(line => line.id === id)?.title ?? id
   // What the list shows now, in its order: what "all" picks.
-  const listedIds = [...visible, ...(sharedOpen ? sharedOrdered : [])].map(item => item.id)
+  const listedIds = [...visible, ...(sharedOpen ? sharedOrdered : []), ...(elsewhereOpen ? elsewhereOrdered : [])].map(item => item.id)
+  /** File what only other lines' text names under those lines: it then leaves this line's page for good. */
+  const fileElsewhere = (): Promise<unknown> => run(async () => {
+    const done = await controller.api.call('lines.assign', { root, byText: true, world: elsewhere.map(item => item.id) })
+    controller.toast('success', t(`${done.world.length} 项照正文归了线`, `${done.world.length} filed under the lines that name them`))
+  })
   const weightOf = (item: WorldEntry): WorldWeight => worldWeight(item, seen.get(item.id) ?? 0, written)
   const create = (): Promise<unknown> => run(async () => {
     const created = await controller.api.call('world.save', { root, entry: { name: name.trim(), category: group === 'ideas' && category !== 'all' ? category : GROUP_CATEGORY[group], importance: 2 } })
@@ -277,6 +298,21 @@ function World({ group }: { group: WorldGroup }) {
               <span className="nv-muted">{sharedOrdered.length}</span>
             </button>
             {sharedOpen ? <ul className="nv-list">{sharedOrdered.map(row)}</ul> : null}
+          </div>
+        ) : null}
+        {elsewhere.length > 0 ? (
+          <div className="nv-people-group nv-shared-group">
+            <button type="button" className="nv-group-head" aria-expanded={elsewhereOpen} onClick={() => { setFolded(previous => ({ ...previous, elsewhere: elsewhereOpen })) }} title={t('没归线，而且只有别的线的正文写到', 'Filed under no line, and named by other lines\' text only')}>
+              <Icon name={elsewhereOpen ? 'chevronDown' : 'chevronRight'} size={12} />
+              <span>{t('只在别的线出现、没归线的', 'Unfiled, named on other lines only')}</span>
+              <span className="nv-muted">{elsewhereOrdered.length}</span>
+            </button>
+            {elsewhereOpen ? (
+              <>
+                <p className="nv-pad nv-small"><Button size="sm" variant="outline" icon="sparkles" busy={busy} onClick={fileElsewhere} title={t('各归到正文写到它的那几条线；之后不再出现在这条线的页面上', 'Each under the lines whose text names it; it then leaves this line\'s page')}>{t(`照正文归线（${elsewhere.length}）`, `File by the text (${elsewhere.length})`)}</Button></p>
+                <ul className="nv-list">{elsewhereOrdered.map(row)}</ul>
+              </>
+            ) : null}
           </div>
         ) : null}
       </aside>

@@ -76,9 +76,18 @@ describe('a line of the plot reads itself', () => {
     expect(await names(book.south.id)).not.toContain('周衡')
     // Cast by the plan of a chapter not yet written, somebody is that line's already.
     const planned = await project.addChapter({ title: '第三天', characters: [book.tang.id] })
+    expect(await names()).toContain('阿棠')
+    // She is the main story's now. The other story's digest, of an older day, has her id on somebody called 阿棠 — an
+    // id is made of the name, and that digest took whoever bore it for the card: a namesake, for all anybody knows.
+    // She is not that story's for it.
     await project.saveMemory({ schema: 1, chapterId: book.c1.id, textHash: 'x', updatedAt: '', brief: '', summary: '', facts: [], newEntities: [], threads: [], characters: [{ character: book.lu.id, name: '陆掌柜' }, { character: book.tang.id, name: '阿棠' }] })
+    expect(await names(book.south.id)).not.toContain('阿棠')
+    expect(Object.keys((await project.lives(book.south.id)).lives)).not.toContain(book.tang.id)
+    // A digest that was asked, and said it is the same person come over, has it settled: she is of both.
+    await project.saveMemory({ schema: 1, chapterId: book.c1.id, textHash: 'x', updatedAt: '', brief: '', summary: '', facts: [], newEntities: [], threads: [], characters: [{ character: book.lu.id, name: '陆掌柜' }, { character: book.tang.id, name: '阿棠', by: 'over' }] })
     expect(await names()).toContain('阿棠')
     expect(await names(book.south.id)).toContain('阿棠')
+    expect(Object.keys((await project.lives(book.south.id)).lives)).toContain(book.tang.id)
     await project.removeChapter(planned.id)
     expect(await names()).not.toContain('阿棠')
     await project.saveMemory({ schema: 1, chapterId: book.c1.id, textHash: 'x', updatedAt: '', brief: '', summary: '陆掌柜在场。', facts: [], newEntities: [], threads: [{ title: '缺页的账本', action: 'plant', threadId: book.ledger.id }], characters: [{ character: book.lu.id, name: '陆掌柜' }] })
@@ -271,6 +280,69 @@ describe('a line of the plot reads itself', () => {
     expect(shared.payload.lines).toBeUndefined()
     expect(shared.detail).toBe('系船的缆桩')
     expect(await project.linesReading(one.id)).toEqual({ lines: [MAIN_LINE, other.id], every: true })
+  })
+
+  it('reads aright what older digests took for one person across stories: who is on a line, a life, the walk-ons, a plan\'s cast', async () => {
+    const { project } = bed.runtime
+    const book = await world(bed)
+    const { listWalkOns } = await import('../src/core/walkons')
+    const { planBlanks, fillPlans } = await import('../src/core/pipelines/digest')
+    const { relinkMemories } = await import('../src/core/pipelines/cast')
+    const moment = (id: string, name: string) => ({ character: id, name, role: '在场' })
+    const memory = (chapterId: string, characters: ReturnType<typeof moment>[]) => ({ schema: 1 as const, chapterId, textHash: 'x', updatedAt: '', brief: '一章', summary: '一章。', facts: [], newEntities: [], threads: [], characters })
+    // The main story is told by 我, whose mother is in it: both have cards, made from its chapters.
+    const me = await project.saveCharacter({ name: '我', role: 'protagonist', personality: '寡言', firstAppearance: book.m1.id })
+    const mother = await project.saveCharacter({ name: '妈妈', role: 'supporting', personality: '唠叨', firstAppearance: book.m1.id })
+    await project.saveMemory(memory(book.m1.id, [moment(me.id, '我'), moment(mother.id, '妈妈'), moment(book.heng.id, '沈蘅')]))
+    // The other story has a narrator and a mother of its own. Its digests are of the day when a name was whoever bore
+    // it, anywhere in the book: they carry the main story's cards by id — and its plans a cast copied from them.
+    await project.saveChapterText(book.c2.id, '我盘了一夜的账。妈妈来铺子送饭。')
+    await project.saveMemory(memory(book.c1.id, [moment(book.lu.id, '陆掌柜'), moment(me.id, '我'), moment(mother.id, '妈妈')]))
+    await project.saveMemory(memory(book.c2.id, [moment(me.id, '我'), moment(mother.id, '妈妈')]))
+    await project.updateChapter(book.c1.id, { characters: [book.lu.id, me.id, mother.id] })
+    await project.updateChapter(book.c2.id, { characters: [me.id, mother.id] })
+
+    // Who is on which line: they are the main story's, and that story's only.
+    const names = async (line?: string): Promise<string[]> => {
+      const scope = await project.lineScope(line)
+      return (await project.characters()).filter(card => scope.has(card)).map(card => card.name)
+    }
+    expect(await names()).toEqual(expect.arrayContaining(['我', '妈妈', '沈蘅']))
+    expect(await names(book.south.id)).toEqual(expect.arrayContaining(['陆掌柜']))
+    expect(await names(book.south.id)).not.toContain('我')
+    expect(await names(book.south.id)).not.toContain('妈妈')
+    const seen = (await project.seenOn()).people
+    expect(seen[me.id]).toEqual([MAIN_LINE, book.stay.id])
+    expect(seen[mother.id]).toEqual([MAIN_LINE, book.stay.id])
+    // A life read along the other story has nothing of them; the main story's has.
+    const south = (await project.lives(book.south.id)).lives
+    expect(south[me.id]).toBeUndefined()
+    expect(south[mother.id]).toBeUndefined()
+    expect(south[book.lu.id]?.events.map(event => event.chapter)).toEqual([book.c1.id])
+    expect((await project.lives()).lives[me.id]?.events.map(event => event.chapter)).toEqual([book.m1.id])
+    // In that story they are people with no card: its walk-ons, under its name.
+    const walkOns = (await listWalkOns(project)).filter(item => item.story === book.south.id).map(item => [item.name, item.chapters.length])
+    expect(walkOns).toEqual(expect.arrayContaining([['我', 2], ['妈妈', 2]]))
+    // What a digest fills into an empty plan: not them.
+    const cards = await project.characters()
+    const { whose } = await project.castResolver()
+    await project.updateChapter(book.c2.id, { characters: [] })
+    const filled = planBlanks((await project.findChapter(book.c2.id))!.plan, (await project.memory(book.c2.id))!, cards, await project.outline(), true, whose)
+    expect(filled.characters).toBeUndefined()
+    expect((await fillPlans(bed.runtime, [book.c2.id], true)).fields).toBe(0)
+    // Pointing the digests at the cards again goes by the story as well: the main story's notes are settled, the
+    // other story's are let be — and the cards keep the chapters they are of.
+    await relinkMemories(bed.runtime)
+    expect((await project.memory(book.m1.id))!.characters.map(item => item.by)).toEqual(['story', 'story', 'story'])
+    expect((await project.memory(book.c2.id))!.characters.map(item => item.by)).toEqual([undefined, undefined])
+    expect((await project.memory(book.c1.id))!.characters.map(item => item.by)).toEqual(['story', undefined, undefined])
+    expect((await project.findCharacter(me.id))!.lastAppearance).toBe(book.m1.id)
+    expect((await project.findCharacter(book.lu.id))!.firstAppearance).toBe(book.c1.id)
+    expect(await names(book.south.id)).not.toContain('我')
+    // The author's word is the last one: filed under both lines, she is of both.
+    await project.saveCharacter({ id: mother.id, lines: [MAIN_LINE, book.south.id] })
+    expect(await names(book.south.id)).toContain('妈妈')
+    expect((await project.lives(book.south.id)).lives[mother.id]?.events.map(event => event.chapter)).toEqual([book.c1.id, book.c2.id])
   })
 
   it('keeps the namesakes of different stories apart: a narrator\'s 我, and a name the digest is asked about', async () => {

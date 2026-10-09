@@ -15,7 +15,7 @@ import type { ArcSummary } from '../context'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { asArray, asList, asRecord, asText } from '../llm'
 import { assign } from '../crew'
-import type { LocatedChapter } from '../project'
+import type { LocatedChapter, WhoseMoment } from '../project'
 import { ProjectError, selfNamed } from '../project'
 import { arcTask, digestSystem, digestTask } from '../prompts'
 import { L, promptLanguage } from '../render'
@@ -89,11 +89,14 @@ export async function digestChapter(core: NovelCore, runtime: ProjectRuntime, re
 
   // Of the namesakes asked about, those the digest said are the same person: they have come over into this story.
   const cameOver = new Set(asArray(value.namesakes).map(asRecord).filter(item => item.same === true).map(item => asText(item.name)).filter((name): name is string => name !== undefined))
-  const resolveCharacter = (name: string): string | undefined => {
+  /** The card a name is, and who says so: the chapter's own story, or the digest, asked of somebody of another. */
+  const settle = (name: string): { id: string; by: NonNullable<CharacterMoment['by']> } | undefined => {
     const who = resolve(name, chapter.plan.id)
-    if (who.id !== undefined) return who.id
-    return who.elsewhere?.find(card => [card.name, ...(card.aliases ?? [])].some(known => [...cameOver].some(said => sameName(said, known))))?.id
+    if (who.id !== undefined) return { id: who.id, by: 'story' }
+    const over = who.elsewhere?.find(card => [card.name, ...(card.aliases ?? [])].some(known => [...cameOver].some(said => sameName(said, known))))?.id
+    return over !== undefined ? { id: over, by: 'over' } : undefined
   }
+  const resolveCharacter = (name: string): string | undefined => settle(name)?.id
   /**
    * The name somebody is kept under. One who is nobody on file in this story, and whose name another story's person
    * already bears — a namesake the digest told apart, or a narrator's "我", which is a different person in every
@@ -126,9 +129,11 @@ export async function digestChapter(core: NovelCore, runtime: ProjectRuntime, re
     const emotion = asText(item.emotion)
     const quote = asText(item.quote)
     const learned = asList(item.learned)
+    const settled = settle(name)
     moments.push({
-      character: resolveCharacter(name) ?? name,
+      character: settled?.id ?? name,
       name,
+      ...(settled !== undefined ? { by: settled.by } : {}),
       ...(role !== undefined ? { role } : {}),
       ...(stateAfter !== undefined ? { stateAfter } : {}),
       ...(location !== undefined ? { location } : {}),
@@ -211,15 +216,18 @@ const blank = (value: string | undefined): boolean => value === undefined || val
  * the planner wrote is replaced: a field with anything in it is left alone.
  * @returns the fields to set; empty when the plan has no blank the digest can fill.
  */
-export function planBlanks(plan: ChapterPlan, memory: ChapterMemory, characters: readonly CharacterCard[], outline: Pick<Outline, 'threads'>, zh: boolean): Partial<ChapterPlan> {
+export function planBlanks(plan: ChapterPlan, memory: ChapterMemory, characters: readonly CharacterCard[], outline: Pick<Outline, 'threads'>, zh: boolean, whose?: WhoseMoment): Partial<ChapterPlan> {
   const patch: Partial<ChapterPlan> = {}
   if (blank(plan.synopsis) && !blank(memory.brief)) patch.synopsis = memory.brief
   if (blank(plan.location) && (memory.locations ?? []).length > 0) patch.location = memory.locations!.join(zh ? '、' : ', ')
   if (blank(plan.time) && !blank(memory.storyTime)) patch.time = memory.storyTime!
   if ((plan.characters ?? []).length === 0) {
     // Those of the chapter who have a card: a name with none is a walk-on, or waits among the suggestions.
-    const card = (moment: CharacterMoment): CharacterCard | undefined => characters.find(candidate => candidate.id === moment.character)
-      ?? characters.find(candidate => sameName(candidate.name, moment.name) || candidate.aliases?.some(alias => sameName(alias, moment.name)) === true)
+    // (Whose a note is goes by the chapter's story, where the book is there to say: a namesake of another story is not cast here.)
+    const card = (moment: CharacterMoment): CharacterCard | undefined => (whose !== undefined
+      ? characters.find(candidate => candidate.id === whose(moment, plan.id))
+      : characters.find(candidate => candidate.id === moment.character)
+        ?? characters.find(candidate => sameName(candidate.name, moment.name) || candidate.aliases?.some(alias => sameName(alias, moment.name)) === true))
     const ids = [...new Set(memory.characters.map(moment => card(moment)?.id).filter((id): id is string => id !== undefined))]
     if (ids.length > 0) patch.characters = ids
   }
@@ -247,8 +255,9 @@ export async function fillPlans(runtime: ProjectRuntime, only?: readonly string[
   const located = wanted !== undefined ? (await Promise.all([...wanted].map(async id => await project.findChapter(id)))).filter((chapter): chapter is LocatedChapter => chapter !== undefined) : undefined
   let chapters = 0
   let fields = 0
+  const { whose } = await project.castResolver()
   for (const { chapter, memory } of await project.memories(located)) {
-    const patch = planBlanks(chapter.plan, memory, characters, outline, zh)
+    const patch = planBlanks(chapter.plan, memory, characters, outline, zh, whose)
     const count = Object.keys(patch).length
     if (count === 0) continue
     if (!dry) await project.updateChapter(chapter.plan.id, patch)
@@ -275,7 +284,8 @@ async function applyMemory(runtime: ProjectRuntime, chapter: LocatedChapter, mem
   const main = chapter.line === undefined
 
   for (const moment of main ? memory.characters : []) {
-    const card = characters.find(candidate => candidate.id === moment.character)
+    // (Settled just now, as the chapter was read: a bare name that happens to be somebody's id is not theirs.)
+    const card = moment.by !== undefined ? characters.find(candidate => candidate.id === moment.character) : undefined
     if (card === undefined) continue
     const patch: Record<string, unknown> = {}
     if (card.firstAppearance === undefined || indexOf(card.firstAppearance) > chapter.index || indexOf(card.firstAppearance) === 0) patch.firstAppearance = chapter.plan.id

@@ -434,9 +434,9 @@ export async function analyzeBook(core: NovelCore, runtime: ProjectRuntime, para
     within(0, L(lang, '生成大纲', 'building the outline'))
     let ok = true
     try {
-      const characters = await project.characters()
+      const { whose } = await project.castResolver()
       for (const { chapter, memory } of memories) {
-        const cast = memory.characters.map(moment => characters.find(card => card.id === moment.character)?.id).filter((id): id is string => id !== undefined)
+        const cast = memory.characters.map(moment => whose(moment, chapter.plan.id)).filter((id): id is string => id !== undefined)
         // What the author wrote into a chapter's plan stays; the digest fills what is empty.
         await project.updateChapter(chapter.plan.id, {
           ...(chapter.plan.synopsis === undefined ? { synopsis: memory.summary } : {}),
