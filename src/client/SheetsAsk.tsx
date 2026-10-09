@@ -23,6 +23,8 @@ export interface SheetsChoice {
 interface Pending {
   people: { id: string; name: string }[]
   unknown: number
+  /** The image service takes no reference pictures: what is drawn first is not sent with the picture. */
+  unheld: boolean
   /** A portrait of one person: the wording is about them, not about "whoever comes back". */
   portrait: boolean
   answer: (choice: 'first' | 'skip' | 'cancel') => void
@@ -51,7 +53,7 @@ export function useSheetsAsk(): {
     asked?.answer(choice)
   }
   const before = useCallback(async (asks: SheetsAsk[], go: (choice: SheetsChoice) => unknown, covered: readonly string[] = []): Promise<void> => {
-    let plan: { people: { id: string; name: string }[]; unknown: number } = { people: [], unknown: 0 }
+    let plan: { people: { id: string; name: string }[]; unknown: number; unheld?: boolean } = { people: [], unknown: 0 }
     try {
       if (asks.length > 0) plan = await controller.api.call('image.sheetsFirst', { root, asks })
     } catch {
@@ -63,7 +65,7 @@ export function useSheetsAsk(): {
       return
     }
     const choice = await new Promise<'first' | 'skip' | 'cancel'>((resolve) => {
-      const asked: Pending = { people, unknown: plan.unknown, portrait: asks.length === 1 && asks[0]!.kind === 'portrait', answer: resolve }
+      const asked: Pending = { people, unknown: plan.unknown, unheld: plan.unheld === true, portrait: asks.length === 1 && asks[0]!.kind === 'portrait', answer: resolve }
       open.current = asked
       setPending(asked)
     })
@@ -86,6 +88,7 @@ export function useSheetsAsk(): {
           ? t(`${names}还没有人设图，先画它，多 1 次绘图调用。`, `${names} has no design sheet: it is drawn first, one more image call.`)
           : t(`${names}还没有人设图，先各画一张，多 ${count} 次绘图调用。`, `${names}: no design sheet yet. One each is drawn first, ${count} more image call(s).`)}
       </p>
+      {pending.unheld ? <p className="nv-picture-warn nv-small">{t('现在的绘图服务不收参考图：补了，这次的图也照不上它。', 'The image service in use takes no reference pictures: this picture would not be drawn against them.')}</p> : null}
       {pending.unknown > 0 ? <p className="nv-muted nv-small">{t(`另有 ${pending.unknown} 章还没编排分镜，要补谁到时才知道。`, `${pending.unknown} more chapter(s) have no storyboard yet; who they need is known then.`)}</p> : null}
       <p className="nv-muted nv-small">{t('不想再问：设置 → 图像生成。', 'To stop being asked: Settings → Images.')}</p>
     </Modal>

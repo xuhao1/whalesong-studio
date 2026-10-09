@@ -331,7 +331,7 @@ export interface RenderPanelsResult {
  * be told "this will first draw N design sheets" and say yes, or not this time.
  * @returns `unknown`: how many of the asks cannot be told yet — panels of a chapter whose storyboard is not laid out.
  */
-export async function sheetsAhead(core: NovelCore, runtime: ProjectRuntime, asks: readonly SheetsAsk[]): Promise<{ people: { id: string; name: string }[]; unknown: number }> {
+export async function sheetsAhead(core: NovelCore, runtime: ProjectRuntime, asks: readonly SheetsAsk[]): Promise<{ people: { id: string; name: string }[]; unknown: number; /** The way to the image model takes no reference pictures: the sheets would be drawn, and this picture not held against them. */ unheld?: true }> {
   const { project } = runtime
   const people = new Map<string, string>()
   let unknown = 0
@@ -355,7 +355,10 @@ export async function sheetsAhead(core: NovelCore, runtime: ProjectRuntime, asks
     }
     for (const card of cards) people.set(card.id, card.name)
   }
-  return { people: [...people].map(([id, name]) => ({ id, name })), unknown }
+  // Sheets are drawn first so that the picture is held against them. Where the way to the model takes no picture, they
+  // are drawn all the same — they are the person's design — but nothing is held against them: said with the answer.
+  const unheld = people.size > 0 && (await (await core.imageProvider(runtime))?.prompting?.().catch(() => undefined))?.references === 0
+  return { people: [...people].map(([id, name]) => ({ id, name })), unknown, ...(unheld ? { unheld: true as const } : {}) }
 }
 
 export async function renderPanels(core: NovelCore, runtime: ProjectRuntime, params: { chapter: string; panels?: string[]; force?: boolean; concurrency?: number; /** `false`: this once, no design sheet is drawn first. */ sheetFirst?: boolean }, task: TaskContext): Promise<RenderPanelsResult> {

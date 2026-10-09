@@ -12,6 +12,9 @@ import type { NovelService } from '../../host/service'
 import type { PlayTurn, StoryboardDensity } from '../../shared/types'
 import { brief, listOf, listParameter, novelTool, toJson } from './shared'
 
+/** Said with the answer to `sheet_first=ask` where the image service takes no reference pictures. */
+const UNHELD = 'Tell them too: the image service in use takes no reference pictures, so the sheets would be drawn but this picture not held against them — who it shows comes from the words alone. '
+
 function renderTurn(turn: PlayTurn): string {
   const parts: string[] = []
   if (turn.narration !== undefined) parts.push(turn.narration)
@@ -79,10 +82,10 @@ export function stageTools(service: NovelService): ToolDefinition[] {
           // Nothing is drawn: who would get a sheet first is worked out, for the author to be asked.
           const ahead = params.kind === 'portrait' || params.kind === 'scene' || params.kind === 'cover' || params.kind === 'custom'
             ? await sheetsAhead(env.core, runtime, [{ kind: params.kind, ...(params.target !== undefined ? { target: params.target } : {}), ...(params.quote !== undefined ? { quote: params.quote } : {}), ...(params.characters !== undefined ? { characters: params.characters } : {}) }])
-            : { people: [], unknown: 0 }
+            : { people: [], unknown: 0 } as Awaited<ReturnType<typeof sheetsAhead>>
           return {
             text: ahead.people.length > 0
-              ? `Nothing drawn yet. This picture would first draw ${ahead.people.length} design sheet${ahead.people.length === 1 ? '' : 's'} — of ${ahead.people.map(person => person.name).join(', ')} — because ${params.kind === 'portrait' ? 'they have none' : 'they come back in the book and have none'}: ${ahead.people.length} more image call${ahead.people.length === 1 ? '' : 's'}. Ask the author; then call again with sheet_first=draw, or sheet_first=skip to draw from what there is.`
+              ? `Nothing drawn yet. This picture would first draw ${ahead.people.length} design sheet${ahead.people.length === 1 ? '' : 's'} — of ${ahead.people.map(person => person.name).join(', ')} — because ${params.kind === 'portrait' ? 'they have none' : 'they come back in the book and have none'}: ${ahead.people.length} more image call${ahead.people.length === 1 ? '' : 's'}. ${ahead.unheld === true ? UNHELD : ''}Ask the author; then call again with sheet_first=draw, or sheet_first=skip to draw from what there is.`
               : 'Nothing drawn yet. No design sheet would be drawn first for this picture: call again with sheet_first=draw.',
             data: toJson(ahead),
             record: false,
@@ -268,7 +271,7 @@ export function stageTools(service: NovelService): ToolDefinition[] {
           const ahead = await sheetsAhead(env.core, runtime, [{ kind: 'panels', chapter, ...(args.force === true ? { force: true } : {}) }])
           return {
             text: ahead.unknown > 0 ? 'Nothing drawn yet. This chapter has no storyboard yet (action=storyboard): who is in its panels, and so whose design sheets they would draw first, is not known before it.'
-              : ahead.people.length > 0 ? `Nothing drawn yet. The panels would first draw ${ahead.people.length} design sheet${ahead.people.length === 1 ? '' : 's'} — of ${ahead.people.map(person => person.name).join(', ')} — because they come back in the book and have none: ${ahead.people.length} more image call${ahead.people.length === 1 ? '' : 's'}. Ask the author; then render with sheet_first=draw, or sheet_first=skip to draw from what there is.`
+              : ahead.people.length > 0 ? `Nothing drawn yet. The panels would first draw ${ahead.people.length} design sheet${ahead.people.length === 1 ? '' : 's'} — of ${ahead.people.map(person => person.name).join(', ')} — because they come back in the book and have none: ${ahead.people.length} more image call${ahead.people.length === 1 ? '' : 's'}. ${ahead.unheld === true ? UNHELD : ''}Ask the author; then render with sheet_first=draw, or sheet_first=skip to draw from what there is.`
                 : 'Nothing drawn yet. No design sheet would be drawn first for these panels: render with sheet_first=draw.',
             data: toJson(ahead),
             record: false,

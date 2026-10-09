@@ -1683,6 +1683,11 @@ export interface IllustrationParts {
   references?: { path: string; label: string }[]
   /** What the prompt said of the reference images: who each one shows, and what they are there for. */
   referenceNote?: string
+  /**
+   * The pictures it would have been held against, left behind: the way to the model takes none, and said so before
+   * anything was drawn. The prompt does not speak of them — it has the words alone to go by.
+   */
+  left?: { path: string; label: string }[]
 }
 
 /** What went to an image service for one picture, word for word. */

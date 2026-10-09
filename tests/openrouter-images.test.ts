@@ -201,6 +201,18 @@ describe('pictures through OpenRouter', () => {
     expect(sentOf(posts[1]!)).toEqual({ aspect_ratio: '16:9', resolution: '2K', n: 1 })
   })
 
+  it('says before drawing how many reference pictures a model takes, by the listing', async () => {
+    // As many as the listing gives room for, up to what the Studio ever sends; none where the listing has no such parameter.
+    expect((await through('recraft/recraft-v4.1-pro').prompting!()).references).toBe(1)
+    expect((await through('google/gemini-3-pro-image').prompting!()).references).toBeGreaterThan(1)
+    expect(await through('blocked/by-the-account').prompting!()).toEqual({ avoidInPrompt: true, references: 0 })
+    // A model nobody listed is asked as one that takes them; so is any model while the listing cannot be had.
+    expect(await through('newcomer/unlisted-image', { promptTokens: 200 }).prompting!()).toEqual({ tokens: 200, avoidInPrompt: true })
+    forgetImageListings()
+    listingThere = false
+    expect(await through('blocked/by-the-account').prompting!()).toEqual({ avoidInPrompt: true })
+  })
+
   it('says what to do when the account\'s privacy settings leave a model no provider', async () => {
     const refusal = await through('blocked/by-the-account').generate({ prompt: 'a paper boat', size: '1280x720' }).catch((error: unknown) => error) as Error & { status?: number }
     expect(refusal.status).toBe(404)

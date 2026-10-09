@@ -882,7 +882,13 @@ export async function renderImage(core: NovelCore, runtime: ProjectRuntime, inpu
   const provider = await requireImages(core, runtime)
   const zh = promptLanguage((await project.manifest()).language) === 'zh'
   const references: { path: string; label: string; image: ImageReference }[] = []
-  const most = referencesOf((await core.settings.get()).image.references)
+  // A way to the model that takes no pictures — a server of the author's own, an endpoint with a model that draws from
+  // words — says so before anything is drawn: the prompt is then written without a word of any (it would speak of
+  // pictures that never arrive, and spend on them what little room some models have), and which ones stayed behind
+  // is kept with the picture.
+  const taken = (await provider.prompting?.(task.signal).catch(() => undefined))?.references
+  const most = Math.min(referencesOf((await core.settings.get()).image.references), taken ?? Number.POSITIVE_INFINITY)
+  const left = taken !== 0 ? [] : (input.references ?? []).filter((reference, at, all) => all.findIndex(other => other.path === reference.path) === at).map(reference => ({ path: reference.path, label: reference.label }))
   for (const reference of input.references ?? []) {
     if (references.length >= most || references.some(known => known.path === reference.path)) continue
     try {
@@ -925,6 +931,7 @@ export async function renderImage(core: NovelCore, runtime: ProjectRuntime, inpu
     ...(used.length > 0 ? { references: used.map(reference => ({ path: reference.path, label: reference.label })) } : {}),
     // Kept also where the pictures did not go — a way to the model that takes none: the prompt still spoke of them.
     ...(referenceLine !== undefined ? { referenceNote: referenceLine } : {}),
+    ...(left.length > 0 ? { left } : {}),
   }
   const info: IllustrationInfo = {
     id: newId('img'),

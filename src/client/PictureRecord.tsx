@@ -103,6 +103,8 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
   const parts = image.parts
   const sent = image.sent
   const references = parts?.references ?? []
+  // What it would have been held against, had the way to the model taken pictures: known before it was drawn, and left out of the prompt.
+  const left = parts?.left ?? []
   const card = image.kind === 'portrait' || image.kind === 'sheet' ? project.characters.find(candidate => candidate.id === image.target) : undefined
   const entry = image.kind === 'location' || image.kind === 'item' ? project.world.find(candidate => candidate.id === image.target) : undefined
   const chapter = image.kind === 'scene' ? project.chapters.find(candidate => candidate.id === image.target) ?? (project.lines ?? []).flatMap(line => line.chapters).find(candidate => candidate.id === image.target) : undefined
@@ -170,7 +172,7 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
     if (image.kind === 'portrait' && card.visual?.sheet !== undefined) {
       if (references.some(reference => reference.path === card.visual!.sheet)) standing.push({ tone: 'ok', text: t('照着现在这张人设图画的。', 'Drawn against the design sheet in use now.') })
       else if (references.length > 0) standing.push({ tone: 'warn', text: t('照着以前的一张人设图画的。', 'Drawn against an earlier design sheet.') })
-      else standing.push({ tone: 'warn', text: t('画的时候没有带人设图。', 'Drawn without a design sheet.') })
+      else standing.push({ tone: 'warn', text: left.length > 0 ? t('绘图服务不收参考图，人设图没有带上。', 'The image service takes no reference pictures: the design sheet did not go along.') : t('画的时候没有带人设图。', 'Drawn without a design sheet.') })
     }
     if (image.kind === 'sheet' && !ofLook && references.length > 0) {
       standing.push({ tone: 'info', text: t('这张人设图是照着另一张图画的，所以和那张几乎一样。现在重画只照文字。', 'This sheet was drawn against another picture, so it is nearly the same. A redraw now goes by the words alone.') })
@@ -197,6 +199,7 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
   // ── the pictures that went along ──
   const said = parts?.referenceNote
   const unsent = said !== undefined && references.length === 0
+
   const statusOf = (path: string): { label: string; tone: 'green' | 'amber' | 'neutral' } => {
     if (held.has(path)) return { label: t('现在还在用', 'In use now'), tone: 'green' }
     if (pictures.byPath.has(path)) return { label: t('旧的一张', 'An earlier one'), tone: 'amber' }
@@ -265,8 +268,10 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
                 : <figure key={reference.path} className="nv-parts-ref">{body}</figure>
             })}
           </div>
+        ) : left.length > 0 ? (
+          <p className="nv-picture-warn nv-small"><Icon name="alert" size={13} /><span>{t(`画这张图的绘图服务不收参考图：${left.map(reference => reference.label).join('、')}的图没有带，只照文字画的。`, `The image service this was drawn with takes no reference pictures: ${left.map(reference => reference.label).join(', ')} stayed behind, and it came from the words alone.`)}</span></p>
         ) : unsent ? (
-          <p className="nv-picture-warn nv-small"><Icon name="alert" size={13} /><span>{t('提示词里交代了参考图，但图没有发出去：这张图只照文字画的。', 'The prompt spoke of references, yet none were sent: this picture came from the words alone.')}</span></p>
+          <p className="nv-picture-warn nv-small"><Icon name="alert" size={13} /><span>{t('提示词里说了参考图，可绘图服务没有收图：这张图只照文字画的。', 'The prompt spoke of references, but the image service took none: this picture came from the words alone.')}</span></p>
         ) : (
           <p className="nv-muted nv-small">{image.kind === 'sheet' && !ofLook ? t('没有带参考图：人设图只照文字画。', 'No references: a design sheet is drawn from the words alone.') : t('没有带参考图：只照文字画的。', 'None: drawn from the words alone.')}</p>
         )}

@@ -57,7 +57,10 @@ export interface PromptRoom {
   tokens?: number
   /** Things to keep out travel inside the prompt (the service has no field for them), and count against the room. */
   avoidInPrompt: boolean
-  /** How many reference pictures go along at most, where that is known: `0` — none, and the prompt need not speak of any. */
+  /**
+   * How many reference pictures go along at most, where that is known before drawing: `0` — none. The prompt is then
+   * written without a word of any, and none is read off the disk for it.
+   */
   references?: number
 }
 
@@ -95,7 +98,9 @@ export function createImageProvider(settings: ImageSettings, keys: KeySource, br
   // for what to keep out, and carry it in the prompt.
   const tokens = tokensSet(settings)
   const avoidInPrompt = settings.provider === 'openrouter' || settings.provider === 'codex'
-  return Object.assign(provider, { prompting: async (): Promise<PromptRoom> => ({ ...(tokens !== undefined ? { tokens } : {}), avoidInPrompt }) })
+  // ComfyUI takes pictures through a workflow of its own for them: with none named, nothing but the words goes.
+  const none = settings.provider === 'comfyui' && (settings.editWorkflow?.trim().length ?? 0) === 0
+  return Object.assign(provider, { prompting: async (): Promise<PromptRoom> => ({ ...(tokens !== undefined ? { tokens } : {}), avoidInPrompt, ...(none ? { references: 0 } : {}) }) })
 }
 
 // ───────────────────────────── sizes ─────────────────────────────
@@ -240,7 +245,8 @@ class OpenAiImages implements ImageProvider {
   async prompting(signal?: AbortSignal): Promise<PromptRoom> {
     const local = localImages(this.settings)
     const set = tokensSet(this.settings)
-    if (!local) return { ...(set !== undefined ? { tokens: set } : {}), avoidInPrompt: true }
+    // Pictures go through the edits endpoint, which is GPT Image's: any other model on this path is sent the words alone.
+    if (!local) return { ...(set !== undefined ? { tokens: set } : {}), avoidInPrompt: true, ...(/^(gpt-image|chatgpt-image)/i.test(this.model) ? {} : { references: 0 }) }
     const base = trimBase(this.settings.baseURL?.trim() || compatibleBase('openai'))
     const listed = set === undefined ? (await ownLimits(base, this.model, await findKey(this.keys, { ref: this.settings.apiKeyRef, endpoint: base }, 'Image generation').catch(() => undefined), signal))?.promptTokens : undefined
     const tokens = set ?? listed
@@ -486,6 +492,20 @@ class OpenRouterImages implements ImageProvider {
 
   constructor(private readonly settings: ImageSettings, private readonly keys: KeySource) {
     this.model = settings.model ?? providerDefault('image', 'openrouter').model
+  }
+
+  /** The author's figure for the prompt; and how many reference pictures the model takes, by the endpoint's listing. */
+  async prompting(signal?: AbortSignal): Promise<PromptRoom> {
+    const tokens = tokensSet(this.settings)
+    const room: PromptRoom = { ...(tokens !== undefined ? { tokens } : {}), avoidInPrompt: true }
+    const base = trimBase(this.settings.baseURL?.trim() || compatibleBase('openrouter'))
+    const apiKey = await findKey(this.keys, { ref: this.settings.apiKeyRef, endpoint: base }, 'Image generation').catch(() => undefined)
+    const listed = apiKey !== undefined ? await listedTakes(base, this.model, apiKey, signal) : undefined
+    // A model the listing does not know is asked as one that takes them (`ASSUMED`).
+    if (listed === undefined) return room
+    const told = learnt.get(`${base}|${this.model}`) ?? {}
+    const takes = narrowed(listed, told)
+    return { ...room, references: takes.input_references === undefined ? 0 : Math.min(MAX_REFERENCES, takes.input_references.max ?? MAX_REFERENCES) }
   }
 
   async generate(request: ImageRequest): Promise<ImageResult> {

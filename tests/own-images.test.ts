@@ -339,7 +339,12 @@ describe('an image server of the author\'s own', () => {
     expect(await createImageProvider(own({ model: 'qwen-image-2.1-turbo-nf4' }), keys)!.prompting!()).toEqual({ tokens: 256, avoidInPrompt: true, references: 0 })
     expect(await createImageProvider(own({ model: 'qwen-image-2.1-turbo-nf4', promptTokens: 180 }), keys)!.prompting!()).toEqual({ tokens: 180, avoidInPrompt: true, references: 0 })
     expect(await createImageProvider(own({ model: 'somebody-elses-model' }), keys)!.prompting!()).toEqual({ avoidInPrompt: true, references: 0 })
-    expect(await createImageProvider(own({ local: false }), keys)!.prompting!()).toEqual({ avoidInPrompt: true })
+    // A model that is not GPT Image is sent the words alone on this path, whoever serves it: only GPT Image has the edits endpoint.
+    expect(await createImageProvider(own({ local: false }), keys)!.prompting!()).toEqual({ avoidInPrompt: true, references: 0 })
+    expect(await createImageProvider(own({ local: false, model: 'gpt-image-2' }), keys)!.prompting!()).toEqual({ avoidInPrompt: true })
+    // ComfyUI takes pictures through a workflow of its own for them, and none without.
+    expect(await createImageProvider({ provider: 'comfyui' }, keys)!.prompting!()).toEqual({ avoidInPrompt: false, references: 0 })
+    expect(await createImageProvider({ provider: 'comfyui', editWorkflow: '{"1":{}}' }, keys)!.prompting!()).toEqual({ avoidInPrompt: false })
     expect(await createImageProvider({ provider: 'dashscope', promptTokens: 300 }, keys)!.prompting!()).toEqual({ tokens: 300, avoidInPrompt: false })
     expect(await createImageProvider({ provider: 'openrouter', model: 'm' }, keys)!.prompting!()).toEqual({ avoidInPrompt: true })
 
@@ -366,6 +371,39 @@ describe('an image server of the author\'s own', () => {
       await illustrate(bed.core, bed.runtime, { kind: 'custom', prompt: '一只纸船', size: '1024x1024' }, { origin: 'user' })
       expect(asked).toHaveLength(1)
       expect(String(seen.at(-1)!.body.prompt)).toContain('Avoid: 文字、水印、现代服饰与物件')
+    } finally {
+      await bed.cleanup()
+    }
+  })
+
+  it('writes no word of reference pictures for a server that takes none, and says which stayed behind', async () => {
+    rules.listing = true
+    rules.key = undefined
+    const bed = await createTestBed({ settings: { image: { provider: 'openai', baseURL: base, model: 'qwen-image-2.1-turbo-nf4' } } })
+    try {
+      const { project } = bed.runtime
+      const { illustrate } = await import('../src/core/pipelines/illustrate')
+      const { sheetsAhead } = await import('../src/core/pipelines/comic')
+      await project.writeAsset('images/sheet-heng.png', PIXEL)
+      const heng = await project.saveCharacter({ name: '沈蘅', role: 'protagonist', appearance: '清瘦，低髻', visual: { prompt: 'slender woman, low bun, grey qipao', sheet: 'assets/images/sheet-heng.png' } })
+      // A portrait is drawn after the sheet wherever the sheet can go along. Here it cannot: the prompt has the words
+      // for her and nothing about a picture that never arrives.
+      const portrait = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: heng.id, plain: true }, { origin: 'user' })
+      const sent = String(seen.at(-1)!.body.prompt)
+      expect(sent).toContain('slender woman, low bun, grey qipao')
+      expect(sent).not.toContain('参考图')
+      expect(Object.keys(seen.at(-1)!.body).sort()).toEqual(['model', 'n', 'prompt', 'seed', 'size'])
+      expect(portrait.prompt).not.toContain('参考图')
+      expect(portrait.parts?.referenceNote).toBeUndefined()
+      expect(portrait.parts?.references).toBeUndefined()
+      expect(portrait.parts?.left).toEqual([{ path: 'assets/images/sheet-heng.png', label: '沈蘅' }])
+      // A picture nothing would have gone along with says nothing of the kind.
+      const alone = await illustrate(bed.core, bed.runtime, { kind: 'custom', prompt: '一只纸船' }, { origin: 'user' })
+      expect(alone.parts?.left).toBeUndefined()
+      // Asked before drawing: a sheet would be drawn first for somebody who has none — and this picture not held against it.
+      const tang = await project.saveCharacter({ name: '阿棠', role: 'supporting', appearance: '圆脸，两条短辫' })
+      expect(await sheetsAhead(bed.core, bed.runtime, [{ kind: 'portrait', target: tang.id }])).toEqual({ people: [{ id: tang.id, name: '阿棠' }], unknown: 0, unheld: true })
+      expect(await sheetsAhead(bed.core, bed.runtime, [{ kind: 'portrait', target: heng.id }])).toEqual({ people: [], unknown: 0 })
     } finally {
       await bed.cleanup()
     }
