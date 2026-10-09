@@ -25,7 +25,7 @@ import type {
   TtsProviderKind,
   AmbiencePreset, AudioCue, AudioLine, AudioScript, BookLock, ChapterMemory, ChapterPlan, ChapterReview, IssueSeverity, CharacterCard, CharacterRole, ComicBoard, ComicPanel, LifeMark, SheetsAsk,
   ChapterVideo, CrewRole, GateKind, GateState, IllustrationInfo, JobInfo, ModelRoute, NovelSettings, PlaySession, PlayTurn, ProjectManifest, ProjectRef, ProjectState, RecommendedState,
-  Proposal, SearchHit, SearchSource, SoundKind, StageStatus, StageStep, StoryboardDensity, StyleProfile, TextRole, TextStep, VersionInfo, WalkOn, WorkMode, WorldEntry,
+  Proposal, SearchHit, SearchSource, SoundKind, StageStatus, StageStep, StoryboardDensity, StyleProfile, TextRole, TextStep, VersionInfo, WalkOn, WorkMode, WorldEntry, HistoryKind, HistoryVersion,
 } from './types'
 
 /**
@@ -557,6 +557,19 @@ export interface NovelRpc {
    * Put a picture the book has into a chapter's text: after its `after`-th paragraph (0: before everything), after the
    * paragraph a `quote` ends in, or — neither said — at the end. Result: the chapter, and the paragraph it now follows.
    */
+  /**
+   * The versions kept of a card, an entry, a style, a chapter's plan, a thread or the book's own information — each
+   * the thing as it was until something changed it — the latest first. (A chapter's text has `chapter.version`.)
+   */
+  'history.list': { params: { root: string; kind: HistoryKind; id: string }; result: { versions: HistoryVersion[] } }
+  /** A thing as one of its versions has it, and as it is now (nothing, where it is no longer in the book). */
+  'history.read': { params: { root: string; kind: HistoryKind; id: string; version: string }; result: { was: Record<string, unknown>; now?: Record<string, unknown> } }
+  /** Put a version back — the whole of it, or the `fields` named (`tagline`, `visual.prompt`). Pictures stay as they are now. What the thing is now is kept as a version first. */
+  'history.restore': { params: { root: string; kind: HistoryKind; id: string; version: string; fields?: string[] }; result: { ok: boolean } }
+  /** Cards and entries taken out of the book that can be put back as they last were. */
+  'history.removed': { params: { root: string }; result: { removed: { kind: HistoryKind; id: string; name: string; at: string; version: string }[] } }
+  /** Throw away for good what is kept of a card or an entry that was deleted: it can no longer be had back. */
+  'history.forget': { params: { root: string; kind: HistoryKind; id: string }; result: { ok: boolean } }
   'image.place': { params: { root: string; picture: string; chapter: string; after?: number; quote?: string; alt?: string }; result: { chapter: string; after: number } }
   /** `released`: whose picture it was — the cards and entries it was taken off, by name. Absent from a Host before the picture was taken off them. */
   /** Take a picture out of the book — by the id of its record, or by its path where it has none: its file, its record, and off every card and entry that shows it (`released`: whose it was). */

@@ -216,7 +216,14 @@ const JOB_TITLES: [RegExp, Label][] = [
   [/^revise passage$/, ['修订选段', 'Revising a passage']],
   [/^revise chapter$/, ['修订整章', 'Revising the chapter']],
   [/^revise book$/, ['全书修订', 'Revising the book']],
-  [/^digest$/, ['收录记忆', 'Digesting']],
+  [/^digest( |$)/, ['收录记忆', 'Digesting']],
+  [/^recheck issues$/, ['核对审校意见', 'Checking the review again']],
+  [/^sift cast$/, ['筛新名字', 'Sifting the new names']],
+  [/^art direction$/, ['定画风', 'Setting the art direction']],
+  [/^growth /, ['读成长轨迹', 'Reading their growth']],
+  [/^signature scenes /, ['找名场面', 'Finding their scenes']],
+  [/^look /, ['写它的样子', 'Writing what it looks like']],
+  [/^import line$/, ['导入另一条故事线', 'Importing a line of the plot']],
   [/^review$/, ['审校', 'Reviewing']],
   [/^derive chapters$/, ['推演后续章节', 'Deriving chapters']],
   [/^derive beats$/, ['推演情节点', 'Deriving beats']],
@@ -358,4 +365,24 @@ export function sheetsDrawn(job: { result?: Record<string, unknown> } | undefine
   // (Where the service took no picture, the sheet that followed was not drawn against the portrait: it is not said to be.)
   if (after.length > 0) return `${left.length > 0 ? t('（补了人设图）', ' (and the design sheet)') : t('（照着它补了人设图）', ' (and the design sheet, drawn against it)')}${left}`
   return `${names.length > 0 ? t(`（先画了${names.map(name => `「${name}」`).join('、')}的人设图）`, ` (first drew the design sheet of ${names.join(', ')})`) : ''}${left}`
+}
+
+/**
+ * Why a version of a card, an entry, a plan was kept: what changed the thing after it (`Project.keep`) — the author,
+ * the showrunner, a version put back, its deletion, or a job, by the title its pipeline gave it.
+ */
+export function whyLabel(why: string, t: (zh: string, en: string) => string): string {
+  if (why === 'edit') return t('你修改之前', 'Before your edit')
+  if (why === 'agent') return t('总编修改之前', 'Before the showrunner changed it')
+  if (why === 'restore') return t('恢复旧版本之前', 'Before a version was put back')
+  if (why === 'removed') return t('删除之前', 'Before it was deleted')
+  if (why === 'job' || why.startsWith('job-')) {
+    // A title comes here with everything but its Latin words worn off: "visual anchor 沈蘅" is "visual-anchor".
+    const raw = why.slice(4)
+    const spaced = raw.replace(/-/g, ' ')
+    const known = [raw, spaced, `${spaced} `].map(title => JOB_TITLES.find(([pattern]) => pattern.test(title))?.[1]).find(label => label !== undefined)
+    const what = known !== undefined ? t(...known) : spaced
+    return what.length > 0 ? t(`"${what}"修改之前`, `Before "${what}" changed it`) : t('一项任务修改之前', 'Before a task changed it')
+  }
+  return why
 }

@@ -47,7 +47,7 @@ import { sleep } from '../core/util/async'
 import type { ContextView, CrewView, FindMatch, ModelKind, NovelRpc, RpcMethod, RpcParams, RpcResult, SettingsView, SitePlan } from '../shared/rpc'
 import { PROJECT_HOMEPAGE, type SetupPart } from '../shared/services'
 import { hashText, proseOnly } from '../shared/text'
-import { ANALYZE_STEPS, CREW_ROLES, MAIN_LINE, STAGE_STEPS, STORYBOARD_DENSITIES, TEXT_STEPS, type JobKind, type NovelSettings, type StageStep, type TextRole, type TextStep, type WorkMode } from '../shared/types'
+import { ANALYZE_STEPS, CREW_ROLES, MAIN_LINE, STAGE_STEPS, STORYBOARD_DENSITIES, TEXT_STEPS, type JobKind, type NovelSettings, type StageStep, type TextRole, type TextStep, type WorkMode, type HistoryKind } from '../shared/types'
 import { recommendedView, settleRecommended } from './recommended'
 import type { NovelService } from './service'
 
@@ -55,6 +55,12 @@ type Handlers = { [M in RpcMethod]: (params: RpcParams<M>, signal: AbortSignal) 
 
 /** What a request says about where it came from; set by the route for the time a handler runs. */
 export const calling = new AsyncLocalStorage<{ session?: string }>()
+
+/** What a history is kept of, as a request names it. */
+function historyKind(value: unknown): HistoryKind {
+  if (value === 'character' || value === 'world' || value === 'style' || value === 'plan' || value === 'thread' || value === 'book') return value
+  throw new ProjectError('novel/invalid', 'a history is kept of: character, world, style, plan, thread, book')
+}
 
 function requireString(value: unknown, name: string): string {
   if (typeof value !== 'string' || value.trim().length === 0) throw new ProjectError('novel/bad-request', `"${name}" is required`)
@@ -801,6 +807,26 @@ export function createHandlers(service: NovelService): Handlers {
     'image.sheetsFirst': async ({ root, asks }) => await sheetsAhead(core, await open(root), Array.isArray(asks) ? asks : []),
     // Every picture of the book, the newest first: those on record and the panels of its storyboards alike.
     'image.list': async ({ root }) => ({ images: (await (await open(root)).project.pictures()).reverse() }),
+    // ── history: how a thing was before it was changed ──
+    'history.list': async ({ root, kind, id }) => ({ versions: await (await open(root)).project.history(historyKind(kind), requireString(id, 'id')) }),
+    'history.read': async ({ root, kind, id, version }) => {
+      const { project } = await open(root)
+      const which = historyKind(kind)
+      const was = await project.historyOf(which, requireString(id, 'id'), requireString(version, 'version'))
+      if (was === undefined) throw new ProjectError('novel/not-found', `no version "${version}" of ${which} "${id}"`)
+      const now = await project.current(which, id)
+      return { was, ...(now !== undefined ? { now } : {}) }
+    },
+    'history.restore': async ({ root, kind, id, version, fields }) => {
+      const { project } = await open(root)
+      await project.restoreHistory(historyKind(kind), requireString(id, 'id'), requireString(version, 'version'), Array.isArray(fields) ? fields.filter((field): field is string => typeof field === 'string' && field.length > 0) : undefined)
+      return { ok: true }
+    },
+    'history.removed': async ({ root }) => ({ removed: await (await open(root)).project.removedCards() }),
+    'history.forget': async ({ root, kind, id }) => {
+      await (await open(root)).project.forgetRemoved(historyKind(kind), requireString(id, 'id'))
+      return { ok: true }
+    },
     'image.place': async ({ root, picture, chapter, after, quote, alt }) => {
       const runtime = await open(root)
       const placed = await runtime.project.placePicture(requireString(chapter, 'chapter'), requireString(picture, 'picture'), {

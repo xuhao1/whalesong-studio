@@ -134,6 +134,17 @@ Retrieval is hybrid: BM25 over CJK bigrams and Latin words, optional embeddings,
 
 Shared rules: changes are **proposals** with a diff (revisions started in the Studio always; the showrunner's apply directly unless you ask to review them); the previous text is **snapshotted** before anything applies; a passage proposal goes **stale** when its target text has since changed — better that than pasting a rewrite in the wrong place; mutating tools **ask first** in read-only sessions.
 
+### What was changed is kept: versions of everything written
+
+A chapter's text always had versions; a character card, an entry of the bible, a style, a chapter's plan, a thread, the book's own info had none — the showrunner changed a card, the director rewrote an anchor, a field was cleared by a slip, and how it was before was gone. They now keep versions one way:
+
+- **A version is the thing before a change**, named by when and by what changed it: the author, the showrunner, a job by its name ("before *Distilling the visual anchor* changed it"), a version put back, a deletion. One is kept only when what the thing *says* changes — not for a picture, not for what the Studio keeps by itself (first and last appearance, where a chapter stands), not for a save that changes nothing.
+- **A sitting of the author's own edits keeps one**: the thing as it was before the sitting, not one for every press of Save. What somebody else — the showrunner, a job — made of it in between is kept all the same.
+- **Pictures are no part of it.** A picture stays for as long as nobody deletes it; a version put back leaves the card with the pictures it has now. A version is about words.
+- **What is shown is the difference, and one field can be put back alone.** *History* lists the versions; beside them, every field in which the one chosen differs from the thing as it is now, as a diff — the whole version goes back, or one field of it. What the thing was until then is kept first, so putting back can be undone.
+- **What was deleted can be had back.** A card, an entry, a style is kept as it last was when it is deleted; *Deleted…* at the foot of its list restores it — or removes it for good.
+- **One control, the same everywhere** it applies: people, entries, styles, the art direction, a chapter's plan, threads, the book's info — and the showrunner reads the same record (`novel_manage action=history / restore_history`).
+
 **Import** is digest run backwards: split chapters → digest each → merge character moments into cards and entities into world entries → rebuild the outline and threads from the summaries → learn the style. It reuses the everyday memory pipeline, so an imported book is indistinguishable from one written here.
 
 ## 5. How it is seen and handled

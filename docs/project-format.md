@@ -200,7 +200,8 @@ Word counts, audio scripts and exports ignore image lines.
 |---|---|
 | `memory/<chapter>.json` | the digest of a chapter: brief, summary, story time, locations, facts, character moments (each with the card it is of, or the name where nobody is on file; `by` says who settled that card as the chapter was read — `story`: somebody of the chapter's own story, `over`: somebody of another story the digest was asked about and said had come over. A note without `by` is of an older digest: its id holds only within the stories that card is of), new entities (each, in a book of several lines, with the `scope` the digest gave it: `line` — of that story alone, `world` — of the world the lines share), the moments somebody would be remembered by (`scenes`: whose, what it is called, the moment as a picture, a weight of 1–3 — what a card's signature scenes are put together from), thread movements, open questions, and the hash of the text it was taken from |
 | `memory/arcs.json` | arc summaries (one per ten chapters) |
-| `versions/<chapter>/<timestamp>__<reason>.md` | snapshots taken before a draft, revision, restore or edit sitting (40 kept per chapter) |
+| `versions/<chapter>/<timestamp>__<reason>.md` | snapshots of a chapter's text taken before a draft, revision, restore or edit sitting (400 kept per chapter) |
+| `history/<kind>/<id>/<timestamp>__<why>.md` · `.json` | the versions of everything else that is written: `character`, `world` and `style` cards (the card's file as it was, `.md`), a chapter's `plan` and a `thread` of the outline, and the `book`'s own info (`history/book/novel/`, the manifest as it was) as `.json`. A version is the thing as it was *before* a change, named by when it was changed and by what: `edit` (the author, on the panel — one a sitting: none is kept while the latest is an `edit` less than five minutes old), `agent` (a tool call of the showrunner), `job-<title>` (a job of the Studio, by its title as far as a file name keeps it: `job-visual-anchor`), `restore` (a version was put back), `removed` (the card was deleted — its last version is what brings it back). One is kept only when what the thing *says* changes: not for its pictures (`visual.portrait`, `visual.sheet`, `visualImage`, `cover`… — a picture stays until somebody deletes it, and a version put back leaves the pictures as they are now), not for what the Studio keeps by itself (`firstAppearance`, `lastAppearance`, a plan's `status`), not for `updatedAt`. 400 kept per thing |
 | `proposals.json` | revision proposals and their status |
 | `suggestions.json` | bible and thread suggestions left by digest |
 | `reviews/<chapter>.json` | the latest editorial review |
@@ -216,7 +217,7 @@ Word counts, audio scripts and exports ignore image lines.
 | `graph.json` | where the author moved people to on the picture of who is what to whom: a person's id to `{x, y}` in the units of its layout; whoever is not in it stands where the layout puts them |
 | `index/` | the search index and embedding cache — rebuildable, safe to delete |
 
-`.novel/` is safe to commit except `index/`, which is better ignored. Deleting `.novel/memory` loses nothing that cannot be recomputed with a digest; deleting `versions/` loses your undo history.
+`.novel/` is safe to commit except `index/`, which is better ignored. Deleting `.novel/memory` loses nothing that cannot be recomputed with a digest; deleting `versions/` or `history/` loses your undo history.
 
 ## A sealed book
 

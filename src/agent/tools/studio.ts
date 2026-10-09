@@ -23,8 +23,12 @@ import { describeRow, rangeStart, summarize, type UsageRange } from '../../core/
 import type { NovelService } from '../../host/service'
 import { hostOf, PROJECT_HOMEPAGE, SERVICES, type ServiceId, type SetupPart } from '../../shared/services'
 import { FFMPEG_INSTALL } from '../../shared/text'
-import type { AmbiencePreset, CameraMove, IllustrationInfo, IllustrationPiece, ModelRoute, NovelSettings, ProjectManifest, SoundKind, TextRole } from '../../shared/types'
+import type { AmbiencePreset, CameraMove, HistoryKind, IllustrationInfo, IllustrationPiece, ModelRoute, NovelSettings, ProjectManifest, SoundKind, TextRole } from '../../shared/types'
+import { changedFields, sayValue } from '../../shared/history'
 import { brief, listOf, listParameter, novelTool, toJson } from './shared'
+
+/** What a history is kept of, as the showrunner names it. */
+const HISTORY_KINDS: readonly HistoryKind[] = ['character', 'world', 'style', 'plan', 'thread', 'book']
 
 /** What each part of a picture's subject is, said for the showrunner. */
 const PIECE_NAMES: Record<IllustrationPiece['of'], string> = {
@@ -368,13 +372,15 @@ export function studioTools(service: NovelService) {
         '- action=edit_panel: change panel `id` of the storyboard of `chapter` — `fields` {prompt, description, camera}. action=delete_panel: take panel `id` out (its lines go to the panel before it). action=delete_storyboard: throw the whole storyboard of `chapter` away — its pictures stay in the gallery (delete_image removes one).',
         '- action=audition: speak `text` so the author can hear a voice — `voice` (a voice id or description), or `character` to hear that character as their lines will sound; neither = the narrator (`direction` optional).',
         '- action=list_images / delete_image (`id`). action=show_image (`id`: a picture\'s id or its path): everything on record of how that picture was made — the parts its prompt was put together from, in the order sent (what kind of picture, the visual anchor or look restated, what was asked of this one, what the references are for, the art direction, what was kept out), which pictures went along as references, and the words the image model was sent. When the author asks why a picture came out as it did, read this before anything else: the answer is a word in the anchor, a reference picture, the art direction — or none of them.',
+        '- action=history: how a card, an entry of the bible, a style, a chapter\'s plan, a thread or the book\'s own info was before it was changed — `fields` {kind: character|world|style|plan|thread|book, of: its name or id (a chapter for plan; nothing for book)}. A version is kept each time what the thing says is about to change, named by when and by what changed it (the author, you, a job, a restore, its deletion). With `version`: the fields in which that version and the thing as it is now differ, both sides. Without `fields`: the cards and entries that were deleted and can be had back. Pictures are no part of a version — a picture stays until somebody deletes it. (A chapter\'s text has versions of its own: novel_read what=versions.)',
+        '- action=restore_history: put `version` of that thing back — `fields` {kind, of, only: [field paths, as action=history names them — "tagline", "visual.prompt"]}; without `only`, the whole version. A card that was deleted comes back as it last was. What the thing was until then is itself kept as a version, so this can be undone; its pictures stay as they are now. Say what you put back.',
         '- action=rewind_interlude / keep_interlude (as a side story) / delete_interlude (`session`).',
         '- action=lock_book: lock the book in play (or `book`) when it is sealed — its key is forgotten, and it cannot be read by anyone, you included, until the author unlocks it in the Studio. You cannot unlock a book, seal one or take a seal off: those are done by the author on the Studio\'s screens, where the password is typed.',
         '- action=delete_book: take the book in play (or `book`) off the shelf. Its own files — manuscript, bible, outline, pictures, audio — are moved to the system trash, where the author can put them back; anything else in its folder stays. Only when the author asked for exactly this; they are asked to confirm.',
       ].join('\n'),
-      mutating: args => args.action !== 'find' && args.action !== 'list_images' && args.action !== 'show_image' && args.action !== 'walkons',
+      mutating: args => args.action !== 'find' && args.action !== 'list_images' && args.action !== 'show_image' && args.action !== 'walkons' && args.action !== 'history',
       parameters: {
-        action: { type: 'string', required: true, enum: ['find', 'restore_version', 'resolve_issue', 'delete_review', 'edit_line', 'delete_line', 'delete_script', 'edit_cue', 'add_cue', 'delete_cue', 'edit_panel', 'delete_panel', 'delete_storyboard', 'walkons', 'sift_walkons', 'settle_walkon', 'audition', 'list_images', 'show_image', 'delete_image', 'rewind_interlude', 'keep_interlude', 'delete_interlude', 'lock_book', 'delete_book'] },
+        action: { type: 'string', required: true, enum: ['find', 'restore_version', 'resolve_issue', 'delete_review', 'edit_line', 'delete_line', 'delete_script', 'edit_cue', 'add_cue', 'delete_cue', 'edit_panel', 'delete_panel', 'delete_storyboard', 'walkons', 'sift_walkons', 'settle_walkon', 'audition', 'list_images', 'show_image', 'delete_image', 'history', 'restore_history', 'rewind_interlude', 'keep_interlude', 'delete_interlude', 'lock_book', 'delete_book'] },
         chapter: { type: 'string' },
         id: { type: 'string', description: 'Line, cue, panel or image id (show_image also takes the picture\'s path).' },
         name: { type: 'string', description: 'settle_walkon: the name as the page writes it.' },
@@ -578,6 +584,44 @@ export function studioTools(service: NovelService) {
             const image = (await project.illustrations()).find(item => item.id === wanted || item.path === wanted)
             if (image === undefined) throw new ProjectError('novel/not-found', `no picture has the id or the path "${wanted}" — action=list_images lists them`)
             return { text: pictureRecord(image), data: toJson(image), record: false }
+          }
+          case 'history':
+          case 'restore_history': {
+            const removed = await project.removedCards()
+            if (args.action === 'history' && fields.kind === undefined) {
+              if (removed.length === 0) return { text: 'Nothing that was deleted is waiting to be had back. To see the versions of something: fields {kind, of}.', record: false }
+              return { text: `Deleted, and to be had back as they last were (action=restore_history fields={kind, of} version=<version>):\n${removed.map(item => `- ${item.kind} "${item.name}" (${item.id}), deleted ${item.at} — version ${item.version}`).join('\n')}`, data: toJson(removed), record: false }
+            }
+            const kind = HISTORY_KINDS.find(item => item === fields.kind)
+            if (kind === undefined) throw new ProjectError('novel/invalid', `fields.kind is one of: ${HISTORY_KINDS.join(', ')}`)
+            const of = text('of')?.trim() ?? ''
+            if (kind !== 'book' && of.length === 0) throw new ProjectError('novel/invalid', 'fields.of: the name or the id of the thing')
+            // The thing by the name the author knows it by — one that is gone, by the name it had.
+            const gone = removed.find(item => item.kind === kind && (item.id === of || item.name === of))?.id
+            const id = kind === 'book' ? 'novel'
+              : kind === 'character' ? (await project.findCharacter(of))?.id ?? gone ?? of
+                : kind === 'world' ? (await project.findWorld(of))?.id ?? gone ?? of
+                  : kind === 'style' ? (await project.findStyle(of))?.id ?? gone ?? of
+                    : kind === 'plan' ? (await project.findChapter(of))?.plan.id ?? of
+                      : (await project.outline()).threads.find(thread => thread.id === of || thread.title === of)?.id ?? of
+            const versions = await project.history(kind, id)
+            if (versions.length === 0) return { text: `No version is kept of ${kind} "${of || id}": nothing it says was changed since versions began to be kept (or no such thing is known — check the name).`, record: false }
+            if (args.action === 'history' && args.version === undefined) {
+              return { text: `Versions of ${kind} "${of || id}", the latest first — each is the thing as it was until then, named by what changed it after:\n${versions.map(item => `- ${item.id} — ${item.at}, before ${item.why === 'edit' ? 'an edit by the author' : item.why === 'agent' ? 'a change you made' : item.why === 'restore' ? 'a version was put back' : item.why === 'removed' ? 'it was deleted' : `the job "${item.why.replace(/^job-/, '').replace(/-/g, ' ')}" changed it`}`).join('\n')}\nWhat one of them differs in from now: the same call with version=<id>.`, data: toJson(versions), record: false }
+            }
+            const version = need(args.version, 'version')
+            const was = await project.historyOf(kind, id, version)
+            if (was === undefined) throw new ProjectError('novel/not-found', `no version "${version}" of ${kind} "${of || id}" — action=history lists them`)
+            const now = await project.current(kind, id)
+            if (args.action === 'history') {
+              const differing = changedFields(kind, was, now)
+              if (differing.length === 0) return { text: 'That version says what the thing says now.', record: false }
+              const clipped = (value: unknown): string => { const said = sayValue(value).replace(/\n+/g, ' / '); return said.length > 600 ? `${said.slice(0, 600)}…` : said.length > 0 ? said : '(nothing)' }
+              return { text: `${now === undefined ? 'The thing is no longer in the book; the version says:' : 'Fields in which the version and the thing as it is now differ:'}\n${differing.map(field => `- ${field.path}\n  then: ${clipped(field.was)}${now === undefined ? '' : `\n  now: ${clipped(field.now)}`}`).join('\n')}\nTo put it back: action=restore_history (the whole version, or fields.only=[paths]).`, data: toJson(differing), record: false }
+            }
+            const only = Array.isArray(fields.only) ? fields.only.filter((item): item is string => typeof item === 'string' && item.length > 0) : undefined
+            await project.restoreHistory(kind, id, version, only)
+            return { text: `${only !== undefined && only.length > 0 ? `Put back in ${kind} "${of || id}": ${only.join(', ')}` : now === undefined ? `${kind} "${of || id}" is back in the book as it last was` : `${kind} "${of || id}" is as that version had it`}. Its pictures are those it has now; what it was until this moment is kept as a version too. Tell the author what was put back.` }
           }
           case 'delete_image': {
             const released = await project.removeIllustration(need(args.id, 'id'))

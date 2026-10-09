@@ -20,7 +20,7 @@ import { basename, join } from 'node:path'
 import {
   analysisSteps, type AnalyzeStep,
   belongsTo, castOrder, chapterBudgetOf, MAIN_LINE,
-  type ActivityEntry, type BookShows, type CharacterLook, type CharacterMoment, type LifeMark, type ShowCount,
+  type ActivityEntry, type BookShows, type HistoryKind, type HistoryVersion, type Timestamp, type CharacterLook, type CharacterMoment, type LifeMark, type ShowCount,
   type AudioScript, type CastPresence, type ChapterInfo, type ChapterMemory, type ChapterPlan, type ChapterReview, type ChapterStatus, type CharacterCard,
   type ComicBoard, type ComicPanel, type IllustrationInfo, type Outline, type PlaySession, type PlotLine, type PlotLineInfo, type PlotLineOrigin, type PlotThread, type ProjectManifest, type ProjectState, type ProjectStats, type Proposal, type RemovedChapter,
   type StyleProfile, type Suggestion, type ThreadTouch, type VersionInfo, type VoiceCast, type Volume, type WorldEntry,
@@ -35,6 +35,8 @@ import {
   containedPath, ensureDir, exists, listDir, mtimeOf, readJson, readText, relativePosix, removePath, writeAtomic, writeJson,
 } from './util/fs'
 import { parseFrontMatter, renderFrontMatter } from './util/frontmatter'
+import { changedBy, changing } from './cause'
+import { getAt, isRecord, said, unversioned } from '../shared/history'
 import { PlainFiles, readStub, SealedFiles, type FileStore } from './util/vault'
 
 export const MANIFEST_FILE = 'novel.json'
@@ -110,6 +112,48 @@ export interface ChapterPlace {
 
 /** History that is kept for looking back, not for working from: bounded so that a book worked on for years stays quick to open. */
 const ACTIVITY_KEPT = 5000
+/** Versions that are kept of a chapter's text, and of any one card, entry or plan: enough that nobody meets the end of them while writing a book. */
+const VERSIONS_KEPT = 400
+/** The author's own saves of a card are kept as versions at most this often: the version before a sitting, not one a press. */
+const EDIT_WINDOW_MS = 5 * 60_000
+
+/** When a version's file says it was made (`2026-10-10T07-10-00-000Z`), as a time. */
+const isoOf = (stamp: string): string => stamp.replace(/^(\d{4}-\d{2}-\d{2}T\d{2})-(\d{2})-(\d{2})-(\d{3}Z)$/, '$1:$2:$3.$4')
+
+/** Put something at a path of a thing, making the way there; nothing put there takes what was there away. */
+function setAt(value: Record<string, unknown>, path: string, put: unknown): void {
+  const keys = path.split('.')
+  let at = value
+  for (const key of keys.slice(0, -1)) {
+    if (!isRecord(at[key])) {
+      if (put === undefined) return
+      at[key] = {}
+    }
+    at = at[key] as Record<string, unknown>
+  }
+  const last = keys.at(-1)!
+  if (put === undefined) delete at[last]
+  else at[last] = structuredClone(put)
+}
+
+/** A field of `next` that a version is not about, made what it is in `now`: by the same element of a list where the field lies in one (told by its id, else by its place). */
+function carry(now: Record<string, unknown>, next: Record<string, unknown>, path: string): void {
+  if (!path.includes('[].')) {
+    setAt(next, path, getAt(now, path))
+    return
+  }
+  const [head, ...rest] = path.split('[].')
+  const [mine, theirs] = [getAt(next, head!), getAt(now, head!)]
+  if (!Array.isArray(mine)) return
+  const tail = rest.join('[].')
+  mine.forEach((item, index) => {
+    if (!isRecord(item)) return
+    const same = Array.isArray(theirs) ? (theirs.find(other => isRecord(other) && other.id !== undefined && other.id === item.id) ?? (item.id === undefined ? theirs[index] : undefined)) : undefined
+    // An element the thing no longer has keeps the picture its version names: it may well still be there.
+    if (isRecord(same)) carry(same, item, tail)
+  })
+}
+
 const SETTLED_PROPOSALS_KEPT = 500
 
 export class ProjectError extends Error {
@@ -414,11 +458,12 @@ export class Project {
     })
   }
 
-  async updateManifest(patch: Partial<ProjectManifest>): Promise<ProjectManifest> {
+  async updateManifest(patch: Partial<ProjectManifest>, options: { /** A field named as nothing is taken away (a version put back whole), not left as it is. */ exact?: boolean } = {}): Promise<ProjectManifest> {
     const path = this.path(MANIFEST_FILE)
     return await this.mutex.run(path, async () => {
       const current = await this.manifest()
       const next: ProjectManifest = { ...current, ...stripUndefined(patch), schema: 1, id: current.id, createdAt: current.createdAt, updatedAt: new Date().toISOString() }
+      if (options.exact === true) for (const [key, value] of Object.entries(patch)) if (value === undefined) delete (next as unknown as Record<string, unknown>)[key]
       // The recommended chapter length has one home. Whoever still names the old one means the new; nothing, or zero, takes the recommendation away.
       if ('chapterBudget' in patch || 'chapterWords' in patch) {
         const wanted = (patch.chapterBudget ?? patch.chapterWords) as number | null | undefined
@@ -428,6 +473,8 @@ export class Project {
       }
       // A cover named as nothing is no cover named: the latest one drawn stands in again.
       if (typeof next.cover === 'string' && next.cover.trim().length === 0) delete next.cover
+      // The book as it was said to be, before this: kept, where what it says has changed.
+      if (said('book', current as unknown as Record<string, unknown>) !== said('book', next as unknown as Record<string, unknown>)) await this.keep('book', 'novel', `${JSON.stringify(current, null, 2)}\n`, 'json')
       await this.writeDoc(path, next)
       return next
     })
@@ -454,7 +501,175 @@ export class Project {
   }
 
   private async saveCard(dir: string, id: string, data: object, body: string | undefined): Promise<void> {
-    await this.write(this.path('bible', dir, `${id}.md`), renderFrontMatter(data, body))
+    const path = this.path('bible', dir, `${id}.md`)
+    const next = renderFrontMatter(data, body)
+    // As it was, before this: kept, where what it says has changed.
+    const kind = dir === 'characters' ? 'character' as const : dir === 'world' ? 'world' as const : dir === 'styles' ? 'style' as const : undefined
+    const before = kind !== undefined ? await this.files.readText(path) : undefined
+    if (kind !== undefined && before !== undefined && before !== null) {
+      const was = parseFrontMatter<Record<string, unknown>>(before)
+      if (said(kind, { ...was.data, notes: was.body }) !== said(kind, { ...data, notes: body ?? '' })) await this.keep(kind, id, before, 'md')
+    }
+    await this.write(path, next)
+  }
+
+  // ───────────── history: how a thing was before it was changed ─────────────
+
+  /** Whatever `work` changes in the book is on record as changed for this reason ({@link changedBy}). */
+  async because<T>(why: string, work: () => Promise<T>): Promise<T> {
+    return await changedBy(why, work)
+  }
+
+  /**
+   * Keep a thing as it was before a change. A version is the thing *before* something changed it, named by when and
+   * why it was changed. The author's own saves are kept at most once in a few minutes — the version before a sitting
+   * of edits is the one to go back to, not one for every press of Save; whatever else changes a thing is kept each time.
+   */
+  private async keep(kind: HistoryKind, id: string, before: string, ext: 'md' | 'json'): Promise<void> {
+    const why = (changing() ?? 'edit').replace(/[^\w-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'edit'
+    const dir = this.statePath('history', kind, id)
+    if (why === 'edit') {
+      // Only while the latest version is itself one of theirs: what somebody else made of the thing in between is kept.
+      const last = (await this.files.listDir(dir)).filter(name => /\.(md|json)$/.test(name)).sort().at(-1)
+      const at = last?.includes('__edit.') === true ? Date.parse(isoOf(last.slice(0, last.indexOf('__')))) : Number.NaN
+      if (Number.isFinite(at) && Date.now() - at < EDIT_WINDOW_MS) return
+    }
+    const path = join(dir, `${new Date().toISOString().replace(/[:.]/g, '-')}__${why}.${ext}`)
+    await this.own(path, async () => { await this.files.writeAtomic(path, before) })
+    const all = (await this.files.listDir(dir)).filter(name => /\.(md|json)$/.test(name)).sort()
+    for (const name of all.slice(0, Math.max(0, all.length - VERSIONS_KEPT))) await this.files.removePath(join(dir, name))
+  }
+
+  /** A card as it last was, kept as it is taken out of the book: what was deleted can be had back. */
+  private async keepRemoved(kind: HistoryKind, dir: string, id: string): Promise<void> {
+    const text = await this.files.readText(this.path('bible', dir, `${id}.md`))
+    if (text !== undefined && text !== null) await this.because('removed', async () => { await this.keep(kind, id, text, 'md') })
+  }
+
+  /** Cards and entries that were taken out of the book and are not in it now, the latest first: each can be put back from its last version. */
+  async removedCards(): Promise<{ kind: HistoryKind; id: string; name: string; at: Timestamp; version: string }[]> {
+    const out: { kind: HistoryKind; id: string; name: string; at: Timestamp; version: string }[] = []
+    for (const [kind, dir] of [['character', 'characters'], ['world', 'world'], ['style', 'styles']] as const) {
+      const here = new Set((await this.files.listDir(this.path('bible', dir)).catch(() => [] as string[])).map(name => name.replace(/\.md$/, '')))
+      for (const id of await this.files.listDir(this.statePath('history', kind)).catch(() => [] as string[])) {
+        if (here.has(id)) continue
+        const last = (await this.history(kind, id))[0]
+        if (last === undefined || last.why !== 'removed') continue
+        const was = await this.historyOf(kind, id, last.id)
+        out.push({ kind, id, name: typeof was?.name === 'string' ? was.name : id, at: last.at, version: last.id })
+      }
+    }
+    return out.sort((left, right) => right.at.localeCompare(left.at))
+  }
+
+  /**
+   * Throw the versions of a card or an entry away for good — one that is no longer in the book: it leaves the list
+   * of what can be had back. (What is in the book keeps its history; that is what a history is for.)
+   * @throws ProjectError `novel/invalid` for a thing that is in the book.
+   */
+  async forgetRemoved(kind: HistoryKind, id: string): Promise<void> {
+    if (!/^[^/\\\0]+$/.test(id) || id === '.' || id === '..') throw new ProjectError('novel/invalid', `"${id}" names nothing a history is kept of`)
+    if (await this.current(kind, id) !== undefined) throw new ProjectError('novel/invalid', `${kind} "${id}" is in the book: its history stays with it`)
+    const dir = this.statePath('history', kind, id)
+    for (const name of await this.files.listDir(dir)) await this.files.removePath(join(dir, name))
+    await this.files.removePath(dir)
+  }
+
+  /** The versions kept of a thing, the latest first: each is the thing as it was until then. */
+  async history(kind: HistoryKind, id: string): Promise<HistoryVersion[]> {
+    if (!/^[^/\\\0]+$/.test(id) || id === '.' || id === '..') return []
+    const names = (await this.files.listDir(this.statePath('history', kind, id)).catch(() => [] as string[])).filter(name => /\.(md|json)$/.test(name)).sort()
+    return names.reverse().map((name) => {
+      const stem = name.replace(/\.(md|json)$/, '')
+      const [stamp, why] = stem.split('__')
+      return { id: stem, kind, of: id, at: isoOf(stamp ?? ''), why: why ?? 'edit' }
+    })
+  }
+
+  /** A thing as it is now, read the way one of its versions is read; nothing where it is no longer in the book. */
+  async current(kind: HistoryKind, id: string): Promise<Record<string, unknown> | undefined> {
+    // By its id alone: a card that is gone is not the one that now bears its name.
+    if (kind === 'character') return (await this.characters()).find(card => card.id === id) as unknown as Record<string, unknown> | undefined
+    if (kind === 'world') return (await this.world()).find(entry => entry.id === id) as unknown as Record<string, unknown> | undefined
+    if (kind === 'style') return (await this.styles()).find(style => style.id === id) as unknown as Record<string, unknown> | undefined
+    if (kind === 'book') return await this.manifest() as unknown as Record<string, unknown>
+    const outline = await this.outline()
+    if (kind === 'thread') return outline.threads.find(thread => thread.id === id) as unknown as Record<string, unknown> | undefined
+    return holders(outline).flatMap(holder => holder.chapters).find(plan => plan.id === id) as unknown as Record<string, unknown> | undefined
+  }
+
+  /** A thing as one of its versions has it — read the way the thing itself is read. Nothing for a version that is not there. */
+  async historyOf(kind: HistoryKind, id: string, version: string): Promise<Record<string, unknown> | undefined> {
+    if (!/^[\w.-]+$/.test(version) || !/^[^/\\\0]+$/.test(id) || id === '..') return undefined
+    const dir = this.statePath('history', kind, id)
+    const card = await this.files.readText(join(dir, `${version}.md`))
+    if (card !== undefined && card !== null) {
+      const { data, body } = parseFrontMatter<Record<string, unknown>>(card)
+      return { ...data, id, ...(body.length > 0 ? { [kind === 'character' ? 'notes' : 'body']: body } : {}) }
+    }
+    const doc = await this.files.readJson<Record<string, unknown>>(join(dir, `${version}.json`))
+    return doc ?? undefined
+  }
+
+  /**
+   * Put a version back: the whole of it, or the fields named. What the thing is now is kept first (as changed by
+   * `restore`), so that putting a version back can itself be undone. Pictures are no part of it: a card put back
+   * keeps the pictures it has now — those are kept for as long as nobody deletes them, and are another matter.
+   * @param fields - only these, by their path (`tagline`, `visual.prompt`); left out, everything.
+   * @throws ProjectError `novel/not-found` where the thing or the version is not there.
+   */
+  async restoreHistory(kind: HistoryKind, id: string, version: string, fields?: readonly string[]): Promise<void> {
+    const old = await this.historyOf(kind, id, version)
+    if (old === undefined) throw new ProjectError('novel/not-found', `no version "${version}" of ${kind} "${id}"`)
+    const some = fields !== undefined && fields.length > 0 ? fields : undefined
+    /** The thing as it is now, with what the version has in the fields asked for — and the pictures of now. */
+    const mixed = (now: Record<string, unknown>): Record<string, unknown> => {
+      const next = some === undefined ? structuredClone(old) : structuredClone(now)
+      if (some !== undefined) for (const field of some) setAt(next, field, getAt(old, field))
+      for (const path of unversioned(kind)) carry(now, next, path)
+      return next
+    }
+    await this.because('restore', async () => {
+      if (kind === 'character' || kind === 'world' || kind === 'style') {
+        const dir = kind === 'character' ? 'characters' : kind === 'world' ? 'world' : 'styles'
+        await this.mutex.run(dir, async () => {
+          const path = this.path('bible', dir, `${id}.md`)
+          const text = await this.files.readText(path)
+          // Gone since: the version is the thing again (a card that was deleted comes back as it last was).
+          const now = text !== undefined && text !== null ? parseFrontMatter<Record<string, unknown>>(text) : { data: {} as Record<string, unknown>, body: '' }
+          // The text below the front matter, by the name the thing has for it.
+          const key = kind === 'character' ? 'notes' : 'body'
+          const { [key]: body, ...data } = mixed({ ...now.data, id, [key]: now.body }) as Record<string, unknown>
+          await this.saveCard(dir, id, { ...data, id, updatedAt: new Date().toISOString() }, typeof body === 'string' ? body : undefined)
+        })
+        return
+      }
+      if (kind === 'book') {
+        const now = await this.manifest() as unknown as Record<string, unknown>
+        const { id: _id, schema: _schema, createdAt: _created, updatedAt: _updated, ...patch } = mixed(now)
+        // What the version does not have is taken away, where everything is put back.
+        if (some === undefined) for (const key of Object.keys(now)) if (!(key in patch) && !['id', 'schema', 'createdAt', 'updatedAt', 'cover'].includes(key)) (patch as Record<string, unknown>)[key] = undefined
+        await this.updateManifest(patch as Partial<ProjectManifest>, { exact: true })
+        return
+      }
+      await this.updateOutline((draft) => {
+        if (kind === 'thread') {
+          const at = draft.threads.findIndex(thread => thread.id === id)
+          if (at < 0) throw new ProjectError('novel/not-found', `no thread "${id}"`)
+          draft.threads[at] = { ...mixed(draft.threads[at] as unknown as Record<string, unknown>), id } as unknown as PlotThread
+          return
+        }
+        for (const holder of holders(draft)) {
+          const at = holder.chapters.findIndex(plan => plan.id === id)
+          if (at < 0) continue
+          const now = holder.chapters[at]!
+          // Where the chapter stands — written, digested — is what its text is now, not what its plan once said.
+          holder.chapters[at] = { ...mixed(now as unknown as Record<string, unknown>), id, status: now.status } as unknown as ChapterPlan
+          return
+        }
+        throw new ProjectError('novel/not-found', `no chapter "${id}"`)
+      })
+    })
   }
 
   private async uniqueId(dir: string, name: string, fallback: string): Promise<string> {
@@ -586,6 +801,7 @@ export class Project {
   async deleteCharacter(ref: string): Promise<boolean> {
     const card = await this.findCharacter(ref)
     if (card === undefined) return false
+    await this.keepRemoved('character', 'characters', card.id)
     await this.remove(this.path('bible', 'characters', `${card.id}.md`))
     await this.dropTiesOf({ type: 'character', id: card.id })
     return true
@@ -714,6 +930,7 @@ export class Project {
   async deleteWorld(ref: string): Promise<boolean> {
     const entry = await this.findWorld(ref)
     if (entry === undefined) return false
+    await this.keepRemoved('world', 'world', entry.id)
     await this.remove(this.path('bible', 'world', `${entry.id}.md`))
     await this.dropTiesOf({ type: 'world', id: entry.id })
     return true
@@ -848,6 +1065,7 @@ export class Project {
   async deleteStyle(ref: string): Promise<boolean> {
     const style = await this.findStyle(ref)
     if (style === undefined) return false
+    await this.keepRemoved('style', 'styles', style.id)
     await this.remove(this.path('bible', 'styles', `${style.id}.md`))
     return true
   }
@@ -866,9 +1084,22 @@ export class Project {
   async updateOutline(mutate: (draft: Outline) => void | Promise<void>): Promise<Outline> {
     const path = this.path(OUTLINE_FILE)
     return await this.mutex.run(path, async () => {
-      const draft = structuredClone(await this.outline())
+      const current = await this.outline()
+      const draft = structuredClone(current)
       await mutate(draft)
       const next = normalizeOutline(draft)
+      // Every chapter's plan and every thread as it was, where this changed what it says: kept one by one — a plan has
+      // a history of its own, and the outline of a long book is not copied whole for a word changed in one chapter.
+      const plansNow = new Map(holders(next).flatMap(holder => holder.chapters).map(plan => [plan.id, plan]))
+      for (const plan of holders(current).flatMap(holder => holder.chapters)) {
+        const now = plansNow.get(plan.id)
+        if (now !== undefined && said('plan', plan as unknown as Record<string, unknown>) !== said('plan', now as unknown as Record<string, unknown>)) await this.keep('plan', plan.id, `${JSON.stringify(plan, null, 2)}\n`, 'json')
+      }
+      const threadsNow = new Map(next.threads.map(thread => [thread.id, thread]))
+      for (const thread of current.threads) {
+        const now = threadsNow.get(thread.id)
+        if (now !== undefined && said('thread', thread as unknown as Record<string, unknown>) !== said('thread', now as unknown as Record<string, unknown>)) await this.keep('thread', thread.id, `${JSON.stringify(thread, null, 2)}\n`, 'json')
+      }
       await this.writeDoc(path, next)
       return next
     })
@@ -1800,7 +2031,7 @@ export class Project {
     return !Number.isFinite(at) || Date.now() - at > windowMs
   }
 
-  private async pruneVersions(chapterId: string, keep = 40): Promise<void> {
+  private async pruneVersions(chapterId: string, keep = VERSIONS_KEPT): Promise<void> {
     const dir = this.statePath('versions', chapterId)
     const names = (await this.files.listDir(dir)).filter(name => name.endsWith('.md'))
     for (const name of names.slice(0, Math.max(0, names.length - keep))) await this.files.removePath(join(dir, name))

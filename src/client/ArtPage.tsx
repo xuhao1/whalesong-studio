@@ -8,6 +8,7 @@
 import { useEffect, useState } from 'react'
 import { mergeAvoid, pictureSize, resolveArtStyle, splitAvoid, type ArtSource, type PictureKind } from '../shared/art'
 import { Button, Chip, Field, SectionTitle, TextArea, TextInput, useAction, useProject, useRunningJob, useSnapshot, useStudio, useT } from './ui'
+import { HistoryButton } from './History'
 
 const SOURCE: Record<ArtSource, [string, string]> = {
   book: ['这本书自己的', 'This book\'s own'],
@@ -72,6 +73,7 @@ export function ArtPage() {
         {legacyAvoid.length > 0 ? <p className="nv-muted nv-small">{t(`全局设置里还有一份仍在生效：${legacyAvoid.join('、')}。`, `The global settings still add: ${legacyAvoid.join(', ')}.`)}</p> : null}
         <div className="nv-form-actions">
           <Button variant="primary" busy={busy} disabled={!dirty && resolved.source === 'book'} onClick={save}>{resolved.source === 'book' ? t('保存', 'Save') : t('定为这本书的画风', 'Make it this book\'s look')}</Button>
+          <HistoryButton kind="book" id="novel" name={t('画风与作品信息', 'Art direction and book info')} label />
         </div>
         {anchored.length + looked.length > 0 ? (
           <details className="nv-art-written">

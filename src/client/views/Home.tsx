@@ -13,6 +13,7 @@ import { MAIN_ROLES } from '../CharacterPicker'
 import { Icon } from '../icons'
 import { sheetsDrawn } from '../labels'
 import { DeletePicture } from '../PictureRecord'
+import { HistoryButton } from '../History'
 import { useSheetsAsk } from '../SheetsAsk'
 import { jobLabel, jobPulse } from '../Studio'
 import {
@@ -1011,6 +1012,8 @@ function ManifestEditor({ manifest, root, onClose }: { manifest: ProjectManifest
   return (
     <Modal title={t('作品信息', 'Book info')} onClose={onClose} wide footer={(
       <>
+        <HistoryButton kind="book" id="novel" name={manifest.title} label onRestored={onClose} />
+        <span className="nv-spacer" />
         <Button variant="ghost" onClick={onClose}>{t('取消', 'Cancel')}</Button>
         <Button variant="primary" busy={busy} pending={t('正在保存…', 'Saving…')} onClick={save}>{t('保存', 'Save')}</Button>
       </>

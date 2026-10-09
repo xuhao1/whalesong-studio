@@ -36,6 +36,12 @@ When a world rule, a character's nature or a name changes after chapters exist:
 4. Run `novel_revise scope=book` with an instruction that states the new fact and the boundary: "Lin is now left-handed and never raises his voice. Make his actions and dialogue match; change nothing about the plot." Pass `chapters` when you already know the list.
 5. After the proposals are settled, memory is digested again for the changed chapters. Check `novel_status` and settle what digest reports.
 
+## What the bible and the outline were before
+
+A card, an entry of the bible, a style, a chapter's plan, a thread and the book's own info each keep how they were before every change — yours included (`novel_manage action=history`, `fields` {kind: character|world|style|plan|thread|book, of: its name}). A version is named by when and by what changed the thing after it: the author, you, a job, a version put back, its deletion. With `version`, the call shows the fields in which that version and the thing as it is now differ; without `fields`, the cards and entries that were deleted and can be had back.
+
+When the author says a card used to say something else, or that a change of yours (or a job's) lost something, look there before rewriting from memory: `action=restore_history` puts the whole version back, or only the fields named in `fields.only` — the usual case, since the rest of the card has moved on. What the thing was until then is kept too, so nothing is lost by putting back. Pictures are no part of a version: they stay as they are. (A chapter's text has its own versions: `novel_read what=versions`, `novel_manage action=restore_version`.)
+
 ## Proposals
 
 Revisions from the Studio always wait as proposals. Yours apply directly unless the author switched on "review the showrunner's revisions" — then tell them proposals are waiting and where (Review tab). `scope=accept` / `scope=reject` settle one by id when the author decides in the chat.

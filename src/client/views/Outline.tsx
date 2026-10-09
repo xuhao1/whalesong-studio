@@ -7,6 +7,7 @@ import { chapterBudgetOf, MAIN_LINE, type Beat, type ChapterInfo, type ChapterMe
 import { byWeight, CharacterPicker, useCastFilter } from '../CharacterPicker'
 import { Icon } from '../icons'
 import { MoveChapters } from '../MoveChapters'
+import { HistoryButton } from '../History'
 import { PlotGraph } from './PlotGraph'
 import { CHAPTER_STATUS, CHAPTER_STATUS_TONE, THREAD_KIND, THREAD_STATUS, THREAD_STATUS_TONE } from '../labels'
 import {
@@ -587,6 +588,7 @@ function ChapterPlanEditor({ plan, index, plans }: { plan: ChapterPlan; index: n
       <header className="nv-detail-head">
         <h2><span className="nv-muted">{onLine !== undefined ? `${onLine.title} · ` : ''}{t(`第 ${index} 章`, `Chapter ${index}`)}</span> {draft.title}</h2>
         <div className="nv-row">
+          <HistoryButton kind="plan" id={plan.id} name={t(`第 ${index} 章 ${plan.title} · 章纲`, `Chapter ${index}, ${plan.title} — the plan`)} onRestored={() => { setDirty(false) }} />
           <Menu
             icon="more"
             align="end"
@@ -708,6 +710,7 @@ function Threads() {
                   <span className="nv-thread-tools">
                     {thread.status === 'open' ? <Button size="sm" variant="ghost" icon="check" onClick={() => run(async () => { await apply([{ op: 'save-thread', thread: thread.id, status: 'paid' }]) })}>{t('标为已回收', 'Mark paid')}</Button> : null}
                     <Button size="sm" variant="ghost" icon="pen" onClick={() => { setEditing(thread) }} />
+                    <HistoryButton kind="thread" id={thread.id} name={thread.title} />
                     <Button size="sm" variant="ghost" icon="trash" onClick={() => { confirm.ask(t(`删除线索「${thread.title}」？`, `Delete the thread "${thread.title}"?`), () => { void run(async () => { await apply([{ op: 'remove-thread', thread: thread.id }]) }) }) }} />
                   </span>
                 </div>

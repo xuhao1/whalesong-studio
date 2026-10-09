@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 /** Plumbing shared by the model-facing tools. */
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import { changedBy } from '../../core/cause'
 import { defineTool, type InferArgs, type ParameterSchemaSpec, type ToolDefinition } from '@deepseek-ai/dsh-tools'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../../core/core'
 import type { JobContext } from '../../core/jobs'
@@ -168,7 +169,8 @@ export function novelTool<const S extends ParameterSchemaSpec>(service: NovelSer
       }
       try {
         if (named !== undefined && spec.book === 'switch') await switchTo(await service.resolveBook(named, workspace))
-        const outcome = await spec.run(args as InferArgs<S>, env)
+        // What the showrunner's tool changes is on record as its doing, where a version of a card or a plan is kept.
+        const outcome = await changedBy('agent', async () => await spec.run(args as InferArgs<S>, env))
         // Whatever changed the book goes on its record, where the author reads what the showrunner did.
         if (used !== undefined && outcome.record !== false && MUTATING.get(spec.name)?.(args) === true) {
           const how = (args as { action?: unknown; scope?: unknown; kind?: unknown; chapter?: unknown; target?: unknown; ref?: unknown })

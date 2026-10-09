@@ -700,6 +700,25 @@ export interface Suggestion {
   createdAt: Timestamp
 }
 
+/** What a history is kept of: a card, an entry of the bible, a style, a chapter's plan, a thread, what the book says of itself. (A chapter's text has versions of its own.) */
+export type HistoryKind = 'character' | 'world' | 'style' | 'plan' | 'thread' | 'book'
+
+/** One version of a thing: the thing as it was until `at`, when something changed it. */
+export interface HistoryVersion {
+  /** Names the version among those of its thing. */
+  id: string
+  kind: HistoryKind
+  /** The thing: a card's or an entry's id, a chapter's, a thread's; `novel` for the book. */
+  of: string
+  at: Timestamp
+  /**
+   * What changed it: `edit` (the author, by hand), `agent` (the showrunner), `device` (a phone or another tab),
+   * `restore` (a version put back), `removed` (it was taken out of the book: this is how it last was),
+   * `job-<title>` (a job of the Studio).
+   */
+  why: string
+}
+
 export interface VersionInfo {
   id: string
   chapterId: string

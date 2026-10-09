@@ -19,6 +19,7 @@ import { sceneOf, sheetsDrawn, type PortraitScene } from '../labels'
 import { DeletePicture, PictureViewer, usePictures } from '../PictureRecord'
 import { useSheetsAsk, type SheetsChoice } from '../SheetsAsk'
 import { TiesBlock } from '../Ties'
+import { HistoryButton, RemovedCards } from '../History'
 import { LinesField, LineTags, type LinePicks } from '../LinesField'
 import { Icon } from '../icons'
 import {
@@ -250,6 +251,7 @@ export function CharacterCards({ shown, grouped, searching, lives, picks }: { sh
         {project.characters.length === 0
           ? <p className="nv-muted nv-pad">{t('还没有人物。', 'No characters yet.')}</p>
           : listed.length === 0 ? <p className="nv-muted nv-pad">{t('上面的筛选条件下没有人物。', 'Nobody passes the filter above.')}</p> : null}
+        <RemovedCards kinds={['character']}>{count => t(`最近删除的人物 · ${count}`, `Deleted characters · ${count}`)}</RemovedCards>
         <button type="button" className="nv-add-row" onClick={() => { controller.openCast('walkons') }}>{t('没立卡的路人、龙套在"龙套"页签里管 →', 'People without a card are kept under Walk-ons →')}</button>
       </aside>
       <section className="nv-split-detail">
@@ -697,6 +699,7 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
           </span>
         </div>
         <div className="nv-row">
+          <HistoryButton kind="character" id={card.id} name={card.name} onRestored={() => { setDirty(false) }} />
           <Button variant="ghost" size="sm" icon="trash" busy={busy} onClick={() => { confirm.ask(t(`删除人物「${card.name}」？`, `Delete the character "${card.name}"?`), () => { void run(async () => { await controller.api.call('character.delete', { root, id: card.id }); onDeleted() }) }) }} title={t('删除这张人物卡', 'Delete this card')} />
           <Button variant="primary" busy={busy} pending={t('正在保存…', 'Saving…')} disabled={!dirty} onClick={save}>{t('保存', 'Save')}</Button>
         </div>

@@ -15,6 +15,7 @@ import { GROUP_CATEGORY, groupOf, WORLD_GROUPS, WORLD_WEIGHTS, worldOrder, world
 import { Icon, type IconName } from '../icons'
 import { WORLD_CATEGORY as CATEGORY_LABELS } from '../labels'
 import { MergeDialog, TidyDialog } from '../WorldTidy'
+import { HistoryButton, RemovedCards } from '../History'
 import { DeletePicture, PictureViewer, type LookOf } from '../PictureRecord'
 import { containment, type Nested } from '../../shared/ties'
 import { DERIVE_TIES_HINT, TiesBlock, TiesReport, useDeriveTies } from '../Ties'
@@ -315,6 +316,7 @@ function World({ group }: { group: WorldGroup }) {
             ) : null}
           </div>
         ) : null}
+        <RemovedCards kinds={['world']}>{count => t(`最近删除的设定 · ${count}`, `Deleted entries · ${count}`)}</RemovedCards>
       </aside>
       <section className="nv-split-detail">
         {entry !== undefined
@@ -455,6 +457,7 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
         <div className="nv-row">
           <Button variant="ghost" size="sm" icon="eye" onClick={() => { controller.openExplore({ type: 'world', id: entry.id }) }} title={t('在“观看 → 世界”里看它', 'See it under Watch → World')}>{t('观看', 'View')}</Button>
           {project.world.length > 1 ? <Button variant="ghost" size="sm" icon="branch" onClick={() => { setMerging(true) }} title={t('和另一条合并', 'Merge with another entry')}>{t('合并…', 'Merge…')}</Button> : null}
+          <HistoryButton kind="world" id={entry.id} name={entry.name} onRestored={() => { setDirty(false) }} />
           <Button variant="ghost" size="sm" icon="trash" onClick={() => { confirm.ask(t(`删除设定「${entry.name}」？`, `Delete the entry "${entry.name}"?`), () => { void run(async () => { await controller.api.call('world.delete', { root, id: entry.id }); onDeleted() }) }) }} />
           <Button variant="primary" busy={busy} pending={t('正在保存…', 'Saving…')} disabled={!dirty} onClick={save}>{t('保存', 'Save')}</Button>
         </div>
@@ -610,6 +613,7 @@ function Styles() {
             </li>
           ))}
         </ul>
+        <RemovedCards kinds={['style']}>{count => t(`最近删除的文风 · ${count}`, `Deleted styles · ${count}`)}</RemovedCards>
       </aside>
       <section className="nv-split-detail">
         {style !== undefined ? <StyleEditor key={style.id} style={style} active={style.id === active} onDeleted={() => { setSelected(undefined) }} /> : <Empty icon="feather" title={t('选择或新建一个文风', 'Select or create a style')} />}
@@ -664,6 +668,7 @@ function StyleEditor({ style, active, onDeleted }: { style: StyleProfile; active
       <header className="nv-detail-head">
         <h2>{draft.name}{active ? <Chip tone="green">{t('当前文风', 'Active')}</Chip> : null}</h2>
         <div className="nv-row">
+          <HistoryButton kind="style" id={style.id} name={style.name} onRestored={() => { setDirty(false) }} />
           {project.styles.length > 1 ? <Button variant="ghost" size="sm" icon="trash" onClick={() => { confirm.ask(t(`删除文风「${style.name}」？`, `Delete the style "${style.name}"?`), () => { void run(async () => { await controller.api.call('style.delete', { root, id: style.id }); onDeleted() }) }) }} /> : null}
           {!active ? <Button busy={busy} onClick={() => { save(true) }}>{t('设为当前文风', 'Make active')}</Button> : null}
           <Button variant="primary" busy={busy} pending={t('正在保存…', 'Saving…')} disabled={!dirty} onClick={() => { save() }}>{t('保存', 'Save')}</Button>

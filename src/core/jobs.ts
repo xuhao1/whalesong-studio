@@ -6,6 +6,7 @@
  * is written to the project by the pipeline that runs inside them.
  */
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { changedBy } from './cause'
 import type { CrewRun, JobInfo, JobKind, JobProgress } from '../shared/types'
 import { newId } from '../shared/text'
 import { anySignal, errorMessage, isAbort } from './util/async'
@@ -207,7 +208,8 @@ export class JobManager {
 
     const done = (async () => {
       try {
-        const value = await active.run(context, async () => await task(context))
+        // What the job changes in the book is on record as its doing — under its title — where a version is kept.
+        const value = await active.run(context, async () => await changedBy(`job-${spec.title}`, async () => await task(context)))
         const { thinking: _thinking, ...info } = record.info
         record.info = { ...info, status: 'done', endedAt: new Date().toISOString() }
         return value
