@@ -854,6 +854,17 @@ export class Project {
   }
 
   /**
+   * The lines of the plot that read a chapter, in the book's order: the chapter's own, and every line that parts from
+   * it later on. `every` says whether that is all the lines the book has.
+   */
+  async linesReading(chapterId: string): Promise<{ lines: string[]; every: boolean }> {
+    const outline = await this.outline()
+    const all = [MAIN_LINE, ...(outline.lines ?? []).map(line => line.id)]
+    const lines = all.filter(id => linePath(outline, lineOf(outline, id)).some(entry => entry.plan.id === chapterId))
+    return { lines, every: lines.length === all.length }
+  }
+
+  /**
    * On which lines of the plot each character is seen — read off the digests along each line. What the page shows
    * beside a name where the author has not said which lines somebody belongs to.
    */

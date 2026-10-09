@@ -184,7 +184,22 @@ export function digestSystem(lang: PromptLanguage): string {
   return L(lang, '你是严谨的小说连续性编辑（场记）。只依据给出的章节正文提取事实，不推测、不评价、不续写。严格按要求输出 JSON。', 'You are a meticulous continuity editor. Extract facts only from the chapter text given — no speculation, no critique, no continuation. Output JSON exactly as requested.')
 }
 
-export function digestTask(base: Base & { chapterLabel: string; text: string; knownCharacters: string; knownWorld: string; openThreads: string }): string {
+/**
+ * @param base.line - in a book of several lines of the plot, the name of the line this chapter is on: the digest then
+ *   says of each new thing whether it is that story's alone or the world's. Left out for a book of one line, whose
+ *   task reads as it always did.
+ */
+export function digestTask(base: Base & { chapterLabel: string; text: string; knownCharacters: string; knownWorld: string; openThreads: string; line?: string }): string {
+  const zhLine = base.line !== undefined ? `## 故事线
+这本书在同一个世界里有不止一条故事线，各讲各的故事。这一章在「${bare(base.line)}」这条线上。
+
+` : ''
+  const zhScope = base.line !== undefined ? ', "scope": "line|world —— line：只是这条故事线里的（这个故事自己的铺子、物件、小团体、只在这里有意义的说法）；world：这个世界本身的，别的故事线上的人也会遇到（城市与地域、朝代与制度、世界的规则、通行的名词）"' : ''
+  const enLine = base.line !== undefined ? `## Lines of the plot
+This book tells more than one story in the same world. This chapter is on the line "${bare(base.line)}".
+
+` : ''
+  const enScope = base.line !== undefined ? ', "scope": "line|world — line: of this story alone (its own shop, object, small circle, a term that means something only here); world: of the world itself, met on the other lines too (cities and regions, the dynasty and its institutions, the rules of the world, terms in common use)"' : ''
   return L(base.lang, `下面是长篇小说《${bare(base.title)}》${base.chapterLabel}的正文。请做场记。
 
 ## 已建档人物（姓名 | 别名）
@@ -196,7 +211,7 @@ ${base.knownWorld || '（暂无）'}
 ## 尚未回收的线索
 ${base.openThreads || '（暂无）'}
 
-## 正文
+${zhLine}## 正文
 """
 ${base.text}
 """
@@ -214,7 +229,7 @@ ${base.text}
     {"subject": "主体", "statement": "本章确立、今后必须保持一致的事实", "kind": "state|relationship|knowledge|item|world|event"}
   ],
   "newEntities": [
-    {"name": "名称", "kind": "character|location|item|faction|term", "description": "正文中首次出现、值得建档的人物/地点/物品/组织/专有名词，一句话说明"}
+    {"name": "名称", "kind": "character|location|item|faction|term", "description": "正文中首次出现、值得建档的人物/地点/物品/组织/专有名词，一句话说明"${zhScope}}
   ],
   "threads": [
     {"title": "线索或伏笔的名称（若对应上面已有线索，用原名）", "action": "plant|advance|payoff", "note": "本章如何埋下/推进/回收"}
@@ -232,7 +247,7 @@ ${base.knownWorld || '(none)'}
 ## Open threads
 ${base.openThreads || '(none)'}
 
-## Text
+${enLine}## Text
 """
 ${base.text}
 """
@@ -250,7 +265,7 @@ Output JSON (every field present; use empty arrays or strings when there is noth
     {"subject": "who or what", "statement": "a fact established here that later chapters must respect", "kind": "state|relationship|knowledge|item|world|event"}
   ],
   "newEntities": [
-    {"name": "name", "kind": "character|location|item|faction|term", "description": "a person/place/object/group/term that first appears here and deserves a bible entry, one sentence"}
+    {"name": "name", "kind": "character|location|item|faction|term", "description": "a person/place/object/group/term that first appears here and deserves a bible entry, one sentence"${enScope}}
   ],
   "threads": [
     {"title": "name of the thread or foreshadowing (reuse the exact name when it matches an open thread)", "action": "plant|advance|payoff", "note": "how this chapter plants / advances / pays it off"}

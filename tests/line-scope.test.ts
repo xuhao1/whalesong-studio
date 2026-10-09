@@ -161,7 +161,7 @@ describe('a line of the plot reads itself', () => {
     await digestChapter(bed.core, bed.runtime, book.c2.id, { origin: 'user' })
     const found = (await project.suggestions()).find(item => item.kind === 'new-world')!
     expect(found.payload).toMatchObject({ name: '后堂暗格', lines: [book.south.id] })
-    expect(found.detail).toContain('在“城南的铺子”这条线上发现')
+    expect(found.detail).toBe('柜台后面的暗格（发现于“城南的铺子”，采纳后归到这条线）')
     await acceptSuggestion(bed.runtime, found.id)
     expect((await project.findWorld('后堂暗格'))!.lines).toEqual([book.south.id])
     expect(await knows()).not.toContain('后堂暗格')
@@ -174,6 +174,36 @@ describe('a line of the plot reads itself', () => {
     expect(shared.payload).toMatchObject({ name: '排字房' })
     expect(shared.payload.lines).toBeUndefined()
     expect(shared.detail).toBe('报馆后面的排字房')
+
+    // The digest says whose each new thing is as it reads the chapter: it is told which story the chapter is of, and
+    // answers `scope` — this story's alone, or the world's.
+    const asked = (): string => bed.llm.requests.at(-1)!.prompt
+    const suggested = async (name: string) => (await project.suggestions()).find(item => item.kind === 'new-world' && item.payload.name === name)!
+    const notes = (entities: { name: string; kind: string; description: string; scope?: string }[]) => () => JSON.stringify({ brief: '一章', summary: '一章。', characters: [], facts: [], threads: [], newEntities: entities })
+    bed.llm.responder = notes([{ name: '描金算盘', kind: 'item', description: '陆掌柜的算盘', scope: 'line' }, { name: '城南', kind: 'location', description: '城的南半边', scope: 'world' }])
+    await digestChapter(bed.core, bed.runtime, book.c2.id, { origin: 'user' }, { force: true })
+    expect(asked()).toContain('## 故事线')
+    expect(asked()).toContain('这一章在「城南的铺子」这条线上')
+    expect(asked()).toContain('"scope": "line|world')
+    expect((await suggested('描金算盘')).payload.lines).toEqual([book.south.id])
+    expect((await suggested('描金算盘')).detail).toBe('陆掌柜的算盘（场记：只属于“城南的铺子”，采纳后归到这条线）')
+    // The world's, though a story beside the main one is where it was met: filed under none.
+    expect((await suggested('城南')).payload.lines).toBeUndefined()
+    expect((await suggested('城南')).detail).toBe('城的南半边（场记：几条线共用的）')
+    expect((await project.memory(book.c2.id))!.newEntities.map(entity => entity.scope)).toEqual(['line', 'world'])
+    // On the main line the same: a thing of the main story alone is filed under it — and under a line that parts later,
+    // which reads the chapter too.
+    bed.llm.responder = notes([{ name: '铅字盘', kind: 'item', description: '排字房的铅字盘', scope: 'line' }, { name: '租界', kind: 'location', description: '报馆所在的租界', scope: 'world' }])
+    await digestChapter(bed.core, bed.runtime, book.m2.id, { origin: 'user' }, { force: true })
+    expect(asked()).toContain('这一章在「主线」这条线上')
+    expect((await suggested('铅字盘')).payload.lines).toEqual([MAIN_LINE])
+    expect((await suggested('租界')).payload.lines).toBeUndefined()
+    bed.llm.responder = notes([{ name: '旧船票', kind: 'item', description: '她袖子里的船票', scope: 'line' }])
+    await digestChapter(bed.core, bed.runtime, book.m1.id, { origin: 'user' }, { force: true })
+    expect((await suggested('旧船票')).payload.lines).toEqual([MAIN_LINE, book.stay.id])
+    expect((await suggested('旧船票')).detail).toBe('她袖子里的船票（场记：只属于“主线”、“她没有上船”，采纳后归到这几条线）')
+    expect(await project.linesReading(book.m1.id)).toEqual({ lines: [MAIN_LINE, book.stay.id], every: false })
+    expect(await project.linesReading(book.c1.id)).toEqual({ lines: [book.south.id], every: false })
 
     // A batch, filed at once under the lines the author names: those and no other.
     const filed = await project.assignLines({ lines: [MAIN_LINE, book.south.id], world: [press.id, '账本'], characters: [book.zhou.id, '阿棠'] })
@@ -215,6 +245,32 @@ describe('a line of the plot reads itself', () => {
     const along = await project.worldPresence(book.south.id)
     expect(along.presence.find(item => item.entry === shop.id)?.chapters).toEqual([book.c1.id])
     expect(along.written).toBe(2)
+  })
+
+  it('asks nothing about lines of a book that has one, and files a thing every line reads under none', async () => {
+    const { project } = bed.runtime
+    const one = await project.addChapter({ title: '码头', synopsis: '等船。' })
+    await project.saveChapterText(one.id, '沈蘅在码头等船。')
+    bed.llm.responder = () => JSON.stringify({ brief: '等船', summary: '等船。', characters: [], facts: [], threads: [], newEntities: [{ name: '渡口茶摊', kind: 'location', description: '码头边的茶摊', scope: 'line' }] })
+    await digestChapter(bed.core, bed.runtime, one.id, { origin: 'user' })
+    const single = bed.llm.requests.at(-1)!.prompt
+    expect(single).not.toContain('故事线')
+    expect(single).not.toContain('scope')
+    const alone = (await project.suggestions()).find(item => item.kind === 'new-world')!
+    expect(alone.payload.lines).toBeUndefined()
+    expect(alone.detail).toBe('码头边的茶摊')
+
+    // A second story parts after that chapter: both lines read it, so what is found in it is everybody's whatever the digest calls it.
+    const other = await project.addLine({ title: '她没有上船', from: one.id })
+    const next = await project.addChapter({ title: '回头', synopsis: '折回去。' }, { line: other.id })
+    await project.saveChapterText(next.id, '她折了回去。')
+    bed.llm.responder = () => JSON.stringify({ brief: '等船', summary: '等船。', characters: [], facts: [], threads: [], newEntities: [{ name: '缆桩', kind: 'item', description: '系船的缆桩', scope: 'line' }] })
+    await digestChapter(bed.core, bed.runtime, one.id, { origin: 'user' }, { force: true })
+    expect(bed.llm.requests.at(-1)!.prompt).toContain('这一章在「主线」这条线上')
+    const shared = (await project.suggestions()).find(item => item.payload.name === '缆桩')!
+    expect(shared.payload.lines).toBeUndefined()
+    expect(shared.detail).toBe('系船的缆桩')
+    expect(await project.linesReading(one.id)).toEqual({ lines: [MAIN_LINE, other.id], every: true })
   })
 
   it('reads and searches for a role along the line its work is on, numbered along it', async () => {

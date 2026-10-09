@@ -588,6 +588,11 @@ export interface EntityCandidate {
   name: string
   kind: 'character' | 'location' | 'item' | 'faction' | 'term'
   description: string
+  /**
+   * In a book of several lines, whose the digest took it to be: `line` — of the story it was found in alone; `world` —
+   * of the world the lines share. Absent in a book of one line, and where the digest did not say.
+   */
+  scope?: 'line' | 'world'
 }
 
 export interface ThreadTouch {

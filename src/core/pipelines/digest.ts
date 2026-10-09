@@ -25,6 +25,12 @@ import { scheduleSift } from './cast'
 const FACT_KINDS: FactKind[] = ['state', 'relationship', 'knowledge', 'item', 'world', 'event']
 const ENTITY_KINDS: EntityCandidate['kind'][] = ['character', 'location', 'item', 'faction', 'term']
 
+/** What a line of the plot is called on the page: its title, "the main line" for the main one. */
+function lineName(outline: Pick<Outline, 'lines'>, line: string | undefined, zh: boolean): string {
+  if (line === undefined || line === MAIN_LINE) return zh ? '主线' : 'the main line'
+  return (outline.lines ?? []).find(candidate => candidate.id === line)?.title ?? line
+}
+
 function chapterLabel(chapter: LocatedChapter, zh: boolean): string {
   return zh ? `第${chapter.index}章《${chapter.plan.title}》` : `chapter ${chapter.index}, "${chapter.plan.title}"`
 }
@@ -61,6 +67,8 @@ export async function digestChapter(core: NovelCore, runtime: ProjectRuntime, re
       knownCharacters: characters.map(card => `${card.name}${card.aliases !== undefined && card.aliases.length > 0 ? ` | ${card.aliases.join('/')}` : ''}`).join('\n'),
       knownWorld: world.map(entry => entry.name).join(lang === 'zh' ? '、' : ', '),
       openThreads: outline.threads.filter(thread => thread.status === 'open').map(thread => `- ${thread.title}`).join('\n'),
+      // A book of several stories: the digest says of each new thing whether it is this story's or the world's.
+      ...((outline.lines ?? []).length > 0 ? { line: lineName(outline, chapter.line, lang === 'zh') } : {}),
     }),
     temperature: 0.1,
     validate: (raw) => {
@@ -110,7 +118,8 @@ export async function digestChapter(core: NovelCore, runtime: ProjectRuntime, re
     const name = asText(item.name)
     const kind = asText(item.kind) as EntityCandidate['kind'] | undefined
     if (name === undefined || kind === undefined || !ENTITY_KINDS.includes(kind)) continue
-    newEntities.push({ name, kind, description: asText(item.description) ?? '' })
+    const scope = asText(item.scope)
+    newEntities.push({ name, kind, description: asText(item.description) ?? '', ...(scope === 'line' || scope === 'world' ? { scope } : {}) })
   }
   const threads: ThreadTouch[] = []
   for (const raw of asArray(value.threads)) {
@@ -241,7 +250,14 @@ async function applyMemory(runtime: ProjectRuntime, chapter: LocatedChapter, mem
   }
 
   const world = await project.world()
-  const lineTitle = chapter.line !== undefined ? ((await project.outline()).lines ?? []).find(line => line.id === chapter.line)?.title ?? chapter.line : undefined
+  const outline = await project.outline()
+  // Whose a new thing is, in a book of several stories. The digest says so of each as it reads the chapter (`scope`);
+  // where it did not — a digest from before, a model that left it out — a thing found beside the main line is that
+  // line's and one found on the main line the world's. The lines it is filed under are those that read this chapter:
+  // its own, and whichever part from it later on. When that is every line there is, it is the world's after all.
+  const several = (outline.lines ?? []).length > 0
+  const readers = several ? await project.linesReading(chapter.plan.id) : undefined
+  const names = (readers?.lines ?? []).map(id => zh ? `“${lineName(outline, id, true)}”` : `"${lineName(outline, id, false)}"`).join(zh ? '、' : ', ')
   for (const entity of memory.newEntities) {
     if (entity.kind === 'character') {
       // A name is not proposed for a card because a chapter met it: a digest names everybody, the doorman as much as
@@ -251,14 +267,16 @@ async function applyMemory(runtime: ProjectRuntime, chapter: LocatedChapter, mem
     } else {
       if (world.some(entry => sameName(entry.name, entity.name) || entry.aliases?.some(alias => sameName(alias, entity.name)) === true)) continue
       const category = entity.kind === 'location' ? 'location' : entity.kind === 'item' ? 'item' : entity.kind === 'faction' ? 'faction' : 'term'
-      // Found on a line beside the main one, it is that line's: filed there when it is taken up, and not handed to
-      // whoever writes the other lines. (Found on the main line it stays unfiled — the world the lines share.)
+      const own = readers !== undefined && !readers.every && (entity.scope !== undefined ? entity.scope === 'line' : !main)
+      const said = entity.scope !== undefined
+      const note = own ? (zh ? `（${said ? '场记：只属于' : '发现于'}${names}，采纳后归到${readers!.lines.length > 1 ? '这几条线' : '这条线'}）` : ` (${said ? 'continuity: of' : 'found on'} ${names} alone; filed there when accepted)`)
+        : several && entity.scope === 'world' ? (zh ? '（场记：几条线共用的）' : ' (continuity: of the world the lines share)') : ''
       suggestions.push({
         kind: 'new-world',
         title: zh ? `新设定：${entity.name}` : `New world entry: ${entity.name}`,
-        detail: lineTitle !== undefined ? (zh ? `${entity.description}（在“${lineTitle}”这条线上发现，采纳后归到这条线）` : `${entity.description} (found on the line "${lineTitle}"; filed under it when accepted)`) : entity.description,
+        detail: `${entity.description}${note}`,
         chapterId: chapter.plan.id,
-        payload: { name: entity.name, category, summary: entity.description, importance: 3, ...(chapter.line !== undefined ? { lines: [chapter.line] } : {}) },
+        payload: { name: entity.name, category, summary: entity.description, importance: 3, ...(own ? { lines: readers!.lines } : {}) },
       })
     }
   }

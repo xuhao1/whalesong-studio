@@ -198,7 +198,7 @@ Word counts, audio scripts and exports ignore image lines.
 
 | Path | Content |
 |---|---|
-| `memory/<chapter>.json` | the digest of a chapter: brief, summary, story time, locations, facts, character moments, new entities, thread movements, open questions, and the hash of the text it was taken from |
+| `memory/<chapter>.json` | the digest of a chapter: brief, summary, story time, locations, facts, character moments, new entities (each, in a book of several lines, with the `scope` the digest gave it: `line` — of that story alone, `world` — of the world the lines share), thread movements, open questions, and the hash of the text it was taken from |
 | `memory/arcs.json` | arc summaries (one per ten chapters) |
 | `versions/<chapter>/<timestamp>__<reason>.md` | snapshots taken before a draft, revision, restore or edit sitting (40 kept per chapter) |
 | `proposals.json` | revision proposals and their status |
