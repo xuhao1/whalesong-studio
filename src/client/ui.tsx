@@ -58,6 +58,13 @@ export function useStudio(): StudioContextValue {
   return value
 }
 
+/**
+ * Enter, pressed to say "go" — and not the Enter that takes a word from an input method: a text field sees that one
+ * as a key too (it is how Chinese, Japanese and Korean are typed), and a form that went on it would go with half a
+ * sentence, before its author had finished the word.
+ */
+export const plainEnter = (event: { key: string; keyCode: number; nativeEvent: { isComposing?: boolean } }): boolean => event.key === 'Enter' && event.nativeEvent.isComposing !== true && event.keyCode !== 229
+
 export function useT(): Translate {
   return useStudio().t
 }
@@ -362,7 +369,7 @@ export function Combo({ value, options, onChange, onPick, onOpen, placeholder, d
             event.preventDefault()
             if (!open) show()
             else move(event.key === 'ArrowDown' ? 1 : -1)
-          } else if (event.key === 'Enter' && open && cursor >= 0 && shown[cursor] !== undefined) {
+          } else if (plainEnter(event) && open && cursor >= 0 && shown[cursor] !== undefined) {
             event.preventDefault()
             pick(shown[cursor])
           } else if (event.key === 'Escape' && open) {

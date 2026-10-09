@@ -5,7 +5,7 @@
  * (which shows exactly what will be applied, and where it comes from) — a
  * picture must never carry words its author cannot see.
  */
-import type { SignatureScene } from './types'
+import type { IllustrationInfo, IllustrationParts, SignatureScene } from './types'
 
 /** What a book starts from until its author writes an art direction of their own. */
 export const DEFAULT_ART_STYLE = {
@@ -31,6 +31,33 @@ export function resolveArtStyle(manifest: { artStyle?: string | undefined; langu
 
 /** One part of a prompt without the punctuation it ended on, which would otherwise sit against the next part. */
 export const tidyPart = (text: string): string => text.trim().replace(/[，,；;、。.\s]+$/u, '')
+
+/** What the picture that goes along to be changed is called, beside the one made from it. */
+export const PICTURE_TO_CHANGE = { zh: '要改的原图', en: 'the picture to change' } as const
+
+/**
+ * What a picture shows in words, and what goes with those words: its subject, the art direction it carries (none, for
+ * a prompt sent as written), what it keeps out, the pictures it is held against — those the service left behind too.
+ * For a picture that is another one changed (the picture went along with what to change, and nothing else was said)
+ * that is what was kept of the one it came from, the changes since said after its subject. What a picture is drawn
+ * from when it is drawn again from words; what its anchor and its art direction are compared in.
+ */
+export function pictureWords(image: Pick<IllustrationInfo, 'prompt' | 'parts'>): NonNullable<IllustrationParts['base']> & { /** It carries an art direction: a prompt sent as written carries none, and gets none when drawn again. */ art: boolean } {
+  const parts = image.parts
+  if (parts === undefined) return { subject: image.prompt, art: true }
+  // The picture one was changed from is no part of what it shows in words: not where it went along with a description
+  // (as it did at first), not where the service would not take it.
+  const from: readonly string[] = [PICTURE_TO_CHANGE.zh, PICTURE_TO_CHANGE.en]
+  const of = parts.base ?? { ...parts, references: [...(parts.references ?? []), ...(parts.left ?? [])].filter(reference => !from.includes(reference.label)) }
+  return {
+    subject: of.subject,
+    ...(of.style !== undefined ? { style: of.style } : {}),
+    ...(of.styleSource !== undefined ? { styleSource: of.styleSource } : {}),
+    ...(of.avoid !== undefined && of.avoid.length > 0 ? { avoid: of.avoid } : {}),
+    ...(of.references !== undefined && of.references.length > 0 ? { references: of.references } : {}),
+    art: of.style !== undefined,
+  }
+}
 
 /**
  * How somebody looks, in the words every picture of them restates: their visual

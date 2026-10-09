@@ -119,6 +119,8 @@ export interface EndpointModel {
   unsupported?: boolean
   /** Image models: what the endpoint says of the pictures it draws — how large, how long a prompt — where it says. */
   image?: ImageLimits
+  /** The endpoint lists it without saying what it is, and its name does not say either: offered after the others. */
+  unsure?: boolean
 }
 
 /** A provider the Harness itself reaches (Settings → Models, a sign-in plugin), as a source of text models. */

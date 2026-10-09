@@ -770,7 +770,7 @@ function ModelField({ label, hint, endpoint, kind, value, onChange, suggestions,
       const note = model.unsupported === true ? t('工坊暂不支持它的协议', 'protocol not supported yet') : describe?.(model)
       return {
         value: model.id,
-        group: model.unsupported === true ? t('这个接口还有这些（暂时用不了）', 'Also served here (not usable yet)') : t('这个接口列出的模型', 'Listed by this endpoint'),
+        group: model.unsupported === true ? t('这个接口还有这些（暂时用不了）', 'Also served here (not usable yet)') : model.unsure === true ? t('这个接口还列了这些（没说是哪一类）', 'Also listed here (it does not say of what kind)') : t('这个接口列出的模型', 'Listed by this endpoint'),
         ...(model.name !== undefined ? { label: model.name } : {}),
         ...(note !== undefined ? { note } : {}),
         ...(model.unsupported === true ? { disabled: true } : {}),

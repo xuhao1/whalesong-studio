@@ -119,9 +119,12 @@ async function viaConnect(ctx: Context, prompt: string, references: ImageReferen
 }
 
 /** What the CLI agent is told; the picture description travels on stdin, never on a command line. */
-function cliInstruction(prompt: string, references: number): string {
+function cliInstruction(prompt: string, references: number, change = false): string {
   return [
-    references > 0
+    // One picture, to be changed: the words between the markers say what to change and nothing of what it shows.
+    change && references > 0
+      ? 'Use your built-in image generation tool to make exactly one image: the attached image, changed as the words between the markers say and left as it is in everything else.'
+      : references > 0
       // What a reference is there for differs — the same person in other clothes, the same place at another time: the
       // description says it, and nothing here may say otherwise.
       ? `Use your built-in image generation tool to create exactly one image from the description between the markers. The ${references} attached image(s) are reference pictures: the description says, by position, who or what each one shows and what of it the new image is to keep.`
@@ -134,7 +137,7 @@ function cliInstruction(prompt: string, references: number): string {
   ].join('\n')
 }
 
-async function viaCli(prompt: string, references: ImageReference[], signal: AbortSignal | undefined): Promise<ImageResult> {
+async function viaCli(prompt: string, references: ImageReference[], signal: AbortSignal | undefined, change = false): Promise<ImageResult> {
   const binary = await findCodexCli()
   if (binary === undefined) throw new ProviderError('the Codex CLI is not installed on the machine that runs Harness', undefined, 'UNSUPPORTED')
   const work = await mkdtemp(join(tmpdir(), 'novel-codex-'))
@@ -146,7 +149,7 @@ async function viaCli(prompt: string, references: ImageReference[], signal: Abor
       await writeFile(file, reference.data)
       attachments.push(file)
     }
-    const instruction = cliInstruction(prompt, attachments.length)
+    const instruction = cliInstruction(prompt, attachments.length, change)
     const threadId = await new Promise<string>((resolve, reject) => {
       // `-` reads the instructions from stdin, so nothing the manuscript says can reach a shell.
       // A `.cmd` shim only runs through a shell, where arguments are joined as written: quote the paths.
@@ -228,12 +231,12 @@ async function viaCli(prompt: string, references: ImageReference[], signal: Abor
 
 /** The bridge the core's `codex` image provider calls. */
 export function createCodexBridge(ctx: Context): CodexImageBridge {
-  return async (prompt, { bridge, signal, references = [] }) => {
+  return async (prompt, { bridge, signal, references = [], change = false }) => {
     if (bridge === 'connect') return await viaConnect(ctx, prompt, references, signal)
-    if (bridge === 'cli') return await viaCli(prompt, references, signal)
+    if (bridge === 'cli') return await viaCli(prompt, references, signal, change)
     const status = await codexStatus(ctx)
     if (status.connect && status.connectSignedIn) return await viaConnect(ctx, prompt, references, signal)
-    if (status.cli && status.cliSignedIn) return await viaCli(prompt, references, signal)
+    if (status.cli && status.cliSignedIn) return await viaCli(prompt, references, signal, change)
     // Neither is signed in: say which step is missing for what is installed.
     if (status.connect) return await viaConnect(ctx, prompt, references, signal)
     if (status.cli) throw new ProviderError('the Codex CLI is not signed in — run `codex login` and choose "Sign in with ChatGPT"', undefined, 'NO_CREDENTIAL')

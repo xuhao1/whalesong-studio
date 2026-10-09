@@ -11,7 +11,7 @@ import type { EndpointCheck, SettingsView as SettingsData } from '../../shared/r
 import { recommended } from '../../shared/recommended'
 import { hostOf, originOf, PROJECT_AUTHOR, PROJECT_HOMEPAGE, recommendedSetup, SERVICES, type ServiceId, type SetupPart } from '../../shared/services'
 import { Icon, type IconName } from '../icons'
-import { Button, Chip, cx, Field, Spinner, TextInput, useAction, useSnapshot, useStudio, useT, type Translate } from '../ui'
+import { Button, Chip, cx, Field, Spinner, TextInput, useAction, useSnapshot, useStudio, useT, type Translate, plainEnter } from '../ui'
 
 const PARTS: { part: SetupPart; label: [string, string] }[] = [
   { part: 'embedding', label: ['语义检索', 'Semantic retrieval'] },
@@ -85,7 +85,7 @@ function ServiceCard({ service, view, t, onDone }: { service: 'bailian' | 'openr
         ) : null}
       </ul>
       <Field label="API key" hint={state?.configured === true ? t('留空就沿用现有的密钥；填写则更换。', 'Leave empty to keep the key in use; type one to replace it.') : t('只存在本机的 DSH 凭据库里。', 'Kept only in DSH\'s credential store on this machine.')}>
-        <TextInput type="password" autoComplete="off" spellCheck={false} value={key} placeholder={state?.configured === true ? '••••••••••••' : t('粘贴 API key', 'Paste the API key')} onChange={(event) => { setKey(event.target.value) }} onKeyDown={(event) => { if (event.key === 'Enter' && canApply) apply() }} />
+        <TextInput type="password" autoComplete="off" spellCheck={false} value={key} placeholder={state?.configured === true ? '••••••••••••' : t('粘贴 API key', 'Paste the API key')} onChange={(event) => { setKey(event.target.value) }} onKeyDown={(event) => { if (plainEnter(event) && canApply) apply() }} />
       </Field>
       <div className="nv-setup-parts">
         {PARTS.map(item => (

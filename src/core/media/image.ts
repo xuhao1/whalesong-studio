@@ -33,6 +33,11 @@ export interface ImageRequest {
   size?: string
   /** Reference images, in the order the prompt numbers them. Providers that cannot take any ignore them and say so. */
   references?: ImageReference[]
+  /**
+   * The one reference is the picture to change, and the prompt is what to change in it and nothing more — it does not
+   * say what the picture shows. For a way to the model that has to tell somebody what an attached picture is there for.
+   */
+  change?: boolean
   signal?: AbortSignal
 }
 
@@ -81,7 +86,7 @@ function tokensSet(settings: ImageSettings): number | undefined {
 }
 
 /** Generates one image from a prompt (and reference images) with a ChatGPT subscription. Supplied by the Host. */
-export type CodexImageBridge = (prompt: string, options: { bridge: CodexBridgeKind; references?: ImageReference[]; signal?: AbortSignal }) => Promise<ImageResult>
+export type CodexImageBridge = (prompt: string, options: { bridge: CodexBridgeKind; references?: ImageReference[]; /** The one reference is the picture to change; the prompt says only what to change. */ change?: boolean; signal?: AbortSignal }) => Promise<ImageResult>
 
 export interface ImageBridges {
   codex?: CodexImageBridge
@@ -221,15 +226,23 @@ const ownListings = new Map<string, { at: number; byId: Promise<Map<string, Imag
  * draws from a seed — where its model list says (`GET /models`). Undefined where the list cannot be had or says nothing.
  */
 async function ownLimits(base: string, model: string, apiKey: string | undefined, signal: AbortSignal | undefined): Promise<ImageLimits | undefined> {
-  const cached = ownListings.get(base)
-  if (cached === undefined || Date.now() - cached.at > 30 * 60_000) {
+  const ask = (): void => {
     const byId = getJson<{ data?: unknown[] }>(`${base}/models`, { ...(apiKey !== undefined ? { apiKey } : {}), timeoutMs: 20_000 })
       .then(reply => new Map((Array.isArray(reply.data) ? reply.data : []).filter((row): row is { id: string } => typeof (row as { id?: unknown } | null)?.id === 'string').map(row => [row.id, imageLimitsOf(row)])))
     byId.catch(() => { if (ownListings.get(base)?.byId === byId) ownListings.delete(base) })
     ownListings.set(base, { at: Date.now(), byId })
   }
+  const cached = ownListings.get(base)
+  if (cached === undefined || Date.now() - cached.at > 30 * 60_000) ask()
   try {
-    return (await ownListings.get(base)!.byId).get(model)
+    let byId = await ownListings.get(base)!.byId
+    // A model the list did not have when it was read: put on the server since, as likely as not. Read again — at most
+    // once in a minute, for a model the server really does not list.
+    if (!byId.has(model) && Date.now() - (ownListings.get(base)?.at ?? 0) > 60_000) {
+      ask()
+      byId = await ownListings.get(base)!.byId
+    }
+    return byId.get(model)
   } catch (error) {
     if (signal?.aborted === true) throw error
     return undefined
@@ -594,7 +607,7 @@ class CodexImages implements ImageProvider {
     const framing = aspect === '1:1' ? 'Square 1:1 composition.' : aspect === '16:9' || aspect === '3:2' ? `Landscape ${aspect} composition.` : `Portrait ${aspect} composition.`
     const prompt = `${withAvoid(request.prompt, request.negativePrompt ?? this.settings.negativePrompt, 7000)}\n\n${framing}`
     const references = (request.references ?? []).slice(0, MAX_REFERENCES)
-    const drawn = await this.bridge(prompt, { bridge: this.settings.bridge ?? 'auto', ...(references.length > 0 ? { references } : {}), ...signalOption(request.signal) })
+    const drawn = await this.bridge(prompt, { bridge: this.settings.bridge ?? 'auto', ...(references.length > 0 ? { references } : {}), ...(request.change === true && references.length > 0 ? { change: true } : {}), ...signalOption(request.signal) })
     // A bridge that wraps the prompt in words of its own says so; otherwise what it was handed is what went.
     return { ...drawn, sent: drawn.sent ?? { prompt } }
   }

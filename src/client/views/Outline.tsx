@@ -20,6 +20,9 @@ function useOutlineOps(): (ops: OutlineOpInput[]) => Promise<{ op: string; ok: b
   const { root } = useProject()
   return async (ops) => {
     const { results } = await controller.api.call('outline.apply', { root, ops })
+    // Shown at once — a chapter let go in its new place is there when the hand leaves it — and not when the page next
+    // hears of the change (which a page that is not in front does not).
+    await controller.refreshProject()
     const failed = results.find(result => !result.ok)
     if (failed !== undefined) throw new Error(failed.message)
     return results
@@ -95,6 +98,12 @@ function Chapters({ onGraph }: { onGraph: () => void }) {
     const id = results[0]?.id
     if (id !== undefined) controller.focusChapter(id)
   })
+  /** A new chapter between two that are there: right after this one, on its line and in its volume. */
+  const addAfter = (plan: ChapterPlan): Promise<unknown> => run(async () => {
+    const results = await apply([{ op: 'add-chapter', title: t('新章节', 'New chapter'), after: plan.id }])
+    const id = results[0]?.id
+    if (id !== undefined) { setDeriving(false); controller.focusChapter(id) }
+  })
 
   // ── taking chapters out: one by its row, several by ticking them — and back again ──
   const [choosing, setChoosing] = useState(false)
@@ -127,6 +136,40 @@ function Chapters({ onGraph }: { onGraph: () => void }) {
     if (back !== undefined) controller.focusChapter(back)
     controller.toast('success', t('已恢复：章纲、正文和由它做出来的东西都回来了。', 'Put back: its plan, its text and what was made from it are all there again.'))
   })
+  // ── a chapter dragged to another place on its line: between two others, or to the end of a volume ──
+  const [dragged, setDragged] = useState<string[] | undefined>()
+  const [drop, setDrop] = useState<{ id: string; side: 'before' | 'after' } | { end: string; line?: boolean } | undefined>()
+  const holders = [...project.outline.volumes, ...others]
+  const place = (): void => {
+    const ids = dragged
+    const to = drop
+    setDragged(undefined)
+    setDrop(undefined)
+    if (ids === undefined || ids.length === 0 || to === undefined) return
+    // Let go where it already is: nothing to do.
+    const holder = holders.find(candidate => ('id' in to ? candidate.chapters.some(plan => plan.id === to.id) : candidate.id === to.end))
+    if (holder !== undefined) {
+      const now = holder.chapters.map(plan => plan.id)
+      const rest = now.filter(id => !ids.includes(id))
+      const at = 'id' in to ? rest.indexOf(to.id) + (to.side === 'after' ? 1 : 0) : rest.length
+      const then = [...rest.slice(0, at), ...ids, ...rest.slice(at)]
+      if (then.length === now.length && then.every((id, index) => id === now[index])) return
+    }
+    void run(async () => {
+      await apply([{ op: 'move-chapters', chapters: ids, ...('id' in to ? { [to.side]: to.id } : to.line === true ? { line: to.end } : { volume: to.end }) }])
+    })
+  }
+  /** What makes the end of a volume, or of a line, a place to let a dragged chapter go. */
+  const endOf = (id: string, line = false): { onDragOver: (event: React.DragEvent) => void; onDragLeave: () => void; onDrop: (event: React.DragEvent) => void } => ({
+    onDragOver: (event) => {
+      if (dragged === undefined) return
+      event.preventDefault()
+      event.dataTransfer.dropEffect = 'move'
+      if (drop === undefined || !('end' in drop) || drop.end !== id) setDrop({ end: id, ...(line ? { line: true } : {}) })
+    },
+    onDragLeave: () => { setDrop(previous => (previous !== undefined && 'end' in previous && previous.end === id ? undefined : previous)) },
+    onDrop: (event) => { event.preventDefault(); place() },
+  })
   const tick = (id: string): void => {
     setTicked((previous) => {
       const next = new Set(previous)
@@ -136,7 +179,29 @@ function Chapters({ onGraph }: { onGraph: () => void }) {
     })
   }
   const row = (plan: ChapterPlan, chapter: ChapterInfo | undefined, shared = false): JSX.Element => (
-    <li key={plan.id} className={cx('nv-list-item', choosing && 'is-choosing', shared && 'is-shared')}>
+    <li
+      key={plan.id}
+      className={cx('nv-list-item', choosing && 'is-choosing', shared && 'is-shared', !shared && 'is-movable', dragged?.includes(plan.id) === true && 'is-dragged', drop !== undefined && 'id' in drop && drop.id === plan.id && `is-drop-${drop.side}`)}
+      // A chapter of this line is taken by its row and let go between two others (the ticked ones go together). What
+      // the line shares with the one it parts from is that line's to order.
+      draggable={!shared}
+      onDragStart={(event) => {
+        event.dataTransfer.effectAllowed = 'move'
+        event.dataTransfer.setData('text/plain', plan.title)
+        setDragged(choosing && ticked.has(plan.id) ? plans.filter(candidate => ticked.has(candidate.id)).map(candidate => candidate.id) : [plan.id])
+      }}
+      onDragEnd={() => { setDragged(undefined); setDrop(undefined) }}
+      onDragOver={(event) => {
+        if (dragged === undefined || shared || dragged.includes(plan.id)) return
+        event.preventDefault()
+        event.dataTransfer.dropEffect = 'move'
+        const box = event.currentTarget.getBoundingClientRect()
+        const side = event.clientY < box.top + box.height / 2 ? 'before' : 'after'
+        if (drop === undefined || !('id' in drop) || drop.id !== plan.id || drop.side !== side) setDrop({ id: plan.id, side })
+      }}
+      onDrop={(event) => { if (dragged === undefined || shared) return; event.preventDefault(); place() }}
+    >
+      {shared ? null : <span className="nv-list-grip" aria-hidden="true" title={t('拖动来排序', 'Drag to reorder')}><Icon name="grip" size={12} /></span>}
       {choosing ? <input type="checkbox" className="nv-list-tick" checked={ticked.has(plan.id)} onChange={() => { tick(plan.id) }} aria-label={t(`选中「${plan.title}」`, `Choose "${plan.title}"`)} /> : null}
       <button type="button" className={cx('nv-list-row', plan.id === selected?.id && !deriving && 'is-active')} onClick={() => { if (choosing) tick(plan.id); else { setDeriving(false); controller.focusChapter(plan.id) } }}>
         <span className="nv-list-index">{chapter?.index ?? ''}</span>
@@ -149,6 +214,7 @@ function Chapters({ onGraph }: { onGraph: () => void }) {
           {chapter !== undefined && chapter.words > 0 ? <span className="nv-list-meta">{formatCount(chapter.words, locale)}</span> : null}
         </span>
       </button>
+      {choosing || shared ? null : <button type="button" className="nv-list-insert" onClick={() => { void addAfter(plan) }} title={t('在这一章后面插入一章', 'Insert a chapter after this one')} aria-label={t(`在「${plan.title}」后面插入一章`, `Insert a chapter after "${plan.title}"`)}><Icon name="plus" size={12} /></button>}
       {choosing ? null : <button type="button" className="nv-list-remove" onClick={() => { remove([plan.id]) }} title={t('删除这一章', 'Delete this chapter')} aria-label={t(`删除「${plan.title}」`, `Delete "${plan.title}"`)}><Icon name="trash" size={12} /></button>}
     </li>
   )
@@ -221,7 +287,7 @@ function Chapters({ onGraph }: { onGraph: () => void }) {
             <ul className="nv-list">
               {volume.chapters.map(plan => row(plan, info.get(plan.id)))}
             </ul>
-            <button type="button" className="nv-add-row" onClick={() => { addChapter(volume) }}>+ {t('添加章节', 'Add chapter')}</button>
+            <button type="button" className={cx('nv-add-row', drop !== undefined && 'end' in drop && drop.end === volume.id && 'is-drop')} onClick={() => { addChapter(volume) }} {...endOf(volume.id)}>+ {t('添加章节', 'Add chapter')}</button>
           </section>
         ))}
         {shownLine !== undefined ? null : <button type="button" className="nv-add-row" onClick={() => { setEditingVolume('new') }}>+ {t('添加分卷', 'Add volume')}</button>}
@@ -238,7 +304,7 @@ function Chapters({ onGraph }: { onGraph: () => void }) {
               {/* As the line is read: what it shares with the line it parts from, greyed, then its own. */}
               {path.map(id => everything.find(plan => plan.id === id)).filter((plan): plan is ChapterPlan => plan !== undefined).map(plan => row(plan, project.lines?.find(candidate => candidate.id === line.id)?.chapters.find(chapter => chapter.id === plan.id) ?? info.get(plan.id), !line.chapters.some(mine => mine.id === plan.id)))}
             </ul>
-            <button type="button" className="nv-add-row" onClick={() => { addToLine(line) }}>+ {t('给这条线添加章节', 'Add a chapter to this line')}</button>
+            <button type="button" className={cx('nv-add-row', drop !== undefined && 'end' in drop && drop.end === line.id && 'is-drop')} onClick={() => { addToLine(line) }} {...endOf(line.id, true)}>+ {t('给这条线添加章节', 'Add a chapter to this line')}</button>
           </section>
         ))}
         {removed.length > 0 ? (
@@ -500,6 +566,14 @@ function ChapterPlanEditor({ plan, index, plans }: { plan: ChapterPlan; index: n
     if (anchor === undefined) return
     void run(async () => { await apply([{ op: 'move-chapter', chapter: plan.id, [side]: anchor.id }]) })
   }
+  /** A new chapter beside this one — between two that are there. */
+  const insert = (side: 'before' | 'after'): void => {
+    void run(async () => {
+      const results = await apply([{ op: 'add-chapter', title: t('新章节', 'New chapter'), [side]: plan.id }])
+      const id = results[0]?.id
+      if (id !== undefined) controller.focusChapter(id)
+    })
+  }
   const deriveBeats = (): void => {
     setDeriving(true)
     void controller.guard(async () => {
@@ -522,6 +596,8 @@ function ChapterPlanEditor({ plan, index, plans }: { plan: ChapterPlan; index: n
               ...(onLine === undefined && project.outline.volumes.length > 1 ? project.outline.volumes.filter(volume => !volume.chapters.some(candidate => candidate.id === plan.id)).map(volume => ({
                 label: t(`移到「${volume.title}」`, `Move to "${volume.title}"`), icon: 'folder' as const, onSelect: () => { void run(async () => { await apply([{ op: 'move-chapter', chapter: plan.id, volume: volume.id }]) }) },
               })) : []),
+              { label: t('在前面插入一章', 'Insert a chapter before'), icon: 'plus', onSelect: () => { insert('before') } },
+              { label: t('在后面插入一章', 'Insert a chapter after'), icon: 'plus', onSelect: () => { insert('after') } },
               { label: t('移到另一条线…', 'Move to another line…'), icon: 'branch', onSelect: () => { setMoving({ chapters: [plan.id] }) } },
               { label: t('把这一章及之后分成一条线…', 'Part this chapter and what follows into a line…'), icon: 'branch', onSelect: () => { setMoving({ chapters: fromHere(), fresh: true }) } },
               'separator',

@@ -20,7 +20,7 @@ import { containment, type Nested } from '../../shared/ties'
 import { DERIVE_TIES_HINT, TiesBlock, TiesReport, useDeriveTies } from '../Ties'
 import {
   Button, Chip, cx, Empty, Field, Modal, ProjectImage, SectionTitle, Select, Tabs, TextArea, TextInput, useAction, useBookLine, useConfirm, useKept, useLoad,
-  useProject, useRunningJob, useSnapshot, useStudio, useT,
+  useProject, useRunningJob, useSnapshot, useStudio, useT, plainEnter,
 } from '../ui'
 
 /** The bible's own choices beside the line in hand: every line at once, and what is filed under no line. */
@@ -324,7 +324,7 @@ function World({ group }: { group: WorldGroup }) {
       {tidying ? <TidyDialog onClose={() => { setTidying(false) }} /> : null}
       {creating ? (
         <Modal title={t(...labels.create)} onClose={() => { setCreating(false) }} footer={<Button variant="primary" busy={busy} disabled={name.trim().length === 0} onClick={create}>{t('创建', 'Create')}</Button>}>
-          <Field label={t('名称', 'Name')}><TextInput autoFocus value={name} onChange={(event) => { setName(event.target.value) }} onKeyDown={(event) => { if (event.key === 'Enter' && name.trim().length > 0) create() }} /></Field>
+          <Field label={t('名称', 'Name')}><TextInput autoFocus value={name} onChange={(event) => { setName(event.target.value) }} onKeyDown={(event) => { if (plainEnter(event) && name.trim().length > 0) create() }} /></Field>
         </Modal>
       ) : null}
     </div>

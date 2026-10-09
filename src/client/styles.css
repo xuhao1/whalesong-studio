@@ -6030,6 +6030,101 @@ button.nv-stat:hover {
   opacity: 1;
 }
 
+/* ───────────── a chapter taken by its row, and let go between two others ───────────── */
+
+.nv-list-grip {
+  position: absolute;
+  top: 50%;
+  left: -3px;
+  display: flex;
+  color: var(--nv-text-3);
+  cursor: grab;
+  /* Faint, and there: what can be dragged says so before anybody tries. */
+  opacity: 0.35;
+  transform: translateY(-50%);
+}
+
+.nv-list-grip svg {
+  stroke-width: 3.2;
+}
+
+.nv-list-item.is-movable:hover .nv-list-grip {
+  opacity: 0.9;
+}
+
+.nv-list-item.is-choosing .nv-list-grip {
+  display: none;
+}
+
+.nv-list-item.is-dragged {
+  opacity: 0.4;
+}
+
+.nv-list-item.is-drop-before::before,
+.nv-list-item.is-drop-after::after {
+  position: absolute;
+  right: 4px;
+  left: 4px;
+  z-index: 1;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--nv-brand);
+  content: '';
+  pointer-events: none;
+}
+
+.nv-list-item.is-drop-before::before {
+  top: -1px;
+}
+
+.nv-list-item.is-drop-after::after {
+  bottom: -1px;
+}
+
+.nv-add-row.is-drop {
+  background: var(--nv-active);
+  color: var(--nv-text);
+  box-shadow: inset 0 2px 0 var(--nv-brand);
+}
+
+/* A new chapter right after this one: beside the way to take the row out, and as plain to see. */
+.nv-list-insert {
+  position: absolute;
+  top: 50%;
+  right: 29px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--nv-text-3);
+  cursor: pointer;
+  opacity: 0.45;
+  transform: translateY(-50%);
+}
+
+.nv-list-item:hover .nv-list-insert,
+.nv-list-item .nv-list-row.is-active ~ .nv-list-insert,
+.nv-list-insert:focus-visible {
+  opacity: 1;
+}
+
+.nv-list-insert:hover {
+  background: var(--nv-hover);
+  color: var(--nv-text);
+}
+
+.nv-list-item.is-movable .nv-list-row {
+  padding-right: 54px;
+}
+
+.nv-list-item.is-movable.is-choosing .nv-list-row {
+  padding-right: 8px;
+}
+
 .nv-list-item.is-choosing {
   display: flex;
   align-items: center;
@@ -8094,7 +8189,8 @@ blockquote.nv-issue-quote {
   margin-top: 8px;
 }
 
-.nv-picture-redraw > .nv-btn {
+.nv-picture-redraw > .nv-btn,
+.nv-picture-redraw > .nv-row {
   align-self: flex-end;
 }
 
@@ -10579,6 +10675,19 @@ button.nv-album-chapter:hover {
   flex-wrap: wrap;
   align-items: center;
   gap: 4px;
+}
+
+.nv-picture-base {
+  margin-top: 8px;
+}
+
+.nv-picture-base > summary {
+  color: var(--nv-text-2);
+  cursor: pointer;
+}
+
+.nv-picture-base > .nv-parts {
+  margin-top: 6px;
 }
 
 .nv-picture-sent {

@@ -35,6 +35,7 @@ const PIECE_NAMES: Record<IllustrationPiece['of'], string> = {
   ask: 'asked of this one picture',
   composed: 'composed by the director',
   scene: 'the moment of the book the portrait shows (one of the signature scenes the card keeps under visual.scenes)',
+  change: 'what to change in the picture that went along',
 }
 
 /** Everything on record of how one picture was made, in the order its prompt was sent. */
@@ -42,6 +43,32 @@ export function pictureRecord(image: IllustrationInfo): string {
   const parts = image.parts
   const references = parts?.references ?? []
   const made = [image.model, image.provider !== undefined ? `through ${image.provider}` : undefined, image.size !== undefined ? `asked for ${image.size}` : undefined].filter((part): part is string => part !== undefined)
+  const wire = [
+    image.sent !== undefined ? 'What the image model was sent, word for word:' : 'The prompt as the Studio put it together (drawn before the words as sent were kept; things to keep out were attached separately):',
+    '<<<',
+    image.sent?.prompt ?? image.prompt,
+    '>>>',
+    ...(image.sent?.negative !== undefined ? [`Negative prompt, in a field of its own: ${image.sent.negative}`] : []),
+    ...(image.sent?.size !== undefined ? [`Size sent to the service: ${image.sent.size}`] : []),
+    ...(image.sent?.seed !== undefined ? [`Seed it was drawn from: ${image.sent.seed}`] : []),
+    ...(image.sent?.compact !== undefined ? [image.sent.compact.failed === true ? `The prompt came to about ${image.sent.compact.from} tokens and the model reads ${image.sent.compact.limit}; it could not be fitted and went as it was — the model did not read its end.` : `The director rewrote the prompt to fit the model: about ${image.sent.compact.from} tokens → about ${image.sent.compact.tokens ?? image.sent.compact.limit} (it reads ${image.sent.compact.limit}). The prompt as the Studio composed it and the one that was sent differ for that reason.`] : []),
+  ]
+  // Another picture, changed in one thing: that picture and the change are all that went.
+  if (parts?.base !== undefined) {
+    const base = parts.base
+    return [
+      `Picture ${image.id}: ${image.kind}${image.target !== undefined ? ` of ${image.target}` : ''} — ${image.path}`,
+      `Drawn ${image.createdAt}${made.length > 0 ? `, ${made.join(', ')}` : ''}.`,
+      `It is another picture changed in one thing. That picture — ${references[0] !== undefined ? references[0].path : '(not on record)'} — went to the image model with what to change in it, and with nothing else: no description, no art direction, nothing to keep out. To see what the picture it came from was made of, look at that one's record (action=show_image id=<its path>).`,
+      `- what to change: ${parts.subject}`,
+      ...wire,
+      'What it shows in words — none of this was sent; it is what the picture is drawn from when it is drawn again from words (novel_illustrate redraw=… subject=…):',
+      `- subject: ${base.subject}`,
+      base.style !== undefined ? `- art direction: ${base.style}` : '- art direction: none',
+      `- kept out: ${base.avoid !== undefined && base.avoid.length > 0 ? base.avoid.join(', ') : 'nothing'}`,
+      ...(base.references !== undefined && base.references.length > 0 ? [`- held against: ${base.references.map(reference => `${reference.label} — ${reference.path}`).join('; ')}`] : []),
+    ].join('\n')
+  }
   const lines = [
     `Picture ${image.id}: ${image.kind}${image.target !== undefined ? ` of ${image.target}` : ''} — ${image.path}`,
     `Drawn ${image.createdAt}${made.length > 0 ? `, ${made.join(', ')}` : ''}.`,
@@ -58,14 +85,7 @@ export function pictureRecord(image: IllustrationInfo): string {
       : parts?.referenceNote !== undefined
         ? 'The prompt speaks of reference pictures, but none went: this way to the image model takes no pictures.'
         : 'No reference picture went with it: it was drawn from the words alone.',
-    image.sent !== undefined ? 'What the image model was sent, word for word:' : 'The prompt as the Studio put it together (drawn before the words as sent were kept; things to keep out were attached separately):',
-    '<<<',
-    image.sent?.prompt ?? image.prompt,
-    '>>>',
-    ...(image.sent?.negative !== undefined ? [`Negative prompt, in a field of its own: ${image.sent.negative}`] : []),
-    ...(image.sent?.size !== undefined ? [`Size sent to the service: ${image.sent.size}`] : []),
-    ...(image.sent?.seed !== undefined ? [`Seed it was drawn from: ${image.sent.seed}`] : []),
-    ...(image.sent?.compact !== undefined ? [image.sent.compact.failed === true ? `The prompt came to about ${image.sent.compact.from} tokens and the model reads ${image.sent.compact.limit}; it could not be fitted and went as it was — the model did not read its end.` : `The director rewrote the prompt to fit the model: about ${image.sent.compact.from} tokens → about ${image.sent.compact.tokens ?? image.sent.compact.limit} (it reads ${image.sent.compact.limit}). The prompt as the Studio composed it and the one that was sent differ for that reason.`] : []),
+    ...wire,
   ]
   return lines.join('\n')
 }

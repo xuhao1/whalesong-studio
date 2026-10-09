@@ -293,7 +293,7 @@ describe('design sheets and looks', () => {
     // The look is drawn against the main sheet, so it is the same person in other clothes — and the prompt says what the
     // reference is for: the face from the picture, the clothes from the words. Never "whatever it shows must match".
     expect(images.calls.at(-1)!.references).toHaveLength(1)
-    expect(mourning.parts?.references).toEqual([{ path: main.path, label: '沈砚的主造型' }])
+    expect(mourning.parts?.references).toEqual([{ path: main.path, label: '沈砚的主造型', sheet: true }])
     expect(mourning.parts?.subject).toContain('plain black mourning robe')
     expect(mourning.parts?.referenceNote).toContain('脸、发色、体型照参考图画')
     expect(mourning.parts?.referenceNote).toContain('一律照文字画')
@@ -303,7 +303,7 @@ describe('design sheets and looks', () => {
     expect(saved.visual?.looks).toEqual([{ id: '丧服', name: '丧服', prompt: 'plain black mourning robe, hair unbound', sheet: mourning.path }])
     // Drawn again, the look is held against the main sheet still — not against its own sheet of before.
     const again = await illustrate(bed.core, bed.runtime, { kind: 'sheet', target: card.id, look: '丧服' }, task)
-    expect(again.parts?.references).toEqual([{ path: main.path, label: '沈砚的主造型' }])
+    expect(again.parts?.references).toEqual([{ path: main.path, label: '沈砚的主造型', sheet: true }])
   })
 
   it('draws the main sheet from the words alone, every time: drawn again, it takes no older picture of the person along', async () => {
@@ -312,7 +312,7 @@ describe('design sheets and looks', () => {
     const card = await project.saveCharacter({ name: '宝玉', appearance: '面若中秋之月', visual: { prompt: 'boy of thirteen, hair in one thick queue' } })
     const first = await illustrate(bed.core, bed.runtime, { kind: 'sheet', target: card.id }, task)
     const portrait = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id }, task)
-    expect(portrait.parts?.references).toEqual([{ path: first.path, label: '宝玉' }])
+    expect(portrait.parts?.references).toEqual([{ path: first.path, label: '宝玉', sheet: true }])
 
     // The author changes how they look, and has the sheet drawn again: the new words are all the picture is made of.
     // Held against the old sheet — or against the portrait drawn from it — it would come back as the old sheet.
@@ -330,7 +330,7 @@ describe('design sheets and looks', () => {
     expect((await project.illustrations()).map(item => item.path)).toEqual([first.path, portrait.path, second.path])
     // The portrait is drawn against the sheet in use: drawn again, against the new one.
     const redrawn = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id }, task)
-    expect(redrawn.parts?.references).toEqual([{ path: second.path, label: '宝玉' }])
+    expect(redrawn.parts?.references).toEqual([{ path: second.path, label: '宝玉', sheet: true }])
 
     // Somebody who has a portrait and no sheet — drawn before sheets came first, or the sheet was taken out of the
     // gallery: their sheet too is drawn from the words, not from the portrait.
@@ -429,7 +429,7 @@ describe('design sheets and looks', () => {
     expect(brief).toContain('「丧服」')
     expect(scene.parts?.subject).toBe('一个高瘦的女人站在夯土圆厅的天井光柱下')
     expect(scene.parts?.references).toEqual([
-      { path: look.path, label: '沈砚（丧服）' },
+      { path: look.path, label: '沈砚（丧服）', sheet: true },
       { path: art.path, label: '场所「咏礼庭」' },
     ])
     expect(images.calls.at(-1)!.references).toHaveLength(2)
@@ -613,7 +613,7 @@ describe('design sheets and looks', () => {
     // The other lead had no sheet: hers was drawn before the cover, and the cover is held against both.
     const hers = (await project.findCharacter('林黛玉'))!.visual!.sheet!
     expect(cover.sheets).toEqual(['林黛玉'])
-    expect(cover.parts?.references).toEqual([{ path: sheet.path, label: '贾宝玉' }, { path: hers, label: '林黛玉' }])
+    expect(cover.parts?.references).toEqual([{ path: sheet.path, label: '贾宝玉', sheet: true }, { path: hers, label: '林黛玉', sheet: true }])
     expect(images.calls.at(-1)!.references).toHaveLength(2)
     expect((await project.findCharacter('周瑞家的'))!.visual?.sheet).toBeUndefined()
   })
@@ -629,7 +629,7 @@ describe('design sheets and looks', () => {
     expect(portrait.sheets).toEqual(['沈砚'])
     expect(images.calls.map(call => call.prompt.includes('三视图'))).toEqual([true, false])
     expect(made.visual?.sheet).toBeDefined()
-    expect(portrait.parts?.references).toEqual([{ path: made.visual!.sheet!, label: '沈砚' }])
+    expect(portrait.parts?.references).toEqual([{ path: made.visual!.sheet!, label: '沈砚', sheet: true }])
     // Drawn again, there is a sheet: nothing is drawn but the portrait, and nothing is said of sheets.
     const again = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: lead.id }, task)
     expect(again.sheets).toBeUndefined()
@@ -674,7 +674,7 @@ describe('design sheets and looks', () => {
     // Whichever of the two drew it says so; both are held against it.
     expect([...(one.sheets ?? []), ...(two.sheets ?? [])]).toEqual(['沈砚'])
     const sheet = (await project.findCharacter(card.id))!.visual!.sheet!
-    for (const scene of [one, two]) expect(scene.parts?.references).toEqual([{ path: sheet, label: '沈砚' }])
+    for (const scene of [one, two]) expect(scene.parts?.references).toEqual([{ path: sheet, label: '沈砚', sheet: true }])
 
     // Turned off: a portrait is drawn from what there is, and no sheet with it.
     await bed.core.settings.update({ image: { ...bed.core.currentSettings().image, sheetFirst: false } })
@@ -826,7 +826,7 @@ describe('design sheets and looks', () => {
     expect(portrait.prompt).not.toContain('面向镜头')
     expect(portrait.prompt).not.toContain('神态体现')
     // Held against the sheet, and — the moment names a place that has design art — against the place.
-    expect(portrait.parts?.references).toEqual([{ path: sheet.path, label: '黛玉' }, { path: art.path, label: '场所「沁芳闸」' }])
+    expect(portrait.parts?.references).toEqual([{ path: sheet.path, label: '黛玉', sheet: true }, { path: art.path, label: '场所「沁芳闸」' }])
     expect(images.calls.at(-1)!.references).toHaveLength(2)
     // The portrait of a moment stays with the moment: the panel shows which have been drawn.
     expect(scenesOf((await project.findCharacter(card.id))!)[0]!.portrait).toBe(portrait.path)
@@ -1034,7 +1034,7 @@ describe('design sheets and looks', () => {
     const calls = images.calls.length
     const portrait = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id, stage: youth.id, plain: true }, task)
     expect(images.calls.length).toBe(calls + 1)
-    expect(portrait.parts?.references).toEqual([{ path: sheet.path, label: '宝玉' }])
+    expect(portrait.parts?.references).toEqual([{ path: sheet.path, label: '宝玉', sheet: true }])
     expect(portrait.prompt).toContain('boy of thirteen')
     const kept = (await project.findCharacter(card.id))!
     expect(kept.stages![1]!.visual?.portrait).toBe(portrait.path)
@@ -1178,7 +1178,7 @@ describe('which picture of a person leads', () => {
       expect(images.calls[1]!.references).toHaveLength(1)
       expect(portrait.sheets).toEqual(['沈砚'])
       expect(portrait.sheetsAfter).toBeUndefined()
-      expect(portrait.parts?.references).toEqual([{ path: (await project.findCharacter(card.id))!.visual!.sheet, label: '沈砚' }])
+      expect(portrait.parts?.references).toEqual([{ path: (await project.findCharacter(card.id))!.visual!.sheet, label: '沈砚', sheet: true }])
       await bed.cleanup()
     }
   })
@@ -1268,7 +1268,7 @@ describe('the pictures kept of somebody, and taking one away', () => {
     // A portrait drawn after her sheet: held against it.
     const portrait = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id, plain: true }, task)
     const sheet = (await project.findCharacter(card.id))!.visual!.sheet!
-    expect(portrait.parts?.references).toEqual([{ path: sheet, label: '沈砚' }])
+    expect(portrait.parts?.references).toEqual([{ path: sheet, label: '沈砚', sheet: true }])
     // Its words rewritten: what she wrote is the picture; the art direction, what is kept out and the sheet go along as before.
     const calls = images.calls.length
     const reworded = await redrawPicture(bed.core, bed.runtime, { picture: portrait.id, subject: '人物立绘，她侧身站在窗前，手里一卷书' }, task)
@@ -1278,20 +1278,41 @@ describe('the pictures kept of somebody, and taking one away', () => {
     expect(images.calls.at(-1)!.prompt).toContain('画风：水墨淡彩')
     expect(images.calls.at(-1)!.references).toHaveLength(1)
     expect(reworded).toMatchObject({ kind: 'portrait', target: card.id, replaced: ['沈砚'] })
-    expect(reworded.parts?.references).toEqual([{ path: sheet, label: '沈砚' }])
+    expect(reworded.parts?.references).toEqual([{ path: sheet, label: '沈砚', sheet: true }])
     // It is her face now, and the one before stays beside it.
     expect((await project.findCharacter(card.id))!.visual).toMatchObject({ portrait: reworded.path, portraits: [reworded.path, portrait.path] })
-    // One thing changed: the picture itself goes along, with what to change and what to leave as it is.
-    const changed = await redrawPicture(bed.core, bed.runtime, { picture: reworded.path, change: '背景换成雪夜' }, task)
-    expect(images.calls.at(-1)!.prompt).toContain('只改这一处：背景换成雪夜')
-    expect(images.calls.at(-1)!.prompt).toContain('她侧身站在窗前')
-    expect(images.calls.at(-1)!.prompt).toContain('第1张是要改的原图')
-    expect(images.calls.at(-1)!.prompt).toContain('只按上面说的改')
-    expect(changed.parts?.references).toEqual([{ path: reworded.path, label: '要改的原图' }])
+    // One thing changed: the picture goes along with what to change — and that is the whole of what is sent. Not the
+    // picture's description, not the art direction, not what to keep out, not a word of what the picture is for.
+    const changed = await redrawPicture(bed.core, bed.runtime, { picture: reworded.path, change: '背景换成雪夜。' }, task)
+    // (This way to the model has no field for a size: the shape of the frame is its one sentence after the prompt.)
+    expect(images.calls.at(-1)!.prompt).toBe('背景换成雪夜\n\nSquare 1:1 composition.')
+    expect(images.calls.at(-1)!.references).toHaveLength(1)
+    expect(images.calls.at(-1)!.change).toBe(true)
+    expect(changed.prompt).toBe('背景换成雪夜')
+    expect(changed.parts).toMatchObject({ subject: '背景换成雪夜', pieces: [{ of: 'change', text: '背景换成雪夜' }], references: [{ path: reworded.path, label: '要改的原图' }] })
+    expect(changed.parts?.style).toBeUndefined()
+    expect(changed.parts?.avoid).toBeUndefined()
+    expect(changed.parts?.referenceNote).toBeUndefined()
+    // What it shows in words is kept beside that, unsent: the picture it came from, with the change — its art direction, what it kept out, the sheet it was held against.
+    expect(changed.parts?.base).toMatchObject({ subject: '人物立绘，她侧身站在窗前，手里一卷书，背景换成雪夜', style: '水墨淡彩', avoid: ['文字'], references: [{ path: sheet, label: '沈砚' }] })
     expect((await project.findCharacter(card.id))!.visual!.portraits).toEqual([changed.path, reworded.path, portrait.path])
+    // Changed once more: again the picture and the change alone, and the words keep both changes.
+    const twice = await redrawPicture(bed.core, bed.runtime, { picture: changed.id, change: '头发放下来' }, task)
+    expect(images.calls.at(-1)!.prompt).toBe('头发放下来\n\nSquare 1:1 composition.')
+    expect(twice.parts?.references).toEqual([{ path: changed.path, label: '要改的原图' }])
+    expect(twice.parts?.base?.subject).toBe('人物立绘，她侧身站在窗前，手里一卷书，背景换成雪夜，头发放下来')
+    // Its words rewritten, after that: drawn from what it shows in words, as any picture is — with the art direction, against her sheet, not against the picture it was changed from.
+    const back = await redrawPicture(bed.core, bed.runtime, { picture: twice.id, subject: '人物立绘，她坐在灯下' }, task)
+    expect(images.calls.at(-1)!.prompt).toContain('她坐在灯下')
+    expect(images.calls.at(-1)!.prompt).toContain('画风：水墨淡彩')
+    expect(images.calls.at(-1)!.prompt).toContain('Avoid: 文字')
+    expect(images.calls.at(-1)!.change).toBeUndefined()
+    expect(back.parts?.references).toEqual([{ path: sheet, label: '沈砚', sheet: true }])
+    expect(back.parts?.base).toBeUndefined()
     // The same for a design sheet — the new one takes the sheet's place, the old one stays in the gallery — …
     const record = (await project.illustrations()).find(item => item.path === sheet)!
     const resheet = await redrawPicture(bed.core, bed.runtime, { picture: record.id, change: '袖口加一圈白边' }, task)
+    expect(images.calls.at(-1)!.prompt).toMatch(/^袖口加一圈白边\n\n\w+ [\d:]+ composition\.$/)
     expect(resheet).toMatchObject({ kind: 'sheet', replaced: ['沈砚'] })
     expect((await project.findCharacter(card.id))!.visual!.sheet).toBe(resheet.path)
     expect((await project.illustrations()).map(item => item.path)).toContain(sheet)
@@ -1305,6 +1326,17 @@ describe('the pictures kept of somebody, and taking one away', () => {
     const reloose = await redrawPicture(bed.core, bed.runtime, { picture: loose.id, subject: '两只纸船' }, task)
     expect(reloose.replaced).toEqual([])
     expect((await project.illustrations()).map(item => item.path)).toEqual(expect.arrayContaining([loose.path, reloose.path]))
+    // Changed, a picture keeps the frame it has — read off its file, where its record (an older one) names no size.
+    const wide = await project.writeAsset('images/wide.png', new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, 0, 0, 5, 0, 0, 0, 2, 0xd0, 8, 2, 0, 0, 0]))
+    // …and one changed the way it was done at first — its description sent along, held against the picture it came from — is not held against that picture when its words are what it is drawn from.
+    await project.addIllustration({ id: 'img_wide', path: wide, kind: 'scene', createdAt: new Date().toISOString(), prompt: '江上一只船，照参考图把这一张重画一遍，只改这一处：加一轮月亮', parts: { subject: '江上一只船，照参考图把这一张重画一遍，只改这一处：加一轮月亮', style: '水墨淡彩', references: [{ path: loose.path, label: '要改的原图' }], referenceNote: '参考图：第1张是要改的原图。' } })
+    const widened = await redrawPicture(bed.core, bed.runtime, { picture: 'img_wide', change: '月亮改成残月' }, task)
+    expect(images.calls.at(-1)!.prompt).toBe('月亮改成残月\n\nLandscape 16:9 composition.')
+    expect(widened.size).toBe('1280x720')
+    expect(widened.parts?.base?.references).toBeUndefined()
+    const { pictureWords } = await import('../src/shared/art')
+    expect(pictureWords(widened)).toMatchObject({ subject: '江上一只船，照参考图把这一张重画一遍，只改这一处：加一轮月亮，月亮改成残月', art: true })
+    expect(pictureWords({ prompt: 'a boat', parts: { subject: 'a boat', left: [{ path: 'x.png', label: 'the picture to change' }, { path: 'y.png', label: 'Shen' }] } })).toEqual({ subject: 'a boat', references: [{ path: 'y.png', label: 'Shen' }], art: false })
     // Nothing to draw from: it says so.
     await expect(redrawPicture(bed.core, bed.runtime, { picture: loose.id }, task)).rejects.toThrow(/say what to draw/)
     await expect(redrawPicture(bed.core, bed.runtime, { picture: 'assets/images/none.png', change: 'x' }, task)).rejects.toThrow(/no picture on record/)

@@ -17,7 +17,7 @@ import { useSheetsAsk } from '../SheetsAsk'
 import { jobLabel, jobPulse } from '../Studio'
 import {
   Button, Chip, crewLabel, cx, Field, Modal, Progress, ProjectImage, SectionTitle, Select, TextArea, TextInput, useAction, useConfirm, useKept, useProject, useRunningJob,
-  useSnapshot, useStudio, useT, type Translate,
+  useSnapshot, useStudio, useT, type Translate, plainEnter,
 } from '../ui'
 import type { StudioController } from '../store'
 
@@ -124,7 +124,7 @@ function WorkspaceField({ suggestion }: { suggestion: string }) {
       {open ? (
         <div className="nv-workspace-new">
           <Field label={t('新工作区的名字', 'Name of the new workspace')} hint={home !== undefined ? t(`会建立文件夹：${home}/${folder}`, `Creates the folder ${home}/${folder}`) : undefined}>
-            <TextInput autoFocus value={name} placeholder={folder} onChange={(event) => { setName(event.target.value) }} onKeyDown={(event) => { if (event.key === 'Enter') create() }} />
+            <TextInput autoFocus value={name} placeholder={folder} onChange={(event) => { setName(event.target.value) }} onKeyDown={(event) => { if (plainEnter(event)) create() }} />
           </Field>
           <div className="nv-row-wrap">
             <Button variant="primary" size="sm" busy={busy} pending={t('正在建立…', 'Creating…')} onClick={() => { create() }}>{t('建立', 'Create')}</Button>

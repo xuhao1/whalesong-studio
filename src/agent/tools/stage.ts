@@ -52,9 +52,9 @@ export function stageTools(service: NovelService): ToolDefinition[] {
       mutating: true,
       parameters: {
         kind: { type: 'string', required: true, enum: ['sheet', 'portrait', 'scene', 'location', 'item', 'cover', 'custom'] },
-        redraw: { type: 'string', description: 'Draw an existing picture again from its record, whatever kind it is — the picture\'s id or path (novel_manage action=show_image shows what it was made of; pass its kind as `kind`). With `subject`: its words as rewritten — they take the subject\'s place, and the art direction, what it kept out and the references it had go along as before. With `change`: the picture itself is sent to the image model and drawn again with that one thing changed (for a picture that is right but for one thing; needs an image service that takes reference pictures). The new picture takes the old one\'s place wherever it hangs — a card\'s sheet, an entry\'s art, the cover; among somebody\'s portraits it goes before the old one — and the old one stays in the gallery.' },
+        redraw: { type: 'string', description: 'Draw an existing picture again from its record, whatever kind it is — the picture\'s id or path (novel_manage action=show_image shows what it was made of; pass its kind as `kind`). With `subject`: its words as rewritten — they take the subject\'s place, and the art direction, what it kept out and the references it had go along as before. With `change`: the picture itself goes to the image model with your `change` — those words and nothing else: no description, no art direction; the picture says the rest. For a picture that is right but for one thing. It needs an image service that takes a picture; where the service takes none, the words the picture was made from go in its place with the change after them, and the result says so. The new picture takes the old one\'s place wherever it hangs — a card\'s sheet, an entry\'s art, the cover; among somebody\'s portraits it goes before the old one — and the old one stays in the gallery.' },
         subject: { type: 'string', description: 'With `redraw`: the picture\'s own words, rewritten.' },
-        change: { type: 'string', description: 'With `redraw`: the one thing to change in the picture.' },
+        change: { type: 'string', description: 'With `redraw`: the one thing to change in the picture, said as an instruction ("a snowy night behind her", "her hair down") — it is the whole prompt, so say only the change.' },
         target: { type: 'string', description: 'Character, chapter or world entry.' },
         quote: { type: 'string', description: 'scene: the passage to illustrate.' },
         prompt: { type: 'string', description: 'Extra direction; the full prompt for kind=custom; what the outfit is for a new look.' },
@@ -82,7 +82,9 @@ export function stageTools(service: NovelService): ToolDefinition[] {
             text: [
               `Drawn again and saved to ${redrawn.path}.`,
               redrawn.replaced.length > 0 ? `It took the old picture's place on: ${redrawn.replaced.join(', ')}. The old one is still in the gallery.` : 'The picture it was drawn from hung nowhere: the new one is in the gallery.',
-              `Reference images sent: ${redrawn.parts?.references !== undefined && redrawn.parts.references.length > 0 ? redrawn.parts.references.map(reference => reference.label).join(', ') : 'none'}`,
+              redrawn.parts?.base !== undefined
+                ? `The picture went to the image model with the change, and nothing else: ${brief(redrawn.parts.subject, 200)}`
+                : `Reference images sent: ${redrawn.parts?.references !== undefined && redrawn.parts.references.length > 0 ? redrawn.parts.references.map(reference => reference.label).join(', ') : 'none'}`,
               ...leftBehind(redrawn.parts),
             ].join('\n'),
             data: toJson(redrawn),

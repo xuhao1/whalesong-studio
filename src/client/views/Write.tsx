@@ -23,7 +23,7 @@ import { useSheetsAsk } from '../SheetsAsk'
 import { Derive } from './Outline'
 import {
   Button, Chip, cx, Empty, Menu, Modal, Progress, Select, Spinner, Tabs, TextInput, ThoughtButton, ThoughtPanel, useAction, useConfirm, useJobStream, useJobTail, useLoad, useProject,
-  useLineView, useQuote, useSnapshot, useStudio, useT, useWidth, waysOn, type Translate,
+  useLineView, useQuote, useSnapshot, useStudio, useT, useWidth, waysOn, type Translate, plainEnter,
 } from '../ui'
 import { IssueList } from '../Issues'
 import { JobBar } from '../JobBar'
@@ -590,7 +590,7 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
             ) : (
               <>
                 <TextInput autoFocus className="nv-grow" value={custom} placeholder={t('这段要怎么改？回车发送', 'How should this passage change? Enter to send')} onChange={(event) => { setCustom(event.target.value) }} onKeyDown={(event) => {
-                  if (event.key === 'Enter' && custom.trim().length > 0) reviseSelection(custom.trim())
+                  if (plainEnter(event) && custom.trim().length > 0) reviseSelection(custom.trim())
                   if (event.key === 'Escape') setCustom(undefined)
                 }} />
                 <Button size="sm" variant="primary" disabled={custom.trim().length === 0} onClick={() => { reviseSelection(custom.trim()) }}>{t('改写', 'Rewrite')}</Button>
@@ -600,7 +600,7 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
           </div>
         ) : (
           <div className="nv-brief-bar">
-            <TextInput className="nv-grow" value={brief} placeholder={empty ? t('给写手的要求', 'What to ask of the writer') : t('给写手的要求：续写的方向，或整章要怎么改', 'A brief: where to continue, or how the chapter should change')} onChange={(event) => { setBrief(event.target.value) }} onKeyDown={(event) => { if (event.key === 'Enter' && writing === undefined) write(empty ? 'draft' : 'continue') }} />
+            <TextInput className="nv-grow" value={brief} placeholder={empty ? t('给写手的要求', 'What to ask of the writer') : t('给写手的要求：续写的方向，或整章要怎么改', 'A brief: where to continue, or how the chapter should change')} onChange={(event) => { setBrief(event.target.value) }} onKeyDown={(event) => { if (plainEnter(event) && writing === undefined) write(empty ? 'draft' : 'continue') }} />
             {writing !== undefined
               ? <Button variant="danger" icon="stop" onClick={() => { void controller.cancelJob(writing.id) }}>{t('停止', 'Stop')}</Button>
               : <Button variant="primary" icon="feather" onClick={() => { write(empty ? 'draft' : 'continue') }}>{empty ? t('写这一章', 'Write it') : t('续写', 'Continue')}</Button>}

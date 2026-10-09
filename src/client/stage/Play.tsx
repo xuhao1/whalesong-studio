@@ -10,7 +10,7 @@ import type { AmbiencePreset, PlayLine, PlaySession, PlayTurn } from '../../shar
 import { AMBIENCE } from '../labels'
 import {
   Button, Chip, cx, Empty, Field, Menu, Modal, ProjectImage, SectionTitle, Select, Spinner, TextArea, TextInput, useAction, useConfirm, useLoad,
-  useMediaUrl, useProject, useStudio, useT,
+  useMediaUrl, useProject, useStudio, useT, plainEnter,
 } from '../ui'
 import { Ambience } from './ambience'
 
@@ -398,7 +398,7 @@ function PlayRoom({ id, fresh, onExit }: { id: string; fresh: boolean; onExit: (
                 ...(playerName !== undefined ? [{ value: 'say' as const, label: t(`${playerName}说`, `${playerName} says`) }, { value: 'do' as const, label: t(`${playerName}做`, `${playerName} does`) }] : []),
                 { value: 'direct' as const, label: t('导演指令', 'Direct the scene') },
               ]} onChange={setMode} />
-              <TextInput className="nv-grow" value={input} placeholder={mode === 'say' ? t('说点什么…', 'Say something…') : mode === 'do' ? t('做点什么…', 'Do something…') : t('让场面怎么发展？例：门外突然有人敲门', 'How should the scene move? e.g. someone knocks at the door')} onChange={(event) => { setInput(event.target.value) }} onKeyDown={(event) => { if (event.key === 'Enter' && !event.nativeEvent.isComposing) send(mode, input) }} />
+              <TextInput className="nv-grow" value={input} placeholder={mode === 'say' ? t('说点什么…', 'Say something…') : mode === 'do' ? t('做点什么…', 'Do something…') : t('让场面怎么发展？例：门外突然有人敲门', 'How should the scene move? e.g. someone knocks at the door')} onChange={(event) => { setInput(event.target.value) }} onKeyDown={(event) => { if (plainEnter(event)) send(mode, input) }} />
               <Button variant="primary" icon="send" disabled={input.trim().length === 0} onClick={() => { send(mode, input) }} />
             </div>
           </div>

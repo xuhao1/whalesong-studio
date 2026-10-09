@@ -1700,8 +1700,9 @@ export interface IllustrationPiece {
    * place or the thing looks. `outfit`: the look (outfit) worn, where it is not the main one. `expression`: what the
    * face is to show. `ask`: what was asked of this one picture and of no other. `composed`: a description the director
    * wrote for it, from the book. `scene`: the moment of the book a portrait shows, as kept on the person's card.
+   * `change`: what was to change in a picture that went along to be changed — with that picture, all that was said.
    */
-  of: 'frame' | 'look' | 'outfit' | 'expression' | 'ask' | 'composed' | 'scene'
+  of: 'frame' | 'look' | 'outfit' | 'expression' | 'ask' | 'composed' | 'scene' | 'change'
   text: string
   /**
    * Where the words were taken from. A `look`: what is written for an image model (`anchor` — a visual anchor, a
@@ -1726,17 +1727,27 @@ export interface IllustrationParts {
   styleSource?: 'book' | 'studio' | 'default'
   /** Everything the picture was told to keep out. */
   avoid?: string[]
-  /** Reference images sent along: project-relative path and who it shows. */
-  references?: { path: string; label: string }[]
+  /**
+   * Reference images sent along: project-relative path and who it shows. `sheet`: it is somebody's design sheet — one
+   * person seen from several sides, which the prompt says, lest the sides be drawn as so many people.
+   */
+  references?: { path: string; label: string; sheet?: boolean }[]
   /** What the prompt said of the reference images: who each one shows, and what they are there for. */
   referenceNote?: string
   /**
    * The pictures it would have been held against, left behind by the image service: it takes none (all of them are
    * here, and `references` is empty), or fewer than there were (the rest are here). The prompt does not speak of them.
    */
-  left?: { path: string; label: string }[]
+  left?: { path: string; label: string; sheet?: boolean }[]
   /** The service was sent them and would not have them: what it answered. The picture was then drawn from the words alone. */
   leftWhy?: string
+  /**
+   * Where this picture is another one changed in one thing: that picture went to the image model — it is the first
+   * of `references` — with what to change in it, which is the whole of `subject`; nothing else was said. This is
+   * what the picture shows in words — what the one it was changed from was made of, the change said after its
+   * subject. None of it was sent: it is what this picture is drawn from when it is drawn again from words.
+   */
+  base?: Pick<IllustrationParts, 'subject' | 'style' | 'styleSource' | 'avoid' | 'references'>
 }
 
 /** What went to an image service for one picture, word for word. */

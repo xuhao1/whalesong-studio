@@ -112,13 +112,17 @@ export function Gallery() {
           title={`${t(...KIND[open.kind])}${nameOf(open) !== undefined ? ` · ${nameOf(open)}` : ''}`}
           onClose={() => { setOpen(undefined) }}
           onChanged={() => { images.reload() }}
-          footer={() => (
-            <>
-              {project.cover === open.path
-                ? <Chip tone="green">{t('这是封面', 'This is the cover')}</Chip>
-                : <Button icon="book" pending={t('正在设为封面…', 'Setting the cover…')} onClick={() => controller.guard(async () => { await controller.api.call('project.update', { root, patch: { cover: open.path } }); await controller.refreshProject(); controller.toast('success', t('已设为这本书的封面', 'This is the book\'s cover now')) })}>{t('设为封面', 'Make it the cover')}</Button>}
-            </>
-          )}
+          // Of the picture looked at — which, once it was drawn again in the viewer, is the one that came of it.
+          footer={(shown) => {
+            const cover = shown?.path ?? open.path
+            return (
+              <>
+                {project.cover === cover
+                  ? <Chip tone="green">{t('这是封面', 'This is the cover')}</Chip>
+                  : <Button icon="book" pending={t('正在设为封面…', 'Setting the cover…')} onClick={() => controller.guard(async () => { await controller.api.call('project.update', { root, patch: { cover } }); await controller.refreshProject(); controller.toast('success', t('已设为这本书的封面', 'This is the book\'s cover now')) })}>{t('设为封面', 'Make it the cover')}</Button>}
+              </>
+            )
+          }}
         />
       ) : null}
 

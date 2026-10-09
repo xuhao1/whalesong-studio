@@ -123,10 +123,10 @@ export const PIXEL = Uint8Array.from(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAA
 
 /** An image model that draws nothing and remembers everything it was asked for. */
 export class FakeImages {
-  readonly calls: { prompt: string; references: ImageReference[] }[] = []
+  readonly calls: { prompt: string; references: ImageReference[]; change?: boolean }[] = []
   readonly bridges: ImageBridges = {
     codex: async (prompt, options) => {
-      this.calls.push({ prompt, references: options.references ?? [] })
+      this.calls.push({ prompt, references: options.references ?? [], ...(options.change === true ? { change: true } : {}) })
       return { data: PIXEL, mime: 'image/png' }
     },
   }

@@ -23,7 +23,7 @@ import { LinesField, LineTags, type LinePicks } from '../LinesField'
 import { Icon } from '../icons'
 import {
   Button, Chip, cx, Empty, Field, Modal, ProjectImage, SectionTitle, Select, TextArea, TextInput, useAction, useConfirm, useLoad, useMediaUrl,
-  useProject, useRunningJob, useSnapshot, useStudio, useT,
+  useProject, useRunningJob, useSnapshot, useStudio, useT, plainEnter,
 } from '../ui'
 
 export const ROLE_LABELS: Record<CharacterRole, [string, string]> = {
@@ -257,7 +257,7 @@ export function CharacterCards({ shown, grouped, searching, lives, picks }: { sh
       </section>
       {creating ? (
         <Modal title={t('新建人物', 'New character')} onClose={() => { setCreating(false) }} footer={<Button variant="primary" busy={busy} disabled={name.trim().length === 0} onClick={create}>{t('创建', 'Create')}</Button>}>
-          <Field label={t('姓名', 'Name')}><TextInput autoFocus value={name} onChange={(event) => { setName(event.target.value) }} onKeyDown={(event) => { if (event.key === 'Enter' && name.trim().length > 0) create() }} /></Field>
+          <Field label={t('姓名', 'Name')}><TextInput autoFocus value={name} onChange={(event) => { setName(event.target.value) }} onKeyDown={(event) => { if (plainEnter(event) && name.trim().length > 0) create() }} /></Field>
         </Modal>
       ) : null}
       {confirm.element}
@@ -821,6 +821,8 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
           path={viewing}
           title={`${draft.name} · ${pictures.find(item => item.path === viewing)?.label ?? moments.find(scene => scene.portrait === viewing)?.title ?? (draft.stages ?? []).find(stage => stage.visual?.sheet === viewing || stage.visual?.portrait === viewing)?.title ?? t('立绘', 'Portrait')}`}
           onClose={() => { setViewing(undefined) }}
+          // Drawn again, it is the new one that is open: named as what it now is among their pictures.
+          onChanged={(now) => { if (now !== undefined) setViewing(now) }}
           onEditLook={(of) => {
             // Their own anchor is on this page, under "Looks": the form scrolls to it.
             if (of.kind === 'character' && of.id === card.id) {

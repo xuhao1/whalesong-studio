@@ -20,9 +20,9 @@
  * leave the book through the shared reader or a published site.
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { lookWords, resolveArtStyle, tidyPart, type ArtSource, scenesOf, sceneWords } from '../shared/art'
+import { lookWords, pictureWords, resolveArtStyle, tidyPart, type ArtSource, scenesOf, sceneWords } from '../shared/art'
 import type { IllustrationInfo, IllustrationPiece } from '../shared/types'
-import { Button, Chip, cx, Modal, Spinner, TextArea, TextInput, useAction, useConfirm, useLoad, useMediaUrl, useProject, useSnapshot, useStudio, useT } from './ui'
+import { Button, Chip, cx, Modal, Spinner, TextArea, TextInput, useAction, useConfirm, useLoad, useMediaUrl, useProject, useSnapshot, useStudio, useT, plainEnter } from './ui'
 import { leftBehind } from './labels'
 import { Icon } from './icons'
 
@@ -58,6 +58,7 @@ const PIECE: Record<Exclude<IllustrationPiece['of'], 'look'>, [string, string]> 
   ask: ['这一张的要求', 'Asked of this one'],
   composed: ['导演写的画面', 'Composed by the director'],
   scene: ['名场面', 'Signature scene'],
+  change: ['改哪一处', 'What to change'],
 }
 
 /** Every picture on record in the open book, by its path. */
@@ -110,38 +111,47 @@ export function DeletePicture({ path, onDone, bare, disabled }: { path: string; 
  * A picture drawn again from where it is shown: its words rewritten, or the picture itself changed in one thing.
  * The new picture takes this one's place wherever it hangs; this one stays in the gallery.
  */
-function RedrawPicture({ image, mode, onDone }: { image: IllustrationInfo; mode: 'words' | 'change'; onDone: () => void }) {
+function RedrawPicture({ image, mode, onDone, onBusy, onCancel }: { image: IllustrationInfo; mode: 'words' | 'change'; /** Drawn: the picture that came of it, as far as the job said. */ onDone: (drawn: IllustrationInfo | undefined) => void; /** Being drawn, or no longer: while it is, the form is not to be put away. */ onBusy: (busy: boolean) => void; onCancel: () => void }) {
   const { controller } = useStudio()
   const t = useT()
   const { root } = useProject()
-  const [words, setWords] = useState(image.parts?.subject ?? image.prompt)
+  const [words, setWords] = useState(pictureWords(image).subject)
   const [change, setChange] = useState('')
   const { busy, run } = useAction()
   const ready = mode === 'words' ? words.trim().length > 0 : change.trim().length > 0
   const go = (): void => {
     if (!ready || busy || !controller.need('image')) return
+    onBusy(true)
     void run(async () => {
-      const job = await controller.run('image.redraw', { root, picture: image.id, ...(mode === 'words' ? { subject: words.trim() } : { change: change.trim() }) })
-      await controller.refreshProject()
-      const replaced = Array.isArray(job.result?.replaced) ? job.result.replaced.filter((name): name is string => typeof name === 'string') : []
-      controller.toast('success', `${replaced.length > 0 ? t(`画好了，换到了 ${replaced.join('、')} 上；原来那张还在图库里`, `Drawn, and put in its place on ${replaced.join(', ')}; the one before is still in the gallery`) : t('画好了：新的一张在图库里', 'Drawn: the new picture is in the gallery')}${leftBehind(job, t)}`)
-      onDone()
+      try {
+        const job = await controller.run('image.redraw', { root, picture: image.id, ...(mode === 'words' ? { subject: words.trim() } : { change: change.trim() }) })
+        await controller.refreshProject()
+        const replaced = Array.isArray(job.result?.replaced) ? job.result.replaced.filter((name): name is string => typeof name === 'string') : []
+        controller.toast('success', `${replaced.length > 0 ? t(`画好了，换到了 ${replaced.join('、')} 上；原来那张还在图库里`, `Drawn, and put in its place on ${replaced.join(', ')}; the one before is still in the gallery`) : t('画好了：新的一张在图库里', 'Drawn: the new picture is in the gallery')}${leftBehind(job, t)}`)
+        const output = job.result?.output
+        onDone(output !== null && typeof output === 'object' && typeof (output as { path?: unknown }).path === 'string' ? output as unknown as IllustrationInfo : undefined)
+      } finally {
+        onBusy(false)
+      }
     })
   }
   return (
     <div className="nv-picture-redraw">
       {mode === 'words' ? (
         <>
-          <TextArea autoFocus value={words} minRows={4} maxRows={14} onChange={(event) => { setWords(event.target.value) }} />
+          <TextArea autoFocus value={words} minRows={4} maxRows={14} disabled={busy} onChange={(event) => { setWords(event.target.value) }} />
           <p className="nv-muted nv-small">{t('这张图的画面部分。画风、不要出现和它原来带的参考图照旧附上。', 'What the picture shows. The art direction, what to keep out and the references it had go along as before.')}</p>
         </>
       ) : (
         <>
-          <TextInput autoFocus value={change} placeholder={t('改成什么样：背景换成雪夜；头发放下来', 'What to change: a snowy night behind her; her hair down')} onChange={(event) => { setChange(event.target.value) }} onKeyDown={(event) => { if (event.key === 'Enter') go() }} />
-          <p className="nv-muted nv-small">{t('这张图会发给绘图模型，照着它重画，只改这一处。', 'The picture goes to the image model, to be drawn again with this one change.')}</p>
+          <TextInput autoFocus value={change} placeholder={t('改成什么样：背景换成雪夜；头发放下来', 'What to change: a snowy night behind her; her hair down')} disabled={busy} onChange={(event) => { setChange(event.target.value) }} onKeyDown={(event) => { if (plainEnter(event)) go() }} />
+          <p className="nv-muted nv-small">{t('发给绘图模型的只有这张图和这句话。', 'The image model gets this picture and these words, nothing else.')}</p>
         </>
       )}
-      <Button variant="primary" icon="image" busy={busy} disabled={!ready} pending={t('正在画…', 'Drawing…')} onClick={go}>{mode === 'words' ? t('照这段重画', 'Draw from these words') : t('照着它改', 'Draw it changed')}</Button>
+      <span className="nv-row">
+        <Button variant="ghost" disabled={busy} onClick={onCancel}>{t('取消', 'Cancel')}</Button>
+        <Button variant="primary" icon="image" busy={busy} disabled={!ready} pending={t('正在画…', 'Drawing…')} onClick={go}>{mode === 'words' ? t('照这段重画', 'Draw from these words') : t('照着它改', 'Draw it changed')}</Button>
+      </span>
     </div>
   )
 }
@@ -176,6 +186,10 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
   const parts = image.parts
   const sent = image.sent
   const references = parts?.references ?? []
+  // Another picture changed in one thing: that picture and the change are all that went to the model. What it shows
+  // in words is kept beside that, and is what its anchor and its art direction are compared in.
+  const changed = parts?.base !== undefined
+  const told = parts !== undefined ? pictureWords(image) : undefined
   // What it would have been held against, had the image service taken them: all of it, or what was over its measure.
   const left = parts?.left ?? []
   const leftNames = left.map(reference => reference.label).join(t('、', ', '))
@@ -203,7 +217,7 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
   // A sheet of a look (an outfit), not the main one: it is in use as one, its record has an outfit — or, from before
   // records had parts, its subject says what a look's always said.
   const worn = (card?.visual?.looks ?? []).find(candidate => candidate.sheet === image.path)
-  const ofLook = image.kind === 'sheet' && (worn !== undefined || parts?.pieces?.some(piece => piece.of === 'outfit') === true || /与参考图是同一个人|the same person as in the reference/.test(parts?.subject ?? ''))
+  const ofLook = image.kind === 'sheet' && (worn !== undefined || parts?.pieces?.some(piece => piece.of === 'outfit') === true || /与参考图是同一个人|the same person as in the reference/.test(told?.subject ?? ''))
   const styleNow = resolveArtStyle(project.manifest, studio?.stylePrompt).text
   const of: LookOf | undefined = card !== undefined ? { kind: 'character', id: card.id } : entry !== undefined ? { kind: 'world', id: entry.id } : undefined
   const editLook = onEditLook !== undefined && of !== undefined ? () => { onEditLook(of) } : undefined
@@ -212,6 +226,7 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
   const standing: Standing[] = []
   const open = (path: string | undefined, label: string): Standing['action'] | undefined => (path !== undefined && onOpen !== undefined ? { label, run: () => { onOpen(path) } } : undefined)
   const withAction = (item: Omit<Standing, 'action'>, action: Standing['action'] | undefined): Standing => (action !== undefined ? { ...item, action } : item)
+  if (changed) standing.push(withAction({ tone: 'info', text: t('照着另一张图改的：发给绘图模型的只有那张图和改哪一处。', 'Another picture, changed: the image model got that picture and what to change, nothing else.') }, open(references[0]?.path, t('看原图', 'See that picture'))))
   if (card !== undefined) {
     if (image.kind === 'portrait') {
       standing.push(card.visual?.portrait === image.path
@@ -229,7 +244,7 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
     // The words for how they look: the same now as when this was drawn, or changed since.
     const now = tidyPart(lookWords(card))
     const then = look?.text
-    const same = then !== undefined ? then === now : parts !== undefined && !parts.subject.endsWith('…') && now.length > 0 ? parts.subject.includes(now) : undefined
+    const same = then !== undefined ? then === now : told !== undefined && !told.subject.endsWith('…') && now.length > 0 ? told.subject.includes(now) : undefined
     const anchored = (card.visual?.prompt ?? '').length > 0
     if (same === true) standing.push({ tone: 'ok', text: anchored ? t('视觉锚点和现在的一样。', 'The visual anchor is the same as now.') : t('外貌和现在的一样。', 'The appearance is as it is now.') })
     else if (same === false) standing.push(withAction({ tone: 'warn', text: t('视觉锚点在这张图之后改过。', 'The visual anchor was changed after this picture.') }, editLook !== undefined ? { label: t('看现在的视觉锚点', 'See the anchor as it is'), run: editLook } : undefined))
@@ -243,13 +258,13 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
       if (!kept.includes(shownScene)) standing.push(withAction({ tone: 'warn', text: kept.length > 0 ? t('这一幕在这张图之后改过，或已不在名场面里。', 'This moment was changed after the picture, or is no longer among their scenes.') : t('人物卡上现在没有名场面：这张画的是当时的那一幕。', 'The card keeps no scene now: this shows the one of that time.') }, onEditLook !== undefined ? { label: t('看现在的', 'See it as it is'), run: () => { onEditLook({ kind: 'character', id: card.id, what: 'scene' }) } } : undefined))
     }
     // A portrait is held against the sheet: against the one in use, an older one, or none.
-    if (image.kind === 'portrait' && card.visual?.sheet !== undefined) {
+    if (image.kind === 'portrait' && card.visual?.sheet !== undefined && !changed) {
       if (references.some(reference => reference.path === card.visual!.sheet)) standing.push({ tone: 'ok', text: t('照着现在这张人设图画的。', 'Drawn against the design sheet in use now.') })
       else if (references.length > 0) standing.push({ tone: 'warn', text: t('照着以前的一张人设图画的。', 'Drawn against an earlier design sheet.') })
       else standing.push({ tone: 'warn', text: left.length > 0 ? t('绘图服务没有收参考图，人设图没有带上。', 'The image service took no reference picture: the design sheet did not go along.') : t('画的时候没有带人设图。', 'Drawn without a design sheet.') })
     }
     if (image.kind === 'sheet' && !ofLook && references.length === 0 && left.length > 0) standing.push({ tone: 'warn', text: t('绘图服务没有收参考图，立绘没有带上：只照文字画的。', 'The image service took no reference picture: the portrait did not go along, and this came from the words alone.') })
-    if (image.kind === 'sheet' && !ofLook && references.length > 0) {
+    if (image.kind === 'sheet' && !ofLook && references.length > 0 && !changed) {
       // Against their portrait: the portrait leads (or it was asked for this once). Against anything else: how sheets were redrawn once.
       const portraits = new Set([card.visual?.portrait, ...(card.stages ?? []).map(stage => stage.visual?.portrait), ...scenesOf(card).map(scene => scene.portrait)].filter((path): path is string => path !== undefined))
       if (references.some(reference => reference.path === card.visual?.portrait)) standing.push({ tone: 'ok', text: t('照着现在这张立绘画的。', 'Drawn against the portrait in use now.') })
@@ -269,8 +284,8 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
       else standing.push(withAction({ tone: 'warn', text: t('条目上写的"样子"在这张图之后改过。', 'The look written on the entry was changed after this picture.') }, editLook !== undefined ? { label: t('看现在写的', 'See it as it is'), run: editLook } : undefined))
     }
   }
-  if (parts?.style !== undefined) {
-    standing.push(tidyPart(parts.style) === tidyPart(styleNow)
+  if (told?.style !== undefined) {
+    standing.push(tidyPart(told.style) === tidyPart(styleNow)
       ? { tone: 'ok', text: t('画风和现在的一样。', 'The art direction is the same as now.') }
       : { tone: 'warn', text: t('这本书的画风在这张图之后改过：这张图带的是当时的画风。', 'The book\'s art direction was changed after this picture: it carries the one of that time.'), action: { label: t('看现在的画风', 'See the art direction'), run: () => { controller.openArt() } } })
   }
@@ -376,7 +391,7 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
             )) : <PieceRow label={t('画面内容', 'Subject')}>{parts.subject}</PieceRow>}
             {parts.clipped === true ? <PieceRow label={t('注意', 'Note')}><span className="nv-picture-warn">{t('画面内容太长，被截短了。', 'The subject was too long and was cut short.')}</span></PieceRow> : null}
             {said !== undefined ? <PieceRow label={t('参考图怎么用', 'What the references are for')}>{said}</PieceRow> : null}
-            {parts.style !== undefined ? (
+            {changed ? <PieceRow label={t('其余', 'The rest')}>{t('照原图：画面描述、画风都没有另发。', 'As the picture has it: no description and no art direction went with it.')}</PieceRow> : parts.style !== undefined ? (
               <PieceRow label={t('画风', 'Art direction')} chip={parts.styleSource !== undefined ? t(...SOURCE[parts.styleSource]) : undefined} tone={parts.styleSource === 'book' ? 'green' : 'amber'}>
                 {parts.style} <button type="button" className="nv-link nv-small" onClick={() => { controller.openArt() }}>{t('去改', 'Change it')}</button>
               </PieceRow>
@@ -389,6 +404,16 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
             ) : null}
           </dl>
         ) : <p className="nv-muted nv-small">{t('这张图没有记下各部分；完整的提示词在下面。', 'The parts of this prompt were not kept; the whole prompt is below.')}</p>}
+        {parts?.base !== undefined ? (
+          <details className="nv-picture-base">
+            <summary className="nv-small">{t('这张图用文字怎么说（没有发；"改提示词重画"用它）', 'The picture in words (not sent; what "Rewrite and redraw" starts from)')}</summary>
+            <dl className="nv-parts">
+              <PieceRow label={t('画面内容', 'Subject')}>{parts.base.subject}</PieceRow>
+              {parts.base.style !== undefined ? <PieceRow label={t('画风', 'Art direction')}>{parts.base.style}</PieceRow> : null}
+              {parts.base.avoid !== undefined && parts.base.avoid.length > 0 ? <PieceRow label={t('不要出现', 'Kept out')}>{parts.base.avoid.join(t('、', ', '))}</PieceRow> : null}
+            </dl>
+          </details>
+        ) : null}
       </section>
 
       <section>
@@ -431,27 +456,42 @@ function PieceRow({ label, chip, tone = 'neutral', children }: { label: string; 
  * wherever one is shown: keep a copy of it, draw it again (its words rewritten, or the picture changed in one
  * thing), take it out of the book.
  * @param footer - what else the page that shows it can do with it, put before those.
- * @param onChanged - the picture was drawn again or removed: whatever lists pictures reads them anew.
+ * @param onChanged - the picture was drawn again or removed: whatever lists pictures reads them anew. Drawn again,
+ *   the viewer stays open on the picture that came of it — `now`, its path — and a page that names what is open goes with it.
  */
-export function PictureViewer({ path, title, note, footer, onClose, onEditLook, onChanged }: { path: string; title?: string | undefined; note?: ReactNode; footer?: ((image: IllustrationInfo | undefined) => ReactNode) | undefined; onClose: () => void; onEditLook?: ((of: LookOf) => void) | undefined; onChanged?: (() => void) | undefined }) {
+export function PictureViewer({ path, title, note, footer, onClose, onEditLook, onChanged }: { path: string; title?: string | undefined; note?: ReactNode; footer?: ((image: IllustrationInfo | undefined) => ReactNode) | undefined; onClose: () => void; onEditLook?: ((of: LookOf) => void) | undefined; onChanged?: ((now?: string) => void) | undefined }) {
   const { controller } = useStudio()
   const t = useT()
   const { project } = useProject()
   const mediaUrl = useMediaUrl()
   const pictures = usePictures()
-  // The pictures stepped through from the one that was opened: the last is the one looked at.
+  // The picture that is open: the one the page opened — or, drawn again here, the one that came of it. (A picture
+  // drawn again does not close what showed it: its author asked for it to look at it, and may want it changed once more.)
+  const [opened, setOpened] = useState(path)
+  useEffect(() => { setOpened(path) }, [path])
+  // The pictures stepped through from the one that is open: the last is the one looked at.
   const [trail, setTrail] = useState<string[]>([path])
-  useEffect(() => { setTrail([path]) }, [path])
-  const at = trail.at(-1) ?? path
-  const image = pictures.byPath.get(at)
+  useEffect(() => { setTrail([opened]) }, [opened])
+  const at = trail.at(-1) ?? opened
+  // Just drawn, its record is known here before the list of them has been read again.
+  const [fresh, setFresh] = useState<IllustrationInfo | undefined>()
+  const image = pictures.byPath.get(at) ?? (fresh?.path === at ? fresh : undefined)
   const [natural, setNatural] = useState<{ path: string; width: number; height: number } | undefined>()
-  const first = at === path
-  // Drawing it again: which of the two ways is open under the picture.
+  const first = at === opened
+  // Drawing it again: which of the two ways is open under the picture — and whether it is being drawn right now,
+  // while which the form stays where it is.
   const [redraw, setRedraw] = useState<'words' | 'change' | undefined>()
+  const [drawing, setDrawing] = useState(false)
   useEffect(() => { setRedraw(undefined) }, [at])
   const gone = (): void => {
     onChanged?.()
     onClose()
+  }
+  const redrawn = (drawn: IllustrationInfo | undefined): void => {
+    onChanged?.(drawn?.path)
+    if (drawn === undefined) { setRedraw(undefined); return }
+    setFresh(drawn)
+    setOpened(drawn.path)
   }
   const nameOf = (record: IllustrationInfo): string | undefined => (record.target === undefined ? undefined
     : project.characters.find(card => card.id === record.target)?.name
@@ -464,7 +504,8 @@ export function PictureViewer({ path, title, note, footer, onClose, onEditLook, 
     else if (of.kind === 'character') controller.openCharacter(of.id)
     else controller.openWorld(of.id)
   }
-  const heading = first && title !== undefined ? title : image !== undefined ? `${t(...PICTURE_KIND[image.kind])}${nameOf(image) !== undefined ? ` · ${nameOf(image)}` : ''}` : title ?? t('图片', 'Picture')
+  // The page's own name for it holds for the picture the page opened — not for one drawn from it since.
+  const heading = first && opened === path && title !== undefined ? title : image !== undefined ? `${t(...PICTURE_KIND[image.kind])}${nameOf(image) !== undefined ? ` · ${nameOf(image)}` : ''}` : title ?? t('图片', 'Picture')
   return (
     <Modal wide className="nv-modal-picture" title={heading} onClose={onClose} footer={first ? (
       <>
@@ -473,19 +514,20 @@ export function PictureViewer({ path, title, note, footer, onClose, onEditLook, 
         {footer !== undefined ? footer(image) : null}
         {image !== undefined && image.kind !== 'panel' ? (
           <>
-            <Button variant={redraw === 'words' ? 'primary' : 'outline'} icon="type" onClick={() => { setRedraw(redraw === 'words' ? undefined : 'words') }} title={t('把这张图的提示词拿出来改，照改过的画一张', 'Rewrite this picture\'s words and draw it from them')}>{t('改提示词重画', 'Rewrite and redraw')}</Button>
-            <Button variant={redraw === 'change' ? 'primary' : 'outline'} icon="wand" onClick={() => { setRedraw(redraw === 'change' ? undefined : 'change') }} title={t('把这张图发给绘图模型，照着它只改一处', 'Send this picture along and have one thing changed in it')}>{t('照着这张改', 'Change this picture')}</Button>
+            {/* Pressed again, a way stays open (a second click that closed it looked like nothing happening); its form has the way out. */}
+            <Button variant={redraw === 'words' ? 'primary' : 'outline'} icon="type" disabled={drawing} onClick={() => { setRedraw('words') }} title={t('把这张图的提示词拿出来改，照改过的画一张', 'Rewrite this picture\'s words and draw it from them')}>{t('改提示词重画', 'Rewrite and redraw')}</Button>
+            <Button variant={redraw === 'change' ? 'primary' : 'outline'} icon="wand" disabled={drawing} onClick={() => { setRedraw('change') }} title={t('把这张图和你写的一句话发给绘图模型：只改那一处', 'Send this picture with a sentence of yours: that one thing is changed')}>{t('照着这张改', 'Change this picture')}</Button>
           </>
         ) : null}
-        <DeletePicture path={at} onDone={gone} />
+        <DeletePicture path={at} onDone={gone} disabled={drawing} />
       </>
     ) : undefined}>
       <div className="nv-picture">
         <div className="nv-picture-stage">
           {!first ? <button type="button" className="nv-link nv-small nv-picture-back" onClick={() => { setTrail(previous => previous.slice(0, -1)) }}><Icon name="chevronLeft" size={12} />{t('回到上一张', 'Back to the picture before')}</button> : null}
           <img className="nv-picture-large" alt={heading} src={mediaUrl(at)} onLoad={(event) => { setNatural({ path: at, width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight }) }} />
-          {first && note !== undefined && redraw === undefined ? <div className="nv-muted nv-small">{note}</div> : null}
-          {first && image !== undefined && redraw !== undefined ? <RedrawPicture key={redraw} image={image} mode={redraw} onDone={gone} /> : null}
+          {first && opened === path && note !== undefined && redraw === undefined ? <div className="nv-muted nv-small">{note}</div> : null}
+          {first && image !== undefined && redraw !== undefined ? <RedrawPicture key={`${redraw}:${image.id}`} image={image} mode={redraw} onDone={redrawn} onBusy={setDrawing} onCancel={() => { setRedraw(undefined) }} /> : null}
         </div>
         <div className={cx('nv-picture-facts', image === undefined && 'is-bare')}>
           {image !== undefined

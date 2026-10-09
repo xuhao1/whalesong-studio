@@ -8,7 +8,7 @@
  */
 import { createServer, type IncomingMessage, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { namedKeySource, retryAfterMs } from '../src/core/media/http'
 import { listEndpointModels } from '../src/core/media/discovery'
 import { createImageProvider, forgetImageListings, referencesRefused } from '../src/core/media/image'
@@ -184,7 +184,7 @@ describe('an image server of the author\'s own', () => {
    * `edits`: it takes one reference picture with a prompt (`POST /v1/images/edits`, a form), as the author's server came
    * to on 2026-10-10 — and its list says so; without it there is no such endpoint, as there was none before.
    */
-  const rules = { key: 'good' as string | undefined, drawMs: 20, busyFirst: 0, retryAfter: '1', listing: false, grid: true, edits: false }
+  const rules = { key: 'good' as string | undefined, drawMs: 20, busyFirst: 0, retryAfter: '1', listing: false, grid: true, edits: false, third: false }
   let listings = 0
   let drawing = 0
   let most = 0
@@ -203,7 +203,8 @@ describe('an image server of the author\'s own', () => {
         // The rows of the author's server, as it gave them on 2026-10-10.
         const pictures = rules.edits ? { capabilities: { text_to_image: true, image_edit: true, mask: false, stream: false }, reference_images: { max_count: 1, formats: ['PNG', 'JPEG', 'WEBP'], max_bytes: 10485760, mask_supported: false }, edit_defaults: { width: 768, height: 768, seed: null, true_cfg_scale: 1 } } : {}
         const row = (id: string, steps: number, most: number) => ({ id, object: 'model', owned_by: 'local', repo_id: 'Qwen/Qwen-Image-2.1', pipeline_class: 'QwenImage21Pipeline', defaults: { width: 768, height: 768, steps, seed: 42, true_cfg_scale: 1 }, limits: { max_width: 768, max_height: 768, max_pixels: 589824, max_steps: most, max_prompt_chars: 2000, max_prompt_tokens: 256 }, ...pictures, supported_n: [1], response_formats: ['b64_json'] })
-        answer(200, { object: 'list', data: [row('qwen-image-2.1-nf4', 25, 40), row('qwen-image-2.1-turbo-nf4', 8, 8), { id: 'text-model', object: 'model' }] })
+        // (A third model came on 2026-10-10 — one whose name says nothing of pictures.)
+        answer(200, { object: 'list', data: [row('qwen-image-2.1-nf4', 25, 40), row('qwen-image-2.1-turbo-nf4', 8, 8), ...(rules.third ? [row('noct-q-v4-nf4', 25, 40)] : []), { id: 'text-model', object: 'model' }, { id: 'bge-embed', object: 'model' }, { id: 'captioner', object: 'model', capabilities: { text_to_image: false, vision: true } }] })
         return
       }
       const editing = rules.edits && request.url === '/v1/images/edits'
@@ -278,7 +279,7 @@ describe('an image server of the author\'s own', () => {
   afterAll(async () => { await new Promise((resolve) => { server.close(resolve) }) })
   beforeEach(() => {
     seen.length = 0
-    Object.assign(rules, { key: 'good', drawMs: 20, busyFirst: 0, retryAfter: '1', listing: false, grid: true, edits: false })
+    Object.assign(rules, { key: 'good', drawMs: 20, busyFirst: 0, retryAfter: '1', listing: false, grid: true, edits: false, third: false })
     most = 0
     refused = 0
     listings = 0
@@ -455,7 +456,7 @@ describe('an image server of the author\'s own', () => {
       expect(portrait.prompt).not.toContain('参考图')
       expect(portrait.parts?.referenceNote).toBeUndefined()
       expect(portrait.parts?.references).toBeUndefined()
-      expect(portrait.parts?.left).toEqual([{ path: 'assets/images/sheet-heng.png', label: '沈蘅' }])
+      expect(portrait.parts?.left).toEqual([{ path: 'assets/images/sheet-heng.png', label: '沈蘅', sheet: true }])
       // What the server answered is kept with the picture, and said with the job now that the picture is there.
       expect(portrait.parts?.leftWhy).toContain('404')
       expect(said).toContainEqual({ left: { names: ['沈蘅'], taken: 0, why: portrait.parts!.leftWhy } })
@@ -463,7 +464,7 @@ describe('an image server of the author\'s own', () => {
       const calls = seen.length
       const again = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: heng.id, plain: true }, { origin: 'user' })
       expect(seen).toHaveLength(calls + 1)
-      expect(again.parts?.left).toEqual([{ path: 'assets/images/sheet-heng.png', label: '沈蘅' }])
+      expect(again.parts?.left).toEqual([{ path: 'assets/images/sheet-heng.png', label: '沈蘅', sheet: true }])
       expect(again.parts?.leftWhy).toBeUndefined()
       // A picture nothing would have gone along with says nothing of the kind.
       const alone = await illustrate(bed.core, bed.runtime, { kind: 'custom', prompt: '一只纸船' }, { origin: 'user' })
@@ -510,7 +511,7 @@ describe('an image server of the author\'s own', () => {
       const portrait = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: heng.id, plain: true }, { origin: 'user' })
       expect(seen.at(-1)).toMatchObject({ path: '/v1/images/edits' })
       expect(String(seen.at(-1)!.body.prompt)).toContain('参考图：第1张是沈蘅')
-      expect(portrait.parts?.references).toEqual([{ path: 'assets/images/sheet-heng.png', label: '沈蘅' }])
+      expect(portrait.parts?.references).toEqual([{ path: 'assets/images/sheet-heng.png', label: '沈蘅', sheet: true }])
       expect(portrait.parts?.left).toBeUndefined()
       const said: Record<string, unknown>[] = []
       const both = await illustrate(bed.core, bed.runtime, { kind: 'custom', prompt: '两人在柜台前对账', characters: ['沈蘅', '阿棠'] }, { origin: 'user', job: { ...quietJob(), result: (value) => { said.push(value) } } })
@@ -518,10 +519,55 @@ describe('an image server of the author\'s own', () => {
       expect((seen.at(-1)!.body.files as Record<string, number>).image).toBe(1)
       expect(String(seen.at(-1)!.body.prompt)).toContain('第1张是沈蘅')
       expect(String(seen.at(-1)!.body.prompt)).not.toContain('第2张')
-      expect(both.parts?.references).toEqual([{ path: 'assets/images/sheet-heng.png', label: '沈蘅' }])
-      expect(both.parts?.left).toEqual([{ path: 'assets/images/sheet-tang.png', label: '阿棠' }])
+      expect(both.parts?.references).toEqual([{ path: 'assets/images/sheet-heng.png', label: '沈蘅', sheet: true }])
+      expect(both.parts?.left).toEqual([{ path: 'assets/images/sheet-tang.png', label: '阿棠', sheet: true }])
       expect(both.parts?.leftWhy).toBeUndefined()
       expect(said).toContainEqual({ left: { names: ['阿棠'], taken: 1 } })
+    } finally {
+      await bed.cleanup()
+    }
+  })
+
+  it('changes a picture with the picture and the change alone — and with the picture\'s words where the server takes no picture', async () => {
+    rules.listing = true
+    rules.edits = true
+    rules.key = undefined
+    const bed = await createTestBed({ settings: { image: { provider: 'openai', baseURL: base, model: 'qwen-image-2.1-turbo-nf4' } } })
+    try {
+      const { project } = bed.runtime
+      const { illustrate, redrawPicture, forgetFittedPrompts } = await import('../src/core/pipelines/illustrate')
+      forgetFittedPrompts()
+      // A book whose art direction and avoid list alone come near what this model reads: any prompt that carries them is the director's to fit.
+      await project.updateManifest({ artStyle: '精致的半写实插画风格，半中国水墨画风格，电影感光影，细腻笔触，统一的色调，适当的细节，建筑服饰是典型的明制'.repeat(5), artAvoid: ['文字', '水印', '现代服饰与物件'] })
+      const asked: string[] = []
+      bed.llm.responder = (request) => { asked.push(request.prompt); return JSON.stringify({ prompt: '雨夜的码头，一盏风灯，半写实水墨插画，明制。' }) }
+      const first = await illustrate(bed.core, bed.runtime, { kind: 'custom', prompt: '雨夜的码头，一盏风灯', size: '1024x1024' }, { origin: 'user' })
+      expect(asked).toHaveLength(1)
+      // Changed: the picture goes to the edits endpoint with the author's words — the whole prompt. No description, no
+      // art direction, nothing to keep out; so nothing that needs fitting, and the director is not asked.
+      const changed = await redrawPicture(bed.core, bed.runtime, { picture: first.id, change: '风灯换成红色的' }, { origin: 'user' })
+      expect(seen.at(-1)).toMatchObject({ path: '/v1/images/edits', type: 'multipart/form-data' })
+      expect(seen.at(-1)!.body).toEqual({ model: 'qwen-image-2.1-turbo-nf4', prompt: '风灯换成红色的', size: '768x768', n: '1', files: { image: 1 } })
+      expect(asked).toHaveLength(1)
+      expect(changed.sent).toEqual({ prompt: '风灯换成红色的', size: '768x768' })
+      expect(changed.parts).toMatchObject({ subject: '风灯换成红色的', references: [{ path: first.path, label: '要改的原图' }], base: { subject: '雨夜的码头，一盏风灯，风灯换成红色的', avoid: ['文字', '水印', '现代服饰与物件'] } })
+      expect(changed.parts?.left).toBeUndefined()
+
+      // The same server before it took pictures: the picture is sent, it has nowhere to take it, and the new one is
+      // drawn from the words that stand in for the picture — its own, the change after them — as any picture is.
+      rules.edits = false
+      forgetImageListings()
+      const said: Record<string, unknown>[] = []
+      const worded = await redrawPicture(bed.core, bed.runtime, { picture: first.id, change: '风灯换成红色的' }, { origin: 'user', job: { ...quietJob(), result: (value) => { said.push(value) } } })
+      expect(seen.at(-1)).toMatchObject({ path: '/v1/images/generations' })
+      expect(worded.prompt).toContain('雨夜的码头，一盏风灯，风灯换成红色的')
+      expect(worded.prompt).toContain('画风：')
+      expect(worded.prompt).not.toContain('参考图')
+      expect(worded.parts?.base).toBeUndefined()
+      expect(worded.parts?.pieces).toEqual([{ of: 'composed', text: '雨夜的码头，一盏风灯' }, { of: 'ask', text: '风灯换成红色的' }])
+      expect(worded.parts?.left).toEqual([{ path: first.path, label: '要改的原图' }])
+      expect(worded.parts?.leftWhy).toContain('404')
+      expect(said).toContainEqual({ left: { names: ['要改的原图'], taken: 0, why: worded.parts!.leftWhy } })
     } finally {
       await bed.cleanup()
     }
@@ -556,8 +602,40 @@ describe('an image server of the author\'s own', () => {
     expect(fittedSize(own({ local: false }), '1280x720', limits)).toBe('1280x720')
     rules.listing = true
     const models = await listEndpointModels(base, 'image', 'good')
-    expect(models.map(model => model.id)).toEqual(['qwen-image-2.1-nf4', 'qwen-image-2.1-turbo-nf4'])
+    // What the server says is an image model is one, whatever it is called; a model it says nothing of is offered
+    // after those, marked; one whose name, or the server, says it is something else is not offered.
+    expect(models.map(model => `${model.id}${model.unsure === true ? '?' : ''}`)).toEqual(['qwen-image-2.1-nf4', 'qwen-image-2.1-turbo-nf4', 'text-model?'])
     expect(models[1]!.image).toEqual({ maxWidth: 768, maxHeight: 768, maxPixels: 589824, promptChars: 2000, promptTokens: 256, seeded: true, steps: 8 })
+    // A model put on the server since — "noct-q-v4-nf4", nothing in its name of pictures — is in the list: the server says what it draws.
+    rules.third = true
+    const grown = await listEndpointModels(base, 'image', 'good')
+    expect(grown.map(model => model.id)).toEqual(['noct-q-v4-nf4', 'qwen-image-2.1-nf4', 'qwen-image-2.1-turbo-nf4', 'text-model'])
+    expect(grown[0]).toMatchObject({ id: 'noct-q-v4-nf4', image: { maxWidth: 768, promptTokens: 256 } })
+    expect(grown[0]!.unsure).toBeUndefined()
+  })
+
+  it('reads the list again for a model it did not have: one put on the server since', async () => {
+    rules.listing = true
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      // Not on the server yet: nothing is known of it, and it is asked the way a server of one's own is asked.
+      expect(await createImageProvider(own({ model: 'noct-q-v4-nf4' }), keys)!.prompting!()).toEqual({ avoidInPrompt: true })
+      expect(listings).toBe(1)
+      // Put there a moment later. Asked again at once, the list is not read a second time…
+      rules.third = true
+      expect(await createImageProvider(own({ model: 'noct-q-v4-nf4' }), keys)!.prompting!()).toEqual({ avoidInPrompt: true })
+      expect(listings).toBe(1)
+      // …but a minute on it is — long before the half hour a list is otherwise kept for — and the model is known.
+      vi.setSystemTime(Date.now() + 61_000)
+      expect(await createImageProvider(own({ model: 'noct-q-v4-nf4' }), keys)!.prompting!()).toEqual({ tokens: 256, avoidInPrompt: true })
+      expect(listings).toBe(2)
+      // A model the list has is not a reason to read it again.
+      vi.setSystemTime(Date.now() + 61_000)
+      expect(await createImageProvider(own({ model: 'qwen-image-2.1-nf4' }), keys)!.prompting!()).toMatchObject({ tokens: 256 })
+      expect(listings).toBe(2)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('goes without a key where none is saved, and says so when the server wants one', async () => {

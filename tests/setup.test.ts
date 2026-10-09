@@ -264,9 +264,12 @@ describe('direct endpoints', () => {
   it('lists the models of an endpoint by what a slot needs', async () => {
     expect(modelsBase('wss://dashscope.aliyuncs.com/api-ws/v1/realtime')).toBe('https://dashscope.aliyuncs.com/compatible-mode/v1')
     expect((await listEndpointModels(base, 'text', 'good')).map(model => model.id)).toEqual(['story-1'])
-    expect((await listEndpointModels(base, 'embedding', 'good')).map(model => model.id)).toEqual(['text-embed-1'])
-    expect((await listEndpointModels(base, 'image', 'good')).map(model => model.id)).toEqual(['image-gen-1'])
-    expect((await listEndpointModels(base, 'speech', 'good')).map(model => model.id)).toEqual(['tts-voice-1'])
+    // On a server of one's own a name leaves no model out of a list: what its name speaks for comes first, and what
+    // nothing speaks for — neither the server nor the name — after it, marked. (A name that says another kind stays out.)
+    const told = (models: { id: string; unsure?: boolean }[]): string[] => models.map(model => `${model.id}${model.unsure === true ? '?' : ''}`)
+    expect(told(await listEndpointModels(base, 'embedding', 'good'))).toEqual(['text-embed-1', 'story-1?'])
+    expect(told(await listEndpointModels(base, 'image', 'good'))).toEqual(['image-gen-1', 'story-1?'])
+    expect(told(await listEndpointModels(base, 'speech', 'good'))).toEqual(['tts-voice-1', 'story-1?'])
     await expect(listEndpointModels(base, 'text', 'bad')).rejects.toMatchObject({ status: 401 })
   })
 
