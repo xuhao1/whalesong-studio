@@ -10,8 +10,9 @@ import { createServer, type IncomingMessage, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { namedKeySource, retryAfterMs } from '../src/core/media/http'
-import { createImageProvider } from '../src/core/media/image'
-import { fittedSize, imageParallel, imageSizes, LOCAL_SIZES, localImages, nearestSize, sizeList } from '../src/shared/images'
+import { listEndpointModels } from '../src/core/media/discovery'
+import { createImageProvider, forgetImageListings } from '../src/core/media/image'
+import { fittedSize, imageLimitsOf, imageParallel, imageSizes, LOCAL_SIZES, localImages, nearestSize, sizeList, sizeWithin } from '../src/shared/images'
 import { privateAddress } from '../src/shared/services'
 import type { ImageSettings } from '../src/shared/types'
 import { createTestBed, PIXEL } from './support/harness'
@@ -145,8 +146,13 @@ describe('an image server of the author\'s own', () => {
   let server: Server
   let base = ''
   const seen: Seen[] = []
-  /** What the server holds its callers to; a test loosens what it is not about. */
-  const rules = { key: 'good' as string | undefined, drawMs: 20, busyFirst: 0, retryAfter: '1' }
+  /**
+   * What the server holds its callers to; a test loosens what it is not about. `listing`: it says what its models take
+   * (`GET /v1/models`, as the author's server does) and then takes any side from 256 to 768 in steps of 32, and a seed;
+   * without it, the three sizes and no seed. `grid: false` with a listing: it lists limits and still takes only the three.
+   */
+  const rules = { key: 'good' as string | undefined, drawMs: 20, busyFirst: 0, retryAfter: '1', listing: false, grid: true }
+  let listings = 0
   let drawing = 0
   let most = 0
   let refused = 0
@@ -159,23 +165,38 @@ describe('an image server of the author\'s own', () => {
         answer(401, { detail: 'Bearer token required' })
         return
       }
+      if (rules.listing && request.method === 'GET' && request.url === '/v1/models') {
+        listings += 1
+        // The rows of the author's server, as it gave them on 2026-10-10.
+        const row = (id: string, steps: number, most: number) => ({ id, object: 'model', owned_by: 'local', repo_id: 'Qwen/Qwen-Image-2.1', pipeline_class: 'QwenImage21Pipeline', defaults: { width: 768, height: 768, steps, seed: 42, true_cfg_scale: 1 }, limits: { max_width: 768, max_height: 768, max_pixels: 589824, max_steps: most, max_prompt_chars: 2000, max_prompt_tokens: 256 }, supported_n: [1], response_formats: ['b64_json'] })
+        answer(200, { object: 'list', data: [row('qwen-image-2.1-nf4', 25, 40), row('qwen-image-2.1-turbo-nf4', 8, 8), { id: 'text-model', object: 'model' }] })
+        return
+      }
       if (request.method !== 'POST' || request.url !== '/v1/images/generations') {
         answer(request.url === '/v1/images/generations' ? 405 : 404, { detail: 'Not Found' })
         return
       }
       const body = JSON.parse(raw.toString('utf8')) as Record<string, unknown>
       seen.push({ path: request.url, auth: request.headers.authorization, type: 'application/json', body })
-      const unknown = Object.keys(body).filter(key => !['model', 'prompt', 'n', 'size'].includes(key))
+      const unknown = Object.keys(body).filter(key => !['model', 'prompt', 'n', 'size', ...(rules.listing ? ['seed'] : [])].includes(key))
       if (unknown.length > 0) {
         answer(422, { detail: unknown.map(key => ({ type: 'extra_forbidden', loc: ['body', key], msg: 'Extra inputs are not permitted' })) })
         return
       }
       if (body.n !== 1) {
-        answer(400, { detail: 'n must be 1' })
+        answer(422, { detail: [{ type: 'value_error', loc: ['body', 'n'], msg: 'Value error, Only integer n=1 is supported.', input: body.n }] })
         return
       }
-      if (!['768x768', '768x512', '512x768'].includes(String(body.size))) {
-        answer(400, { detail: `size ${String(body.size)} is not one of 768x768, 768x512, 512x768` })
+      if (String(body.prompt).length > 2000) {
+        answer(422, { detail: [{ type: 'string_too_long', loc: ['body', 'prompt'], msg: 'String should have at most 2000 characters', input: body.prompt }] })
+        return
+      }
+      const [width, height] = String(body.size).split('x').map(Number) as [number, number]
+      const onGrid = [width, height].every(side => Number.isInteger(side) && side >= 256 && side <= 768 && side % 32 === 0)
+      if (rules.listing && rules.grid ? !onGrid : !['768x768', '768x512', '512x768'].includes(String(body.size))) {
+        answer(rules.listing ? 422 : 400, rules.listing
+          ? { detail: [{ type: 'value_error', loc: ['body', 'size'], msg: 'Value error, Dimensions must be 256..768, in multiples of 32.', input: body.size }] }
+          : { detail: `size ${String(body.size)} is not one of 768x768, 768x512, 512x768` })
         return
       }
       if (drawing > 0 || rules.busyFirst > 0) {
@@ -191,10 +212,11 @@ describe('an image server of the author\'s own', () => {
       answer(200, {
         created: 1791500000,
         model: body.model,
-        model_version: 'qwen-image-2.1-nf4@2026-10',
-        parameters: { steps: 8, guidance: 1, seed: 20261009, sampler: 'euler' },
-        performance: { queue_s: 0, load_s: 0, draw_s: 11.4, vram_gb: 13.2 },
-        data: [{ b64_json: B64, seed: 20261009, nsfw: false }],
+        id: '6b00ffee92ea4d5da26ceb55dcdad496',
+        revision: 'd65dbc9a7e8f6b5479e33dee6030eaab2a906509',
+        parameters: { prompt: body.prompt, width, height, steps: 8, seed: body.seed ?? 42, n: 1, true_cfg_scale: 1, sampling: { mode: 'fixed_sigmas', sigmas: [1, 0.978453] } },
+        metrics: { inference_seconds: 4.4, model_load_seconds: 0, cuda_peak_allocated_bytes: 11215419392 },
+        data: [{ b64_json: B64 }],
       })
     })
     await new Promise<void>((resolve) => { server.listen(0, '127.0.0.1', resolve) })
@@ -203,9 +225,11 @@ describe('an image server of the author\'s own', () => {
   afterAll(async () => { await new Promise((resolve) => { server.close(resolve) }) })
   beforeEach(() => {
     seen.length = 0
-    Object.assign(rules, { key: 'good', drawMs: 20, busyFirst: 0, retryAfter: '1' })
+    Object.assign(rules, { key: 'good', drawMs: 20, busyFirst: 0, retryAfter: '1', listing: false, grid: true })
     most = 0
     refused = 0
+    listings = 0
+    forgetImageListings()
   })
 
   const own = (extra: Partial<ImageSettings> = {}): ImageSettings => ({ provider: 'openai', baseURL: base, model: 'qwen-image-2.1-nf4', apiKeyRef: 'GOOD', ...extra })
@@ -278,6 +302,68 @@ describe('an image server of the author\'s own', () => {
     const size = await createImageProvider(own({ local: false }), keys)!.generate({ prompt: 'a boat', size: '1280x720' }).catch((error: unknown) => error) as Error & { status?: number }
     expect(size.status).toBe(400)
     expect(size.message).toContain('size 1280x720 is not one of 768x768, 768x512, 512x768')
+  })
+
+  it('asks the server what its model draws, and fits the picture, the prompt and the seed to that', async () => {
+    rules.listing = true
+    const provider = createImageProvider(own({ model: 'qwen-image-2.1-turbo-nf4', negativePrompt: '文字' }), keys)!
+    const drawn = []
+    // A scene, a design sheet, a cover, a portrait: each the largest of its shape within 768 a side, sides in steps of 32.
+    for (const size of ['1280x720', '1536x1024', '768x1152', '1024x1024']) drawn.push(await provider.generate({ prompt: '雨夜的码头', size }))
+    expect(seen.map(call => call.body.size)).toEqual(['736x416', '768x512', '512x768', '768x768'])
+    expect(drawn.map(image => image.sent?.size)).toEqual(['736x416', '768x512', '512x768', '768x768'])
+    // Four pictures, one question.
+    expect(listings).toBe(1)
+    // The server draws from seed 42 until told another: every picture is sent one of its own, and its record keeps it.
+    const seeds = seen.map(call => call.body.seed as number)
+    expect(seeds.every(seed => Number.isInteger(seed) && seed >= 0 && seed < 2 ** 31)).toBe(true)
+    expect(new Set(seeds).size).toBe(4)
+    expect(drawn.map(image => image.sent?.seed)).toEqual(seeds)
+    expect(Object.keys(seen[0]!.body).sort()).toEqual(['model', 'n', 'prompt', 'seed', 'size'])
+    // A prompt longer than the server reads is cut to what it reads, not refused.
+    const long = await provider.generate({ prompt: '雨夜的码头，一盏纸灯笼。'.repeat(200), size: '1280x720' })
+    expect(String(seen.at(-1)!.body.prompt)).toHaveLength(2000)
+    expect(long.sent?.prompt).toHaveLength(2000)
+    // The author's own list of sizes still has the last word.
+    await createImageProvider(own({ model: 'qwen-image-2.1-turbo-nf4', sizes: ['512x512', '768x512'] }), keys)!.generate({ prompt: 'a boat', size: '1024x1024' })
+    expect(seen.at(-1)!.body).toMatchObject({ size: '512x512' })
+    expect(seen.at(-1)!.body.seed).toBeTypeOf('number')
+    // A model the list does not know is asked for as before: the three sizes, no seed.
+    await createImageProvider(own({ model: 'somebody-elses-model' }), keys)!.generate({ prompt: 'a boat', size: '1280x720' }).catch(() => undefined)
+    expect(seen.at(-1)!.body).toEqual({ model: 'somebody-elses-model', prompt: 'a boat', size: '768x512', n: 1 })
+  })
+
+  it('falls back on a usual size once when the server lists limits and takes only some sizes within them', async () => {
+    rules.listing = true
+    rules.grid = false
+    const image = await createImageProvider(own({ model: 'qwen-image-2.1-turbo-nf4' }), keys)!.generate({ prompt: 'a boat', size: '1280x720' })
+    expect(seen.map(call => call.body.size)).toEqual(['736x416', '768x512'])
+    expect(image.sent?.size).toBe('768x512')
+    // A refusal that is not about the size is not asked again.
+    await expect(createImageProvider(own({ model: 'qwen-image-2.1-turbo-nf4', local: true, quality: 'high' }), keys)!.generate({ prompt: 'a boat', size: '768x512' })).resolves.toBeDefined()
+    expect(seen).toHaveLength(3)
+  })
+
+  it('reads a model\'s limits off its row, and offers them with the model', async () => {
+    const row = { id: 'm', defaults: { width: 768, height: 768, steps: 8, seed: 42 }, limits: { max_width: 768, max_height: 768, max_pixels: 589824, max_steps: 8, max_prompt_chars: 2000, max_prompt_tokens: 256 } }
+    expect(imageLimitsOf(row)).toEqual({ maxWidth: 768, maxHeight: 768, maxPixels: 589824, promptChars: 2000, seeded: true, steps: 8 })
+    expect(imageLimitsOf({ id: 'm' })).toBeUndefined()
+    expect(imageLimitsOf({ id: 'm', limits: { max_width: 1024 } })).toBeUndefined()
+    expect(imageLimitsOf({ id: 'm', limits: { max_width: 1024, max_height: 1024 } })).toEqual({ maxWidth: 1024, maxHeight: 1024 })
+    const limits = { maxWidth: 768, maxHeight: 768, maxPixels: 589824 }
+    expect(['1280x720', '1536x1024', '768x1152', '1024x1024', '1600x1200', '900x1200', '720x1280', '2520x1080', undefined].map(size => sizeWithin(size, limits)))
+      .toEqual(['736x416', '768x512', '512x768', '768x768', '768x576', '576x768', '416x736', '672x288', '768x768'])
+    // Pixels in all can be the tighter limit; sides that are no multiple of 32 are brought down to one.
+    expect(sizeWithin('1280x720', { maxWidth: 2048, maxHeight: 2048, maxPixels: 1048576 })).toBe('1344x768')
+    expect(sizeWithin('1280x720', { maxWidth: 1000, maxHeight: 700 })).toBe('960x544')
+    // What the settings show is what the provider asks.
+    expect(fittedSize(own(), '1280x720', limits)).toBe('736x416')
+    expect(fittedSize(own({ sizes: ['768x512'] }), '1280x720', limits)).toBe('768x512')
+    expect(fittedSize(own({ local: false }), '1280x720', limits)).toBe('1280x720')
+    rules.listing = true
+    const models = await listEndpointModels(base, 'image', 'good')
+    expect(models.map(model => model.id)).toEqual(['qwen-image-2.1-nf4', 'qwen-image-2.1-turbo-nf4'])
+    expect(models[1]!.image).toEqual({ maxWidth: 768, maxHeight: 768, maxPixels: 589824, promptChars: 2000, seeded: true, steps: 8 })
   })
 
   it('goes without a key where none is saved, and says so when the server wants one', async () => {

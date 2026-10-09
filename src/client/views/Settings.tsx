@@ -14,7 +14,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import type { EndpointCheck, EndpointModel, KeyState, ModelKind, ModelOption, ProviderOption, SettingsView as SettingsData } from '../../shared/rpc'
 import type { ComfyCatalog } from '../../shared/types'
 import { ASPECTS, DEFAULT_ART_STYLE, KIND_ASPECT, PICTURE_KINDS, PICTURE_TIERS, pictureSize, pixelSize, type PictureKind, type PictureTier } from '../../shared/art'
-import { fittedSize, imageSizes, LOCAL_SIZES, localImages, sizeList } from '../../shared/images'
+import { fittedSize, imageSizes, LOCAL_SIZES, localImages, sizeList, type ImageLimits } from '../../shared/images'
 import { FFMPEG_INSTALL } from '../../shared/text'
 import { OutsideHelp } from '../OutsideHelp'
 import { RecommendedCard } from '../Recommended'
@@ -689,7 +689,7 @@ const discovered = new Map<string, EndpointModel[]>()
  * plus everything the endpoint itself says it serves — all of it, whatever is
  * already in the field.
  */
-function ModelField({ label, hint, endpoint, kind, value, onChange, suggestions, refName, keys, placeholder, onModels, onPickModel, describe, t }: {
+function ModelField({ label, hint, endpoint, kind, value, onChange, suggestions, refName, keys, placeholder, onModels, onPickModel, describe, eager, t }: {
   label: string
   hint?: string | undefined
   endpoint: string | undefined
@@ -705,6 +705,8 @@ function ModelField({ label, hint, endpoint, kind, value, onChange, suggestions,
   onPickModel?: (model: EndpointModel) => void
   /** A few words about a listed model, shown beside it. */
   describe?: (model: EndpointModel) => string | undefined
+  /** Ask the endpoint for its list without waiting for the list to be opened: what it says of a model is needed on the page. */
+  eager?: boolean
   t: Translate
 }) {
   const { controller } = useStudio()
@@ -746,6 +748,16 @@ function ModelField({ label, hint, endpoint, kind, value, onChange, suggestions,
       setBusy(false)
     }
   }
+  // Asked at once only where a key is at hand already — a list refused for want of one says nothing — and without
+  // spending the list's own first look, which still asks when it is opened.
+  const keyed = useKeyState(keys, endpoint, refName)?.configured === true
+  const eagerly = useRef<string | undefined>(undefined)
+  useEffect(() => {
+    if (eager !== true || !keyed || host === undefined || eagerly.current === cacheKey || (discovered.get(cacheKey) ?? []).length > 0) return
+    eagerly.current = cacheKey
+    void load(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eager, keyed, cacheKey, host])
   const known = new Map(found.map(model => [model.id, model]))
   const recommended = t('推荐', 'Recommended')
   const options: ComboOption[] = [
@@ -1025,7 +1037,7 @@ const KIND_LABELS: Record<PictureKind, [string, string]> = {
  * stage lies. Each shape says the pixels it comes to; exact pixels can be
  * typed instead.
  */
-function PictureSizeFields({ value, onChange, t, advanced }: { value: ImageSettings; onChange: (next: ImageSettings) => void; t: Translate; advanced: boolean }) {
+function PictureSizeFields({ value, onChange, t, advanced, limits }: { value: ImageSettings; onChange: (next: ImageSettings) => void; t: Translate; advanced: boolean; /** What the author's own server says its model draws at most, where it was asked. */ limits?: ImageLimits }) {
   // No fineness chosen: every kind of picture at the size it has always had.
   const tier = (PICTURE_TIERS as readonly string[]).includes(value.resolution ?? '') ? value.resolution as PictureTier : undefined
   const aspects = value.aspects ?? {}
@@ -1035,12 +1047,16 @@ function PictureSizeFields({ value, onChange, t, advanced }: { value: ImageSetti
     const { aspects: _all, ...others } = value
     onChange(Object.keys(merged).length > 0 ? { ...others, aspects: merged } : others)
   }
-  // An endpoint that draws only some sizes: each kind of picture comes to the one nearest in shape.
-  const only = imageSizes(value)
+  // An endpoint that draws only some sizes: each kind of picture comes to the one nearest in shape — or, where the
+  // author's own server said how large its model draws and no sizes are listed, to the largest of its shape.
+  const within = limits !== undefined && sizeList(value.sizes).length === 0 && localImages(value) ? limits : undefined
+  const only = within !== undefined ? undefined : imageSizes(value)
   const across = (size: string): string => size.replace('x', '×')
   return (
     <>
-      <Field label={t('清晰度', 'Fineness')} hint={only !== undefined
+      <Field label={t('清晰度', 'Fineness')} hint={within !== undefined
+        ? t(`这台服务器最大画到 ${within.maxWidth}×${within.maxHeight}：每类图片取自己形状里最大的。`, `This server draws up to ${within.maxWidth}×${within.maxHeight}: each kind of picture gets the largest of its shape.`)
+        : only !== undefined
         ? t(`这个接口只画 ${only.map(across).join('、')}：每类图片取形状最近的一种。`, `This endpoint draws ${only.map(across).join(', ')} only: each kind of picture gets the nearest in shape.`)
         : tier === undefined
         ? t('默认：每类图片各用自己的常用尺寸。', 'Default: each kind of picture at its usual size.')
@@ -1054,7 +1070,7 @@ function PictureSizeFields({ value, onChange, t, advanced }: { value: ImageSetti
           const chosen = aspects[kind]
           const custom = chosen !== undefined && !(ASPECTS as readonly string[]).includes(chosen)
           return (
-            <Field key={kind} label={t(...KIND_LABELS[kind])} hint={custom && only === undefined ? t('宽x高，如 1600x900', 'WIDTHxHEIGHT, e.g. 1600x900') : fittedSize(value, pictureSize(value, kind)).replace('x', ' × ')}>
+            <Field key={kind} label={t(...KIND_LABELS[kind])} hint={custom && only === undefined && within === undefined ? t('宽x高，如 1600x900', 'WIDTHxHEIGHT, e.g. 1600x900') : fittedSize(value, pictureSize(value, kind), within).replace('x', ' × ')}>
               <Select value={custom ? 'custom' : chosen ?? ''} options={[{ value: '', label: t(`默认（${ASPECT_LABELS[KIND_ASPECT[kind]]![0]}）`, `Default (${ASPECT_LABELS[KIND_ASPECT[kind]]![1]})`) }, ...ASPECTS.map(item => ({ value: item as string, label: t(...ASPECT_LABELS[item]!) })), { value: 'custom', label: t('自己填像素…', 'Exact pixels…') }]} onChange={(next) => { setAspect(kind, next === 'custom' ? pictureSize(value, kind) : next === '' ? undefined : next) }} />
               {custom ? <TextInput value={chosen} placeholder="1600x900" onChange={(event) => { setAspect(kind, event.target.value.trim().length > 0 ? event.target.value : undefined) }} /> : null}
             </Field>
@@ -1237,6 +1253,9 @@ function ImageSection({ value, keys, onChange, t, advanced }: { value: ImageSett
   const ready = value.bridge === 'connect' ? viaConnect : value.bridge === 'cli' ? viaCli : viaConnect || viaCli
   // A server of the author's own behind the custom endpoint: told by its address, and said outright where that misleads.
   const own = localImages(value)
+  // What that server's own list says of the model chosen: how large it draws.
+  const [listed, setListed] = useState<EndpointModel[]>([])
+  const limits = own ? listed.find(model => model.id === value.model)?.image : undefined
   const setOwn = (next: boolean): void => {
     const { local: _old, ...rest } = value
     onChange(localImages(rest) === next ? rest : { ...rest, local: next })
@@ -1285,7 +1304,9 @@ function ImageSection({ value, keys, onChange, t, advanced }: { value: ImageSett
           <>
             <EndpointField value={value.baseURL ?? ''} placeholder={endpoint} hint={value.provider === 'dashscope' ? t('百炼的域名；专属域名也可以', 'The Bailian domain; a workspace domain works too') : undefined} t={t} onChange={(baseURL) => { onChange(without(value, 'baseURL', baseURL)) }} />
             <KeyField endpoint={endpoint} refName={value.apiKeyRef} keys={keys} t={t} onRef={(name) => { onChange(without(value, 'apiKeyRef', name)) }} />
-            <ModelField label={t('模型', 'Model')} endpoint={endpoint} kind="image" value={value.model ?? ''} suggestions={suggestions} refName={value.apiKeyRef} keys={keys} t={t} onChange={(model) => { onChange(without(value, 'model', model)) }} />
+            <ModelField label={t('模型', 'Model')} endpoint={endpoint} kind="image" value={value.model ?? ''} suggestions={suggestions} refName={value.apiKeyRef} keys={keys} t={t} eager={own} onModels={setListed}
+              describe={model => (model.image !== undefined ? t(`最大 ${model.image.maxWidth}×${model.image.maxHeight}${model.image.steps !== undefined ? ` · ${model.image.steps} 步` : ''}`, `up to ${model.image.maxWidth}×${model.image.maxHeight}${model.image.steps !== undefined ? ` · ${model.image.steps} steps` : ''}`) : undefined)}
+              onChange={(model) => { onChange(without(value, 'model', model)) }} />
           </>
         ) : null}
         {source === 'custom' ? (
@@ -1294,10 +1315,10 @@ function ImageSection({ value, keys, onChange, t, advanced }: { value: ImageSett
               <input type="checkbox" checked={own} onChange={(event) => { setOwn(event.target.checked) }} />
               <span>{t('我自己的服务器（本机 / 局域网）：一次画一张，不带参考图', 'A server of my own (this machine or network): one picture at a time, no reference pictures')}</span>
             </label>
-            <SizeListField value={value.sizes} placeholder={own ? LOCAL_SIZES.join(', ') : t('留空：要多大给多大', 'Empty: whatever size is wanted')} onChange={(sizes) => { onChange(without(value, 'sizes', sizes)) }} t={t} />
+            <SizeListField value={value.sizes} placeholder={own ? (limits !== undefined ? t(`留空：照服务器说的，最大 ${limits.maxWidth}×${limits.maxHeight}`, `Empty: as the server says, up to ${limits.maxWidth}×${limits.maxHeight}`) : LOCAL_SIZES.join(', ')) : t('留空：要多大给多大', 'Empty: whatever size is wanted')} onChange={(sizes) => { onChange(without(value, 'sizes', sizes)) }} t={t} />
           </>
         ) : null}
-        {value.provider !== 'none' ? <PictureSizeFields value={value} onChange={onChange} t={t} advanced={advanced} /> : null}
+        {value.provider !== 'none' ? <PictureSizeFields value={value} onChange={onChange} t={t} advanced={advanced} {...(limits !== undefined ? { limits } : {})} /> : null}
         {value.provider !== 'none' && advanced ? (
           <Field label={t('一张图带几张参考图', 'Reference pictures per image')} hint={t(`每张图最多带几张参考图。留空：${REFERENCES_DEFAULT}，最多 ${REFERENCES_MAX}。`, `How many reference pictures one picture may carry. Empty: ${REFERENCES_DEFAULT}; ${REFERENCES_MAX} at most.`)}>
             <TextInput inputMode="numeric" value={value.references !== undefined ? String(value.references) : ''} placeholder={String(REFERENCES_DEFAULT)} onChange={(event) => { const count = number(event.target.value); const { references: _old, ...rest } = value; onChange(count !== undefined && count >= 0 ? { ...rest, references: Math.min(REFERENCES_MAX, Math.round(count)) } : rest) }} />

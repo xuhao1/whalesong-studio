@@ -12,6 +12,7 @@
  * long-poll `events.wait`.
  */
 import type { Album, AlbumCounts } from './album'
+import type { ImageLimits } from './images'
 import type { Life } from './life'
 import type { LineWorld } from './worldline'
 import type { Tie } from './ties'
@@ -116,6 +117,8 @@ export interface EndpointModel {
   via?: TtsProviderKind
   /** Speech models: the endpoint serves it, but over a protocol the Studio does not speak yet. */
   unsupported?: boolean
+  /** Image models: what the endpoint says of the pictures it draws — how large, how long a prompt — where it says. */
+  image?: ImageLimits
 }
 
 /** A provider the Harness itself reaches (Settings → Models, a sign-in plugin), as a source of text models. */

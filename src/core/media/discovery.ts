@@ -3,6 +3,7 @@
  * Asking an endpoint what it serves, so a model can be picked instead of typed.
  * Every answer is a suggestion: the settings accept any model id.
  */
+import { imageLimitsOf, type ImageLimits } from '../../shared/images'
 import { compatibleBase, hostOf, originOf, serviceOf } from '../../shared/services'
 import { getJson, trimBase, type KeySource } from './http'
 import { knownOutput, knownWindow } from '../../shared/recommended'
@@ -15,6 +16,8 @@ export interface DiscoveredModel {
   contextWindow?: number
   /** Voices a speech model accepts, when the endpoint lists them. */
   voices?: string[]
+  /** What an image model's pictures are held to — their size, the length of a prompt — when the endpoint says. */
+  image?: ImageLimits
 }
 
 interface ModelRow {
@@ -78,7 +81,11 @@ export async function listEndpointModels(url: string, kind: ModelKind, apiKey: s
     rows = rowsOf(await getJson<unknown>(`${base}/models`, options))
     rows = rows.filter(row => typeof row.id === 'string' && (kind === 'text' ? !NOT_TEXT.test(row.id) : BY_KIND[kind].test(row.id) && !(kind === 'speech' && NOT_SPEECH.test(row.id))))
   }
-  const models = rows.map(describe).filter((model): model is DiscoveredModel => model !== undefined)
+  const models = rows.map((row) => {
+    const model = describe(row)
+    const limits = kind === 'image' && model !== undefined ? imageLimitsOf(row) : undefined
+    return model !== undefined && limits !== undefined ? { ...model, image: limits } : model
+  }).filter((model): model is DiscoveredModel => model !== undefined)
   return models.sort((left, right) => left.id.localeCompare(right.id))
 }
 

@@ -1678,6 +1678,8 @@ export interface IllustrationSent {
   negative?: string
   /** The size or shape asked for, in the service's own terms. */
   size?: string
+  /** The seed it was drawn from, where the Studio sent one (a server of the author's own, which draws the same picture again from its own). */
+  seed?: number
   /**
    * How it was sampled, where the Studio built the graph itself (a model on a ComfyUI server, no workflow named), and
    * where the steps and the guidance came from: the `settings`, the `server`'s own last run of that model, or the

@@ -81,8 +81,84 @@ export function nearestSize(wanted: string | undefined, sizes: readonly string[]
   return best
 }
 
-/** What a picture wanted at a size is drawn at by the endpoint the settings name. */
-export function fittedSize(settings: ImageSettings, wanted: string): string {
+/**
+ * What a server of the author's own says of one of its models, where its model list says it (`GET /models`: a row's
+ * `limits` and `defaults`): how large a picture may be, how long a prompt, and whether pictures are drawn from a seed.
+ */
+export interface ImageLimits {
+  maxWidth: number
+  maxHeight: number
+  /** The most pixels in all, where that is less than the two sides allow. */
+  maxPixels?: number
+  /** The longest prompt it takes, in characters. */
+  promptChars?: number
+  /** It draws from a seed, and from the same one every time unless it is sent another. */
+  seeded?: boolean
+  /** How many steps it samples in when not told, for the author to read. */
+  steps?: number
+}
+
+/** A model's row as a server lists it, read for what it says of pictures; undefined where it says nothing of their size. */
+export function imageLimitsOf(row: unknown): ImageLimits | undefined {
+  if (row === null || typeof row !== 'object') return undefined
+  const { limits, defaults } = row as { limits?: Record<string, unknown>; defaults?: Record<string, unknown> }
+  const figure = (value: unknown): number | undefined => (typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined)
+  const maxWidth = figure(limits?.max_width)
+  const maxHeight = figure(limits?.max_height)
+  if (maxWidth === undefined || maxHeight === undefined) return undefined
+  const maxPixels = figure(limits?.max_pixels)
+  const promptChars = figure(limits?.max_prompt_chars)
+  const steps = figure(defaults?.steps)
+  return {
+    maxWidth,
+    maxHeight,
+    ...(maxPixels !== undefined ? { maxPixels } : {}),
+    ...(promptChars !== undefined ? { promptChars } : {}),
+    ...(typeof defaults?.seed === 'number' ? { seeded: true } : {}),
+    ...(steps !== undefined ? { steps } : {}),
+  }
+}
+
+/** Sides are asked for in whole multiples of this — what a diffusion model's latent grid takes — and no smaller than {@link SIDE_LEAST}. */
+const SIDE_STEP = 32
+const SIDE_LEAST = 256
+
+/**
+ * The largest picture of the shape wanted that a model's limits allow: the
+ * long side as long as it may be, the other the multiple of {@link SIDE_STEP}
+ * that keeps the shape best. So a 16:9 scene on a model that stops at 768
+ * a side is 768x448, not the 3:2 of a list of three sizes.
+ */
+export function sizeWithin(wanted: string | undefined, limits: ImageLimits): string {
+  const floor = (value: number): number => Math.max(SIDE_LEAST, Math.floor(value / SIDE_STEP) * SIDE_STEP)
+  const most = { width: floor(limits.maxWidth), height: floor(limits.maxHeight) }
+  const target = parseSize(wanted)
+  const aspect = target !== undefined ? target.width / target.height : 1
+  const allowed = (width: number, height: number): boolean => width >= SIDE_LEAST && height >= SIDE_LEAST && width <= most.width && height <= most.height && (limits.maxPixels === undefined || width * height <= limits.maxPixels)
+  let best: { width: number; height: number } | undefined
+  let distance = [Number.POSITIVE_INFINITY, 0]
+  // Every size the limits allow, from the largest down: the shape first, then the pixels.
+  for (let width = most.width; width >= SIDE_LEAST; width -= SIDE_STEP) {
+    for (const height of new Set([floor(width / aspect), floor(width / aspect) + SIDE_STEP])) {
+      if (!allowed(width, height)) continue
+      const shape = Math.abs(Math.log(width / height / aspect))
+      const pixels = width * height
+      if (shape < distance[0]! - 0.02 || (Math.abs(shape - distance[0]!) <= 0.02 && pixels > distance[1]!)) {
+        best = { width, height }
+        distance = [shape, pixels]
+      }
+    }
+  }
+  return best !== undefined ? `${best.width}x${best.height}` : `${most.width}x${most.height}`
+}
+
+/**
+ * What a picture wanted at a size is drawn at by the endpoint the settings name: the nearest of the sizes the author
+ * listed; else, at a server of their own, the largest of that shape the server says the model takes (`limits`, where it
+ * was asked) or the nearest of {@link LOCAL_SIZES}; else the size as wanted.
+ */
+export function fittedSize(settings: ImageSettings, wanted: string, limits?: ImageLimits): string {
+  if (settings.provider === 'openai' && sizeList(settings.sizes).length === 0 && limits !== undefined && localImages(settings)) return sizeWithin(wanted, limits)
   const sizes = imageSizes(settings)
   return sizes !== undefined ? nearestSize(wanted, sizes) : wanted
 }

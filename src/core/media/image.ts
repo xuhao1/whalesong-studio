@@ -10,7 +10,7 @@
  *               the Host provides (the Codex Connect plugin or the Codex CLI);
  *               it has no key of its own.
  */
-import { imageSizes, localImages, nearestSize, parseSize } from '../../shared/images'
+import { fittedSize, imageLimitsOf, imageSizes, LOCAL_SIZES, localImages, nearestSize, parseSize, sizeList, type ImageLimits } from '../../shared/images'
 import { providerDefault } from '../../shared/recommended'
 import { compatibleBase, originOf } from '../../shared/services'
 import type { CodexBridgeKind, IllustrationSent, ImageProviderKind, ImageSettings } from '../../shared/types'
@@ -182,6 +182,29 @@ interface ImagesReply {
   data?: { b64_json?: string; url?: string; media_type?: string }[]
 }
 
+/** What servers of the author's own said of their models, asked for once in a while. */
+const ownListings = new Map<string, { at: number; byId: Promise<Map<string, ImageLimits | undefined>> }>()
+
+/**
+ * What a server of the author's own says of a model — how large it draws, how long a prompt it reads, whether it
+ * draws from a seed — where its model list says (`GET /models`). Undefined where the list cannot be had or says nothing.
+ */
+async function ownLimits(base: string, model: string, apiKey: string | undefined, signal: AbortSignal | undefined): Promise<ImageLimits | undefined> {
+  const cached = ownListings.get(base)
+  if (cached === undefined || Date.now() - cached.at > 30 * 60_000) {
+    const byId = getJson<{ data?: unknown[] }>(`${base}/models`, { ...(apiKey !== undefined ? { apiKey } : {}), timeoutMs: 20_000 })
+      .then(reply => new Map((Array.isArray(reply.data) ? reply.data : []).filter((row): row is { id: string } => typeof (row as { id?: unknown } | null)?.id === 'string').map(row => [row.id, imageLimitsOf(row)])))
+    byId.catch(() => { if (ownListings.get(base)?.byId === byId) ownListings.delete(base) })
+    ownListings.set(base, { at: Date.now(), byId })
+  }
+  try {
+    return (await ownListings.get(base)!.byId).get(model)
+  } catch (error) {
+    if (signal?.aborted === true) throw error
+    return undefined
+  }
+}
+
 class OpenAiImages implements ImageProvider {
   readonly kind = 'openai' as const
   readonly model: string
@@ -200,9 +223,14 @@ class OpenAiImages implements ImageProvider {
     const apiKey = local ? await findKey(this.keys, credential, 'Image generation') : await requireKey(this.keys, credential, 'Image generation')
     const wanted = request.size ?? this.settings.size ?? '1024x1024'
     const gpt = /^(gpt-image|dall-e|chatgpt-image)/i.test(this.model)
-    const prompt = withAvoid(request.prompt, request.negativePrompt ?? this.settings.negativePrompt, 4000)
+    // Such a server is asked what its model takes: the largest picture, the longest prompt, whether it draws from a seed.
+    const limits = local ? await ownLimits(base, this.model, apiKey, request.signal) : undefined
+    const prompt = withAvoid(request.prompt, request.negativePrompt ?? this.settings.negativePrompt, Math.min(4000, limits?.promptChars ?? 4000))
     const sizes = imageSizes(this.settings)
-    const size = sizes !== undefined ? nearestSize(wanted, sizes) : gpt ? gptImageSize(wanted) : wanted
+    const within = local && limits !== undefined && sizeList(this.settings.sizes).length === 0
+    let size = local ? fittedSize(this.settings, wanted, limits) : sizes !== undefined ? nearestSize(wanted, sizes) : gpt ? gptImageSize(wanted) : wanted
+    // From its own seed it draws the same picture every time it is asked the same: a picture drawn again is drawn from another.
+    const seed = limits?.seeded === true ? Math.floor(Math.random() * 2 ** 31) : undefined
     const quality = !local && this.settings.quality !== undefined && this.settings.quality.length > 0 ? this.settings.quality : undefined
     const references = (request.references ?? []).slice(0, MAX_REFERENCES)
     // Pictures to keep faithful to go through the edits endpoint, which is where GPT Image takes image input.
@@ -226,25 +254,31 @@ class OpenAiImages implements ImageProvider {
       const reply = JSON.parse(text) as ImagesReply
       return { ...await fromReply(reply.data?.[0], request.signal), referencesUsed: references.length, sent: { prompt, size } }
     }
+    const ask = async (): Promise<ImagesReply> => await postJson<ImagesReply>(`${base}/images/generations`, {
+      model: this.model,
+      prompt,
+      size,
+      n: 1,
+      ...(quality !== undefined ? { quality } : {}),
+      ...(seed !== undefined ? { seed } : {}),
+      // A model that has to be loaded first takes its time over the first picture.
+    }, { ...(apiKey !== undefined ? { apiKey } : {}), ...signalOption(request.signal), ...(local ? { timeoutMs: 600_000, heedRetryAfter: true } : { timeoutMs: 300_000 }) })
     let reply: ImagesReply
     try {
-      reply = await postJson<ImagesReply>(`${base}/images/generations`, {
-        model: this.model,
-        prompt,
-        size,
-        n: 1,
-        ...(quality !== undefined ? { quality } : {}),
-        // A model that has to be loaded first takes its time over the first picture.
-      }, { ...(apiKey !== undefined ? { apiKey } : {}), ...signalOption(request.signal), ...(local ? { timeoutMs: 600_000, heedRetryAfter: true } : { timeoutMs: 300_000 }) })
+      reply = await ask()
     } catch (error) {
       // No key was sent because none is saved; the server turns out to want one.
       if (local && apiKey === undefined && error instanceof ProviderError && (error.status === 401 || error.status === 403)) {
         throw new ProviderError(`${error.message} — this server asks for a key: paste it in Novel Studio → Settings`, error.status, 'NO_CREDENTIAL')
       }
-      throw error
+      // The size was worked out from the limits the server gave, and the server will not have it: one of the usual sizes, once.
+      const usual = nearestSize(wanted, LOCAL_SIZES)
+      if (!(within && usual !== size && error instanceof ProviderError && (error.status === 400 || error.status === 422) && /\bsize\b|dimension/i.test(error.message))) throw error
+      size = usual
+      reply = await ask()
     }
     // Whatever else the reply says — the model's build, how it was sampled, how long it took — is no part of the picture.
-    return { ...await fromReply(reply.data?.[0], request.signal), referencesUsed: 0, sent: { prompt, size } }
+    return { ...await fromReply(reply.data?.[0], request.signal), referencesUsed: 0, sent: { prompt, size, ...(seed !== undefined ? { seed } : {}) } }
   }
 }
 
@@ -303,6 +337,7 @@ function narrowed(takes: ImageTakes, told: Record<string, string[] | null>): Ima
 export function forgetImageListings(): void {
   listings.clear()
   learnt.clear()
+  ownListings.clear()
 }
 
 /** What the endpoint's listing says a model takes; undefined when the listing cannot be had or does not know the model. */
