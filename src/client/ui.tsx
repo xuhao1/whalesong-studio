@@ -452,6 +452,8 @@ export function Progress({ done, total, label }: { done: number; total: number; 
  */
 const OverlayRootContext = createContext<HTMLElement | null>(null)
 export const OverlayRootProvider = OverlayRootContext.Provider
+/** Where dialogs are put now: to hand on, or to stand in for (a frame that has the screen to itself puts them inside it). */
+export const useOverlayRoot = (): HTMLElement | null => useContext(OverlayRootContext)
 
 export function Modal({ title, onClose, children, footer, wide, className }: { title: string; onClose: () => void; children: ReactNode; footer?: ReactNode; wide?: boolean; className?: string | undefined }) {
   const root = useContext(OverlayRootContext)

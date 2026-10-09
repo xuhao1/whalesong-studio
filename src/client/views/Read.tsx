@@ -37,13 +37,27 @@ import { useSheetsAsk } from '../SheetsAsk'
 import { IssueCard, IssueList, issueMarks } from '../Issues'
 import { AudioDesk, ScriptTable, type ScriptView } from '../stage/Audio'
 import {
-  Button, cx, Empty, Select, Spinner, useBookLine, useLoad, useMediaUrl, useProject, useQuote, useSnapshot, useStudio, useT, useLineView, waysOn,
+  Button, cx, Empty, OverlayRootProvider, Select, Spinner, useBookLine, useLoad, useMediaUrl, useOverlayRoot, useProject, useQuote, useSnapshot, useStudio, useT, useLineView, waysOn,
 } from '../ui'
+import { FullButton, FullFrame, useFull } from '../reader/full'
 import { ShareDialog } from './Share'
 import { DERIVE_TIES_HINT, TiesReport, useDeriveTies } from '../Ties'
 
-/** The viewer: the text of the book, or the album of its people and its world. */
+/**
+ * The viewer, in the frame that can take the whole screen: whichever half is shown — the text, the people, the world,
+ * the side stories — it is the same frame, so changing between them stays in full screen.
+ */
 export function ReadView() {
+  const outer = useOverlayRoot()
+  return (
+    <FullFrame provide={(within, children) => <OverlayRootProvider value={within ?? outer}>{children}</OverlayRootProvider>}>
+      <Viewer />
+    </FullFrame>
+  )
+}
+
+/** The viewer: the text of the book, or the album of its people and its world. */
+function Viewer() {
   const { project } = useProject()
   const at = useSnapshot(snapshot => snapshot.album)
   // How much there is to look at besides the text: what the viewer offers to change to.
@@ -77,8 +91,9 @@ function SidesPage({ counts, sides, side }: { counts: AlbumCounts; sides: SideRe
       <header className="nv-reader-bar">
         <ViewerTabs t={t} value="sides" counts={counts} sides={sides.length} onChange={(next) => { controller.setAlbum({ section: next }) }} />
         <span className="nv-spacer" />
-        <Button size="sm" variant="ghost" icon="phone" onClick={() => { setSharing(true) }} title={t('给别人看：在手机上读，或发布成网站——番外也在里面', 'Show it to others: on a phone, or as a site of its own — the side stories go with it')} />
-        <Button size="sm" icon="pen" onClick={() => { controller.navigate({ view: 'stage', tab: 'play' }) }} title={t('去“演出 → 幕间”', 'To Stage → Interludes')}>{t('编辑', 'Edit')}</Button>
+        <FullButton t={t} />
+        <Button size="sm" variant="ghost" icon="phone" className="nv-only-studio" onClick={() => { setSharing(true) }} title={t('给别人看：在手机上读，或发布成网站——番外也在里面', 'Show it to others: on a phone, or as a site of its own — the side stories go with it')} />
+        <Button size="sm" icon="pen" className="nv-only-studio" onClick={() => { controller.navigate({ view: 'stage', tab: 'play' }) }} title={t('去“演出 → 幕间”', 'To Stage → Interludes')}>{t('编辑', 'Edit')}</Button>
       </header>
       <div className="nv-album-page">
         {side !== undefined ? (
@@ -127,8 +142,9 @@ function AlbumPage({ at, counts, sides }: { at: AlbumAt; counts: AlbumCounts; si
       <header className="nv-reader-bar">
         <ViewerTabs t={t} value={at.section} counts={counts} sides={sides} onChange={(next) => { controller.setAlbum({ section: next }) }} />
         <span className="nv-spacer" />
-        <Button size="sm" variant="ghost" icon="phone" onClick={() => { setSharing(true) }} title={t('给别人看：在手机上读，或发布成网站', 'Show it to others: read on a phone, or publish as a site')} />
-        <Button size="sm" icon="pen" onClick={edit} title={at.end !== undefined ? t('去编辑这一页写的是谁、是什么', 'Edit who or what this page is about') : at.section === 'people' ? t('去"人物"页编辑', 'Edit under People') : t('去"设定"页编辑', 'Edit under Bible')}>{t('编辑', 'Edit')}</Button>
+        <FullButton t={t} />
+        <Button size="sm" variant="ghost" icon="phone" className="nv-only-studio" onClick={() => { setSharing(true) }} title={t('给别人看：在手机上读，或发布成网站', 'Show it to others: read on a phone, or publish as a site')} />
+        <Button size="sm" icon="pen" className="nv-only-studio" onClick={edit} title={at.end !== undefined ? t('去编辑这一页写的是谁、是什么', 'Edit who or what this page is about') : at.section === 'people' ? t('去"人物"页编辑', 'Edit under People') : t('去"设定"页编辑', 'Edit under Bible')}>{t('编辑', 'Edit')}</Button>
       </header>
       <div className="nv-album-page">
         <TiesReport report={ties.report} onDismiss={ties.dismiss} />
@@ -173,7 +189,10 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
   const sheets = useSheetsAsk()
   const [flash, setFlash] = useState<number | undefined>()
   // What a review found, shown on the page where it was found — when the author asks to see it. Reading stays clean otherwise.
-  const [annotate, setAnnotateState] = useState(() => {
+  // In full screen the viewer is a reader's: no notes of a review, no production desk, nothing to edit — whatever the
+  // switches below say, which are kept for when it is left.
+  const full = useFull()?.on === true
+  const [annotateKept, setAnnotateState] = useState(() => {
     try {
       return localStorage.getItem('novel-studio:annotate') === '1'
     } catch {
@@ -188,11 +207,12 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
       // Kept for this visit only.
     }
   }
+  const annotate = annotateKept && !full
   const [noted, setNoted] = useState<{ id: string; top: number; left: number } | undefined>()
   const [looseOpen, setLooseOpen] = useState(false)
   const [sharing, setSharing] = useState(false)
   // Listening is for listening: the production desk of the audio version comes when it is asked for, and is remembered.
-  const [desk, setDeskState] = useState(() => {
+  const [deskKept, setDeskState] = useState(() => {
     try {
       return localStorage.getItem('novel-studio:listen-desk') === '1'
     } catch {
@@ -207,6 +227,7 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
       // Kept for this visit only.
     }
   }
+  const desk = deskKept && !full
   // A chapter that ran out goes on to the next, unless the listener would rather not: a wish kept with the player's.
   const autoNext = options.autoNext ?? (() => {
     try {
@@ -400,17 +421,18 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
           size="sm"
           variant="ghost"
           icon="checkCircle"
-          className={cx(annotate && 'is-active')}
+          className={cx('nv-only-studio', annotate && 'is-active')}
           onClick={() => { setAnnotate(!annotate); setNoted(undefined) }}
           title={annotate ? t('收起批注：正文恢复干净', 'Hide the notes: the page is clean again') : t('批注：把审校出的问题标在正文里，点开可以就地修', 'Notes: mark what the review found in the text; press one to mend it there')}
         >
           {t('批注', 'Notes')}{openIssues > 0 ? ` ${openIssues}` : ''}
         </Button>
         <Button size="sm" variant="ghost" icon="type" className={cx(settings && 'is-active')} onClick={() => { setSettings(!settings) }} title={t('阅读设置：字号、纸张、字体、语速、播放与声音', 'Reading settings: type, paper, typeface, speed, playback and sound')}>{t('阅读设置', 'Reading')}</Button>
-        <Button size="sm" variant="ghost" icon="phone" onClick={() => { setSharing(true) }} title={t('在手机上读这本书', 'Read this book on another device')} />
-        {!watching ? <Button size="sm" variant="ghost" icon="mic" className={cx(desk && 'is-active')} onClick={() => { setDesk(!desk) }} title={desk ? t('收起有声版的制作台，只听', 'Fold the production desk away and just listen') : t('有声版的制作台：脚本、选角、配音、声音', 'The production desk of the audio version: script, casting, voices, sound')}>{t('制作', 'Produce')}</Button> : null}
-        {watching ? <Button size="sm" variant="ghost" icon="film" onClick={() => { controller.navigate({ view: 'stage', tab: 'comic', chapter: chapter.id }) }} title={t('有声漫的制作：分镜、画面、成片', 'Making the motion comic: storyboard, pictures, video')}>{t('制作', 'Produce')}</Button> : null}
-        <Button size="sm" icon="pen" onClick={() => { controller.setView('write', chapter.id) }}>{t('编辑', 'Edit')}</Button>
+        <FullButton t={t} />
+        <Button size="sm" variant="ghost" icon="phone" className="nv-only-studio" onClick={() => { setSharing(true) }} title={t('在手机上读这本书', 'Read this book on another device')} />
+        {!watching ? <Button size="sm" variant="ghost" icon="mic" className={cx('nv-only-studio', desk && 'is-active')} onClick={() => { setDesk(!desk) }} title={desk ? t('收起有声版的制作台，只听', 'Fold the production desk away and just listen') : t('有声版的制作台：脚本、选角、配音、声音', 'The production desk of the audio version: script, casting, voices, sound')}>{t('制作', 'Produce')}</Button> : null}
+        {watching ? <Button size="sm" variant="ghost" icon="film" className="nv-only-studio" onClick={() => { controller.navigate({ view: 'stage', tab: 'comic', chapter: chapter.id }) }} title={t('有声漫的制作：分镜、画面、成片', 'Making the motion comic: storyboard, pictures, video')}>{t('制作', 'Produce')}</Button> : null}
+        <Button size="sm" icon="pen" className="nv-only-studio" onClick={() => { controller.setView('write', chapter.id) }}>{t('编辑', 'Edit')}</Button>
       </header>
       {annotate && mode === 'read' ? (
         <div className="nv-reader-notes" role="status">
@@ -450,7 +472,7 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
                 <h1 className="nv-reader-watch-title">{chapter.title}</h1>
                 {placed.length > 0 ? <WatchChoice t={t} film onChange={(value) => { updateOptions({ film: value }) }} /> : null}
               </div>
-              <p className="nv-muted nv-small">
+              <p className="nv-muted nv-small nv-only-studio">
                 {t('这是后期剪好的成片。', 'This is the video post-production cut. ')}
                 <button type="button" className="nv-link" onClick={() => { controller.navigate({ view: 'stage', tab: 'comic', chapter: chapter.id }) }}>{t('重剪、下载或删除在"演出 → 有声漫"的成片一栏', 'Cutting it again, downloading or deleting it is under Stage → Motion comic, in the video card')}</button>
               </p>
@@ -543,7 +565,7 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
               <IssueCard chapterId={chapter.id} issue={notedIssue} onChanged={() => { setNoted(undefined); doc.reload() }} after={() => { setNoted(undefined) }} />
             </div>
           ) : null}
-          {picked !== undefined ? (
+          {picked !== undefined && !full ? (
             <div className="nv-reader-pick" style={{ top: Math.max(4, picked.top), left: picked.left }} onMouseUp={(event) => { event.stopPropagation() }}>
               <Button size="sm" icon="pen" onClick={() => { controller.jumpTo(chapter.id, picked.offset, picked.text.length, 'write') }}>{t('去修改', 'Edit here')}</Button>
               {quote !== undefined ? (
@@ -587,7 +609,7 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
           updateOptions={updateOptions}
           t={t}
           onClose={() => { setSettings(false) }}
-          extra={(
+          extra={full ? undefined : (
             <label className="nv-check" title={t('把审校出的问题标在正文里', 'Mark what the review found in the text')}>
               <input type="checkbox" checked={annotate} onChange={(event) => { setAnnotate(event.target.checked); setNoted(undefined) }} />
               <span>{t('在正文里显示审校批注', 'Show review notes in the text')}</span>

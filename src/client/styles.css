@@ -10683,3 +10683,66 @@ button.nv-album-chapter:hover {
   max-width: 100%;
   flex: 1 1 140px;
 }
+
+/* ── Full screen: the viewer with the screen to itself, as a reader has it ── */
+.nv-full {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.nv-full-layer:empty {
+  display: none;
+}
+
+.nv-full.is-full {
+  background: var(--nv-bg);
+  color: var(--nv-text);
+}
+
+.nv-full:fullscreen {
+  width: 100%;
+  height: 100%;
+}
+
+/* The screen could not be had: the window, then. */
+.nv-full.is-window {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+}
+
+/* What belongs to the workshop — notes, the production desk, the way to edit — stays behind. */
+.nv-full.is-full .nv-only-studio {
+  display: none;
+}
+
+.nv-full.is-full .nv-reader-bar {
+  border-bottom-color: transparent;
+  transition: opacity 0.25s ease;
+}
+
+/* The pointer at rest: the bar goes, and the pointer with it. The strip it leaves reads as the page's margin. */
+.nv-full.is-full.is-rested {
+  cursor: none;
+}
+
+.nv-full.is-full.is-rested .nv-reader-bar:not(:focus-within) {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Watching: as wide as leaves the picture whole on the screen. */
+.nv-full.is-full .nv-reader-watch {
+  padding-inline: max(14px, calc((100% - 150vh) / 2));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nv-full.is-full .nv-reader-bar {
+    transition: none;
+  }
+}
+
