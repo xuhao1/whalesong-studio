@@ -882,6 +882,16 @@ export interface ImageSettings {
    */
   local?: boolean
   /**
+   * The most tokens of a prompt the image model reads; what lies beyond, it never sees. Unset: what the endpoint itself
+   * says of its model where it says (a server of the author's own, `limits.max_prompt_tokens`); else no limit.
+   */
+  promptTokens?: number
+  /**
+   * A prompt that comes to more than the model reads is rewritten by the director to fit before it is sent — the same
+   * picture in fewer words, not the prompt cut off. Unset: yes. `false`: prompts go as they are.
+   */
+  promptCompact?: boolean
+  /**
    * `openai`: the sizes the endpoint draws, as `WIDTHxHEIGHT`; a picture is asked for at whichever is nearest in shape.
    * Unset: for a server of the author's own, 768x768, 768x512 and 512x768; for GPT Image, its own three; for anything
    * else, the size wanted as it is.
@@ -1680,6 +1690,12 @@ export interface IllustrationSent {
   size?: string
   /** The seed it was drawn from, where the Studio sent one (a server of the author's own, which draws the same picture again from its own). */
   seed?: number
+  /**
+   * The prompt came to more than the model reads — about `from` tokens against `limit` — and the director rewrote it
+   * to about `tokens`; or could not (`failed`), and it went as it was, the model reading as far as it reads.
+   * Tokens are the Studio's estimate: it has no model's tokenizer.
+   */
+  compact?: { limit: number; from: number; tokens?: number; failed?: boolean; /** What the director wrote was still over, and its end — the least of it, by the order it was written in — was left off. */ cut?: boolean }
   /**
    * How it was sampled, where the Studio built the graph itself (a model on a ComfyUI server, no workflow named), and
    * where the steps and the guidance came from: the `settings`, the `server`'s own last run of that model, or the

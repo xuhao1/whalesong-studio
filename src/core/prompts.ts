@@ -1517,6 +1517,49 @@ Output JSON only: {"title": "", "chapter": 0, "scene": "", "why": ""}`)
  * @param base.picture - the picture about to be drawn: a portrait, or a design sheet (which has no setting to give).
  * @param base.anchor - the visual anchor as it stands; absent when there is none yet, and one is to be written.
  */
+/**
+ * A picture's prompt, put together by the Studio, for a model that reads fewer tokens than it comes to: the director
+ * writes the same picture in fewer words. What is handed in is counted against `tokens`.
+ */
+export function compactPromptTask(base: Base & { prompt: string; avoid: string[]; tokens: number; estimate: number; model: string; references: boolean; avoidInPrompt: boolean }): string {
+  const avoid = base.avoid.join(base.lang === 'zh' ? '、' : ', ')
+  return L(base.lang, `《${bare(base.title)}》要画一张图。绘图模型（${base.model}）一次只读得进大约 ${base.tokens} 个 token 的提示词，超出的部分它看不到。下面这段提示词连同“不要出现”的清单大约有 ${base.estimate} 个 token。请把它重写成放得下的一段——画出来的应当还是同一张图。
+
+## 现在的提示词（工坊拼好的）
+${base.prompt}
+
+## 画面里不要出现
+${avoid.length > 0 ? avoid : '（无特别限制）'}
+
+重写后的提示词：
+1. 先后次序：这张图画的是什么（谁、在哪、在做什么、构图）；画里每个人的样子（脸、发式、衣着、随身的东西——原文写了的特征一样不丢）；这本书的画风；光线与气氛。模型从头读起，要紧的在前。
+2. 同一件事只说一次；解释、客套和不影响画面的话去掉。原文里用英文写的外貌短语是这个人每一张图都带的写法，可以原样留着，也可以并得更紧，意思不变。
+3. ${base.avoidInPrompt ? '“不要出现”的东西没有单独的地方放，要写就得写在这一段里：能靠把画面里实际有的东西说清楚来避开的，就那样写（写明是明制的发髻，而不是写“没有辫子”）；非点名不可的，放在最后，一句短话，只列最要紧的几样。' : '“不要出现”的清单会另外交给模型，不必写进这一段；它在这里只是让你知道该绕开什么。'}
+4. ${base.references ? '这张图会带参考图：留一句话，说清第几张是谁、画里的他们要和参考图一致。' : '这张图不带参考图：原文里说到参考图的话全部去掉。'}
+5. 不添原文没有的内容，不改画的是什么。原文用什么语言就用什么语言，中英混排的照旧。
+6. 篇幅：现在量出来是 ${base.estimate}，要到 ${base.tokens} 以内——大约是现在的 ${Math.max(10, Math.floor(base.tokens * 100 / base.estimate / 5) * 5)}%。不用自己数：交上来时会量，超了会告诉你超出多少。
+
+只输出 JSON：
+{"prompt": "重写后的整段提示词"}`, `A picture is to be drawn for "${bare(base.title)}". The image model (${base.model}) reads about ${base.tokens} tokens of a prompt and never sees what lies beyond. The prompt below, with its list of what to keep out, comes to about ${base.estimate}. Write it again so that it fits — the picture it asks for is to be the same picture.
+
+## The prompt as it stands (put together by the Studio)
+${base.prompt}
+
+## Must not appear in the picture
+${avoid.length > 0 ? avoid : '(nothing in particular)'}
+
+The prompt you write:
+1. In this order: what the picture shows (who, where, doing what, how it is framed); how each person in it looks (face, hair, clothing, what they carry — no feature the original names is lost); the book's art direction; light and mood. The model reads from the top: what matters most comes first.
+2. Says each thing once; explanations, courtesies and words that change nothing in the picture go. The English phrases describing a person are how they are written in every picture of them: keep them as they are, or tighten them without changing what they say.
+3. ${base.avoidInPrompt ? 'What must not appear has no field of its own here: it is in this prompt or nowhere. Where saying plainly what is there keeps a thing out, say that (the Ming topknot, not "no queue"); what has to be named is named last, in one short sentence, the few that matter most.' : 'The list of what must not appear goes to the model separately and is not written into this prompt; it is here for you to steer around.'}
+4. ${base.references ? 'Reference pictures go along with this one: keep one sentence saying which shows whom, and that they are to match their reference.' : 'No reference picture goes along with this one: everything the original says of reference pictures goes.'}
+5. Adds nothing the original does not have, and does not change what the picture shows. In the language the original is in; where it mixes Chinese and English, so does yours.
+6. Its length: it measures ${base.estimate} now and has to come to ${base.tokens} or less — about ${Math.max(10, Math.floor(base.tokens * 100 / base.estimate / 5) * 5)}% of what it is. No need to count: what you hand in is measured, and you are told by how much it is over if it is.
+
+Output JSON only:
+{"prompt": "the whole prompt, rewritten"}`)
+}
+
 export function lookNotesTask(base: Base & { card: string; anchor?: string; negative?: string; notes: string; picture: 'portrait' | 'sheet'; avoid?: string[]; artStyle?: string }): string {
   const avoid = (base.avoid ?? []).join(', ')
   const zhPicture = base.picture === 'sheet'

@@ -333,6 +333,44 @@ describe('an image server of the author\'s own', () => {
     expect(seen.at(-1)!.body).toEqual({ model: 'somebody-elses-model', prompt: 'a boat', size: '768x512', n: 1 })
   })
 
+  it('says how much of a prompt its model reads, and has the director fit a longer one', async () => {
+    rules.listing = true
+    // The server's own figure; the author's, where they set one; nothing for a service on the net that names none.
+    expect(await createImageProvider(own({ model: 'qwen-image-2.1-turbo-nf4' }), keys)!.prompting!()).toEqual({ tokens: 256, avoidInPrompt: true, references: 0 })
+    expect(await createImageProvider(own({ model: 'qwen-image-2.1-turbo-nf4', promptTokens: 180 }), keys)!.prompting!()).toEqual({ tokens: 180, avoidInPrompt: true, references: 0 })
+    expect(await createImageProvider(own({ model: 'somebody-elses-model' }), keys)!.prompting!()).toEqual({ avoidInPrompt: true, references: 0 })
+    expect(await createImageProvider(own({ local: false }), keys)!.prompting!()).toEqual({ avoidInPrompt: true })
+    expect(await createImageProvider({ provider: 'dashscope', promptTokens: 300 }, keys)!.prompting!()).toEqual({ tokens: 300, avoidInPrompt: false })
+    expect(await createImageProvider({ provider: 'openrouter', model: 'm' }, keys)!.prompting!()).toEqual({ avoidInPrompt: true })
+
+    // Through the Studio: a prompt of some three hundred tokens, a model that reads 256.
+    rules.key = undefined
+    const bed = await createTestBed({ settings: { image: { provider: 'openai', baseURL: base, model: 'qwen-image-2.1-turbo-nf4' } } })
+    try {
+      await bed.runtime.project.updateManifest({ artStyle: '精致的半写实插画风格，半中国水墨画风格，电影感光影，细腻笔触，统一的色调，适当的细节，建筑服饰是典型的明制', artAvoid: ['文字', '水印', '现代服饰与物件'] })
+      const long = '清晨的码头，薄雾未散，一艘乌篷船缓缓靠岸，船篷上还挂着隔夜的露水；她提着一只竹篮走下青石阶，回头望了一眼身后的巷口。'.repeat(6)
+      const fits = '清晨薄雾的码头，乌篷船靠岸，少女提竹篮走下青石阶回望巷口。半写实插画、水墨意味，电影感光影，明制服饰与建筑。'
+      const asked: string[] = []
+      bed.llm.responder = (request) => { asked.push(request.prompt); return JSON.stringify({ prompt: fits }) }
+      const { illustrate, forgetFittedPrompts } = await import('../src/core/pipelines/illustrate')
+      forgetFittedPrompts()
+      const info = await illustrate(bed.core, bed.runtime, { kind: 'custom', prompt: long, size: '1280x720' }, { origin: 'user' })
+      expect(asked).toHaveLength(1)
+      expect(asked[0]).toContain('大约 230 个 token')
+      expect(asked[0]).toContain('qwen-image-2.1-turbo-nf4')
+      // The server got the director's prompt and nothing after it; the record says what was done.
+      expect(seen.at(-1)!.body).toMatchObject({ prompt: fits, size: '736x416', n: 1 })
+      expect(info.sent?.compact).toMatchObject({ limit: 256 })
+      expect(info.sent!.compact!.from).toBeGreaterThan(256)
+      // A short prompt is sent as it is, with what to keep out after it, and nobody is asked.
+      await illustrate(bed.core, bed.runtime, { kind: 'custom', prompt: '一只纸船', size: '1024x1024' }, { origin: 'user' })
+      expect(asked).toHaveLength(1)
+      expect(String(seen.at(-1)!.body.prompt)).toContain('Avoid: 文字、水印、现代服饰与物件')
+    } finally {
+      await bed.cleanup()
+    }
+  })
+
   it('falls back on a usual size once when the server lists limits and takes only some sizes within them', async () => {
     rules.listing = true
     rules.grid = false
@@ -346,7 +384,7 @@ describe('an image server of the author\'s own', () => {
 
   it('reads a model\'s limits off its row, and offers them with the model', async () => {
     const row = { id: 'm', defaults: { width: 768, height: 768, steps: 8, seed: 42 }, limits: { max_width: 768, max_height: 768, max_pixels: 589824, max_steps: 8, max_prompt_chars: 2000, max_prompt_tokens: 256 } }
-    expect(imageLimitsOf(row)).toEqual({ maxWidth: 768, maxHeight: 768, maxPixels: 589824, promptChars: 2000, seeded: true, steps: 8 })
+    expect(imageLimitsOf(row)).toEqual({ maxWidth: 768, maxHeight: 768, maxPixels: 589824, promptChars: 2000, promptTokens: 256, seeded: true, steps: 8 })
     expect(imageLimitsOf({ id: 'm' })).toBeUndefined()
     expect(imageLimitsOf({ id: 'm', limits: { max_width: 1024 } })).toBeUndefined()
     expect(imageLimitsOf({ id: 'm', limits: { max_width: 1024, max_height: 1024 } })).toEqual({ maxWidth: 1024, maxHeight: 1024 })
@@ -363,7 +401,7 @@ describe('an image server of the author\'s own', () => {
     rules.listing = true
     const models = await listEndpointModels(base, 'image', 'good')
     expect(models.map(model => model.id)).toEqual(['qwen-image-2.1-nf4', 'qwen-image-2.1-turbo-nf4'])
-    expect(models[1]!.image).toEqual({ maxWidth: 768, maxHeight: 768, maxPixels: 589824, promptChars: 2000, seeded: true, steps: 8 })
+    expect(models[1]!.image).toEqual({ maxWidth: 768, maxHeight: 768, maxPixels: 589824, promptChars: 2000, promptTokens: 256, seeded: true, steps: 8 })
   })
 
   it('goes without a key where none is saved, and says so when the server wants one', async () => {

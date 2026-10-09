@@ -2,10 +2,10 @@
 /** What shapes a book's pictures: art direction, avoid lists, visual anchors, design sheets and reference images. */
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, beforeEach } from 'vitest'
 import { pictureRecord } from '../src/agent/tools/studio'
 import { sheetsAhead } from '../src/core/pipelines/comic'
-import { artDirectionOf, deriveArtDirection, deriveLook, deriveScenes, deriveVisual, illustrate, looksOf } from '../src/core/pipelines/illustrate'
+import { artDirectionOf, deriveArtDirection, deriveLook, deriveScenes, deriveVisual, illustrate, looksOf, forgetFittedPrompts } from '../src/core/pipelines/illustrate'
 import { castAt, deriveGrowth } from '../src/core/pipelines/growth'
 import { packContext } from '../src/core/context'
 import { inStage, stageAt } from '../src/shared/stages'
@@ -1021,5 +1021,101 @@ describe('how large a picture is, and in what shape', () => {
     expect(pictureSize({ resolution: '1080p', aspects: { scene: '1600×900' } }, 'scene')).toBe('1600x900')
     expect(pictureSize({ resolution: '1080p', aspects: { panel: 'wide' } }, 'panel')).toBe('1920x1080')
     expect(pictureSize({ resolution: 'huge' }, 'location')).toBe('1280x720')
+  })
+})
+
+describe('a prompt for a model that reads only so much', () => {
+  beforeEach(() => { forgetFittedPrompts() })
+  const LONG = '清晨的码头，薄雾未散，一艘乌篷船缓缓靠岸，船篷上还挂着隔夜的露水；她提着一只竹篮走下青石阶，回头望了一眼身后的巷口，巷口的灯笼还亮着，远处传来早市的叫卖声，石阶缝里长着青苔，水面映着灰白的天光'
+  const FITS = '清晨薄雾的码头，乌篷船靠岸；少女提竹篮走下青石阶回望巷口。水墨淡彩，明制服饰。'
+  /** Plays the director: hands in what it is told to, and keeps what it was asked. */
+  const director = (answers: string[]) => {
+    const asked: string[] = []
+    return { asked, responder: (request: { prompt: string }) => { asked.push(request.prompt); return JSON.stringify({ prompt: answers[Math.min(asked.length, answers.length) - 1] }) } }
+  }
+
+  it('has the director write the same picture in fewer words, and keeps both prompts on record', async () => {
+    const { bed, images } = await studio({ promptTokens: 60 })
+    await bed.runtime.project.updateManifest({ artStyle: '水墨淡彩，明制服饰', artAvoid: ['文字', '水印'] })
+    const play = director([FITS])
+    bed.llm.responder = play.responder
+    const info = await illustrate(bed.core, bed.runtime, { kind: 'custom', prompt: LONG }, task)
+    // The director was handed the prompt as composed, what to keep out, how much room there is and for which model.
+    expect(play.asked).toHaveLength(1)
+    expect(play.asked[0]).toContain(LONG)
+    expect(play.asked[0]).toContain('画风：水墨淡彩，明制服饰')
+    expect(play.asked[0]).toContain('文字、水印')
+    // The count is an estimate, so the director writes to a tenth under what the model reads.
+    expect(play.asked[0]).toContain('大约 54 个 token')
+    expect(play.asked[0]).toMatch(/要到 54 以内——大约是现在的 \d+%/)
+    expect(play.asked[0]).toContain('这张图不带参考图')
+    // This way of drawing has no field for what to keep out: it is in the prompt or nowhere.
+    expect(play.asked[0]).toContain('没有单独的地方放')
+    // What went to the model is the director's prompt — and nothing written after it again.
+    expect(images.calls.at(-1)!.prompt.startsWith(FITS)).toBe(true)
+    expect(images.calls.at(-1)!.prompt).not.toContain('Avoid:')
+    // The record keeps the prompt as the Studio composed it, the one that was sent, and what was done between them.
+    expect(info.prompt).toContain(LONG)
+    expect(info.sent?.prompt.startsWith(FITS)).toBe(true)
+    expect(info.sent?.compact).toMatchObject({ limit: 60 })
+    expect(info.sent!.compact!.from).toBeGreaterThan(60)
+    expect(info.sent!.compact!.tokens).toBeLessThanOrEqual(54)
+    expect(info.sent!.compact!.failed).toBeUndefined()
+    // The same picture asked for again is not written again: the director's words are kept.
+    const again = await illustrate(bed.core, bed.runtime, { kind: 'custom', prompt: LONG }, task)
+    expect(play.asked).toHaveLength(1)
+    expect(again.sent?.prompt.startsWith(FITS)).toBe(true)
+    expect(again.sent?.compact).toMatchObject({ limit: 60 })
+  })
+
+  it('hands a prompt that is still too long back, and takes the next', async () => {
+    const { bed, images } = await studio({ promptTokens: 60 })
+    const play = director([LONG, FITS])
+    bed.llm.responder = play.responder
+    const info = await illustrate(bed.core, bed.runtime, { kind: 'custom', prompt: LONG }, task)
+    expect(play.asked).toHaveLength(2)
+    expect(play.asked[1]).toMatch(/comes to about \d+ tokens.*at most 54/)
+    expect(images.calls.at(-1)!.prompt.startsWith(FITS)).toBe(true)
+    expect(info.sent?.compact).toMatchObject({ limit: 60 })
+    expect(info.sent!.compact!.cut).toBeUndefined()
+  })
+
+  it('leaves the end off what the director wrote when every try was over', async () => {
+    const { bed, images } = await studio({ promptTokens: 40 })
+    // Shorter than the original both times, and over both times.
+    const over = '清晨薄雾的码头，乌篷船靠岸；少女提竹篮走下青石阶，回望巷口，灯笼还亮着，石阶缝里有青苔，水面映着灰白天光。水墨淡彩，明制服饰。'
+    const play = director([over, over])
+    bed.llm.responder = play.responder
+    const info = await illustrate(bed.core, bed.runtime, { kind: 'custom', prompt: `${LONG}。${LONG}` }, task)
+    expect(play.asked).toHaveLength(2)
+    const sent = images.calls.at(-1)!.prompt
+    expect(sent.startsWith('清晨薄雾的码头，乌篷船靠岸')).toBe(true)
+    expect(sent).not.toContain('水墨淡彩')
+    expect(info.sent?.compact).toMatchObject({ limit: 40, cut: true })
+    expect(info.sent!.compact!.tokens).toBeLessThanOrEqual(36)
+  })
+
+  it('sends the prompt as it is when the director cannot be had, and says so', async () => {
+    const { bed, images } = await studio({ promptTokens: 60 })
+    await bed.runtime.project.updateManifest({ artAvoid: ['文字'] })
+    bed.llm.responder = () => { throw new Error('the model is away') }
+    const info = await illustrate(bed.core, bed.runtime, { kind: 'custom', prompt: LONG }, task)
+    expect(images.calls.at(-1)!.prompt).toContain(LONG)
+    expect(images.calls.at(-1)!.prompt).toContain('Avoid: 文字')
+    expect(info.sent?.compact).toMatchObject({ limit: 60, failed: true })
+  })
+
+  it('asks nobody where the prompt fits, where no limit is set, or where the author turned it off', async () => {
+    for (const image of [{ promptTokens: 4000 }, {}, { promptTokens: 60, promptCompact: false }]) {
+      const { bed: made, images } = await studio(image)
+      let asked = 0
+      made.llm.responder = () => { asked += 1; return JSON.stringify({ prompt: FITS }) }
+      const info = await illustrate(made.core, made.runtime, { kind: 'custom', prompt: LONG }, task)
+      expect(asked, JSON.stringify(image)).toBe(0)
+      expect(images.calls.at(-1)!.prompt).toContain(LONG)
+      expect(info.sent?.compact).toBeUndefined()
+      await made.cleanup()
+      bed = undefined
+    }
   })
 })

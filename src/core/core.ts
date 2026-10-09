@@ -701,6 +701,7 @@ export class NovelCore {
       kind: metered.kind,
       model: metered.model,
       generate: request => this.through('image', () => metered.generate(request), request.signal !== undefined ? { signal: request.signal } : {}),
+      ...(metered.prompting !== undefined ? { prompting: async signal => await metered.prompting!(signal) } : {}),
     }
   }
 

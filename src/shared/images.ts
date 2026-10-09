@@ -92,6 +92,8 @@ export interface ImageLimits {
   maxPixels?: number
   /** The longest prompt it takes, in characters. */
   promptChars?: number
+  /** How many tokens of a prompt it reads. */
+  promptTokens?: number
   /** It draws from a seed, and from the same one every time unless it is sent another. */
   seeded?: boolean
   /** How many steps it samples in when not told, for the author to read. */
@@ -108,16 +110,35 @@ export function imageLimitsOf(row: unknown): ImageLimits | undefined {
   if (maxWidth === undefined || maxHeight === undefined) return undefined
   const maxPixels = figure(limits?.max_pixels)
   const promptChars = figure(limits?.max_prompt_chars)
+  const promptTokens = figure(limits?.max_prompt_tokens)
   const steps = figure(defaults?.steps)
   return {
     maxWidth,
     maxHeight,
     ...(maxPixels !== undefined ? { maxPixels } : {}),
     ...(promptChars !== undefined ? { promptChars } : {}),
+    ...(promptTokens !== undefined ? { promptTokens } : {}),
     ...(typeof defaults?.seed === 'number' ? { seeded: true } : {}),
     ...(steps !== undefined ? { steps } : {}),
   }
 }
+
+/**
+ * About how many tokens an image model's text encoder makes of a prompt. The Studio has no model's tokenizer, so this
+ * is a count on the safe side: every Chinese character and every Chinese or full-width punctuation mark one token, and
+ * of everything else one token to 3.6 characters. It is the count the director is given to write to.
+ */
+export function promptTokens(text: string): number {
+  let wide = 0
+  for (const char of text) if (char.codePointAt(0)! >= 0x2e80) wide += 1
+  return Math.ceil(wide + (text.length - wide) / 3.6)
+}
+
+/**
+ * How much of what a model reads a prompt is held to. The count is an estimate; a prompt that is a little over by
+ * the model's own count loses its end without anybody being told, so the Studio keeps a tenth in hand.
+ */
+export const PROMPT_HEADROOM = 0.9
 
 /** Sides are asked for in whole multiples of this — what a diffusion model's latent grid takes — and no smaller than {@link SIDE_LEAST}. */
 const SIDE_STEP = 32

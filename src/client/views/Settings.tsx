@@ -1305,7 +1305,7 @@ function ImageSection({ value, keys, onChange, t, advanced }: { value: ImageSett
             <EndpointField value={value.baseURL ?? ''} placeholder={endpoint} hint={value.provider === 'dashscope' ? t('百炼的域名；专属域名也可以', 'The Bailian domain; a workspace domain works too') : undefined} t={t} onChange={(baseURL) => { onChange(without(value, 'baseURL', baseURL)) }} />
             <KeyField endpoint={endpoint} refName={value.apiKeyRef} keys={keys} t={t} onRef={(name) => { onChange(without(value, 'apiKeyRef', name)) }} />
             <ModelField label={t('模型', 'Model')} endpoint={endpoint} kind="image" value={value.model ?? ''} suggestions={suggestions} refName={value.apiKeyRef} keys={keys} t={t} eager={own} onModels={setListed}
-              describe={model => (model.image !== undefined ? t(`最大 ${model.image.maxWidth}×${model.image.maxHeight}${model.image.steps !== undefined ? ` · ${model.image.steps} 步` : ''}`, `up to ${model.image.maxWidth}×${model.image.maxHeight}${model.image.steps !== undefined ? ` · ${model.image.steps} steps` : ''}`) : undefined)}
+              describe={model => (model.image !== undefined ? t(`最大 ${model.image.maxWidth}×${model.image.maxHeight}${model.image.steps !== undefined ? ` · ${model.image.steps} 步` : ''}${model.image.promptTokens !== undefined ? ` · 读 ${model.image.promptTokens} 个 token` : ''}`, `up to ${model.image.maxWidth}×${model.image.maxHeight}${model.image.steps !== undefined ? ` · ${model.image.steps} steps` : ''}${model.image.promptTokens !== undefined ? ` · reads ${model.image.promptTokens} tokens` : ''}`) : undefined)}
               onChange={(model) => { onChange(without(value, 'model', model)) }} />
           </>
         ) : null}
@@ -1319,6 +1319,17 @@ function ImageSection({ value, keys, onChange, t, advanced }: { value: ImageSett
           </>
         ) : null}
         {value.provider !== 'none' ? <PictureSizeFields value={value} onChange={onChange} t={t} advanced={advanced} {...(limits !== undefined ? { limits } : {})} /> : null}
+        {value.provider !== 'none' && (own || advanced || value.promptTokens !== undefined) ? (
+          <Field label={t('提示词上限（token）', 'Prompt limit (tokens)')} hint={t('超过时，画之前由导演重写成放得下的一段', 'A longer prompt is rewritten by the director to fit before the picture is drawn')}>
+            <TextInput inputMode="numeric" value={value.promptTokens !== undefined ? String(value.promptTokens) : ''} placeholder={limits?.promptTokens !== undefined ? t(`留空：照服务器说的 ${limits.promptTokens}`, `Empty: the server's own ${limits.promptTokens}`) : t('留空：不限', 'Empty: none')} onChange={(event) => { const count = number(event.target.value); const { promptTokens: _old, ...rest } = value; onChange(count !== undefined && count > 0 ? { ...rest, promptTokens: Math.round(count) } : rest) }} />
+          </Field>
+        ) : null}
+        {value.provider !== 'none' && (value.promptTokens !== undefined || limits?.promptTokens !== undefined) ? (
+          <label className="nv-check">
+            <input type="checkbox" checked={value.promptCompact !== false} onChange={(event) => { const { promptCompact: _old, ...rest } = value; onChange(event.target.checked ? rest : { ...rest, promptCompact: false }) }} />
+            <span>{t('提示词超过上限时让导演压缩（不勾：照原样发，超出的部分模型读不到）', 'Have the director fit a prompt that is over the limit (unticked: sent as it is; the model does not read what is beyond)')}</span>
+          </label>
+        ) : null}
         {value.provider !== 'none' && advanced ? (
           <Field label={t('一张图带几张参考图', 'Reference pictures per image')} hint={t(`每张图最多带几张参考图。留空：${REFERENCES_DEFAULT}，最多 ${REFERENCES_MAX}。`, `How many reference pictures one picture may carry. Empty: ${REFERENCES_DEFAULT}; ${REFERENCES_MAX} at most.`)}>
             <TextInput inputMode="numeric" value={value.references !== undefined ? String(value.references) : ''} placeholder={String(REFERENCES_DEFAULT)} onChange={(event) => { const count = number(event.target.value); const { references: _old, ...rest } = value; onChange(count !== undefined && count >= 0 ? { ...rest, references: Math.min(REFERENCES_MAX, Math.round(count)) } : rest) }} />

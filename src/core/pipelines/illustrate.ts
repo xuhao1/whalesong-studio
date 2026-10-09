@@ -40,9 +40,10 @@
  * for word — so that a look nobody asked for can be traced to where it came from.
  */
 import { lookWords, mergeAvoid, pictureSize, resolveArtStyle, sceneFor, scenesOf, sceneWords, splitAvoid, tidyPart as tidy, type ArtSource } from '../../shared/art'
-import type { CharacterCard, CharacterLook, CharacterStage, IllustrationInfo, IllustrationParts, IllustrationPiece, PromptLanguage, SignatureScene, SortedNotes, WorldEntry, WorldEvent } from '../../shared/types'
+import type { CharacterCard, CharacterLook, CharacterStage, IllustrationInfo, IllustrationParts, IllustrationPiece, IllustrationSent, PromptLanguage, SignatureScene, SortedNotes, WorldEntry, WorldEvent } from '../../shared/types'
 import { MAIN_LINE, referencesOf } from '../../shared/types'
 import { clip, fuzzyFind, hashText, newId, sameName, slugify } from '../../shared/text'
+import { PROMPT_HEADROOM, promptTokens } from '../../shared/images'
 import { inStage, looksApart, stageAt } from '../../shared/stages'
 import { groupOf } from '../../shared/world'
 import { detectCharacters } from '../context'
@@ -53,7 +54,7 @@ import { extensionOf, type ImageProvider, type ImageReference } from '../media/i
 import { castAt } from './growth'
 import { ProviderError } from '../media/http'
 import { ProjectError } from '../project'
-import { artDirectionTask, coverPromptTask, illustrationPromptTask, lookNotesTask, lookTask, portraitSceneTask, portraitScenesTask, turnLookTask, visualAnchorTask } from '../prompts'
+import { artDirectionTask, compactPromptTask, coverPromptTask, illustrationPromptTask, lookNotesTask, lookTask, portraitSceneTask, portraitScenesTask, turnLookTask, visualAnchorTask } from '../prompts'
 import { L, promptLanguage, renderCharacter, renderWorld } from '../render'
 import { isAbort } from '../util/async'
 
@@ -793,6 +794,89 @@ function compose(parts: readonly (IllustrationPiece | undefined)[], comma: strin
 const lookFrom = (card: CharacterCard): NonNullable<IllustrationPiece['from']> => (card.visual?.prompt !== undefined && card.visual.prompt.length > 0 ? 'anchor' : 'card')
 
 /** Generate one image, store it under `assets/images/`, and record what its prompt was made of. */
+/** Prompts the director fitted, by what was asked: the same prompt for the same model comes to the same words again. */
+const fittedPrompts = new Map<string, string>()
+
+/** Forget the prompts that were fitted. For tests. */
+export function forgetFittedPrompts(): void {
+  fittedPrompts.clear()
+}
+
+/** A text with as much of its end left off as brings it within so many tokens: whole phrases, where it has any. */
+function clipTokens(text: string, limit: number): string {
+  const phrases = text.split(/(?<=[，。；、,.;\n])/u)
+  while (phrases.length > 1 && promptTokens(phrases.join('')) > limit) phrases.pop()
+  let kept = phrases.join('').trim().replace(/[，；、,;]$/u, '')
+  while (promptTokens(kept) > limit && kept.length > 1) kept = kept.slice(0, Math.max(1, Math.floor(kept.length * 0.95)))
+  return kept
+}
+
+/** What a prompt would come to with what is kept out written after it, the way a service with no field for that gets it. */
+const withAvoided = (prompt: string, avoid: readonly string[], zh: boolean): string => (avoid.length > 0 ? `${prompt}\n\nAvoid: ${avoid.join(zh ? '、' : ', ')}` : prompt)
+
+/**
+ * A prompt that comes to more than the model reads, written again by the director to fit: the same picture in fewer
+ * words, where cutting it off would lose whatever stood last — the art direction, what to keep out. Nothing is asked
+ * where the model has room, where no limit is known, or where the author turned this off; a director that cannot be
+ * had leaves the prompt as it was, and the picture's record says so.
+ * @returns the prompt to send, whether what is kept out is now part of it, and what was done for the record.
+ */
+async function fitPrompt(core: NovelCore, runtime: ProjectRuntime, provider: ImageProvider, input: { prompt: string; avoid: string[]; references: number }, task: TaskContext): Promise<{ prompt: string; folded: boolean; compact?: NonNullable<IllustrationSent['compact']> }> {
+  const asIs = { prompt: input.prompt, folded: false }
+  if (core.currentSettings().image.promptCompact === false) return asIs
+  const room = await provider.prompting?.(task.signal).catch(() => undefined)
+  if (room?.tokens === undefined) return asIs
+  const manifest = await runtime.project.manifest()
+  const lang = promptLanguage(manifest.language)
+  const zh = lang === 'zh'
+  // What is kept out counts where it travels in the prompt, and not where the service takes it apart from it.
+  const from = promptTokens(room.avoidInPrompt ? withAvoided(input.prompt, input.avoid, zh) : input.prompt)
+  // Counted by estimate, so held to a little under what the model reads.
+  const limit = Math.max(1, Math.floor(room.tokens * PROMPT_HEADROOM))
+  if (from <= limit) return asIs
+  // The same picture asked for again — drawn again, a panel redone — is not written again.
+  const key = hashText(`${provider.model}\n${limit}\n${room.avoidInPrompt}\n${input.references > 0 && room.references !== 0}\n${input.prompt}\n${input.avoid.join('|')}`)
+  const before = fittedPrompts.get(key)
+  if (before !== undefined) return { prompt: before, folded: room.avoidInPrompt, compact: { limit: room.tokens, from, tokens: promptTokens(before) } }
+  // The nearest the director came, where every try was over: written with what matters first, it loses least at its end.
+  let nearest: string | undefined
+  const restore = task.job?.note(L(lang, `导演在把提示词压到 ${limit} 个 token 以内（现在约 ${from} 个）…`, `The director is bringing the prompt within ${limit} tokens (about ${from} now)…`))
+  try {
+    const { value } = await assign(core, runtime, task, {
+      role: 'director',
+      label: L(lang, '压缩提示词', 'Fitting a prompt'),
+      tool: 'fit_prompt',
+      // Everything is in the task; a try or two at the length.
+      maxSteps: 6,
+      what: L(lang, `同一张图的提示词，不超过 ${limit} 个 token`, `the same picture's prompt, in no more than ${limit} tokens`),
+      prompt: compactPromptTask({ lang, language: manifest.language, title: manifest.title, prompt: input.prompt, avoid: input.avoid, tokens: limit, estimate: from, model: provider.model, references: input.references > 0 && room.references !== 0, avoidInPrompt: room.avoidInPrompt }),
+      temperature: 0.2,
+      validate: (raw) => {
+        const text = asText(asRecord(raw).prompt)
+        if (text === undefined) throw new Error('"prompt" is empty')
+        const tokens = promptTokens(text)
+        if (tokens > limit && (nearest === undefined || tokens < promptTokens(nearest))) nearest = text
+        if (tokens > limit) throw new Error(`the prompt comes to about ${tokens} tokens; it has to be at most ${limit} — about ${Math.ceil((tokens - limit) * 100 / tokens)}% shorter still`)
+        return text
+      },
+    })
+    if (fittedPrompts.size >= 500) fittedPrompts.delete(fittedPrompts.keys().next().value!)
+    fittedPrompts.set(key, value)
+    return { prompt: value, folded: room.avoidInPrompt, compact: { limit: room.tokens, from, tokens: promptTokens(value) } }
+  } catch (error) {
+    if (isAbort(error) || task.signal?.aborted === true) throw error
+    if (nearest !== undefined && promptTokens(nearest) < from) {
+      const cut = clipTokens(nearest, limit)
+      core.log(`the director's prompt was still over ${limit} tokens; its end was left off`, error)
+      return { prompt: cut, folded: room.avoidInPrompt, compact: { limit: room.tokens, from, tokens: promptTokens(cut), cut: true } }
+    }
+    core.log(`could not bring a prompt within ${limit} tokens; it goes as it is`, error)
+    return { ...asIs, compact: { limit: room.tokens, from, failed: true } }
+  } finally {
+    restore?.()
+  }
+}
+
 export async function renderImage(core: NovelCore, runtime: ProjectRuntime, input: RenderInput, task: TaskContext): Promise<IllustrationInfo> {
   const { project } = runtime
   const provider = await requireImages(core, runtime)
@@ -819,9 +903,12 @@ export async function renderImage(core: NovelCore, runtime: ProjectRuntime, inpu
   const whole = tidy(input.subject)
   const subject = clip(whole, Math.max(200, 1900 - tail.length), '…')
   const prompt = tail.length > 0 ? `${subject}\n${tail}` : subject
+  // A model that reads less than this comes to gets the same picture in fewer words, written by the director.
+  const fitted = await fitPrompt(core, runtime, provider, { prompt, avoid, references: references.length }, task)
   const result = await provider.generate({
-    prompt,
-    ...(avoid.length > 0 ? { negativePrompt: avoid.join(zh ? '、' : ', ') } : {}),
+    prompt: fitted.prompt,
+    // What is kept out was worked into the prompt that fits: nothing is to be written after it again.
+    ...(fitted.folded ? { negativePrompt: '' } : avoid.length > 0 ? { negativePrompt: avoid.join(zh ? '、' : ', ') } : {}),
     ...(input.size !== undefined ? { size: input.size } : {}),
     ...(references.length > 0 ? { references: references.map(reference => reference.image) } : {}),
     ...(task.signal !== undefined ? { signal: task.signal } : {}),
@@ -850,7 +937,7 @@ export async function renderImage(core: NovelCore, runtime: ProjectRuntime, inpu
     model: provider.model,
     provider: provider.kind,
     ...(input.size !== undefined ? { size: input.size } : {}),
-    ...(result.sent !== undefined ? { sent: result.sent } : {}),
+    ...(result.sent !== undefined ? { sent: { ...result.sent, ...(fitted.compact !== undefined ? { compact: fitted.compact } : {}) } } : {}),
   }
   if (input.record !== false) await project.addIllustration(info)
   return info

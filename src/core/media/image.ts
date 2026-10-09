@@ -51,10 +51,27 @@ function dataUrl(reference: ImageReference): string {
   return `data:${reference.mime};base64,${Buffer.from(reference.data).toString('base64')}`
 }
 
+/** What a prompt has to fit, on the way to one model. */
+export interface PromptRoom {
+  /** The most tokens the model reads: the author's figure, else the endpoint's own where it gives one. */
+  tokens?: number
+  /** Things to keep out travel inside the prompt (the service has no field for them), and count against the room. */
+  avoidInPrompt: boolean
+  /** How many reference pictures go along at most, where that is known: `0` — none, and the prompt need not speak of any. */
+  references?: number
+}
+
 export interface ImageProvider {
   readonly kind: ImageProviderKind
   readonly model: string
   generate(request: ImageRequest): Promise<ImageResult>
+  /** How much room a prompt has on the way to this model. Left out: as much as it needs. */
+  prompting?(signal?: AbortSignal): Promise<PromptRoom>
+}
+
+/** The author's own figure for how many tokens the model reads. */
+function tokensSet(settings: ImageSettings): number | undefined {
+  return typeof settings.promptTokens === 'number' && Number.isFinite(settings.promptTokens) && settings.promptTokens > 0 ? Math.round(settings.promptTokens) : undefined
 }
 
 /** Generates one image from a prompt (and reference images) with a ChatGPT subscription. Supplied by the Host. */
@@ -66,13 +83,19 @@ export interface ImageBridges {
 
 /** @returns the provider for the current settings, or undefined when images are switched off. */
 export function createImageProvider(settings: ImageSettings, keys: KeySource, bridges: ImageBridges = {}): ImageProvider | undefined {
-  if (settings.provider === 'dashscope') return new DashScopeImages(settings, keys)
-  if (settings.provider === 'openai') return new OpenAiImages(settings, keys)
-  if (settings.provider === 'openrouter') return new OpenRouterImages(settings, keys)
-  if (settings.provider === 'codex') return new CodexImages(settings, bridges.codex)
-  if (settings.provider === 'comfyui') return new ComfyImages(settings)
-  if (settings.provider === 'diffusers') return new DiffusersImages(settings)
-  return undefined
+  const provider: ImageProvider | undefined = settings.provider === 'dashscope' ? new DashScopeImages(settings, keys)
+    : settings.provider === 'openai' ? new OpenAiImages(settings, keys)
+      : settings.provider === 'openrouter' ? new OpenRouterImages(settings, keys)
+        : settings.provider === 'codex' ? new CodexImages(settings, bridges.codex)
+          : settings.provider === 'comfyui' ? new ComfyImages(settings)
+            : settings.provider === 'diffusers' ? new DiffusersImages(settings)
+              : undefined
+  if (provider === undefined || provider.prompting !== undefined) return provider
+  // A way of drawing that says nothing of its own: the author's figure, where there is one. These three have no field
+  // for what to keep out, and carry it in the prompt.
+  const tokens = tokensSet(settings)
+  const avoidInPrompt = settings.provider === 'openrouter' || settings.provider === 'codex'
+  return Object.assign(provider, { prompting: async (): Promise<PromptRoom> => ({ ...(tokens !== undefined ? { tokens } : {}), avoidInPrompt }) })
 }
 
 // ───────────────────────────── sizes ─────────────────────────────
@@ -211,6 +234,18 @@ class OpenAiImages implements ImageProvider {
 
   constructor(private readonly settings: ImageSettings, private readonly keys: KeySource) {
     this.model = settings.model ?? providerDefault('image', 'openai').model
+  }
+
+  /** The author's figure; else, at a server of their own, what its model list says the model reads. */
+  async prompting(signal?: AbortSignal): Promise<PromptRoom> {
+    const local = localImages(this.settings)
+    const set = tokensSet(this.settings)
+    if (!local) return { ...(set !== undefined ? { tokens: set } : {}), avoidInPrompt: true }
+    const base = trimBase(this.settings.baseURL?.trim() || compatibleBase('openai'))
+    const listed = set === undefined ? (await ownLimits(base, this.model, await findKey(this.keys, { ref: this.settings.apiKeyRef, endpoint: base }, 'Image generation').catch(() => undefined), signal))?.promptTokens : undefined
+    const tokens = set ?? listed
+    // Such a server takes no reference pictures.
+    return { ...(tokens !== undefined ? { tokens } : {}), avoidInPrompt: true, references: 0 }
   }
 
   async generate(request: ImageRequest): Promise<ImageResult> {

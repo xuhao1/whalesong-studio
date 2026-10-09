@@ -243,6 +243,7 @@ export function meterImages(provider: ImageProvider, record: Record_, book?: { r
       record({ kind: 'image', model: provider.model, via: provider.kind, images: 1, ...(book !== undefined ? { book: book.root, bookTitle: book.title } : {}) })
       return result
     },
+    ...(provider.prompting !== undefined ? { prompting: async signal => await provider.prompting!(signal) } : {}),
   }
 }
 
