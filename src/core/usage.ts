@@ -214,6 +214,7 @@ export function meterLlm(llm: LlmBackend, record: Record_): LlmBackend {
     defaultRoute: llm.defaultRoute.bind(llm),
     ...(llm.reasoning !== undefined ? { reasoning: llm.reasoning.bind(llm) } : {}),
     ...(llm.catalog !== undefined ? { catalog: llm.catalog.bind(llm) } : {}),
+    ...(llm.sees !== undefined ? { sees: llm.sees.bind(llm) } : {}),
     async complete(request) {
       const response = await llm.complete(request)
       const { route } = request
@@ -222,7 +223,7 @@ export function meterLlm(llm: LlmBackend, record: Record_): LlmBackend {
         kind: 'text',
         model: route.model,
         via: route.baseURL !== undefined ? hostOf(route.baseURL) ?? route.baseURL : route.provider,
-        ...(tag !== undefined ? { role: tag.role as TextRole, ...(tag.book !== undefined ? { book: tag.book } : {}), ...(tag.title !== undefined ? { bookTitle: tag.title } : {}) } : {}),
+        ...(tag !== undefined ? { role: tag.role, ...(tag.book !== undefined ? { book: tag.book } : {}), ...(tag.title !== undefined ? { bookTitle: tag.title } : {}) } : {}),
         ...(response.usage !== undefined
           ? { input: response.usage.inputTokens, output: response.usage.outputTokens, ...(response.usage.cachedTokens !== undefined ? { cached: response.usage.cachedTokens } : {}) }
           // An endpoint that does not say what it counted is counted by the length of what was sent and said.

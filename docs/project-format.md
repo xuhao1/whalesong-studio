@@ -43,6 +43,7 @@ Novel Studio finds books by looking for `novel.json` in a workspace directory an
 | | With a `provider`, `image` is the book's whole image service — `provider`, `baseURL`, `model`, `sizes`, `local`, `workflow`… as in the Studio's settings — and nothing of the Studio's service is mixed in; `kept` remembers the services the book was moved away from. Keys are never here: the one saved for the address is used. |
 | `tts` | this book's own speech setup, whole (`provider`, `baseURL`, `model`, `narratorVoice`, `defaultVoices`, `speechTags`…), where it has one; absent, the Studio's speaks for it. |
 | `sound` | this book's own way with effects, music and beds (`provider`, `model`, `effects`, `music`, `beds`), where it has one. |
+| `vision` | this book's own model for looking at pictures (`{ "provider", "model" }` of DSH's), where it has one: it says in words what a picture given to steer a plan or a chapter shows, for a working model that takes no pictures. |
 | `embedding` | this book's own semantic retrieval, whole (`provider`, `baseURL`, `model`, `dimensions`), where it has one; absent, the Studio's is used. Its key is the one saved for the address. |
 | `context` | this book's own context budgets — any of `strategy`, `budgetTokens`, `tailChars`, `sideTokens`, `playTokens`; what is not named follows the Studio's. |
 | `parallel` | how many requests of a kind go out at once for this book: `{ "text"?, "speech"?, "image"?, "sound"? }`. A kind named here is counted for this book alone; one left out is counted with every other book's. |
@@ -69,6 +70,7 @@ Novel Studio finds books by looking for `novel.json` in a workspace directory an
           "threads": ["th_ab12cd"],      // thread ids it touches
           "beats": [{ "id": "b_…", "summary": "…", "conflict": "…", "outcome": "…", "emotion": "…" }],
           "targetWords": 3000,           // recommended length; absent: the book's, else the writer judges
+          "guides": [{ "path": "assets/guides/1a2b….png", "note": "the last image of the chapter" }], // pictures to write it by
           "notes": "for the writer"
         }
       ]
@@ -217,6 +219,7 @@ Word counts, audio scripts and exports ignore image lines.
 | `settled.json` | what became of suggestions the planner settled without the author being asked: entered, folded into something there, left out — each with its reason, the latest first (600 at most) |
 | `figures-hidden.json` | the portraits the author keeps out of the text, by path — ones that would stand there by themselves. By itself a portrait of one of somebody's moments stands where the chapter tells the moment, and one portrait of the person where they first come on (a period's, where the period begins) unless a moment of theirs is shown in that chapter; of several of one moment, or of the person, the first in the card's order is the one. Pictures drawn to compare services are listed here until one is taken. |
 | `figures-shown.json` | the portraits the author asked into the text beside those: ones the rule leaves out (a second picture of a moment, another portrait of the person), by path. |
+| `guide-notes.json` | what the model that looks at pictures wrote of the pictures given to steer by, by picture, model and what was said of it — so that none is looked at twice. Safe to delete. |
 | `reviews/<chapter>.json` | the latest editorial review |
 | `audio/<chapter>.json` | the audio script: lines, cues, and which clip belongs to which line. A line that was spoken more than once says so (`takes`), and one whose kept take the listening check still faults says how (`check`: `silent`, `short`, `long`, `drift`). `degraded` is set when part of the chapter could not be directed by the model and was cut by rule (how many passages, and why) A script shaped for speaking has `shape: 2`: narration is in whole takes, and a narration line that only says who spoke carries `tag: true` (left unspoken unless `voiced: true`, or the book reads every word; `voiced: false` silences any line). Cues have a `kind` (`bed`, `effect`, `music`), a `caption` for the reader, a `prompt` for the sound model and, once generated, the clip (`audio`, `duration`, `renderKey`) |
 | `activity.json` | the book's record: what changed it that the author did not do by hand on the panel — the showrunner's tool calls (`by: agent`), edits from another device (`device`), files changed outside the Studio (`outside`) — newest first, 300 kept. A manuscript edit carries the `version` that undoes it |

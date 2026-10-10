@@ -81,6 +81,8 @@ export interface ProjectManifest {
    * one; else the Studio's is used. Its key is the one saved for the address.
    */
   embedding?: EmbeddingSettings
+  /** This book's own model for looking at pictures (see `NovelSettings.vision`), where it has one. */
+  vision?: ModelRoute
   /** This book's own context budgets: what is named here holds for it, the Studio's for the rest. */
   context?: Partial<ContextSettings>
   /**
@@ -470,7 +472,31 @@ export interface ChapterPlan {
   status: ChapterStatus
   /** A length recommended for this chapter. Absent: the book's own recommendation, else whoever writes it judges. */
   targetWords?: number
+  /** Pictures the author gave to steer this chapter: whoever writes it is shown them (or told what they show). */
+  guides?: PictureGuide[]
   notes?: string
+}
+
+/**
+ * A picture the author gives to steer a stretch of plot or a chapter — a moment they see, a face, a place, a mood:
+ * one of the book's own files (a picture of its gallery, or one brought in for this), with what the author says of it.
+ */
+export interface PictureGuide {
+  /** Project-relative path of the picture. */
+  path: string
+  /** What the author says of it: what it is, what of it matters. */
+  note?: string
+}
+
+/** How the pictures given to a piece of work were read: how many, and by whom. */
+export interface PicturesRead {
+  count: number
+  /** `self`: the model that did the work looked at them. `vision`: the model set up to look at pictures said what they show. */
+  by: 'self' | 'vision'
+  /** The model that looked, where it was not the working one. */
+  model?: string
+  /** The working model does not say whether it takes pictures; it was sent them all the same. */
+  unsure?: true
 }
 
 export interface Volume {
@@ -922,7 +948,7 @@ export interface ModelRoute {
   /** Read the key from this environment variable / Harness credential instead of the one saved for the endpoint. */
   apiKeyRef?: string
   /** Set by the Studio on the route it resolved for a call — which role and book the call serves — so usage can be told apart. Never saved. */
-  for?: { role: TextRole; book?: string; title?: string }
+  for?: { role: TextRole | 'vision'; book?: string; title?: string }
 }
 
 export interface TextModelRouting {
@@ -1285,6 +1311,12 @@ export interface NovelSettings {
   tts: TtsSettings
   /** Effects, music and generated ambience; absent in settings saved before there were any. */
   sound?: SoundSettings
+  /**
+   * The model that looks at pictures for a role whose own model cannot: where the author gives pictures to steer a
+   * plot or a chapter, it says in words what each shows. One of DSH's models (`provider`, `model`). Absent: none —
+   * pictures then go to models that see them, and to no other.
+   */
+  vision?: ModelRoute
   embedding: EmbeddingSettings
   /** How the crew works: which roles are agents, and what tools each may reach. Absent in settings saved before there was a crew. */
   crew?: CrewSettings
@@ -1400,8 +1432,8 @@ export interface UsageEvent {
   /** Root and title of the book the call was for, when known. */
   book?: string
   bookTitle?: string
-  /** Text calls: which role spoke. */
-  role?: TextRole
+  /** Text calls: which role spoke — or `vision`, the model that looked at pictures for one. */
+  role?: TextRole | 'vision'
   /** The kind of job the call was part of. */
   task?: JobKind
   origin?: 'agent' | 'user'

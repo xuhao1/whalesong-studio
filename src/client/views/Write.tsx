@@ -19,6 +19,7 @@ import { ChapterTree } from '../ChapterTree'
 import { TranslateDialog } from '../Translate'
 import { ChapterPortraits } from '../Figures'
 import { WriteTrialDialog } from '../Trial'
+import { GuidePictures } from '../Guides'
 import { Icon } from '../icons'
 import { jobKindLabel, jobPulse } from '../Studio'
 import { CHAPTER_STATUS, CHAPTER_STATUS_TONE, ISSUE_TYPE, languageLabel, SEVERITY, SEVERITY_TONE, sheetsDrawn } from '../labels'
@@ -632,6 +633,16 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
             ) : null}
           </div>
         )}
+
+        {selected.length === 0 && plan !== undefined ? (
+          // Kept on the chapter's plan: every pass at this chapter — a draft, a continuation, a comparison, a batch — goes by them.
+          <GuidePictures value={plan.guides ?? []} chapter={chapter.id} disabled={writing !== undefined} hint={t('写这一章时给写手看', 'Shown to whoever writes this chapter')} onChange={(guides) => {
+            void controller.guard(async () => {
+              await controller.api.call('outline.apply', { root, ops: [{ op: 'update-chapter', chapter: chapter.id, guides }] })
+              doc.reload()
+            })
+          }} />
+        ) : null}
 
         {!empty && writing === undefined ? <NextChapter chapter={chapter} path={path} lineId={lineId} onBranch={onBranch} onLine={onLine} onDerive={onDerive} /> : null}
 

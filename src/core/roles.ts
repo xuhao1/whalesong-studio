@@ -16,6 +16,7 @@
  * would.
  */
 import type { ModelRoute } from '../shared/types'
+import type { LlmImage } from './llm'
 
 /** A parameter of a role's tool, in the shape the Harness declares tool parameters. */
 export type RoleValue =
@@ -91,6 +92,8 @@ export interface RoleTask {
   rules?: string
   /** The task: the agent's first message from outside. */
   prompt: string
+  /** Pictures that go with the task, for an agent whose model sees them. */
+  images?: LlmImage[]
   tools: RoleTool[]
   skills?: RoleSkill[]
   /** The conversation's other tools the agent may use; none by default. */

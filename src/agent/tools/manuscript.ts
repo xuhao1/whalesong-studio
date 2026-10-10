@@ -8,6 +8,7 @@ import { analyzeBook, importManuscript, readBookFile, importLine, rereadBook } f
 import { reviewChapter } from '../../core/pipelines/review'
 import { acceptProposal, rejectProposal, fixIssues, mendInTurn, reviseBook, reviseChapter, reviseSpan } from '../../core/pipelines/revise'
 import { writeChapter } from '../../core/pipelines/write'
+import { cleanGuides } from '../../core/pipelines/guides'
 import { settleTerms, translateChapters, untranslateChapter } from '../../core/pipelines/translate'
 import { ProjectError } from '../../core/project'
 import { containedPath } from '../../core/util/fs'
@@ -27,6 +28,7 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
         '- `brief`: what this pass must achieve that the outline does not already say — emphasis, tone, what to hold back, how to end. Keep it short; do not restate the outline.',
         '- `words`: a length recommended for this pass. Leave it out unless the author named one: the chapter\'s own recommendation applies (novel_outline targetWords), else the book\'s (novel_settings action=book fields.chapterBudget), and where nobody set any the writer judges the length from what the chapter has to do.',
         'The writer reads the story so far in two layers: as many whole chapters up to this one as half its context window holds, word for word, and the chapters before those as an outline; a chapter that already has chapters after it (one written again) is given what follows too, and must lead into it.',
+        '- `pictures`: pictures of the book (project-relative paths, as novel_manage lists them) the author gave to write this pass by — a moment, a face, a place, a mood. A writer whose model takes pictures looks at them itself; otherwise the model set up to look at pictures (novel_settings: vision) says in words what they show, and without one the call fails and says so. Pictures kept on the chapter\'s plan (novel_outline update-chapter guides) are used without being named here. Only pictures the author pointed at: do not pick some yourself.',
         'The result gives length, the opening and closing lines and the cast used; read the chapter (novel_read) only when you need to check something specific. Make sure the chapter has beats first (novel_derive kind=beats). To write a run of chapters in one go, use novel_batch.',
       ].join('\n'),
       mutating: true,
@@ -38,6 +40,7 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
         line: { type: 'string', description: 'With `chapter` left out: the line of the plot to go on with (its id or name). Default: the main line.' },
         style: { type: 'string', description: 'Style profile to use instead of the active one.' },
         characters: listParameter('Characters to keep in view besides those the outline names.'),
+        pictures: listParameter('Pictures the author gave to write this pass by: project-relative paths of the book\'s own pictures.'),
       },
       async run(args, env) {
         const runtime = await env.project()
@@ -49,11 +52,13 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
           ...(args.line !== undefined && args.line.trim().length > 0 ? { line: args.line.trim() } : {}),
           ...(args.style !== undefined ? { style: args.style } : {}),
           ...(listOf(args.characters) !== undefined ? { characters: listOf(args.characters)! } : {}),
+          ...(listOf(args.pictures) !== undefined ? { guides: cleanGuides(listOf(args.pictures)!) } : {}),
         }, task))
         const story = result.strategy === 'full' ? 'everything before it word for word' : result.strategy === 'window' ? `chapters ${result.window?.from}–${result.window?.to} word for word, the ones before as an outline` : 'no chapter whole: an outline, looked-up passages and the end of the chapter before'
         const lines = [
           `${result.mode === 'continue' ? 'Continued' : 'Drafted'} chapter ${result.index} "${result.title}" (${result.chapterId}): ${result.wordsWritten} words written, ${result.wordsTotal} in the chapter now.`,
           `Writer: ${result.model}; length: ${result.budget !== undefined ? `about ${result.budget} recommended` : 'left to the writer'}; story so far: ${story}${result.following !== undefined ? `, plus the ${result.following} chapter(s) after it` : ''} (~${result.contextTokens} tokens${result.cachedTokens !== undefined ? `, ${result.cachedTokens} read from the provider's cache` : ''}); cast in view: ${result.cast.join(', ') || 'none'}.${result.continued ? ' The model hit its output limit and the chapter was completed by continuation.' : ''}`,
+          ...(result.pictures !== undefined ? [`Pictures: ${result.pictures.count} given — ${result.pictures.by === 'vision' ? `put into words for the writer by ${result.pictures.model ?? 'the picture model'}` : result.pictures.unsure === true ? 'sent to the writer\'s model, which does not say whether it takes pictures: tell the author, and that a model to look at pictures can be set (novel_settings: vision)' : 'looked at by the writer\'s own model'}.`] : []),
           result.digested ? 'Memory digested: summary, facts and character states are up to date.' : 'Not digested yet — run novel_digest before writing later chapters.',
           `Opens: ${result.preview.head}${result.preview.tail.length > 0 ? `\n…\nCloses: ${result.preview.tail}` : ''}`,
         ]

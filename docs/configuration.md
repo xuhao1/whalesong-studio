@@ -161,6 +161,20 @@ A role is one of two things:
 
 **Direct endpoints of earlier versions.** A role saved with a `baseURL` of its own (an OpenAI-compatible endpoint the Studio called itself, with a key entered in the Studio) keeps working as it did — by plain calls. It cannot work as an agent, and the Settings screen says so on that role, with a button back to the conversation's model. New ones cannot be made: connect the vendor in DSH instead. For such a route `apiKeyRef` reads the key from a variable instead of the one saved for the host, and `reasoningEffort` is one of `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, translated per service.
 
+### Pictures to go by, and the model that looks at them
+
+A plan of chapters to come and the writing of a chapter can be given a few pictures — a moment the author sees, a face, a place, a mood. They are pictures of the book: ones it already has, or ones brought in for this (kept under `assets/guides/`). Those given to a chapter stay on its plan (`guides`), so every pass at it goes by them; those given to a derivation go to the planner, and the chapter that goes by a picture keeps it.
+
+Who looks at them is decided by what DSH says of the model doing the work (`inputModalities` of the model, from its provider's adapter):
+
+| The working model… | What happens |
+|---|---|
+| says it takes pictures | the pictures go to it with the task, the way DSH sends pictures (its attachment service, the provider's adapter) |
+| says it takes none | the model set as `vision` looks at each picture once and says in words what it shows; the words go into the task. Without `vision` the work is refused before it starts, and says why |
+| does not say | `vision` looks, where one is set; otherwise the pictures are sent all the same, and the result says that the model does not say whether it sees them |
+
+`vision` is a route of DSH's like a role's (`{ "provider": "…", "model": "…" }`), Studio-wide or a book's own (`novel.json`). It is not a role: it has no fallback — unset means none. What it wrote of a picture is kept with the book (`.novel/guide-notes.json`) and not asked for twice. The settings page lists a provider's models with those that say they take pictures first, and says beside the row what the writer's and the planner's own models say of themselves.
+
 ## The crew
 
 Continuity, the planner, the director and post-production are **agents of DSH**: each a persona, rules, skills, tools and permissions of its own, on the model chosen for it above. (The writer is not one of them: it writes, and has nothing to look up or call.) When the showrunner — or a button in the Studio — gives one of them work, the run is a **subagent of the conversation** the work belongs to: it is listed under *subagents* in that conversation's header, where every step of it can be opened and read, with its tokens and its time. A finished job also names the roles that worked in it, and how (*Jobs*, the clock at the top of the Studio).
@@ -420,6 +434,8 @@ A subscription has no embedding endpoint and no speech endpoint — retrieval an
 | `textConcurrency` | `8` | pieces of text work running side by side: chapters being digested, reviewed or given beats, blocks of a script, agents of the crew |
 
 Each figure is one limit for the whole Studio, not per job: three chapters being voiced at once share the eight. The ceiling is 256.
+
+A book may have numbers of its own (`parallel` in its `novel.json`: `text`, `speech`, `image`, `sound`). A kind it names is counted for that book alone, on a gate of its own — it neither waits for what other books have out nor is held to the Studio's figure; a kind it leaves out is counted with everything else.
 
 The figure is what the Studio *tries*. When a service answers that requests come too fast (HTTP 429, 503, 529, or its own throttling codes), the limit is halved, everything waits a moment (longer each time in a row, 30 seconds at most, or as long as the service asks), and the refused request is sent again — up to seven times — rather than failing the line. Each full round of requests that goes through raises the limit by one until it is back at your figure. While this lasts, the job dock says so ("speech is being rate-limited: 8 → 4"). A request that fails for another passing reason is tried twice more; one refused over the account's balance is not tried again.
 

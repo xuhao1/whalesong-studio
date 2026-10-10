@@ -5,6 +5,7 @@ import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { acceptSuggestion, deriveTies, dismissSuggestion, expandCharacter, expandWorld, extractStyle, tidyWorld } from '../../core/pipelines/bible'
 import { applyOutlineOps, type OutlineOp } from '../../core/pipelines/outline'
 import { buildFoundation, deriveBeats, deriveChapters, whatIf } from '../../core/pipelines/plot'
+import { cleanGuides } from '../../core/pipelines/guides'
 import { ProjectError, upsertLooks } from '../../core/project'
 import { deriveLook, deriveScenes, deriveVisual } from '../../core/pipelines/illustrate'
 import { L, promptLanguage, renderCharacter, renderWorld } from '../../core/render'
@@ -13,7 +14,7 @@ import type { NovelService } from '../../host/service'
 import { TIE_ENDS, TIE_KINDS, type Tie, type TieEnd, type TieKind } from '../../shared/ties'
 import { WORLD_EVENT_KINDS, withTurnPictures, type CharacterCard, type StyleProfile, type WorldEntry, type WorldEvent } from '../../shared/types'
 import { groupOf } from '../../shared/world'
-import { brief, novelTool, toJson } from './shared'
+import { brief, listOf, listParameter, novelTool, toJson } from './shared'
 
 const CHARACTER_FIELDS = 'name, aliases[], role (protagonist|deuteragonist|antagonist|supporting|minor|cameo), tagline, gender, age, appearance, personality, background, motivation, flaw, arc, voice, abilities, secrets, persona {traits[{name,level 1-5}], values[], speech[], taboos[], underPressure}, relationships[{target, kind, note}], tags[], visual {prompt (the visual anchor: concrete, drawable phrases for an image model — build, face, hair, clothing, signature items; English works best), negative (what must not be drawn on them), looks[{name, prompt (what the outfit changes), when (when it is worn)}] — looks are added or updated by name and the others stay; {name, remove: true} takes one away; their design sheets are drawn with novel_illustrate kind=sheet look=…}, voiceProfile {voice, instructions, designPrompt}, life (what they go through in the book, in a paragraph), notes. A card has no status: where somebody comes on, is away, leaves or dies is read off the chapter digests, along each line of the plot'
 const WORLD_FIELDS = 'name, aliases[], category (setting|location|faction|system|item|history|culture|rule|term|other — location, faction and item are a place, a house or organization, a thing, each with a page of its own; everything else is an idea of the world), importance (1 core canon always in context | 2 normal | 3 detail — how its text travels with requests, not how much it matters), weight (core|major|minor|once — how much of the story it carries; leave it out and it is counted from the chapters that name it), summary, body (Markdown), related[], tags[], visualPrompt (how it looks, for its design art), events[{chapter (id or number), kind (begin|change|decline|end), what}] — its course over the story: built, changed hands, fallen to ruin, destroyed; the list given replaces the one there (a turn kept keeps the picture drawn of it — novel_illustrate with event draws one)'
@@ -368,6 +369,7 @@ export function bibleTools(service: NovelService): ToolDefinition[] {
       description: [
         'Ask the architect model to develop plot from where the story stands. It reads the bible, the story so far and the open threads.',
         '- kind=chapters: outline the next `count` chapters (default 5; any number the author asks for — they are derived ten at a time, each round from where the last left off) following `direction` if given. They are added to the outline unless apply=false. Where they go: at the end of the main line by default; `line` names another line of the plot; `after` the chapter they follow. `mode` says what becomes of what is there after that chapter already — append (default) adds; replace puts the new chapters in its place (chapters that are written are never thrown away: they are kept as a line put aside); branch leaves it as it is and opens a new line for the new chapters (`title` names it, `choice` says what is decided to go that way). When the author wants the story to go differently from some chapter on, ask which they mean — replace, or a line of its own — unless they said.',
+        '  `pictures`: pictures of the book the author gave to steer these chapters by (project-relative paths). The planner looks at them — or is told what they show by the model set up to look at pictures (novel_settings: vision) — and works them in; the chapter that goes by a picture keeps it on its plan (`guides`), where whoever writes it finds it. Only pictures the author pointed at.',
         '- kind=beats: break one chapter\'s outline into scene beats (`chapter` required). Do this before novel_write when a chapter only has a synopsis.',
         '- kind=what_if: explore alternative directions for a question in `direction` ("what if she refuses the deal?"). Nothing is changed; bring the branches to the author.',
         '- kind=foundation: develop a raw idea in `direction` into premise, cast, world, volumes and opening chapters (for a project that is still empty).',
@@ -385,6 +387,7 @@ export function bibleTools(service: NovelService): ToolDefinition[] {
         chapter: { type: 'string', description: 'beats: which chapter.' },
         volume: { type: 'string', description: 'chapters: which volume to extend (default: the last).' },
         apply: { type: 'boolean', description: 'chapters/beats: write the result into the outline (default true).' },
+        pictures: listParameter('chapters: pictures the author gave to steer by — project-relative paths of the book\'s own pictures.'),
       },
       async run(args, env) {
         const runtime = await env.project()
@@ -399,15 +402,16 @@ export function bibleTools(service: NovelService): ToolDefinition[] {
             ...(args.mode !== undefined ? { mode: args.mode } : {}),
             ...(args.title !== undefined && args.title.trim().length > 0 ? { title: args.title.trim() } : {}),
             ...(args.choice !== undefined && args.choice.trim().length > 0 ? { choice: args.choice.trim() } : {}),
+            ...(listOf(args.pictures) !== undefined ? { guides: cleanGuides(listOf(args.pictures)!) } : {}),
           }, task))
           const where = result.line !== undefined ? ` ${result.line.created ? 'on a new line of the plot' : 'on the line'} "${result.line.title}" (${result.line.id})` : ''
           const replaced = result.replaced !== undefined && result.replaced.chapters > 0 ? `\nThey take the place of ${result.replaced.chapters} chapter(s)${result.replaced.kept !== undefined ? `, which had text and are kept as the line "${result.replaced.kept.title}" (${result.replaced.kept.id}), put aside — tell the author where they went` : ' that were not written and are gone'}.` : ''
           const lines = result.chapters.map((chapter, index) => {
             const added = result.added[index]
-            return `${added !== undefined ? `${added.index}. ` : '- '}${chapter.title}${added !== undefined ? ` (${added.id})` : ''}\n   ${brief(chapter.synopsis, 260)}${chapter.beats.length > 0 ? `\n   beats: ${chapter.beats.map(beat => brief(beat.summary, 60)).join(' → ')}` : ''}`
+            return `${added !== undefined ? `${added.index}. ` : '- '}${chapter.title}${added !== undefined ? ` (${added.id})` : ''}\n   ${brief(chapter.synopsis, 260)}${chapter.beats.length > 0 ? `\n   beats: ${chapter.beats.map(beat => brief(beat.summary, 60)).join(' → ')}` : ''}${chapter.guides !== undefined ? `\n   goes by: ${chapter.guides.map(guide => guide.path).join(', ')}` : ''}`
           })
           return {
-            text: `${result.added.length > 0 ? `Added ${result.added.length} chapters to the outline${where}` : `Derived ${result.chapters.length} chapters (not applied)`}:${replaced}\n${lines.join('\n')}${result.rationale !== undefined ? `\n\nRationale: ${result.rationale}` : ''}`,
+            text: `${result.added.length > 0 ? `Added ${result.added.length} chapters to the outline${where}` : `Derived ${result.chapters.length} chapters (not applied)`}:${replaced}\n${lines.join('\n')}${result.rationale !== undefined ? `\n\nRationale: ${result.rationale}` : ''}${result.pictures !== undefined ? `\n\nPictures: ${result.pictures.count} given — ${result.pictures.by === 'vision' ? `put into words for the planner by ${result.pictures.model ?? 'the picture model'}` : result.pictures.unsure === true ? 'sent to the planner\'s model, which does not say whether it takes pictures: tell the author, and that a model to look at pictures can be set (novel_settings: vision)' : 'looked at by the planner\'s own model'}.` : ''}`,
             data: toJson(result),
           }
         }

@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 /** Outline: volumes, chapters and beats; the lines of the plot and their graph; long-running threads; AI derivation and what-if branches. */
 import { DeriveTrialDialog } from '../Trial'
+import { GuidePictures, picturesReadWord } from '../Guides'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { OutlineOpInput } from '../../shared/rpc'
 import { formatCount, sameName } from '../../shared/text'
-import { chapterBudgetOf, MAIN_LINE, type Beat, type ChapterInfo, type ChapterMemory, type ChapterPlan, type ChapterStatus, type CharacterCard, type PlotLine, type PlotThread, type ThreadKind, type ThreadStatus, type Volume } from '../../shared/types'
+import { chapterBudgetOf, MAIN_LINE, type Beat, type ChapterInfo, type ChapterMemory, type ChapterPlan, type ChapterStatus, type CharacterCard, type PictureGuide, type PicturesRead, type PlotLine, type PlotThread, type ThreadKind, type ThreadStatus, type Volume } from '../../shared/types'
 import { byWeight, CharacterPicker, useCastFilter } from '../CharacterPicker'
 import { Icon } from '../icons'
 import { ChapterTree, useOutlineOps } from '../ChapterTree'
@@ -505,6 +506,8 @@ interface DerivedChapter {
   characters: string[]
   beats: Beat[]
   threads: { title: string; action: string }[]
+  /** The author's pictures this chapter goes by, as the planner said. */
+  guides?: PictureGuide[]
 }
 
 interface Branch {
@@ -558,6 +561,9 @@ export function Derive({ onApplied, only, autoStart, preset }: {
   const [skipped, setSkipped] = useState<Set<number>>(new Set())
   // The same chapters planned by several models at once, to be compared.
   const [comparing, setComparing] = useState(false)
+  // Pictures the planner is to go by, and — after a run — how they were read.
+  const [guides, setGuides] = useState<PictureGuide[]>([])
+  const [read, setRead] = useState<PicturesRead | undefined>()
   const [question, setQuestion] = useState('')
   const [branches, setBranches] = useState<{ branches: Branch[]; recommendation?: string } | undefined>()
   const nameOf = (ref: string): string => project.characters.find(card => card.id === ref)?.name ?? ref
@@ -569,6 +575,7 @@ export function Derive({ onApplied, only, autoStart, preset }: {
     setDerived(undefined)
     setSkipped(new Set())
     setApplied(undefined)
+    setRead(undefined)
     void controller.guard(async () => {
       if (direct) {
         const info = await controller.run('ai.deriveChapters', {
@@ -580,16 +587,19 @@ export function Derive({ onApplied, only, autoStart, preset }: {
           ...(after.length > 0 ? { after } : {}),
           ...(mode === 'branch' && lineTitle.trim().length > 0 ? { title: lineTitle.trim() } : {}),
           ...(mode === 'branch' && choice.trim().length > 0 ? { choice: choice.trim() } : {}),
+          ...(guides.length > 0 ? { guides } : {}),
         }, setStream)
-        const output = info.result?.output as { added?: { id: string }[]; line?: { title: string; created: boolean }; replaced?: { chapters: number; kept?: { title: string } }; rationale?: string } | undefined
+        const output = info.result?.output as { added?: { id: string }[]; line?: { title: string; created: boolean }; replaced?: { chapters: number; kept?: { title: string } }; rationale?: string; pictures?: PicturesRead } | undefined
+        setRead(output?.pictures)
         await controller.refreshProject()
         const first = output?.added?.[0]?.id
         if (first !== undefined) controller.focusChapter(first)
         setApplied({ added: output?.added?.length ?? 0, ...(output?.line !== undefined ? { line: output.line } : {}), ...(output?.replaced !== undefined ? { replaced: output.replaced } : {}) })
         return
       }
-      const info = await controller.run('ai.deriveChapters', { root, apply: false, count: Math.max(1, Math.min(12, wanted)), ...(brief.length > 0 ? { direction: brief } : {}), ...(volume.length > 0 ? { volume } : {}) }, setStream)
-      const output = info.result?.output as { chapters?: DerivedChapter[]; rationale?: string } | undefined
+      const info = await controller.run('ai.deriveChapters', { root, apply: false, count: Math.max(1, Math.min(12, wanted)), ...(brief.length > 0 ? { direction: brief } : {}), ...(volume.length > 0 ? { volume } : {}), ...(guides.length > 0 ? { guides } : {}) }, setStream)
+      const output = info.result?.output as { chapters?: DerivedChapter[]; rationale?: string; pictures?: PicturesRead } | undefined
+      setRead(output?.pictures)
       if (output?.chapters !== undefined) setDerived({ chapters: output.chapters, ...(output.rationale !== undefined ? { rationale: output.rationale } : {}), volume })
     }).finally(() => { setWorking(undefined); setStream('') })
   }
@@ -640,6 +650,8 @@ export function Derive({ onApplied, only, autoStart, preset }: {
           ...(chapter.characters.length > 0 ? { characters: chapter.characters } : {}),
           ...(chapter.beats.length > 0 ? { beats: chapter.beats.map(({ id: _id, ...beat }) => beat) } : {}),
           ...(threads.length > 0 ? { threads } : {}),
+          // The pictures it goes by stay on its plan: whoever writes it is shown them.
+          ...(chapter.guides !== undefined && chapter.guides.length > 0 ? { guides: chapter.guides } : {}),
         })
       })
       const results = await apply(ops)
@@ -683,11 +695,13 @@ export function Derive({ onApplied, only, autoStart, preset }: {
         ) : null}
         {mode === 'replace' ? <p className="nv-note is-warn">{t(`这会把${after.length > 0 ? '所选章节' : '最后一章已写章节'}之后的大纲换掉。没写正文的章节会被删除；写了正文的留成一条“搁置”的线。`, `This replaces the outline after ${after.length > 0 ? 'the chosen chapter' : 'the last written chapter'}. Unwritten chapters are deleted; written ones are kept as a shelved line.`)}</p> : null}
         <Field label={t('方向（可留空）', 'Direction (optional)')}><TextArea value={direction} minRows={2} placeholder={t('例：让反派先赢一局；这几章把感情线推到误会最深处', 'e.g. let the antagonist win a round; push the romance to its deepest misunderstanding')} onChange={(event) => { setDirection(event.target.value) }} /></Field>
+        <GuidePictures value={guides} onChange={setGuides} disabled={working !== undefined} hint={t('策划照着图来排；哪一章用了哪张图，记在那一章上', 'The planner goes by them; which chapter goes by which is kept on that chapter')} />
+        {read !== undefined ? <p className="nv-muted nv-small">{picturesReadWord(read, t)}</p> : null}
         <div className="nv-form-actions">
           {!direct ? <Button variant="outline" icon="layers" disabled={working !== undefined} onClick={() => { setComparing(true) }} title={t('让几个模型各推演一版，并排着看，采纳一版——采纳之前什么都不进大纲', 'Have several models each plan these chapters, read the plans side by side and take one — nothing enters the outline before that')}>{t('对比…', 'Compare…')}</Button> : null}
           <Button variant="primary" icon="sparkles" busy={working === 'chapters'} disabled={working !== undefined} onClick={() => { derive() }}>{t('推演', 'Derive')}</Button>
         </div>
-        {comparing ? <DeriveTrialDialog<{ label: string; provider: string; model: string; chapters?: DerivedChapter[]; rationale?: string; seconds: number; error?: string }> count={Math.max(1, Math.min(12, wanted))} direction={direction} volume={volume} onClose={() => { setComparing(false) }} onTake={(plan) => { setSkipped(new Set()); setApplied(undefined); setDerived({ chapters: plan.chapters ?? [], ...(plan.rationale !== undefined ? { rationale: `${plan.label}：${plan.rationale}` } : {}), volume }) }} /> : null}
+        {comparing ? <DeriveTrialDialog<{ label: string; provider: string; model: string; chapters?: DerivedChapter[]; rationale?: string; seconds: number; error?: string }> count={Math.max(1, Math.min(12, wanted))} direction={direction} volume={volume} guides={guides} onClose={() => { setComparing(false) }} onTake={(plan) => { setSkipped(new Set()); setApplied(undefined); setDerived({ chapters: plan.chapters ?? [], ...(plan.rationale !== undefined ? { rationale: `${plan.label}：${plan.rationale}` } : {}), volume }) }} /> : null}
         {working === 'chapters' && stream.length > 0 ? <pre className="nv-stream">{stream.slice(-900)}</pre> : null}
         {applied !== undefined ? (
           <p className="nv-note is-ok">

@@ -276,7 +276,7 @@ export function withBookImage(settings: ImageSettings, book: BookImageSettings |
 }
 
 /** What of a book's manifest changes the settings that hold for it. */
-export type BookSettings = Pick<ProjectManifest, 'image' | 'tts' | 'sound' | 'embedding' | 'context'>
+export type BookSettings = Pick<ProjectManifest, 'image' | 'tts' | 'sound' | 'embedding' | 'context' | 'vision'>
 
 /**
  * The settings as they hold for a book: its own pictures, speech, sound, retrieval and context budgets where it has
@@ -285,7 +285,7 @@ export type BookSettings = Pick<ProjectManifest, 'image' | 'tts' | 'sound' | 'em
 export function withBook(settings: NovelSettings, book: BookSettings | undefined): NovelSettings {
   // Budgets that name nothing are none of the book's own.
   const context = Object.fromEntries(Object.entries(book?.context ?? {}).filter(([, value]) => value !== undefined && value !== null))
-  if (book === undefined || (book.image === undefined && book.tts === undefined && book.sound === undefined && book.embedding === undefined && Object.keys(context).length === 0)) return settings
+  if (book === undefined || (book.image === undefined && book.tts === undefined && book.sound === undefined && book.embedding === undefined && book.vision === undefined && Object.keys(context).length === 0)) return settings
   const { kept: _kept, ...tts } = book.tts ?? { provider: undefined }
   return {
     ...settings,
@@ -293,6 +293,7 @@ export function withBook(settings: NovelSettings, book: BookSettings | undefined
     ...(book.tts !== undefined && tts.provider !== undefined ? { tts: tts as TtsSettings } : {}),
     ...(book.sound !== undefined ? { sound: book.sound } : {}),
     ...(book.embedding !== undefined ? { embedding: book.embedding } : {}),
+    ...(book.vision !== undefined ? { vision: book.vision } : {}),
     ...(Object.keys(context).length > 0 ? { context: { ...settings.context, ...context } } : {}),
   }
 }

@@ -477,7 +477,7 @@ export class Project {
         else delete next.chapterBudget
       }
       // Services of the book's own named as nothing are taken off it: the Studio's hold for it again.
-      for (const key of ['image', 'tts', 'sound', 'embedding', 'context', 'parallel'] as const) if ((patch as Record<string, unknown>)[key] === null) delete next[key]
+      for (const key of ['image', 'tts', 'sound', 'embedding', 'context', 'parallel', 'vision'] as const) if ((patch as Record<string, unknown>)[key] === null) delete next[key]
       // Budgets and numbers of its own that name nothing are none of its own.
       for (const key of ['context', 'parallel'] as const) if (next[key] !== undefined && Object.values(next[key]!).every(value => value === undefined || value === null)) delete next[key]
       // A cover named as nothing is no cover named: the latest one drawn stands in again.

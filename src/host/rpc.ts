@@ -2,6 +2,7 @@
 /** Handlers of the Studio's RPC contract (see shared/rpc.ts). */
 import { deriveGrowth } from '../core/pipelines/growth'
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { createHash } from 'node:crypto'
 import { readdir, readFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { HISTORY_KINDS } from '../shared/history'
@@ -39,6 +40,7 @@ import { clearReview, listReviews, noteIssue, recheckIssues, resolveIssue, revie
 import { fixIssue, fixIssues, acceptProposal, rejectProposal, reviseBook, reviseChapter, reviseSpan, mendInTurn } from '../core/pipelines/revise'
 import { writeChapter } from '../core/pipelines/write'
 import { imageSetups, speechSetups, trialDerive, trialSpeak, trialWrite } from '../core/pipelines/trial'
+import { cleanGuides } from '../core/pipelines/guides'
 import { ProjectError } from '../core/project'
 import { siftCast } from '../core/pipelines/cast'
 import { overrule, settleSuggestions, settlesItself } from '../core/pipelines/settle'
@@ -643,7 +645,7 @@ export function createHandlers(service: NovelService): Handlers {
     },
 
     // ── model work ──
-    'ai.write': async ({ root, chapter, brief, mode, words, style, line }) => {
+    'ai.write': async ({ root, chapter, brief, mode, words, style, line, guides }) => {
       const runtime = await open(root)
       return job(runtime, 'write', 'write', chapter, async task => await writeChapter(core, runtime, {
         ...(chapter !== undefined ? { chapter } : {}),
@@ -652,7 +654,21 @@ export function createHandlers(service: NovelService): Handlers {
         ...(mode !== undefined ? { mode } : {}),
         ...(words !== undefined ? { words } : {}),
         ...(style !== undefined ? { style } : {}),
+        ...(Array.isArray(guides) ? { guides: cleanGuides(guides) } : {}),
       }, task))
+    },
+    'guide.add': async ({ root, mediaType, data }) => {
+      const { project } = await open(root)
+      const ending = ({ 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' } as Record<string, string>)[String(mediaType)]
+      if (ending === undefined) throw new ProjectError('novel/invalid', 'a picture to steer by is a PNG, JPEG, WebP or GIF')
+      const bytes = Buffer.from(requireString(data, 'data'), 'base64')
+      // Told by its first bytes, whatever it was called.
+      const head = bytes.subarray(0, 12)
+      const real = head.subarray(0, 4).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47])) ? 'png' : head[0] === 0xff && head[1] === 0xd8 ? 'jpg' : head.subarray(0, 4).toString('latin1') === 'RIFF' && head.subarray(8, 12).toString('latin1') === 'WEBP' ? 'webp' : head.subarray(0, 3).toString('latin1') === 'GIF' ? 'gif' : undefined
+      if (real === undefined || bytes.length < 64) throw new ProjectError('novel/invalid', 'that is not a picture the Studio can read (PNG, JPEG, WebP, GIF)')
+      if (bytes.length > 24 * 1024 * 1024) throw new ProjectError('novel/invalid', 'that picture is larger than 24 MB: bring in a smaller copy')
+      // Named by what it is: the same picture brought in twice is one file.
+      return { path: await project.writeAsset(`guides/${createHash('sha1').update(bytes).digest('hex').slice(0, 16)}.${real}`, bytes) }
     },
     'ai.reviseSpan': async ({ root, chapter, start, end, quote, instruction }) => {
       const runtime = await open(root)
@@ -707,7 +723,7 @@ export function createHandlers(service: NovelService): Handlers {
         return { chapterId: review.chapterId, issues: review.issues.length, verdict: review.verdict }
       })
     },
-    'ai.deriveChapters': async ({ root, count, direction, volume, apply, line, after, mode, title, choice }) => {
+    'ai.deriveChapters': async ({ root, count, direction, volume, apply, line, after, mode, title, choice, guides }) => {
       const runtime = await open(root)
       return job(runtime, 'derive', 'derive chapters', undefined, async task => await deriveChapters(core, runtime, {
         ...(count !== undefined ? { count } : {}),
@@ -719,6 +735,7 @@ export function createHandlers(service: NovelService): Handlers {
         ...(mode === 'append' || mode === 'replace' || mode === 'branch' ? { mode } : {}),
         ...(typeof title === 'string' && title.trim().length > 0 ? { title } : {}),
         ...(typeof choice === 'string' && choice.trim().length > 0 ? { choice } : {}),
+        ...(Array.isArray(guides) ? { guides: cleanGuides(guides) } : {}),
       }, task))
     },
     'ai.deriveBeats': async ({ root, chapter, direction }) => {
@@ -1052,7 +1069,7 @@ export function createHandlers(service: NovelService): Handlers {
       }
       return { ok: true, replaced, removed }
     },
-    'trial.write': async ({ root, chapter, brief, mode, words, line, with: routes }) => {
+    'trial.write': async ({ root, chapter, brief, mode, words, line, guides, with: routes }) => {
       const runtime = await open(root)
       return job(runtime, 'write', 'trial write', chapter, async task => await trialWrite(core, runtime, {
         ...(chapter !== undefined ? { chapter } : {}),
@@ -1060,6 +1077,7 @@ export function createHandlers(service: NovelService): Handlers {
         ...(brief !== undefined ? { brief } : {}),
         ...(mode !== undefined ? { mode } : {}),
         ...(words !== undefined ? { words } : {}),
+        ...(Array.isArray(guides) ? { guides: cleanGuides(guides) } : {}),
         with: Array.isArray(routes) ? routes : [],
       }, task))
     },
@@ -1068,12 +1086,13 @@ export function createHandlers(service: NovelService): Handlers {
       if (text === undefined) throw new ProjectError('novel/not-found', 'no such draft')
       return { text }
     },
-    'trial.derive': async ({ root, count, direction, volume, with: routes }) => {
+    'trial.derive': async ({ root, count, direction, volume, guides, with: routes }) => {
       const runtime = await open(root)
       return job(runtime, 'derive', 'trial derive', undefined, async task => await trialDerive(core, runtime, {
         ...(count !== undefined ? { count } : {}),
         ...(direction !== undefined ? { direction } : {}),
         ...(volume !== undefined ? { volume } : {}),
+        ...(Array.isArray(guides) ? { guides: cleanGuides(guides) } : {}),
         with: Array.isArray(routes) ? routes : [],
       }, task))
     },

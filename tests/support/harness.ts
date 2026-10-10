@@ -39,6 +39,13 @@ export class FakeLlm implements LlmBackend {
     return { provider: 'fake', model: 'fake-model' }
   }
 
+  /** Which models take pictures, by id: `true`, `false`; one not listed says nothing of it. */
+  sight: Record<string, boolean> = {}
+
+  async sees(route: { model: string }): Promise<boolean | undefined> {
+    return this.sight[route.model]
+  }
+
   /** The default policy, without the waiting. */
   retryPolicy(): RetryPolicy {
     return { ...DEFAULT_RETRY, initialDelayMs: 0, maxDelayMs: 0, jitterRatio: 0 }

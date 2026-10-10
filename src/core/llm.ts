@@ -8,9 +8,19 @@ import type { ModelRoute, NovelSettings, ProjectManifest, TextRole } from '../sh
 import { currentJob } from './jobs'
 import { errorMessage, isAbort } from './util/async'
 
+/** A picture that goes to a model with the words. */
+export interface LlmImage {
+  data: Uint8Array
+  mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
+  /** What it is called, for whoever reads the record of the call. */
+  name?: string
+}
+
 export interface LlmRequest {
   route: ModelRoute
   system?: string
+  /** Pictures the model is to look at, in the order the words speak of them. Only for a model that sees ({@link LlmBackend.sees}). */
+  images?: LlmImage[]
   /**
    * Text that opens the prompt and is the same over a run of calls — the book
    * and the story so far, while chapter after chapter is written. It is sent
@@ -49,6 +59,8 @@ export interface ModelDescriptor {
   id: string
   name: string
   description?: string
+  /** Whether it takes pictures, where its provider says: `true` it does, `false` it does not; absent, nobody said. */
+  sees?: boolean
 }
 
 /** What the pipelines need from a text-model provider. */
@@ -67,6 +79,8 @@ export interface LlmBackend {
   outputCap?(route: ModelRoute): Promise<OutputCap>
   /** The retry policy of the provider behind a route; absent or undefined means {@link DEFAULT_RETRY}. */
   retryPolicy?(route: ModelRoute): RetryPolicy | undefined
+  /** Whether the model behind a route takes pictures: `true`, `false`, or undefined where its provider does not say. */
+  sees?(route: ModelRoute): Promise<boolean | undefined>
 }
 
 export interface OutputCap {
@@ -212,6 +226,7 @@ export function retrying(backend: LlmBackend, random: () => number = Math.random
     ...(backend.catalog !== undefined ? { catalog: backend.catalog.bind(backend) } : {}),
     ...(backend.outputCap !== undefined ? { outputCap: backend.outputCap.bind(backend) } : {}),
     ...(backend.retryPolicy !== undefined ? { retryPolicy: backend.retryPolicy.bind(backend) } : {}),
+    ...(backend.sees !== undefined ? { sees: backend.sees.bind(backend) } : {}),
     async complete(request) {
       const zh = inChinese(request)
       const policy = backend.retryPolicy?.(request.route) ?? DEFAULT_RETRY

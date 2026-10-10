@@ -113,6 +113,7 @@ function compact(tokens: number): string {
 
 const ROLE_NAME: Record<string, [string, string]> = {
   writer: ['写手', 'Writer'],
+  vision: ['看图', 'Pictures'],
   architect: ['策划', 'Planner'],
   analyst: ['场记', 'Continuity'],
   director: ['导演', 'Director'],
@@ -145,7 +146,7 @@ const scopeShown = new Map<string, 'global' | 'book'>()
 function SettingsShell({ view, t }: { view: SettingsData; t: Translate }) {
   const root = useSnapshot(snapshot => snapshot.root)
   const book = useSnapshot(snapshot => snapshot.project?.manifest)
-  const own = book !== undefined ? { models: book.models, crew: book.crew, image: book.image, tts: book.tts, sound: book.sound, embedding: book.embedding, context: book.context, parallel: book.parallel } : undefined
+  const own = book !== undefined ? { models: book.models, crew: book.crew, image: book.image, tts: book.tts, sound: book.sound, embedding: book.embedding, vision: book.vision, context: book.context, parallel: book.parallel } : undefined
   return <SettingsForm key={JSON.stringify([{ ...view.settings, recommended: undefined }, root, own])} view={view} t={t} />
 }
 
@@ -165,7 +166,7 @@ const STRATEGY_WORD: Record<ContextSettings['strategy'], [string, string]> = {
 }
 
 /** What a book has of its own, as the page holds it until it is saved into the book. */
-interface BookOwn { models: Partial<TextModelRouting>; crew: CrewSettings; image: BookImageSettings; tts?: TtsSettings | undefined; sound?: SoundSettings | undefined; embedding?: EmbeddingSettings | undefined; context: Partial<ContextSettings>; parallel: BookParallel }
+interface BookOwn { models: Partial<TextModelRouting>; crew: CrewSettings; image: BookImageSettings; tts?: TtsSettings | undefined; sound?: SoundSettings | undefined; embedding?: EmbeddingSettings | undefined; vision?: ModelRoute | undefined; context: Partial<ContextSettings>; parallel: BookParallel }
 
 function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
   const { controller } = useStudio()
@@ -180,9 +181,9 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
   // Where the text models and the crew's ways are saved: for every book, or with the book that is open.
   const book = useSnapshot(snapshot => snapshot.project?.manifest)
   const bookRoot = useSnapshot(snapshot => snapshot.root)
-  const [own, setOwn] = useState<BookOwn>(() => ({ models: book?.models ?? {}, crew: book?.crew ?? {}, image: book?.image ?? {}, context: book?.context ?? {}, parallel: book?.parallel ?? {}, ...(book?.tts !== undefined ? { tts: book.tts } : {}), ...(book?.sound !== undefined ? { sound: book.sound } : {}), ...(book?.embedding !== undefined ? { embedding: book.embedding } : {}) }))
+  const [own, setOwn] = useState<BookOwn>(() => ({ models: book?.models ?? {}, crew: book?.crew ?? {}, image: book?.image ?? {}, context: book?.context ?? {}, parallel: book?.parallel ?? {}, ...(book?.tts !== undefined ? { tts: book.tts } : {}), ...(book?.sound !== undefined ? { sound: book.sound } : {}), ...(book?.embedding !== undefined ? { embedding: book.embedding } : {}), ...(book?.vision !== undefined ? { vision: book.vision } : {}) }))
   const [ownDirty, setOwnDirty] = useState(false)
-  const bookHasOwn = book !== undefined && (Object.keys(book.models ?? {}).length > 0 || Object.values(book.crew ?? {}).some(value => value !== undefined && Object.keys(value).length > 0) || Object.keys(book.image ?? {}).length > 0 || book.tts !== undefined || book.sound !== undefined || book.embedding !== undefined || Object.keys(book.context ?? {}).length > 0 || Object.keys(book.parallel ?? {}).length > 0)
+  const bookHasOwn = book !== undefined && (Object.keys(book.models ?? {}).length > 0 || Object.values(book.crew ?? {}).some(value => value !== undefined && Object.keys(value).length > 0) || Object.keys(book.image ?? {}).length > 0 || book.tts !== undefined || book.sound !== undefined || book.embedding !== undefined || book.vision !== undefined || Object.keys(book.context ?? {}).length > 0 || Object.keys(book.parallel ?? {}).length > 0)
   // A book that has settings of its own is what the page opens on: they are what holds for the book in hand.
   const [wanted, setWanted] = useState<'global' | 'book'>((bookRoot !== undefined ? scopeShown.get(bookRoot) : undefined) ?? (bookHasOwn ? 'book' : 'global'))
   const setScope = (next: 'global' | 'book'): void => {
@@ -197,6 +198,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
       if ('tts' in patch && patch.tts === undefined) delete next.tts
       if ('sound' in patch && patch.sound === undefined) delete next.sound
       if ('embedding' in patch && patch.embedding === undefined) delete next.embedding
+      if ('vision' in patch && patch.vision === undefined) delete next.vision
       return next
     })
     setOwnDirty(true)
@@ -249,7 +251,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
     if (ownDirty && bookRoot !== undefined) {
       const crew = Object.fromEntries(Object.entries(own.crew).filter(([, value]) => value !== undefined && Object.keys(value).length > 0))
       // Named as nothing (`null`), speech and sound of its own are taken off the book: the Studio's hold for it again.
-      await controller.api.call('project.update', { root: bookRoot, patch: { models: own.models, crew, image: own.image, tts: own.tts ?? null, sound: own.sound ?? null, embedding: own.embedding ?? null, context: Object.keys(own.context).length > 0 ? own.context : null, parallel: Object.keys(own.parallel).length > 0 ? own.parallel : null } as never })
+      await controller.api.call('project.update', { root: bookRoot, patch: { models: own.models, crew, image: own.image, tts: own.tts ?? null, sound: own.sound ?? null, embedding: own.embedding ?? null, vision: own.vision ?? null, context: Object.keys(own.context).length > 0 ? own.context : null, parallel: Object.keys(own.parallel).length > 0 ? own.parallel : null } as never })
       setOwnDirty(false)
       await controller.refreshProject()
       if (!dirty) {
@@ -265,6 +267,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
       tts: sectionPatch(view.settings.tts, draft.tts),
       sound: sectionPatch(view.settings.sound ?? { provider: 'auto' }, draft.sound ?? { provider: 'auto' }),
       embedding: sectionPatch(view.settings.embedding, draft.embedding),
+      vision: draft.vision ?? null,
       crew: sectionPatch(view.settings.crew ?? {}, draft.crew ?? {}),
       textConcurrency: draft.textConcurrency ?? null,
       autoDigest: draft.autoDigest,
@@ -285,6 +288,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
     ...(own.image.provider !== undefined ? [{ key: 'image:service', label: t(`绘图服务：${own.image.provider === 'none' ? '不画图' : imageSetupName(own.image as ImageSettings)}`, `image service: ${own.image.provider === 'none' ? 'none' : imageSetupName(own.image as ImageSettings)}`), reset: () => { updateOwn({ image: imageWays(own.image) }) } }] : []),
     ...(own.tts !== undefined ? [{ key: 'tts', label: t(`配音服务：${own.tts.provider === 'none' ? '不配音' : own.tts.model ?? own.tts.provider}`, `speech: ${own.tts.provider === 'none' ? 'none' : own.tts.model ?? own.tts.provider}`), reset: () => { updateOwn({ tts: undefined }) } }] : []),
     ...(own.sound !== undefined ? [{ key: 'sound', label: t('声音设计', 'sound design'), reset: () => { updateOwn({ sound: undefined }) } }] : []),
+    ...(own.vision !== undefined ? [{ key: 'vision', label: t(`看图的模型：${own.vision.model}`, `looks at pictures: ${own.vision.model}`), reset: () => { updateOwn({ vision: undefined }) } }] : []),
     ...(own.embedding !== undefined ? [{ key: 'embedding', label: t(`检索：${own.embedding.provider === 'none' ? '只按关键词' : own.embedding.model ?? own.embedding.provider}`, `retrieval: ${own.embedding.provider === 'none' ? 'keywords only' : own.embedding.model ?? own.embedding.provider}`), reset: () => { updateOwn({ embedding: undefined }) } }] : []),
     ...(Object.keys(own.parallel).length > 0 ? [{ key: 'parallel', label: t(`并发：${GATE_KINDS.filter(kind => own.parallel[kind] !== undefined).map(kind => `${t(...GATE_WORD[kind])} ${own.parallel[kind]}`).join(' · ')}`, `at once: ${GATE_KINDS.filter(kind => own.parallel[kind] !== undefined).map(kind => `${t(...GATE_WORD[kind])} ${own.parallel[kind]}`).join(' · ')}`), reset: () => { updateOwn({ parallel: {} }) } }] : []),
     ...(Object.keys(own.context).length > 0 ? [{ key: 'context', label: t(`上下文预算：${Object.keys(own.context).length} 项`, `context: ${Object.keys(own.context).length} of its own`), reset: () => { updateOwn({ context: {} }) } }] : []),
@@ -481,6 +485,21 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
             />
           </>
         )}
+        <VisionRow
+          route={scope === 'book' ? own.vision : draft.vision}
+          models={view.models}
+          providers={view.providers}
+          working={(['writer', 'architect'] as const).map(role => ({ name: roleWord(role), model: ((scope === 'book' ? bookView?.context : undefined) ?? view.context ?? []).find(row => row.role === role)?.model }))}
+          {...(scope === 'book' ? { unset: t(`沿用全局设置（${draft.vision !== undefined ? draft.vision.model : '不配'}）`, `As set for every book (${draft.vision !== undefined ? draft.vision.model : 'none'})`) } : {})}
+          t={t}
+          onChange={(vision) => {
+            if (scope === 'book') updateOwn({ vision })
+            else {
+              setDraft(({ vision: _old, ...rest }) => (vision !== undefined ? { ...rest, vision } : rest))
+              setDirty(true)
+            }
+          }}
+        />
         {advanced ? ROLES.map((item) => {
           const role = item.role
           const crewRole = (CREW_ROLES as readonly string[]).includes(role) && view.crew !== undefined ? role as CrewRole : undefined
@@ -942,6 +961,54 @@ function EndpointField({ value, placeholder, hint, onChange, t }: { value: strin
 }
 
 // ───────────────────────────── text roles ─────────────────────────────
+
+/**
+ * The model that looks at pictures for a role whose own model cannot: one of DSH's, with those that say they take
+ * pictures listed first. Beside it, what the writer's and the planner's own models say of themselves — where they see,
+ * this one is not asked.
+ */
+function VisionRow({ route, models, providers, working, unset, onChange, t }: {
+  route: ModelRoute | undefined
+  models: ModelOption[]
+  providers: ProviderOption[]
+  /** The roles that are given pictures, and the model each runs on. */
+  working: { name: string; model?: string | undefined }[]
+  /** What "none chosen" means here, when it is not "none": a book's row falls back on the Studio-wide one. */
+  unset?: string
+  onChange: (route: ModelRoute | undefined) => void
+  t: Translate
+}) {
+  const of = (provider: string): ModelOption[] => models.filter(model => model.provider === provider)
+  const mine = route !== undefined ? of(route.provider) : []
+  const picked = route !== undefined ? mine.find(model => model.id === route.model) : undefined
+  const seeing = t('说自己能看图的', 'Say they take pictures')
+  const sight = (model: string | undefined): boolean | undefined => (model !== undefined ? models.find(candidate => candidate.id === model)?.sees : undefined)
+  return (
+    <div className="nv-role-block" data-section="vision">
+      <div className="nv-form-grid">
+        <Field label={t('看图的模型', 'Looks at pictures')} hint={t('给推演、写作配了参考图，而干活的模型自己看不了图时，由它先把图看成文字。', 'Where pictures are given to a plan or a chapter and the model doing the work takes none, this one says in words what they show.')}>
+          <Select value={route?.provider ?? ''} options={[
+            { value: '', label: unset ?? t('不配：图只给自己能看图的模型', 'None: pictures go only to models that take them') },
+            ...providers.map(provider => ({ value: provider.id, label: provider.name })),
+          ]} onChange={(provider) => {
+            if (provider === '') onChange(undefined)
+            // The first of its models that says it sees; else the first it lists, to be changed.
+            else onChange({ provider, model: (of(provider).find(model => model.sees === true) ?? of(provider)[0])?.id ?? '' })
+          }} />
+        </Field>
+        {route !== undefined ? (
+          <Field label={t('模型', 'Model')} hint={picked?.sees === true ? t('它说自己能看图', 'It says it takes pictures') : picked?.sees === false ? t('它说自己看不了图：换一个', 'It says it takes no pictures: choose another') : t('它没有声明能不能看图', 'It does not say whether it takes pictures')}>
+            <Combo value={route.model} placeholder={t('模型名', 'model id')} options={[...mine].sort((left, right) => Number(right.sees === true) - Number(left.sees === true)).map((model): ComboOption => ({ value: model.id, ...(model.name !== model.id && model.name.length > 0 ? { label: model.name } : {}), ...(model.sees === true ? { group: seeing } : { group: t('其它', 'Others'), ...(model.sees === false ? { note: t('看不了图', 'no pictures') } : {}) }) }))} onChange={(model) => { onChange({ provider: route.provider, model }) }} />
+          </Field>
+        ) : null}
+      </div>
+      <p className="nv-muted nv-small">
+        {working.map(role => `${role.name}${role.model !== undefined ? `（${role.model}）` : ''}${sight(role.model) === true ? t('自己能看图', ' takes pictures itself') : sight(role.model) === false ? t('看不了图', ' takes no pictures') : t('没有声明能不能看图', ' does not say whether it takes pictures')}`).join(t('；', '; '))}
+        {t('。自己能看图的直接看，用不到上面这个。', '. One that takes pictures looks itself; the model above is not asked for it.')}
+      </p>
+    </div>
+  )
+}
 
 /** Where a role's model comes from: the chat model, one of the providers the Harness reaches (`harness:<id>`), or an endpoint named here. */
 type RoleSource = '' | `harness:${string}` | ServiceId

@@ -842,6 +842,17 @@ export class NovelCore {
   }
 
   /**
+   * The model that looks at pictures for a role whose own model cannot: the book's where it names one, the Studio's
+   * otherwise; none where neither does.
+   */
+  async visionRoute(runtime?: ProjectRuntime): Promise<ModelRoute | undefined> {
+    const route = (await this.settingsOf(runtime)).vision
+    if (route === undefined || route.provider.length === 0 || route.model.length === 0) return undefined
+    const manifest = runtime !== undefined ? await runtime.project.manifest() : undefined
+    return { provider: route.provider, model: route.model, ...(route.reasoningEffort !== undefined ? { reasoningEffort: route.reasoningEffort } : {}), for: { role: 'vision', ...(runtime !== undefined ? { book: runtime.project.root } : {}), ...(manifest !== undefined ? { title: manifest.title } : {}) } }
+  }
+
+  /**
    * What passages are embedded with: the Studio's endpoint, or — for a book that has retrieval of its own — the
    * book's. One embedder per setup, kept while the setup stands.
    */

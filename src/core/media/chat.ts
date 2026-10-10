@@ -269,6 +269,8 @@ export function createRoutedLlm(harness: LlmBackend, keys: KeySource): LlmBacken
       if (!isDirect(route)) return await harness.reasoning?.(route) ?? { efforts: [] }
       return { efforts: DIRECT_EFFORTS.map(effort => ({ id: effort.id, name: effort.name[1] })) }
     },
+    // Pictures go to a model through DSH's own way of sending them: an endpoint the Studio calls itself is sent words only.
+    sees: async route => (isDirect(route) ? false : await harness.sees?.(route)),
     // An endpoint the Studio calls itself has no policy of its own and gets the default one.
     retryPolicy: route => (isDirect(route) ? undefined : harness.retryPolicy?.(route)),
     async outputCap(route) {

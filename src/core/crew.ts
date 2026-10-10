@@ -28,7 +28,7 @@ import { fileURLToPath } from 'node:url'
 import type { CrewRole, CrewRun, ProjectManifest, PromptLanguage } from '../shared/types'
 import { clip } from '../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from './core'
-import { completeJson, extractJson, LlmCallError } from './llm'
+import { completeJson, extractJson, LlmCallError, type LlmImage } from './llm'
 import { ProjectError } from './project'
 import { READ_KINDS, readBook, searchBook, SEARCH_SOURCES } from './reading'
 import { L, promptLanguage } from './render'
@@ -320,6 +320,8 @@ export interface Assignment<T> {
   system?: string
   /** The task and its material. It may say "output JSON": for an agent that means "hand this JSON in". */
   prompt: string
+  /** Pictures that go with the task, for a role whose model sees them (see `guidePictures`). */
+  images?: LlmImage[]
   temperature?: number
   /** The tool the result is handed in with. */
   tool: string
@@ -391,6 +393,7 @@ async function assignNow<T>(core: NovelCore, runtime: ProjectRuntime, task: Task
       route,
       ...(work.system !== undefined ? { system: work.system } : {}),
       prompt: work.prompt,
+      ...(work.images !== undefined && work.images.length > 0 ? { images: work.images } : {}),
       ...(work.temperature !== undefined ? { temperature: work.temperature } : {}),
       ...(task.signal !== undefined ? { signal: task.signal } : {}),
       onText: (_delta, total) => { task.job?.rewrite(total) },
@@ -428,6 +431,7 @@ async function assignNow<T>(core: NovelCore, runtime: ProjectRuntime, task: Task
       persona: CREW[work.role].persona[lang === 'zh' ? 0 : 1],
       rules: crewRules(work.role, lang, manifest),
       prompt: `${work.prompt}${handIn(lang, work.tool, declared)}`,
+      ...(work.images !== undefined && work.images.length > 0 ? { images: work.images } : {}),
       tools: [...bookTools(runtime, task.signal, work.line), ...(work.tools ?? []), deliver],
       ...(skills.length > 0 ? { skills } : {}),
       inherit: plan.inherit,

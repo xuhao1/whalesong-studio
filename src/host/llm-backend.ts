@@ -11,6 +11,7 @@ import { currentJob } from '../core/jobs'
 import { LlmCallError, type LlmBackend, type LlmRequest, type LlmResponse, type ModelDescriptor, type ProviderListing, type RetryPolicy } from '../core/llm'
 import { knownMaxOutput } from '../core/media/discovery'
 import type { ModelRoute } from '../shared/types'
+import { imageBlocks } from './pictures'
 
 export function createHarnessLlm(ctx: Context): LlmBackend {
   /**
@@ -32,6 +33,8 @@ export function createHarnessLlm(ctx: Context): LlmBackend {
             id: model.id,
             name: model.name,
             ...(model.description !== undefined ? { description: model.description } : {}),
+            // Said outright either way where the provider says; left out where it does not.
+            ...(model.inputModalities !== undefined ? { sees: model.inputModalities.includes('image') } : {}),
           })
         }
         providers.push({ id: provider.id, name: provider.name, models: listed.length })
@@ -46,11 +49,13 @@ export function createHarnessLlm(ctx: Context): LlmBackend {
       const { route } = request
       const temperature = request.temperature ?? route.temperature
       const maxTokens = request.maxTokens ?? route.maxTokens
+      // Pictures go the way DSH sends them: kept by its attachment service, carried as references.
+      const pictures = await imageBlocks(ctx, request.images)
       const options: GenerateOptions = {
         provider: route.provider,
         model: route.model,
-        // The part that stays the same from call to call goes ahead as a block of its own: a cache keeps a prefix, and this is where it ends.
-        messages: [{ role: 'user', content: request.stable !== undefined && request.stable.length > 0 ? [{ type: 'text', text: request.stable }, { type: 'text', text: request.prompt }] : [{ type: 'text', text: request.prompt }] }],
+        // The part that stays the same from call to call goes ahead as a block of its own: a cache keeps a prefix, and this is where it ends. Pictures come after it, with the words that speak of them.
+        messages: [{ role: 'user', content: [...(request.stable !== undefined && request.stable.length > 0 ? [{ type: 'text' as const, text: request.stable }] : []), ...pictures, { type: 'text' as const, text: request.prompt }] as never }],
         ...(request.system !== undefined && request.system.length > 0 ? { system: request.system } : {}),
         ...(temperature !== undefined ? { temperature } : {}),
         ...(maxTokens !== undefined ? { maxTokens } : {}),
@@ -96,6 +101,12 @@ export function createHarnessLlm(ctx: Context): LlmBackend {
     async contextWindow(route: ModelRoute): Promise<number | undefined> {
       const info = await ctx.llm.resolveModelInfo(route.provider, route.model)
       return info.context?.contextWindow
+    },
+
+    async sees(route: ModelRoute): Promise<boolean | undefined> {
+      // What the provider's adapter says the model takes; a model it says nothing of is not known either way.
+      const info = await ctx.llm.resolveModelInfo(route.provider, route.model)
+      return info.inputModalities !== undefined ? info.inputModalities.includes('image') : undefined
     },
 
     async reasoning(route: ModelRoute) {

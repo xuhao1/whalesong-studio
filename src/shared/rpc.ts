@@ -23,7 +23,7 @@ import type {
   AnalyzeStep, ComfyCatalog,
   PriceEntry,
   UsageSummary,
-  TtsProviderKind, TtsSettings, SpeechTrial,
+  TtsProviderKind, TtsSettings, SpeechTrial, PictureGuide,
   AmbiencePreset, AudioCue, AudioLine, AudioScript, BookLock, ChapterMemory, ChapterPlan, ChapterReview, IssueSeverity, CharacterCard, CharacterRole, ComicBoard, ComicPanel, LifeMark, SheetsAsk,
   ChapterVideo, CrewRole, GateKind, GateState, IllustrationInfo, ImageTrial, JobInfo, SettledSuggestion, ModelRoute, NovelSettings, PlaySession, PlayTurn, ProjectManifest, ProjectRef, ProjectState, RecommendedState,
   Proposal, SearchHit, SearchSource, SoundKind, StageStatus, StageStep, StoryboardDensity, StyleProfile, TextRole, TextStep, VersionInfo, WalkOn, WorkMode, WorldEntry, HistoryKind, HistoryVersion, GlossaryTerm, ChapterTranslation,
@@ -73,6 +73,8 @@ export interface ModelOption {
   id: string
   name: string
   description?: string
+  /** Whether it takes pictures, where its provider says; absent, nobody said. */
+  sees?: boolean
 }
 
 /** What a text model can be asked to do beyond the defaults. */
@@ -535,7 +537,7 @@ export interface NovelRpc {
   'find': { params: { root: string; query: string; limit?: number }; result: { matches: FindMatch[]; total: number } }
 
   // ── model work (jobs) ──
-  'ai.write': { params: { root: string; chapter?: string; brief?: string; mode?: 'draft' | 'continue'; words?: number; style?: string; /** With no chapter named: the line of the plot to go on with. */ line?: string }; result: JobStarted }
+  'ai.write': { params: { root: string; chapter?: string; brief?: string; mode?: 'draft' | 'continue'; words?: number; style?: string; /** With no chapter named: the line of the plot to go on with. */ line?: string; /** Pictures to write this pass by, instead of the ones kept on the chapter's plan. */ guides?: PictureGuide[] }; result: JobStarted }
   'ai.reviseSpan': { params: { root: string; chapter: string; start: number; end: number; quote?: string; instruction: string }; result: JobStarted }
   'ai.reviseChapter': { params: { root: string; chapter: string; instruction: string }; result: JobStarted }
   /** Mend what a review found: at the place it quotes (`passage`), or wherever it reaches (`book` — the planner traces it through the chapters and the bible). `note` is what the author wants done about it. Changes come back as proposals. */
@@ -549,7 +551,12 @@ export interface NovelRpc {
    * `append` adds, `replace` puts the new chapters in its place (written chapters are kept as a line put aside),
    * `branch` leaves it and opens a line of its own (`title`, `choice`). More than ten chapters are derived in rounds.
    */
-  'ai.deriveChapters': { params: { root: string; count?: number; direction?: string; volume?: string; apply?: boolean; line?: string; after?: string; mode?: 'append' | 'replace' | 'branch'; title?: string; choice?: string }; result: JobStarted }
+  'ai.deriveChapters': { params: { root: string; count?: number; direction?: string; volume?: string; apply?: boolean; line?: string; after?: string; mode?: 'append' | 'replace' | 'branch'; title?: string; choice?: string; /** Pictures to steer the chapters by. */ guides?: PictureGuide[] }; result: JobStarted }
+  /**
+   * Bring a picture into the book to steer a plot or a chapter by: kept among its files (`assets/guides/`), where the
+   * same picture brought twice is one file. `data` is the picture's bytes in base64.
+   */
+  'guide.add': { params: { root: string; mediaType: string; data: string }; result: { path: string } }
   'ai.deriveBeats': { params: { root: string; chapter: string; direction?: string }; result: JobStarted }
   'ai.whatIf': { params: { root: string; question: string; branches?: number }; result: JobStarted }
   /** Read the book and write down what it says — the passes of an import's analysis, on a book that has its chapters. Without `steps`: what an analysis that was cut short has left to do (all of it where none was started). */
@@ -648,11 +655,11 @@ export interface NovelRpc {
    */
   'trial.adopt': { params: { root: string; path: string; instead?: string; others?: string[] }; result: { ok: boolean; replaced: string[]; removed: number } }
   /** Have several of DSH's models write the same chapter at once; the chapter keeps its text, the drafts are kept among its versions (job result: `drafts`). */
-  'trial.write': { params: { root: string; chapter?: string; brief?: string; mode?: 'draft' | 'continue'; words?: number; line?: string; with: { provider: string; model: string; reasoningEffort?: string }[] }; result: JobStarted }
+  'trial.write': { params: { root: string; chapter?: string; brief?: string; mode?: 'draft' | 'continue'; words?: number; line?: string; guides?: PictureGuide[]; with: { provider: string; model: string; reasoningEffort?: string }[] }; result: JobStarted }
   /** One draft of such a comparison, whole: its text. */
   'trial.draft': { params: { root: string; chapter: string; version: string }; result: { text: string } }
   /** Have several of DSH's models plan the same chapters to come at once: previews only (job result: `plans`). */
-  'trial.derive': { params: { root: string; count?: number; direction?: string; volume?: string; with: { provider: string; model: string; reasoningEffort?: string }[] }; result: JobStarted }
+  'trial.derive': { params: { root: string; count?: number; direction?: string; volume?: string; guides?: PictureGuide[]; with: { provider: string; model: string; reasoningEffort?: string }[] }; result: JobStarted }
   'image.sheetsFirst': { params: { root: string; asks: SheetsAsk[] }; result: { people: { id: string; name: string }[]; unknown: number; /** The sheets would be drawn after the portraits asked for, against them (`image.lead` is `portrait`). */ after?: boolean } }
   'image.list': { params: { root: string }; result: { images: IllustrationInfo[] } }
   /** The portraits of people and where each stands in the book — those of one chapter, of one person, or all — the ones kept out of the text among them. */

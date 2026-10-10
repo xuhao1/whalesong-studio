@@ -62,7 +62,8 @@ ${base.style}`)
  * @param base.words - the length recommended for what this call writes; absent, the writer judges.
  * @param base.usual - how long the book's written chapters run, for a writer left to judge.
  */
-export function writerTask(base: Base & { context: string; brief?: string; continuing: boolean; words?: number; usual?: number }): string {
+export function writerTask(base: Base & { context: string; brief?: string; continuing: boolean; words?: number; usual?: number; /** The pictures the author gave for this chapter, as the task tells of them. */ pictures?: string }): string {
+  const pictures = base.pictures !== undefined && base.pictures.trim().length > 0 ? `\n\n${base.pictures.trim()}` : ''
   const brief = base.brief !== undefined && base.brief.trim().length > 0
     ? L(base.lang, `\n\n## 编辑对本次写作的要求\n\n${base.brief.trim()}`, `\n\n## The editor's brief for this pass\n\n${base.brief.trim()}`)
     : ''
@@ -78,7 +79,7 @@ export function writerTask(base: Base & { context: string; brief?: string; conti
     base.continuing ? '你是在续写：从"本章已有正文"的最后一个字之后接着写，不要重复已有内容，衔接处不能看出缝。直接输出续写的正文。' : '从本章第一句开始写，直接输出正文。',
     base.continuing ? 'You are continuing: pick up right after the last word of "This chapter so far", repeat nothing, and leave no seam. Output the continuation only.' : 'Start from the first sentence of the chapter. Output the prose only.',
   )
-  return `${base.context}${brief}\n\n---\n${length}\n${how}`
+  return `${base.context}${brief}${pictures}\n\n---\n${length}\n${how}`
 }
 
 export function reviseSpanSystem(base: Base & { style: string }): string {
@@ -314,11 +315,14 @@ export function architectSystem(lang: PromptLanguage): string {
  * @param base.situation - what is particular about where these chapters go: a new line and what it parts from, a rewrite and what it gives up, a line that has to arrive somewhere.
  * @param base.after - the chapter the new ones follow, when that is not the end of the line.
  */
-export function deriveChaptersTask(base: Base & { context: string; count: number; direction?: string; volume: string; situation?: string; after?: string }): string {
+export function deriveChaptersTask(base: Base & { context: string; count: number; direction?: string; volume: string; situation?: string; after?: string; /** The pictures the author gave to steer these chapters, as the task tells of them. */ pictures?: string }): string {
+  const pictures = base.pictures !== undefined && base.pictures.trim().length > 0 ? `\n\n${base.pictures.trim()}` : ''
+  // Said with what is to be handed in, where the shape of a chapter is: which pictures it goes by.
+  const pictured = pictures.length > 0 ? L(base.lang, '\n每章另加一项 "pictures"：这一章照着写的参考图的序号（如 [1]）；没有照哪张图的章写 []。', '\nGive every chapter one more field, "pictures": the numbers of the pictures it goes by (e.g. [1]); [] for a chapter that goes by none.') : ''
   const direction = base.direction !== undefined && base.direction.trim().length > 0 ? L(base.lang, `\n\n## 作者给的方向\n\n${base.direction.trim()}`, `\n\n## Direction from the author\n\n${base.direction.trim()}`) : ''
   const situation = base.situation !== undefined && base.situation.trim().length > 0 ? L(base.lang, `\n\n## 这次推演的处境\n\n${base.situation.trim()}`, `\n\n## Where these chapters go\n\n${base.situation.trim()}`) : ''
   const after = base.after !== undefined ? L(base.lang, `这些章节接在「${base.after}」之后、大纲里它后面那一章之前：要接得上前面，也要引得出后面。\n`, `These chapters go after "${base.after}" and before the chapter the outline has after it: they have to follow from the one and lead into the other.\n`) : ''
-  return `${base.context}${situation}${direction}\n\n---\n${after}${L(base.lang, `请为《${bare(base.title)}》的「${base.volume}」推演接下来的 ${base.count} 章章纲。要求：
+  return `${base.context}${situation}${direction}${pictures}\n\n---\n${after}${L(base.lang, `请为《${bare(base.title)}》的「${base.volume}」推演接下来的 ${base.count} 章章纲。要求：
 - 从已写内容和人物此刻的处境、欲望出发推演，情节由人物的选择推动，每章都有不可逆的变化；
 - 兼顾群像：让久未出场但仍有未了之事的人物合理回归，不要让所有戏都压在主角身上；
 - 主动推进或回收"尚未回收的线索"，新埋的伏笔要有后续打算；
@@ -334,11 +338,11 @@ export function deriveChaptersTask(base: Base & { context: string; count: number
 
 Output JSON only:
 {"chapters": [{"title": "chapter title", "synopsis": "80-130 word synopsis", "purpose": "what the chapter does for the book", "pov": "viewpoint character name", "location": "main location", "time": "story time", "characters": ["names of characters appearing"], "beats": [{"summary": "beat: who wants what, what blocks them, how it turns", "conflict": "conflict", "outcome": "outcome"}], "threads": [{"title": "thread name", "action": "plant|advance|payoff"}]}], "rationale": "why this arrangement, and alternatives worth considering (for the author)"}
-3-6 beats per chapter.`)}`
+3-6 beats per chapter.`)}${pictured}`
 }
 
-export function deriveBeatsTask(base: Base & { context: string; direction?: string }): string {
-  return `${base.context}${base.direction !== undefined && base.direction.trim().length > 0 ? `\n\n${L(base.lang, '## 作者给的方向', '## Direction from the author')}\n\n${base.direction.trim()}` : ''}\n\n---\n${L(base.lang, `请把"本章章纲"细化成可以直接照着写的场景节拍（4-8 个）。每个节拍要有明确的人物意图、阻碍与转折，体现人物性格，并标出情绪走向。
+export function deriveBeatsTask(base: Base & { context: string; direction?: string; pictures?: string }): string {
+  return `${base.context}${base.direction !== undefined && base.direction.trim().length > 0 ? `\n\n${L(base.lang, '## 作者给的方向', '## Direction from the author')}\n\n${base.direction.trim()}` : ''}${base.pictures !== undefined && base.pictures.trim().length > 0 ? `\n\n${base.pictures.trim()}` : ''}\n\n---\n${L(base.lang, `请把"本章章纲"细化成可以直接照着写的场景节拍（4-8 个）。每个节拍要有明确的人物意图、阻碍与转折，体现人物性格，并标出情绪走向。
 
 只输出 JSON：
 {"synopsis": "细化后的本章梗概（150-250字）", "beats": [{"summary": "节拍内容", "characters": ["人物姓名"], "location": "地点", "conflict": "冲突", "outcome": "结果", "emotion": "情绪"}], "characters": ["本章全部出场人物姓名"], "pov": "视角人物姓名"}`, `Break "This chapter's outline" down into 4-8 scene beats a writer can follow directly. Each beat needs a clear intent, an obstacle and a turn, shows character, and names the emotional movement.

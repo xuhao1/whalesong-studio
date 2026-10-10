@@ -33,6 +33,7 @@ import { currentJob, type JobContext } from '../core/jobs'
 import { LlmCallError } from '../core/llm'
 import { PROJECT_CONTEXT, SHOWRUNNER_SECTION, type RoleOutcome, type RoleRunner, type RoleTask } from '../core/roles'
 import type { ModelRoute } from '../shared/types'
+import { imageBlocks, type ImageBlock } from './pictures'
 
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
@@ -83,6 +84,8 @@ interface Staged {
   said: string
   last: string
   cancelled: boolean
+  /** The task's pictures, as DSH carries them in a message. */
+  pictures: ImageBlock[]
   child?: Agent
 }
 
@@ -260,8 +263,8 @@ export function createRoleRunner(ctx: Context, options: {
   /** Give the agent its task and see it through: one turn, and another when it stopped without handing in. */
   const drive = async (child: Agent, run: Staged, signal: AbortSignal | undefined): Promise<RoleOutcome['stop']> => {
     const { task } = run
-    const say = (text: string): void => {
-      child.followup(frozen({ id: randomUUID(), role: 'user', content: [{ type: 'text', text }], source: { kind: 'user' } }) as never)
+    const say = (text: string, pictures: readonly ImageBlock[] = []): void => {
+      child.followup(frozen({ id: randomUUID(), role: 'user', content: [...pictures, { type: 'text', text }], source: { kind: 'user' } }) as never)
     }
     const stop = (): void => {
       run.cancelled = true
@@ -283,7 +286,8 @@ export function createRoleRunner(ctx: Context, options: {
         return run.cancelled && recorded !== 'completed' ? 'aborted' : recorded
       }
       if (run.cancelled) return 'aborted'
-      say(task.prompt)
+      // The task's pictures go with its words, in the one message.
+      say(task.prompt, run.pictures)
       await child.whenIdle()
       let outcome = ended()
       for (let nudge = 0; nudge < NUDGES && outcome === 'completed' && !run.cancelled; nudge++) {
@@ -428,7 +432,7 @@ export function createRoleRunner(ctx: Context, options: {
     async run(task: RoleTask): Promise<RoleOutcome> {
       const { route } = task
       if (!can(route)) throw new LlmCallError(`the "${task.role}" role works as an agent and needs a model from Settings → Models to run on; ${route.model} is an endpoint the Studio calls directly`, 'NO_AGENT_LOOP')
-      const run: Staged = { task, job: currentJob(), limit: Math.max(4, task.maxSteps ?? DEFAULT_STEPS), steps: 0, said: '', last: '', cancelled: false }
+      const run: Staged = { task, job: currentJob(), limit: Math.max(4, task.maxSteps ?? DEFAULT_STEPS), steps: 0, said: '', last: '', cancelled: false, pictures: await imageBlocks(ctx, task.images) }
       const parent = task.parent as Agent | undefined
       const subagents = ctx.get('subagents')
       // A parent that is gone cannot take a child; the work is still done.
@@ -444,7 +448,7 @@ export function createRoleRunner(ctx: Context, options: {
       try {
         started = await subagents.start(CREW_PROVIDER, {
           label: task.label,
-          prompt: [{ type: 'text', text: task.prompt }],
+          prompt: [...run.pictures, { type: 'text', text: task.prompt }] as never,
           parent,
           signal: controller.signal,
           agentOptions: {

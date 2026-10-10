@@ -6,7 +6,7 @@
  *   beats       one chapter outline → scene beats a writer can follow,
  *   what-if     alternative directions with their consequences, nothing is changed.
  */
-import { MAIN_LINE, type Beat, type ChapterPlan, type CharacterCard, type PlotLine, type StyleProfile, type WorldCategory, type WorldEntry } from '../../shared/types'
+import { MAIN_LINE, type Beat, type ChapterPlan, type CharacterCard, type PictureGuide, type PicturesRead, type PlotLine, type StyleProfile, type WorldCategory, type WorldEntry } from '../../shared/types'
 import { clip, newId, sameName } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { asArray, asList, asRecord, asText } from '../llm'
@@ -15,6 +15,7 @@ import type { Project } from '../project'
 import { ProjectError } from '../project'
 import { architectSystem, deriveBeatsTask, deriveChaptersTask, foundationTask, whatIfTask } from '../prompts'
 import { deriveArtDirection } from './illustrate'
+import { guidePictures, picturesRead } from './guides'
 import { L, promptLanguage } from '../render'
 
 const ROLES: CharacterCard['role'][] = ['protagonist', 'deuteragonist', 'antagonist', 'supporting', 'minor', 'cameo']
@@ -86,6 +87,8 @@ export interface DerivedChapter {
   characters: string[]
   beats: Beat[]
   threads: { title: string; action: string }[]
+  /** The pictures the author gave that this chapter goes by, as the planner said: kept on its plan, where whoever writes it finds them. */
+  guides?: PictureGuide[]
 }
 
 /** How many chapters the planner is asked for in one go; more than that are derived round by round, each from where the last left off. */
@@ -115,6 +118,8 @@ export interface DeriveChaptersParams {
   /** `branch`: what the new line is called, and what is decided to go that way. */
   title?: string
   choice?: string
+  /** Pictures to steer the chapters by: the planner looks at them (or is told what they show) and works them in. */
+  guides?: PictureGuide[]
 }
 
 export interface DeriveChaptersResult {
@@ -122,6 +127,8 @@ export interface DeriveChaptersResult {
   chapters: DerivedChapter[]
   /** Ids of the chapters added to the outline, when applied. */
   added: { id: string; title: string; index: number }[]
+  /** Where pictures were given: how many, and who looked at them — the planner's own model, or the one set up to look at pictures. */
+  pictures?: PicturesRead
   /** The line the chapters went to, when it is not the main one. */
   line?: { id: string; title: string; created: boolean }
   /** What became of the chapters that were there before, when the outline was rewritten. */
@@ -204,6 +211,8 @@ export async function deriveChapters(core: NovelCore, runtime: ProjectRuntime, p
   const outline = await project.outline()
   const volume = (params.volume !== undefined ? outline.volumes.find(candidate => candidate.id === params.volume || sameName(candidate.title, params.volume!)) : undefined) ?? outline.volumes.at(-1)!
   const route = await core.route('architect', runtime, task)
+  // The pictures the author gave: looked at by the planner's model, or put into words for it.
+  const guided = await guidePictures(core, runtime, route, params.guides, 'plot', task)
   const characters = await project.characters()
   const resolve = (name: string): string => characters.find(card => sameName(card.name, name) || card.aliases?.some(alias => sameName(alias, name)) === true)?.id ?? name
   // A chapter named in the middle of a line, with what follows it left standing: the planner writes what comes between.
@@ -243,7 +252,9 @@ export async function deriveChapters(core: NovelCore, runtime: ProjectRuntime, p
         ...(params.direction !== undefined ? { direction: params.direction } : {}),
         ...(situation !== undefined ? { situation } : {}),
         ...(inside !== undefined ? { after: `${inside.index}. ${inside.plan.title}` } : {}),
+        ...(guided !== undefined ? { pictures: guided.text } : {}),
       }),
+      ...(guided !== undefined && guided.images.length > 0 ? { images: guided.images } : {}),
       validate: (raw) => {
         const record = asRecord(raw)
         if (asArray(record.chapters).length === 0) throw new Error('"chapters" is empty')
@@ -271,8 +282,15 @@ export async function deriveChapters(core: NovelCore, runtime: ProjectRuntime, p
         characters: asList(item.characters).map(resolve),
         beats: toBeats(item.beats, resolve),
         threads: asArray(item.threads).map(asRecord).map(thread => ({ title: asText(thread.title) ?? '', action: asText(thread.action) ?? 'advance' })).filter(thread => thread.title.length > 0),
+        // The pictures this chapter goes by, as the planner numbered them.
+        ...(() => {
+          const mine = guided !== undefined ? [...new Set(asArray(item.pictures).map(Number).filter(at => Number.isInteger(at) && at >= 1 && at <= guided.guides.length))].map(at => guided.guides[at - 1]!) : []
+          return mine.length > 0 ? { guides: mine } : {}
+        })(),
       })
     }
+    // One chapter asked for, and the planner did not say which pictures it goes by: all of them — there is no other chapter they could be for.
+    if (guided !== undefined && wanted === 1 && derived.length === 1 && derived[0]!.guides === undefined) derived[0] = { ...derived[0]!, guides: guided.guides }
     chapters.push(...derived)
     const rationale = asText(value.rationale)
     if (rationale !== undefined) rationales.push(rationale)
@@ -298,6 +316,7 @@ export async function deriveChapters(core: NovelCore, runtime: ProjectRuntime, p
         ...(chapter.pov !== undefined ? { pov: chapter.pov } : {}),
         ...(chapter.location !== undefined ? { location: chapter.location } : {}),
         ...(chapter.time !== undefined ? { time: chapter.time } : {}),
+        ...(chapter.guides !== undefined ? { guides: chapter.guides } : {}),
         ...(chapter.characters.length > 0 ? { characters: chapter.characters } : {}),
         ...(chapter.beats.length > 0 ? { beats: chapter.beats } : {}),
         ...(threadIds.length > 0 ? { threads: threadIds } : {}),
@@ -316,6 +335,7 @@ export async function deriveChapters(core: NovelCore, runtime: ProjectRuntime, p
     added,
     ...(line !== undefined ? { line: { id: line.id, title: line.title, created } } : {}),
     ...(replaced !== undefined ? { replaced } : {}),
+    ...(guided !== undefined ? { pictures: picturesRead(guided)! } : {}),
   }
 }
 
@@ -335,6 +355,8 @@ export async function deriveBeats(core: NovelCore, runtime: ProjectRuntime, para
   const manifest = await project.manifest()
   const lang = promptLanguage(manifest.language)
   const route = await core.route('architect', runtime, task)
+  // The pictures the author gave this chapter go with the planning of its beats, as they will with its writing.
+  const guided = await guidePictures(core, runtime, route, chapter.plan.guides, 'chapter', task)
   const pack = await core.pack(runtime, route, {
     purpose: 'derive',
     chapter,
@@ -350,7 +372,8 @@ export async function deriveBeats(core: NovelCore, runtime: ProjectRuntime, para
     tool: 'submit_beats',
     what: L(lang, '这一章的节拍', 'the beats of this chapter'),
     system: architectSystem(lang),
-    prompt: deriveBeatsTask({ lang, language: manifest.language, title: manifest.title, context: pack.text, ...(params.direction !== undefined ? { direction: params.direction } : {}) }),
+    prompt: deriveBeatsTask({ lang, language: manifest.language, title: manifest.title, context: pack.text, ...(params.direction !== undefined ? { direction: params.direction } : {}), ...(guided !== undefined ? { pictures: guided.text } : {}) }),
+    ...(guided !== undefined && guided.images.length > 0 ? { images: guided.images } : {}),
     validate: (raw) => {
       const record = asRecord(raw)
       if (asArray(record.beats).length === 0) throw new Error('"beats" is empty')

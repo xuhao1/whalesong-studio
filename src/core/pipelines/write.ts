@@ -4,7 +4,7 @@
  * context. The orchestrator never writes prose itself — it decides what gets
  * written and passes a brief; this pipeline turns that into text on disk.
  */
-import { chapterBudgetOf, MAIN_LINE, type ChapterInfo } from '../../shared/types'
+import { chapterBudgetOf, MAIN_LINE, type ChapterInfo, type PictureGuide, type PicturesRead } from '../../shared/types'
 import { clipTail, countWords, normalizeProse, proseOnly } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { LlmCallError, type LlmResponse } from '../llm'
@@ -13,6 +13,7 @@ import { ProjectError } from '../project'
 import { writerSystem, writerTask } from '../prompts'
 import { promptLanguage, renderStyle } from '../render'
 import { digestChapter, updateArcs } from './digest'
+import { guidePictures, picturesLabel, picturesRead } from './guides'
 
 export interface WriteParams {
   /** Chapter reference; `next` (default) picks the first outlined chapter without text. */
@@ -31,6 +32,8 @@ export interface WriteParams {
   characters?: string[]
   /** Override of the auto-digest setting for this call. */
   digest?: boolean
+  /** Pictures to write this pass by, instead of the ones kept on the chapter's plan. */
+  guides?: PictureGuide[]
   /**
    * Write, and hand the text back: the chapter keeps what it has, nothing is digested, and nothing is shown as it is
    * written (several writers may be at the same chapter at once, each to be compared with the others).
@@ -70,6 +73,8 @@ export interface WriteResult {
   /** `dry`: the text itself, which was not saved. */
   text?: string
   brief?: string
+  /** Where the author gave pictures for the chapter: how many, and who looked at them. */
+  pictures?: PicturesRead
 }
 
 /** Remove what models add around prose against instructions: fences, titles, lead-ins. */
@@ -132,6 +137,8 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
   const lengths = target === undefined ? (await project.chapterInfos(chapter.line)).filter(info => info.hasText && info.id !== chapter.plan.id).map(info => info.words) : []
   const usual = lengths.length >= 2 ? Math.round(lengths.reduce((sum, words) => sum + words, 0) / lengths.length / 100) * 100 : undefined
   const route = await core.route('writer', runtime, task)
+  // The pictures the author gave this chapter — for this pass, or kept on its plan: the writer looks at them, or is told what they show.
+  const guided = await guidePictures(core, runtime, route, params.guides ?? chapter.plan.guides, 'chapter', task)
 
   if (!dry) task.job?.progress(0, 3, lang === 'zh' ? '整理上下文' : 'packing context')
   const pack = await core.pack(runtime, route, {
@@ -148,7 +155,7 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
   const system = writerSystem({ ...base, style: renderStyle(style, lang) })
   const length = (written: number): { words?: number; usual?: number } => target !== undefined ? { words: Math.max(300, target - written) } : usual !== undefined ? { usual } : {}
 
-  if (!dry) task.job?.progress(1, 3, lang === 'zh' ? '写作中' : 'writing')
+  if (!dry) task.job?.progress(1, 3, `${lang === 'zh' ? '写作中' : 'writing'}${picturesLabel(guided, lang)}`)
   let written = ''
   let continued = false
   let cached = 0
@@ -156,12 +163,13 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
   for (let round = 0; round < 4; round++) {
     const soFar = written
     const prompt = round === 0
-      ? writerTask({ ...base, context: pack.rest, ...(params.brief !== undefined ? { brief: params.brief } : {}), continuing: mode === 'continue', ...(target !== undefined ? { words: target } : usual !== undefined ? { usual } : {}) })
+      ? writerTask({ ...base, context: pack.rest, ...(params.brief !== undefined ? { brief: params.brief } : {}), ...(guided !== undefined ? { pictures: guided.text } : {}), continuing: mode === 'continue', ...(target !== undefined ? { words: target } : usual !== undefined ? { usual } : {}) })
       // The model ran out of output room mid-chapter: show it what it wrote and let it finish.
       : writerTask({
           ...base,
           context: `${pack.rest}\n\n## ${lang === 'zh' ? '本章已有正文' : 'This chapter so far'}\n\n${mode === 'continue' ? clipTail(existing, (await core.settingsOf(runtime)).context.tailChars) + '\n\n' : ''}${soFar}`,
           ...(params.brief !== undefined ? { brief: params.brief } : {}),
+          ...(guided !== undefined ? { pictures: guided.text } : {}),
           continuing: true,
           ...length(countWords(soFar)),
         })
@@ -172,6 +180,7 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
         system,
         ...(pack.stable.length > 0 ? { stable: pack.stable } : {}),
         prompt,
+        ...(guided !== undefined && guided.images.length > 0 ? { images: guided.images } : {}),
         ...(task.signal !== undefined ? { signal: task.signal } : {}),
         onText: (_delta, total) => {
           partial = total
@@ -244,6 +253,7 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
     continued,
     preview: { head: written.slice(0, 220), tail: written.length > 440 ? written.slice(-220) : '' },
     ...(params.brief !== undefined ? { brief: params.brief } : {}),
+    ...(guided !== undefined ? { pictures: picturesRead(guided)! } : {}),
     ...(dry ? { text: finalText } : {}),
   }
 }

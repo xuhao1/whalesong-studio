@@ -11,7 +11,7 @@
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { ModelOption } from '../shared/rpc'
-import type { ImageTrial, JobInfo, SpeechTrial, TrialDraft, TrialPicture, TrialTake } from '../shared/types'
+import type { ImageTrial, JobInfo, PictureGuide, SpeechTrial, TrialDraft, TrialPicture, TrialTake } from '../shared/types'
 import { imageSetupName, speechSetupName } from '../shared/images'
 import { RpcError } from './api'
 import { ImageModelField, ModelField, speechEndpoint, speechSuggestions, withSpeechModel } from './ModelField'
@@ -431,7 +431,7 @@ export interface TrialPlanView {
  * The chapters to come planned by several models, side by side.
  * @param onTake - the plan taken, whole as the planner gave it: the page it came from adds it the way it adds any plan (looked at, a chapter left out here and there).
  */
-export function DeriveTrialDialog<Plan extends TrialPlanView>({ count, direction, volume, onClose, onTake }: { count: number; direction?: string; volume?: string; onClose: () => void; onTake: (plan: Plan) => void }) {
+export function DeriveTrialDialog<Plan extends TrialPlanView>({ count, direction, volume, guides, onClose, onTake }: { count: number; direction?: string; volume?: string; /** Pictures each planner is to go by. */ guides?: readonly PictureGuide[]; onClose: () => void; onTake: (plan: Plan) => void }) {
   const { controller } = useStudio()
   const t = useT()
   const { root } = useProject()
@@ -440,7 +440,7 @@ export function DeriveTrialDialog<Plan extends TrialPlanView>({ count, direction
   const job = useTrialJob()
   const plans = ((job.live?.result?.plans ?? (job.done?.result?.output as { plans?: Plan[] } | undefined)?.plans) as Plan[] | undefined) ?? []
   const start = (): void => {
-    job.start(async () => await controller.api.call('trial.derive', { root, count, ...(direction !== undefined && direction.trim().length > 0 ? { direction: direction.trim() } : {}), ...(volume !== undefined && volume.length > 0 ? { volume } : {}), with: routesOf(picked) }))
+    job.start(async () => await controller.api.call('trial.derive', { root, count, ...(direction !== undefined && direction.trim().length > 0 ? { direction: direction.trim() } : {}), ...(volume !== undefined && volume.length > 0 ? { volume } : {}), ...(guides !== undefined && guides.length > 0 ? { guides: [...guides] } : {}), with: routesOf(picked) }))
   }
   return (
     <Modal wide className="nv-modal-trial" title={t(`几个模型各推演 ${count} 章`, `${count} chapter(s) planned by several models`)} onClose={onClose} footer={(
@@ -453,6 +453,7 @@ export function DeriveTrialDialog<Plan extends TrialPlanView>({ count, direction
     )}>
       <ModelChecklist picked={picked} onChange={setPicked} disabled={job.busy} hint={inUse !== undefined ? t(`策划现在用的是 ${inUse}`, `the planner runs on ${inUse}`) : undefined} />
       {direction !== undefined && direction.trim().length > 0 ? <p className="nv-muted nv-small">{t(`方向：${direction.trim()}`, `Direction: ${direction.trim()}`)}</p> : null}
+      {guides !== undefined && guides.length > 0 ? <p className="nv-muted nv-small">{t(`带 ${guides.length} 张参考图：能看图的模型自己看，看不了的由“看图的模型”先看成文字`, `With ${guides.length} picture(s): a model that sees looks itself; for one that does not, the picture model puts them into words`)}</p> : null}
       {job.error !== undefined ? <p className="nv-note is-warn">{job.error}</p> : null}
       {plans.length > 0 ? (
         <div className="nv-trial-columns">

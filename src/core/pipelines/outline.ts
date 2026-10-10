@@ -5,12 +5,13 @@
  * the same validation. The lines of the plot are edited with the same
  * vocabulary: opened, renamed, joined to another, made the main one, removed.
  */
-import { MAIN_LINE, type Beat, type ChapterPlan, type ChapterStatus, type PlotLine, type PlotThread, type ThreadKind, type ThreadStatus } from '../../shared/types'
+import { MAIN_LINE, type Beat, type ChapterPlan, type ChapterStatus, type PictureGuide, type PlotLine, type PlotThread, type ThreadKind, type ThreadStatus } from '../../shared/types'
 import { newId, sameName } from '../../shared/text'
 import type { ProjectRuntime } from '../core'
 import { ProjectError, type ChapterPlace } from '../project'
 import { L, promptLanguage } from '../render'
 import { foldIn } from './digest'
+import { cleanGuides } from './guides'
 
 export type OutlineOp =
   | { op: 'add-volume'; title: string; synopsis?: string; goal?: string; before?: string }
@@ -56,6 +57,8 @@ export interface ChapterFields {
   status?: ChapterStatus
   /** A length recommended for the chapter; 0 takes the recommendation away, and whoever writes it judges. */
   targetWords?: number
+  /** Pictures to write the chapter by: paths of the book's own pictures, or `{path, note}`. An empty list takes them off. */
+  guides?: (string | PictureGuide)[]
   notes?: string
 }
 
@@ -97,6 +100,10 @@ export async function applyOutlineOps(runtime: ProjectRuntime, ops: OutlineOp[])
     }
     // Zero, or anything that is not a length, takes the recommendation away.
     if (fields.targetWords !== undefined) (patch as Record<string, unknown>).targetWords = Number.isFinite(fields.targetWords) && fields.targetWords > 0 ? Math.round(fields.targetWords) : null
+    if (fields.guides !== undefined) {
+      const guides = cleanGuides(Array.isArray(fields.guides) ? fields.guides : [])
+      ;(patch as Record<string, unknown>).guides = guides.length > 0 ? guides : null
+    }
     return patch
   }
   const findLine = async (ref: string): Promise<string> => {
