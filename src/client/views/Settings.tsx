@@ -25,10 +25,11 @@ import {
 } from '../../shared/services'
 import {
   CREW_ROLES,
-  type CodexBridgeKind, type CrewRole, type CrewRoleSettings, type CrewSettings, type EmbeddingSettings, type ImageSettings, type ModelRoute, type NovelSettings, type SoundProviderKind, type SoundSettings, type TextModelRouting, type TextRole, type TtsProviderKind, type TtsSettings,
+  type BookParallel, type CodexBridgeKind, type ContextSettings, type CrewRole, type CrewRoleSettings, type CrewSettings, type EmbeddingSettings, type GateKind, type ImageSettings, type ModelRoute, type NovelSettings, type SoundProviderKind, type SoundSettings, type TextModelRouting, type TextRole, type TtsProviderKind, type TtsSettings,
 } from '../../shared/types'
 import { PARALLEL_DEFAULT, PARALLEL_MAX, PLAY_CONTEXT_DEFAULT, REFERENCES_DEFAULT, REFERENCES_MAX, TTS_SERVICE_KEYS, type SoundSettings as SoundDraft } from '../../shared/types'
 import { messageOf } from '../api'
+import { ImageModelField, ModelField, speechEndpoint, speechSuggestions, useKeyState, type KeyBag, type TypedKeys } from '../ModelField'
 import { Icon } from '../icons'
 import {
   Button, Chip, Combo, cx, Field, SectionTitle, Select, Spinner, TextArea, TextInput, useAction, useKept, useLoad, useSnapshot, useStudio, useT, type ComboOption, type Translate,
@@ -124,14 +125,6 @@ function without<T extends object, K extends keyof T>(value: T, key: K, next: T[
 }
 
 /** Keys typed on this page and not saved yet, by the host they are for. */
-type TypedKeys = Record<string, { url: string; value: string }>
-
-interface KeyBag {
-  typed: TypedKeys
-  set(url: string, value: string): void
-  view: SettingsData
-}
-
 export function SettingsView() {
   const { controller } = useStudio()
   const t = useT()
@@ -152,7 +145,7 @@ const scopeShown = new Map<string, 'global' | 'book'>()
 function SettingsShell({ view, t }: { view: SettingsData; t: Translate }) {
   const root = useSnapshot(snapshot => snapshot.root)
   const book = useSnapshot(snapshot => snapshot.project?.manifest)
-  const own = book !== undefined ? { models: book.models, crew: book.crew, image: book.image, tts: book.tts, sound: book.sound } : undefined
+  const own = book !== undefined ? { models: book.models, crew: book.crew, image: book.image, tts: book.tts, sound: book.sound, embedding: book.embedding, context: book.context, parallel: book.parallel } : undefined
   return <SettingsForm key={JSON.stringify([{ ...view.settings, recommended: undefined }, root, own])} view={view} t={t} />
 }
 
@@ -163,8 +156,16 @@ function ReadingPanel({ t }: { t: Translate }) {
   return <ReaderSettings prefs={prefs} update={update} options={options} updateOptions={updateOptions} t={t} />
 }
 
+const GATE_KINDS: GateKind[] = ['text', 'speech', 'image', 'sound']
+const GATE_WORD: Record<GateKind, [string, string]> = { text: ['文字', 'text'], speech: ['语音', 'speech'], image: ['图片', 'pictures'], sound: ['声音', 'sound'] }
+const STRATEGY_WORD: Record<ContextSettings['strategy'], [string, string]> = {
+  auto: ['梗概 + 尽量多的整章原文', 'outline + as many whole chapters as fit'],
+  full: ['原文能塞多少塞多少', 'as much text as the window holds'],
+  retrieval: ['不带整章：梗概 + 检索片段', 'no whole chapter: outline + looked-up passages'],
+}
+
 /** What a book has of its own, as the page holds it until it is saved into the book. */
-interface BookOwn { models: Partial<TextModelRouting>; crew: CrewSettings; image: BookImageSettings; tts?: TtsSettings | undefined; sound?: SoundSettings | undefined }
+interface BookOwn { models: Partial<TextModelRouting>; crew: CrewSettings; image: BookImageSettings; tts?: TtsSettings | undefined; sound?: SoundSettings | undefined; embedding?: EmbeddingSettings | undefined; context: Partial<ContextSettings>; parallel: BookParallel }
 
 function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
   const { controller } = useStudio()
@@ -179,9 +180,9 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
   // Where the text models and the crew's ways are saved: for every book, or with the book that is open.
   const book = useSnapshot(snapshot => snapshot.project?.manifest)
   const bookRoot = useSnapshot(snapshot => snapshot.root)
-  const [own, setOwn] = useState<BookOwn>(() => ({ models: book?.models ?? {}, crew: book?.crew ?? {}, image: book?.image ?? {}, ...(book?.tts !== undefined ? { tts: book.tts } : {}), ...(book?.sound !== undefined ? { sound: book.sound } : {}) }))
+  const [own, setOwn] = useState<BookOwn>(() => ({ models: book?.models ?? {}, crew: book?.crew ?? {}, image: book?.image ?? {}, context: book?.context ?? {}, parallel: book?.parallel ?? {}, ...(book?.tts !== undefined ? { tts: book.tts } : {}), ...(book?.sound !== undefined ? { sound: book.sound } : {}), ...(book?.embedding !== undefined ? { embedding: book.embedding } : {}) }))
   const [ownDirty, setOwnDirty] = useState(false)
-  const bookHasOwn = book !== undefined && (Object.keys(book.models ?? {}).length > 0 || Object.values(book.crew ?? {}).some(value => value !== undefined && Object.keys(value).length > 0) || Object.keys(book.image ?? {}).length > 0 || book.tts !== undefined || book.sound !== undefined)
+  const bookHasOwn = book !== undefined && (Object.keys(book.models ?? {}).length > 0 || Object.values(book.crew ?? {}).some(value => value !== undefined && Object.keys(value).length > 0) || Object.keys(book.image ?? {}).length > 0 || book.tts !== undefined || book.sound !== undefined || book.embedding !== undefined || Object.keys(book.context ?? {}).length > 0 || Object.keys(book.parallel ?? {}).length > 0)
   // A book that has settings of its own is what the page opens on: they are what holds for the book in hand.
   const [wanted, setWanted] = useState<'global' | 'book'>((bookRoot !== undefined ? scopeShown.get(bookRoot) : undefined) ?? (bookHasOwn ? 'book' : 'global'))
   const setScope = (next: 'global' | 'book'): void => {
@@ -195,6 +196,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
       // Named as nothing: the book has none of its own.
       if ('tts' in patch && patch.tts === undefined) delete next.tts
       if ('sound' in patch && patch.sound === undefined) delete next.sound
+      if ('embedding' in patch && patch.embedding === undefined) delete next.embedding
       return next
     })
     setOwnDirty(true)
@@ -247,7 +249,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
     if (ownDirty && bookRoot !== undefined) {
       const crew = Object.fromEntries(Object.entries(own.crew).filter(([, value]) => value !== undefined && Object.keys(value).length > 0))
       // Named as nothing (`null`), speech and sound of its own are taken off the book: the Studio's hold for it again.
-      await controller.api.call('project.update', { root: bookRoot, patch: { models: own.models, crew, image: own.image, tts: own.tts ?? null, sound: own.sound ?? null } as never })
+      await controller.api.call('project.update', { root: bookRoot, patch: { models: own.models, crew, image: own.image, tts: own.tts ?? null, sound: own.sound ?? null, embedding: own.embedding ?? null, context: Object.keys(own.context).length > 0 ? own.context : null, parallel: Object.keys(own.parallel).length > 0 ? own.parallel : null } as never })
       setOwnDirty(false)
       await controller.refreshProject()
       if (!dirty) {
@@ -283,6 +285,9 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
     ...(own.image.provider !== undefined ? [{ key: 'image:service', label: t(`绘图服务：${own.image.provider === 'none' ? '不画图' : imageSetupName(own.image as ImageSettings)}`, `image service: ${own.image.provider === 'none' ? 'none' : imageSetupName(own.image as ImageSettings)}`), reset: () => { updateOwn({ image: imageWays(own.image) }) } }] : []),
     ...(own.tts !== undefined ? [{ key: 'tts', label: t(`配音服务：${own.tts.provider === 'none' ? '不配音' : own.tts.model ?? own.tts.provider}`, `speech: ${own.tts.provider === 'none' ? 'none' : own.tts.model ?? own.tts.provider}`), reset: () => { updateOwn({ tts: undefined }) } }] : []),
     ...(own.sound !== undefined ? [{ key: 'sound', label: t('声音设计', 'sound design'), reset: () => { updateOwn({ sound: undefined }) } }] : []),
+    ...(own.embedding !== undefined ? [{ key: 'embedding', label: t(`检索：${own.embedding.provider === 'none' ? '只按关键词' : own.embedding.model ?? own.embedding.provider}`, `retrieval: ${own.embedding.provider === 'none' ? 'keywords only' : own.embedding.model ?? own.embedding.provider}`), reset: () => { updateOwn({ embedding: undefined }) } }] : []),
+    ...(Object.keys(own.parallel).length > 0 ? [{ key: 'parallel', label: t(`并发：${GATE_KINDS.filter(kind => own.parallel[kind] !== undefined).map(kind => `${t(...GATE_WORD[kind])} ${own.parallel[kind]}`).join(' · ')}`, `at once: ${GATE_KINDS.filter(kind => own.parallel[kind] !== undefined).map(kind => `${t(...GATE_WORD[kind])} ${own.parallel[kind]}`).join(' · ')}`), reset: () => { updateOwn({ parallel: {} }) } }] : []),
+    ...(Object.keys(own.context).length > 0 ? [{ key: 'context', label: t(`上下文预算：${Object.keys(own.context).length} 项`, `context: ${Object.keys(own.context).length} of its own`), reset: () => { updateOwn({ context: {} }) } }] : []),
     ...(own.image.lead !== undefined ? [{ key: 'image:lead', label: t(`人物的图：${leadWord(own.image.lead)}`, `pictures of people: ${leadWord(own.image.lead)}`), reset: () => { const { lead: _old, ...rest } = own.image; updateOwn({ image: rest }) } }] : []),
     ...(own.image.sheet !== undefined ? [{ key: 'image:sheet', label: own.image.sheet === 'front' ? t('人设图只画正面', 'sheets show the front alone') : t('人设图画三视图', 'sheets show three views'), reset: () => { const { sheet: _old, ...rest } = own.image; updateOwn({ image: rest }) } }] : []),
     ...(own.image.portraitScene !== undefined ? [{ key: 'image:scene', label: own.image.portraitScene ? t('立绘照名场面画', 'portraits show the signature scene') : t('立绘画素底定妆照', 'portraits are plain'), reset: () => { const { portraitScene: _old, ...rest } = own.image; updateOwn({ image: rest }) } }] : []),
@@ -641,7 +646,86 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
               <SoundSection value={own.sound} tts={held.tts} ready={bookView?.ready.sound === true} keys={keys} t={t} onChange={(sound) => { updateOwn({ sound }) }} />
             </div>
           ) : null}
-          <p className="nv-muted nv-small">{t('检索、并发、上下文对每本书都一样：切到“全局”去改。', 'Retrieval, how much at once and context are the same for every book: change them under Every book.')}</p>
+        </section>
+      ) : null}
+
+      {scope === 'book' ? (
+        <section className="nv-card" data-section="book-embedding">
+          <SectionTitle actions={bookView !== undefined && own.embedding !== undefined ? <Chip tone={bookView.ready.embedding && !ownDirty ? 'green' : 'neutral'}>{ownDirty ? t('保存后生效', 'applies on save') : bookView.ready.embedding ? t('可用', 'ready') : own.embedding.provider === 'none' ? t('只按关键词', 'keywords only') : t('还不能用', 'not ready')}</Chip> : undefined}>{t('检索：这本书自己的', 'Retrieval: this book\'s own')}</SectionTitle>
+          <OwnMark own={own.embedding !== undefined} scope={scope} t={t}>
+            <Field label={t('语义检索（向量）', 'Semantic retrieval (embeddings)')} hint={own.embedding !== undefined ? t('这本书的段落用下面这个模型建索引；换了模型，索引在下次检索时重建。', 'This book\'s passages are indexed with the model below; another model rebuilds the index on the next search.') : undefined}>
+              <Select<'' | 'own'> value={own.embedding !== undefined ? 'own' : ''} options={[
+                { value: '', label: t(`沿用全局：${draft.embedding.provider === 'none' ? '只按关键词' : draft.embedding.model ?? draft.embedding.provider}`, `As for every book: ${draft.embedding.provider === 'none' ? 'keywords only' : draft.embedding.model ?? draft.embedding.provider}`) },
+                { value: 'own', label: t('这本书用自己的', 'This book\'s own') },
+              ]} onChange={(next) => { updateOwn({ embedding: next === 'own' ? { ...draft.embedding } : undefined }) }} />
+            </Field>
+          </OwnMark>
+          {own.embedding !== undefined ? (
+            <div className="nv-own is-own nv-own-block">
+              <EmbeddingSection value={own.embedding} keys={keys} t={t} onChange={(embedding) => { updateOwn({ embedding }) }} />
+            </div>
+          ) : null}
+          {!advanced && Object.keys(own.parallel).length === 0 && Object.keys(own.context).length === 0 ? <p className="nv-muted nv-small">{t('并发、上下文预算也能随书：打开右上角的“高级选项”。', 'How much at once and the context budgets can be this book\'s own too: turn on Advanced, top right.')}</p> : null}
+        </section>
+      ) : null}
+
+      {scope === 'book' && (advanced || Object.keys(own.parallel).length > 0) ? (
+        <section className="nv-card" data-section="book-parallel">
+          <SectionTitle>{t('并发：这本书自己的', 'How much at once: this book\'s own')}</SectionTitle>
+          <p className="nv-muted nv-small">{t(`填了数的那一类，这本书的请求单独计数；留空沿用全局。最多 ${PARALLEL_MAX}。`, `A kind given a number is counted for this book alone; left empty it follows every book's. ${PARALLEL_MAX} at most.`)}</p>
+          <div className="nv-form-grid">
+            {GATE_KINDS.map((kind) => {
+              const everywhere = kind === 'text' ? draft.textConcurrency : kind === 'speech' ? held.tts.concurrency : kind === 'image' ? held.image.concurrency : held.sound?.concurrency
+              const one = kind === 'image' && localImages(held.image)
+              return (
+                <OwnMark key={kind} own={own.parallel[kind] !== undefined} scope={scope} t={t}>
+                  <Field label={kind === 'text' ? t('文字：同时进行几件活', 'Text: pieces of work at once') : kind === 'speech' ? t('语音：同时合成几句', 'Speech: lines at once') : kind === 'image' ? t('图片：同时画几张', 'Images: pictures at once') : t('声音：同时生成几处', 'Sound: clips at once')} hint={one ? t('你自己的服务一次画一张', 'A server of your own draws one at a time') : kind === 'sound' && own.parallel.sound === undefined && (held.sound?.provider ?? 'auto') === 'auto' ? t('留空：和语音共用一个数', 'Empty: shares the speech number') : undefined}>
+                    {one
+                      ? <TextInput disabled value="1" />
+                      : <TextInput inputMode="numeric" value={own.parallel[kind] !== undefined ? String(own.parallel[kind]) : ''} placeholder={t(`沿用全局：${everywhere ?? PARALLEL_DEFAULT}`, `As for every book: ${everywhere ?? PARALLEL_DEFAULT}`)} onChange={(event) => { const value = parallel(event.target.value); const { [kind]: _old, ...rest } = own.parallel; updateOwn({ parallel: value !== undefined ? { ...rest, [kind]: value } : rest }) }} />}
+                  </Field>
+                </OwnMark>
+              )
+            })}
+          </div>
+        </section>
+      ) : null}
+
+      {scope === 'book' && (advanced || Object.keys(own.context).length > 0) ? (
+        <section className="nv-card" data-section="book-context">
+          <SectionTitle>{t('上下文：这本书自己的', 'Context: this book\'s own')}</SectionTitle>
+          <div className="nv-form-grid">
+            <OwnMark own={own.context.strategy !== undefined} scope={scope} t={t}>
+              <Field label={t('前文怎么给', 'How the story so far travels')}>
+                <Select<ContextSettings['strategy'] | ''> value={own.context.strategy ?? ''} options={[
+                  { value: '', label: t(`沿用全局：${t(...STRATEGY_WORD[draft.context.strategy])}`, `As for every book: ${t(...STRATEGY_WORD[draft.context.strategy])}`) },
+                  ...(['auto', 'full', 'retrieval'] as const).map(value => ({ value, label: t(...STRATEGY_WORD[value]) })),
+                ]} onChange={(strategy) => { const { strategy: _old, ...rest } = own.context; updateOwn({ context: strategy === '' ? rest : { ...rest, strategy } }) }} />
+              </Field>
+            </OwnMark>
+            {([
+              ['budgetTokens', t('前文原文的预算（tokens）', 'Budget for the text itself (tokens)'), draft.context.budgetTokens !== undefined ? String(draft.context.budgetTokens) : t('窗口的一半', 'half the window'), 2000],
+              ['tailChars', t('没有整章时带上的上文（字符）', 'Preceding text when no chapter is whole (characters)'), String(draft.context.tailChars), 0],
+              ['sideTokens', t('设定、线索、检索片段一共占多少（tokens）', 'Bible, threads and looked-up passages together (tokens)'), draft.context.sideTokens !== undefined ? String(draft.context.sideTokens) : t('窗口的 22%', '22% of the window'), 1],
+              ['playTokens', t('幕间每一回合带多少上下文（tokens）', 'Context of each turn of an interlude (tokens)'), String(draft.context.playTokens ?? PLAY_CONTEXT_DEFAULT), 1],
+            ] as const).map(([key, label, everywhere, least]) => (
+              <OwnMark key={key} own={own.context[key] !== undefined} scope={scope} t={t}>
+                <Field label={label}>
+                  <TextInput inputMode="numeric" value={own.context[key] !== undefined ? String(own.context[key]) : ''} placeholder={t(`沿用全局：${everywhere}`, `As for every book: ${everywhere}`)} onChange={(event) => { const value = number(event.target.value); const { [key]: _old, ...rest } = own.context; updateOwn({ context: value !== undefined && value >= (key === 'tailChars' ? 0 : 1) ? { ...rest, [key]: Math.max(least, Math.round(value)) } : rest }) }} />
+                </Field>
+              </OwnMark>
+            ))}
+          </div>
+          {bookView !== undefined && bookView.context.length > 0 ? (
+            <div className="nv-context-rows">
+              <span className="nv-muted nv-small">{t('按已保存的设置，这本书各角色现在是：', 'With the settings as saved, each role gets for this book:')}</span>
+              {bookView.context.map(row => (
+                <Chip key={row.role} tone={row.window !== undefined ? 'blue' : 'amber'}>
+                  {t(...(ROLE_NAME[row.role] ?? [row.role, row.role]))}{row.model !== undefined ? ` · ${row.model}` : ''} · {t(`窗口 ${compact(row.window ?? 200_000)} → 原文 ${compact(row.textBudget)}`, `window ${compact(row.window ?? 200_000)} → text ${compact(row.textBudget)}`)}
+                </Chip>
+              ))}
+            </div>
+          ) : null}
         </section>
       ) : null}
 
@@ -649,6 +733,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
       <section className="nv-card" data-section="parallel" data-global="">
         <SectionTitle>{t('并发：同时发出多少个请求', 'How much at once')}</SectionTitle>
         <p className="nv-muted nv-small">{t(`每一类请求同时最多发出几个。默认 ${PARALLEL_DEFAULT}，最多 ${PARALLEL_MAX}；被限流时自动降速重试。`, `How many requests of each kind go out at once. ${PARALLEL_DEFAULT} by default, ${PARALLEL_MAX} at most; when rate-limited it slows down and retries.`)}</p>
+        {Object.keys(book?.parallel ?? {}).length > 0 ? <p className="nv-own-note">{t(`《${bookTitle}》另设了自己的并发（${GATE_KINDS.filter(kind => book?.parallel?.[kind] !== undefined).map(kind => `${t(...GATE_WORD[kind])} ${book?.parallel?.[kind]}`).join(' · ')}），那几类单独计数。`, `"${bookTitle}" has numbers of its own (${GATE_KINDS.filter(kind => book?.parallel?.[kind] !== undefined).map(kind => `${t(...GATE_WORD[kind])} ${book?.parallel?.[kind]}`).join(' · ')}), counted apart.`)}</p> : null}
         <div className="nv-form-grid">
           <Field label={t('语音：同时合成几句', 'Speech: lines at once')}>
             <TextInput inputMode="numeric" value={draft.tts.concurrency !== undefined ? String(draft.tts.concurrency) : ''} placeholder={String(PARALLEL_DEFAULT)} onChange={(event) => { update({ tts: without(draft.tts, 'concurrency', parallel(event.target.value)) }) }} />
@@ -672,6 +757,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
       <section className="nv-card" data-section="context" data-global="">
         <SectionTitle>{t('上下文与记忆', 'Context and memory')}</SectionTitle>
         <p className="nv-muted nv-small">{t('写一章时带的前文：最近若干整章的原文，加更早章节的梗概。', 'What a chapter is written with: the latest chapters whole, and summaries of the ones before.')}</p>
+        {Object.keys(book?.context ?? {}).length > 0 ? <p className="nv-own-note">{t(`《${bookTitle}》另设了 ${Object.keys(book?.context ?? {}).length} 项自己的上下文预算，那几项这里的对它不生效。`, `"${bookTitle}" has ${Object.keys(book?.context ?? {}).length} context budget(s) of its own; for those, what is set here does not hold for it.`)}</p> : null}
         <div className="nv-form-grid">
           <Field label={t('前文怎么给', 'How the story so far travels')}>
             <Select value={draft.context.strategy} options={[
@@ -748,6 +834,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
 
       <Fold id="embedding" title={t('语义检索（向量）', 'Semantic retrieval (embeddings)')} summary={draft.embedding.provider === 'none' ? t('未使用：按关键词检索', 'off: keyword retrieval') : draft.embedding.model ?? draft.embedding.provider} ready={view.ready.embedding} {...fold('embedding')}>
         <p className="nv-muted nv-small">{t('不配置时按关键词检索；配置后两者混合排序。', 'Without it, search is by keyword; with it, the two are ranked together.')}</p>
+        {book?.embedding !== undefined ? <p className="nv-own-note">{t(`《${bookTitle}》另设了自己的检索（${book.embedding.provider === 'none' ? '只按关键词' : book.embedding.model ?? book.embedding.provider}），这里的对它不生效。`, `"${bookTitle}" has retrieval of its own (${book.embedding.provider === 'none' ? 'keywords only' : book.embedding.model ?? book.embedding.provider}); what is set here does not hold for it.`)}</p> : null}
         <EmbeddingSection value={draft.embedding} keys={keys} t={t} onChange={(embedding) => { update({ embedding }) }} />
       </Fold>
 
@@ -781,19 +868,6 @@ function Fold({ id, title, summary, ready, open, toggle, children }: { id: strin
 }
 
 // ───────────────────────────── shared fields ─────────────────────────────
-
-/** Whatever the page knows about the key of an endpoint, asking the Host for hosts it has not seen. */
-function useKeyState(keys: KeyBag, endpoint: string | undefined, ref: string | undefined): KeyState | undefined {
-  const { controller } = useStudio()
-  const host = hostOf(endpoint)
-  const known = host !== undefined ? keys.view.keys[ref !== undefined && ref.length > 0 ? `${host}#${ref}` : host] : undefined
-  const asked = useLoad(async (signal) => {
-    if (host === undefined || endpoint === undefined || known !== undefined) return undefined
-    const { states } = await controller.api.call('key.state', { endpoints: [{ url: endpoint, ...(ref !== undefined && ref.length > 0 ? { ref } : {}) }] }, signal)
-    return states[0]
-  }, [host, ref, known !== undefined])
-  return known ?? asked.data
-}
 
 function describeCheck(check: EndpointCheck, t: Translate): string {
   // The count is of text models; an endpoint that has none — an image server — is not said to have "0 models".
@@ -854,126 +928,6 @@ function KeyField({ endpoint, refName, keys, onRef, t }: { endpoint: string | un
           else keys.set(endpoint, '')
           setByName(value => !value)
         }}>{byName ? t('直接填写', 'Type it') : t('用环境变量', 'Use env')}</Button>
-      </span>
-    </Field>
-  )
-}
-
-/** Model lists already fetched on this page, so sibling fields on one endpoint ask once. */
-const discovered = new Map<string, EndpointModel[]>()
-
-/**
- * A model id: anything may be typed, and the list offers the recommended ones
- * plus everything the endpoint itself says it serves — all of it, whatever is
- * already in the field.
- */
-function ModelField({ label, hint, endpoint, kind, value, onChange, suggestions, refName, keys, placeholder, onModels, onPickModel, describe, eager, t }: {
-  label: string
-  hint?: string | undefined
-  endpoint: string | undefined
-  kind: ModelKind
-  value: string
-  onChange: (model: string) => void
-  suggestions: string[]
-  refName?: string | undefined
-  keys: KeyBag
-  placeholder?: string
-  onModels?: (models: EndpointModel[]) => void
-  /** A model was chosen from the list; the endpoint's own record of it comes along when there is one. */
-  onPickModel?: (model: EndpointModel) => void
-  /** A few words about a listed model, shown beside it. */
-  describe?: (model: EndpointModel) => string | undefined
-  /** Ask the endpoint for its list without waiting for the list to be opened: what it says of a model is needed on the page. */
-  eager?: boolean
-  t: Translate
-}) {
-  const { controller } = useStudio()
-  const host = hostOf(endpoint)
-  const cacheKey = `${host ?? ''}|${kind}`
-  const [found, setFound] = useState<EndpointModel[]>(() => discovered.get(cacheKey) ?? [])
-  const [busy, setBusy] = useState(false)
-  const [signal, setSignal] = useState(0)
-  const typed = host !== undefined ? keys.typed[host]?.value : undefined
-  const asked = useRef<string | undefined>(undefined)
-  const notify = useRef(onModels)
-  notify.current = onModels
-  useEffect(() => {
-    const cached = discovered.get(cacheKey) ?? []
-    setFound(cached)
-    if (cached.length > 0) notify.current?.(cached)
-  }, [cacheKey])
-  const load = async (quiet: boolean): Promise<void> => {
-    if (endpoint === undefined || host === undefined) return
-    setBusy(true)
-    try {
-      const { models } = await controller.api.call('endpoint.models', { url: endpoint, kind, ...(typed !== undefined && typed.trim().length > 0 ? { key: typed.trim() } : {}), ...(refName !== undefined && refName.length > 0 ? { ref: refName } : {}) })
-      discovered.set(cacheKey, models)
-      setFound(models)
-      notify.current?.(models)
-      if (quiet) return
-      const usable = models.filter(model => model.unsupported !== true).length
-      if (models.length === 0) controller.toast('info', t('这个接口没有列出这类模型，直接填写模型名即可', 'The endpoint lists no such models; type the model id'))
-      else {
-        controller.toast('success', usable === models.length
-          ? t(`这个接口列出了 ${models.length} 个模型`, `The endpoint lists ${models.length} model(s)`)
-          : t(`这个接口有 ${models.length} 个这类模型，${usable} 个可以直接用`, `The endpoint has ${models.length} such model(s), ${usable} usable as they are`))
-        // Show them: a count nobody can act on is no answer.
-        setSignal(count => count + 1)
-      }
-    } catch (error) {
-      if (!quiet) controller.toast('error', messageOf(error))
-    } finally {
-      setBusy(false)
-    }
-  }
-  // Asked at once only where a key is at hand already — a list refused for want of one says nothing — and without
-  // spending the list's own first look, which still asks when it is opened.
-  const keyed = useKeyState(keys, endpoint, refName)?.configured === true
-  const eagerly = useRef<string | undefined>(undefined)
-  useEffect(() => {
-    if (eager !== true || !keyed || host === undefined || eagerly.current === cacheKey || (discovered.get(cacheKey) ?? []).length > 0) return
-    eagerly.current = cacheKey
-    void load(true)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eager, keyed, cacheKey, host])
-  const known = new Map(found.map(model => [model.id, model]))
-  const recommended = t('推荐', 'Recommended')
-  const options: ComboOption[] = [
-    ...suggestions.map((id): ComboOption => {
-      const model = known.get(id)
-      const note = model !== undefined ? describe?.(model) : describe?.({ id })
-      return { value: id, group: recommended, ...(model?.name !== undefined ? { label: model.name } : {}), ...(note !== undefined ? { note } : {}) }
-    }),
-    ...found.filter(model => !suggestions.includes(model.id)).map((model): ComboOption => {
-      const note = model.unsupported === true ? t('工坊暂不支持它的协议', 'protocol not supported yet') : describe?.(model)
-      return {
-        value: model.id,
-        group: model.unsupported === true ? t('这个接口还有这些（暂时用不了）', 'Also served here (not usable yet)') : model.unsure === true ? t('这个接口还列了这些（没说是哪一类）', 'Also listed here (it does not say of what kind)') : t('这个接口列出的模型', 'Listed by this endpoint'),
-        ...(model.name !== undefined ? { label: model.name } : {}),
-        ...(note !== undefined ? { note } : {}),
-        ...(model.unsupported === true ? { disabled: true } : {}),
-      }
-    }),
-  ]
-  return (
-    <Field label={label} hint={hint}>
-      <span className="nv-keyrow">
-        <Combo
-          value={value}
-          options={options}
-          placeholder={placeholder ?? suggestions[0] ?? ''}
-          openSignal={signal}
-          empty={host === undefined ? t('先填接口地址', 'Enter the endpoint first') : busy ? t('正在读取…', 'Loading…') : t('没有可选的模型，直接填写模型名', 'Nothing to choose from; type the model id')}
-          onChange={onChange}
-          onPick={(option) => { onPickModel?.(known.get(option.value) ?? { id: option.value }) }}
-          onOpen={() => {
-            // The first look at the list fetches the endpoint's own quietly; a failure just leaves the recommendations.
-            if (asked.current === cacheKey || found.length > 0) return
-            asked.current = cacheKey
-            void load(true)
-          }}
-        />
-        <Button size="sm" variant="ghost" icon="refresh" busy={busy} disabled={host === undefined} title={t('读取这个接口提供的全部模型', 'List every model this endpoint serves')} onClick={() => { void load(false) }} />
       </span>
     </Field>
   )
@@ -1424,7 +1378,6 @@ function ImageSection({ value, keys, onChange, t, advanced, only }: { value: Ima
   const endpoint = value.provider === 'dashscope' ? value.baseURL ?? SERVICES.bailian.origin : value.provider === 'openrouter' ? value.baseURL ?? compatibleBase('openrouter') : value.baseURL ?? compatibleBase('openai')
   // On this machine: no key, no list of models to choose from.
   const local = value.provider === 'comfyui' || value.provider === 'diffusers'
-  const suggestions = source !== 'none' && source !== 'codex' && source !== 'comfyui' && source !== 'diffusers' ? recommendedSetup(source)?.suggestions.image ?? [] : []
   const text = (key: 'baseURL' | 'model' | 'workflow' | 'editWorkflow' | 'python', placeholder: string) => ({ value: value[key] ?? '', placeholder, onChange: (event: { target: { value: string } }) => { onChange(without(value, key, event.target.value.length > 0 ? event.target.value : undefined)) } })
   const figure = (key: 'steps' | 'guidance') => ({ value: value[key] !== undefined ? String(value[key]) : '', onChange: (event: { target: { value: string } }) => { const given = Number(event.target.value); onChange(without(value, key, event.target.value.trim().length > 0 && Number.isFinite(given) && given >= 0 ? given : undefined)) } })
   const viaConnect = codex.connect && codex.connectSignedIn
@@ -1483,9 +1436,7 @@ function ImageSection({ value, keys, onChange, t, advanced, only }: { value: Ima
           <>
             <EndpointField value={value.baseURL ?? ''} placeholder={endpoint} hint={value.provider === 'dashscope' ? t('百炼的域名；专属域名也可以', 'The Bailian domain; a workspace domain works too') : undefined} t={t} onChange={(baseURL) => { onChange(without(value, 'baseURL', baseURL)) }} />
             <KeyField endpoint={endpoint} refName={value.apiKeyRef} keys={keys} t={t} onRef={(name) => { onChange(without(value, 'apiKeyRef', name)) }} />
-            <ModelField label={t('模型', 'Model')} endpoint={endpoint} kind="image" value={value.model ?? ''} suggestions={suggestions} refName={value.apiKeyRef} keys={keys} t={t} eager={own} onModels={setListed}
-              describe={model => (model.image !== undefined ? t(`最大 ${model.image.maxWidth}×${model.image.maxHeight}${model.image.steps !== undefined ? ` · ${model.image.steps} 步` : ''}${model.image.promptTokens !== undefined ? ` · 读 ${model.image.promptTokens} 个 token` : ''}${model.image.references === undefined ? '' : model.image.references > 0 ? ` · 参考图 ${model.image.references} 张` : ' · 不收参考图'}`, `up to ${model.image.maxWidth}×${model.image.maxHeight}${model.image.steps !== undefined ? ` · ${model.image.steps} steps` : ''}${model.image.promptTokens !== undefined ? ` · reads ${model.image.promptTokens} tokens` : ''}${model.image.references === undefined ? '' : model.image.references > 0 ? ` · ${model.image.references} reference picture${model.image.references === 1 ? '' : 's'}` : ' · no reference pictures'}`) : undefined)}
-              onChange={(model) => { onChange(without(value, 'model', model)) }} />
+            <ImageModelField value={value} keys={keys} t={t} onModels={setListed} onChange={(model) => { onChange(without(value, 'model', model)) }} />
           </>
         ) : null}
         {source === 'custom' ? (
@@ -1628,17 +1579,14 @@ function TtsSection({ value, keys, voices, savedProvider, onChange, t }: { value
   const id = useId()
   const [listed, setListed] = useState<EndpointModel[]>([])
   const inWords = value.provider === 'qwen-audiogen'
-  const endpoint = value.baseURL ?? (value.provider === 'openrouter' ? compatibleBase('openrouter') : value.provider === 'openai' ? compatibleBase('openai') : value.provider === 'qwen-realtime' ? bailianRealtime() : SERVICES.bailian.origin)
+  const endpoint = speechEndpoint(value)
   const fallback = value.defaultVoices ?? {}
   const setFallback = (key: 'female' | 'male' | 'neutral', voice: string): void => {
     const { [key]: _old, ...rest } = fallback
     const next = voice.trim().length > 0 ? { ...rest, [key]: voice.trim() } : rest
     onChange(without(value, 'defaultVoices', Object.keys(next).length > 0 ? next : undefined))
   }
-  // What is worth offering beside the field: what the recommendations list for this kind of endpoint, else for the service it is.
-  const offered = value.provider === 'none' ? undefined : providerDefault('tts', value.provider)
-  const suggestions = value.provider === 'none' ? []
-    : offered?.suggestions ?? (value.provider === 'openrouter' ? recommendedSetup('openrouter')?.suggestions.tts : undefined) ?? (offered !== undefined && offered.model.length > 0 ? [offered.model] : [])
+  const suggestions = speechSuggestions(value.provider)
   // Voices the endpoint lists for the chosen model win over the stock catalog of the saved provider.
   const fromEndpoint = listed.find(model => model.id === value.model)?.voices ?? []
   const voiceOptions = fromEndpoint.length > 0 ? fromEndpoint.map(voice => ({ id: voice, note: '' })) : value.provider === savedProvider ? voices : []

@@ -18,6 +18,7 @@ import {
 import { NeedsSetup } from '../views/Settings'
 import type { LinePlayer, PlayerOptions, PlayerState } from './player'
 import { HistoryButton } from '../History'
+import { SpeechTrialDialog } from '../Trial'
 
 export { formatDuration, usePlayerOptions }
 
@@ -120,6 +121,7 @@ export function AudioDesk({ chapter, view, job, player, onBody, onChanged }: {
   const t = useT()
   const { project, root } = useProject()
   const [exported, setExported] = useState<{ path: string; duration: number; missing: number } | undefined>()
+  const [comparing, setComparing] = useState(false)
   const { busy, run } = useAction()
   const confirmScript = useConfirm()
   const script = view.script
@@ -220,9 +222,16 @@ export function AudioDesk({ chapter, view, job, player, onBody, onChanged }: {
         {script !== undefined && voiced > 0 ? (
           <Button icon="download" disabled={working} pending={t('正在拼接…', 'Joining…')} onClick={() => controller.guard(async () => { setExported(await controller.api.call('audio.export', { root, chapter: chapter.id })) })}>{t('导出整章音频', 'Export chapter audio')}</Button>
         ) : null}
+        <Button variant="ghost" icon="layers" title={t('换几个配音服务念同一句，并排着听', 'The same line by several speech setups, side by side')} onClick={() => { setComparing(true) }}>{t('对比…', 'Compare…')}</Button>
         {script !== undefined ? <Button variant="ghost" icon="refresh" disabled={working} onClick={() => start('audio.build', { force: true })} title={t('重新编排脚本', 'Script it again')} /> : null}
         {script !== undefined ? <Button variant="ghost" icon="trash" disabled={working} onClick={() => { confirmScript.ask(t('删除这一章的有声脚本？这一章的分镜会跟着失效；配音文件留着，重新编排后相同的句子直接复用。', 'Delete this chapter\'s script? Its storyboard goes with it; the voice files stay, and lines that come back the same reuse them.'), () => { void controller.guard(async () => { await controller.api.call('audio.clear', { root, chapter: chapter.id }); controller.toast('success', t('已删除这一章的有声脚本', 'The audio script is deleted')); onChanged?.() }) }) }} title={t('删除这一章的有声脚本', 'Delete this chapter\'s audio script')} /> : null}
         {confirmScript.element}
+        {comparing ? (() => {
+          // Begun with a line of this chapter: its first spoken by somebody with a card, else its first.
+          const first = lines.find(line => line.kind === 'dialogue' && line.speaker !== undefined && line.speakerName !== undefined) ?? lines[0]
+          const whose = first?.speaker !== undefined && first.speakerName !== undefined && first.kind !== 'narration' ? { character: { id: first.speaker, name: first.speakerName } } : {}
+          return <SpeechTrialDialog of={{ ...whose, ...(first !== undefined ? { text: first.text } : {}), ...(first?.direction !== undefined ? { direction: first.direction } : {}) }} onClose={() => { setComparing(false) }} onChanged={() => { onChanged?.() }} />
+        })() : null}
         <span className="nv-spacer" />
         <HistoryButton kind="script" id={chapter.id} name={t(`第 ${chapter.index} 章 · 有声脚本`, `Chapter ${chapter.index} — the audio script`)} onRestored={onChanged} />
       </div>

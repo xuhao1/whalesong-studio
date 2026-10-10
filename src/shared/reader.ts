@@ -232,7 +232,7 @@ export interface ChapterFigure {
   after: number
 }
 
-/** A portrait of somebody and where it stands in the book, shown or kept out of the text: what the author is shown to say which of them the text carries. */
+/** A portrait of somebody and where it stands in the book — or would, were it in the text: what the author is shown to say which of them the text carries. */
 export interface PortraitPlace {
   path: string
   /** Whose it is: their card and their name. */
@@ -245,8 +245,14 @@ export interface PortraitPlace {
   /** That chapter as it is counted along its line, and what it is called. */
   index?: number
   chapterTitle?: string
-  /** The author keeps it out of the text. */
+  /** It is not in the text: kept out by the author, or `spare` and not asked in. */
   hidden: boolean
+  /**
+   * Why it does not stand in the text by itself: `moment` — another picture of the same moment does; `person` —
+   * another portrait is the one of them that stands where they first come on; `chapter` — a moment of theirs is shown
+   * in that chapter, and that is the picture of them there. The author can ask it in all the same.
+   */
+  spare?: 'moment' | 'person' | 'chapter'
 }
 
 /** Pairs of neighbouring characters of a text, without what is not letters: what two texts are compared by. */

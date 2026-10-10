@@ -175,3 +175,91 @@ describe('chapters to come planned by several models', () => {
     }
   })
 })
+
+describe('a line spoken by several speech setups', () => {
+  let server: Server
+  let base = ''
+  const heard: { model: string; voice: string; input: string; instructions?: string }[] = []
+
+  beforeAll(async () => {
+    const { encodeWav } = await import('../src/core/media/wav')
+    // Half a second of a tone: enough of a voice to be measured.
+    const pcm = new Int16Array(12_000)
+    for (let at = 0; at < pcm.length; at++) pcm[at] = Math.round(Math.sin(at / 8) * 9000)
+    const wav = encodeWav({ pcm, sampleRate: 24_000, channels: 1 } as never)
+    server = createServer((request, response) => {
+      const chunks: Buffer[] = []
+      request.on('data', (chunk: Buffer) => { chunks.push(chunk) })
+      request.on('end', () => {
+        const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}') as { model: string; voice: string; input: string; instructions?: string }
+        heard.push(body)
+        if (body.model === 'mute') {
+          response.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { message: 'this model does not speak' } }))
+          return
+        }
+        response.writeHead(200, { 'content-type': 'audio/wav' }).end(Buffer.from(wav))
+      })
+    })
+    await new Promise<void>((resolve) => { server.listen(0, '127.0.0.1', resolve) })
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`
+  })
+
+  afterAll(async () => {
+    server.closeAllConnections()
+    await new Promise<void>((resolve) => { server.close(() => { resolve() }) })
+  })
+
+  it('lists the setup that speaks now and every one set up before', async () => {
+    const { speechSetups } = await import('../src/core/pipelines/trial')
+    const settings = { ...DEFAULT_SETTINGS, tts: { provider: 'qwen-audiogen' as const, model: 'qwen-audio-gen', narratorVoice: '沉稳的男声', kept: { openrouter: { provider: 'openrouter' as const, model: 'google/gemini-tts' } } } }
+    expect(speechSetups(settings).map(setup => [setup.id, setup.label, setup.current])).toEqual([['current', 'Bailian · qwen-audio-gen', true], ['studio:openrouter', 'OpenRouter · gemini-tts', false]])
+    // A book that speaks with its own: that one is in force, and the Studio's is one to try beside it.
+    expect(speechSetups(settings, { tts: { provider: 'openai', baseURL: 'http://10.0.0.2:9000/v1', model: 'kokoro' } }).map(setup => [setup.id, setup.label])).toEqual([['current', '10.0.0.2:9000 · kokoro'], ['studio', 'Bailian · qwen-audio-gen'], ['studio:openrouter', 'OpenRouter · gemini-tts']])
+    expect(speechSetups({ ...settings, tts: { provider: 'none' } })).toEqual([])
+  })
+
+  it('has each speak the same words as the same person, casts nobody, and changes no setup', async () => {
+    const { trialSpeak } = await import('../src/core/pipelines/trial')
+    const bed = await createTestBed({ settings: { tts: { provider: 'openai', baseURL: base, model: 'voice-a', narratorVoice: 'onyx', narratorInstructions: '像深夜电台' } } })
+    try {
+      Object.assign(bed.core.credentials, { forEndpoint: async () => 'a-key-of-this-machine' })
+      const { project } = bed.runtime
+      const card = await project.saveCharacter({ name: '沈蘅', role: 'protagonist', gender: '女', voice: '清冷' })
+      heard.length = 0
+      const said: unknown[] = []
+      const made = await trialSpeak(bed.core, bed.runtime, {
+        text: '有些话，我只说一遍。',
+        character: card.id,
+        with: [
+          { label: 'A', tts: { provider: 'openai', baseURL: base, model: 'voice-a' } },
+          { label: 'B', tts: { provider: 'openai', baseURL: base, model: 'voice-b' }, voice: 'nova' },
+          { label: 'C', tts: { provider: 'openai', baseURL: base, model: 'mute' } },
+        ],
+      }, { origin: 'user', job: { result: (value: unknown) => { said.push(value) }, progress: () => {}, write: () => {}, crew: () => {} } as never })
+      // The same words to each, each with its own model; the voice named for one is the voice it speaks with.
+      expect(heard.map(body => [body.model, body.input]).sort()).toEqual([['mute', '有些话，我只说一遍。'], ['voice-a', '有些话，我只说一遍。'], ['voice-b', '有些话，我只说一遍。']])
+      expect(heard.find(body => body.model === 'voice-b')?.voice).toBe('nova')
+      // She is spoken as a line of hers would be: who she is goes along as the direction.
+      expect(heard.find(body => body.model === 'voice-a')?.instructions).toContain('沈蘅')
+      expect(made.takes.map(take => [take.label, take.model, take.path !== undefined, take.error !== undefined])).toEqual([['A', 'voice-a', true, false], ['B', 'voice-b', true, false], ['C', 'mute', false, true]])
+      expect(made.takes[2]!.error).toContain('does not speak')
+      expect(made.takes[0]!.path).not.toBe(made.takes[1]!.path)
+      expect((await project.readFile(made.takes[0]!.path!)).byteLength).toBeGreaterThan(1000)
+      expect(said.length).toBeGreaterThan(1)
+      // Listening casts nobody and learns nothing: the book's voice sheet is as it was, and so are the settings.
+      expect(await project.voiceCast()).toBeUndefined()
+      expect((await bed.core.settingsOf(bed.runtime)).tts.model).toBe('voice-a')
+      expect((await project.manifest()).tts).toBeUndefined()
+
+      // Nobody named: the narrator's voice of each setup, read the way the author has the narrator read.
+      heard.length = 0
+      await trialSpeak(bed.core, bed.runtime, { text: '雨下了一夜。', with: [{ label: 'A', tts: { provider: 'openai', baseURL: base, model: 'voice-a', narratorVoice: 'onyx' } }] }, { origin: 'user' })
+      expect(heard[0]).toMatchObject({ model: 'voice-a', voice: 'onyx', instructions: '像深夜电台' })
+
+      await expect(trialSpeak(bed.core, bed.runtime, { text: ' ', with: [{ label: 'A', tts: { provider: 'openai', baseURL: base } }] }, { origin: 'user' })).rejects.toThrow(/words/)
+      await expect(trialSpeak(bed.core, bed.runtime, { text: '一', with: [] }, { origin: 'user' })).rejects.toThrow(/setups/)
+    } finally {
+      await bed.cleanup()
+    }
+  })
+})

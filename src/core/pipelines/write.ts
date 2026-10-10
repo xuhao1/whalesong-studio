@@ -160,7 +160,7 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
       // The model ran out of output room mid-chapter: show it what it wrote and let it finish.
       : writerTask({
           ...base,
-          context: `${pack.rest}\n\n## ${lang === 'zh' ? '本章已有正文' : 'This chapter so far'}\n\n${mode === 'continue' ? clipTail(existing, (await core.settings.get()).context.tailChars) + '\n\n' : ''}${soFar}`,
+          context: `${pack.rest}\n\n## ${lang === 'zh' ? '本章已有正文' : 'This chapter so far'}\n\n${mode === 'continue' ? clipTail(existing, (await core.settingsOf(runtime)).context.tailChars) + '\n\n' : ''}${soFar}`,
           ...(params.brief !== undefined ? { brief: params.brief } : {}),
           continuing: true,
           ...length(countWords(soFar)),

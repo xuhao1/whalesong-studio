@@ -462,7 +462,7 @@ export async function analyzeBook(core: NovelCore, runtime: ProjectRuntime, para
     let read = 0
     let stages = 0
     within(0, L(lang, `读 ${due.length} 个人物的成长轨迹`, `reading how ${due.length} people grow`))
-    await mapLimit(due, core.parallel('text'), async (card) => {
+    await mapLimit(due, await core.parallelFor('text', runtime), async (card) => {
       try {
         const inner: TaskContext = { origin: task.origin, ...(task.signal !== undefined ? { signal: task.signal } : {}), ...(task.agentRoute !== undefined ? { agentRoute: task.agentRoute } : {}) }
         stages += (await deriveGrowth(core, runtime, { character: card.id, plain: true }, inner)).stages.length

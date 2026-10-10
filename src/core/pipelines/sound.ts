@@ -108,7 +108,7 @@ export async function renderSound(core: NovelCore, runtime: ProjectRuntime, para
   let total = 0
   const label = (): string => L(lang, `生成声音 ${done}/${todo.length}`, `making sounds ${done}/${todo.length}`)
   task.job?.progress(0, todo.length, label())
-  await mapLimit(todo, core.parallel('sound'), async (item) => {
+  await mapLimit(todo, await core.parallelFor('sound', runtime), async (item) => {
     let patch: Partial<AudioCue>
     try {
       const raw = await provider.generate({ kind: item.kind, prompt: item.prompt, seconds: item.seconds, language: manifest.language, ...(task.signal !== undefined ? { signal: task.signal } : {}) })

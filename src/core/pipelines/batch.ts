@@ -420,7 +420,7 @@ export async function stagePlan(core: NovelCore, runtime: ProjectRuntime, params
       })
     }
   }
-  const text = core.parallel('text')
+  const text = await core.parallelFor('text', runtime)
   return {
     what: 'stage',
     columns,
@@ -429,10 +429,10 @@ export async function stagePlan(core: NovelCore, runtime: ProjectRuntime, params
     // A chapter's script is a few passages, its voices a hundred lines: enough chapters at once to keep every gate busy, few enough that the first ones are done first.
     lanes: {
       script: clamp(Math.ceil(text / 2), 2, 8),
-      voice: clamp(Math.ceil(core.parallel('speech') / 32), 2, 8),
-      sound: clamp(Math.ceil(core.parallel('sound') / 8), 2, 8),
+      voice: clamp(Math.ceil(await core.parallelFor('speech', runtime) / 32), 2, 8),
+      sound: clamp(Math.ceil(await core.parallelFor('sound', runtime) / 8), 2, 8),
       storyboard: clamp(Math.ceil(text / 2), 2, 8),
-      panels: clamp(Math.ceil(core.parallel('image') / 8), 2, 8),
+      panels: clamp(Math.ceil(await core.parallelFor('image', runtime) / 8), 2, 8),
       video: 1,
     },
   }
@@ -600,7 +600,7 @@ export async function textPlan(core: NovelCore, runtime: ProjectRuntime, params:
     }
     previous = id
   }
-  const text = core.parallel('text')
+  const text = await core.parallelFor('text', runtime)
   return {
     what: 'text',
     columns,
@@ -778,14 +778,14 @@ export async function artPlan(core: NovelCore, runtime: ProjectRuntime, params: 
   }
   if (steps.length === 0) throw new ProjectError('novel/invalid', 'name what to make: `sheets`, `portraits`, `voices`, `places`, `items`, `scenes` or `cover`')
   const ops: ArtStep[] = ['sheet', 'portrait', 'voice', 'place', 'item', 'scene', 'cover']
-  const image = core.parallel('image')
+  const image = await core.parallelFor('image', runtime)
   // One request each: as many side by side as the gate lets through.
   return {
     what: 'art',
     columns: ops.filter(op => steps.some(step => step.op === op)),
     rows,
     steps,
-    lanes: { sheet: image, portrait: image, place: image, item: image, scene: image, cover: 1, voice: core.parallel('speech') },
+    lanes: { sheet: image, portrait: image, place: image, item: image, scene: image, cover: 1, voice: await core.parallelFor('speech', runtime) },
   }
 }
 

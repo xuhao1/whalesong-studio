@@ -477,7 +477,9 @@ export class Project {
         else delete next.chapterBudget
       }
       // Services of the book's own named as nothing are taken off it: the Studio's hold for it again.
-      for (const key of ['image', 'tts', 'sound'] as const) if ((patch as Record<string, unknown>)[key] === null) delete next[key]
+      for (const key of ['image', 'tts', 'sound', 'embedding', 'context', 'parallel'] as const) if ((patch as Record<string, unknown>)[key] === null) delete next[key]
+      // Budgets and numbers of its own that name nothing are none of its own.
+      for (const key of ['context', 'parallel'] as const) if (next[key] !== undefined && Object.values(next[key]!).every(value => value === undefined || value === null)) delete next[key]
       // A cover named as nothing is no cover named: the latest one drawn stands in again.
       if (typeof next.cover === 'string' && next.cover.trim().length === 0) delete next.cover
       // The book as it was said to be, before this: kept, where what it says has changed.
@@ -2377,18 +2379,49 @@ export class Project {
     return (await this.readState<string[]>('figures-hidden.json')) ?? []
   }
 
-  /** Keep a portrait out of the text, or let it stand there again. */
-  async showFigure(path: string, show: boolean): Promise<void> {
-    await this.updateState<string[]>(['figures-hidden.json'], [], current => (show ? current.filter(item => item !== path) : current.includes(path) ? current : [...current, path]))
+  /** The portraits the author asked into the text beside the ones that stand there by themselves, by path. */
+  async shownFigures(): Promise<string[]> {
+    return (await this.readState<string[]>('figures-shown.json')) ?? []
+  }
+
+  private async figureList(file: 'figures-hidden.json' | 'figures-shown.json', path: string, listed: boolean): Promise<void> {
+    const current = (await this.readState<string[]>(file)) ?? []
+    if (current.includes(path) === listed) return
+    await this.updateState<string[]>([file], [], now => (listed ? (now.includes(path) ? now : [...now, path]) : now.filter(item => item !== path)))
   }
 
   /**
-   * Every portrait of everybody, and where it stands in the book: a portrait of one of their moments in the chapter the
-   * moment is from; any other in the chapter they first come on in. All of them stand in the text unless the author
-   * keeps one out (`hidden`).
+   * The author's say on one portrait: in the text, or out of it. Only what differs from where it would stand by
+   * itself is written down — one that stands there anyway is noted when it is kept out, one that does not when it is
+   * asked in — so the rule goes on holding for every picture nobody said anything about.
+   */
+  async showFigure(path: string, show: boolean): Promise<void> {
+    const place = (await this.portraitPlaces()).find(item => item.path === path)
+    const byItself = place === undefined || place.spare === undefined
+    await this.figureList('figures-hidden.json', path, !show && byItself)
+    await this.figureList('figures-shown.json', path, show && !byItself)
+  }
+
+  /**
+   * Keep a picture out of the text whatever would have it stand there — one drawn only to be compared — or let it be a
+   * picture like any other again, standing where the rule has it.
+   */
+  async holdFigure(path: string, out: boolean): Promise<void> {
+    await this.figureList('figures-hidden.json', path, out)
+    if (out) await this.figureList('figures-shown.json', path, false)
+  }
+
+  /**
+   * Every portrait of everybody, and where it stands in the book.
+   *
+   * A portrait of one of their moments stands where the chapter tells that moment; one portrait of the person stands
+   * where they first come on (one of a period of their life, where the period begins) — unless a moment of theirs is
+   * shown in that same chapter: then that is the picture of them there, and it stands at the moment. Of several
+   * pictures of one moment, and of several of the person, the first as the author has them in order is the one.
+   * Whatever does not stand by this is `spare`; the author asks any of them in, and keeps any of the others out.
    */
   async portraitPlaces(): Promise<(PortraitPlace & { told: string })[]> {
-    const [characters, records, hidden, outline] = await Promise.all([this.characters(), this.illustrations(), this.hiddenFigures(), this.outline()])
+    const [characters, records, hidden, shown, outline] = await Promise.all([this.characters(), this.illustrations(), this.hiddenFigures(), this.shownFigures(), this.outline()])
     // Who is in which chapter is read only for somebody whose card does not say where they first come on.
     let seen: CastPresence[] | undefined
     const firstSeen = async (id: string): Promise<string | undefined> => {
@@ -2396,6 +2429,7 @@ export class Project {
       return seen.find(entry => entry.character === id)?.chapters[0]
     }
     const kept = new Set(hidden)
+    const asked = new Set(shown)
     const byPath = new Map(records.map(record => [record.path, record]))
     // Every chapter of every line, as it is counted along its own.
     const places = new Map<string, { index: number; title: string }>()
@@ -2416,10 +2450,12 @@ export class Project {
       }
       return elsewhere.get(id)
     }
-    const out: (PortraitPlace & { told: string })[] = []
+    type Held = PortraitPlace & { told: string }
+    const out: Held[] = []
     for (const card of characters) {
       const scenes = scenesOf(card)
       const stages = card.stages ?? []
+      // In the author's order: the portraits as they stand on the card first, then what else there is of them.
       const paths = [...new Set([
         ...(card.visual?.portraits ?? []),
         ...(card.visual?.portrait !== undefined ? [card.visual.portrait] : []),
@@ -2430,6 +2466,7 @@ export class Project {
       if (paths.length === 0) continue
       // Where they first come on: what the digests have, else the first chapter that has them at all.
       const first = card.firstAppearance ?? await firstSeen(card.id) ?? await firstElsewhere(card.id)
+      const mine: { place: Held; of: 'moment' | 'stage' | 'person'; group: string }[] = []
       for (const path of paths) {
         const record = byPath.get(path)
         // The moment it is of: the one that keeps it, the one its record names, or the one its record was written from.
@@ -2439,27 +2476,47 @@ export class Project {
           ?? (said !== undefined ? scenes.find(item => item.text.length > 0 && said.includes(item.text)) : undefined)
         const stage = stages.find(item => item.visual?.portrait === path)
         const title = scene?.title ?? record?.moment?.title
+        const of = scene !== undefined || record?.moment !== undefined ? 'moment' : stage !== undefined ? 'stage' : 'person'
         const chapter = [scene?.chapter, record?.moment?.chapter, stage?.from, first].find(id => id !== undefined && places.has(id))
         const at = chapter !== undefined ? places.get(chapter) : undefined
-        out.push({
-          path,
-          character: card.id,
-          name: card.name,
-          ...(title !== undefined && title.length > 0 ? { title } : {}),
-          ...(chapter !== undefined && at !== undefined ? { chapter, index: at.index, chapterTitle: at.title } : {}),
-          hidden: kept.has(path),
-          // What the text is searched for to place it: the moment as it is written, else their name.
-          told: scene !== undefined ? `${scene.title}${scene.text}` : `${title ?? ''}${[card.name, ...(card.aliases ?? [])].join('')}`,
+        mine.push({
+          of,
+          group: of === 'moment' ? `moment:${scene?.id ?? record?.moment?.scene ?? title ?? ''}` : of === 'stage' ? `stage:${stage!.id}` : 'person',
+          place: {
+            path,
+            character: card.id,
+            name: card.name,
+            ...(title !== undefined && title.length > 0 ? { title } : {}),
+            ...(chapter !== undefined && at !== undefined ? { chapter, index: at.index, chapterTitle: at.title } : {}),
+            hidden: false,
+            // What the text is searched for to place it: the moment as it is written, else their name.
+            told: scene !== undefined ? `${scene.title}${scene.text}` : `${title ?? ''}${[card.name, ...(card.aliases ?? [])].join('')}`,
+          },
         })
       }
+      // One picture for each moment, one for each period, one for the person: the first of each as they are in order.
+      const led = new Set<string>()
+      for (const item of mine) {
+        if (led.has(item.group)) item.place.spare = item.of === 'moment' ? 'moment' : 'person'
+        else led.add(item.group)
+      }
+      const stands = (place: Held): boolean => !kept.has(place.path) && (place.spare === undefined || asked.has(place.path))
+      // A chapter that shows a moment of theirs has its picture of them: the one of the person does not stand beside it.
+      for (const rank of ['stage', 'person'] as const) {
+        for (const item of mine) {
+          if (item.of !== rank || item.place.spare !== undefined || item.place.chapter === undefined) continue
+          const over = mine.some(other => other !== item && (other.of === 'moment' || (rank === 'person' && other.of === 'stage')) && other.place.chapter === item.place.chapter && stands(other.place))
+          if (over) item.place.spare = 'chapter'
+        }
+      }
+      for (const { place } of mine) out.push({ ...place, hidden: !stands(place) })
     }
     return out
   }
 
   /**
    * The portraits that stand in a chapter, each where the chapter tells it: shown beside the text to whoever reads it,
-   * without being written into it. Every portrait of a moment of this chapter, and of whoever first comes on in it —
-   * less the ones the author keeps out.
+   * without being written into it — see {@link portraitPlaces} for which.
    */
   async chapterFigures(chapterId: string, text?: string): Promise<ChapterFigure[]> {
     const moments = (await this.portraitPlaces())

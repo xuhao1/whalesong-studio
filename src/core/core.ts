@@ -7,8 +7,8 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { mkdir, rename, rmdir, stat } from 'node:fs/promises'
 import { basename, dirname, join, relative, resolve } from 'node:path'
-import { imageParallel, imageService, imageWays, withBook } from '../shared/images'
-import { parallelOf, TTS_SERVICE_KEYS, type BookLock, type ImageSettings, type ModelRoute, type NovelSettings, type ProjectManifest, type ProjectRef, type TextRole } from '../shared/types'
+import { imageParallel, imageService, imageWays, localImages, ttsService, ttsWays, withBook } from '../shared/images'
+import { parallelOf, TTS_SERVICE_KEYS, type BookLock, type ImageSettings, type ModelRoute, type NovelSettings, type ProjectManifest, type ProjectRef, type TextRole, type TtsSettings } from '../shared/types'
 import { contextBudgets, packContext, type ContextPack, type PackOptions } from './context'
 import { currentJob, JobManager, type JobContext } from './jobs'
 import { resolveRoute, retrying, type LlmBackend } from './llm'
@@ -85,9 +85,10 @@ export interface TaskContext {
   job?: JobContext
 }
 
-/** What a trial is of: an image service other than the one in force, a model other than a role's own. */
+/** What a trial is of: an image service or a speech setup other than the one in force, a model other than a role's own. */
 export interface Trial {
   image?: Partial<ImageSettings>
+  tts?: Partial<TtsSettings>
   routes?: Partial<Record<TextRole, ModelRoute>>
 }
 
@@ -129,7 +130,8 @@ export class NovelCore {
   }
   /** Gates of services that are not the Studio's own for their kind (a book's, one on trial), by what they are. */
   private readonly sideGates = new Map<string, Gate>()
-  private embedderCache: { key: string; value: Embedder | undefined } | undefined
+  /** Embedders by the setup they were made for: the Studio's, and each book's own. */
+  private readonly embedders = new Map<string, { value: Embedder | undefined }>()
   private readonly unsubscribe: () => void
   private disposed = false
 
@@ -154,7 +156,8 @@ export class NovelCore {
   private async refreshSettings(): Promise<void> {
     try {
       this.snapshot = await this.settings.get()
-      this.embedderCache = undefined
+      // A key changed is a setup changed: every embedder is made again when next asked for.
+      this.embedders.clear()
       this.gates.text.setCeiling(parallelOf(this.snapshot.textConcurrency))
       this.gates.speech.setCeiling(parallelOf(this.snapshot.tts.concurrency))
       // A server of the author's own draws one picture at a time, whatever number is set.
@@ -200,7 +203,7 @@ export class NovelCore {
         const project = await Project.open(key, this.bookKeys.get(key))
         if (project === undefined) return undefined
         this.rootsById.set((await project.manifest()).id, key)
-        const runtime: ProjectRuntime = { project, index: new RetrievalIndex(project, () => this.embedder()) }
+        const runtime: ProjectRuntime = { project, index: new RetrievalIndex(project, () => this.embedder(project)) }
         this.announce(runtime)
         return runtime
       })()
@@ -220,7 +223,7 @@ export class NovelCore {
   async create(root: string, input: CreateProjectInput): Promise<ProjectRuntime> {
     const key = resolve(root)
     const project = await Project.create(key, input)
-    const runtime: ProjectRuntime = { project, index: new RetrievalIndex(project, () => this.embedder()) }
+    const runtime: ProjectRuntime = { project, index: new RetrievalIndex(project, () => this.embedder(project)) }
     this.runtimes.set(key, Promise.resolve(runtime))
     this.rootsById.set((await project.manifest()).id, key)
     this.announce(runtime)
@@ -803,8 +806,14 @@ export class NovelCore {
   async settingsOf(runtime: ProjectRuntime | undefined): Promise<NovelSettings> {
     const settings = await this.settings.get()
     const held = runtime !== undefined ? withBook(settings, await runtime.project.manifest()) : settings
-    const trial = trials.getStore()?.image
-    return trial !== undefined ? { ...held, image: { ...imageWays(held.image), ...imageService(trial) } as ImageSettings } : held
+    const trial = trials.getStore()
+    if (trial?.image === undefined && trial?.tts === undefined) return held
+    // What is tried is the service; the author's ways with it — which picture leads, how the narrator reads — hold as they are.
+    return {
+      ...held,
+      ...(trial.image !== undefined ? { image: { ...imageWays(held.image), ...imageService(trial.image) } as ImageSettings } : {}),
+      ...(trial.tts !== undefined ? { tts: { ...ttsWays(held.tts), ...ttsService(trial.tts) } as TtsSettings } : {}),
+    }
   }
 
   /** The image settings as they hold for a book; see {@link settingsOf}. */
@@ -832,17 +841,20 @@ export class NovelCore {
     return { ...route, for: { role, ...(runtime !== undefined ? { book: runtime.project.root } : {}), ...(manifest !== undefined ? { title: manifest.title } : {}) } }
   }
 
-  embedder(): Embedder | undefined {
-    const settings = this.snapshot.embedding
+  /**
+   * What passages are embedded with: the Studio's endpoint, or — for a book that has retrieval of its own — the
+   * book's. One embedder per setup, kept while the setup stands.
+   */
+  async embedder(project?: Project): Promise<Embedder | undefined> {
+    const settings = (project !== undefined ? withBook(this.snapshot, await project.manifest().catch(() => undefined)) : this.snapshot).embedding
     const key = JSON.stringify(settings)
-    if (this.embedderCache?.key !== key) {
+    let held = this.embedders.get(key)
+    if (held === undefined) {
       const embedder = createEmbedder(settings, this.credentials)
-      this.embedderCache = {
-        key,
-        value: embedder !== undefined ? meterEmbedder(embedder, settings.model ?? 'embedding', hostOf(settings.baseURL) ?? settings.provider, (event) => { this.usage.record(event) }) : undefined,
-      }
+      held = { value: embedder !== undefined ? meterEmbedder(embedder, settings.model ?? 'embedding', hostOf(settings.baseURL) ?? settings.provider, (event) => { this.usage.record(event) }) : undefined }
+      this.embedders.set(key, held)
     }
-    return this.embedderCache.value
+    return held.value
   }
 
   // ───────────── how much at once ─────────────
@@ -856,34 +868,78 @@ export class NovelCore {
     return kind === 'sound' && soundSetup(this.snapshot)?.shared === true ? this.gates.speech : this.gates[kind]
   }
 
-  /** How many requests of a kind the author lets out at once. */
+  /** How many requests of a kind the author lets out at once, over every book that has no number of its own. */
   parallel(kind: GateKind): number {
     return this.gate(kind).ceiling
   }
 
-  /** Make a request through its gate; the work of a batch waits behind whatever the author asked for by hand. */
-  through<T>(kind: GateKind, task: (attempt: number) => Promise<T>, options: GateOptions = {}): Promise<T> {
-    return this.gate(kind).run(task, { background: currentJob()?.kind === 'batch', ...options })
+  /**
+   * The gate a book's requests of a kind go through. A book with a number of its own for the kind has a gate of its
+   * own, which counts its requests alone; so has a service that is not the Studio's (a book's own, one on trial) — a
+   * server that draws one picture at a time is asked for one, whatever the Studio's draws. Everything else goes
+   * through the Studio's gates, where the work of every book is counted together.
+   */
+  async gateOf(kind: GateKind, runtime: ProjectRuntime | undefined): Promise<Gate> {
+    if (runtime === undefined) return this.gate(kind)
+    const settings = await this.settingsOf(runtime)
+    const own = (await runtime.project.manifest()).parallel?.[kind]
+    const book = { book: runtime.project.root }
+    if (kind === 'text') return own !== undefined ? this.sideGate('text', book, parallelOf(own)) : this.gates.text
+    if (kind === 'image') {
+      const { concurrency: _mine, ...mine } = imageService(settings.image)
+      const { concurrency: _main, ...main } = imageService(this.snapshot.image)
+      const same = JSON.stringify(mine) === JSON.stringify(main)
+      // A server of the author's own draws one picture at a time, whatever number is set.
+      if (own !== undefined) return this.sideGate('image', same ? book : { ...book, ...mine }, localImages(settings.image) ? 1 : parallelOf(own))
+      return same ? this.gates.image : this.sideGate('image', mine, imageParallel(settings.image))
+    }
+    if (kind === 'speech') {
+      const service = (value: NovelSettings['tts']): object => Object.fromEntries(TTS_SERVICE_KEYS.filter(key => key !== 'narratorVoice' && key !== 'defaultVoices' && value[key] !== undefined).map(key => [key, value[key]]))
+      const same = JSON.stringify(service(settings.tts)) === JSON.stringify(service(this.snapshot.tts))
+      if (own !== undefined) return this.sideGate('speech', same ? book : { ...book, ...service(settings.tts) }, parallelOf(own))
+      return same ? this.gates.speech : this.sideGate('speech', service(settings.tts), parallelOf(settings.tts.concurrency))
+    }
+    if (own !== undefined) return this.sideGate('sound', book, parallelOf(own))
+    return soundSetup(settings)?.shared === true ? await this.gateOf('speech', runtime) : this.gates.sound
+  }
+
+  /** How many requests of a kind go out at once for a book: its own number where it has one, the Studio's otherwise. */
+  async parallelFor(kind: GateKind, runtime: ProjectRuntime | undefined): Promise<number> {
+    return (await this.gateOf(kind, runtime)).ceiling
+  }
+
+  /**
+   * Make a request through its gate; the work of a batch waits behind whatever the author asked for by hand.
+   * @param runtime - the book the request is for: one with a number of its own for the kind is counted apart.
+   */
+  async through<T>(kind: GateKind, task: (attempt: number) => Promise<T>, options: GateOptions = {}, runtime?: ProjectRuntime): Promise<T> {
+    return await (await this.gateOf(kind, runtime)).run(task, { background: currentJob()?.kind === 'batch', ...options })
   }
 
   /** The gates that have something to say: work waiting at them, or a service pushing back. */
   gateStates(): Partial<Record<GateKind, GateState>> {
     const states: Partial<Record<GateKind, GateState>> = {}
+    const telling = (state: GateState): boolean => state.active > 0 || state.waiting > 0 || state.limit < state.ceiling || state.pausedMs > 0
     for (const kind of Object.keys(this.gates) as GateKind[]) {
       // Shared with speech: said once, there.
       if (this.gate(kind) !== this.gates[kind]) continue
       const state = this.gates[kind].state()
-      if (state.active > 0 || state.waiting > 0 || state.limit < state.ceiling || state.pausedMs > 0) states[kind] = state
+      if (telling(state)) states[kind] = state
+    }
+    // A gate of a book's own, or of a service on the side, is heard where the Studio's of its kind has nothing to say — the one with the most waiting.
+    for (const [key, gate] of this.sideGates) {
+      const kind = key.slice(0, key.indexOf(':')) as GateKind
+      const state = gate.state()
+      if (!telling(state)) continue
+      const said = states[kind]
+      if (said === undefined || (said.waiting === 0 && said.limit >= said.ceiling && said.pausedMs === 0 && state.waiting + (state.limit < state.ceiling ? 1 : 0) > 0)) states[kind] = state
     }
     return states
   }
 
-  /**
-   * The gate of a service that is not the Studio's own for its kind — a book's, or one on trial: its own count of
-   * what is out at once, so a server that draws one picture at a time is asked for one, whatever the Studio's draws.
-   */
-  private sideGate(kind: 'image' | 'speech', service: object, ceiling: number): Gate {
-    const key = `${kind}:${JSON.stringify(service)}`
+  /** A gate beside the Studio's own of its kind, by what it is for; made when first asked for, and kept at the number given. */
+  private sideGate(kind: GateKind, what: object, ceiling: number): Gate {
+    const key = `${kind}:${JSON.stringify(what)}`
     let gate = this.sideGates.get(key)
     if (gate === undefined) {
       gate = new Gate(kind, ceiling)
@@ -903,16 +959,12 @@ export class NovelCore {
     const provider = createImageProvider(settings, this.credentials, this.options.bridges)
     if (provider === undefined) return undefined
     const metered = meterImages(provider, (event) => { this.usage.record(event) }, await this.bookTag(runtime))
-    const { concurrency: _mine, ...mine } = imageService(settings)
-    const { concurrency: _main, ...main } = imageService(this.snapshot.image)
-    const gate = JSON.stringify(mine) === JSON.stringify(main) ? undefined : this.sideGate('image', mine, imageParallel(settings))
+    const gate = await this.gateOf('image', runtime)
     const background = (): boolean => currentJob()?.kind === 'batch'
     return {
       kind: metered.kind,
       model: metered.model,
-      generate: request => (gate !== undefined
-        ? gate.run(() => metered.generate(request), { background: background(), ...(request.signal !== undefined ? { signal: request.signal } : {}) })
-        : this.through('image', () => metered.generate(request), request.signal !== undefined ? { signal: request.signal } : {})),
+      generate: request => gate.run(() => metered.generate(request), { background: background(), ...(request.signal !== undefined ? { signal: request.signal } : {}) }),
       ...(metered.prompting !== undefined ? { prompting: async signal => await metered.prompting!(signal) } : {}),
     }
   }
@@ -926,9 +978,8 @@ export class NovelCore {
     const provider = createTtsProvider(settings, this.credentials)
     if (provider === undefined) return undefined
     const metered = meterSpeech(provider, settings.model ?? settings.provider, (event) => { this.usage.record(event) }, await this.bookTag(runtime))
-    const service = (value: NovelSettings['tts']): object => Object.fromEntries(TTS_SERVICE_KEYS.filter(key => key !== 'narratorVoice' && key !== 'defaultVoices' && value[key] !== undefined).map(key => [key, value[key]]))
-    const gate = JSON.stringify(service(settings)) === JSON.stringify(service(this.snapshot.tts)) ? undefined : this.sideGate('speech', service(settings), parallelOf(settings.concurrency))
-    const through = <T>(task: () => Promise<T>, options: GateOptions): Promise<T> => (gate !== undefined ? gate.run(task, { background: currentJob()?.kind === 'batch', ...options }) : this.through('speech', task, options))
+    const gate = await this.gateOf('speech', runtime)
+    const through = <T>(task: () => Promise<T>, options: GateOptions): Promise<T> => gate.run(task, { background: currentJob()?.kind === 'batch', ...options })
     const gated: TtsProvider = Object.create(metered) as TtsProvider
     gated.synthesize = request => through(() => metered.synthesize(request), {
       ...(request.signal !== undefined ? { signal: request.signal } : {}),
@@ -951,12 +1002,13 @@ export class NovelCore {
     if (provider === undefined) return undefined
     const tag = await this.bookTag(runtime)
     const metered: SoundProvider = Object.create(provider) as SoundProvider
-    metered.generate = request => this.through('sound', async () => {
+    const gate = await this.gateOf('sound', runtime)
+    metered.generate = request => gate.run(async () => {
       const audio = await provider.generate(request)
       // Billed like speech — by the second — and filed with it.
       this.usage.record({ kind: 'speech', model: provider.model, via: provider.kind, chars: 0, seconds: Number((audio.pcm.length / audio.sampleRate).toFixed(2)), ...(tag !== undefined ? { book: tag.root, bookTitle: tag.title } : {}) })
       return audio
-    }, request.signal !== undefined ? { signal: request.signal } : {})
+    }, { background: currentJob()?.kind === 'batch', ...(request.signal !== undefined ? { signal: request.signal } : {}) })
     return metered
   }
 
@@ -975,7 +1027,7 @@ export class NovelCore {
    * @param options.limit - hold the whole pack to about this many tokens, for work that has to answer at once.
    */
   async pack(runtime: ProjectRuntime, route: ModelRoute, options: Omit<PackOptions, 'textBudget' | 'sideBudget' | 'tailChars'> & { limit?: number }): Promise<ContextPack> {
-    const settings = (await this.settings.get()).context
+    const settings = (await this.settingsOf(runtime)).context
     const budgets = contextBudgets(settings.strategy, settings.budgetTokens, await this.windowOf(route), settings.sideTokens)
     const { limit, ...rest } = options
     return await packContext(runtime.project, runtime.index, {

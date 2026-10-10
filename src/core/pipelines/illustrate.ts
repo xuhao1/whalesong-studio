@@ -862,7 +862,7 @@ export async function drawTrials(core: NovelCore, runtime: ProjectRuntime, trial
     try {
       const info = await core.trial({ image: trial.image }, () => draw({ id, label: trial.label }))
       // A picture drawn to be compared is not one the text carries until the author takes it.
-      await runtime.project.showFigure(info.path, false)
+      await runtime.project.holdFigure(info.path, true)
       pictures[at] = { label: trial.label, path: info.path, ...(info.model !== undefined ? { model: info.model } : {}), seconds: Math.round((Date.now() - began) / 100) / 10 }
       first ??= info
     } catch (error) {

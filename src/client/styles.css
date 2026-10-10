@@ -11829,6 +11829,11 @@ button.nv-album-chapter:hover {
   width: min(1080px, 100%);
 }
 
+/* Room for a list of models to open in, before there is anything to compare. */
+.nv-modal-trial .nv-modal-body {
+  min-height: min(440px, 62vh);
+}
+
 .nv-trial-rows {
   display: grid;
   gap: 6px;
@@ -11857,9 +11862,35 @@ button.nv-album-chapter:hover {
   font-weight: 600;
 }
 
+.nv-trial-who {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
 .nv-trial-model {
   flex: 1 1 200px;
   min-width: 0;
+}
+
+/* The model is picked as the settings pick it: the list and its reload on one line. */
+.nv-trial-model > .nv-keyrow {
+  flex-wrap: nowrap;
+}
+
+.nv-trial-voice {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+
+.nv-trial-audio {
+  width: 100%;
+}
+
+.nv-trial-columns.is-takes .nv-trial-body {
+  min-height: 0;
 }
 
 .nv-trial-grid {

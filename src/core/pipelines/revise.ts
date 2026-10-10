@@ -384,7 +384,7 @@ export async function reviseBook(core: NovelCore, runtime: ProjectRuntime, param
   const failed: ReviseBookResult['failed'] = []
   let done = 0
   task.job?.progress(0, targets.length)
-  await mapLimit(targets, params.concurrency ?? core.parallel('text'), async (target) => {
+  await mapLimit(targets, params.concurrency ?? await core.parallelFor('text', runtime), async (target) => {
     try {
       const instruction = params.brief !== undefined ? params.brief(target.id, target.reason === params.instruction ? '' : target.reason)
         : target.reason === params.instruction ? params.instruction : `${params.instruction}\n\n${L(lang, '具体到本章', 'For this chapter specifically')}${lang === 'zh' ? '：' : ': '}${target.reason}`

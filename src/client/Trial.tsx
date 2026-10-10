@@ -5,16 +5,17 @@
  *
  * One way of asking for all of it — pick who takes part, press, read the
  * results as they come, take one or none — whether what is compared is a
- * picture (image services), a chapter (the writer's model) or chapters to come
- * (the planner's). Nothing a comparison makes takes the place of anything
- * until the author takes it.
+ * picture (image services), a line spoken (speech setups), a chapter (the
+ * writer's model) or chapters to come (the planner's). Nothing a comparison
+ * makes takes the place of anything until the author takes it.
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { ModelOption } from '../shared/rpc'
-import type { ImageTrial, JobInfo, TrialDraft, TrialPicture } from '../shared/types'
-import { imageSetupName } from '../shared/images'
+import type { ImageTrial, JobInfo, SpeechTrial, TrialDraft, TrialPicture, TrialTake } from '../shared/types'
+import { imageSetupName, speechSetupName } from '../shared/images'
 import { RpcError } from './api'
-import { Button, Chip, cx, Field, Modal, ProjectImage, Spinner, TextArea, TextInput, useLoad, useProject, useSnapshot, useStudio, useT } from './ui'
+import { ImageModelField, ModelField, speechEndpoint, speechSuggestions, withSpeechModel } from './ModelField'
+import { Button, Chip, cx, Field, Modal, ProjectImage, Select, Spinner, TextArea, TextInput, useLoad, useMediaUrl, useProject, useSnapshot, useStudio, useT } from './ui'
 
 /** A job started here and watched until it is over: what it has said so far, and how it ended. */
 function useTrialJob(): { start: (begin: () => Promise<{ jobId: string }>) => void; live: JobInfo | undefined; done: JobInfo | undefined; busy: boolean; error: string | undefined; stop: () => void } {
@@ -118,12 +119,17 @@ export function ImageTrialDialog({ of, params, onClose, onChanged }: { of: { cha
       ) : (
         <div className="nv-trial-rows">
           {rows.map(row => (
-            <label key={row.key} className={cx('nv-trial-row', !row.ready && 'is-off')}>
-              <input type="checkbox" checked={row.on} disabled={!row.ready || running} onChange={(event) => { edit(row.key, { on: event.target.checked }) }} />
-              <span className="nv-trial-name">{row.setup.label.split(' · ')[0]}{row.current ? <Chip tone="blue">{t('现在用的', 'in use')}</Chip> : null}{!row.ready ? <Chip>{t('还不能用：缺密钥或没连上', 'not ready: no key, or not reachable')}</Chip> : null}</span>
-              <TextInput className="nv-trial-model" value={row.model} disabled={!row.ready || running || row.setup.image.provider === 'codex'} placeholder={row.setup.image.provider === 'codex' ? 'gpt-image' : t('模型（留空用它配好的）', 'Model (empty: as set up)')} onChange={(event) => { edit(row.key, { model: event.target.value }) }} onClick={(event) => { event.preventDefault() }} />
-              {row.ready && row.setup.image.provider !== 'codex' ? <button type="button" className="nv-link nv-small" disabled={running} onClick={(event) => { event.preventDefault(); again(row) }} title={t('同一个服务再加一行，填另一个模型', 'Another row of the same service, for another model')}>{t('＋ 再加一个模型', '+ another model')}</button> : null}
-            </label>
+            <div key={row.key} className={cx('nv-trial-row', !row.ready && 'is-off')}>
+              <label className="nv-trial-who">
+                <input type="checkbox" checked={row.on} disabled={!row.ready || running} onChange={(event) => { edit(row.key, { on: event.target.checked }) }} />
+                <span className="nv-trial-name">{row.setup.label.split(' · ')[0]}{row.current ? <Chip tone="blue">{t('现在用的', 'in use')}</Chip> : null}{!row.ready ? <Chip>{t('还不能用：缺密钥或没连上', 'not ready: no key, or not reachable')}</Chip> : null}</span>
+              </label>
+              {/* The model is picked the way the settings pick it: from what the service lists, read again on a press. */}
+              <div className="nv-trial-model">
+                <ImageModelField bare t={t} value={{ ...row.setup.image, provider: row.setup.image.provider ?? 'none', model: row.model }} disabled={!row.ready || running} placeholder={t('模型（留空用它配好的）', 'Model (empty: as set up)')} onChange={(model) => { edit(row.key, { model }) }} />
+              </div>
+              {row.ready && row.setup.image.provider !== 'codex' ? <button type="button" className="nv-link nv-small" disabled={running} onClick={() => { again(row) }} title={t('同一个服务再加一行，选另一个模型', 'Another row of the same service, for another model')}>{t('＋ 再加一个模型', '+ another model')}</button> : null}
+            </div>
           ))}
         </div>
       )}
@@ -154,6 +160,116 @@ export function ImageTrialDialog({ of, params, onClose, onChanged }: { of: { cha
   )
 }
 
+// ───────────────────────────── speech ─────────────────────────────
+
+interface VoiceRow { key: string; label: string; tts: SpeechTrial['tts']; ready: boolean; current: boolean; on: boolean; voice: string }
+
+/**
+ * The same words spoken by each of several speech setups, to be listened to side by side.
+ * @param of.character - whose line it is to begin with; the narrator's otherwise. `of.text`: the words to begin with.
+ */
+export function SpeechTrialDialog({ of, onClose, onChanged }: { of: { character?: { id: string; name: string }; text?: string; direction?: string }; onClose: () => void; onChanged?: () => void }) {
+  const { controller } = useStudio()
+  const t = useT()
+  const { root, project } = useProject()
+  const mediaUrl = useMediaUrl()
+  const setups = useLoad(signal => controller.api.call('trial.setups', { root }, signal), [root])
+  const [rows, setRows] = useState<VoiceRow[] | undefined>()
+  useEffect(() => {
+    if (setups.data === undefined || rows !== undefined) return
+    setRows((setups.data.speech ?? []).map(setup => ({ key: setup.id, label: setup.label, tts: setup.tts, ready: setup.ready, current: setup.current, on: setup.ready, voice: '' })))
+  }, [setups.data, rows])
+  const [who, setWho] = useState(of.character?.id ?? '')
+  const [text, setText] = useState(of.text ?? (of.character !== undefined ? t(`我是${of.character.name}。有些话，我只说一遍。`, `I am ${of.character.name}. Some things I only say once.`) : t('雨下了一夜。天亮的时候，巷子里只剩下一把撑开的伞。', 'It rained all night. By morning there was only an open umbrella left in the lane.')))
+  const job = useTrialJob()
+  const takes = ((job.live?.result?.takes ?? (job.done?.result?.output as { takes?: TrialTake[] } | undefined)?.takes) as TrialTake[] | undefined) ?? []
+  // What was asked for with this round, by place: a take answers the row it was made for.
+  const [asked, setAsked] = useState<VoiceRow[]>([])
+  const [taken, setTaken] = useState<string | undefined>()
+  const chosen = (rows ?? []).filter(row => row.on)
+  const edit = (key: string, patch: Partial<VoiceRow>): void => { setRows(previous => previous?.map(row => (row.key === key ? { ...row, ...patch } : row))) }
+  const again = (row: VoiceRow): void => { setRows(previous => (previous === undefined ? previous : [...previous.slice(0, previous.indexOf(row) + 1), { ...row, key: `${row.key}+${previous.length}`, current: false, on: true, voice: '' }, ...previous.slice(previous.indexOf(row) + 1)])) }
+  const running = job.busy
+  const start = (): void => {
+    setTaken(undefined)
+    setAsked(chosen)
+    const trials: SpeechTrial[] = chosen.map(row => ({ label: speechSetupName({ provider: row.tts.provider ?? 'none', ...(row.tts.baseURL !== undefined ? { baseURL: row.tts.baseURL } : {}), ...(row.tts.model !== undefined ? { model: row.tts.model } : {}) }), tts: row.tts, ...(row.voice.trim().length > 0 ? { voice: row.voice.trim() } : {}) }))
+    job.start(async () => await controller.api.call('trial.speak', { root, text, ...(who.length > 0 ? { character: who } : {}), ...(of.direction !== undefined ? { direction: of.direction } : {}), with: trials }))
+  }
+  const take = (at: number, scope: 'book' | 'studio'): Promise<unknown> => controller.guard(async () => {
+    const row = asked[at]
+    if (row === undefined) return
+    const done = await controller.api.call('trial.takeSpeech', { root, tts: row.tts, for: scope, ...(who.length > 0 && row.voice.trim().length > 0 ? { character: who, voice: row.voice.trim() } : {}) })
+    setTaken(`${at}:${scope}`)
+    await Promise.all([controller.refreshProject(), controller.loadSettings().catch(() => undefined)])
+    onChanged?.()
+    controller.toast('success', scope === 'book' ? t(`这本书从现在起用 ${done.label} 配音`, `This book is voiced with ${done.label} from now on`) : t(`所有的书从现在起用 ${done.label} 配音；原来那套记着`, `Every book is voiced with ${done.label} from now on; the setup before is remembered`))
+  })
+  return (
+    <Modal wide className="nv-modal-trial" title={t('换几个配音服务念同一句', 'The same line by several speech setups')} onClose={onClose} footer={(
+      <>
+        <span className="nv-muted nv-small">{t('同一句话、同一个人，各念一遍。只是试听，采纳了才换。', 'The same words by the same speaker, once each. Samples only: nothing changes until you take one.')}</span>
+        <span className="nv-spacer" />
+        {running ? <Button variant="ghost" onClick={job.stop}>{t('停止', 'Stop')}</Button> : null}
+        <Button variant="primary" icon="layers" busy={running} disabled={chosen.length === 0 || text.trim().length === 0} pending={t('正在念…', 'Speaking…')} onClick={start}>{takes.length > 0 ? t(`再念一轮（${chosen.length} 个）`, `Another round (${chosen.length})`) : t(`${chosen.length} 个各念一遍`, `Once each by ${chosen.length}`)}</Button>
+      </>
+    )}>
+      {rows === undefined ? <div className="nv-center">{setups.error !== undefined ? <p className="nv-muted">{setups.error}</p> : <Spinner />}</div> : setups.data?.speech === undefined ? (
+        <p className="nv-note is-warn">{t('后台还是旧版本，不会对比配音：在工坊顶上点“重启”。', 'The Host half is an older build that cannot compare speech: press Restart at the top of the Studio.')}</p>
+      ) : rows.length === 0 ? (
+        <p className="nv-note">{t('还没有可以比的配音服务。到“设置 → 语音合成”配一个；换到别的服务时，原来那个会记着，之后就能在这里一起比。', 'There is no speech setup to compare yet. Set one up under Settings → Speech; when you move to another, the one before is remembered and can be compared here.')}</p>
+      ) : (
+        <div className="nv-trial-rows">
+          {rows.map(row => (
+            <div key={row.key} className={cx('nv-trial-row', !row.ready && 'is-off')}>
+              <label className="nv-trial-who">
+                <input type="checkbox" checked={row.on} disabled={!row.ready || running} onChange={(event) => { edit(row.key, { on: event.target.checked }) }} />
+                <span className="nv-trial-name">{row.label.split(' · ')[0]}{row.current ? <Chip tone="blue">{t('现在用的', 'in use')}</Chip> : null}{!row.ready ? <Chip>{t('还不能用：缺密钥', 'not ready: no key')}</Chip> : null}</span>
+              </label>
+              <div className="nv-trial-model">
+                <ModelField bare t={t} kind="speech" endpoint={speechEndpoint({ provider: row.tts.provider ?? 'none', ...(row.tts.baseURL !== undefined ? { baseURL: row.tts.baseURL } : {}) })} value={row.tts.model ?? ''} suggestions={speechSuggestions(row.tts.provider ?? 'none')} refName={row.tts.apiKeyRef} disabled={!row.ready || running}
+                  onChange={(model) => { edit(row.key, { tts: { ...row.tts, model } }) }}
+                  onPickModel={(model) => { edit(row.key, { tts: withSpeechModel(row.tts, model) }) }} />
+              </div>
+              <TextInput className="nv-trial-voice" value={row.voice} disabled={!row.ready || running} placeholder={row.tts.provider === 'qwen-audiogen' ? t('音色（留空：照人物卡的描述）', 'Voice (empty: as the card describes it)') : t('音色（留空：它给这个人选的）', 'Voice (empty: the one it casts)')} onChange={(event) => { edit(row.key, { voice: event.target.value }) }} />
+              {row.ready ? <button type="button" className="nv-link nv-small" disabled={running} onClick={() => { again(row) }} title={t('同一个服务再加一行，选另一个模型或音色', 'Another row of the same service, for another model or voice')}>{t('＋ 再加一行', '+ another row')}</button> : null}
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="nv-form-grid">
+        <Field label={t('谁来念', 'Who speaks')}>
+          <Select value={who} options={[{ value: '', label: t('旁白', 'The narrator') }, ...project.characters.map(card => ({ value: card.id, label: card.name }))]} onChange={setWho} />
+        </Field>
+      </div>
+      <Field label={t('念什么', 'The words')}>
+        <TextArea value={text} minRows={2} disabled={running} onChange={(event) => { setText(event.target.value) }} />
+      </Field>
+      {job.error !== undefined ? <p className="nv-note is-warn">{job.error}</p> : null}
+      {takes.length > 0 ? (
+        <div className="nv-trial-columns is-takes">
+          {takes.map((clip, at) => (
+            <TrialColumn key={`${clip.label}:${at}`} title={clip.label} sub={clip.error !== undefined ? t('没念成', 'failed') : clip.path !== undefined ? `${took(clip.seconds, t)}${clip.duration !== undefined ? ` · ${t(`${clip.duration} 秒长`, `${clip.duration}s long`)}` : ''}` : t('正在念…', 'speaking…')} taken={taken?.startsWith(`${at}:`) === true}
+              action={clip.path !== undefined ? (asked[at]?.current === true && asked[at]?.voice.trim().length === 0 && taken === undefined ? <Chip tone="blue">{t('现在用的', 'in use')}</Chip> : (
+                <span className="nv-row-wrap">
+                  {taken === `${at}:book` ? <Chip tone="green">{t('这本书用它了', 'this book\'s now')}</Chip> : <Button size="sm" variant="outline" icon="check" onClick={() => take(at, 'book')}>{t('这本书用它', 'For this book')}</Button>}
+                  {taken === `${at}:studio` ? <Chip tone="green">{t('全局用它了', 'every book\'s now')}</Chip> : <Button size="sm" variant="ghost" onClick={() => take(at, 'studio')}>{t('全局用它', 'For every book')}</Button>}
+                </span>
+              )) : undefined}>
+              {clip.error !== undefined ? <p className="nv-trial-failed">{clip.error}</p> : clip.path !== undefined ? (
+                <>
+                  <audio controls preload="auto" src={mediaUrl(clip.path, clip.seconds)} className="nv-trial-audio" />
+                  {clip.voice !== undefined ? <p className="nv-muted nv-small">{t(`音色：${clip.voice}`, `Voice: ${clip.voice}`)}</p> : null}
+                </>
+              ) : <div className="nv-center"><Spinner /></div>}
+            </TrialColumn>
+          ))}
+        </div>
+      ) : null}
+    </Modal>
+  )
+}
+
 // ───────────────────────────── models ─────────────────────────────
 
 const keyOf = (model: Pick<ModelOption, 'provider' | 'id'>): string => `${model.provider}\u0000${model.id}`
@@ -165,6 +281,7 @@ function ModelChecklist({ picked, onChange, disabled, hint }: { picked: Readonly
   const settings = useSnapshot(snapshot => snapshot.settings)
   useEffect(() => { if (settings === undefined) void controller.loadSettings().catch(() => {}) }, [controller, settings])
   const [filter, setFilter] = useState('')
+  const [reading, setReading] = useState(false)
   const models = settings?.models ?? []
   const wanted = filter.trim().toLowerCase()
   const groups = useMemo(() => {
@@ -183,6 +300,7 @@ function ModelChecklist({ picked, onChange, disabled, hint }: { picked: Readonly
     <div className="nv-trial-models">
       <div className="nv-row-wrap">
         <TextInput className="nv-grow" value={filter} placeholder={t('按名字找模型', 'Find a model by name')} onChange={(event) => { setFilter(event.target.value) }} />
+        <Button size="sm" variant="ghost" icon="refresh" busy={reading} title={t('重新读取 DSH 的模型', 'Read DSH\'s models again')} onClick={() => { setReading(true); void controller.loadSettings().catch(() => {}).finally(() => { setReading(false) }) }} />
         <span className="nv-muted nv-small">{t(`选了 ${picked.size} 个`, `${picked.size} picked`)}{hint !== undefined ? ` · ${hint}` : ''}</span>
       </div>
       <div className="nv-trial-model-list">

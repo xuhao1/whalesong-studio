@@ -241,6 +241,25 @@ export function switchTts(value: TtsSettings, next: TtsSettings['provider'], fre
   return { ...picked(value, TTS_SERVICE_KEYS, false), provider: next, ...(back ?? fresh), ...(Object.keys(kept).length > 0 ? { kept } : {}) } as TtsSettings
 }
 
+/** The service part of speech settings: who speaks, where, with what model and voices. */
+export function ttsService(value: Partial<TtsSettings>): Partial<TtsSettings> {
+  return picked(value as TtsSettings, TTS_SERVICE_KEYS, true)
+}
+
+/** The rest of them: how the narrator is told to read, how often a line is read again — the author's ways, whoever speaks. */
+export function ttsWays(value: TtsSettings): Partial<TtsSettings> {
+  return picked(value, TTS_SERVICE_KEYS, false)
+}
+
+/** A speech setup, in a few words: for a list of them to choose among. */
+export function speechSetupName(value: Pick<TtsSettings, 'provider' | 'baseURL' | 'model'>): string {
+  const where = value.provider === 'qwen-audiogen' || value.provider === 'qwen-realtime' || value.provider === 'dashscope' ? 'Bailian'
+    : value.provider === 'openrouter' ? 'OpenRouter'
+      : serviceOf(value.baseURL) === 'openai' || value.baseURL === undefined ? 'OpenAI' : hostOf(value.baseURL) ?? 'custom'
+  const model = (value.model ?? '').trim()
+  return model.length > 0 ? `${where} · ${model.split('/').at(-1)}` : where
+}
+
 /**
  * The image settings as they hold for a book: the Studio's, with what the book has its own way with. A book that
  * names a service draws with that service as the book set it up — nothing of the Studio's service is mixed in.
@@ -256,15 +275,25 @@ export function withBookImage(settings: ImageSettings, book: BookImageSettings |
   return next
 }
 
-/** The settings as they hold for a book: its own pictures, speech and sound where it has them, the Studio's for the rest. */
-export function withBook(settings: NovelSettings, book: Pick<ProjectManifest, 'image' | 'tts' | 'sound'> | undefined): NovelSettings {
-  if (book === undefined || (book.image === undefined && book.tts === undefined && book.sound === undefined)) return settings
+/** What of a book's manifest changes the settings that hold for it. */
+export type BookSettings = Pick<ProjectManifest, 'image' | 'tts' | 'sound' | 'embedding' | 'context'>
+
+/**
+ * The settings as they hold for a book: its own pictures, speech, sound, retrieval and context budgets where it has
+ * them, the Studio's for the rest. (How much of its work goes out at once is counted apart: see the core's gates.)
+ */
+export function withBook(settings: NovelSettings, book: BookSettings | undefined): NovelSettings {
+  // Budgets that name nothing are none of the book's own.
+  const context = Object.fromEntries(Object.entries(book?.context ?? {}).filter(([, value]) => value !== undefined && value !== null))
+  if (book === undefined || (book.image === undefined && book.tts === undefined && book.sound === undefined && book.embedding === undefined && Object.keys(context).length === 0)) return settings
   const { kept: _kept, ...tts } = book.tts ?? { provider: undefined }
   return {
     ...settings,
     image: withBookImage(settings.image, book.image),
     ...(book.tts !== undefined && tts.provider !== undefined ? { tts: tts as TtsSettings } : {}),
     ...(book.sound !== undefined ? { sound: book.sound } : {}),
+    ...(book.embedding !== undefined ? { embedding: book.embedding } : {}),
+    ...(Object.keys(context).length > 0 ? { context: { ...settings.context, ...context } } : {}),
   }
 }
 

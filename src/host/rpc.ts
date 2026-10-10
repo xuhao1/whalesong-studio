@@ -27,6 +27,7 @@ import { findPicturePress, findSoundPress } from '../core/media/press'
 import { publishSite, siteChaptersUpTo, siteDefaults, siteFolder } from '../core/pipelines/site'
 import { listChapters, listLines, listSides, readAlbum, readPosition, readSide, savePosition } from '../core/reader'
 import { albumCounts, albumEmpty } from '../shared/album'
+import { scenesOf } from '../shared/art'
 import { deriveArtDirection, deriveLook, deriveScenes, deriveVisual, illustrate, redrawPicture } from '../core/pipelines/illustrate'
 import { analyzeBook, importManuscript, readBookFile, importLine, rereadBook } from '../core/pipelines/import'
 import { applyOutlineOps, type OutlineOp } from '../core/pipelines/outline'
@@ -37,7 +38,7 @@ import { buildFoundation, deriveBeats, deriveChapters, whatIf } from '../core/pi
 import { clearReview, listReviews, noteIssue, recheckIssues, resolveIssue, reviewChapter } from '../core/pipelines/review'
 import { fixIssue, fixIssues, acceptProposal, rejectProposal, reviseBook, reviseChapter, reviseSpan, mendInTurn } from '../core/pipelines/revise'
 import { writeChapter } from '../core/pipelines/write'
-import { imageSetups, trialDerive, trialWrite } from '../core/pipelines/trial'
+import { imageSetups, speechSetups, trialDerive, trialSpeak, trialWrite } from '../core/pipelines/trial'
 import { ProjectError } from '../core/project'
 import { siftCast } from '../core/pipelines/cast'
 import { overrule, settleSuggestions, settlesItself } from '../core/pipelines/settle'
@@ -49,7 +50,7 @@ import type { DeepPartial } from '../core/settings'
 import { rangeStart, summarize, type UsageRange } from '../core/usage'
 import { sleep } from '../core/util/async'
 import type { BookSettingsView, CodexStatus, ContextView, CrewView, FindMatch, ModelKind, NovelRpc, RpcMethod, RpcParams, RpcResult, SettingsView, SitePlan } from '../shared/rpc'
-import { withBook } from '../shared/images'
+import { speechSetupName, switchTts, ttsService, ttsWays, withBook } from '../shared/images'
 import { PROJECT_HOMEPAGE, type SetupPart } from '../shared/services'
 import { hashText, proseOnly } from '../shared/text'
 import { ANALYZE_STEPS, CREW_ROLES, GLOSSARY_KINDS, MAIN_LINE, STAGE_STEPS, STORYBOARD_DENSITIES, TEXT_STEPS, type GlossaryTerm, type JobKind, type NovelSettings, type ProjectManifest, type StageStep, type TextRole, type TextStep, type WorkMode, type HistoryKind } from '../shared/types'
@@ -167,7 +168,9 @@ export function createHandlers(service: NovelService): Handlers {
         route = undefined
       }
       const window = route !== undefined ? await core.windowOf(route) : undefined
-      const budgets = contextBudgets(settings.context.strategy, settings.context.budgetTokens, window, settings.context.sideTokens)
+      // A book with budgets of its own is shown with them.
+      const context = withBook(settings, manifest).context
+      const budgets = contextBudgets(context.strategy, context.budgetTokens, window, context.sideTokens)
       rows.push({ role, ...(route !== undefined ? { model: route.model } : {}), ...(window !== undefined ? { window } : {}), textBudget: budgets.textBudget, sideBudget: budgets.sideBudget })
     }
     return rows
@@ -193,7 +196,7 @@ export function createHandlers(service: NovelService): Handlers {
       // A provider that cannot list its models right now is not one that has dropped this model.
       if (provider === undefined || (!listed && provider.error === undefined && provider.models > 0)) unlisted.push({ role: role as TextRole, provider: route.provider, model: route.model, noProvider: provider === undefined })
     }
-    return { root, ready: { image: ready.image, tts: ready.tts, sound: ready.sound }, roles: crewRoles(settings, manifest), context: await contextView(settings, manifest), voices: stockVoices(held.tts.provider, held.tts.model), unlisted }
+    return { root, ready: { image: ready.image, tts: ready.tts, sound: ready.sound, embedding: ready.embedding }, roles: crewRoles(settings, manifest), context: await contextView(settings, manifest), voices: stockVoices(held.tts.provider, held.tts.model), unlisted }
   }
 
   const settingsView = async (root?: string): Promise<SettingsView> => {
@@ -956,11 +959,13 @@ export function createHandlers(service: NovelService): Handlers {
       // A picture of one turn of a place's course says so: the page that asked marks that turn as being drawn.
       return job(runtime, 'illustrate', `illustrate ${params.kind}${params.event !== undefined ? ` at ${params.event}` : ''}`, params.target, async task => await illustrate(core, runtime, params, task))
     },
-    'image.redraw': async ({ root, picture, subject, change }) => {
+    'image.redraw': async ({ root, picture, subject, change, trials }) => {
       const runtime = await open(root)
       const record = (await runtime.project.pictures()).find(item => item.id === picture || item.path === picture)
+      // Drawn as it is by several services, to compare them — or drawn anew from words rewritten or one thing changed.
+      const tried = Array.isArray(trials) && trials.length > 0 ? trials : undefined
       // Named as the drawing of a picture of its kind is: the page that shows whose it is says that it is being drawn.
-      return job(runtime, 'illustrate', `illustrate ${record?.kind ?? 'picture'}`, record?.target, async task => await redrawPicture(core, runtime, { picture, ...(subject !== undefined ? { subject } : {}), ...(change !== undefined ? { change } : {}) }, task))
+      return job(runtime, 'illustrate', `illustrate ${record?.kind ?? 'picture'}`, record?.target, async task => await redrawPicture(core, runtime, { picture, ...(subject !== undefined ? { subject } : {}), ...(change !== undefined ? { change } : {}), ...(tried !== undefined ? { trials: tried } : {}) }, task))
     },
     // ── the same piece of work by several services or models, to be compared ──
     'trial.setups': async ({ root }) => {
@@ -973,7 +978,45 @@ export function createHandlers(service: NovelService): Handlers {
         const tried = { ...settings, image: { ...setup.image, provider: setup.image.provider ?? 'none' } as NovelSettings['image'] }
         image.push({ ...setup, ready: service.mediaReady(tried, await service.keyStates(tried), codex).image })
       }
-      return { image }
+      const speech = []
+      for (const setup of speechSetups(settings, await runtime.project.manifest())) {
+        const tried = { ...settings, tts: { ...setup.tts, provider: setup.tts.provider ?? 'none' } as NovelSettings['tts'] }
+        speech.push({ ...setup, ready: service.mediaReady(tried, await service.keyStates(tried), codex).tts })
+      }
+      return { image, speech }
+    },
+    'trial.speak': async ({ root, text, character, direction, with: setups }) => {
+      const runtime = await open(root)
+      return job(runtime, 'audio', 'trial speak', typeof character === 'string' && character.length > 0 ? character : undefined, async task => await trialSpeak(core, runtime, {
+        text: requireString(text, 'text'),
+        ...(typeof character === 'string' && character.length > 0 ? { character } : {}),
+        ...(typeof direction === 'string' && direction.trim().length > 0 ? { direction: direction.trim() } : {}),
+        with: Array.isArray(setups) ? setups : [],
+      }, task))
+    },
+    'trial.takeSpeech': async ({ root, tts, for: scope, character, voice }) => {
+      const { project } = await open(root)
+      const tried = ttsService((tts ?? {}) as Partial<NovelSettings['tts']>)
+      if (tried.provider === undefined || tried.provider === 'none') throw new ProjectError('novel/invalid', 'name the speech setup to speak with')
+      // A key never travels with a setup: the one saved for its address is used.
+      delete (tried as Record<string, unknown>).apiKey
+      const settings = await core.settings.get()
+      if (scope === 'studio') {
+        // The one left is remembered as it was set up, like any setup the author moves on from.
+        const next: Record<string, unknown> = { ...switchTts(settings.tts, tried.provider, tried), ...tried }
+        // What the setup left has and this one has not is named as nothing, so that it goes.
+        await core.settings.update({ tts: Object.fromEntries([...new Set([...Object.keys(settings.tts), ...Object.keys(next)])].map(key => [key, next[key] ?? null])) } as never)
+      } else {
+        // The book's own from here on: this service, with the ways of reading that held for the book.
+        const held = withBook(settings, await project.manifest()).tts
+        await project.updateManifest({ tts: { ...ttsWays(held), ...tried } as NovelSettings['tts'] })
+      }
+      const named = typeof voice === 'string' ? voice.trim() : ''
+      if (named.length > 0 && typeof character === 'string' && character.length > 0) {
+        const card = await project.findCharacter(character)
+        if (card !== undefined) await project.saveCharacter({ id: card.id, voiceProfile: { ...card.voiceProfile, provider: tried.provider, voice: named } })
+      }
+      return { ok: true, label: speechSetupName(tried as NovelSettings['tts']) }
     },
     'trial.adopt': async ({ root, path, instead, others }) => {
       const { project } = await open(root)
@@ -989,12 +1032,14 @@ export function createHandlers(service: NovelService): Handlers {
       if (replaced.length === 0 && record.kind === 'portrait' && record.target !== undefined) {
         const card = await project.findCharacter(record.target)
         if (card !== undefined) {
-          await project.saveCharacter({ id: card.id, visual: { portrait: taken } })
+          // Of a moment of theirs, it is that moment's picture from here on.
+          const scenes = record.moment?.scene !== undefined && scenesOf(card).some(scene => scene.id === record.moment!.scene) ? scenesOf(card).map(scene => (scene.id === record.moment!.scene ? { ...scene, portrait: taken } : scene)) : undefined
+          await project.saveCharacter({ id: card.id, visual: { portrait: taken, ...(scenes !== undefined ? { scenes } : {}) } })
           replaced = [card.name]
         }
       }
-      // Taken, it is a picture the text may carry like any other.
-      await project.showFigure(taken, true)
+      // Taken, it is a picture like any other: it stands in the text where the others of its kind would.
+      await project.holdFigure(taken, false)
       let removed = 0
       for (const other of Array.isArray(others) ? others : []) {
         if (typeof other !== 'string' || other === taken) continue

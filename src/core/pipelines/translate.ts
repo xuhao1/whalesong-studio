@@ -443,7 +443,7 @@ export async function translateChapters(core: NovelCore, runtime: ProjectRuntime
           result.terms.added += after.length - before
         }
         result.translated.push({ chapter: id, title: made.title, words: countWords(made.text) })
-      }, { ...(task.signal !== undefined ? { signal: task.signal } : {}), retry: false })
+      }, { ...(task.signal !== undefined ? { signal: task.signal } : {}), retry: false }, runtime)
     } catch (error) {
       if (task.signal?.aborted === true) throw error
       result.failed.push({ chapter: id, error: errorMessage(error) })

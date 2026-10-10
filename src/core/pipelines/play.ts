@@ -86,7 +86,7 @@ async function runTurn(core: NovelCore, runtime: ProjectRuntime, session: PlaySe
     brief: `${session.situation}\n${session.location ?? ''}\n${input?.text ?? ''}`,
     characters: [...session.cast, ...(session.player !== undefined ? [session.player] : [])],
     // A turn has to come back while the player waits: it carries what the author set for a turn, not what the model could read.
-    limit: (await core.settings.get()).context.playTokens ?? PLAY_CONTEXT_DEFAULT,
+    limit: (await core.settingsOf(runtime)).context.playTokens ?? PLAY_CONTEXT_DEFAULT,
     ...(task.signal !== undefined ? { signal: task.signal } : {}),
   })
   const player = characters.find(card => card.id === session.player)

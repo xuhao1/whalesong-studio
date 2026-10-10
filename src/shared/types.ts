@@ -76,6 +76,18 @@ export interface ProjectManifest {
   tts?: TtsSettings
   /** This book's own way with sound that is not speech, where it has one. */
   sound?: SoundSettings
+  /**
+   * This book's own semantic retrieval, whole — where its passages are embedded and with what model — where it has
+   * one; else the Studio's is used. Its key is the one saved for the address.
+   */
+  embedding?: EmbeddingSettings
+  /** This book's own context budgets: what is named here holds for it, the Studio's for the rest. */
+  context?: Partial<ContextSettings>
+  /**
+   * How many requests of a kind go out at once for this book, where it has a number of its own: counted for this
+   * book alone, beside whatever the Studio is doing for the others.
+   */
+  parallel?: BookParallel
   /** Free-form notes that always travel with the project digest. */
   notes?: string
   createdAt: Timestamp
@@ -997,6 +1009,9 @@ export const PLAY_CONTEXT_DEFAULT = 24_000
 export const PARALLEL_DEFAULT = 8
 /** The most a number of parallel requests may be set to. */
 export const PARALLEL_MAX = 256
+
+/** A book's own numbers of parallel requests, by kind; a kind left out follows the Studio's. */
+export type BookParallel = Partial<Record<GateKind, number>>
 
 /** A number of parallel requests as the settings hold it, brought into range; the default when none is set. */
 export function parallelOf(value: unknown): number {
@@ -1965,6 +1980,28 @@ export interface TrialPicture {
   path?: string
   model?: string
   /** How long it took, in seconds. */
+  seconds: number
+  error?: string
+}
+
+/** One speech setup a line is tried with: what the author reads it as, the setup itself (its part of the speech settings), and a voice to use instead of the one it would cast. */
+export interface SpeechTrial {
+  label: string
+  tts: Partial<TtsSettings>
+  voice?: string
+}
+
+/** What one speech setup made of a line spoken by several: the clip, or why there is none. */
+export interface TrialTake {
+  label: string
+  model?: string
+  /** The voice it spoke with: an id of the service's, or the description it was given. */
+  voice?: string
+  /** The clip, project-relative. */
+  path?: string
+  /** How long the clip runs, in seconds. */
+  duration?: number
+  /** How long it took to make, in seconds. */
   seconds: number
   error?: string
 }

@@ -343,7 +343,7 @@ export async function buildAudioScript(core: NovelCore, runtime: ProjectRuntime,
   let done = 0
   task.job?.progress(0, blocks.length, L(lang, `编排有声脚本（共 ${blocks.length} 段）`, `directing the script (${blocks.length} passages)`))
 
-  const results = await mapLimit(blocks, core.parallel('text'), async (block) => {
+  const results = await mapLimit(blocks, await core.parallelFor('text', runtime), async (block) => {
     let lines: DraftLine[] | undefined
     let cues: DraftCue[] = []
     let reason: string | undefined
@@ -981,7 +981,7 @@ export async function synthesizeChapter(core: NovelCore, runtime: ProjectRuntime
     if (saved !== undefined) script = saved
   })
   // As many lines wait at the booth door as may be inside at once; the gate behind it counts over every chapter being voiced.
-  await mapLimit(todo, core.parallel('speech'), async ({ line, choice, renderKey }) => {
+  await mapLimit(todo, await core.parallelFor('speech', runtime), async ({ line, choice, renderKey }) => {
     const label = `${who(line)}「${clipText(line.text, 16, '…')}」`
     // In the booth from the moment the line is actually sent, not from when it joined the queue.
     const enter = (): void => {

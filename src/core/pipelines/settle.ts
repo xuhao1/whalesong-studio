@@ -114,7 +114,7 @@ export async function settleSuggestions(core: NovelCore, runtime: ProjectRuntime
     for (let at = 0; at < judged.length; at += SETTLE_ROUND) rounds.push(judged.slice(at, at + SETTLE_ROUND))
     const restore = task.job?.note(L(lang, `策划在审定 ${judged.length} 条设定建议…`, `The planner is settling ${judged.length} suggestion(s)…`))
     try {
-      await mapLimit([...rounds.entries()], Math.max(1, core.parallel('text')), async ([round, batch]) => {
+      await mapLimit([...rounds.entries()], Math.max(1, await core.parallelFor('text', runtime)), async ([round, batch]) => {
         task.signal?.throwIfAborted()
         try {
           const lines = batch.map((item, at) => `${at + 1}. [${L(lang, ...(KIND[item.kind] ?? [item.kind, item.kind]))}${item.kind === 'new-world' && typeof item.payload.category === 'string' ? `·${item.payload.category}` : ''}] ${item.title} —— ${clip(item.detail, 200)}${item.chapterId !== undefined && indexOf.has(item.chapterId) ? L(lang, `（第 ${indexOf.get(item.chapterId)} 章）`, ` (chapter ${indexOf.get(item.chapterId)})`) : ''}`)
@@ -129,7 +129,7 @@ export async function settleSuggestions(core: NovelCore, runtime: ProjectRuntime
             prompt: settleTask({ lang, language: manifest.language, title: manifest.title, suggestions: lines.join('\n'), known, threads }),
             temperature: 0.1,
             validate: raw => asRecord(raw),
-          }), task.signal !== undefined ? { signal: task.signal } : {})
+          }), task.signal !== undefined ? { signal: task.signal } : {}, runtime)
           const said = new Map<number, Record<string, unknown>>()
           for (const raw of asArray(value.verdicts)) {
             const item = asRecord(raw)

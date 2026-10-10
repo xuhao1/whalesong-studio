@@ -73,7 +73,7 @@ export async function iterateChapters(core: NovelCore, runtime: ProjectRuntime, 
   const review = async (ids: readonly string[]): Promise<void> => {
     await Promise.all(ids.map(async (id) => {
       if ((await project.chapterText(id)).trim().length === 0) return
-      await core.through('text', async () => { await reviewChapter(core, runtime, { chapter: id, ...(params.focus !== undefined ? { focus: params.focus } : {}) }, task) }, task.signal !== undefined ? { signal: task.signal } : {})
+      await core.through('text', async () => { await reviewChapter(core, runtime, { chapter: id, ...(params.focus !== undefined ? { focus: params.focus } : {}) }, task) }, task.signal !== undefined ? { signal: task.signal } : {}, runtime)
     }))
   }
   // Whatever of these has not been reviewed yet is, first: a round goes by what a review found.

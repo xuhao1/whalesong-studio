@@ -368,7 +368,7 @@ function handIn(lang: PromptLanguage, tool: string, declared: boolean): string {
  */
 export async function assign<T = Record<string, unknown>>(core: NovelCore, runtime: ProjectRuntime, task: TaskContext, work: Assignment<T>): Promise<Assigned<T>> {
   // One piece of work is one place at the gate, however many steps its agent takes. The models' own retries stand; the gate only keeps count.
-  return await core.through('text', async () => await assignNow(core, runtime, task, work), { ...(task.signal !== undefined ? { signal: task.signal } : {}), retry: false })
+  return await core.through('text', async () => await assignNow(core, runtime, task, work), { ...(task.signal !== undefined ? { signal: task.signal } : {}), retry: false }, runtime)
 }
 
 async function assignNow<T>(core: NovelCore, runtime: ProjectRuntime, task: TaskContext, work: Assignment<T>): Promise<Assigned<T>> {
@@ -531,7 +531,7 @@ export async function delegate(core: NovelCore, runtime: ProjectRuntime, task: T
     onStart: (ids) => { task.job?.crew({ role: work.role, label, by: 'agent', running: true, session: ids.session, ...(ids.parent !== undefined ? { parent: ids.parent } : {}) }) },
     onStep: (step) => { task.job?.write(stepLine(step)) },
     ...(work.unfinished !== undefined ? { unfinished: work.unfinished } : {}),
-  }), { ...(task.signal !== undefined ? { signal: task.signal } : {}), retry: false })
+  }), { ...(task.signal !== undefined ? { signal: task.signal } : {}), retry: false }, runtime)
   task.signal?.throwIfAborted()
   const run: CrewRun = { role: work.role, label, by: 'agent', steps: outcome.steps, ...(outcome.session !== undefined ? { session: outcome.session } : {}), ...(outcome.parent !== undefined ? { parent: outcome.parent } : {}) }
   task.job?.crew(run)

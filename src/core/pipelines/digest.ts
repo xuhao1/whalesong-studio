@@ -439,7 +439,7 @@ export async function digestPending(core: NovelCore, runtime: ProjectRuntime, ta
   const failed: { chapter: string; error: string }[] = []
   let done = 0
   task.job?.progress(0, targets.length)
-  await mapLimit(targets, options.concurrency ?? core.parallel('text'), async (info) => {
+  await mapLimit(targets, options.concurrency ?? await core.parallelFor('text', runtime), async (info) => {
     try {
       await digestChapter(core, runtime, info.id, task, options.force === true ? { force: true } : {})
       digested.push(info.id)

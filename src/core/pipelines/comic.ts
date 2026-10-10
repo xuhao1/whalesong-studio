@@ -198,7 +198,7 @@ export async function buildStoryboard(core: NovelCore, runtime: ProjectRuntime, 
   let early = 0
   task.job?.progress(0, windows.length, L(lang, `编排分镜（目标约 ${plan.target} 格）`, `storyboarding (about ${plan.target} panels)`))
 
-  const boarded = await mapLimit(windows, core.parallel('text'), async (window) => {
+  const boarded = await mapLimit(windows, await core.parallelFor('text', runtime), async (window) => {
     const drafts: DraftPanel[] = []
     let cursor = 0
     // A director that stops before the end of the passage is asked for the rest, not papered over.
@@ -469,7 +469,7 @@ export async function renderPanels(core: NovelCore, runtime: ProjectRuntime, par
     updates.clear()
     board = await project.patchComicPanels(board.chapterId, mine) ?? board
   })
-  await mapLimit(todo, Math.max(1, params.concurrency ?? core.parallel('image')), async (panel) => {
+  await mapLimit(todo, Math.max(1, params.concurrency ?? await core.parallelFor('image', runtime)), async (panel) => {
     try {
       // What the director wrote for the panel, and after it how everyone in it looks in what they wear there, how its
       // place and the things it shows look — as the bible has them now; with their design sheets and art along.

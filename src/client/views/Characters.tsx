@@ -8,7 +8,7 @@
  *   CardPhoto        somebody's face for a list
  *   ROLE_LABELS…     how parts are called, and where somebody stands at a chapter of a line
  */
-import { ImageTrialDialog } from '../Trial'
+import { ImageTrialDialog, SpeechTrialDialog } from '../Trial'
 import { PortraitInText } from '../Figures'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { VoiceOption } from '../../shared/rpc'
@@ -474,6 +474,7 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
   const drawing = useRunningJob(job => job.kind === 'illustrate' && job.target === card.id)
   const designing = useRunningJob(job => job.kind === 'audio' && job.title === 'design voice' && job.target === card.id) !== undefined
   const [sample, setSample] = useState<{ path: string; at: number } | undefined>()
+  const [voicing, setVoicing] = useState(false)
   const audition = (): Promise<unknown> | undefined => {
     if (!controller.need('tts')) return undefined
     return controller.guard(async () => {
@@ -847,6 +848,7 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
       <div className="nv-row-wrap">
         <Button size="sm" icon="volume" disabled={dirty} pending={t('正在生成试听语音…', 'Recording the audition…')} title={t('用这个人物的声音念一句', 'Hear a line in this character\'s voice')} onClick={audition}>{t('试听', 'Audition')}</Button>
         <Button size="sm" icon="wand" disabled={dirty} busy={designing} pending={t('正在设计声线…', 'Designing the voice…')} onClick={() => (controller.need('tts') ? controller.guard(async () => { await controller.run('voice.design', { root, character: card.id }); controller.toast('success', t('专属声线已创建', 'Voice designed')) }) : undefined)}>{t('设计专属声线', 'Design a voice')}</Button>
+        <Button size="sm" variant="ghost" icon="layers" disabled={dirty} title={t('换几个配音服务念同一句，并排着听', 'The same line by several speech setups, side by side')} onClick={() => { setVoicing(true) }}>{t('对比…', 'Compare…')}</Button>
         {sample !== undefined ? <audio key={sample.at} controls preload="auto" src={mediaUrl(sample.path, sample.at)} className="nv-audio-inline" title={t('刚才的试听', 'The audition just recorded')} /> : voiceProfile.sample !== undefined ? <audio controls preload="none" src={mediaUrl(voiceProfile.sample)} className="nv-audio-inline" title={t('专属声线的样音', 'Sample of the designed voice')} /> : null}
       </div>
 
@@ -872,6 +874,7 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
         />
       ) : null}
       {confirm.element}
+      {voicing ? <SpeechTrialDialog of={{ character: { id: card.id, name: card.name } }} onClose={() => { setVoicing(false) }} /> : null}
       {comparing ? <ImageTrialDialog of={{ character: { id: card.id, name: card.name } }} params={{ ...(moment === 'plain' ? { plain: true } : moment.length > 0 ? { scene: moment } : {}), ...(portraitFrom !== undefined ? { from: portraitFrom } : {}), ...(notes.trim().length > 0 ? { notes: notes.trim() } : {}) }} onClose={() => { setComparing(false) }} /> : null}
       {sheets.element}
     </div>

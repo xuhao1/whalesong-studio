@@ -160,7 +160,7 @@ export class RetrievalIndex {
   /** Why the vector half is off right now, shown in the UI. */
   embeddingError: string | undefined
 
-  constructor(private readonly project: Project, private readonly embedder: () => Embedder | undefined) {}
+  constructor(private readonly project: Project, private readonly embedder: () => Embedder | undefined | Promise<Embedder | undefined>) {}
 
   /** Number of indexed passages (after the last refresh). */
   get size(): number {
@@ -268,7 +268,7 @@ export class RetrievalIndex {
    * @returns how many passages were embedded in this call.
    */
   async embedPending(options: { signal?: AbortSignal; onProgress?: (done: number, total: number) => void; batchSize?: number } = {}): Promise<number> {
-    const embedder = this.embedder()
+    const embedder = await this.embedder()
     if (embedder === undefined) return 0
     await this.refresh()
     await this.loadVectors(embedder.space)
@@ -313,7 +313,7 @@ export class RetrievalIndex {
 
     const lexical = this.rankLexical(query, pool)
     let vector: { doc: IndexedDoc; score: number }[] = []
-    const embedder = this.embedder()
+    const embedder = await this.embedder()
     if (embedder !== undefined) {
       try {
         await this.loadVectors(embedder.space)

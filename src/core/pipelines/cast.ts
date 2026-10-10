@@ -174,7 +174,7 @@ export async function mergeCast(core: NovelCore, runtime: ProjectRuntime, task: 
   const numbered = [...rounds.entries()]
   for (const wave of [numbered.filter(([, round]) => round.full), numbered.filter(([, round]) => !round.full)]) {
   if (wave.length === 0) continue
-  await mapLimit(wave, Math.max(1, core.parallel('text')), async ([at, round]) => {
+  await mapLimit(wave, Math.max(1, await core.parallelFor('text', runtime)), async ([at, round]) => {
     task.signal?.throwIfAborted()
     const names = round.people.slice(0, 3).map(entry => entry.name).join(lang === 'zh' ? '、' : ', ')
     onRound?.(started++, rounds.length, L(lang, `${names}${round.people.length > 3 ? ` 等 ${round.people.length} 人` : ''}`, `${names}${round.people.length > 3 ? ` and ${round.people.length - 3} more` : ''}`))
@@ -197,7 +197,7 @@ export async function mergeCast(core: NovelCore, runtime: ProjectRuntime, task: 
         prompt: castRoundTask({ ...base, sightings: sightings.join('\n'), known: clip(known.join('\n'), 12_000), full: round.full }),
         temperature: 0.2,
         validate: raw => asRecord(raw),
-      }), task.signal !== undefined ? { signal: task.signal } : {})
+      }), task.signal !== undefined ? { signal: task.signal } : {}, runtime)
       await inTurn(async () => {
       result.rounds += 1
       const items = asArray(value.characters).map(asRecord).map((item) => {

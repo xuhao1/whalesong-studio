@@ -23,7 +23,7 @@ import type {
   AnalyzeStep, ComfyCatalog,
   PriceEntry,
   UsageSummary,
-  TtsProviderKind,
+  TtsProviderKind, TtsSettings, SpeechTrial,
   AmbiencePreset, AudioCue, AudioLine, AudioScript, BookLock, ChapterMemory, ChapterPlan, ChapterReview, IssueSeverity, CharacterCard, CharacterRole, ComicBoard, ComicPanel, LifeMark, SheetsAsk,
   ChapterVideo, CrewRole, GateKind, GateState, IllustrationInfo, ImageTrial, JobInfo, SettledSuggestion, ModelRoute, NovelSettings, PlaySession, PlayTurn, ProjectManifest, ProjectRef, ProjectState, RecommendedState,
   Proposal, SearchHit, SearchSource, SoundKind, StageStatus, StageStep, StoryboardDensity, StyleProfile, TextRole, TextStep, VersionInfo, WalkOn, WorkMode, WorldEntry, HistoryKind, HistoryVersion, GlossaryTerm, ChapterTranslation,
@@ -214,7 +214,7 @@ export interface SettingsView {
 /** How the settings stand for one book: what it can do with its own services, and what its crew really runs on. */
 export interface BookSettingsView {
   root: string
-  ready: { image: boolean; tts: boolean; sound: boolean }
+  ready: { image: boolean; tts: boolean; sound: boolean; embedding: boolean }
   /** The crew as it stands for this book: each role on the model the book gives it, where it gives one. */
   roles: CrewView['roles']
   context: ContextView[]
@@ -632,7 +632,15 @@ export interface NovelRpc {
    */
   'image.redraw': { params: { root: string; picture: string; subject?: string; change?: string; /** Draw it as it is with each of these services, to compare them: nothing is replaced. */ trials?: ImageTrial[] }; result: JobStarted }
   /** The image services there are to try for a book — the one that draws for it now, and the ones set up before — and whether each can draw right now. */
-  'trial.setups': { params: { root: string }; result: { image: (ImageTrial & { id: string; current: boolean; ready: boolean })[] } }
+  'trial.setups': { params: { root: string }; result: { image: (ImageTrial & { id: string; current: boolean; ready: boolean })[]; /** The speech setups there are to try, the same way. Absent from a Host that cannot compare speech yet. */ speech?: (SpeechTrial & { id: string; current: boolean; ready: boolean })[] } }
+  /** The same words spoken by each of several speech setups — as a character's line, or the narrator's — to be listened to side by side. Nothing is cast or kept by it but the clips. */
+  'trial.speak': { params: { root: string; text: string; character?: string; direction?: string; with: SpeechTrial[] }; result: JobStarted }
+  /**
+   * Have a speech setup that was tried speak from now on: for this book (`book`: it becomes the book's own setup) or
+   * for every book (`studio`; the one left is remembered). `voice` with `character`: that character speaks with this
+   * voice of it.
+   */
+  'trial.takeSpeech': { params: { root: string; tts: Partial<TtsSettings>; for: 'book' | 'studio'; character?: string; voice?: string }; result: { ok: boolean; label: string } }
   /**
    * Take one of the pictures drawn to compare services: it stands in the text again, and — `instead` — takes the place
    * of the picture it was tried against wherever that one hung, or — a portrait with nothing named — becomes the

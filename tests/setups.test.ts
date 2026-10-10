@@ -172,3 +172,81 @@ describe('a book draws with its own service', () => {
     }
   })
 })
+
+describe('a book with retrieval, budgets and numbers of its own', () => {
+  it('keeps the Studio\'s for whatever it does not name', () => {
+    const settings: NovelSettings = { ...DEFAULT_SETTINGS, context: { strategy: 'auto', tailChars: 3000, sideTokens: 40_000 }, embedding: { provider: 'openai', baseURL: 'https://a.example/v1', model: 'studio-embed' } }
+    const held = withBook(settings, { context: { budgetTokens: 60_000, strategy: 'retrieval' }, embedding: { provider: 'none' } })
+    expect(held.context).toEqual({ strategy: 'retrieval', tailChars: 3000, sideTokens: 40_000, budgetTokens: 60_000 })
+    expect(held.embedding).toEqual({ provider: 'none' })
+    // Budgets that name nothing are none of the book's own.
+    expect(withBook(settings, { context: {} })).toBe(settings)
+  })
+
+  it('packs a chapter\'s context with the book\'s budgets, embeds with the book\'s model, and counts its work apart', async () => {
+    const asked: { path: string; model: unknown }[] = []
+    const server = createServer((request, response) => {
+      const chunks: Buffer[] = []
+      request.on('data', (chunk: Buffer) => { chunks.push(chunk) })
+      request.on('end', () => {
+        const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}') as { model?: string; input?: string[] }
+        asked.push({ path: request.url ?? '', model: body.model })
+        response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ data: (body.input ?? []).map(() => ({ embedding: [1, 0, 0] })) }))
+      })
+    })
+    await new Promise<void>((resolve) => { server.listen(0, '127.0.0.1', resolve) })
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`
+    const bed = await createTestBed({ settings: { textConcurrency: 6, context: { strategy: 'auto', tailChars: 3000, playTokens: 9000 } } })
+    try {
+      const { project } = bed.runtime
+      const chapter = await project.addChapter({ title: '一' })
+      await project.saveChapterText(chapter.id, '雨下了一夜。\n\n她把信折好，放回抽屉。')
+
+      // Nothing of its own: the Studio's numbers, the Studio's gates, no embedder.
+      expect(await bed.core.parallelFor('text', bed.runtime)).toBe(6)
+      expect(await bed.core.gateOf('text', bed.runtime)).toBe(bed.core.gate('text'))
+      expect(await bed.core.embedder(project)).toBeUndefined()
+      expect((await bed.core.settingsOf(bed.runtime)).context.playTokens).toBe(9000)
+
+      await project.updateManifest({ parallel: { text: 2, image: 3 }, context: { playTokens: 4000, tailChars: 800 }, embedding: { provider: 'openai', baseURL: base, model: 'book-embed' } })
+      // Its own numbers, on gates that count this book alone; the kinds it does not name stay with the Studio's.
+      expect(await bed.core.parallelFor('text', bed.runtime)).toBe(2)
+      expect(await bed.core.parallelFor('image', bed.runtime)).toBe(3)
+      expect(await bed.core.gateOf('text', bed.runtime)).not.toBe(bed.core.gate('text'))
+      expect(await bed.core.gateOf('speech', bed.runtime)).toBe(bed.core.gate('speech'))
+      expect(bed.core.parallel('text')).toBe(6)
+      // Two pieces of its work at once, however many are asked for.
+      let out = 0
+      let most = 0
+      await Promise.all(Array.from({ length: 5 }, () => bed.core.through('text', async () => {
+        out += 1
+        most = Math.max(most, out)
+        await new Promise(resolve => setTimeout(resolve, 15))
+        out -= 1
+      }, {}, bed.runtime)))
+      expect(most).toBe(2)
+
+      // Its own budgets where it names them, the Studio's for the rest.
+      const held = (await bed.core.settingsOf(bed.runtime)).context
+      expect(held).toMatchObject({ strategy: 'auto', playTokens: 4000, tailChars: 800 })
+      expect((await bed.core.settingsOf(undefined)).context).toMatchObject({ playTokens: 9000, tailChars: 3000 })
+
+      // Its passages are embedded with its own model, at its own address (the key is the one this machine has for that address).
+      Object.assign(bed.core.credentials, { forEndpoint: async () => 'a-key-of-this-machine' })
+      expect(await bed.runtime.index.embedPending()).toBeGreaterThan(0)
+      expect(asked.at(-1)).toMatchObject({ path: '/v1/embeddings', model: 'book-embed' })
+      expect(await bed.core.embedder()).toBeUndefined()
+
+      // Named as nothing, each is the Studio's again.
+      await project.updateManifest({ parallel: null, context: null, embedding: null } as never)
+      const bare = await project.manifest()
+      expect([bare.parallel, bare.context, bare.embedding]).toEqual([undefined, undefined, undefined])
+      expect(await bed.core.parallelFor('text', bed.runtime)).toBe(6)
+      expect(await bed.core.embedder(project)).toBeUndefined()
+    } finally {
+      await bed.cleanup()
+      server.closeAllConnections()
+      await new Promise<void>((resolve) => { server.close(() => { resolve() }) })
+    }
+  })
+})
