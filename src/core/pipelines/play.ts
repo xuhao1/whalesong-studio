@@ -234,7 +234,7 @@ export async function voicePlayLine(core: NovelCore, runtime: ProjectRuntime, pa
   if (turn === undefined || (params.line >= 0 && line === undefined)) throw new ProjectError('novel/not-found', 'no such line')
   if (line?.audio !== undefined) return { path: line.audio }
   const provider = await requireSpeech(core, runtime)
-  const settings = (await core.settings.get()).tts
+  const settings = (await core.settingsOf(runtime)).tts
   const manifest = await project.manifest()
   const characters = await project.characters()
   const text = line?.text ?? turn.narration ?? ''
@@ -297,7 +297,7 @@ export async function paintPlayScene(core: NovelCore, runtime: ProjectRuntime, p
     kind: 'background',
     target: session.id,
     // The backdrop of an interlude is a stage like a panel is.
-    size: pictureSize(core.currentSettings().image, 'panel'),
+    size: pictureSize((await core.imageOf(runtime)), 'panel'),
     name: `bg-${session.id}`,
     record: false,
     art,

@@ -26,6 +26,7 @@ import { blocksOf } from '../../shared/reader'
 import { groupOf } from '../../shared/world'
 import { AlbumView, ViewerTabs } from '../reader/album'
 import { PlayTranscript, SideList, type SideRef } from '../reader/sides'
+import { ChapterPortraits } from '../Figures'
 import { ListenBar, ModeSwitch, ReaderPage, ReaderSettings, usePlayerOptions, useReaderPrefs, type ReaderPerson, type ReaderThing } from '../reader/parts'
 import { useChapterPlayback } from '../reader/playback'
 import { ScriptPage } from '../reader/script'
@@ -241,6 +242,8 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
     }
   })()
   const [settings, setSettings] = useState(false)
+  // Counted up when a portrait is kept out of the text from the page itself: the list behind the button is read again.
+  const [figuresNonce, setFiguresNonce] = useState(0)
   const scroller = useRef<HTMLDivElement>(null)
   // One line of the plot is read at a time: the main one, or the one a choice at a fork led onto.
   const { lineId, path, pick: pickLine } = useLineView(project, chapterId)
@@ -462,6 +465,7 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
         >
           {t('批注', 'Notes')}{openIssues > 0 ? ` ${openIssues}` : ''}
         </Button>
+        <span className="nv-only-studio"><ChapterPortraits key={figuresNonce} chapter={chapter.id} label={false} onChanged={() => { doc.reload() }} /></span>
         <Button size="sm" variant="ghost" icon="type" className={cx(settings && 'is-active')} onClick={() => { setSettings(!settings) }} title={t('阅读设置：字号、纸张、字体、语速、播放与声音', 'Reading settings: type, paper, typeface, speed, playback and sound')}>{t('阅读设置', 'Reading')}</Button>
         <FullButton t={t} />
         <Button size="sm" variant="ghost" icon="phone" className="nv-only-studio" onClick={() => { setSharing(true) }} title={t('在手机上读这本书', 'Read this book on another device')} />
@@ -581,6 +585,7 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
           things={things}
           onThing={(id) => { toPage('world', id) }}
           figures={doc.data?.figures}
+          onHideFigure={(path) => { void controller.guard(async () => { await controller.api.call('figures.show', { root, path, show: false }); doc.reload(); setFiguresNonce(value => value + 1); controller.toast('success', t('这张立绘不再出现在正文里。要放回来：顶上的“立绘”。', 'This portrait is kept out of the text. To put it back: Portraits, at the top.')) }) }}
           marks={annotate && !engaged ? notes.marks : undefined}
           openMark={noted?.id}
           onMark={(id, at) => {

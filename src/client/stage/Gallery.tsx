@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 /** Every picture made for the book, and a place to make more. */
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { mergeAvoid, resolveArtStyle, splitAvoid, type ArtSource } from '../../shared/art'
-import type { IllustrationInfo, SheetsAsk } from '../../shared/types'
+import type { IllustrationInfo, SheetsAsk, WorldCategory } from '../../shared/types'
+import { Icon } from '../icons'
 import { PICTURE_KIND as KIND, PictureViewer } from '../PictureRecord'
 import {
   Button, Chip, Empty, Field, Modal, ProjectImage, Select, Spinner, TextArea, TextInput, useAction, useConfirm, useLoad, useProject, useSnapshot, useStudio, useT,
@@ -19,6 +20,20 @@ const SOURCE: Record<ArtSource, [string, string]> = {
   studio: ['来自工坊设置', 'From the Studio settings'],
   default: ['内置默认', 'Built-in default'],
 }
+
+/** The kinds of thing a picture can be of, or show: what the gallery is listed by besides the kind of picture. */
+type SubjectGroup = 'people' | 'places' | 'houses' | 'things' | 'chapters'
+
+const GROUPS: { id: SubjectGroup; label: [string, string] }[] = [
+  { id: 'people', label: ['人物', 'People'] },
+  { id: 'places', label: ['地点', 'Places'] },
+  { id: 'houses', label: ['家族与组织', 'Houses'] },
+  { id: 'things', label: ['物品', 'Things'] },
+  { id: 'chapters', label: ['章节', 'Chapters'] },
+]
+
+const groupOfWorld = (category: WorldCategory | string | undefined): SubjectGroup | undefined => (
+  category === 'location' || category === 'setting' ? 'places' : category === 'faction' ? 'houses' : category === 'item' ? 'things' : undefined)
 
 export function Gallery() {
   const { controller } = useStudio()
@@ -40,8 +55,63 @@ export function Gallery() {
   const confirm = useConfirm()
   const drawing = jobs.filter(job => job.status === 'running' && job.kind === 'illustrate').length
     + jobs.filter(job => job.status === 'running').reduce((sum, job) => sum + (batchOf(job)?.what === 'art' ? batchOf(job)!.rows.reduce((count, row) => count + Object.values(row.steps).filter(step => step.state === 'running').length, 0) : 0), 0)
-  const list = (images.data?.images ?? []).filter(image => filter === 'all' || image.kind === filter)
+  // Who and what each picture is of or shows: whose it is (its target), whose reference pictures went along with it,
+  // whom its parts name — and, for pictures kept without such a record, whose name its prompt says.
+  const subjects = useMemo(() => {
+    const everyone: { id: string; group: SubjectGroup; name: string; names: string[] }[] = [
+      ...project.characters.map(card => ({ id: card.id, group: 'people' as const, name: card.name, names: [card.name, ...(card.aliases ?? [])] })),
+      ...project.world.flatMap((entry) => { const group = groupOfWorld(entry.category); return group !== undefined ? [{ id: entry.id, group, name: entry.name, names: [entry.name, ...(entry.aliases ?? [])] }] : [] }),
+      ...[...project.chapters, ...(project.lines ?? []).flatMap(line => line.chapters)].map(chapter => ({ id: chapter.id, group: 'chapters' as const, name: chapter.title, names: [] })),
+    ]
+    const byId = new Map(everyone.map(item => [item.id, item]))
+    const shown = new Map<string, Set<string>>()
+    for (const image of images.data?.images ?? []) {
+      const of = new Set<string>()
+      if (image.target !== undefined && byId.has(image.target)) of.add(image.target)
+      const labels = new Set([...(image.parts?.references ?? []), ...(image.parts?.left ?? [])].map(reference => reference.label).concat((image.parts?.pieces ?? []).flatMap(piece => (piece.label !== undefined ? [piece.label] : []))))
+      const told = image.parts?.pieces !== undefined || (image.parts?.references ?? []).length > 0
+      for (const item of everyone) {
+        if (item.group === 'chapters' || of.has(item.id)) continue
+        const names = item.names.filter(name => name.trim().length >= 2)
+        // A label may say more than the name ("沈蘅的立绘"); a prompt is searched only where the record names nobody.
+        if (names.some(name => [...labels].some(label => label.includes(name))) || (!told && names.some(name => image.prompt.includes(name)))) of.add(item.id)
+      }
+      shown.set(image.id, of)
+    }
+    return { everyone, byId, shown }
+  }, [images.data, project.characters, project.world, project.chapters, project.lines])
+  const [group, setGroup] = useState<SubjectGroup | 'all'>('all')
+  const [subject, setSubject] = useState<string | undefined>()
+  const ofKind = (images.data?.images ?? []).filter(image => filter === 'all' || image.kind === filter)
+  const inGroup = (image: IllustrationInfo, wanted: SubjectGroup): boolean => [...(subjects.shown.get(image.id) ?? [])].some(id => subjects.byId.get(id)?.group === wanted)
+  const list = ofKind.filter(image => (group === 'all' || inGroup(image, group)) && (subject === undefined || subjects.shown.get(image.id)?.has(subject) === true))
   const kinds = [...new Set((images.data?.images ?? []).map(image => image.kind))]
+  // Whoever has pictures, with how many, most first: what there is to list by.
+  const counted = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const image of ofKind) for (const id of subjects.shown.get(image.id) ?? []) counts.set(id, (counts.get(id) ?? 0) + 1)
+    return counts
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subjects, filter, images.data])
+  const groups = GROUPS.filter(item => subjects.everyone.some(candidate => candidate.group === item.id && counted.has(candidate.id)))
+  const members = group === 'all' ? [] : subjects.everyone.filter(item => item.group === group && counted.has(item.id)).sort((a, b) => (group === 'chapters' ? 0 : (counted.get(b.id) ?? 0) - (counted.get(a.id) ?? 0)))
+  // Several pictures picked at once, to be deleted together.
+  const [picking, setPicking] = useState(false)
+  const [picked, setPicked] = useState<ReadonlySet<string>>(new Set())
+  const pick = (id: string): void => { setPicked((previous) => { const next = new Set(previous); if (!next.delete(id)) next.add(id); return next }) }
+  const chosen = list.filter(image => picked.has(image.id))
+  const removePicked = (): void => {
+    confirm.ask(
+      t(`删除选中的 ${chosen.length} 张图？图片文件一起删掉，挂着它们的人物卡、设定条目、分镜会取下；正文里插着它们的那一行不动。删了找不回来。`, `Delete the ${chosen.length} pictures picked? The files go too, and whatever card, entry or panel showed them lets go of them; a line of the text that places one stays as it is. This cannot be undone.`),
+      () => void run(async () => {
+        const done = await controller.api.call('image.delete', { root, paths: chosen.map(image => image.path) })
+        setPicked(new Set())
+        await controller.refreshProject()
+        images.reload()
+        controller.toast('success', t(`删掉了 ${done.removed ?? chosen.length} 张${(done.released ?? []).length > 0 ? `；它们原来是这些的图，已取下：${[...new Set(done.released)].slice(0, 8).join('、')}${new Set(done.released).size > 8 ? '…' : ''}` : ''}`, `${done.removed ?? chosen.length} pictures deleted${(done.released ?? []).length > 0 ? `; taken off: ${[...new Set(done.released)].slice(0, 8).join(', ')}${new Set(done.released).size > 8 ? '…' : ''}` : ''}`))
+      }),
+    )
+  }
   const nameOf = (image: IllustrationInfo): string | undefined => {
     if (image.target === undefined) return undefined
     return project.characters.find(card => card.id === image.target)?.name
@@ -88,9 +158,33 @@ export function Gallery() {
         </div>
         <span className="nv-spacer" />
         {drawing > 0 ? <span className="nv-muted nv-small"><Spinner size={12} /> {t(`${drawing} 张绘制中`, `${drawing} in progress`)}</span> : null}
+        {(images.data?.images ?? []).length > 0 ? <Button size="sm" variant={picking ? 'primary' : 'ghost'} icon="check" onClick={() => { setPicking(value => !value); setPicked(new Set()) }}>{picking ? t('完成', 'Done') : t('多选', 'Select')}</Button> : null}
         <Button size="sm" icon="layers" onClick={() => { setBatching(true) }} title={t('补齐还没有的图和声线', 'Make the pictures and voices still missing')}>{t('批量绘制…', 'Draw in a batch…')}</Button>
         <Button variant="primary" size="sm" icon="plus" onClick={() => { if (controller.need('image')) setCreating(true) }}>{t('画一张', 'New picture')}</Button>
       </div>
+      {groups.length > 0 ? (
+        <div className="nv-gallery-by">
+          <div className="nv-chips">
+            <span className="nv-muted nv-small">{t('按对象', 'Of')}</span>
+            <Chip active={group === 'all'} tone={group === 'all' ? 'blue' : 'neutral'} onClick={() => { setGroup('all'); setSubject(undefined) }}>{t('全部', 'Anything')}</Chip>
+            {groups.map(item => <Chip key={item.id} active={group === item.id} tone={group === item.id ? 'blue' : 'neutral'} onClick={() => { setGroup(item.id); setSubject(undefined) }}>{t(...item.label)}</Chip>)}
+          </div>
+          {members.length > 0 ? (
+            <div className="nv-chips nv-gallery-members">
+              {members.map(item => <Chip key={item.id} active={subject === item.id} tone={subject === item.id ? 'violet' : 'neutral'} onClick={() => { setSubject(previous => (previous === item.id ? undefined : item.id)) }}>{item.name}<span className="nv-gallery-count">{counted.get(item.id)}</span></Chip>)}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      {picking ? (
+        <div className="nv-pick-bar">
+          <span>{t(`已选 ${chosen.length} 张`, `${chosen.length} picked`)}</span>
+          <button type="button" className="nv-link" onClick={() => { setPicked(new Set(list.map(image => image.id))) }}>{t(`全选（列表里的 ${list.length} 张）`, `All ${list.length} listed`)}</button>
+          <button type="button" className="nv-link" onClick={() => { setPicked(new Set()) }}>{t('清空', 'None')}</button>
+          <span className="nv-spacer" />
+          <Button size="sm" variant="danger" icon="trash" busy={busy} disabled={chosen.length === 0} onClick={removePicked}>{t(`删除选中的 ${chosen.length} 张`, `Delete the ${chosen.length} picked`)}</Button>
+        </div>
+      ) : null}
       <NeedsSetup what="image" />
       <ArtDirection />
       {images.data === undefined ? <div className="nv-center"><Spinner /></div> : list.length === 0 ? (
@@ -98,8 +192,9 @@ export function Gallery() {
       ) : (
         <div className="nv-gallery-grid">
           {list.map(image => (
-            <button key={image.id} type="button" className="nv-gallery-item" onClick={() => { setOpen(image) }}>
+            <button key={image.id} type="button" className={`nv-gallery-item${picking && picked.has(image.id) ? ' is-picked' : ''}`} aria-pressed={picking ? picked.has(image.id) : undefined} onClick={() => { if (picking) pick(image.id); else setOpen(image) }}>
               <ProjectImage path={image.path} alt={image.prompt} />
+              {picking ? <span className={`nv-pick-mark nv-photo-pick${picked.has(image.id) ? ' is-on' : ''}`}><Icon name="check" size={11} /></span> : null}
               <span className="nv-gallery-caption"><Chip>{t(...KIND[image.kind])}</Chip>{nameOf(image) !== undefined ? <span>{nameOf(image)}</span> : null}</span>
             </button>
           ))}

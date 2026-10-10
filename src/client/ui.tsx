@@ -2,7 +2,7 @@
 /** Studio context, hooks and the small set of controls every view shares. */
 import {
   createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore,
-  type ButtonHTMLAttributes, type CSSProperties, type InputHTMLAttributes, type MouseEvent as ReactMouseEvent, type ReactNode, type TextareaHTMLAttributes,
+  type ButtonHTMLAttributes, type CSSProperties, type HTMLAttributes, type InputHTMLAttributes, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject, type TextareaHTMLAttributes,
 } from 'react'
 import { createPortal } from 'react-dom'
 import { linePath } from '../shared/lines'
@@ -84,6 +84,14 @@ export function useSnapshot<T>(select: (snapshot: StudioSnapshot) => T): T {
   const { controller } = useStudio()
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
   return select(snapshot)
+}
+
+/** What can be used right now for the book in hand: its own services where it has them, the Studio's otherwise. */
+export function useReady(): { image: boolean; tts: boolean; sound: boolean } {
+  const root = useSnapshot(snapshot => snapshot.root)
+  const settings = useSnapshot(snapshot => snapshot.settings)
+  const own = settings?.book !== undefined && settings.book.root === root ? settings.book.ready : undefined
+  return { image: (own?.image ?? settings?.ready.image) === true, tts: (own?.tts ?? settings?.ready.tts) === true, sound: (own?.sound ?? settings?.ready.sound) === true }
 }
 
 /** The open project; views that render only with a project use this. */
@@ -479,6 +487,8 @@ export const useOverlayRoot = (): HTMLElement | null => useContext(OverlayRootCo
 
 export function Modal({ title, onClose, children, footer, wide, className }: { title: string; onClose: () => void; children: ReactNode; footer?: ReactNode; wide?: boolean; className?: string | undefined }) {
   const root = useContext(OverlayRootContext)
+  // On a phone a dialog is the whole screen, and goes the way a page does: under a swipe from left to right.
+  const swipe = useSwipeBack(onClose, () => globalThis.matchMedia?.('(pointer: coarse)').matches === true)
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') {
@@ -491,7 +501,7 @@ export function Modal({ title, onClose, children, footer, wide, className }: { t
   }, [onClose])
   const node = (
     <div className="nv-modal-mask" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
-      <div className={cx('nv-modal', wide === true && 'nv-modal-wide', className)} role="dialog" aria-modal="true" aria-label={title}>
+      <div className={cx('nv-modal', wide === true && 'nv-modal-wide', className)} role="dialog" aria-modal="true" aria-label={title} {...swipe}>
         <header className="nv-modal-head">
           <h3>{title}</h3>
           <Button variant="ghost" size="sm" icon="x" onClick={onClose} aria-label="close" />
@@ -502,6 +512,117 @@ export function Modal({ title, onClose, children, footer, wide, className }: { t
     </div>
   )
   return root !== null ? createPortal(node, root) : node
+}
+
+/** Whether something between a touched element and the pane it is in scrolls sideways: a swipe there is that thing's own. */
+function scrollsSideways(from: HTMLElement, within: HTMLElement): boolean {
+  for (let at: HTMLElement | null = from; at !== null && at !== within; at = at.parentElement) {
+    if (at.scrollWidth > at.clientWidth + 4) {
+      const flow = getComputedStyle(at).overflowX
+      if (flow === 'auto' || flow === 'scroll') return true
+    }
+  }
+  return false
+}
+
+/**
+ * The way back under a finger: a swipe from left to right over a pane takes one back from it, the pane following the
+ * finger while it moves. Left alone where the swipe is something else's — a strip that scrolls sideways, a slider, a
+ * drawing that is dragged, text being selected.
+ * @param active - whether a swipe means "back" right now (a pane that is not the whole screen has no "back").
+ * @returns handlers for the pane.
+ */
+export function useSwipeBack(onBack: () => void, active: () => boolean = () => true): Pick<HTMLAttributes<HTMLElement>, 'onTouchStart' | 'onTouchMove' | 'onTouchEnd' | 'onTouchCancel'> {
+  const held = useRef<{ x: number; y: number; pane: HTMLElement; way?: 'back' | 'other' } | undefined>(undefined)
+  const settle = (pane: HTMLElement): void => {
+    pane.style.transition = 'transform 0.18s ease-out'
+    pane.style.transform = ''
+    setTimeout(() => { pane.style.transition = '' }, 200)
+  }
+  return {
+    onTouchStart(event) {
+      held.current = undefined
+      const target = event.target as HTMLElement
+      if (event.touches.length !== 1 || !active()) return
+      if (scrollsSideways(target, event.currentTarget) || target.closest('input[type="range"], svg, canvas, [draggable="true"], [data-no-swipe]') !== null) return
+      held.current = { x: event.touches[0]!.clientX, y: event.touches[0]!.clientY, pane: event.currentTarget }
+    },
+    onTouchMove(event) {
+      const now = held.current
+      if (now === undefined) return
+      const dx = event.touches[0]!.clientX - now.x
+      const dy = event.touches[0]!.clientY - now.y
+      if (now.way === undefined && (Math.abs(dx) > 14 || Math.abs(dy) > 14)) {
+        // Text being selected moves the finger sideways too.
+        const selecting = globalThis.getSelection?.()?.isCollapsed === false
+        now.way = !selecting && dx > 0 && Math.abs(dx) > Math.abs(dy) * 1.6 ? 'back' : 'other'
+      }
+      if (now.way === 'back') {
+        now.pane.style.transition = 'none'
+        now.pane.style.transform = `translateX(${Math.max(0, dx)}px)`
+      }
+    },
+    onTouchEnd(event) {
+      const now = held.current
+      held.current = undefined
+      if (now === undefined || now.way !== 'back') return
+      const dx = (event.changedTouches[0]?.clientX ?? now.x) - now.x
+      settle(now.pane)
+      if (dx > Math.min(110, now.pane.offsetWidth * 0.28)) onBack()
+    },
+    onTouchCancel() {
+      const now = held.current
+      held.current = undefined
+      if (now?.way === 'back') settle(now.pane)
+    },
+  }
+}
+
+/**
+ * A list and the page of what is chosen from it. Side by side where there is room. On a screen as narrow as a
+ * phone's they are one at a time, the whole screen each: the list — then, once something on it is pressed, its page,
+ * with the way back at its top and under a swipe from left to right.
+ * @param start - whether the page is what a narrow screen opens on (somebody was led here to one thing).
+ */
+export function useSplit(start = false): {
+  /** On a narrow screen, the page of the chosen thing is what shows. */
+  shown: boolean
+  open: () => void
+  back: () => void
+  /** For the element that holds both (`nv-split`). */
+  rootClass: string
+  /** For the list: pressing one of its rows opens the page. */
+  list: { onClick: (event: ReactMouseEvent<HTMLElement>) => void }
+  /** For the page: the swipe back. */
+  detail: ReturnType<typeof useSwipeBack> & { ref: RefObject<HTMLElement> }
+  /** The way back, to stand at the top of the page; shown on a narrow screen alone. */
+  backBar: (label: string) => ReactNode
+} {
+  const [shown, setShown] = useState(start)
+  const pane = useRef<HTMLElement>(null)
+  const back = useCallback(() => { setShown(false) }, [])
+  // One at a time only where the two do not stand side by side: told by the way back being on the screen at all.
+  const paged = (): boolean => pane.current?.querySelector<HTMLElement>(':scope > .nv-split-back')?.offsetParent != null
+  const swipe = useSwipeBack(back, paged)
+  return {
+    shown,
+    open: () => { setShown(true) },
+    back,
+    rootClass: shown ? 'is-paged is-detail' : 'is-paged',
+    list: {
+      onClick: (event) => {
+        // A row of the list was pressed (not one of the list's own tools): its page is what the author asked for.
+        const row = (event.target as HTMLElement).closest('.nv-list-row, .nv-photo-card')
+        if (row !== null && event.currentTarget.contains(row) && (event.target as HTMLElement).closest('.nv-row-tools, [data-row-tool]') === null) setShown(true)
+      },
+    },
+    detail: { ...swipe, ref: pane },
+    backBar: label => (
+      <div className="nv-split-back">
+        <button type="button" onClick={back}><Icon name="chevronLeft" size={16} /><span>{label}</span></button>
+      </div>
+    ),
+  }
 }
 
 /** A button that opens a small anchored menu. */

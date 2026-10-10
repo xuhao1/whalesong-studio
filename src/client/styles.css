@@ -11581,3 +11581,442 @@ button.nv-album-chapter:hover {
   .nv-home-page .nv-shelf { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 10px; }
   .nv-home-actions { flex-wrap: wrap; }
 }
+
+/* A book's own service, set out under the choice that it has one. */
+.nv-own-block {
+  display: block;
+  margin: 8px 0 14px;
+  padding: 12px 12px 4px;
+}
+
+/* The gallery, listed by who or what its pictures show. */
+.nv-gallery-by {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 8px;
+}
+
+.nv-gallery-members {
+  max-height: 96px;
+  overflow-y: auto;
+}
+
+.nv-gallery-count {
+  margin-left: 5px;
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+}
+
+.nv-gallery-item.is-picked {
+  outline: 2px solid var(--nv-brand);
+  outline-offset: -2px;
+}
+
+/* The way to the viewing side, in the bar: apart from the pages where the book is made, and lit while it is where one is. */
+.nv-view-btn.nv-header-view {
+  height: 30px;
+  margin: 0 2px 0 8px;
+  padding: 0 13px;
+  border-radius: 15px;
+  font-size: 13px;
+}
+
+.nv-view-btn.nv-header-view::before {
+  content: none;
+}
+
+.nv-view-btn.nv-header-view.is-active {
+  border-color: var(--nv-brand);
+  background: var(--nv-brand);
+  color: var(--nv-on-accent);
+}
+
+.nv-header-rule {
+  flex: none;
+  align-self: center;
+  width: 1px;
+  height: 18px;
+  margin: 0 2px 0 8px;
+  background: var(--nv-border);
+}
+
+@container studio (max-width: 900px) {
+  .nv-header-rule { display: none; }
+}
+
+@container studio (max-width: 480px) {
+  .nv-cover .nv-view-btn.nv-header-view { height: 34px; margin-left: 4px; padding: 0 11px; }
+}
+
+/* Which portraits the text carries: the list of a chapter's, and the say beside one portrait. */
+.nv-figure-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.nv-figure-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px;
+  border: 1px solid var(--nv-border);
+  border-radius: var(--nv-radius);
+}
+
+.nv-figure-row.is-hidden .nv-figure-thumb {
+  opacity: 0.45;
+}
+
+.nv-figure-thumb {
+  flex: none;
+  width: 56px;
+  height: 72px;
+  border-radius: 6px;
+  object-fit: cover;
+}
+
+.nv-figure-what {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 2px;
+}
+
+.nv-figure-say {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+/* On a figure met in the text: quiet until the figure is pointed at. */
+.nv-figure-hide {
+  margin-left: 10px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.nv-figure:hover .nv-figure-hide,
+.nv-figure-hide:focus-visible {
+  opacity: 0.7;
+}
+
+@media (pointer: coarse) {
+  .nv-figure-hide { opacity: 0.6; }
+}
+
+/* The unlock form where it stands in a dialog (the private shelf's): the lock card without its frame. */
+.nv-lock-card.is-inline {
+  display: grid;
+  gap: 10px;
+  width: auto;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  text-align: left;
+}
+
+/*
+ * A list and the page of what is chosen from it, on a screen as narrow as a phone's: one at a time, the whole screen
+ * each. The list first; a row pressed, its page — with the way back at its top (and under a swipe from the left).
+ */
+.nv-split-back {
+  display: none;
+}
+
+@container studio (max-width: 680px) {
+  .nv-split.is-paged > .nv-split-list {
+    max-height: none;
+    overflow: visible;
+  }
+
+  .nv-split.is-paged.is-detail > .nv-split-list,
+  .nv-split.is-paged:not(.is-detail) > .nv-split-detail {
+    display: none;
+  }
+
+  .nv-split.is-paged > .nv-split-detail {
+    will-change: transform;
+    animation: nv-page-in 0.18s ease-out;
+  }
+
+  .nv-split-back {
+    position: sticky;
+    top: -12px;
+    z-index: 5;
+    display: flex;
+    margin: -12px -12px 8px;
+    padding: 4px 6px;
+    border-bottom: 1px solid var(--nv-border);
+    background: var(--nv-bg);
+  }
+
+  .nv-split-back > button {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    min-height: 40px;
+    padding: 0 10px 0 4px;
+    border: 0;
+    background: none;
+    color: var(--nv-brand-text);
+    font: inherit;
+    font-size: 15px;
+    cursor: pointer;
+  }
+}
+
+@keyframes nv-page-in {
+  from { opacity: 0.4; transform: translateX(24px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nv-split.is-paged > .nv-split-detail { animation: none; }
+}
+
+/* A dialog on a phone is the whole screen, not a card adrift in the middle of it. */
+@container studio (max-width: 480px) {
+  .nv-cover .nv-modal-mask {
+    padding: 0;
+    align-items: stretch;
+  }
+
+  .nv-cover .nv-modal,
+  .nv-cover .nv-modal-wide {
+    width: 100%;
+    height: 100%;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    animation: nv-page-in 0.18s ease-out;
+  }
+
+  .nv-cover .nv-modal-head {
+    min-height: 48px;
+    border-bottom: 1px solid var(--nv-border);
+  }
+
+  .nv-cover .nv-modal-body {
+    flex: 1;
+    padding-top: 12px;
+  }
+}
+
+/* The bar on a phone: the book's name gives way before the tools wrap to a row of their own. */
+@container studio (max-width: 480px) {
+  .nv-cover .nv-header > .nv-menu { flex: 1 1 0; min-width: 56px; }
+  .nv-cover .nv-header > .nv-menu > .nv-btn { max-width: 100%; overflow: hidden; }
+  .nv-cover .nv-header > .nv-menu > .nv-btn > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .nv-cover .nv-view-btn.nv-header-view { margin-left: 0; padding: 0 10px; }
+  .nv-cover .nv-header-tools { margin-left: auto; }
+}
+
+/* Comparing services and models: who takes part, and what each made of the same task, side by side. */
+.nv-modal.nv-modal-trial {
+  width: min(1080px, 100%);
+}
+
+.nv-trial-rows {
+  display: grid;
+  gap: 6px;
+}
+
+.nv-trial-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 6px 8px;
+  border: 1px solid var(--nv-border);
+  border-radius: var(--nv-radius-s);
+}
+
+.nv-trial-row.is-off {
+  opacity: 0.6;
+}
+
+.nv-trial-name {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 140px;
+  font-weight: 600;
+}
+
+.nv-trial-model {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+.nv-trial-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.nv-trial-cell {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid var(--nv-border);
+  border-radius: var(--nv-radius);
+  background: var(--nv-surface);
+}
+
+.nv-trial-cell.is-taken,
+.nv-trial-column.is-taken {
+  border-color: var(--nv-success);
+  box-shadow: 0 0 0 1px var(--nv-success);
+}
+
+.nv-trial-picture {
+  display: grid;
+  place-items: center;
+  min-height: 200px;
+  background: var(--nv-surface-2);
+}
+
+.nv-trial-picture img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.nv-trial-cell figcaption {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 8px 10px;
+}
+
+.nv-trial-cell figcaption > strong {
+  flex: 1 1 100%;
+  overflow-wrap: anywhere;
+}
+
+.nv-trial-cell figcaption > .nv-btn,
+.nv-trial-cell figcaption > .nv-chip {
+  margin-left: auto;
+}
+
+.nv-trial-failed {
+  margin: 0;
+  padding: 12px;
+  color: var(--nv-error);
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+
+.nv-trial-models {
+  display: grid;
+  gap: 8px;
+}
+
+.nv-trial-model-list {
+  display: grid;
+  gap: 8px;
+  max-height: 168px;
+  padding: 8px;
+  overflow-y: auto;
+  border: 1px solid var(--nv-border);
+  border-radius: var(--nv-radius-s);
+}
+
+.nv-trial-model-group {
+  display: grid;
+  gap: 4px;
+}
+
+.nv-trial-columns {
+  display: grid;
+  grid-auto-columns: minmax(280px, 1fr);
+  grid-auto-flow: column;
+  gap: 12px;
+  overflow-x: auto;
+}
+
+.nv-trial-column {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  max-height: 56vh;
+  border: 1px solid var(--nv-border);
+  border-radius: var(--nv-radius);
+  background: var(--nv-surface);
+}
+
+.nv-trial-column > header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--nv-border);
+}
+
+.nv-trial-column > header > div {
+  display: grid;
+  min-width: 0;
+}
+
+.nv-trial-column > header strong {
+  overflow-wrap: anywhere;
+}
+
+.nv-trial-body {
+  min-height: 80px;
+  padding: 10px 12px;
+  overflow-y: auto;
+}
+
+.nv-trial-prose p {
+  margin: 0 0 0.9em;
+  line-height: 1.85;
+  text-indent: 2em;
+}
+
+.nv-trial-plan {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 1.4em;
+}
+
+.nv-trial-plan li > span {
+  display: block;
+  color: var(--nv-text-2);
+  font-size: 12.5px;
+}
+
+@container studio (max-width: 680px) {
+  .nv-trial-columns {
+    grid-auto-columns: minmax(84%, 1fr);
+  }
+}
+
+.nv-trial-why {
+  margin-top: 10px;
+}
+
+.nv-trial-why > summary {
+  color: var(--nv-text-2);
+  font-size: 12.5px;
+  cursor: pointer;
+}

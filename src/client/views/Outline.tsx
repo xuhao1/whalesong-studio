@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 /** Outline: volumes, chapters and beats; the lines of the plot and their graph; long-running threads; AI derivation and what-if branches. */
+import { DeriveTrialDialog } from '../Trial'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { OutlineOpInput } from '../../shared/rpc'
 import { formatCount, sameName } from '../../shared/text'
@@ -14,6 +15,7 @@ import { CHAPTER_STATUS, CHAPTER_STATUS_TONE, THREAD_KIND, THREAD_STATUS, THREAD
 import {
   Button, Chip, cx, Empty, Field, Menu, Modal, SectionTitle, Select, Tabs, TextArea, TextInput, useAction, useBookLine, useConfirm, useLoad, useProject, useSnapshot,
   useStudio, useT, type Translate, ViewButton,
+  useSplit,
 } from '../ui'
 
 const labelOptions = <T extends string>(labels: Record<T, [string, string]>, t: Translate): { value: T; label: string }[] =>
@@ -63,6 +65,8 @@ function Chapters({ onGraph }: { onGraph: () => void }) {
   const plans = home !== undefined ? home.chapters : main
   // What comes next is asked of the planner here, for the line shown: the chapters and their deriving are one page.
   const [deriving, setDeriving] = useState(false)
+  // On a phone the chapters and a chapter's plan are one at a time.
+  const split = useSplit()
 
   // ── plans that say nothing of chapters whose digest knows them ──
   const fillable = useLoad(async signal => await controller.api.call('outline.fill', { root, dry: true }, signal), [root, project.revision])
@@ -74,8 +78,8 @@ function Chapters({ onGraph }: { onGraph: () => void }) {
   })
 
   return (
-    <div className="nv-split">
-      <aside className="nv-split-list nv-outline-tree">
+    <div className={cx('nv-split', split.rootClass)}>
+      <aside className="nv-split-list nv-outline-tree" {...split.list}>
         <ChapterTree
           active={deriving ? undefined : selected?.id}
           onOpen={(id) => { setDeriving(false); controller.focusChapter(id) }}
@@ -90,7 +94,8 @@ function Chapters({ onGraph }: { onGraph: () => void }) {
           ) : undefined}
         />
       </aside>
-      <section className="nv-split-detail">
+      <section className="nv-split-detail" {...split.detail}>
+        {split.backBar(t('章节', 'Chapters'))}
         {deriving ? (
           <>
             <div className="nv-toolbar">
@@ -551,6 +556,8 @@ export function Derive({ onApplied, only, autoStart, preset }: {
   const [working, setWorking] = useState<'chapters' | 'whatif' | undefined>()
   const [derived, setDerived] = useState<{ chapters: DerivedChapter[]; rationale?: string; volume: string } | undefined>()
   const [skipped, setSkipped] = useState<Set<number>>(new Set())
+  // The same chapters planned by several models at once, to be compared.
+  const [comparing, setComparing] = useState(false)
   const [question, setQuestion] = useState('')
   const [branches, setBranches] = useState<{ branches: Branch[]; recommendation?: string } | undefined>()
   const nameOf = (ref: string): string => project.characters.find(card => card.id === ref)?.name ?? ref
@@ -677,8 +684,10 @@ export function Derive({ onApplied, only, autoStart, preset }: {
         {mode === 'replace' ? <p className="nv-note is-warn">{t(`这会把${after.length > 0 ? '所选章节' : '最后一章已写章节'}之后的大纲换掉。没写正文的章节会被删除；写了正文的留成一条“搁置”的线。`, `This replaces the outline after ${after.length > 0 ? 'the chosen chapter' : 'the last written chapter'}. Unwritten chapters are deleted; written ones are kept as a shelved line.`)}</p> : null}
         <Field label={t('方向（可留空）', 'Direction (optional)')}><TextArea value={direction} minRows={2} placeholder={t('例：让反派先赢一局；这几章把感情线推到误会最深处', 'e.g. let the antagonist win a round; push the romance to its deepest misunderstanding')} onChange={(event) => { setDirection(event.target.value) }} /></Field>
         <div className="nv-form-actions">
+          {!direct ? <Button variant="outline" icon="layers" disabled={working !== undefined} onClick={() => { setComparing(true) }} title={t('让几个模型各推演一版，并排着看，采纳一版——采纳之前什么都不进大纲', 'Have several models each plan these chapters, read the plans side by side and take one — nothing enters the outline before that')}>{t('对比…', 'Compare…')}</Button> : null}
           <Button variant="primary" icon="sparkles" busy={working === 'chapters'} disabled={working !== undefined} onClick={() => { derive() }}>{t('推演', 'Derive')}</Button>
         </div>
+        {comparing ? <DeriveTrialDialog<{ label: string; provider: string; model: string; chapters?: DerivedChapter[]; rationale?: string; seconds: number; error?: string }> count={Math.max(1, Math.min(12, wanted))} direction={direction} volume={volume} onClose={() => { setComparing(false) }} onTake={(plan) => { setSkipped(new Set()); setApplied(undefined); setDerived({ chapters: plan.chapters ?? [], ...(plan.rationale !== undefined ? { rationale: `${plan.label}：${plan.rationale}` } : {}), volume }) }} /> : null}
         {working === 'chapters' && stream.length > 0 ? <pre className="nv-stream">{stream.slice(-900)}</pre> : null}
         {applied !== undefined ? (
           <p className="nv-note is-ok">

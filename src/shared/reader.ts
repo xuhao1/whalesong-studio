@@ -232,6 +232,23 @@ export interface ChapterFigure {
   after: number
 }
 
+/** A portrait of somebody and where it stands in the book, shown or kept out of the text: what the author is shown to say which of them the text carries. */
+export interface PortraitPlace {
+  path: string
+  /** Whose it is: their card and their name. */
+  character: string
+  name: string
+  /** The moment it is of, where it is of one. */
+  title?: string
+  /** The chapter it stands in: its moment's, else the one they first come on in. Absent while no chapter has them yet. */
+  chapter?: string
+  /** That chapter as it is counted along its line, and what it is called. */
+  index?: number
+  chapterTitle?: string
+  /** The author keeps it out of the text. */
+  hidden: boolean
+}
+
 /** Pairs of neighbouring characters of a text, without what is not letters: what two texts are compared by. */
 function pairsOf(text: string): Set<string> {
   const letters = [...text.replace(/[\s\p{P}\p{S}]+/gu, '')]

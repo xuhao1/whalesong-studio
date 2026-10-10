@@ -338,7 +338,7 @@ export async function buildAudioScript(core: NovelCore, runtime: ProjectRuntime,
   const resolve = (name: string): CharacterCard | undefined => characters.find(card => sameName(card.name, name) || card.aliases?.some(alias => sameName(alias, name)) === true)
   const castText = castFor(chapter, characters, text).map(card => `${card.name}${card.aliases !== undefined && card.aliases.length > 0 ? `(${card.aliases.join('/')})` : ''} | ${[card.gender, card.age, card.voice ?? card.personality].filter(Boolean).join('，')}`).join('\n')
   const ambienceText = AMBIENCE_KEYS.map(key => `${key}: ${AMBIENCE[key][lang === 'zh' ? 0 : 1]}`).join('\n')
-  const sounds = soundPlan(await core.settings.get())
+  const sounds = soundPlan(await core.settingsOf(runtime))
   const blocks = blocksOf(text)
   let done = 0
   task.job?.progress(0, blocks.length, L(lang, `编排有声脚本（共 ${blocks.length} 段）`, `directing the script (${blocks.length} passages)`))
@@ -875,7 +875,7 @@ const ISSUE_WORDS: Record<TakeIssue, [string, string]> = {
 export async function synthesizeChapter(core: NovelCore, runtime: ProjectRuntime, params: { chapter: string; lines?: string[]; force?: boolean }, task: TaskContext): Promise<SynthesisResult> {
   const { project } = runtime
   const provider = await requireSpeech(core, runtime)
-  const settings = (await core.settings.get()).tts
+  const settings = (await core.settingsOf(runtime)).tts
   let script = await buildAudioScript(core, runtime, { chapter: params.chapter }, task)
   const manifest = await project.manifest()
   const lang = promptLanguage(manifest.language)
@@ -1090,7 +1090,7 @@ export async function audition(core: NovelCore, runtime: ProjectRuntime, params:
   const provider = await requireSpeech(core, runtime)
   const manifest = await runtime.project.manifest()
   const lang = promptLanguage(manifest.language)
-  const settings = (await core.settings.get()).tts
+  const settings = (await core.settingsOf(runtime)).tts
   const cast = await openCast(runtime.project, settings)
   // No voice named: the narrator's, which is what a line without a speaker is read in.
   const narrator = settings.narratorVoice ?? (describesVoices(settings.provider) ? AUDIOGEN_NARRATOR : undefined)

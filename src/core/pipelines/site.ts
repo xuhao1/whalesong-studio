@@ -232,7 +232,7 @@ export async function publishSite(core: NovelCore, runtime: ProjectRuntime, para
   const root = resolve(project.root)
   // A site inside the book would be read back as part of it — and, in a sealed book, would lie there in the open.
   if (out === root || out.startsWith(root + sep)) throw new ProjectError('novel/invalid', 'publish into a folder outside the book\'s own')
-  const settings = await core.settings.get()
+  const settings = await core.settingsOf(runtime)
   const book = await describeBook(runtime, 'read')
   const wanted = params.chapters !== undefined && params.chapters.length > 0 ? new Set(params.chapters) : undefined
   const trunk = await listChapters(runtime)

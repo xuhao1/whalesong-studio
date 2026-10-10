@@ -65,8 +65,17 @@ export interface ProjectManifest {
   models?: Partial<TextModelRouting>
   /** This book's own way of working its crew: a role named here is set so for this book, whatever the Studio-wide settings say. */
   crew?: CrewSettings
-  /** This book's own way with its pictures, where it differs from the Studio's (which picture of a person leads, what a design sheet shows…). */
+  /**
+   * This book's own way with its pictures, where it differs from the Studio's: which picture of a person leads, what a
+   * design sheet shows… — and, where it names a `provider`, the service its pictures come from: the whole of that
+   * service's setup (address, model, sizes) is then the book's, and none of the Studio's is mixed into it. Keys are
+   * never kept in a book: the one saved for the address is used.
+   */
   image?: BookImageSettings
+  /** This book's own speech setup, whole (service, model, narrator, voices), where it has one; else the Studio's speaks for it. */
+  tts?: TtsSettings
+  /** This book's own way with sound that is not speech, where it has one. */
+  sound?: SoundSettings
   /** Free-form notes that always travel with the project digest. */
   notes?: string
   createdAt: Timestamp
@@ -1113,16 +1122,31 @@ export interface ImageSettings {
    * yes. `false`: panels are held against people and places only.
    */
   panelThings?: boolean
+  /**
+   * What each service was set up with when the author moved on to another — its address, model, sizes, workflow… —
+   * by the service it was (`openrouter`, `custom`, `comfyui`…): put back when they return to it. Nothing here is in
+   * force; it is what is remembered.
+   */
+  kept?: Record<string, Partial<ImageSettings>>
 }
 
 /**
  * A book's own way with its pictures, where it is not the Studio's: whatever is named here holds for this book,
  * whatever the settings for every book say (`novel.json`, so it travels with the book).
  */
-export type BookImageSettings = Pick<ImageSettings, 'lead' | 'portraitScene' | 'sheet' | 'panelThings'>
+export type BookImageSettings = Partial<Omit<ImageSettings, 'stylePrompt' | 'negativePrompt'>>
 
-/** What of the image settings a book may have its own way with. */
+/** The ways of drawing a book may have of its own while its pictures still come from the Studio's service. */
 export const BOOK_IMAGE_KEYS: readonly (keyof BookImageSettings)[] = ['lead', 'portraitScene', 'sheet', 'panelThings']
+
+/**
+ * What of the image settings belongs to the service the pictures come from: changed together when the author moves to
+ * another service, remembered together (`kept`), and a book's own together where the book names a service.
+ */
+export const IMAGE_SERVICE_KEYS: readonly (keyof ImageSettings)[] = ['provider', 'baseURL', 'apiKeyRef', 'model', 'quality', 'local', 'promptTokens', 'promptCompact', 'sizes', 'bridge', 'workflow', 'editWorkflow', 'textEncoder', 'vae', 'encoderType', 'python', 'device', 'dtype', 'steps', 'guidance', 'size', 'resolution', 'concurrency', 'references']
+
+/** The same of the speech settings: what belongs to the service that speaks. How the narrator is told to read is the author's, whoever reads. */
+export const TTS_SERVICE_KEYS: readonly (keyof TtsSettings)[] = ['provider', 'baseURL', 'apiKeyRef', 'model', 'sampleRate', 'designedVoiceModel', 'narratorVoice', 'defaultVoices']
 
 /** How an author's loose notes on a picture of somebody were sorted. */
 export interface SortedNotes {
@@ -1193,6 +1217,8 @@ export interface TtsSettings {
    * has the narrator read every word, as an audiobook would.
    */
   speechTags?: 'drop' | 'read'
+  /** What each speech service was set up with when the author moved on to another, by its kind: put back when they return to it. Nothing here is in force. */
+  kept?: Record<string, Partial<TtsSettings>>
 }
 
 /** Where sounds that are not speech come from: effects, music, generated ambience. */
@@ -1921,6 +1947,39 @@ export interface IllustrationInfo {
   size?: string
   /** What went to the image service, word for word. Pictures drawn before this was kept have none. */
   sent?: IllustrationSent
+  /** A portrait of one of somebody's moments: which (its name, its id on their card) and the chapter it is from — where the picture stands in the text. */
+  moment?: { title?: string; scene?: string; chapter?: string }
+  /** Drawn to compare services: one of several pictures of the same thing, each by another (`label`: which); `id` is the same for the pictures of one comparison. */
+  trial?: { id: string; label: string }
+}
+
+/** One service a picture is tried with: what the author reads it as, and the service itself (its part of the image settings). */
+export interface ImageTrial {
+  label: string
+  image: Partial<ImageSettings>
+}
+
+/** What one service made of a picture tried with several: the picture, or why there is none. */
+export interface TrialPicture {
+  label: string
+  path?: string
+  model?: string
+  /** How long it took, in seconds. */
+  seconds: number
+  error?: string
+}
+
+/** What one model made of a chapter written by several: the text (also kept among the chapter's versions), or why there is none. */
+export interface TrialDraft {
+  label: string
+  provider: string
+  model: string
+  text?: string
+  words?: number
+  seconds: number
+  /** The version of the chapter it is kept as: restoring it makes this draft the chapter. */
+  version?: string
+  error?: string
 }
 
 // ───────────────────────────── working modes ─────────────────────────────

@@ -6,6 +6,7 @@ import { buildAudioScript, designCharacterVoice, exportChapterAudio, isSkipped, 
 import { renderSound } from '../../core/pipelines/sound'
 import { buildStoryboard, renderPanels, sheetsAhead } from '../../core/pipelines/comic'
 import { illustrate, redrawPicture, type IllustrateParams } from '../../core/pipelines/illustrate'
+import { imageSetups, withModel } from '../../core/pipelines/trial'
 import { novelizePlay, playTurn, setPlayOutcome, startPlay } from '../../core/pipelines/play'
 import { ProjectError } from '../../core/project'
 import type { NovelService } from '../../host/service'
@@ -52,6 +53,7 @@ export function stageTools(service: NovelService): ToolDefinition[] {
       mutating: true,
       parameters: {
         kind: { type: 'string', required: true, enum: ['sheet', 'portrait', 'scene', 'location', 'item', 'cover', 'custom'] },
+        compare: listParameter('portrait, or with `redraw`: draw the same picture once with each of several image services, to compare them — the ids `compare=["list"]` gives (the service in force, and the ones the author set up before), `id=model` for another model of a service. Nothing is replaced; the author takes one in the Studio.'),
         redraw: { type: 'string', description: 'Draw an existing picture again from its record, whatever kind it is — the picture\'s id or path (novel_manage action=show_image shows what it was made of; pass its kind as `kind`). With `subject`: its words as rewritten — they take the subject\'s place, and the art direction, what it kept out and the references it had go along as before. With `change`: the picture itself goes to the image model with your `change` — those words and nothing else: no description, no art direction; the picture says the rest. For a picture that is right but for one thing. It needs an image service that takes a picture; where the service takes none, the words the picture was made from go in its place with the change after them, and the result says so. The new picture takes the old one\'s place wherever it hangs — a card\'s sheet, an entry\'s art, the cover; among somebody\'s portraits it goes before the old one — and the old one stays in the gallery.' },
         subject: { type: 'string', description: 'With `redraw`: the picture\'s own words, rewritten.' },
         change: { type: 'string', description: 'With `redraw`: the one thing to change in the picture, said as an instruction ("a snowy night behind her", "her hair down") — it is the whole prompt, so say only the change.' },
@@ -76,8 +78,23 @@ export function stageTools(service: NovelService): ToolDefinition[] {
       async run(args, env) {
         const runtime = await env.project()
         const again = typeof args.redraw === 'string' ? args.redraw.trim() : ''
+        // The same picture by several image services, to be compared: the setups the author has, by the names `compare=list` gives.
+        const wanted = listOf(args.compare) ?? []
+        const setups = wanted.length > 0 ? imageSetups(await env.core.settings.get(), await runtime.project.manifest()) : []
+        if (wanted.length === 1 && wanted[0] === 'list') {
+          const all = imageSetups(await env.core.settings.get(), await runtime.project.manifest())
+          return { text: all.length > 0 ? `Image services there are to compare (pass their ids as \`compare\`; \`id=model\` tries another model of the same service):\n${all.map(setup => `- ${setup.id}: ${setup.label}${setup.current ? ' (draws for this book now)' : ' (set up before, remembered)'}`).join('\n')}` : 'No image service is set up, and none is remembered from before.', record: false }
+        }
+        const trials = wanted.map((name) => {
+          const [id, model] = name.split('=')
+          const setup = setups.find(candidate => candidate.id === id)
+          if (setup === undefined) throw new ProjectError('novel/invalid', `no image service is called "${id}" — compare=list names the ones there are`)
+          return model !== undefined && model.length > 0 ? withModel(setup, model) : { label: setup.label, image: setup.image }
+        })
+        const tried = (pictures: { label: string; path?: string; seconds: number; error?: string }[]): string => `Drawn to compare, one picture a service — none of them replaces anything; they are in the gallery (kept out of the text) for the author to take one in the Studio:\n${pictures.map(picture => `- ${picture.label}: ${picture.path !== undefined ? `${picture.path} (${picture.seconds}s)` : `failed — ${brief(picture.error, 160)}`}`).join('\n')}\nTell the author they are there, and which service made which.`
         if (again.length > 0) {
-          const redrawn = await env.job('illustrate', `illustrate ${args.kind}`, args.target, async task => await redrawPicture(env.core, runtime, { picture: again, ...(typeof args.subject === 'string' ? { subject: args.subject } : {}), ...(typeof args.change === 'string' ? { change: args.change } : {}) }, task))
+          const redrawn = await env.job('illustrate', `illustrate ${args.kind}`, args.target, async task => await redrawPicture(env.core, runtime, { picture: again, ...(typeof args.subject === 'string' ? { subject: args.subject } : {}), ...(typeof args.change === 'string' ? { change: args.change } : {}), ...(trials.length > 0 ? { trials } : {}) }, task))
+          if (redrawn.tried !== undefined) return { text: tried(redrawn.tried), data: toJson(redrawn.tried) }
           return {
             text: [
               `Drawn again and saved to ${redrawn.path}.`,
@@ -108,7 +125,9 @@ export function stageTools(service: NovelService): ToolDefinition[] {
           ...(args.plain === true ? { plain: true } : {}),
           ...(args.scene !== undefined && args.scene.length > 0 ? { scene: args.scene } : {}),
           ...(args.stage !== undefined && args.stage.length > 0 ? { stage: args.stage } : {}),
+          ...(trials.length > 0 && args.kind === 'portrait' ? { trials } : {}),
         }
+        if (trials.length > 0 && args.kind !== 'portrait') throw new ProjectError('novel/invalid', '`compare` draws a portrait with several services (kind=portrait), or an existing picture again (`redraw`)')
         if (args.sheet_first === 'ask') {
           // Nothing is drawn: who would get a sheet first is worked out, for the author to be asked.
           const ahead = params.kind === 'portrait' || params.kind === 'scene' || params.kind === 'cover' || params.kind === 'custom'
@@ -124,6 +143,7 @@ export function stageTools(service: NovelService): ToolDefinition[] {
         }
         if (args.sheet_first === 'skip') params.sheetFirst = false
         const result = await env.job('illustrate', `illustrate ${args.kind}`, args.target, async task => await illustrate(env.core, runtime, params, task))
+        if (result.tried !== undefined) return { text: tried(result.tried), data: toJson(result.tried) }
         const parts = result.parts
         const lines = [
           `Image saved to ${result.path}${result.inserted ? ' and embedded in the chapter' : ''}.`,
@@ -194,13 +214,13 @@ export function stageTools(service: NovelService): ToolDefinition[] {
           }
         }
         if (args.action === 'voices') {
-          const settings = (await env.core.settings.get()).tts
+          const settings = (await env.core.settingsOf(runtime)).tts
           const voices = stockVoices(settings.provider)
           if (voices.length === 0) return { text: 'No speech provider is configured (Novel Studio → Settings).' }
           return { text: `Stock voices of ${settings.provider}:\n${voices.map(voice => `- ${voice.id}: ${voice.gender}, ${voice.age}${voice.accent !== undefined ? `, ${voice.accent}` : ''} — ${voice.note}`).join('\n')}`, data: toJson(voices) }
         }
         if (args.action === 'cast') {
-          const settings = (await env.core.settings.get()).tts
+          const settings = (await env.core.settingsOf(runtime)).tts
           if (settings.provider === 'none') return { text: 'No speech provider is configured (Novel Studio → Settings), so nobody has a voice yet.' }
           const sheet = await project.voiceCast()
           const characters = await project.characters()
@@ -225,7 +245,7 @@ export function stageTools(service: NovelService): ToolDefinition[] {
             const card = await project.findCharacter(character)
             if (card === undefined) throw new ProjectError('novel/not-found', `no character matches "${character}"`)
             if (args.voice === undefined || args.voice.trim().length === 0) throw new ProjectError('novel/invalid', 'action=set_voice needs `voice`')
-            const provider = (await env.core.settings.get()).tts.provider
+            const provider = (await env.core.settingsOf(runtime)).tts.provider
             await project.saveCharacter({ id: card.id, voiceProfile: { ...card.voiceProfile, provider, voice: args.voice.trim(), ...(args.prompt !== undefined ? { instructions: args.prompt } : {}) } })
             return { text: `${card.name} now speaks with voice "${args.voice.trim()}".` }
           }
@@ -261,7 +281,7 @@ export function stageTools(service: NovelService): ToolDefinition[] {
             data: toJson(result),
           }
         }
-        const result = await exportChapterAudio(runtime, chapter, (await env.core.settings.get()).tts)
+        const result = await exportChapterAudio(runtime, chapter, (await env.core.settingsOf(runtime)).tts)
         return { text: `Exported ${Math.round(result.duration)} seconds of audio to ${result.path}${result.missing > 0 ? ` (${result.missing} lines had no audio and were skipped)` : ''}.`, data: toJson(result) }
       },
     }),

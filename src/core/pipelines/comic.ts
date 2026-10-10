@@ -432,7 +432,7 @@ export async function sheetsAhead(core: NovelCore, runtime: ProjectRuntime, asks
 
 export async function renderPanels(core: NovelCore, runtime: ProjectRuntime, params: { chapter: string; panels?: string[]; force?: boolean; concurrency?: number; /** `false`: this once, no design sheet is drawn first. */ sheetFirst?: boolean; /** Whether the art of the things a panel shows goes along; left out: as the book (else the Studio) has it. */ things?: boolean }, task: TaskContext): Promise<RenderPanelsResult> {
   const { project } = runtime
-  await requireImages(core)
+  await requireImages(core, runtime)
   let board = await buildStoryboard(core, runtime, { chapter: params.chapter }, task)
   const manifest = await project.manifest()
   const lang = promptLanguage(manifest.language)
@@ -449,7 +449,7 @@ export async function renderPanels(core: NovelCore, runtime: ProjectRuntime, par
   if (first.drawn.length > 0) task.job?.result({ sheets: first.drawn })
   // Drawn as this chapter has them: the look — and the sheet — of the stretch of their life that holds here.
   const characters = await castAt(runtime, board.chapterId, first.drawn.length > 0 ? await project.characters() : cards)
-  const mostReferences = referencesOf((await core.settings.get()).image.references)
+  const mostReferences = referencesOf((await core.imageOf(runtime)).references)
   // Whether the art of the things a panel shows goes along: this drawing's own word for it, else the book's, else the Studio's (yes).
   const thingArt = params.things ?? (await core.imageOf(runtime)).panelThings !== false
   let rendered = 0
@@ -479,7 +479,7 @@ export async function renderPanels(core: NovelCore, runtime: ProjectRuntime, par
         ...(makings.pieces !== undefined ? { pieces: makings.pieces } : {}),
         kind: 'panel',
         target: board.chapterId,
-        size: pictureSize(core.currentSettings().image, 'panel'),
+        size: pictureSize((await core.imageOf(runtime)), 'panel'),
         name: `panel-${board.chapterId}-${hashText(panel.id).slice(0, 4)}`,
         // A panel is a picture of the book like any other: on record, in the gallery, drawn again and changed from there.
         art,

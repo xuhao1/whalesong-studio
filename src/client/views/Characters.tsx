@@ -8,6 +8,8 @@
  *   CardPhoto        somebody's face for a list
  *   ROLE_LABELS…     how parts are called, and where somebody stands at a chapter of a line
  */
+import { ImageTrialDialog } from '../Trial'
+import { PortraitInText } from '../Figures'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { VoiceOption } from '../../shared/rpc'
 import type { CharacterCard, CharacterLook, CharacterRole, CharacterStage, LifeMark, SignatureScene, SortedNotes } from '../../shared/types'
@@ -28,6 +30,8 @@ import {
   Button, Chip, cx, Empty, Field, Modal, ProjectImage, SectionTitle, Select, TextArea, TextInput, useAction, useConfirm, useLoad, useMediaUrl,
   useProject, useRunningJob, useSnapshot, useStudio, useT, plainEnter,
   ViewButton,
+  useReady,
+  useSplit,
 } from '../ui'
 
 export const ROLE_LABELS: Record<CharacterRole, [string, string]> = {
@@ -113,12 +117,14 @@ export function CharacterCards({ shown, grouped, searching, lives, picks }: { sh
   const entity = useSnapshot(snapshot => snapshot.entity)
   const [selected, setSelected] = useState<string | undefined>(() => (entity?.kind === 'character' ? entity.id : undefined) ?? shown[0]?.id ?? project.characters[0]?.id)
   // A link from elsewhere (the board, a relationship, a tool row) names the card to open.
-  useEffect(() => { if (entity?.kind === 'character') setSelected(entity.id) }, [entity?.nonce])
+  // On a phone the list and a person's page are one at a time; led here to one person, their page is what opens.
+  const split = useSplit(entity?.kind === 'character')
+  useEffect(() => { if (entity?.kind === 'character') { setSelected(entity.id); split.open() } }, [entity?.nonce])
   const [creating, setCreating] = useState(false)
   const [name, setName] = useState('')
   const settings = useSnapshot(snapshot => snapshot.settings)
   useEffect(() => { if (settings === undefined) void controller.loadSettings().catch(() => {}) }, [controller, settings])
-  const canDraw = settings?.ready?.image === true
+  const canDraw = useReady().image
   const faced = project.characters.filter(card => card.visual?.portrait !== undefined || card.visual?.sheet !== undefined)
   const [choice, setChoice] = useState<PeopleMode | undefined>(storedMode)
   // Portraits by default wherever there is something to show or a way to draw it.
@@ -222,8 +228,8 @@ export function CharacterCards({ shown, grouped, searching, lives, picks }: { sh
     </li>
   ))
   return (
-    <div className={cx('nv-split nv-people', mode === 'photos' && 'has-photos')}>
-      <aside className="nv-split-list">
+    <div className={cx('nv-split nv-people', mode === 'photos' && 'has-photos', split.rootClass)}>
+      <aside className="nv-split-list" {...split.list}>
         <div className="nv-people-tools">
           <div className="nv-seg" role="group" aria-label={t('人物列表的样子', 'How the list looks')}>
             <button type="button" className={cx(mode === 'photos' && 'is-active')} onClick={() => { pick('photos') }} title={t('显示定妆照', 'Show portraits')}><Icon name="users" size={13} /><span>{t('定妆照', 'Portraits')}</span></button>
@@ -259,8 +265,9 @@ export function CharacterCards({ shown, grouped, searching, lives, picks }: { sh
         <RemovedCards kinds={['character']}>{count => t(`最近删除的人物 · ${count}`, `Deleted characters · ${count}`)}</RemovedCards>
         <button type="button" className="nv-add-row" onClick={() => { controller.openCast('walkons') }}>{t('没立卡的路人、龙套在"龙套"页签里管 →', 'People without a card are kept under Walk-ons →')}</button>
       </aside>
-      <section className="nv-split-detail">
-        {card !== undefined ? <CharacterEditor key={card.id} card={card} lives={lives} onDeleted={() => { setSelected(undefined) }} /> : <Empty icon="users" title={t('选择或新建一个人物', 'Select or create a character')} />}
+      <section className="nv-split-detail" {...split.detail}>
+        {split.backBar(t('人物', 'People'))}
+        {card !== undefined ? <CharacterEditor key={card.id} card={card} lives={lives} onDeleted={() => { setSelected(undefined); split.back() }} /> : <Empty icon="users" title={t('选择或新建一个人物', 'Select or create a character')} />}
       </section>
       {creating ? (
         <Modal title={t('新建人物', 'New character')} onClose={() => { setCreating(false) }} footer={<Button variant="primary" busy={busy} disabled={name.trim().length === 0} onClick={create}>{t('创建', 'Create')}</Button>}>
@@ -459,7 +466,8 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
   const seen = useLoad(async signal => ((project.lines ?? []).length > 0 ? await controller.api.call('lines.seen', { root }, signal).catch(() => undefined) : undefined), [root, project.revision])
   const presence = project.presence.find(entry => entry.character === card.id)
   const told = lives?.lives[card.id]?.first !== undefined ? lives.lives[card.id] : undefined
-  const voices: VoiceOption[] = settings?.voices ?? []
+  // The stock voices of whatever speaks for this book: its own speech setup where it has one.
+  const voices: VoiceOption[] = (settings?.book?.root === root ? settings.book.voices : undefined) ?? settings?.voices ?? []
   const voiceProfile = draft.voiceProfile ?? {}
   // Work on this card that is still running — also when it was started before this screen was opened.
   const anchoring = useRunningJob(job => job.kind === 'bible' && job.title.startsWith('visual anchor') && job.target === card.id) !== undefined
@@ -497,6 +505,8 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
     setPortraitFrom(undefined)
     setSheetFrom(undefined)
   }, [card.id])
+  // A portrait by several image services at once, to be compared.
+  const [comparing, setComparing] = useState(false)
   const draw = (kind: 'sheet' | 'portrait', done: string, look?: string, scene?: string, stage?: string): Promise<unknown> | undefined => {
     if (!controller.need('image')) return undefined
     // A look (outfit) is described on its own row; the ideas here are for the main sheet and the portrait.
@@ -598,6 +608,7 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
                 <span className="nv-spacer" />
               </>
             ) : null}
+            {placed >= 0 ? <PortraitInText character={card.id} path={picture.path} /> : null}
             <DeletePicture bare path={picture.path} disabled={dirty} onDone={() => { setPicked(undefined) }} />
           </div>
         ) : null}
@@ -614,6 +625,7 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
         <div className="nv-person-draw">
           <Button size="sm" variant={draft.visual?.portrait === undefined ? 'primary' : 'outline'} icon="image" disabled={dirty || (drawing !== undefined && !portraitBusy)} busy={portraitBusy} pending={t('正在画立绘…', 'Drawing the portrait…')} onClick={() => draw('portrait', t('立绘已生成', 'Portrait ready'))} title={dirty ? t('先保存当前修改', 'Save your edits first') : portraitAgainst === 'words' ? t('只照文字画', 'Drawn from the words alone') : hasSheet ? t('照着人设图画', 'Drawn against the design sheet') : t('先画人设图，再照着它画立绘', 'The design sheet is drawn first, then the portrait against it')}>{draft.visual?.portrait !== undefined ? t('重画立绘', 'Redraw portrait') : t('画立绘', 'Draw portrait')}</Button>
           <Button size="sm" variant="outline" icon="users" disabled={dirty || (drawing !== undefined && !sheetBusy)} busy={sheetBusy} pending={t('正在画人设图…', 'Drawing the sheet…')} onClick={() => draw('sheet', t('人设图已生成', 'Design sheet ready'))} title={dirty ? t('先保存当前修改', 'Save your edits first') : sheetAgainst === 'portrait' ? t(`${image?.sheet === 'front' ? '正面全身' : '三视图'}，照着立绘画`, `${image?.sheet === 'front' ? 'The front view' : 'Three views'}, drawn against the portrait`) : t(`${image?.sheet === 'front' ? '正面全身' : '三视图'}，只照文字画：视觉锚点、画风和下面写的想法`, `${image?.sheet === 'front' ? 'The front view' : 'Three views'}, drawn from the words alone: the visual anchor, the art direction and the ideas below`)}>{draft.visual?.sheet !== undefined ? t('重画人设图', 'Redraw sheet') : t('生成人设图', 'Design sheet')}</Button>
+          <Button size="sm" variant="ghost" icon="layers" disabled={dirty || drawing !== undefined} onClick={() => { if (controller.need('image')) setComparing(true) }} title={t('用几个绘图服务各画一张立绘，并排着比，采纳一张——同一幕、同一段提示词、同样的参考图', 'A portrait by each of several image services, side by side, to take one — the same moment, the same words, the same reference pictures')}>{t('对比…', 'Compare…')}</Button>
         </div>
         <label className="nv-person-moment" title={t('这一页画的立绘照着什么画；不选就是 设置 → 图像生成 里定的', 'What a portrait drawn from this page is held against; left alone, as Settings → Images has it')}>
           <span>{t('立绘照着', 'Portrait from')}</span>
@@ -860,6 +872,7 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
         />
       ) : null}
       {confirm.element}
+      {comparing ? <ImageTrialDialog of={{ character: { id: card.id, name: card.name } }} params={{ ...(moment === 'plain' ? { plain: true } : moment.length > 0 ? { scene: moment } : {}), ...(portraitFrom !== undefined ? { from: portraitFrom } : {}), ...(notes.trim().length > 0 ? { notes: notes.trim() } : {}) }} onClose={() => { setComparing(false) }} /> : null}
       {sheets.element}
     </div>
   )

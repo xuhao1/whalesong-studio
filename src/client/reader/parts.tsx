@@ -310,6 +310,8 @@ export interface ReaderPageProps {
   onPerson?: ((id: string) => void) | undefined
   /** The pictures of people's moments that fall in this chapter: each shown after the paragraph it is told in — beside the text, not part of it. */
   figures?: readonly { path: string; caption: string; after: number }[] | undefined
+  /** Where the reader is the author: a portrait met in the text can be kept out of it from there. */
+  onHideFigure?: ((path: string) => void) | undefined
   /** The places, houses, things and ideas of the book's world: marked where a chapter first names one, as people are. */
   things?: readonly ReaderThing[] | undefined
   /** Go to the page of one of them. */
@@ -372,7 +374,7 @@ const nameable = (name: string): boolean => [...name.trim()].length >= 2
 const literal = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 /** One chapter on the page. In listening mode every sentence of the prose can be pressed, and the one being spoken is lit. */
-export function ReaderPage({ t, bookTitle, chapter, text, prefs, media, lines, active, onLine, sound, sounding, pace, flash, scroller, footer, children, onSelect, marks, openMark, onMark, people, onPerson, things, onThing, figures }: ReaderPageProps) {
+export function ReaderPage({ t, bookTitle, chapter, text, prefs, media, lines, active, onLine, sound, sounding, pace, flash, scroller, footer, children, onSelect, marks, openMark, onMark, people, onPerson, things, onThing, figures, onHideFigure }: ReaderPageProps) {
   const blocks = useMemo<Block[]>(() => (text !== undefined ? blocksOf(text) : []), [text])
   // The pictures of moments, by the paragraph each stands after.
   const pictured = useMemo(() => {
@@ -384,7 +386,10 @@ export function ReaderPage({ t, bookTitle, chapter, text, prefs, media, lines, a
   const momentsAfter = (offset: number): ReactNode => (pictured.get(offset) ?? []).map(figure => (
     <figure key={`moment-${figure.path}`} className="nv-figure is-moment">
       <img alt={figure.caption} loading="lazy" src={media(figure.path)} />
-      <figcaption>{figure.caption}</figcaption>
+      <figcaption>
+        {figure.caption}
+        {onHideFigure !== undefined ? <button type="button" className="nv-figure-hide" onClick={() => { onHideFigure(figure.path) }}>{t('不在正文里显示', 'Keep out of the text')}</button> : null}
+      </figcaption>
     </figure>
   ))
   // Whose name is whose: every name and other name the text has of the book's people and of its world, the longest

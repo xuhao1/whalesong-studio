@@ -300,7 +300,7 @@ export interface StageBatchParams {
 /** What each step of the stage needs that may not be there, as the author would be told. */
 export async function stageReadiness(core: NovelCore, runtime: ProjectRuntime, task: Pick<TaskContext, 'agentRoute'> = {}): Promise<Partial<Record<StageStep, string>>> {
   const lang = promptLanguage((await runtime.project.manifest()).language)
-  const settings = await core.settings.get()
+  const settings = await core.settingsOf(runtime)
   const missing: Partial<Record<StageStep, string>> = {}
   if (await core.ttsProvider(runtime) === undefined) missing.voice = L(lang, '还没有配置语音模型', 'no speech model is set up')
   if (soundSetup(settings) === undefined) missing.sound = L(lang, '还没有能生成声音的模型', 'nothing is set up that can make sound')
@@ -441,7 +441,7 @@ export async function stagePlan(core: NovelCore, runtime: ProjectRuntime, params
 /** Where the stage production of each chapter of a line stands. */
 export async function stageOverview(core: NovelCore, runtime: ProjectRuntime, line?: string): Promise<StageStatus[]> {
   const { project } = runtime
-  const settings = await core.settings.get()
+  const settings = await core.settingsOf(runtime)
   const on = line !== undefined && line !== MAIN_LINE ? (await project.findLine(line))?.id : undefined
   const beds = soundPlan(settings).beds
   const out: StageStatus[] = []

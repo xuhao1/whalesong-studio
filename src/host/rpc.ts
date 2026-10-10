@@ -37,6 +37,7 @@ import { buildFoundation, deriveBeats, deriveChapters, whatIf } from '../core/pi
 import { clearReview, listReviews, noteIssue, recheckIssues, resolveIssue, reviewChapter } from '../core/pipelines/review'
 import { fixIssue, fixIssues, acceptProposal, rejectProposal, reviseBook, reviseChapter, reviseSpan, mendInTurn } from '../core/pipelines/revise'
 import { writeChapter } from '../core/pipelines/write'
+import { imageSetups, trialDerive, trialWrite } from '../core/pipelines/trial'
 import { ProjectError } from '../core/project'
 import { siftCast } from '../core/pipelines/cast'
 import { overrule, settleSuggestions, settlesItself } from '../core/pipelines/settle'
@@ -47,10 +48,11 @@ import { checkPassword, readStub, VaultError } from '../core/util/vault'
 import type { DeepPartial } from '../core/settings'
 import { rangeStart, summarize, type UsageRange } from '../core/usage'
 import { sleep } from '../core/util/async'
-import type { ContextView, CrewView, FindMatch, ModelKind, NovelRpc, RpcMethod, RpcParams, RpcResult, SettingsView, SitePlan } from '../shared/rpc'
+import type { BookSettingsView, CodexStatus, ContextView, CrewView, FindMatch, ModelKind, NovelRpc, RpcMethod, RpcParams, RpcResult, SettingsView, SitePlan } from '../shared/rpc'
+import { withBook } from '../shared/images'
 import { PROJECT_HOMEPAGE, type SetupPart } from '../shared/services'
 import { hashText, proseOnly } from '../shared/text'
-import { ANALYZE_STEPS, CREW_ROLES, GLOSSARY_KINDS, MAIN_LINE, STAGE_STEPS, STORYBOARD_DENSITIES, TEXT_STEPS, type GlossaryTerm, type JobKind, type NovelSettings, type StageStep, type TextRole, type TextStep, type WorkMode, type HistoryKind } from '../shared/types'
+import { ANALYZE_STEPS, CREW_ROLES, GLOSSARY_KINDS, MAIN_LINE, STAGE_STEPS, STORYBOARD_DENSITIES, TEXT_STEPS, type GlossaryTerm, type JobKind, type NovelSettings, type ProjectManifest, type StageStep, type TextRole, type TextStep, type WorkMode, type HistoryKind } from '../shared/types'
 import { settleTerms, translateChapters, untranslateChapter } from '../core/pipelines/translate'
 import { recommendedView, settleRecommended } from './recommended'
 import type { NovelService } from './service'
@@ -86,6 +88,8 @@ function requireString(value: unknown, name: string): string {
 export function createHandlers(service: NovelService): Handlers {
   const core: NovelCore = service.core
   const open = async (root: unknown): Promise<ProjectRuntime> => await core.runtime(requireString(root, 'root'))
+  /** The speech settings as they hold for a book: its own where it has them. */
+  const ttsOf = async (root: unknown): Promise<NovelSettings['tts']> => (await core.settingsOf(await open(root))).tts
 
   /**
    * The author's own task. Started in the Studio beside a conversation, it is
@@ -111,27 +115,30 @@ export function createHandlers(service: NovelService): Handlers {
     return { jobId: started.id }
   }
 
+  /** The crew role by role: the model each would run on — for a book, the one the book gives it — and whether that model can drive an agent. */
+  const crewRoles = (settings: NovelSettings, manifest?: ProjectManifest): CrewView['roles'] => CREW_ROLES.map((role) => {
+    let route: ReturnType<typeof resolveRoute> | undefined
+    try {
+      route = resolveRoute(role, settings, core.llm, manifest !== undefined ? { manifest } : {})
+    } catch {
+      route = undefined
+    }
+    return {
+      role,
+      ...(route !== undefined ? { model: route.model, provider: route.provider } : {}),
+      agent: route !== undefined && core.roles?.can(route) === true,
+      direct: route?.baseURL !== undefined,
+      own: [...CREW[role].tools],
+      steps: CREW[role].steps,
+    }
+  })
+
   const crewView = async (settings: NovelSettings): Promise<CrewView> => {
     const [ffmpeg, ffprobe] = await Promise.all([findProgram('ffmpeg'), findProgram('ffprobe')])
     return {
       loop: core.roles !== undefined,
       subagents: service.subagentsMounted(),
-      roles: CREW_ROLES.map((role) => {
-        let route: ReturnType<typeof resolveRoute> | undefined
-        try {
-          route = resolveRoute(role, settings, core.llm)
-        } catch {
-          route = undefined
-        }
-        return {
-          role,
-          ...(route !== undefined ? { model: route.model, provider: route.provider } : {}),
-          agent: route !== undefined && core.roles?.can(route) === true,
-          direct: route?.baseURL !== undefined,
-          own: [...CREW[role].tools],
-          steps: CREW[role].steps,
-        }
-      }),
+      roles: crewRoles(settings),
       help: service.outsideHelp(),
       helpers: await service.helpView(),
       ffmpeg: ffmpeg !== undefined && ffprobe !== undefined,
@@ -150,12 +157,12 @@ export function createHandlers(service: NovelService): Handlers {
     })
   }
 
-  const contextView = async (settings: NovelSettings): Promise<ContextView[]> => {
+  const contextView = async (settings: NovelSettings, manifest?: ProjectManifest): Promise<ContextView[]> => {
     const rows: ContextView[] = []
     for (const role of ['writer', 'architect', 'analyst', 'director'] as TextRole[]) {
       let route: ReturnType<typeof resolveRoute> | undefined
       try {
-        route = resolveRoute(role, settings, core.llm)
+        route = resolveRoute(role, settings, core.llm, manifest !== undefined ? { manifest } : {})
       } catch {
         route = undefined
       }
@@ -166,7 +173,30 @@ export function createHandlers(service: NovelService): Handlers {
     return rows
   }
 
-  const settingsView = async (): Promise<SettingsView> => {
+  /** The settings as they stand for one book: what its own services can do, what its crew runs on, and which of its models DSH no longer lists. */
+  const bookSettingsView = async (root: string, settings: NovelSettings, models: SettingsView['models'], providers: SettingsView['providers'], codex: CodexStatus): Promise<BookSettingsView | undefined> => {
+    let manifest: ProjectManifest
+    try {
+      // A book that is locked says nothing of itself; the page then shows the Studio's own.
+      manifest = await (await core.runtime(root)).project.manifest()
+    } catch {
+      return undefined
+    }
+    const held = withBook(settings, manifest)
+    const ready = service.mediaReady(held, await service.keyStates(held), codex)
+    const unlisted: BookSettingsView['unlisted'] = []
+    for (const [role, route] of Object.entries(manifest.models ?? {})) {
+      // A directly called endpoint of the old kind is nothing DSH would list.
+      if (route === undefined || route.baseURL !== undefined || route.provider.length === 0) continue
+      const provider = providers.find(candidate => candidate.id === route.provider)
+      const listed = models.some(model => model.provider === route.provider && model.id === route.model)
+      // A provider that cannot list its models right now is not one that has dropped this model.
+      if (provider === undefined || (!listed && provider.error === undefined && provider.models > 0)) unlisted.push({ role: role as TextRole, provider: route.provider, model: route.model, noProvider: provider === undefined })
+    }
+    return { root, ready: { image: ready.image, tts: ready.tts, sound: ready.sound }, roles: crewRoles(settings, manifest), context: await contextView(settings, manifest), voices: stockVoices(held.tts.provider, held.tts.model), unlisted }
+  }
+
+  const settingsView = async (root?: string): Promise<SettingsView> => {
     await service.recommendations
     const settings = await core.settings.get()
     let models: SettingsView['models'] = []
@@ -212,6 +242,10 @@ export function createHandlers(service: NovelService): Handlers {
       version: __NOVEL_VERSION__,
       recommended: recommendedView(settings),
       build: await service.buildState(),
+      ...await (async () => {
+        const book = typeof root === 'string' && root.length > 0 ? await bookSettingsView(root, settings, models, providers, codex) : undefined
+        return book !== undefined ? { book } : {}
+      })(),
     }
   }
 
@@ -226,7 +260,7 @@ export function createHandlers(service: NovelService): Handlers {
     'workspace.info': async ({ sessionId }) => {
       const workspaces = await service.workspaces()
       const home = service.workspaceHome()
-      const shelf = await core.shelfState()
+      const shelf = await service.shelfView()
       if (sessionId === undefined) return { workspaces, home, shelf, ...await staleNote() }
       const current = await service.workspaceOfSession(sessionId)
       const state = await service.sessions.get(sessionId)
@@ -326,24 +360,29 @@ export function createHandlers(service: NovelService): Handlers {
       }
       return await service.lockView(root)
     },
-    'shelf.get': async () => await core.shelfState(),
+    'shelf.get': async () => await service.shelfView(),
     'shelf.setup': async ({ password }) => {
       const secret = requireString(password, 'password')
       await shelfWork(async () => { await core.setupShelf(secret, await core.shelved((await service.workspaces()).map(workspace => workspace.path))) })
-      return await core.shelfState()
+      return await service.shelfView()
     },
-    'shelf.open': async ({ password }) => {
-      await shelfWork(async () => { await core.openShelf(requireString(password, 'password')) })
-      return await core.shelfState()
+    'shelf.open': async ({ password, device }, signal) => {
+      // Opened the way a sealed book is: with its password, or by this computer's own unlock.
+      await service.unlockShelf({ ...(typeof password === 'string' ? { password } : {}), ...(device === true ? { device } : {}) }, signal)
+      return await service.shelfView()
+    },
+    'shelf.device': async ({ on }) => {
+      await shelfWork(async () => { await service.setShelfDeviceUnlock(on === true) })
+      return await service.shelfView()
     },
     'shelf.close': async () => {
       await core.closeShelf()
-      return await core.shelfState()
+      return await service.shelfView()
     },
     'shelf.change': async ({ password, next }) => {
       const [was, now] = [requireString(password, 'password'), requireString(next, 'next')]
       await shelfWork(async () => { await core.rekeyShelf(was, now, await core.shelved((await service.workspaces()).map(workspace => workspace.path))) })
-      return await core.shelfState()
+      return await service.shelfView()
     },
     'shelf.add': async ({ root, own }) => {
       const runtime = await open(root)
@@ -356,7 +395,7 @@ export function createHandlers(service: NovelService): Handlers {
     },
     'shelf.remove': async ({ root, password }) => {
       await shelfWork(async () => { await core.unshelveBook(requireString(root, 'root'), password) })
-      return await core.shelfState()
+      return await service.shelfView()
     },
     'conversation.open': async ({ root, workspace, create }) => {
       if (root === undefined && workspace === undefined) throw new ProjectError('novel/invalid', 'name a book (`root`) or a folder (`workspace`)')
@@ -923,9 +962,90 @@ export function createHandlers(service: NovelService): Handlers {
       // Named as the drawing of a picture of its kind is: the page that shows whose it is says that it is being drawn.
       return job(runtime, 'illustrate', `illustrate ${record?.kind ?? 'picture'}`, record?.target, async task => await redrawPicture(core, runtime, { picture, ...(subject !== undefined ? { subject } : {}), ...(change !== undefined ? { change } : {}) }, task))
     },
+    // ── the same piece of work by several services or models, to be compared ──
+    'trial.setups': async ({ root }) => {
+      const runtime = await open(root)
+      const settings = await core.settings.get()
+      const codex = await service.codex()
+      const image = []
+      for (const setup of imageSetups(settings, await runtime.project.manifest())) {
+        // Whether it can draw right now: its key is at hand (or it needs none).
+        const tried = { ...settings, image: { ...setup.image, provider: setup.image.provider ?? 'none' } as NovelSettings['image'] }
+        image.push({ ...setup, ready: service.mediaReady(tried, await service.keyStates(tried), codex).image })
+      }
+      return { image }
+    },
+    'trial.adopt': async ({ root, path, instead, others }) => {
+      const { project } = await open(root)
+      const taken = requireString(path, 'path')
+      const record = (await project.pictures()).find(item => item.path === taken)
+      if (record === undefined) throw new ProjectError('novel/not-found', `no picture on record at "${taken}"`)
+      let replaced: string[] = []
+      if (typeof instead === 'string' && instead.length > 0 && instead !== taken) {
+        // In the place of the picture it was tried against, wherever that one hung; the one replaced stays in the gallery.
+        replaced = await project.replacePicture(instead, taken)
+        // A portrait that hung nowhere all the same is one of theirs: it joins the others, first.
+      }
+      if (replaced.length === 0 && record.kind === 'portrait' && record.target !== undefined) {
+        const card = await project.findCharacter(record.target)
+        if (card !== undefined) {
+          await project.saveCharacter({ id: card.id, visual: { portrait: taken } })
+          replaced = [card.name]
+        }
+      }
+      // Taken, it is a picture the text may carry like any other.
+      await project.showFigure(taken, true)
+      let removed = 0
+      for (const other of Array.isArray(others) ? others : []) {
+        if (typeof other !== 'string' || other === taken) continue
+        try {
+          await project.removePicture({ path: other })
+          removed += 1
+        } catch (error) {
+          service.log(`could not delete ${other}`, error)
+        }
+      }
+      return { ok: true, replaced, removed }
+    },
+    'trial.write': async ({ root, chapter, brief, mode, words, line, with: routes }) => {
+      const runtime = await open(root)
+      return job(runtime, 'write', 'trial write', chapter, async task => await trialWrite(core, runtime, {
+        ...(chapter !== undefined ? { chapter } : {}),
+        ...(typeof line === 'string' && line.length > 0 ? { line } : {}),
+        ...(brief !== undefined ? { brief } : {}),
+        ...(mode !== undefined ? { mode } : {}),
+        ...(words !== undefined ? { words } : {}),
+        with: Array.isArray(routes) ? routes : [],
+      }, task))
+    },
+    'trial.draft': async ({ root, chapter, version }) => {
+      const text = await (await open(root)).project.versionText(requireString(chapter, 'chapter'), requireString(version, 'version'))
+      if (text === undefined) throw new ProjectError('novel/not-found', 'no such draft')
+      return { text }
+    },
+    'trial.derive': async ({ root, count, direction, volume, with: routes }) => {
+      const runtime = await open(root)
+      return job(runtime, 'derive', 'trial derive', undefined, async task => await trialDerive(core, runtime, {
+        ...(count !== undefined ? { count } : {}),
+        ...(direction !== undefined ? { direction } : {}),
+        ...(volume !== undefined ? { volume } : {}),
+        with: Array.isArray(routes) ? routes : [],
+      }, task))
+    },
     'image.sheetsFirst': async ({ root, asks }) => await sheetsAhead(core, await open(root), Array.isArray(asks) ? asks : []),
     // Every picture of the book, the newest first: those on record and the panels of its storyboards alike.
     'image.list': async ({ root }) => ({ images: (await (await open(root)).project.pictures()).reverse() }),
+    'figures.list': async ({ root, chapter, character }) => {
+      const { project } = await open(root)
+      const at = typeof chapter === 'string' ? (await project.findChapter(chapter))?.plan.id : undefined
+      const whose = typeof character === 'string' ? (await project.findCharacter(character))?.id : undefined
+      // Without what the text is searched for: that is the Host's own business.
+      return { portraits: (await project.portraitPlaces()).filter(place => (at === undefined || place.chapter === at) && (whose === undefined || place.character === whose)).map(({ told: _told, ...place }) => place) }
+    },
+    'figures.show': async ({ root, path, show }) => {
+      await (await open(root)).project.showFigure(requireString(path, 'path'), show !== false)
+      return { ok: true }
+    },
     // ── history: how a thing was before it was changed ──
     'history.list': async ({ root, kind, id }) => ({ versions: await (await open(root)).project.history(historyKind(kind), requireString(id, 'id')) }),
     'history.read': async ({ root, kind, id, version }) => {
@@ -955,8 +1075,24 @@ export function createHandlers(service: NovelService): Handlers {
       })
       return placed
     },
-    'image.delete': async ({ root, id, path }) => {
-      const released = await (await open(root)).project.removePicture({ ...(id !== undefined ? { id } : {}), ...(path !== undefined ? { path } : {}) })
+    'image.delete': async ({ root, id, path, paths }) => {
+      const { project } = await open(root)
+      if (Array.isArray(paths)) {
+        // Several at once: one that will not go (not a picture of the book's) does not keep the others.
+        const released: string[] = []
+        let removed = 0
+        for (const each of paths) {
+          if (typeof each !== 'string') continue
+          try {
+            released.push(...await project.removePicture({ path: each }))
+            removed += 1
+          } catch (error) {
+            service.log(`could not delete ${each}`, error)
+          }
+        }
+        return { ok: true, released, removed }
+      }
+      const released = await project.removePicture({ ...(id !== undefined ? { id } : {}), ...(path !== undefined ? { path } : {}) })
       return { ok: true, released }
     },
 
@@ -967,7 +1103,7 @@ export function createHandlers(service: NovelService): Handlers {
       if (located === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${chapter}"`)
       const script = await project.audioScript(located.plan.id)
       const stale = script !== undefined && script.textHash !== hashText(proseOnly(await project.chapterText(located.plan.id)))
-      const settings = await core.settings.get()
+      const settings = await core.settingsOf(await open(root))
       // Who sounds like whom in this chapter: what was cast, and what will be for those who have not spoken yet.
       const cast = script !== undefined ? await previewVoices(project, settings.tts, script.lines).catch(() => undefined) : undefined
       const sound = soundSetup(settings)
@@ -990,23 +1126,23 @@ export function createHandlers(service: NovelService): Handlers {
       const runtime = await open(root)
       return job(runtime, 'audio', 'synthesize', chapter, async task => await synthesizeChapter(core, runtime, { chapter, ...(lines !== undefined ? { lines } : {}), ...(force !== undefined ? { force } : {}) }, task))
     },
-    'audio.updateLine': async ({ root, chapter, line, patch }) => playable(await updateAudioLine(await open(root), chapter, line, patch), (await core.settings.get()).tts),
+    'audio.updateLine': async ({ root, chapter, line, patch }) => playable(await updateAudioLine(await open(root), chapter, line, patch), await ttsOf(root)),
     'audio.removeLine': async ({ root, chapter, line }) => {
       const result = await removeAudioLine(await open(root), requireString(chapter, 'chapter'), requireString(line, 'line'))
-      return { script: playable(result.script, (await core.settings.get()).tts), panels: result.panels }
+      return { script: playable(result.script, await ttsOf(root)), panels: result.panels }
     },
     'audio.clear': async ({ root, chapter }) => ({ removed: (await clearAudioScript(await open(root), requireString(chapter, 'chapter'))).removed }),
     'audio.reshape': async ({ root, chapter }) => {
       const result = await reshapeAudioScript(await open(root), chapter)
-      return { ...result, script: playable(result.script, (await core.settings.get()).tts) }
+      return { ...result, script: playable(result.script, await ttsOf(root)) }
     },
     'audio.sound': async ({ root, chapter, cues, kinds, force }) => {
       const runtime = await open(root)
       return job(runtime, 'audio', 'sound', chapter, async task => await renderSound(core, runtime, { chapter, ...(cues !== undefined ? { cues } : {}), ...(kinds !== undefined ? { kinds } : {}), ...(force !== undefined ? { force } : {}) }, task))
     },
-    'audio.updateCue': async ({ root, chapter, cue, patch, remove, dropClip }) => playable(await updateCue(await open(root), { chapter, cue, ...(patch !== undefined ? { patch } : {}), ...(remove !== undefined ? { remove } : {}), ...(dropClip !== undefined ? { dropClip } : {}) }), (await core.settings.get()).tts),
-    'audio.addCue': async ({ root, chapter, at, kind, caption, prompt, ambience, intensity }) => playable((await addCue(await open(root), { chapter, at, kind, ...(caption !== undefined ? { caption } : {}), ...(prompt !== undefined ? { prompt } : {}), ...(ambience !== undefined ? { ambience } : {}), ...(intensity !== undefined ? { intensity } : {}) })).script, (await core.settings.get()).tts),
-    'audio.export': async ({ root, chapter }) => await exportChapterAudio(await open(root), chapter, (await core.settings.get()).tts),
+    'audio.updateCue': async ({ root, chapter, cue, patch, remove, dropClip }) => playable(await updateCue(await open(root), { chapter, cue, ...(patch !== undefined ? { patch } : {}), ...(remove !== undefined ? { remove } : {}), ...(dropClip !== undefined ? { dropClip } : {}) }), await ttsOf(root)),
+    'audio.addCue': async ({ root, chapter, at, kind, caption, prompt, ambience, intensity }) => playable((await addCue(await open(root), { chapter, at, kind, ...(caption !== undefined ? { caption } : {}), ...(prompt !== undefined ? { prompt } : {}), ...(ambience !== undefined ? { ambience } : {}), ...(intensity !== undefined ? { intensity } : {}) })).script, await ttsOf(root)),
+    'audio.export': async ({ root, chapter }) => await exportChapterAudio(await open(root), chapter, await ttsOf(root)),
     'voice.audition': async ({ root, voice, character, text, direction }) => {
       const runtime = await open(root)
       const sample = requireString(text, 'text')
@@ -1229,8 +1365,8 @@ export function createHandlers(service: NovelService): Handlers {
     },
 
     // ── settings ──
-    'settings.get': async () => await settingsView(),
-    'settings.update': async ({ patch, keys }) => {
+    'settings.get': async ({ root }) => await settingsView(typeof root === 'string' ? root : undefined),
+    'settings.update': async ({ patch, keys, root }) => {
       // Keys first: a setting that points at an endpoint should find its key the moment it is saved.
       for (const [url, value] of Object.entries(keys ?? {})) {
         if (typeof value !== 'string') continue
@@ -1238,7 +1374,7 @@ export function createHandlers(service: NovelService): Handlers {
         else await service.keys.save(url, value)
       }
       await core.settings.update(patch as DeepPartial<NovelSettings>)
-      return await settingsView()
+      return await settingsView(typeof root === 'string' ? root : undefined)
     },
     'key.state': async ({ endpoints }) => ({
       states: await Promise.all((Array.isArray(endpoints) ? endpoints : []).slice(0, 24).map(async endpoint => await service.keys.describe(requireString(endpoint.url, 'url'), endpoint.ref))),

@@ -12,8 +12,8 @@
  * Shared by the Host (which draws) and the Studio (which shows what will be drawn).
  */
 import { providerDefault } from './recommended'
-import { privateAddress } from './services'
-import { BOOK_IMAGE_KEYS, parallelOf, type BookImageSettings, type ImageSettings } from './types'
+import { hostOf, privateAddress, serviceOf, type ServiceId } from './services'
+import { IMAGE_SERVICE_KEYS, TTS_SERVICE_KEYS, parallelOf, type BookImageSettings, type ImageSettings, type NovelSettings, type ProjectManifest, type TtsSettings } from './types'
 
 /** OpenAI's own image models, wherever they are reached: a gateway on the author's network that hands on to them is no model of the author's. */
 const GPT_IMAGE = /^(gpt-image|dall-e|chatgpt-image)/i
@@ -200,12 +200,80 @@ export function imageParallel(settings: ImageSettings): number {
   return localImages(settings) ? 1 : parallelOf(settings.concurrency)
 }
 
-/** The image settings as they hold for a book: the Studio's, with what the book has its own way with. */
-export function withBookImage<T extends BookImageSettings>(settings: T, book: BookImageSettings | undefined): T {
-  if (book === undefined) return settings
-  const own = Object.fromEntries(BOOK_IMAGE_KEYS.filter(key => book[key] !== undefined).map(key => [key, book[key]]))
+/** Where pictures come from, as the author chooses it: a service by name, a server of their own (`custom`), this machine, or nowhere. */
+export type ImageSource = 'none' | 'codex' | 'comfyui' | 'diffusers' | ServiceId
+
+export function imageSourceOf(value: Pick<ImageSettings, 'provider' | 'baseURL'>): ImageSource {
+  if (value.provider === 'none' || value.provider === 'codex' || value.provider === 'comfyui' || value.provider === 'diffusers') return value.provider
+  if (value.provider === 'dashscope') return 'bailian'
+  if (value.provider === 'openrouter') return 'openrouter'
+  return serviceOf(value.baseURL) === 'openai' || value.baseURL === undefined ? 'openai' : 'custom'
+}
+
+const picked = <T extends object>(value: T, keys: readonly (keyof T)[], keep: boolean): Partial<T> =>
+  Object.fromEntries(Object.entries(value).filter(([key, field]) => field !== undefined && key !== 'kept' && keys.includes(key as keyof T) === keep)) as Partial<T>
+
+/** What of the image settings is the service's (see {@link IMAGE_SERVICE_KEYS}), and what is the author's whichever service draws. */
+export const imageService = (value: Partial<ImageSettings>): Partial<ImageSettings> => picked(value, IMAGE_SERVICE_KEYS, true)
+export const imageWays = (value: Partial<ImageSettings>): Partial<ImageSettings> => picked(value, IMAGE_SERVICE_KEYS, false)
+
+/**
+ * The image settings once the author moves to another service: what the one they leave was set up with is remembered
+ * under its name, and the one they move to comes back as they left it — or, never set up before, starts from `fresh`.
+ * How pictures are drawn whichever service draws them (which picture leads, what a sheet shows, the look) stays.
+ */
+export function switchImage<T extends Partial<ImageSettings>>(value: T, next: ImageSource, fresh: Partial<ImageSettings>): T {
+  const from = value.provider !== undefined ? imageSourceOf(value as ImageSettings) : undefined
+  const kept: Record<string, Partial<ImageSettings>> = { ...value.kept }
+  // Nothing is worth remembering of "off".
+  if (from !== undefined && from !== 'none') kept[from] = imageService(value)
+  const back = next !== 'none' ? kept[next] : undefined
+  delete kept[next]
+  return { ...imageWays(value), ...(back ?? fresh), ...(Object.keys(kept).length > 0 ? { kept } : {}) } as T
+}
+
+/** The same for speech; see {@link switchImage}. */
+export function switchTts(value: TtsSettings, next: TtsSettings['provider'], fresh: Partial<TtsSettings>): TtsSettings {
+  const kept: Record<string, Partial<TtsSettings>> = { ...value.kept }
+  if (value.provider !== 'none') kept[value.provider] = picked(value, TTS_SERVICE_KEYS, true)
+  const back = next !== 'none' ? kept[next] : undefined
+  delete kept[next]
+  return { ...picked(value, TTS_SERVICE_KEYS, false), provider: next, ...(back ?? fresh), ...(Object.keys(kept).length > 0 ? { kept } : {}) } as TtsSettings
+}
+
+/**
+ * The image settings as they hold for a book: the Studio's, with what the book has its own way with. A book that
+ * names a service draws with that service as the book set it up — nothing of the Studio's service is mixed in.
+ */
+export function withBookImage(settings: ImageSettings, book: BookImageSettings | undefined): ImageSettings {
+  if (book === undefined || Object.keys(book).length === 0) return settings
+  const { kept: _mine, ...mine } = book
+  const { kept: _theirs, ...theirs } = settings
+  const base = book.provider !== undefined ? imageWays(theirs) : theirs
+  const next = { ...base, ...Object.fromEntries(Object.entries(mine).filter(([, value]) => value !== undefined)) } as ImageSettings
   // A book that says which picture leads says so whatever an older switch of the Studio's had it at.
-  return { ...settings, ...own, ...(book.lead !== undefined ? { sheetFirst: undefined } : {}) }
+  if (book.lead !== undefined) delete next.sheetFirst
+  return next
+}
+
+/** The settings as they hold for a book: its own pictures, speech and sound where it has them, the Studio's for the rest. */
+export function withBook(settings: NovelSettings, book: Pick<ProjectManifest, 'image' | 'tts' | 'sound'> | undefined): NovelSettings {
+  if (book === undefined || (book.image === undefined && book.tts === undefined && book.sound === undefined)) return settings
+  const { kept: _kept, ...tts } = book.tts ?? { provider: undefined }
+  return {
+    ...settings,
+    image: withBookImage(settings.image, book.image),
+    ...(book.tts !== undefined && tts.provider !== undefined ? { tts: tts as TtsSettings } : {}),
+    ...(book.sound !== undefined ? { sound: book.sound } : {}),
+  }
+}
+
+/** A service pictures come from, in a few words: for a list of them to choose among. */
+export function imageSetupName(value: Pick<ImageSettings, 'provider' | 'baseURL' | 'model'>): string {
+  const source = imageSourceOf(value)
+  const where = source === 'codex' ? 'ChatGPT' : source === 'bailian' ? 'Bailian' : source === 'openrouter' ? 'OpenRouter' : source === 'openai' ? 'OpenAI' : source === 'comfyui' ? 'ComfyUI' : source === 'diffusers' ? 'Diffusers' : hostOf(value.baseURL) ?? 'custom'
+  const model = (value.model ?? '').trim()
+  return model.length > 0 ? `${where} · ${model.split('/').at(-1)}` : where
 }
 
 /** Which picture of a person leads; see `ImageSettings.lead`. */

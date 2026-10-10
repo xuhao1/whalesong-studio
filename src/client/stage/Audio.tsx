@@ -13,6 +13,7 @@ import { AMBIENCE, TAKE_ISSUE, TAKE_ISSUE_HINT } from '../labels'
 import { cueCaption, formatDuration, usePlayerOptions } from '../reader/parts'
 import {
   Button, Chip, cx, Field, Modal, Progress, ProjectImage, Select, Spinner, TextArea, TextInput, useAction, useConfirm, useMediaUrl, useProject, useSnapshot, useStudio, useT, type Translate,
+  useReady,
 } from '../ui'
 import { NeedsSetup } from '../views/Settings'
 import type { LinePlayer, PlayerOptions, PlayerState } from './player'
@@ -133,7 +134,7 @@ export function AudioDesk({ chapter, view, job, player, onBody, onChanged }: {
   // A batch that has this chapter on its list is at work on it even between its steps.
   const batch = inBatch(useSnapshot(snapshot => snapshot.jobs), chapter.id)
   const working = busy || job !== undefined || batch !== undefined
-  const soundReady = useSnapshot(snapshot => snapshot.settings?.ready.sound) === true || view.sound !== undefined
+  const soundReady = useReady().sound || view.sound !== undefined
   const cues = script?.cues ?? []
   const toMake = generated(cues, view.sound?.beds ?? 'generate')
   const made = toMake.filter(cue => cue.audio !== undefined).length

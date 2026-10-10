@@ -14,6 +14,7 @@ import { AMBIENCE, CAMERA, DENSITY, DENSITY_HINT } from '../labels'
 import {
   Button, Chip, cx, Empty, Field, Modal, Progress, ProjectImage, Select, Spinner, TextArea, TextInput, useAction, useConfirm, useLoad, useMediaUrl, useProject, useSnapshot,
   useStudio, useT,
+  useReady,
 } from '../ui'
 import { NeedsSetup } from '../views/Settings'
 import { formatDuration, JobProgress, PlayerControls, usePlayerOptions } from './Audio'
@@ -50,7 +51,7 @@ export function ComicStage({ chapter }: { chapter: ChapterInfo | undefined }) {
   const drawingNow = new Set(draws.flatMap(item => (Array.isArray(item.result?.drawing) ? (item.result.drawing as unknown[]).filter((id): id is string => typeof id === 'string') : [])))
   const drawingAll = draws.some(item => item.result?.all === true)
   // What is set up decides which steps one click can do.
-  const ready = useSnapshot(snapshot => snapshot.settings?.ready)
+  const ready = useReady() as { image: boolean; tts: boolean; sound: boolean } | undefined
   // Whether the art of the things a panel shows goes along with it: as the book has it, else the Studio — to be said otherwise here, and kept with the book.
   const studioImage = useSnapshot(snapshot => snapshot.settings?.settings.image)
   const withThings = (project.manifest.image?.panelThings ?? studioImage?.panelThings) !== false

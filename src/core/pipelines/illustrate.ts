@@ -40,7 +40,7 @@
  * for word — so that a look nobody asked for can be traced to where it came from.
  */
 import { lookWords, mergeAvoid, PICTURE_TO_CHANGE, pictureSize, pictureWords, resolveArtStyle, sceneFor, scenesOf, sceneWords, splitAvoid, tidyPart as tidy, type ArtSource } from '../../shared/art'
-import type { CharacterCard, CharacterLook, CharacterStage, ComicPanel, IllustrationInfo, IllustrationParts, IllustrationPiece, IllustrationSent, PromptLanguage, SignatureScene, SortedNotes, WorldEntry, WorldEvent } from '../../shared/types'
+import type { CharacterCard, CharacterLook, CharacterStage, ComicPanel, ImageTrial, TrialPicture, IllustrationInfo, IllustrationParts, IllustrationPiece, IllustrationSent, PromptLanguage, SignatureScene, SortedNotes, WorldEntry, WorldEvent } from '../../shared/types'
 import { MAIN_LINE, referencesOf } from '../../shared/types'
 import { clip, fuzzyFind, hashText, newId, sameName, slugify } from '../../shared/text'
 import { leadOf, PROMPT_HEADROOM, promptTokens, type PictureLead } from '../../shared/images'
@@ -118,6 +118,12 @@ export interface IllustrateParams {
    * chapter has several.
    */
   event?: string
+  /**
+   * Portrait: draw it once with each of these services, to compare them — the same moment, the same words, the same
+   * reference pictures. None of the pictures becomes their portrait: they are among their pictures, kept out of the
+   * text, for the author to take one.
+   */
+  trials?: ImageTrial[]
 }
 
 export async function requireImages(core: NovelCore, runtime?: ProjectRuntime): Promise<ImageProvider> {
@@ -833,6 +839,39 @@ export interface RenderInput {
   change?: string
   /** With `change`: what the picture to change was held against when it was drawn from words — kept with the new one, for when that is drawn from words again. */
   heldAgainst?: Held[]
+  /** A portrait of one of somebody's moments: kept with the picture, which stands in the text where that moment is told. */
+  moment?: NonNullable<IllustrationInfo['moment']>
+  /** One of several pictures of the same thing drawn to compare services: said on its record. */
+  trial?: NonNullable<IllustrationInfo['trial']>
+}
+
+/**
+ * Draw the same picture once with each of several services, at the same time: the same words, the same reference
+ * pictures, each service's own size for it. None of them hangs anywhere — they are in the gallery, kept out of the
+ * text, for the author to take one (or none). A service that fails says why and does not keep the others.
+ * @param draw - draws the picture with whatever service is in force when it is called.
+ */
+export async function drawTrials(core: NovelCore, runtime: ProjectRuntime, trials: readonly ImageTrial[], draw: (trial: NonNullable<IllustrationInfo['trial']>) => Promise<IllustrationInfo>, task: TaskContext): Promise<{ pictures: TrialPicture[]; first?: IllustrationInfo }> {
+  const id = newId('trial')
+  const pictures: TrialPicture[] = trials.map(trial => ({ label: trial.label, seconds: 0 }))
+  let first: IllustrationInfo | undefined
+  const say = (): void => { task.job?.result({ trial: pictures.map(picture => ({ ...picture })) }) }
+  say()
+  await Promise.all(trials.map(async (trial, at) => {
+    const began = Date.now()
+    try {
+      const info = await core.trial({ image: trial.image }, () => draw({ id, label: trial.label }))
+      // A picture drawn to be compared is not one the text carries until the author takes it.
+      await runtime.project.showFigure(info.path, false)
+      pictures[at] = { label: trial.label, path: info.path, ...(info.model !== undefined ? { model: info.model } : {}), seconds: Math.round((Date.now() - began) / 100) / 10 }
+      first ??= info
+    } catch (error) {
+      if (isAbort(error) || task.signal?.aborted === true) throw error
+      pictures[at] = { label: trial.label, seconds: Math.round((Date.now() - began) / 100) / 10, error: error instanceof Error ? error.message : String(error) }
+    }
+    say()
+  }))
+  return { pictures, ...(first !== undefined ? { first } : {}) }
 }
 
 /** Join the parts of a subject into one line, each part without the punctuation it ended on. */
@@ -887,7 +926,7 @@ const withAvoided = (prompt: string, avoid: readonly string[], zh: boolean): str
  */
 async function fitPrompt(core: NovelCore, runtime: ProjectRuntime, provider: ImageProvider, input: { prompt: string; avoid: string[]; references: number }, task: TaskContext): Promise<{ prompt: string; folded: boolean; compact?: NonNullable<IllustrationSent['compact']> }> {
   const asIs = { prompt: input.prompt, folded: false }
-  if (core.currentSettings().image.promptCompact === false) return asIs
+  if ((await core.imageOf(runtime)).promptCompact === false) return asIs
   const room = await provider.prompting?.(task.signal).catch(() => undefined)
   if (room?.tokens === undefined) return asIs
   const manifest = await runtime.project.manifest()
@@ -952,7 +991,7 @@ export async function renderImage(core: NovelCore, runtime: ProjectRuntime, inpu
   // model, or what an earlier picture found out. None: the prompt is written without a word of any (it would speak of
   // pictures that never arrive, and spend on them what little room some models have). Not known: they are sent.
   const taken = (await provider.prompting?.(task.signal).catch(() => undefined))?.references
-  const own = referencesOf((await core.settings.get()).image.references)
+  const own = referencesOf((await core.imageOf(runtime)).references)
   const most = Math.min(own, taken ?? Number.POSITIVE_INFINITY)
   const wanted = (input.references ?? []).filter((reference, at, all) => all.findIndex(other => other.path === reference.path) === at)
   // What the service's own measure keeps back, of those the author's setting would have sent: kept with the picture.
@@ -1050,7 +1089,9 @@ export async function renderImage(core: NovelCore, runtime: ProjectRuntime, inpu
   // Said with the picture, now that it is there: what the service did not take along. (Never before: what a service
   // takes is the service's to show.)
   if (left.length > 0) task.job?.result({ left: { names: left.map(reference => reference.label), taken: Math.min(drawn.held.length, result.referencesUsed ?? drawn.held.length), ...(leftWhy !== undefined ? { why: leftWhy } : {}) } })
-  const file = `images/${input.name}-${hashText(prompt + Date.now()).slice(0, 8)}.${extensionOf(result.mime)}`
+  // Named apart from every other picture: two drawn from the same words in the same instant (the same picture tried with
+  // several services at once) are two files, not one written twice.
+  const file = `images/${input.name}-${hashText(`${prompt}${Date.now()}${Math.random()}`).slice(0, 8)}.${extensionOf(result.mime)}`
   const path = await project.writeAsset(file, result.data)
   const used = drawn.held.slice(0, result.referencesUsed ?? drawn.held.length)
   // The picture went along to be changed: the record says what was sent — the picture, and the change — and keeps
@@ -1091,6 +1132,8 @@ export async function renderImage(core: NovelCore, runtime: ProjectRuntime, inpu
     provider: provider.kind,
     ...(input.size !== undefined ? { size: input.size } : {}),
     ...(result.sent !== undefined ? { sent: { ...result.sent, ...(fitted.compact !== undefined ? { compact: fitted.compact } : {}) } } : {}),
+    ...(input.moment !== undefined && Object.keys(input.moment).length > 0 ? { moment: input.moment } : {}),
+    ...(input.trial !== undefined ? { trial: input.trial } : {}),
   }
   if (input.record !== false) await project.addIllustration(info)
   return info
@@ -1102,6 +1145,8 @@ export async function renderImage(core: NovelCore, runtime: ProjectRuntime, inpu
 export interface RedrawResult extends IllustrationInfo {
   /** Whose picture the new one is now, by name: it took the old one's place there. Empty: it is in the gallery, and hangs nowhere. */
   replaced: string[]
+  /** Drawn with several services to compare them: what each made of it. Nothing was replaced. */
+  tried?: TrialPicture[]
 }
 
 /**
@@ -1120,9 +1165,9 @@ export interface RedrawResult extends IllustrationInfo {
  * @param params.picture - the picture: the id of its record, or its path.
  * @throws ProjectError `novel/not-found` for a picture with no record — nothing says what it was drawn from.
  */
-export async function redrawPicture(core: NovelCore, runtime: ProjectRuntime, params: { picture: string; subject?: string; change?: string }, task: TaskContext): Promise<RedrawResult> {
+export async function redrawPicture(core: NovelCore, runtime: ProjectRuntime, params: { picture: string; subject?: string; change?: string; /** Draw it as it is, once with each of these services, to compare them: nothing is replaced. */ trials?: ImageTrial[] }, task: TaskContext): Promise<RedrawResult> {
   const { project } = runtime
-  await requireImages(core)
+  await requireImages(core, runtime)
   // Any picture of the book: one on record, or a panel drawn before panels were kept on record.
   const record = (await project.pictures()).find(item => item.id === params.picture || item.path === params.picture)
   if (record === undefined) throw new ProjectError('novel/not-found', `no picture on record matches "${params.picture}"`)
@@ -1130,7 +1175,8 @@ export async function redrawPicture(core: NovelCore, runtime: ProjectRuntime, pa
   const comma = lang === 'zh' ? '，' : ', '
   const subject = params.subject?.trim() ?? ''
   const change = params.change?.trim() ?? ''
-  if (subject.length === 0 && change.length === 0) throw new ProjectError('novel/invalid', 'say what to draw: the picture\'s words rewritten (`subject`), or what to change in it (`change`)')
+  const trying = params.trials !== undefined && params.trials.length > 0
+  if (subject.length === 0 && change.length === 0 && !trying) throw new ProjectError('novel/invalid', 'say what to draw: the picture\'s words rewritten (`subject`), or what to change in it (`change`)')
   // What the picture shows in words — its own, or, where it is itself a picture changed, those kept of the one it came from.
   let was = pictureWords(record)
   // A panel of which nothing was kept but the director's words is held against what its storyboard says is in it —
@@ -1138,7 +1184,7 @@ export async function redrawPicture(core: NovelCore, runtime: ProjectRuntime, pa
   if (record.kind === 'panel' && record.parts === undefined) {
     const at = await project.panelOf(record.path)
     if (at !== undefined) {
-      const makings = panelMakings(at.panel, { thingArt: (await core.imageOf(runtime)).panelThings !== false, characters: await castAt(runtime, at.board.chapterId, await project.characters()), world: await project.world(), most: referencesOf((await core.settings.get()).image.references), lang })
+      const makings = panelMakings(at.panel, { thingArt: (await core.imageOf(runtime)).panelThings !== false, characters: await castAt(runtime, at.board.chapterId, await project.characters()), world: await project.world(), most: referencesOf((await core.imageOf(runtime)).references), lang })
       was = { ...was, subject: makings.subject, ...(makings.references.length > 0 ? { references: makings.references } : {}), ...(makings.avoid.length > 0 ? { avoid: makings.avoid } : {}) }
     }
   }
@@ -1146,23 +1192,33 @@ export async function redrawPicture(core: NovelCore, runtime: ProjectRuntime, pa
   const art = was.art ? await artDirectionOf(core, runtime, { pin: true }) : false as const
   const words = change.length > 0
     ? compose([piece('composed', subject.length > 0 ? subject : was.subject), piece('ask', change)])
-    : compose([piece('ask', subject)])
+    // Tried with other services as it is: the words it was drawn from, unchanged.
+    : compose([piece(subject.length > 0 ? 'ask' : 'composed', subject.length > 0 ? subject : was.subject)])
   // Changed, it keeps the frame of the picture it comes from — as that picture is, which is not always as it was asked for.
   const frame = change.length > 0 ? await project.readFile(record.path).then(pixelsOf).catch(() => undefined) : undefined
   const size = frame !== undefined ? `${frame.width}x${frame.height}` : record.size
-  const info = await renderImage(core, runtime, {
+  const render = async (trial?: NonNullable<IllustrationInfo['trial']>): Promise<IllustrationInfo> => await renderImage(core, runtime, {
     ...words,
+    ...(trial !== undefined ? { trial } : {}),
     kind: record.kind,
     ...(record.target !== undefined ? { target: record.target } : {}),
     // The file is named as the one it comes after.
     name: record.path.split('/').pop()!.replace(/-[0-9a-f]{8}\.[a-z]+$/i, '').replace(/\.[a-z]+$/i, ''),
     ...(size !== undefined ? { size } : {}),
     art,
+    ...(record.moment !== undefined ? { moment: record.moment } : {}),
     avoid: was.avoid ?? [],
     ...(change.length > 0
       ? { change, references: [{ path: record.path, label: L(lang, PICTURE_TO_CHANGE.zh, PICTURE_TO_CHANGE.en) }], heldAgainst: was.references ?? [] }
       : { references: was.references ?? [] }),
   }, task)
+  if (trying) {
+    // The same picture by other services, beside the one there is: nothing takes its place until the author says so.
+    const tried = await drawTrials(core, runtime, params.trials!, render, task)
+    if (tried.first === undefined) throw new ProviderError(tried.pictures.map(picture => `${picture.label}: ${picture.error ?? 'no picture'}`).join('; '), undefined, 'TRIAL_FAILED')
+    return { ...tried.first, replaced: [], tried: tried.pictures }
+  }
+  const info = await render()
   const replaced = await project.replacePicture(record.path, info.path)
   // A portrait that hung nowhere — an earlier one, out of the gallery — is a portrait of theirs all the same: it joins the others, first.
   if (replaced.length === 0 && record.kind === 'portrait' && record.target !== undefined) {
@@ -1348,11 +1404,13 @@ export interface IllustrateResult extends IllustrationInfo {
    * the portrait is drawn without one, and this is why.
    */
   scene?: { text: string; title?: string; chapter?: string; id?: string; found?: number; asked?: string; why?: string } | { none: string }
+  /** Drawn with several services to compare them: what each made of it. */
+  tried?: TrialPicture[]
 }
 
 export async function illustrate(core: NovelCore, runtime: ProjectRuntime, params: IllustrateParams, task: TaskContext): Promise<IllustrateResult> {
   const { project } = runtime
-  await requireImages(core)
+  await requireImages(core, runtime)
   const manifest = await project.manifest()
   const lang = promptLanguage(manifest.language)
   const comma = lang === 'zh' ? '，' : ', '
@@ -1581,7 +1639,16 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
       if (beside.place?.visualImage !== undefined) sheet.push({ path: beside.place.visualImage, label: L(lang, `场所「${beside.place.name}」`, `the place "${beside.place.name}"`) })
       for (const entry of beside.things) if (entry.visualImage !== undefined) sheet.push({ path: entry.visualImage, label: L(lang, `物品「${entry.name}」`, `the object "${entry.name}"`) })
       if (first.drawn.length > 0) task.job?.note(L(lang, '人设图画好了，照着它画立绘…', 'The sheet is drawn; now the portrait, against it…'))
-      const info = await renderImage(core, runtime, { ...composed, kind: 'portrait', target: card.id, name: `portrait-${card.id}`, size: params.size ?? pictureSize(core.currentSettings().image, 'portrait'), art, avoid: [...(params.avoid ?? []), ...negativesOf([card, ...others])], references: sheet }, task)
+      const momentTitle = shown !== undefined && 'text' in shown ? shown.title : undefined
+      const moment = scene !== undefined && scene.length > 0 ? { ...(momentTitle !== undefined ? { title: momentTitle } : {}), ...(drawnOf !== undefined && drawnOf.id !== 'kept' ? { scene: drawnOf.id } : {}), ...(momentAt !== undefined ? { chapter: momentAt } : {}) } : undefined
+      const render = async (trial?: NonNullable<IllustrationInfo['trial']>): Promise<IllustrationInfo> => await renderImage(core, runtime, { ...composed, kind: 'portrait', target: card.id, name: `portrait-${card.id}`, size: params.size ?? pictureSize((await core.imageOf(runtime)), 'portrait'), art, avoid: [...(params.avoid ?? []), ...negativesOf([card, ...others])], references: sheet, ...(moment !== undefined ? { moment } : {}), ...(trial !== undefined ? { trial } : {}) }, task)
+      if (params.trials !== undefined && params.trials.length > 0) {
+        // Tried with several services: the pictures stand beside their portraits for the author to choose from; the card keeps what it has.
+        const tried = await drawTrials(core, runtime, params.trials, render, task)
+        if (tried.first === undefined) throw new ProviderError(tried.pictures.map(picture => `${picture.label}: ${picture.error ?? 'no picture'}`).join('; '), undefined, 'TRIAL_FAILED')
+        return { ...done(tried.first), tried: tried.pictures }
+      }
+      const info = await render()
       // The portrait of one of their moments stays with that moment as well: the panel shows which have been drawn.
       const scenes = drawnOf !== undefined && drawnOf.id !== 'kept' ? scenesOf(card).map(item => item.id === drawnOf!.id ? { ...item, portrait: info.path } : item) : undefined
       // …and a portrait of one stretch of their life with that stretch: the card's own portrait — their face in every
@@ -1648,7 +1715,7 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
       target: card.id,
       name: `sheet-${card.id}${look !== undefined ? `-${look.id}` : stage !== undefined ? `-${stage.id}` : ''}`,
       // One figure stands: the sheet's own shape turned on its side.
-      size: params.size ?? (frontOnly ? upright(pictureSize(core.currentSettings().image, 'sheet')) : pictureSize(core.currentSettings().image, 'sheet')),
+      size: params.size ?? (frontOnly ? upright(pictureSize((await core.imageOf(runtime)), 'sheet')) : pictureSize((await core.imageOf(runtime)), 'sheet')),
       art,
       avoid: [...(params.avoid ?? []), ...negativesOf([card])],
       ...(portrait !== undefined ? {
@@ -1699,7 +1766,7 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
       kind: 'location',
       target: entry.id,
       name: `location-${entry.id}${turn !== undefined ? `-${turn.chapter}-${turn.kind}` : ''}`,
-      size: params.size ?? pictureSize(core.currentSettings().image, 'location'),
+      size: params.size ?? pictureSize((await core.imageOf(runtime)), 'location'),
       art,
       // What happened is told with the people it happened through; the picture is of the place.
       ...(turn !== undefined ? { avoid: [...(params.avoid ?? []), L(lang, '人物', 'people')] } : params.avoid !== undefined ? { avoid: params.avoid } : {}),
@@ -1726,7 +1793,7 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
       kind: 'item',
       target: entry.id,
       name: `item-${entry.id}${turn !== undefined ? `-${turn.chapter}-${turn.kind}` : ''}`,
-      size: params.size ?? pictureSize(core.currentSettings().image, 'item'),
+      size: params.size ?? pictureSize((await core.imageOf(runtime)), 'item'),
       art,
       ...(params.avoid !== undefined ? { avoid: params.avoid } : {}),
       ...turnAgainst(entry, turn, lang),
@@ -1772,7 +1839,7 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
       ]),
       kind: 'cover',
       name: 'cover',
-      size: params.size ?? pictureSize(core.currentSettings().image, 'cover'),
+      size: params.size ?? pictureSize((await core.imageOf(runtime)), 'cover'),
       art,
       avoid: extraAvoid,
       references: leads.map(card => referenceOf(card, worn(card))).filter((reference): reference is { path: string; label: string } => reference !== undefined),
@@ -1830,11 +1897,11 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
   const place = places.find(entry => entry.visualImage !== undefined && entry.category !== 'item') ?? places.find(entry => entry.visualImage !== undefined)
   // Faces first, and the place they stand in keeps its seat: with room for three references, that is two people and the place.
   const people = cast.map(card => referenceOf(card, wearing(card))).filter((reference): reference is { path: string; label: string } => reference !== undefined)
-  const most = referencesOf((await core.settings.get()).image.references)
+  const most = referencesOf((await core.imageOf(runtime)).references)
   const references = place?.visualImage !== undefined
     ? [...people.slice(0, Math.max(0, most - 1)), { path: place.visualImage, label: place.category === 'item' ? L(lang, `物品「${place.name}」`, `the object "${place.name}"`) : L(lang, `场所「${place.name}」`, `the place "${place.name}"`) }]
     : people
-  const info = await renderImage(core, runtime, { ...compose([piece('composed', description)]), kind: 'scene', target: chapter.plan.id, name: `scene-${chapter.plan.id}`, size: params.size ?? pictureSize(core.currentSettings().image, 'scene'), art, avoid: extraAvoid, references }, task)
+  const info = await renderImage(core, runtime, { ...compose([piece('composed', description)]), kind: 'scene', target: chapter.plan.id, name: `scene-${chapter.plan.id}`, size: params.size ?? pictureSize((await core.imageOf(runtime)), 'scene'), art, avoid: extraAvoid, references }, task)
   let inserted = false
   if (params.insert === true) {
     const current = await project.chapterText(chapter.plan.id)

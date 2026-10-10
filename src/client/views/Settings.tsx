@@ -14,7 +14,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import type { EndpointCheck, EndpointModel, KeyState, ModelKind, ModelOption, ProviderOption, SettingsView as SettingsData } from '../../shared/rpc'
 import type { ComfyCatalog, BookImageSettings } from '../../shared/types'
 import { ASPECTS, DEFAULT_ART_STYLE, KIND_ASPECT, PICTURE_KINDS, PICTURE_TIERS, pictureSize, pixelSize, type PictureKind, type PictureTier } from '../../shared/art'
-import { fittedSize, imageSizes, leadOf, LOCAL_SIZES, localImages, sizeList, type ImageLimits, type PictureLead } from '../../shared/images'
+import { fittedSize, imageService, imageSetupName, imageSizes, imageSourceOf, imageWays, leadOf, LOCAL_SIZES, localImages, sizeList, switchImage, switchTts, withBook, type ImageLimits, type ImageSource, type PictureLead } from '../../shared/images'
 import { FFMPEG_INSTALL } from '../../shared/text'
 import { OutsideHelp } from '../OutsideHelp'
 import { RecommendedCard } from '../Recommended'
@@ -27,7 +27,7 @@ import {
   CREW_ROLES,
   type CodexBridgeKind, type CrewRole, type CrewRoleSettings, type CrewSettings, type EmbeddingSettings, type ImageSettings, type ModelRoute, type NovelSettings, type SoundProviderKind, type SoundSettings, type TextModelRouting, type TextRole, type TtsProviderKind, type TtsSettings,
 } from '../../shared/types'
-import { PARALLEL_DEFAULT, PARALLEL_MAX, PLAY_CONTEXT_DEFAULT, REFERENCES_DEFAULT, REFERENCES_MAX, type SoundSettings as SoundDraft } from '../../shared/types'
+import { PARALLEL_DEFAULT, PARALLEL_MAX, PLAY_CONTEXT_DEFAULT, REFERENCES_DEFAULT, REFERENCES_MAX, TTS_SERVICE_KEYS, type SoundSettings as SoundDraft } from '../../shared/types'
 import { messageOf } from '../api'
 import { Icon } from '../icons'
 import {
@@ -142,7 +142,18 @@ export function SettingsView() {
   }, [controller])
   if (view === undefined) return <div className="nv-center">{error !== undefined ? <p className="nv-muted">{error}</p> : <Spinner size={18} />}</div>
   // The form is made anew when the settings under it change — not when only what is noted about the recommendations does: a switch there must not cost a half-filled form.
-  return <SettingsForm key={JSON.stringify({ ...view.settings, recommended: undefined })} view={view} t={t} />
+  return <SettingsShell view={view} t={t} />
+}
+
+/** Which of the two the page showed last, book by book: a form made anew (after a save) opens where it was. */
+const scopeShown = new Map<string, 'global' | 'book'>()
+
+/** The form, made anew as well when another book is in hand or the book's own settings changed under the page: what it shows of a book is that book's, as it is now. */
+function SettingsShell({ view, t }: { view: SettingsData; t: Translate }) {
+  const root = useSnapshot(snapshot => snapshot.root)
+  const book = useSnapshot(snapshot => snapshot.project?.manifest)
+  const own = book !== undefined ? { models: book.models, crew: book.crew, image: book.image, tts: book.tts, sound: book.sound } : undefined
+  return <SettingsForm key={JSON.stringify([{ ...view.settings, recommended: undefined }, root, own])} view={view} t={t} />
 }
 
 /** The reader's own settings, where the Studio's other settings are: the same panel, the same store. */
@@ -151,6 +162,9 @@ function ReadingPanel({ t }: { t: Translate }) {
   const [options, updateOptions] = usePlayerOptions()
   return <ReaderSettings prefs={prefs} update={update} options={options} updateOptions={updateOptions} t={t} />
 }
+
+/** What a book has of its own, as the page holds it until it is saved into the book. */
+interface BookOwn { models: Partial<TextModelRouting>; crew: CrewSettings; image: BookImageSettings; tts?: TtsSettings | undefined; sound?: SoundSettings | undefined }
 
 function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
   const { controller } = useStudio()
@@ -165,16 +179,29 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
   // Where the text models and the crew's ways are saved: for every book, or with the book that is open.
   const book = useSnapshot(snapshot => snapshot.project?.manifest)
   const bookRoot = useSnapshot(snapshot => snapshot.root)
-  const [own, setOwn] = useState<{ models: Partial<TextModelRouting>; crew: CrewSettings; image: BookImageSettings }>(() => ({ models: book?.models ?? {}, crew: book?.crew ?? {}, image: book?.image ?? {} }))
+  const [own, setOwn] = useState<BookOwn>(() => ({ models: book?.models ?? {}, crew: book?.crew ?? {}, image: book?.image ?? {}, ...(book?.tts !== undefined ? { tts: book.tts } : {}), ...(book?.sound !== undefined ? { sound: book.sound } : {}) }))
   const [ownDirty, setOwnDirty] = useState(false)
-  const bookHasOwn = book !== undefined && (Object.keys(book.models ?? {}).length > 0 || Object.values(book.crew ?? {}).some(value => value !== undefined && Object.keys(value).length > 0) || Object.keys(book.image ?? {}).length > 0)
+  const bookHasOwn = book !== undefined && (Object.keys(book.models ?? {}).length > 0 || Object.values(book.crew ?? {}).some(value => value !== undefined && Object.keys(value).length > 0) || Object.keys(book.image ?? {}).length > 0 || book.tts !== undefined || book.sound !== undefined)
   // A book that has settings of its own is what the page opens on: they are what holds for the book in hand.
-  const [wanted, setScope] = useState<'global' | 'book'>(bookHasOwn ? 'book' : 'global')
+  const [wanted, setWanted] = useState<'global' | 'book'>((bookRoot !== undefined ? scopeShown.get(bookRoot) : undefined) ?? (bookHasOwn ? 'book' : 'global'))
+  const setScope = (next: 'global' | 'book'): void => {
+    if (bookRoot !== undefined) scopeShown.set(bookRoot, next)
+    setWanted(next)
+  }
   const scope: 'global' | 'book' = wanted === 'book' && book !== undefined && bookRoot !== undefined ? 'book' : 'global'
-  const updateOwn = (patch: Partial<{ models: Partial<TextModelRouting>; crew: CrewSettings; image: BookImageSettings }>): void => {
-    setOwn(previous => ({ ...previous, ...patch }))
+  const updateOwn = (patch: Partial<BookOwn>): void => {
+    setOwn((previous) => {
+      const next = { ...previous, ...patch }
+      // Named as nothing: the book has none of its own.
+      if ('tts' in patch && patch.tts === undefined) delete next.tts
+      if ('sound' in patch && patch.sound === undefined) delete next.sound
+      return next
+    })
     setOwnDirty(true)
   }
+  // What holds for this book as the page stands: the draft for every book, with the book's own over it.
+  const held = withBook(draft, own)
+  const bookView = view.book !== undefined && view.book.root === bookRoot ? view.book : undefined
   const bookTitle = book?.title.replace(/^[《「『“"]+|[》」』”"]+$/gu, '') ?? ''
   const { busy, run } = useAction()
   // A link here can ask for one part of the page ("speech is not set up" leads to the speech section).
@@ -219,9 +246,12 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
     // What was set for the book goes into the book: its novel.json travels with it.
     if (ownDirty && bookRoot !== undefined) {
       const crew = Object.fromEntries(Object.entries(own.crew).filter(([, value]) => value !== undefined && Object.keys(value).length > 0))
-      await controller.api.call('project.update', { root: bookRoot, patch: { models: own.models, crew, image: own.image } })
+      // Named as nothing (`null`), speech and sound of its own are taken off the book: the Studio's hold for it again.
+      await controller.api.call('project.update', { root: bookRoot, patch: { models: own.models, crew, image: own.image, tts: own.tts ?? null, sound: own.sound ?? null } as never })
       setOwnDirty(false)
+      await controller.refreshProject()
       if (!dirty) {
+        await controller.loadSettings()
         controller.toast('success', t(`已保存到《${bookTitle}》`, `Saved with "${bookTitle}"`))
         return
       }
@@ -250,6 +280,9 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
   const differing: { key: string; label: string; reset: () => void }[] = [
     ...Object.entries(own.models).filter(([, route]) => route !== undefined).map(([role, route]) => ({ key: `model:${role}`, label: t(`${roleWord(role)}的模型：${route!.model}`, `${roleWord(role)}'s model: ${route!.model}`), reset: () => { const { [role as TextRole]: _old, ...rest } = own.models; updateOwn({ models: rest }) } })),
     ...Object.entries(own.crew).filter(([, value]) => value !== undefined && Object.keys(value).length > 0).map(([role]) => ({ key: `crew:${role}`, label: t(`${roleWord(role)}怎么干活`, `how ${roleWord(role)} works`), reset: () => { const { [role as CrewRole]: _old, ...rest } = own.crew; updateOwn({ crew: rest }) } })),
+    ...(own.image.provider !== undefined ? [{ key: 'image:service', label: t(`绘图服务：${own.image.provider === 'none' ? '不画图' : imageSetupName(own.image as ImageSettings)}`, `image service: ${own.image.provider === 'none' ? 'none' : imageSetupName(own.image as ImageSettings)}`), reset: () => { updateOwn({ image: imageWays(own.image) }) } }] : []),
+    ...(own.tts !== undefined ? [{ key: 'tts', label: t(`配音服务：${own.tts.provider === 'none' ? '不配音' : own.tts.model ?? own.tts.provider}`, `speech: ${own.tts.provider === 'none' ? 'none' : own.tts.model ?? own.tts.provider}`), reset: () => { updateOwn({ tts: undefined }) } }] : []),
+    ...(own.sound !== undefined ? [{ key: 'sound', label: t('声音设计', 'sound design'), reset: () => { updateOwn({ sound: undefined }) } }] : []),
     ...(own.image.lead !== undefined ? [{ key: 'image:lead', label: t(`人物的图：${leadWord(own.image.lead)}`, `pictures of people: ${leadWord(own.image.lead)}`), reset: () => { const { lead: _old, ...rest } = own.image; updateOwn({ image: rest }) } }] : []),
     ...(own.image.sheet !== undefined ? [{ key: 'image:sheet', label: own.image.sheet === 'front' ? t('人设图只画正面', 'sheets show the front alone') : t('人设图画三视图', 'sheets show three views'), reset: () => { const { sheet: _old, ...rest } = own.image; updateOwn({ image: rest }) } }] : []),
     ...(own.image.portraitScene !== undefined ? [{ key: 'image:scene', label: own.image.portraitScene ? t('立绘照名场面画', 'portraits show the signature scene') : t('立绘画素底定妆照', 'portraits are plain'), reset: () => { const { portraitScene: _old, ...rest } = own.image; updateOwn({ image: rest }) } }] : []),
@@ -268,6 +301,9 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
   const crewWayNow: CrewWay | '' | 'mixed' = crewWays.every(way => way === crewWays[0]) ? crewWays[0]! : 'mixed'
   const everywhereWays = CREW_ROLES.map(role => crewWay(draft.crew?.[role]))
   const everywhereWay = everywhereWays.every(way => way === everywhereWays[0]) ? t(...CREW_WAYS.find(item => item.value === everywhereWays[0])!.label) : t('各角色不同', 'differs by role')
+  // What the crew runs on for every book, in a word: said beside "as for every book", so that following it is following something.
+  const everywhereModels = CREW_ROLES.map(role => draft.models[role]?.model ?? '')
+  const everywhereCrew = everywhereModels.every(model => model === everywhereModels[0]) ? (everywhereModels[0]!.length > 0 ? everywhereModels[0]! : t(`跟随对话模型${view.defaultRoute !== undefined ? `：${view.defaultRoute.model}` : ''}`, `follows the chat model${view.defaultRoute !== undefined ? `: ${view.defaultRoute.model}` : ''}`)) : t('各角色不同', 'differs by role')
   const setCrewWay = (way: CrewWay | ''): void => {
     const table: CrewSettings = (inBook ? own.crew : draft.crew) ?? {}
     const next: CrewSettings = {}
@@ -279,7 +315,10 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
     else update({ crew: next })
   }
   // A role whose model cannot drive an agent works by plain calls whatever is chosen here: said, not found out later.
-  const unable = view.crew !== undefined ? view.crew.roles.filter(item => (CREW_ROLES as readonly string[]).includes(item.role) && !(item.agent && view.crew!.loop)) : []
+  const crewRoles = (inBook ? bookView?.roles : undefined) ?? view.crew?.roles ?? []
+  const unable = view.crew !== undefined ? crewRoles.filter(item => (CREW_ROLES as readonly string[]).includes(item.role) && !(item.agent && view.crew!.loop)) : []
+  // Models this book names that DSH does not list now: the role cannot run on them.
+  const unlisted = (bookView?.unlisted ?? []).filter(item => { const mine = own.models[item.role]; return mine !== undefined && mine.provider === item.provider && mine.model === item.model })
   const roleRow = (role: TextRole, label: string, hint: string): ReactNode => {
     const global = draft.models[role]
     const mine = own.models[role]
@@ -376,7 +415,21 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
 
       <section className="nv-card" data-section="text">
         <SectionTitle>{t('模型', 'Models')}</SectionTitle>
-        <p className="nv-muted nv-small">{t('文字模型来自 DSH 的“设置 → 模型”。总编用对话自己选的模型。', 'Text models come from DSH Settings → Models. The showrunner uses the conversation\'s own model.')}</p>
+        <p className="nv-muted nv-small">{t('文字模型来自 DSH 的“设置 → 模型”。总编用对话自己选的模型。', 'Text models come from DSH Settings → Models. The showrunner uses the conversation\'s own model.')}{' '}<button type="button" className="nv-link" onClick={() => controller.guard(async () => { await controller.loadSettings() })}>{t('重新读取 DSH 的模型', 'Read DSH\'s models again')}</button></p>
+        {unlisted.length > 0 ? (
+          <div className="nv-note is-warn">
+            <p>{t(`《${bookTitle}》指定的 ${unlisted.length} 个模型，DSH 里现在没有——这些角色在这本书上跑不起来：`, `"${bookTitle}" names ${unlisted.length} model(s) DSH does not list now — these roles cannot run for this book:`)}</p>
+            <ul className="nv-plain-list">
+              {unlisted.map(item => (
+                <li key={item.role}>
+                  {roleWord(item.role)}：<code>{item.model}</code>{t(`（${item.provider}${item.noProvider ? '：DSH 里没有这个提供方了' : '：它现在不列这个模型'}）`, ` (${item.provider}${item.noProvider ? ': DSH no longer has this provider' : ': it does not list this model now'})`)}{' '}
+                  <button type="button" className="nv-link" onClick={() => { const { [item.role]: _old, ...rest } = own.models; updateOwn({ models: rest }) }}>{t('改回沿用全局', 'Back to every book\'s')}</button>
+                </li>
+              ))}
+            </ul>
+            <p className="nv-small">{t('也可以在下面另选一个；改完点“保存”。', 'Or choose another below; then Save.')}</p>
+          </div>
+        ) : null}
         {advanced ? null : (
           <>
             {(() => {
@@ -396,7 +449,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
               fallback={view.defaultRoute}
               keys={keys}
               t={t}
-              {...(!crewSame ? { unset: t('各角色不同——见高级选项', 'Differs by role — see Advanced') } : scope === 'book' ? { unset: t('沿用全局设置', 'As set for every book') } : {})}
+              {...(!crewSame ? { unset: t('各角色不同——见高级选项', 'Differs by role — see Advanced') } : scope === 'book' ? { unset: t(`沿用全局设置（${everywhereCrew}）`, `As set for every book (${everywhereCrew})`) } : {})}
               extra={view.crew !== undefined ? (
                 <Field
                   label={t('agent 能力范围', 'What the crew may do')}
@@ -428,7 +481,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
           const crewRole = (CREW_ROLES as readonly string[]).includes(role) && view.crew !== undefined ? role as CrewRole : undefined
           if (crewRole === undefined) return <div key={role} className="nv-role-block">{roleRow(role, t(...item.label), t(...item.hint))}</div>
           return ((role: CrewRole) => {
-            const info = view.crew!.roles.find(item => item.role === role)
+            const info = crewRoles.find(item => item.role === role)
             const everywhere = draft.crew?.[role] ?? {}
             const set = (scope === 'book' ? own.crew[role] : draft.crew?.[role]) ?? {}
             const change = (patch: Partial<CrewRoleSettings>): void => {
@@ -499,8 +552,24 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
 
       {scope === 'book' ? (
         <section className="nv-card" data-section="book-image">
-          <SectionTitle>{t('图像：这本书自己的', 'Pictures: this book\'s own')}</SectionTitle>
-          <p className="nv-muted nv-small">{t('绘图服务、模型、清晰度是全局的；下面四项可以随书。', 'The image service, its model and the fineness are for every book; these four a book may have its own way with.')}</p>
+          <SectionTitle actions={bookView !== undefined ? <Chip tone={bookView.ready.image && !ownDirty ? 'green' : 'neutral'}>{ownDirty ? t('保存后生效', 'applies on save') : bookView.ready.image ? t('可用', 'ready') : t('还不能用', 'not ready')}</Chip> : undefined}>{t('图像：这本书自己的', 'Pictures: this book\'s own')}</SectionTitle>
+          <OwnMark own={own.image.provider !== undefined} scope={scope} t={t}>
+            <Field label={t('绘图服务', 'Image service')} hint={own.image.provider !== undefined ? t('这本书的图都用下面这个服务画。密钥按接口地址保存在本机，不进书里。', 'This book\'s pictures are drawn with the service below. Keys are kept on this machine by address, never in the book.') : undefined}>
+              <Select<'' | 'own'> value={own.image.provider !== undefined ? 'own' : ''} options={[
+                { value: '', label: t(`沿用全局：${draft.image.provider === 'none' ? '不画图' : imageSetupName(draft.image)}`, `As for every book: ${draft.image.provider === 'none' ? 'off' : imageSetupName(draft.image)}`) },
+                { value: 'own', label: t('这本书用自己的绘图服务', 'A service of this book\'s own') },
+              ]} onChange={(next) => {
+                // Starts from what every book draws with — a copy to change — and goes back to it by letting go of the copy.
+                if (next === 'own') updateOwn({ image: { ...imageService(draft.image), ...own.image } })
+                else updateOwn({ image: imageWays(own.image) })
+              }} />
+            </Field>
+          </OwnMark>
+          {own.image.provider !== undefined ? (
+            <div className="nv-own is-own nv-own-block">
+              <ImageSection value={own.image as ImageSettings} keys={keys} t={t} advanced={advanced} only="service" onChange={(image) => { updateOwn({ image }) }} />
+            </div>
+          ) : null}
           <div className="nv-form-grid">
             <OwnMark own={own.image.lead !== undefined} scope={scope} t={t}>
               <Field label={t('人物的图以哪张为准', 'Which picture of a person leads')}>
@@ -540,7 +609,39 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
               </Field>
             </OwnMark>
           </div>
-          <p className="nv-muted nv-small">{t('其余的设置（接口、密钥、语音、检索、并发……）对每本书都一样：切到“全局”去改。', 'Everything else (endpoints, keys, speech, retrieval, how much at once…) is the same for every book: change it under Every book.')}</p>
+        </section>
+      ) : null}
+
+      {scope === 'book' ? (
+        <section className="nv-card" data-section="book-tts">
+          <SectionTitle actions={bookView !== undefined ? <Chip tone={bookView.ready.tts && !ownDirty ? 'green' : 'neutral'}>{ownDirty ? t('保存后生效', 'applies on save') : bookView.ready.tts ? t('可用', 'ready') : t('还不能用', 'not ready')}</Chip> : undefined}>{t('语音：这本书自己的', 'Speech: this book\'s own')}</SectionTitle>
+          <OwnMark own={own.tts !== undefined} scope={scope} t={t}>
+            <Field label={t('配音服务', 'Speech service')} hint={own.tts !== undefined ? t('这本书的配音都用下面这一套：服务、模型、旁白、默认音色。', 'This book is voiced with the setup below: service, model, narrator, default voices.') : undefined}>
+              <Select<'' | 'own'> value={own.tts !== undefined ? 'own' : ''} options={[
+                { value: '', label: t(`沿用全局：${draft.tts.provider === 'none' ? '不配音' : draft.tts.model ?? draft.tts.provider}`, `As for every book: ${draft.tts.provider === 'none' ? 'off' : draft.tts.model ?? draft.tts.provider}`) },
+                { value: 'own', label: t('这本书用自己的配音服务', 'A setup of this book\'s own') },
+              ]} onChange={(next) => { const { kept: _kept, ...copy } = draft.tts; updateOwn({ tts: next === 'own' ? copy : undefined }) }} />
+            </Field>
+          </OwnMark>
+          {own.tts !== undefined ? (
+            <div className="nv-own is-own nv-own-block">
+              <TtsSection value={own.tts} keys={keys} voices={(bookView?.voices ?? view.voices).map(voice => ({ id: voice.id, note: `${voice.note}${voice.accent !== undefined ? ` · ${voice.accent}` : ''}` }))} savedProvider={book?.tts?.provider ?? view.settings.tts.provider} t={t} onChange={(tts) => { updateOwn({ tts }) }} />
+            </div>
+          ) : null}
+          <OwnMark own={own.sound !== undefined} scope={scope} t={t}>
+            <Field label={t('声音设计：环境声、音效、配乐', 'Sound design: ambience, effects, music')}>
+              <Select<'' | 'own'> value={own.sound !== undefined ? 'own' : ''} options={[
+                { value: '', label: t(`沿用全局：${(draft.sound?.provider ?? 'auto') === 'none' ? '不生成' : (draft.sound?.provider ?? 'auto') === 'auto' ? '跟随语音' : draft.sound?.model ?? '单独的接口'}`, `As for every book: ${(draft.sound?.provider ?? 'auto') === 'none' ? 'off' : (draft.sound?.provider ?? 'auto') === 'auto' ? 'follows speech' : draft.sound?.model ?? 'its own endpoint'}`) },
+                { value: 'own', label: t('这本书自己定', 'This book\'s own') },
+              ]} onChange={(next) => { updateOwn({ sound: next === 'own' ? { ...(draft.sound ?? { provider: 'auto' }) } : undefined }) }} />
+            </Field>
+          </OwnMark>
+          {own.sound !== undefined ? (
+            <div className="nv-own is-own nv-own-block">
+              <SoundSection value={own.sound} tts={held.tts} ready={bookView?.ready.sound === true} keys={keys} t={t} onChange={(sound) => { updateOwn({ sound }) }} />
+            </div>
+          ) : null}
+          <p className="nv-muted nv-small">{t('检索、并发、上下文对每本书都一样：切到“全局”去改。', 'Retrieval, how much at once and context are the same for every book: change them under Every book.')}</p>
         </section>
       ) : null}
 
@@ -630,11 +731,13 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
 
       <Fold id="image" title={t('图像生成', 'Image generation')} summary={draft.image.provider === 'none' ? t('未使用', 'off') : `${draft.image.provider === 'codex' ? t('ChatGPT 订阅', 'ChatGPT subscription') : draft.image.model ?? draft.image.provider}${view.ready.image ? '' : t(' · 还不能用', ' · not ready')}`} ready={view.ready.image} {...fold('image')}>
         <p className="nv-muted nv-small">{t('立绘、插图、封面、分镜画面都用它。', 'Portraits, illustrations, covers and panels all use it.')}</p>
+        {book?.image?.provider !== undefined ? <p className="nv-own-note">{t(`《${bookTitle}》另设了自己的绘图服务（${book.image.provider === 'none' ? '不画图' : imageSetupName(book.image as ImageSettings)}），这里的对它不生效。`, `"${bookTitle}" has an image service of its own (${book.image.provider === 'none' ? 'off' : imageSetupName(book.image as ImageSettings)}); what is set here does not hold for it.`)}</p> : null}
         <ImageSection value={draft.image} keys={keys} t={t} advanced={advanced} onChange={(image) => { update({ image }) }} />
       </Fold>
 
       <Fold id="tts" title={t('语音合成', 'Speech')} summary={draft.tts.provider === 'none' ? t('未使用', 'off') : `${draft.tts.model ?? draft.tts.provider}${view.ready.tts ? '' : t(' · 还不能用', ' · not ready')}`} ready={view.ready.tts} {...fold('tts')}>
         <p className="nv-muted nv-small">{t('同一人物全书用同一个声音：人物卡指定的优先，其次自动选角。', 'One voice per person through the book: the one on their card first, else cast automatically.')}</p>
+        {book?.tts !== undefined ? <p className="nv-own-note">{t(`《${bookTitle}》另设了自己的配音服务（${book.tts.provider === 'none' ? '不配音' : book.tts.model ?? book.tts.provider}），这里的对它不生效。`, `"${bookTitle}" has a speech setup of its own (${book.tts.provider === 'none' ? 'off' : book.tts.model ?? book.tts.provider}); what is set here does not hold for it.`)}</p> : null}
         <TtsSection value={draft.tts} keys={keys} voices={view.voices.map(voice => ({ id: voice.id, note: `${voice.note}${voice.accent !== undefined ? ` · ${voice.accent}` : ''}` }))} savedProvider={view.settings.tts.provider} t={t} onChange={(tts) => { update({ tts }) }} />
       </Fold>
 
@@ -1080,15 +1183,6 @@ function EmbeddingSection({ value, keys, onChange, t }: { value: EmbeddingSettin
 
 // ───────────────────────────── images ─────────────────────────────
 
-type ImageSource = 'none' | 'codex' | 'comfyui' | 'diffusers' | ServiceId
-
-function imageSourceOf(value: ImageSettings): ImageSource {
-  if (value.provider === 'none' || value.provider === 'codex' || value.provider === 'comfyui' || value.provider === 'diffusers') return value.provider
-  if (value.provider === 'dashscope') return 'bailian'
-  if (value.provider === 'openrouter') return 'openrouter'
-  return serviceOf(value.baseURL) === 'openai' || value.baseURL === undefined ? 'openai' : 'custom'
-}
-
 const TIER_LABELS: Record<PictureTier, [string, string]> = {
   '720p': ['720p（标清，快而省）', '720p (quick and cheap)'],
   '1080p': ['1080p（高清）', '1080p (full HD)'],
@@ -1315,18 +1409,18 @@ function SizeListField({ value, placeholder, onChange, t }: { value: string[] | 
   )
 }
 
-function ImageSection({ value, keys, onChange, t, advanced }: { value: ImageSettings; keys: KeyBag; onChange: (value: ImageSettings) => void; t: Translate; advanced: boolean }) {
+function ImageSection({ value, keys, onChange, t, advanced, only }: { value: ImageSettings; keys: KeyBag; onChange: (value: ImageSettings) => void; t: Translate; advanced: boolean; /** `service`: the service alone — where it comes from and what it is asked for — without the ways of drawing that hold whichever service draws. */ only?: 'service' }) {
   const source = imageSourceOf(value)
   const { codex } = keys.view
-  // The look of the book outlives a change of service.
-  const look = { ...(value.stylePrompt !== undefined ? { stylePrompt: value.stylePrompt } : {}), ...(value.negativePrompt !== undefined ? { negativePrompt: value.negativePrompt } : {}) }
-  const pick = (next: ImageSource): void => {
-    if (next === 'none') onChange({ provider: 'none', ...look })
-    else if (next === 'codex') onChange({ provider: 'codex', size: '1536x1024', ...look })
-    else if (next === 'comfyui' || next === 'diffusers') onChange({ provider: next, size: value.size ?? '1024x1024', ...look })
-    else if (next === 'custom') onChange({ provider: 'openai', baseURL: '', model: '', size: value.size ?? '1024x1024', ...look })
-    else onChange({ ...recommendedSetup(next)!.image, ...look })
-  }
+  const all = only !== 'service'
+  // What a service starts out with the first time it is chosen; one that was set up before comes back as it was left.
+  const fresh = (next: ImageSource): Partial<ImageSettings> => (
+    next === 'none' ? { provider: 'none' }
+      : next === 'codex' ? { provider: 'codex', size: '1536x1024' }
+        : next === 'comfyui' || next === 'diffusers' ? { provider: next, size: value.size ?? '1024x1024' }
+          : next === 'custom' ? { provider: 'openai', baseURL: '', model: '', size: value.size ?? '1024x1024' }
+            : imageService(recommendedSetup(next)!.image))
+  const pick = (next: ImageSource): void => { if (next !== source) onChange(switchImage(value, next, fresh(next))) }
   const endpoint = value.provider === 'dashscope' ? value.baseURL ?? SERVICES.bailian.origin : value.provider === 'openrouter' ? value.baseURL ?? compatibleBase('openrouter') : value.baseURL ?? compatibleBase('openai')
   // On this machine: no key, no list of models to choose from.
   const local = value.provider === 'comfyui' || value.provider === 'diffusers'
@@ -1349,7 +1443,7 @@ function ImageSection({ value, keys, onChange, t, advanced }: { value: ImageSett
     <>
       <div className="nv-form-grid">
         <Field label={t('服务', 'Service')}>
-          <Select<ImageSource> value={source} options={[
+          <Select<ImageSource> value={source} options={([
             { value: 'none', label: t('不使用', 'Off') },
             { value: 'openrouter', label: t('OpenRouter（GPT Image 2.5 等，推荐）', 'OpenRouter (GPT Image 2.5 and more, recommended)') },
             { value: 'codex', label: t('ChatGPT 订阅（Codex，无需 key）', 'ChatGPT subscription (Codex, no key)') },
@@ -1358,7 +1452,7 @@ function ImageSection({ value, keys, onChange, t, advanced }: { value: ImageSett
             { value: 'custom', label: t('自定义接口（OpenAI 兼容；也可以是你自己的服务器）', 'Custom endpoint (OpenAI-compatible; a server of your own too)') },
             { value: 'comfyui', label: t('ComfyUI（本机）', 'ComfyUI (this machine)') },
             { value: 'diffusers', label: t('Diffusers（本机的 Python）', 'Diffusers (this machine\'s Python)') },
-          ]} onChange={pick} />
+          ] as { value: ImageSource; label: string }[]).map(option => (value.kept?.[option.value] !== undefined && option.value !== source ? { ...option, label: t(`${option.label} · 配过，换回去还在`, `${option.label} · set up before, kept`) } : option))} onChange={pick} />
         </Field>
         {value.provider === 'codex' ? (
           <Field label={t('通道', 'Bridge')} hint={ready ? t('这条通道已登录，可以出图', 'This bridge is signed in and can draw') : value.bridge === 'cli' ? t('还没有登录：在终端运行 codex login，选择用 ChatGPT 登录', 'Not signed in yet: run codex login in a terminal and sign in with ChatGPT') : value.bridge === 'connect' ? t('还没有登录：在 DSH 设置 → 模型 → Openai-Codex 里授权', 'Not signed in yet: authorize under DSH Settings → Models → Openai-Codex') : t('还没有登录：在 DSH 设置 → 模型 → Openai-Codex 授权，或运行 codex login', 'Not signed in yet: authorize under DSH Settings → Models → Openai-Codex, or run codex login')}>
@@ -1420,7 +1514,7 @@ function ImageSection({ value, keys, onChange, t, advanced }: { value: ImageSett
             <TextInput inputMode="numeric" value={value.references !== undefined ? String(value.references) : ''} placeholder={String(REFERENCES_DEFAULT)} onChange={(event) => { const count = number(event.target.value); const { references: _old, ...rest } = value; onChange(count !== undefined && count >= 0 ? { ...rest, references: Math.min(REFERENCES_MAX, Math.round(count)) } : rest) }} />
           </Field>
         ) : null}
-        {value.provider !== 'none' ? (
+        {all && value.provider !== 'none' ? (
           // Shown outright, not only among the fine print: it decides how many pictures a click draws.
           <Field label={t('人物的图以哪张为准', 'Which picture of a person leads')} hint={leadOf(value) === 'portrait'
             ? t('立绘只照文字画；人设图照着立绘画，没有的画完立绘就补；别的图照着人设图画。', 'A portrait is drawn from the words alone; the sheet is drawn against it — after it, where there is none — and other pictures against the sheet.')
@@ -1434,7 +1528,7 @@ function ImageSection({ value, keys, onChange, t, advanced }: { value: ImageSett
             ]} onChange={(lead) => { const { sheetFirst: _old, lead: _lead, ...rest } = value; onChange(lead === 'sheet' ? rest : { ...rest, lead }) }} />
           </Field>
         ) : null}
-        {value.provider !== 'none' ? (
+        {all && value.provider !== 'none' ? (
           <Field label={t('人设图画什么', 'What a design sheet shows')} hint={t('小的绘图模型画不好并排的三个视图时，选只画正面', 'Where a small image model cannot keep three views alike: the front alone')}>
             <Select<'turn' | 'front'> value={value.sheet === 'front' ? 'front' : 'turn'} options={[
               { value: 'turn', label: t('三视图：正面、侧面、背面', 'Three views: front, side, back') },
@@ -1442,13 +1536,13 @@ function ImageSection({ value, keys, onChange, t, advanced }: { value: ImageSett
             ]} onChange={(sheet) => { const { sheet: _old, ...rest } = value; onChange(sheet === 'front' ? { ...rest, sheet } : rest) }} />
           </Field>
         ) : null}
-        {value.provider !== 'none' ? (
+        {all && value.provider !== 'none' ? (
           <label className="nv-check">
             <input type="checkbox" checked={value.portraitScene !== false} onChange={(event) => { const { portraitScene: _old, ...rest } = value; onChange(event.target.checked ? rest : { ...rest, portraitScene: false }) }} />
             <span>{t('立绘照名场面画（不勾：素底定妆照）', 'Portraits show the signature scene (unticked: a plain likeness)')}</span>
           </label>
         ) : null}
-        {value.provider !== 'none' ? (
+        {all && value.provider !== 'none' ? (
           <label className="nv-check">
             <input type="checkbox" checked={value.panelThings !== false} onChange={(event) => { const { panelThings: _old, ...rest } = value; onChange(event.target.checked ? rest : { ...rest, panelThings: false }) }} />
             <span>{t('有声漫的画面带上物品的设定图', 'A motion comic\'s panels take the art of the things they show along')}</span>
@@ -1460,7 +1554,7 @@ function ImageSection({ value, keys, onChange, t, advanced }: { value: ImageSett
           </Field>
         ) : null}
       </div>
-      {value.provider !== 'none' ? (
+      {all && value.provider !== 'none' ? (
         <div className="nv-note">
           <p>{t('画风属于每一本书，在那本书的“设定 → 画风”里。', 'Art direction belongs to each book: under its Bible → Art.')}</p>
           {/* What was once entered here is still in force for books without a look of their own: shown, and removable, not silently kept. */}
@@ -1552,7 +1646,12 @@ function TtsSection({ value, keys, voices, savedProvider, onChange, t }: { value
     <>
       <div className="nv-form-grid">
         <Field label={t('服务', 'Service')}>
-          <Select<TtsProviderKind> value={value.provider} options={TTS_OPTIONS.map(option => ({ value: option.value, label: t(...option.label) }))} onChange={(provider) => { onChange(ttsDefaults(provider, value)) }} />
+          <Select<TtsProviderKind> value={value.provider} options={TTS_OPTIONS.map(option => ({ value: option.value, label: value.kept?.[option.value] !== undefined && option.value !== value.provider ? t(`${option.label[0]} · 配过，换回去还在`, `${option.label[1]} · set up before, kept`) : t(...option.label) }))} onChange={(provider) => {
+            // The service left is remembered as it was set up; the one come back to returns as it was left.
+            if (provider === value.provider) return
+            const start = ttsDefaults(provider, value)
+            onChange(switchTts(value, provider, Object.fromEntries(Object.entries(start).filter(([key]) => (TTS_SERVICE_KEYS as readonly string[]).includes(key)))))
+          }} />
         </Field>
         {value.provider !== 'none' ? (
           <>

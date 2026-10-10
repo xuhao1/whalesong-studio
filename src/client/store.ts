@@ -568,7 +568,10 @@ export class StudioController {
     const before = this.snapshot.sessionBook
     const moves = bind && this.sessionId !== undefined && before !== root
     // Claimed before the Host confirms, so the wake-up our own move causes is not mistaken for the showrunner's.
+    const came = this.snapshot.root !== root
     this.set({ root, project, status: 'ready', line, ...(chapterId !== undefined ? { chapterId } : {}), ...(moves ? { sessionBook: root } : {}) })
+    // What can be drawn and spoken is told book by book: a book may have services of its own.
+    if (came && this.snapshot.settings?.book?.root !== root) void this.loadSettings().catch(() => undefined)
     // On the Studio's own page: whose conversation the work started here belongs to. Looked up, never made, and not waited for.
     if (this.sessionId === undefined && this.bookSession?.root !== root) {
       void this.api.call('conversation.open', { root, create: false }, this.abort.signal)
@@ -1045,7 +1048,9 @@ export class StudioController {
   // ───────────── settings & feedback ─────────────
 
   async loadSettings(): Promise<SettingsView> {
-    const settings = taking(await this.api.call('settings.get', {}))
+    // Told for the book in hand as well: what its own services can do, what its crew runs on.
+    const root = this.snapshot.root
+    const settings = taking(await this.api.call('settings.get', root !== undefined ? { root } : {}))
     this.set({ settings, ...(settings.build?.stale === true ? { hostStale: true, hostReloadable: settings.build.reloadable === true } : {}) })
     return settings
   }
@@ -1082,7 +1087,8 @@ export class StudioController {
 
   /** Save settings; `keys` maps endpoint addresses to keys typed for them. */
   async saveSettings(patch: Record<string, unknown>, keys?: Record<string, string>): Promise<SettingsView> {
-    const settings = taking(await this.api.call('settings.update', { patch, ...(keys !== undefined && Object.keys(keys).length > 0 ? { keys } : {}) }))
+    const root = this.snapshot.root
+    const settings = taking(await this.api.call('settings.update', { patch, ...(keys !== undefined && Object.keys(keys).length > 0 ? { keys } : {}), ...(root !== undefined ? { root } : {}) }))
     this.set({ settings })
     return settings
   }

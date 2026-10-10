@@ -240,4 +240,43 @@ describe('the code a phone scans', () => {
     expect(placeFigures(text, [{ path: 'assets/images/b.png', caption: 'x', told: 'zzz' }])[0]!.after).toBe(text.indexOf('晚间'))
     expect(placeFigures(`${text}\n\n![](assets/images/a.png)`, [{ path: 'assets/images/a.png', caption: 'x', told: '桃花树下' }])).toEqual([])
   })
+
+  it('carries every portrait of a person — of a moment in its chapter, any other where they first come on — but the ones the author keeps out', async () => {
+    const { createTestBed, PIXEL } = await import('./support/harness')
+    const bed = await createTestBed()
+    try {
+      const { project } = bed.runtime
+      const first = await project.addChapter({ title: '进府' })
+      await project.saveChapterText(first.id, '轿子进了角门。\n\n黛玉下了轿，随婆子往里走。\n\n晚间各自安歇。')
+      const later = await project.addChapter({ title: '葬花' })
+      await project.saveChapterText(later.id, '园中花谢。\n\n黛玉肩上担着花锄，锄上挂着花囊，往花冢去。\n\n宝玉在山坡上听见。')
+      const plain = await project.writeAsset('images/plain.png', PIXEL)
+      const now = await project.writeAsset('images/zang-2.png', PIXEL)
+      const before = await project.writeAsset('images/zang-1.png', PIXEL)
+      const card = await project.saveCharacter({
+        name: '黛玉',
+        role: 'protagonist',
+        firstAppearance: first.id,
+        visual: { portrait: now, portraits: [now, plain], scenes: [{ id: 's1', title: '葬花', chapter: later.id, text: '她肩担花锄，锄上挂着花囊，独自往花冢去', portrait: now }] },
+      })
+      // An earlier portrait of the same moment: off the card, still in the gallery, and its record says what it is of.
+      await project.addIllustration({ id: 'img-old', path: before, prompt: '葬花', kind: 'portrait', target: card.id, createdAt: new Date().toISOString(), moment: { title: '葬花', scene: 's1', chapter: later.id } })
+
+      // All of them stand in the book: the two of the moment in its chapter, the plain one where she first comes on — after the paragraph that names her.
+      const places = await project.portraitPlaces()
+      expect(places.map(place => [place.path, place.chapter, place.title, place.hidden])).toEqual([[now, later.id, '葬花', false], [plain, first.id, undefined, false], [before, later.id, '葬花', false]])
+      const text = await project.chapterText(first.id)
+      expect(await project.chapterFigures(first.id)).toEqual([{ path: plain, caption: '黛玉', after: text.indexOf('黛玉下了轿') }])
+      expect((await project.chapterFigures(later.id)).map(figure => [figure.path, figure.caption])).toEqual([[now, '葬花 · 黛玉'], [before, '葬花 · 黛玉']])
+
+      // One kept out is out for whoever reads — and comes back when the author lets it.
+      await project.showFigure(before, false)
+      expect((await project.chapterFigures(later.id)).map(figure => figure.path)).toEqual([now])
+      expect((await project.portraitPlaces()).find(place => place.path === before)?.hidden).toBe(true)
+      await project.showFigure(before, true)
+      expect((await project.chapterFigures(later.id)).map(figure => figure.path)).toEqual([now, before])
+    } finally {
+      await bed.cleanup()
+    }
+  })
 })

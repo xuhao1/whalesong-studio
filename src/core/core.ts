@@ -4,11 +4,11 @@
  * and provider factories. It has no knowledge of Cordis or HTTP — the Host
  * half wires it to the Harness, tests drive it directly.
  */
-import { withBookImage } from '../shared/images'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { mkdir, rename, rmdir, stat } from 'node:fs/promises'
 import { basename, dirname, join, relative, resolve } from 'node:path'
-import { imageParallel } from '../shared/images'
-import { parallelOf, type BookLock, type ModelRoute, type NovelSettings, type ProjectManifest, type ProjectRef, type TextRole } from '../shared/types'
+import { imageParallel, imageService, imageWays, withBook } from '../shared/images'
+import { parallelOf, TTS_SERVICE_KEYS, type BookLock, type ImageSettings, type ModelRoute, type NovelSettings, type ProjectManifest, type ProjectRef, type TextRole } from '../shared/types'
 import { contextBudgets, packContext, type ContextPack, type PackOptions } from './context'
 import { currentJob, JobManager, type JobContext } from './jobs'
 import { resolveRoute, retrying, type LlmBackend } from './llm'
@@ -85,6 +85,14 @@ export interface TaskContext {
   job?: JobContext
 }
 
+/** What a trial is of: an image service other than the one in force, a model other than a role's own. */
+export interface Trial {
+  image?: Partial<ImageSettings>
+  routes?: Partial<Record<TextRole, ModelRoute>>
+}
+
+const trials = new AsyncLocalStorage<Trial>()
+
 export class NovelCore {
   readonly jobs = new JobManager()
   readonly settings: SettingsStore
@@ -119,6 +127,8 @@ export class NovelCore {
     image: new Gate('image', parallelOf(undefined)),
     sound: new Gate('sound', parallelOf(undefined)),
   }
+  /** Gates of services that are not the Studio's own for their kind (a book's, one on trial), by what they are. */
+  private readonly sideGates = new Map<string, Gate>()
   private embedderCache: { key: string; value: Embedder | undefined } | undefined
   private readonly unsubscribe: () => void
   private disposed = false
@@ -430,9 +440,22 @@ export class NovelCore {
   // ───────────── the private shelf ─────────────
 
   /** How the private shelf stands: whether one was set up here, and whether it is open now. */
-  async shelfState(): Promise<{ set: boolean; open: boolean }> {
+  async shelfState(): Promise<{ set: boolean; open: boolean; /** Which shelf it is. */ id?: string; /** The keepers of its other ways in (`host:…`). */ devices: string[] }> {
     const file = await this.shelf.file()
-    return { set: file !== undefined, open: file !== undefined && this.shelf.open }
+    return { set: file !== undefined, open: file !== undefined && this.shelf.open, ...(file !== undefined ? { id: file.id } : {}), devices: (file?.ways ?? []).filter(way => way.kind === 'device' && way.id !== undefined).map(way => way.id!) }
+  }
+
+  /** Open the private shelf by a secret its keeper holds (this computer's own unlock). @throws VaultError `wrong-key`. */
+  async openShelfWith(kind: 'device', id: string, secret: Buffer): Promise<void> {
+    await this.shelf.unlockWith(kind, id, secret)
+  }
+
+  /** Let a keeper's secret open the private shelf, which must be open; or stop letting it. */
+  async shelfWay(change: { add: (key: Buffer) => SealSlot } | { remove: { kind: 'device'; id: string } }): Promise<void> {
+    if ('add' in change) {
+      if (!this.shelf.open) throw new ProjectError('novel/locked', 'open the private shelf first')
+      await this.shelf.allow(change.add)
+    } else await this.shelf.forbid(change.remove.kind, change.remove.id)
   }
 
   /** The books under these folders that stand on a private shelf — any shelf, open or not: read off their stubs alone. */
@@ -773,15 +796,35 @@ export class NovelCore {
     return this.snapshot
   }
 
-  /** The image settings as they hold for a book: the Studio's, with what the book has its own way with (`novel.json`'s `image`). */
-  async imageOf(runtime: ProjectRuntime): Promise<NovelSettings['image']> {
-    return withBookImage(this.snapshot.image, (await runtime.project.manifest()).image)
+  /**
+   * The settings as they hold for a book: the Studio's, with the book's own pictures, speech and sound where it has
+   * them (`novel.json`) — and, inside a trial, with whatever the trial is of.
+   */
+  async settingsOf(runtime: ProjectRuntime | undefined): Promise<NovelSettings> {
+    const settings = await this.settings.get()
+    const held = runtime !== undefined ? withBook(settings, await runtime.project.manifest()) : settings
+    const trial = trials.getStore()?.image
+    return trial !== undefined ? { ...held, image: { ...imageWays(held.image), ...imageService(trial) } as ImageSettings } : held
+  }
+
+  /** The image settings as they hold for a book; see {@link settingsOf}. */
+  async imageOf(runtime: ProjectRuntime | undefined): Promise<NovelSettings['image']> {
+    return (await this.settingsOf(runtime)).image
+  }
+
+  /**
+   * Do a piece of work with another setup than the one in force — another image service, another model for a role —
+   * to see what it makes of the same task. Whatever runs inside draws and writes with it; nothing is saved to the settings.
+   */
+  trial<T>(of: Trial, work: () => Promise<T>): Promise<T> {
+    return trials.run(of, work)
   }
 
   async route(role: TextRole, runtime: ProjectRuntime | undefined, task?: Pick<TaskContext, 'agentRoute'>): Promise<ModelRoute> {
     const settings = await this.settings.get()
     const manifest = runtime !== undefined ? await runtime.project.manifest() : undefined
-    const route = resolveRoute(role, settings, this.llm, {
+    const tried = trials.getStore()?.routes?.[role]
+    const route = tried ?? resolveRoute(role, settings, this.llm, {
       ...(manifest !== undefined ? { manifest } : {}),
       ...(task?.agentRoute !== undefined ? { agentRoute: task.agentRoute } : {}),
     })
@@ -835,44 +878,76 @@ export class NovelCore {
     return states
   }
 
-  /** @param runtime - the book the pictures are for, so the ledger files them under it. */
+  /**
+   * The gate of a service that is not the Studio's own for its kind — a book's, or one on trial: its own count of
+   * what is out at once, so a server that draws one picture at a time is asked for one, whatever the Studio's draws.
+   */
+  private sideGate(kind: 'image' | 'speech', service: object, ceiling: number): Gate {
+    const key = `${kind}:${JSON.stringify(service)}`
+    let gate = this.sideGates.get(key)
+    if (gate === undefined) {
+      gate = new Gate(kind, ceiling)
+      gate.onChange(() => { this.jobs.touch() })
+      this.sideGates.set(key, gate)
+    }
+    gate.setCeiling(ceiling)
+    return gate
+  }
+
+  /**
+   * The service pictures are drawn with for a book: its own where it has one, the Studio's otherwise (and, in a trial, the one tried).
+   * @param runtime - the book the pictures are for, so the ledger files them under it.
+   */
   async imageProvider(runtime?: ProjectRuntime): Promise<ImageProvider | undefined> {
-    const provider = createImageProvider((await this.settings.get()).image, this.credentials, this.options.bridges)
+    const settings = await this.imageOf(runtime)
+    const provider = createImageProvider(settings, this.credentials, this.options.bridges)
     if (provider === undefined) return undefined
     const metered = meterImages(provider, (event) => { this.usage.record(event) }, await this.bookTag(runtime))
+    const { concurrency: _mine, ...mine } = imageService(settings)
+    const { concurrency: _main, ...main } = imageService(this.snapshot.image)
+    const gate = JSON.stringify(mine) === JSON.stringify(main) ? undefined : this.sideGate('image', mine, imageParallel(settings))
+    const background = (): boolean => currentJob()?.kind === 'batch'
     return {
       kind: metered.kind,
       model: metered.model,
-      generate: request => this.through('image', () => metered.generate(request), request.signal !== undefined ? { signal: request.signal } : {}),
+      generate: request => (gate !== undefined
+        ? gate.run(() => metered.generate(request), { background: background(), ...(request.signal !== undefined ? { signal: request.signal } : {}) })
+        : this.through('image', () => metered.generate(request), request.signal !== undefined ? { signal: request.signal } : {})),
       ...(metered.prompting !== undefined ? { prompting: async signal => await metered.prompting!(signal) } : {}),
     }
   }
 
-  /** @param runtime - the book the voices are for, so the ledger files them under it. */
+  /**
+   * The service that speaks for a book: its own where it has one, the Studio's otherwise.
+   * @param runtime - the book the voices are for, so the ledger files them under it.
+   */
   async ttsProvider(runtime?: ProjectRuntime): Promise<TtsProvider | undefined> {
-    const settings = (await this.settings.get()).tts
+    const settings = (await this.settingsOf(runtime)).tts
     const provider = createTtsProvider(settings, this.credentials)
     if (provider === undefined) return undefined
     const metered = meterSpeech(provider, settings.model ?? settings.provider, (event) => { this.usage.record(event) }, await this.bookTag(runtime))
+    const service = (value: NovelSettings['tts']): object => Object.fromEntries(TTS_SERVICE_KEYS.filter(key => key !== 'narratorVoice' && key !== 'defaultVoices' && value[key] !== undefined).map(key => [key, value[key]]))
+    const gate = JSON.stringify(service(settings)) === JSON.stringify(service(this.snapshot.tts)) ? undefined : this.sideGate('speech', service(settings), parallelOf(settings.concurrency))
+    const through = <T>(task: () => Promise<T>, options: GateOptions): Promise<T> => (gate !== undefined ? gate.run(task, { background: currentJob()?.kind === 'batch', ...options }) : this.through('speech', task, options))
     const gated: TtsProvider = Object.create(metered) as TtsProvider
-    gated.synthesize = request => this.through('speech', () => metered.synthesize(request), {
+    gated.synthesize = request => through(() => metered.synthesize(request), {
       ...(request.signal !== undefined ? { signal: request.signal } : {}),
       ...(request.onStart !== undefined ? { onStart: request.onStart } : {}),
     })
     if (metered.anchor !== undefined) {
       const anchor = metered.anchor.bind(metered)
-      gated.anchor = (voice, options) => this.through('speech', () => anchor(voice, options), options.signal !== undefined ? { signal: options.signal } : {})
+      gated.anchor = (voice, options) => through(() => anchor(voice, options), options.signal !== undefined ? { signal: options.signal } : {})
     }
     if (metered.designVoice !== undefined) {
       const design = metered.designVoice.bind(metered)
-      gated.designVoice = request => this.through('speech', () => design(request), request.signal !== undefined ? { signal: request.signal } : {})
+      gated.designVoice = request => through(() => design(request), request.signal !== undefined ? { signal: request.signal } : {})
     }
     return gated
   }
 
   /** The model that makes effects, music and generated beds — by default the speech setup, when it can. */
   async soundProvider(runtime?: ProjectRuntime): Promise<SoundProvider | undefined> {
-    const provider = createSoundProvider(await this.settings.get(), this.credentials)
+    const provider = createSoundProvider(await this.settingsOf(runtime), this.credentials)
     if (provider === undefined) return undefined
     const tag = await this.bookTag(runtime)
     const metered: SoundProvider = Object.create(provider) as SoundProvider

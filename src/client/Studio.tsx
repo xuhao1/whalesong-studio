@@ -270,8 +270,6 @@ const NAV: { view: StudioView; icon: IconName; label: [string, string] }[] = [
   { view: 'bible', icon: 'globe', label: ['设定', 'Bible'] },
   { view: 'outline', icon: 'tree', label: ['大纲', 'Outline'] },
   { view: 'write', icon: 'pen', label: ['写作', 'Write'] },
-  // What the book is to whoever reads it: its text, its people, its world — everything else is where it is made.
-  { view: 'read', icon: 'eye', label: ['观看', 'View'] },
   { view: 'review', icon: 'checkCircle', label: ['审校', 'Review'] },
   { view: 'stage', icon: 'stage', label: ['演出', 'Stage'] },
 ]
@@ -468,6 +466,12 @@ function Header({ onSearch }: { onSearch: () => void }) {
       <span className="nv-header-stats" title={t(`${stats.chaptersWithText}/${stats.chapters} 章已写`, `${stats.chaptersWithText}/${stats.chapters} chapters written`)}>
         {formatCount(stats.words, locale)}{t(' 字', ' words')}
       </span>
+      {/* What the book is to whoever reads it — its text, its people, its world — stands apart from the pages where it is made. */}
+      <button type="button" className={cx('nv-view-btn nv-header-view', view === 'read' && 'is-active')} aria-pressed={view === 'read'} onClick={() => { controller.setView('read') }} title={t('观看：读者看到的样子——正文、人物、世界', 'View: the book as a reader has it — text, people, world')}>
+        <Icon name="eye" size={15} />
+        <span>{t('观看', 'View')}</span>
+      </button>
+      <span className="nv-header-rule" aria-hidden="true" />
       <nav className="nv-nav" aria-label="Novel Studio">
         {NAV.map(item => (
           <button key={item.view} type="button" className={cx('nv-nav-item', view === item.view && 'is-active')} onClick={() => { controller.setView(item.view) }} title={t(...item.label)}>

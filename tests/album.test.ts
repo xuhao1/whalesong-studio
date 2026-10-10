@@ -361,6 +361,8 @@ describe('the album of a book', () => {
       expect(JSON.stringify(cut)).not.toContain('晴雯')
 
       // Left out when the author says so: no file, no count, and the pictures only it showed are taken away again.
+      // (His portrait stands in the text where he first comes on, and would go along for that: kept out of the text, it does not.)
+      await bed.runtime.project.showFigure('assets/images/baoyu.png', false)
       const bare = await publishSite(bed.core, bed.runtime, { out, reader, album: false })
       expect(bare.album).toBeUndefined()
       expect(JSON.parse(await readFile(join(out, 'data', id, 'book.json'), 'utf8')).album).toBeUndefined()

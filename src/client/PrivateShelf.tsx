@@ -10,6 +10,7 @@ import type { PrivateShelfState } from '../shared/rpc'
 import type { ProjectRef } from '../shared/types'
 import { RpcError } from './api'
 import { Button, Field, Modal, plainEnter, Select, TextInput, useAction, useStudio, useT } from './ui'
+import { deviceName, UnlockForm } from './views/Lock'
 
 type Book = ProjectRef & { workspace: string }
 
@@ -21,7 +22,29 @@ function Password({ value, onChange, onEnter, placeholder, autoFocus }: { value:
 /** What a request that failed says, in the words it came with. */
 const said = (error: unknown): string => (error instanceof Error ? error.message : String(error))
 
-/** Set the shelf up, open it, or give it another password. */
+/** Open the shelf: the same form a sealed book is opened with — this computer's own unlock where the shelf was set up for it, and the password. */
+function ShelfOpenDialog({ state, onClose }: { state: PrivateShelfState; onClose: () => void }) {
+  const { controller } = useStudio()
+  const t = useT()
+  return (
+    <Modal title={t('打开私密书架', 'Open the private shelf')} onClose={onClose}>
+      <div className="nv-lock-card is-inline">
+        <UnlockForm
+          device={state.device}
+          deviceOn={state.deviceOn === true}
+          placeholder={t('私密书架的密码', 'The shelf\'s password')}
+          unlock={async (how) => {
+            await controller.api.call('shelf.open', how)
+            await controller.loadWorkspaces()
+            onClose()
+          }}
+        />
+      </div>
+    </Modal>
+  )
+}
+
+/** Set the shelf up, or give it another password. */
 function ShelfKeyDialog({ how, onClose }: { how: 'setup' | 'open' | 'change'; onClose: () => void }) {
   const { controller } = useStudio()
   const t = useT()
@@ -185,6 +208,12 @@ export function PrivateShelfSection({ state, books, others, tile }: { state: Pri
               : (
                   <>
                     <Button size="sm" variant="ghost" icon="plus" onClick={() => { setAdding(true) }}>{t('放一本书进来…', 'Put a book on it…')}</Button>
+                    {state.device?.available === true ? (
+                      <label className="nv-check nv-small" title={t(`打开私密书架时可以不输密码，用${deviceName(state.device, t)}确认。书架的钥匙交给这台电脑的系统钥匙串保管。`, `Open the shelf without typing its password, confirmed with ${deviceName(state.device, t)}. The shelf's key is kept by this computer's own credential store.`)}>
+                        <input type="checkbox" checked={state.deviceOn === true} disabled={busy} onChange={(event) => { const on = event.target.checked; void run(async () => { await controller.api.call('shelf.device', { on }); await controller.loadWorkspaces(); controller.toast('success', on ? t(`以后可以用${deviceName(state.device, t)}打开私密书架`, `The shelf now opens with ${deviceName(state.device, t)} too`) : t('私密书架只用密码打开了', 'The shelf opens with its password only')) }) }} />
+                        <span>{t(`可用${deviceName(state.device, t)}打开`, `Opens with ${deviceName(state.device, t)}`)}</span>
+                      </label>
+                    ) : null}
                     <Button size="sm" variant="ghost" onClick={() => { setAsking('change') }}>{t('换密码', 'Password…')}</Button>
                     <Button size="sm" icon="lock" busy={busy} onClick={() => run(async () => { await controller.api.call('shelf.close', {}); await controller.loadWorkspaces() })}>{t('锁上', 'Close')}</Button>
                   </>
@@ -200,7 +229,7 @@ export function PrivateShelfSection({ state, books, others, tile }: { state: Pri
           </div>
         ) : <p className="nv-muted nv-small">{t('还没有书。', 'No book on it yet.')}</p>
       ) : null}
-      {asking !== undefined ? <ShelfKeyDialog how={asking} onClose={() => { setAsking(undefined) }} /> : null}
+      {asking === 'open' ? <ShelfOpenDialog state={state} onClose={() => { setAsking(undefined) }} /> : asking !== undefined ? <ShelfKeyDialog how={asking} onClose={() => { setAsking(undefined) }} /> : null}
       {adding ? <ShelveDialog books={others.filter(book => book.locked !== true)} onClose={() => { setAdding(false) }} /> : null}
       {taking !== undefined ? <UnshelveDialog book={taking} onClose={() => { setTaking(undefined) }} /> : null}
     </section>

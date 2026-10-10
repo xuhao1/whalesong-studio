@@ -148,7 +148,7 @@ export async function bookAnswer(core: NovelCore, runtime: ProjectRuntime, mode:
   }
   if (section === 'chapters' && rest.length === 2) {
     if (reading) {
-      const chapter = await readChapter(runtime, rest[1]!, (await core.settings.get()).tts)
+      const chapter = await readChapter(runtime, rest[1]!, (await core.settingsOf(runtime)).tts)
       if (chapter === undefined) throw new ReaderRefused(404, 'not found')
       return chapter
     }

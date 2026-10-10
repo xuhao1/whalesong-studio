@@ -5,7 +5,7 @@
  * written and passes a brief; this pipeline turns that into text on disk.
  */
 import { chapterBudgetOf, MAIN_LINE, type ChapterInfo } from '../../shared/types'
-import { clipTail, countWords, normalizeProse } from '../../shared/text'
+import { clipTail, countWords, normalizeProse, proseOnly } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { LlmCallError, type LlmResponse } from '../llm'
 import type { LocatedChapter } from '../project'
@@ -31,6 +31,11 @@ export interface WriteParams {
   characters?: string[]
   /** Override of the auto-digest setting for this call. */
   digest?: boolean
+  /**
+   * Write, and hand the text back: the chapter keeps what it has, nothing is digested, and nothing is shown as it is
+   * written (several writers may be at the same chapter at once, each to be compared with the others).
+   */
+  dry?: boolean
 }
 
 export interface WriteResult {
@@ -62,6 +67,8 @@ export interface WriteResult {
   continued: boolean
   /** The opening and the closing of what was written, for the orchestrator to judge without rereading. */
   preview: { head: string; tail: string }
+  /** `dry`: the text itself, which was not saved. */
+  text?: string
   brief?: string
 }
 
@@ -104,8 +111,9 @@ async function pickChapter(runtime: ProjectRuntime, ref: string | undefined, lin
 export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, params: WriteParams, task: TaskContext): Promise<WriteResult> {
   const { project } = runtime
   const chapter = await pickChapter(runtime, params.chapter, params.line)
+  const dry = params.dry === true
   // Named at once, so a Studio showing this chapter can tail the stream while it is written.
-  task.job?.result({ chapterId: chapter.plan.id })
+  if (!dry) task.job?.result({ chapterId: chapter.plan.id })
   const manifest = await project.manifest()
   const lang = promptLanguage(manifest.language)
   const existing = await project.chapterText(chapter.plan.id)
@@ -125,7 +133,7 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
   const usual = lengths.length >= 2 ? Math.round(lengths.reduce((sum, words) => sum + words, 0) / lengths.length / 100) * 100 : undefined
   const route = await core.route('writer', runtime, task)
 
-  task.job?.progress(0, 3, lang === 'zh' ? '整理上下文' : 'packing context')
+  if (!dry) task.job?.progress(0, 3, lang === 'zh' ? '整理上下文' : 'packing context')
   const pack = await core.pack(runtime, route, {
     purpose: mode === 'continue' ? 'continue' : 'draft',
     chapter,
@@ -140,7 +148,7 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
   const system = writerSystem({ ...base, style: renderStyle(style, lang) })
   const length = (written: number): { words?: number; usual?: number } => target !== undefined ? { words: Math.max(300, target - written) } : usual !== undefined ? { usual } : {}
 
-  task.job?.progress(1, 3, lang === 'zh' ? '写作中' : 'writing')
+  if (!dry) task.job?.progress(1, 3, lang === 'zh' ? '写作中' : 'writing')
   let written = ''
   let continued = false
   let cached = 0
@@ -167,7 +175,7 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
         ...(task.signal !== undefined ? { signal: task.signal } : {}),
         onText: (_delta, total) => {
           partial = total
-          task.job?.rewrite(soFar.length > 0 ? `${soFar}\n\n${total}` : total)
+          if (!dry) task.job?.rewrite(soFar.length > 0 ? `${soFar}\n\n${total}` : total)
         },
       })
     } catch (error) {
@@ -178,7 +186,7 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
       }
       // Stopped mid-chapter: what was written is kept when it replaces nothing (an empty chapter, or a continuation).
       const kept = [soFar, cleanProse(partial, chapter.plan.title)].filter(part => part.trim().length > 0).join('\n\n')
-      if (task.signal?.aborted === true && kept.length > 0 && (mode === 'continue' || existing.length === 0)) {
+      if (!dry && task.signal?.aborted === true && kept.length > 0 && (mode === 'continue' || existing.length === 0)) {
         await project.saveChapterText(chapter.plan.id, mode === 'continue' ? `${existing}\n\n${kept}` : kept, { reason: 'before-continue' })
       }
       throw error
@@ -193,11 +201,12 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
   if (written.trim().length === 0) throw new ProjectError('novel/empty', lang === 'zh' ? '写手模型的回复里没有正文（只有标题或空白）。请再试一次。' : 'the writer model\'s reply held no prose (only a heading or blank lines) — try again')
 
   const finalText = mode === 'continue' ? `${existing}\n\n${written}` : written
-  task.job?.rewrite(written)
-  const saved = await project.saveChapterText(chapter.plan.id, finalText, { reason: mode === 'continue' ? 'before-continue' : 'before-redraft' })
+  if (!dry) task.job?.rewrite(written)
+  // Written to be compared: the chapter keeps its text, and the draft goes back to whoever asked.
+  const saved = dry ? { words: countWords(proseOnly(finalText)), changed: false } : await project.saveChapterText(chapter.plan.id, finalText, { reason: mode === 'continue' ? 'before-continue' : 'before-redraft' })
 
   let digested = false
-  const wantDigest = params.digest ?? core.currentSettings().autoDigest
+  const wantDigest = !dry && (params.digest ?? core.currentSettings().autoDigest)
   if (wantDigest) {
     task.job?.progress(2, 3, lang === 'zh' ? '收录记忆' : 'digesting')
     try {
@@ -210,8 +219,10 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
       core.log(`digest after writing ${chapter.plan.id} failed`, error)
     }
   }
-  task.job?.progress(3, 3)
-  task.job?.result({ chapterId: chapter.plan.id })
+  if (!dry) {
+    task.job?.progress(3, 3)
+    task.job?.result({ chapterId: chapter.plan.id })
+  }
 
   return {
     chapterId: chapter.plan.id,
@@ -233,5 +244,6 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
     continued,
     preview: { head: written.slice(0, 220), tail: written.length > 440 ? written.slice(-220) : '' },
     ...(params.brief !== undefined ? { brief: params.brief } : {}),
+    ...(dry ? { text: finalText } : {}),
   }
 }

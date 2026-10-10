@@ -22,6 +22,7 @@ import { DERIVE_TIES_HINT, TiesBlock, TiesReport, useDeriveTies } from '../Ties'
 import {
   Button, Chip, cx, Empty, Field, Modal, ProjectImage, SectionTitle, Select, Tabs, TextArea, TextInput, useAction, useBookLine, useConfirm, useKept, useLoad,
   useProject, useRunningJob, useSnapshot, useStudio, useT, plainEnter, ViewButton,
+  useSplit,
 } from '../ui'
 
 /** The bible's own choices beside the line in hand: every line at once, and what is filed under no line. */
@@ -165,9 +166,12 @@ function World({ group }: { group: WorldGroup }) {
   const hasTree = nested.some(node => node.children.length > 0)
   const [layout, setLayout] = useKept<'weight' | 'tree'>(`bible.layout.${group}`, 'weight')
   const asTree = hasTree && layout === 'tree'
+  // On a phone the list and an entry's page are one at a time; led here to one entry, its page is what opens.
+  const split = useSplit(entity?.kind === 'world' && mine.some(entry => entry.id === entity.id))
   useEffect(() => {
     if (entity?.kind !== 'world' || !mine.some(entry => entry.id === entity.id)) return
     setSelected(entity.id)
+    split.open()
     setCategory('all')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity?.nonce])
@@ -231,8 +235,8 @@ function World({ group }: { group: WorldGroup }) {
     )
   }
   return (
-    <div className="nv-split">
-      <aside className="nv-split-list">
+    <div className={cx('nv-split', split.rootClass)}>
+      <aside className="nv-split-list" {...split.list}>
         <div className="nv-list-tools">
           {group === 'ideas' && used.length > 1
             ? <Select value={category} options={[{ value: 'all', label: t('全部类别', 'All categories') }, ...options(CATEGORY_LABELS, t).filter(option => used.includes(option.value))]} onChange={setCategory} />
@@ -319,7 +323,8 @@ function World({ group }: { group: WorldGroup }) {
         ) : null}
         <RemovedCards kinds={['world']}>{count => t(`最近删除的设定 · ${count}`, `Deleted entries · ${count}`)}</RemovedCards>
       </aside>
-      <section className="nv-split-detail">
+      <section className="nv-split-detail" {...split.detail}>
+        {split.backBar(t(...labels.tab))}
         {entry !== undefined
           ? <WorldEditor key={entry.id} entry={entry} seen={presence.find(item => item.entry === entry.id)?.chapters ?? []} derived={worldWeight({}, seen.get(entry.id) ?? 0, written)} onDeleted={() => { setSelected(undefined) }} />
           : <Empty icon={labels.icon} title={mine.length === 0 ? t(...labels.create) : t('从左边选一条', 'Choose one on the left')} />}
@@ -600,9 +605,10 @@ function Styles() {
   const assist = useAssist()
   const { busy, run } = useAction()
   const style = project.styles.find(candidate => candidate.id === selected)
+  const split = useSplit()
   return (
-    <div className="nv-split">
-      <aside className="nv-split-list">
+    <div className={cx('nv-split', split.rootClass)}>
+      <aside className="nv-split-list" {...split.list}>
         <div className="nv-list-tools">
           <Button size="sm" icon="plus" onClick={() => run(async () => { const created = await controller.api.call('style.save', { root, style: { name: t('新文风', 'New style') } }); setSelected(created.id) })} busy={busy}>{t('新建', 'New')}</Button>
           <Button size="sm" icon="wand" onClick={() => { setLearning(true) }}>{t('从范文提炼', 'Learn from a sample')}</Button>
@@ -622,7 +628,8 @@ function Styles() {
         </ul>
         <RemovedCards kinds={['style']}>{count => t(`最近删除的文风 · ${count}`, `Deleted styles · ${count}`)}</RemovedCards>
       </aside>
-      <section className="nv-split-detail">
+      <section className="nv-split-detail" {...split.detail}>
+        {split.backBar(t('文风', 'Styles'))}
         {style !== undefined ? <StyleEditor key={style.id} style={style} active={style.id === active} onDeleted={() => { setSelected(undefined) }} /> : <Empty icon="feather" title={t('选择或新建一个文风', 'Select or create a style')} />}
       </section>
       {learning ? (

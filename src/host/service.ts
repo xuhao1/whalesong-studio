@@ -40,7 +40,7 @@ import { SessionBooks, SessionStateStore, type SwitchedBy } from '../core/sessio
 import { DEFAULT_SETTINGS, mergeSettings, SettingsStore, type DeepPartial } from '../core/settings'
 import { errorMessage } from '../core/util/async'
 import { displayPath, exists } from '../core/util/fs'
-import type { CodexStatus, EndpointCheck, EndpointModel, HelpPackage, HelpView, KeyState, LockView, ModelKind, ShareStatus, WorkspaceInfo } from '../shared/rpc'
+import type { CodexStatus, EndpointCheck, EndpointModel, HelpPackage, HelpView, KeyState, LockView, ModelKind, PrivateShelfState, ShareStatus, WorkspaceInfo } from '../shared/rpc'
 import { unlistedModels } from '../shared/recommended'
 import { localImages } from '../shared/images'
 import { compatibleBase, hostOf, originOf, recommendedSetup, SERVICES, serviceOf, setupPatch, speechProtocol, type ServiceId, type SetupPart } from '../shared/services'
@@ -233,18 +233,86 @@ export class NovelService extends Service {
         await this.core.unlockBook(root, { password: how.password })
         return
       }
-      if (how.device !== true || this.device === undefined) throw new ProjectError('novel/invalid', 'give the password, or ask for this computer\'s own unlock')
-      if (!stub.sealed.slots.some(slot => slot.kind === 'device' && slot.id === this.deviceSlot())) throw new ProjectError('novel/wrong-key', 'this book was not set up to open with this computer\'s unlock — use its password, then switch that on')
+      if (how.device !== true) throw new ProjectError('novel/invalid', 'give the password, or ask for this computer\'s own unlock')
       const zh = this.locale().startsWith('zh')
-      const confirmed = await this.device.confirm(zh ? `解锁《${stub.title}》` : `unlock "${stub.title}"`, signal)
-      if (!confirmed) throw new ProjectError('novel/wrong-key', 'the system did not confirm that it is you')
-      const secret = await this.device.load(stub.id)
-      if (secret === undefined) throw new ProjectError('novel/wrong-key', 'the key this computer kept for the book is gone — use the password, then switch this computer\'s unlock on again')
-      try {
-        await this.core.unlockBook(root, { kind: 'device', id: this.deviceSlot(), secret })
-      } finally {
-        secret.fill(0)
+      await this.byPresence({ id: stub.id, set: stub.sealed.slots.some(slot => slot.kind === 'device' && slot.id === this.deviceSlot()), reason: zh ? `解锁《${stub.title}》` : `unlock "${stub.title}"`, what: 'this book' }, async (secret) => { await this.core.unlockBook(root, { kind: 'device', id: this.deviceSlot(), secret }) }, signal)
+    } catch (error) {
+      if (error instanceof VaultError) throw new ProjectError(error.code === 'wrong-key' ? 'novel/wrong-key' : 'novel/invalid', error.message)
+      throw error
+    }
+  }
+
+  /**
+   * Open something by this computer's own unlock — a sealed book, the private shelf: the system asks for a fingerprint
+   * or the computer's password, and only on a yes is the secret that opens it fetched from the account's credential store.
+   * @param of.id - what the secret is kept under.
+   * @param of.set - whether it was set up to open this way on this computer.
+   * @throws ProjectError `novel/wrong-key` where it was not, the owner was not confirmed, or the secret is gone.
+   */
+  private async byPresence(of: { id: string; set: boolean; reason: string; what: string }, open: (secret: Buffer) => Promise<void>, signal?: AbortSignal): Promise<void> {
+    if (this.device === undefined) throw new ProjectError('novel/invalid', 'give the password: this computer offers no unlock of its own')
+    if (!of.set) throw new ProjectError('novel/wrong-key', `${of.what} was not set up to open with this computer's unlock — use its password, then switch that on`)
+    const confirmed = await this.device.confirm(of.reason, signal)
+    if (!confirmed) throw new ProjectError('novel/wrong-key', 'the system did not confirm that it is you')
+    const secret = await this.device.load(of.id)
+    if (secret === undefined) throw new ProjectError('novel/wrong-key', `the key this computer kept for ${of.what} is gone — use the password, then switch this computer's unlock on again`)
+    try {
+      await open(secret)
+    } finally {
+      secret.fill(0)
+    }
+  }
+
+  // ───────────── the private shelf: opened the way a sealed book is ─────────────
+
+  /** What the shelf's secret is kept under in this account's credential store. */
+  private shelfSecretId(id: string): string {
+    return `shelf:${id}`
+  }
+
+  /** How the private shelf stands, with this computer's own unlock: whether there is one, and whether the shelf opens by it. */
+  async shelfView(): Promise<PrivateShelfState> {
+    const state = await this.core.shelfState()
+    const device = await this.device?.info().catch(() => undefined) ?? { available: false, biometrics: false, method: 'none' as const, host: hostname() }
+    return { set: state.set, open: state.open, device, deviceOn: state.devices.includes(this.deviceSlot()) }
+  }
+
+  /** Let this computer's own unlock open the private shelf (which is open now), or stop letting it. */
+  async setShelfDeviceUnlock(on: boolean): Promise<void> {
+    const state = await this.core.shelfState()
+    if (state.id === undefined) throw new ProjectError('novel/invalid', 'no private shelf is set up here')
+    if (!on) {
+      await this.core.shelfWay({ remove: { kind: 'device', id: this.deviceSlot() } })
+      await this.device?.remove(this.shelfSecretId(state.id)).catch(() => {})
+      return
+    }
+    const info = await this.device?.info()
+    if (this.device === undefined || info === undefined || !info.available) throw new ProjectError('novel/unsupported', 'this computer offers no way to prove its owner is present — the shelf opens with its password')
+    if (!state.open) throw new ProjectError('novel/locked', 'open the private shelf with its password first')
+    const secret = randomBytes(32)
+    await this.device.store(this.shelfSecretId(state.id), secret)
+    try {
+      await this.core.shelfWay({ add: this.core.slotFor('device', this.deviceSlot(), secret, info.host) })
+    } finally {
+      secret.fill(0)
+    }
+  }
+
+  /**
+   * Open the private shelf: with its password, or by this computer's own unlock.
+   * @throws ProjectError `novel/wrong-key` when it does not open that way.
+   */
+  async unlockShelf(how: { password?: string; device?: boolean }, signal?: AbortSignal): Promise<void> {
+    try {
+      if (how.password !== undefined && how.password.length > 0) {
+        await this.core.openShelf(how.password)
+        return
       }
+      if (how.device !== true) throw new ProjectError('novel/invalid', 'give the password, or ask for this computer\'s own unlock')
+      const state = await this.core.shelfState()
+      if (state.id === undefined) throw new ProjectError('novel/invalid', 'no private shelf is set up here')
+      const zh = this.locale().startsWith('zh')
+      await this.byPresence({ id: this.shelfSecretId(state.id), set: state.devices.includes(this.deviceSlot()), reason: zh ? '打开小说工坊的私密书架' : 'open Novel Studio\'s private shelf', what: 'the private shelf' }, async (secret) => { await this.core.openShelfWith('device', this.deviceSlot(), secret) }, signal)
     } catch (error) {
       if (error instanceof VaultError) throw new ProjectError(error.code === 'wrong-key' ? 'novel/wrong-key' : 'novel/invalid', error.message)
       throw error

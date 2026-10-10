@@ -194,17 +194,25 @@ class DashScopeImages implements ImageProvider {
     const references = (request.references ?? []).slice(0, MAX_REFERENCES)
     const prompt = request.prompt.slice(0, 2000)
     const size = (request.size ?? this.settings.size ?? '1024x1024').replace(/[xX×]/, '*')
-    const reply = await postJson<DashScopeImageReply>(`${origin}/api/v1/services/aigc/multimodal-generation/generation`, {
-      model: this.model,
-      // Reference pictures come first, the way the API reads "these, then what to do with them".
-      input: { messages: [{ role: 'user', content: [...references.map(reference => ({ image: dataUrl(reference) })), { text: prompt }] }] },
-      parameters: {
-        size,
-        prompt_extend: false,
-        watermark: false,
-        ...(negative !== undefined && negative.length > 0 ? { negative_prompt: negative } : {}),
-      },
-    }, { apiKey, ...signalOption(request.signal), timeoutMs: 300_000 })
+    let reply: DashScopeImageReply
+    try {
+      reply = await postJson<DashScopeImageReply>(`${origin}/api/v1/services/aigc/multimodal-generation/generation`, {
+        model: this.model,
+        // Reference pictures come first, the way the API reads "these, then what to do with them".
+        input: { messages: [{ role: 'user', content: [...references.map(reference => ({ image: dataUrl(reference) })), { text: prompt }] }] },
+        parameters: {
+          size,
+          prompt_extend: false,
+          watermark: false,
+          ...(negative !== undefined && negative.length > 0 ? { negative_prompt: negative } : {}),
+        },
+      }, { apiKey, ...signalOption(request.signal), timeoutMs: 300_000 })
+    } catch (error) {
+      // Asked with pictures and refused as a request it cannot take: a model of Bailian's that draws from words alone
+      // (Z-Image) answers so. Whoever asked may ask again with the words alone, and the picture's record says why.
+      if (references.length > 0 && error instanceof ProviderError && error.status === 400) throw new ProviderError(error.message, error.status, REFERENCES_REFUSED)
+      throw error
+    }
     const url = reply.output?.choices?.[0]?.message?.content?.find(part => typeof part.image === 'string')?.image
     if (url === undefined) throw new ProviderError(`image generation returned no image${reply.message !== undefined ? `: ${reply.message}` : ''}`)
     const file = await download(url, signalOption(request.signal))

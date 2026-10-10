@@ -19,6 +19,7 @@
  * It is the author's alone. Nothing of it goes to a reader: prompts do not
  * leave the book through the shared reader or a published site.
  */
+import { ImageTrialDialog } from './Trial'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { lookWords, pictureWords, resolveArtStyle, tidyPart, type ArtSource, scenesOf, sceneWords } from '../shared/art'
 import type { IllustrationInfo, IllustrationPiece } from '../shared/types'
@@ -487,6 +488,8 @@ export function PictureViewer({ path, title, note, footer, onClose, onEditLook, 
   const [drawing, setDrawing] = useState(false)
   // Putting it into a chapter's text: asked where.
   const [placing, setPlacing] = useState(false)
+  // The same picture by several image services, to be compared.
+  const [comparing, setComparing] = useState(false)
   useEffect(() => { setRedraw(undefined) }, [at])
   const gone = (): void => {
     onChanged?.()
@@ -525,6 +528,7 @@ export function PictureViewer({ path, title, note, footer, onClose, onEditLook, 
             <Button variant={redraw === 'change' ? 'primary' : 'outline'} icon="wand" disabled={drawing} onClick={() => { setRedraw('change') }} title={t('把这张图和你写的一句话发给绘图模型：只改那一处', 'Send this picture with a sentence of yours: that one thing is changed')}>{t('照着这张改', 'Change this picture')}</Button>
           </>
         ) : null}
+        {image !== undefined ? <Button variant="outline" icon="layers" disabled={drawing} onClick={() => { if (controller.need('image')) setComparing(true) }} title={t('用几个绘图服务把这张图各画一遍，并排着比，采纳一张', 'Have several image services each draw this picture, compare them side by side, and take one')}>{t('对比…', 'Compare…')}</Button> : null}
         <DeletePicture path={at} onDone={gone} disabled={drawing} />
       </>
     ) : undefined}>
@@ -548,6 +552,7 @@ export function PictureViewer({ path, title, note, footer, onClose, onEditLook, 
               : <div className="nv-center"><Spinner /></div>}
         </div>
       </div>
+      {comparing && image !== undefined ? <ImageTrialDialog of={{ picture: { path: image.path, kind: image.kind } }} onClose={() => { setComparing(false) }} onChanged={() => { onChanged?.() }} /> : null}
       {placing ? <PlacePicture image={image} path={at} chapter={image !== undefined && (image.kind === 'scene' || image.kind === 'panel') ? image.target : undefined} onClose={() => { setPlacing(false) }} /> : null}
     </Modal>
   )

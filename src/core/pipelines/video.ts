@@ -116,7 +116,7 @@ export async function videoMaterials(core: NovelCore, runtime: ProjectRuntime, c
   const manifest = await project.manifest()
   const script = await project.audioScript(chapter.plan.id)
   if (script === undefined || script.lines.length === 0) throw new ProjectError('novel/empty', `chapter ${chapter.index} has no audio script yet — direct and voice it first (novel_audio action=script, then action=synthesize)`)
-  const settings = (await core.settings.get()).tts
+  const settings = (await core.settingsOf(runtime)).tts
   const lines: VideoMaterials['lines'] = []
   let cursor = 0
   let spoken = 0

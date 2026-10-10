@@ -17,6 +17,8 @@ import { BatchMatrix, chapterJob, TextBatchDialog, useBatchJob } from '../Batch'
 import { DiffView, ProposalCard } from '../components/ProposalCard'
 import { ChapterTree } from '../ChapterTree'
 import { TranslateDialog } from '../Translate'
+import { ChapterPortraits } from '../Figures'
+import { WriteTrialDialog } from '../Trial'
 import { Icon } from '../icons'
 import { jobKindLabel, jobPulse } from '../Studio'
 import { CHAPTER_STATUS, CHAPTER_STATUS_TONE, ISSUE_TYPE, languageLabel, SEVERITY, SEVERITY_TONE, sheetsDrawn } from '../labels'
@@ -56,6 +58,8 @@ function versionReason(reason: string, t: Translate): string {
     'edit-device': ['在其他设备上改动前', 'before an edit from another device'],
   }
   const label = labels[reason]
+  // A draft written to be compared with others: kept as a version, named by the model that wrote it.
+  if (label === undefined && reason.startsWith('trial-')) return t(`对比稿（${reason.slice(6)}）`, `a draft to compare (${reason.slice(6)})`)
   return label !== undefined ? t(...label) : reason
 }
 
@@ -258,6 +262,8 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
   const [saveState, setSaveState] = useState<'saved' | 'dirty' | 'saving'>('saved')
   const [selection, setSelection] = useState<{ start: number; end: number } | undefined>()
   const [brief, setBrief] = useState('')
+  // Several models at this chapter at once, to be compared.
+  const [comparing, setComparing] = useState(false)
   const [custom, setCustom] = useState<string | undefined>()
   const [viewing, setViewing] = useState<VersionInfo | undefined>()
   const [appending, setAppending] = useState(false)
@@ -566,6 +572,7 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
           <span className={cx('nv-save-state', `is-${saveState}`)}>{saveState === 'saving' ? t('保存中…', 'Saving…') : saveState === 'dirty' ? t('未保存', 'Unsaved') : t('已保存', 'Saved')}</span>
           <span className="nv-spacer" />
           <Button size="sm" variant="ghost" icon="globe" onClick={() => { void save().then(() => { setTranslating(true) }) }} title={t('把这一章（或这条线上的各章）译成另一种语言；原文留在“版本”里', 'Translate this chapter (or every chapter of the line); the original stays among its versions')}>{t('翻译', 'Translate')}</Button>
+          <ChapterPortraits chapter={chapter.id} />
           <ViewButton title={t('观看：这一章在读者那里的样子', 'View: this chapter as a reader has it')} onClick={() => { void save(); controller.setView('read', chapter.id) }} />
           <Menu icon="more" variant="ghost" size="sm" align="end" label={t('章节', 'Chapter')} items={[
             { label: t('推演后续章节', 'Derive the next chapters'), icon: 'sparkles', onSelect: onDerive },
@@ -613,6 +620,7 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
             {writing !== undefined
               ? <Button variant="danger" icon="stop" onClick={() => { void controller.cancelJob(writing.id) }}>{t('停止', 'Stop')}</Button>
               : <Button variant="primary" icon="feather" onClick={() => { write(empty ? 'draft' : 'continue') }}>{empty ? t('写这一章', 'Write it') : t('续写', 'Continue')}</Button>}
+            {writing === undefined ? <Button variant="outline" icon="layers" onClick={() => { void save().then(() => { setComparing(true) }) }} title={t('让几个模型各写一稿这一章，并排着看，采纳一稿——正文不动，采纳了才换', 'Have several models write this chapter, read the drafts side by side and take one — the chapter keeps its text until you do')}>{t('对比…', 'Compare…')}</Button> : null}
             {!empty && writing === undefined ? (
               <Menu icon="chevronDown" variant="outline" size="md" align="end" items={[
                 { label: t('按要求修改整章（生成提案）', 'Revise the whole chapter (as a proposal)'), icon: 'wand', onSelect: reviseChapter },
@@ -673,6 +681,7 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
 
       {viewing !== undefined ? <VersionModal chapterId={chapter.id} version={viewing} current={text} onClose={() => { setViewing(undefined) }} /> : null}
       {moving ? <MoveChapters chapters={[chapter.id]} onClose={() => { setMoving(false) }} /> : null}
+      {comparing ? <WriteTrialDialog chapter={{ id: chapter.id, title: chapter.title, hasText: !empty }} brief={brief} onClose={() => { setComparing(false) }} onTaken={() => { doc.reload() }} /> : null}
       {translating ? <TranslateDialog chapters={[chapter.id]} line={lineId} onClose={() => { setTranslating(false) }} /> : null}
       {confirm.element}
       {sheets.element}

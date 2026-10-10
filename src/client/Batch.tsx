@@ -28,6 +28,7 @@ import { BATCH_STEP, DENSITY, STAGE_STEP_HINT } from './labels'
 import {
   Button, Chip, crewLabel, cx, Field, Modal, Progress, Select, Spinner, TextArea, TextInput, useAction, useLoad, useProject, useSnapshot, useStudio, useT, type Translate,
   SectionTitle, Menu, useBookLine, useKept,
+  useReady,
 } from './ui'
 import { CharacterPicker, defaultCastFilter, matchesCast, useCastFilter } from './CharacterPicker'
 import { useSheetsAsk } from './SheetsAsk'
@@ -666,7 +667,7 @@ export function ArtBatchDialog({ onClose }: { onClose: () => void }) {
     { key: 'cover', label: ['封面', 'Cover'], hint: ['照故事核和主角的样子画', 'From the premise and the look of the leads'], count: noCover ? 1 : 0, needs: 'image' },
     { key: 'voices', label: ['专属声线', 'Voices of their own'], hint: ['按人物卡的声音描述给每个人设计一个声音', 'A voice designed for each character from what their card says'], count: lists.voices.length, needs: 'tts' },
   ]
-  const ready = { image: settings?.ready.image === true, tts: settings?.ready.tts === true }
+  const ready = useReady()
   const total = rows.filter(row => picked.has(row.key)).reduce((sum, row) => sum + row.count, 0)
   const sheets = useSheetsAsk()
   const start = (): Promise<unknown> => run(async () => {

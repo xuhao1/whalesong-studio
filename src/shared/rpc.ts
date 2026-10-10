@@ -14,6 +14,7 @@
 import type { Album, AlbumCounts } from './album'
 import type { ImageLimits } from './images'
 import type { Life } from './life'
+import type { PortraitPlace } from './reader'
 import type { LineWorld } from './worldline'
 import type { Tie } from './ties'
 import type { Recommended } from './recommended'
@@ -24,7 +25,7 @@ import type {
   UsageSummary,
   TtsProviderKind,
   AmbiencePreset, AudioCue, AudioLine, AudioScript, BookLock, ChapterMemory, ChapterPlan, ChapterReview, IssueSeverity, CharacterCard, CharacterRole, ComicBoard, ComicPanel, LifeMark, SheetsAsk,
-  ChapterVideo, CrewRole, GateKind, GateState, IllustrationInfo, JobInfo, SettledSuggestion, ModelRoute, NovelSettings, PlaySession, PlayTurn, ProjectManifest, ProjectRef, ProjectState, RecommendedState,
+  ChapterVideo, CrewRole, GateKind, GateState, IllustrationInfo, ImageTrial, JobInfo, SettledSuggestion, ModelRoute, NovelSettings, PlaySession, PlayTurn, ProjectManifest, ProjectRef, ProjectState, RecommendedState,
   Proposal, SearchHit, SearchSource, SoundKind, StageStatus, StageStep, StoryboardDensity, StyleProfile, TextRole, TextStep, VersionInfo, WalkOn, WorkMode, WorldEntry, HistoryKind, HistoryVersion, GlossaryTerm, ChapterTranslation,
 } from './types'
 
@@ -36,6 +37,10 @@ import type {
 export interface PrivateShelfState {
   set: boolean
   open: boolean
+  /** This computer's own unlock, as for a sealed book. Absent on a Host from before the shelf opened by it. */
+  device?: LockView['device']
+  /** The shelf opens with this computer's own unlock. */
+  deviceOn?: boolean
 }
 
 export interface LockView extends BookLock {
@@ -202,6 +207,24 @@ export interface SettingsView {
   recommended?: RecommendedView
   /** The build the Host runs and the one installed now; `stale` when they differ. Absent on a Host from before builds were named. */
   build?: { running?: string; installed?: string; stale: boolean; /** The Host half can be replaced by the installed one while DSH runs (`host.reload`). Absent on a Host that DSH loaded whole. */ reloadable?: boolean }
+  /** The same told for the book that was asked about, with its own settings counted in. Absent where no book was named, and on a Host from before a book had services of its own. */
+  book?: BookSettingsView
+}
+
+/** How the settings stand for one book: what it can do with its own services, and what its crew really runs on. */
+export interface BookSettingsView {
+  root: string
+  ready: { image: boolean; tts: boolean; sound: boolean }
+  /** The crew as it stands for this book: each role on the model the book gives it, where it gives one. */
+  roles: CrewView['roles']
+  context: ContextView[]
+  /** Stock voices of the speech service the book speaks with. */
+  voices: VoiceOption[]
+  /**
+   * Roles this book names a model for that DSH does not list now (the provider is gone, or no longer has the model):
+   * the role cannot run on it. Told so the page can say it and offer the way out, not found when a job fails.
+   */
+  unlisted: { role: TextRole; provider: string; model: string; /** The provider itself is not among DSH's. */ noProvider: boolean }[]
 }
 
 /** The issue of the recommendations (`recommended.json`) in force, and what the author has said about following it. */
@@ -408,7 +431,9 @@ export interface NovelRpc {
   'shelf.get': { params: Record<string, never>; result: PrivateShelfState }
   /** Set it up (opened at once). Books already here that stand on a shelf this password opens are on it again. */
   'shelf.setup': { params: { password: string }; result: PrivateShelfState }
-  'shelf.open': { params: { password: string }; result: PrivateShelfState }
+  'shelf.open': { params: { password?: string; /** By this computer's own unlock, where the shelf was set up for it. */ device?: boolean }; result: PrivateShelfState }
+  /** Let this computer's own unlock (a fingerprint, the computer's password) open the shelf, which is open now; or stop letting it. */
+  'shelf.device': { params: { on: boolean }; result: PrivateShelfState }
   /** Close it: every book on it is locked and leaves the shelf's list. */
   'shelf.close': { params: Record<string, never>; result: PrivateShelfState }
   'shelf.change': { params: { password: string; next: string }; result: PrivateShelfState }
@@ -594,7 +619,7 @@ export interface NovelRpc {
   'jobs.cancel': { params: { id: string }; result: { cancelled: boolean } }
 
   // ── stage: illustration ──
-  'image.create': { params: { root: string; kind: 'portrait' | 'sheet' | 'scene' | 'location' | 'item' | 'cover' | 'custom'; target?: string; quote?: string; prompt?: string; size?: string; insert?: boolean; /** Portrait, sheet: the author's loose ideas — what is of the person goes into their look, what is of this picture directs it only. */ notes?: string; /** Sheet: which look (outfit) to draw. */ look?: string; looks?: Record<string, string>; characters?: string[]; avoid?: string[]; raw?: boolean; /** false: this once, no design sheet is drawn first. */ sheetFirst?: boolean; /** What this picture of a person is drawn against, this once: a sheet against their `portrait` or from the `words` alone; a portrait against their `sheet` or from the `words` alone. Left out: by `image.lead`. */ from?: 'portrait' | 'sheet' | 'words'; /** Portrait: plain — facing the viewer on a plain ground, not their signature scene. */ plain?: boolean; /** Portrait: which of their signature scenes it shows (by id). */ scene?: string; /** Portrait, sheet: which stretch of their life it shows (a stage's id). */ stage?: string; /** Location, item: the turn of its course to draw it at (`<chapter>` or `<chapter>:<kind>`); the picture is kept with that turn. */ event?: string }; result: JobStarted }
+  'image.create': { params: { root: string; kind: 'portrait' | 'sheet' | 'scene' | 'location' | 'item' | 'cover' | 'custom'; target?: string; quote?: string; prompt?: string; size?: string; insert?: boolean; /** Portrait, sheet: the author's loose ideas — what is of the person goes into their look, what is of this picture directs it only. */ notes?: string; /** Sheet: which look (outfit) to draw. */ look?: string; looks?: Record<string, string>; characters?: string[]; avoid?: string[]; raw?: boolean; /** false: this once, no design sheet is drawn first. */ sheetFirst?: boolean; /** What this picture of a person is drawn against, this once: a sheet against their `portrait` or from the `words` alone; a portrait against their `sheet` or from the `words` alone. Left out: by `image.lead`. */ from?: 'portrait' | 'sheet' | 'words'; /** Portrait: plain — facing the viewer on a plain ground, not their signature scene. */ plain?: boolean; /** Portrait: which of their signature scenes it shows (by id). */ scene?: string; /** Portrait, sheet: which stretch of their life it shows (a stage's id). */ stage?: string; /** Location, item: the turn of its course to draw it at (`<chapter>` or `<chapter>:<kind>`); the picture is kept with that turn. */ event?: string; /** Portrait: draw it once with each of these services, to compare them; none becomes their portrait until the author takes it. */ trials?: ImageTrial[] }; result: JobStarted }
   /**
    * Whose design sheets what is about to be drawn would draw first — asked before any of it is started, so that the author
    * can be told and say yes, or not this time. `unknown`: asks that cannot be told yet (panels with no storyboard).
@@ -605,9 +630,27 @@ export interface NovelRpc {
    * along, to be drawn again with this one thing changed. The new picture takes the old one's place wherever it
    * hangs; the old one stays in the gallery. A job; its result names whose picture the new one is (`replaced`).
    */
-  'image.redraw': { params: { root: string; picture: string; subject?: string; change?: string }; result: JobStarted }
+  'image.redraw': { params: { root: string; picture: string; subject?: string; change?: string; /** Draw it as it is with each of these services, to compare them: nothing is replaced. */ trials?: ImageTrial[] }; result: JobStarted }
+  /** The image services there are to try for a book — the one that draws for it now, and the ones set up before — and whether each can draw right now. */
+  'trial.setups': { params: { root: string }; result: { image: (ImageTrial & { id: string; current: boolean; ready: boolean })[] } }
+  /**
+   * Take one of the pictures drawn to compare services: it stands in the text again, and — `instead` — takes the place
+   * of the picture it was tried against wherever that one hung, or — a portrait with nothing named — becomes the
+   * person's first portrait. `others`: the rest of the comparison, deleted with that.
+   */
+  'trial.adopt': { params: { root: string; path: string; instead?: string; others?: string[] }; result: { ok: boolean; replaced: string[]; removed: number } }
+  /** Have several of DSH's models write the same chapter at once; the chapter keeps its text, the drafts are kept among its versions (job result: `drafts`). */
+  'trial.write': { params: { root: string; chapter?: string; brief?: string; mode?: 'draft' | 'continue'; words?: number; line?: string; with: { provider: string; model: string; reasoningEffort?: string }[] }; result: JobStarted }
+  /** One draft of such a comparison, whole: its text. */
+  'trial.draft': { params: { root: string; chapter: string; version: string }; result: { text: string } }
+  /** Have several of DSH's models plan the same chapters to come at once: previews only (job result: `plans`). */
+  'trial.derive': { params: { root: string; count?: number; direction?: string; volume?: string; with: { provider: string; model: string; reasoningEffort?: string }[] }; result: JobStarted }
   'image.sheetsFirst': { params: { root: string; asks: SheetsAsk[] }; result: { people: { id: string; name: string }[]; unknown: number; /** The sheets would be drawn after the portraits asked for, against them (`image.lead` is `portrait`). */ after?: boolean } }
   'image.list': { params: { root: string }; result: { images: IllustrationInfo[] } }
+  /** The portraits of people and where each stands in the book — those of one chapter, of one person, or all — the ones kept out of the text among them. */
+  'figures.list': { params: { root: string; chapter?: string; character?: string }; result: { portraits: PortraitPlace[] } }
+  /** Keep a portrait out of the text (`show: false`), or let it stand there again. */
+  'figures.show': { params: { root: string; path: string; show: boolean }; result: { ok: boolean } }
   /**
    * Put a picture the book has into a chapter's text: after its `after`-th paragraph (0: before everything), after the
    * paragraph a `quote` ends in, or — neither said — at the end. Result: the chapter, and the paragraph it now follows.
@@ -628,7 +671,7 @@ export interface NovelRpc {
   'image.place': { params: { root: string; picture: string; chapter: string; after?: number; quote?: string; alt?: string }; result: { chapter: string; after: number } }
   /** `released`: whose picture it was — the cards and entries it was taken off, by name. Absent from a Host before the picture was taken off them. */
   /** Take a picture out of the book — by the id of its record, or by its path where it has none: its file, its record, and off every card and entry that shows it (`released`: whose it was). */
-  'image.delete': { params: { root: string; id?: string; path?: string }; result: { ok: boolean; released?: string[] } }
+  'image.delete': { params: { root: string; id?: string; path?: string; /** Several at once, by path. */ paths?: string[] }; result: { ok: boolean; released?: string[]; /** How many pictures went, where several were named. */ removed?: number } }
 
   // ── stage: audio drama ──
   'audio.script': { params: { root: string; chapter: string }; result: { script?: AudioScript; stale: boolean; /** The voice each speaker of this chapter has, or will get, in the audio drama. */ cast?: { characters: Record<string, string>; extras: Record<string, string> }; /** What can make sound for this book, when something can. */ sound?: { model: string; shared: boolean; beds: 'generate' | 'browser' } } }
@@ -749,9 +792,9 @@ export interface NovelRpc {
   'help.install': { params: { id: HelpPackage['id'] }; result: JobStarted }
   /** Remove an outside-help plugin the author installed. */
   'help.remove': { params: { id: HelpPackage['id'] }; result: HelpView & { message?: string } }
-  'settings.get': { params: Record<string, never>; result: SettingsView }
+  'settings.get': { params: { /** A book to tell the settings for as well (`book` in the answer). */ root?: string }; result: SettingsView }
   /** `keys` maps an endpoint address to the key to save for its host; an empty string forgets the saved key. */
-  'settings.update': { params: { patch: Record<string, unknown>; keys?: Record<string, string> }; result: SettingsView }
+  'settings.update': { params: { patch: Record<string, unknown>; keys?: Record<string, string>; root?: string }; result: SettingsView }
   'key.state': { params: { endpoints: { url: string; ref?: string }[] }; result: { states: KeyState[] } }
   /** List what an endpoint serves; `key` tries a key that has not been saved yet. */
   'endpoint.models': { params: { url: string; kind: ModelKind; key?: string; ref?: string }; result: { models: EndpointModel[] } }

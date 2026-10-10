@@ -17,45 +17,65 @@ import {
   Button, Chip, Field, Modal, Progress, Spinner, TextInput, useLoad, useProject, useRunningJob, useSnapshot, useStudio, useT, type Translate,
 } from '../ui'
 
-const methodName = (view: LockView | undefined, t: Translate): string => (view?.device.method === 'touch-id' ? t('触控 ID', 'Touch ID') : view?.device.method === 'windows-hello' ? 'Windows Hello' : t('这台电脑的密码', 'this computer\'s password'))
+type Device = LockView['device']
 
-/** What stands in place of a locked book: its name on the shelf, and the ways it opens. */
-export function LockScreen() {
-  const { controller } = useStudio()
+/** What this computer's own unlock is called. */
+export const deviceName = (device: Device | undefined, t: Translate): string => (device?.method === 'touch-id' ? t('触控 ID', 'Touch ID') : device?.method === 'windows-hello' ? 'Windows Hello' : t('这台电脑的密码', 'this computer\'s password'))
+const methodName = (view: LockView | undefined, t: Translate): string => deviceName(view?.device, t)
+
+/**
+ * The way in to whatever is locked — a sealed book, the private shelf: this computer's own unlock where it was set up
+ * for it, and the password. One form for both, so both open alike.
+ * @param unlock - open it; a `novel/wrong-key` it throws is said here, in the form.
+ */
+export function UnlockForm({ device, deviceOn, placeholder, unlock, focusKey }: { device: Device | undefined; deviceOn: boolean; placeholder: string; unlock: (how: { password?: string; device?: boolean }) => Promise<unknown>; /** Changes when another thing is to be opened: the field is focused again. */ focusKey?: unknown }) {
   const t = useT()
-  const lock = useSnapshot(snapshot => snapshot.lock)
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState<'password' | 'device' | undefined>()
   const [wrong, setWrong] = useState<string | undefined>()
   const field = useRef<HTMLInputElement>(null)
-  const view = lock?.view
-  useEffect(() => { field.current?.focus() }, [lock?.root])
-  if (lock === undefined) return null
+  useEffect(() => { field.current?.focus() }, [focusKey])
+  const byDevice = deviceOn && device?.available === true
   const open = (how: { password?: string; device?: boolean }): void => {
     setBusy(how.device === true ? 'device' : 'password')
     setWrong(undefined)
-    void controller.unlock(how).then(() => { setPassword('') }, (error: unknown) => {
+    void unlock(how).then(() => { setPassword('') }, (error: unknown) => {
       setWrong(error instanceof RpcError && error.code === 'novel/wrong-key'
         ? how.device === true ? t('系统没有确认是你本人——再试一次，或者用密码。', 'The system did not confirm it is you — try again, or use the password.') : t('密码不对。', 'That is not the password.')
         : error instanceof Error ? error.message : String(error))
     }).finally(() => { setBusy(undefined) })
   }
   return (
+    <>
+      {byDevice ? (
+        <Button variant="primary" icon="fingerprint" busy={busy === 'device'} disabled={busy !== undefined} pending={t(`请在系统弹出的窗口里用${deviceName(device, t)}确认…`, `Confirm with ${deviceName(device, t)} in the system prompt…`)} onClick={() => { open({ device: true }) }}>{t(`用${deviceName(device, t)}解锁`, `Unlock with ${deviceName(device, t)}`)}</Button>
+      ) : null}
+      <form className="nv-lock-form" onSubmit={(event) => { event.preventDefault(); if (password.length > 0 && busy === undefined) open({ password }) }}>
+        <input ref={field} className="nv-input" type="password" autoComplete="off" value={password} placeholder={placeholder} onChange={(event) => { setPassword(event.target.value); setWrong(undefined) }} />
+        <Button variant={byDevice ? 'outline' : 'primary'} icon="unlock" busy={busy === 'password'} disabled={password.length === 0 || busy !== undefined} pending={t('正在解锁…', 'Unlocking…')} onClick={() => { open({ password }) }}>{t('解锁', 'Unlock')}</Button>
+      </form>
+      {wrong !== undefined ? <p className="nv-note is-warn">{wrong}</p> : null}
+      {deviceOn && device !== undefined && !device.available ? <p className="nv-muted nv-small">{t('系统解锁现在不可用，请用密码。', 'System unlock is not available right now: use the password.')}</p> : null}
+    </>
+  )
+}
+
+/** What stands in place of a locked book: its name on the shelf, and the ways it opens. */
+export function LockScreen() {
+  const { controller } = useStudio()
+  const t = useT()
+  const lock = useSnapshot(snapshot => snapshot.lock)
+  const view = lock?.view
+  if (lock === undefined) return null
+  return (
     <div className="nv-page nv-lockscreen">
       <div className="nv-lock-card">
         <span className="nv-lock-icon"><Icon name="lock" size={28} /></span>
         <h2>{view?.title ?? t('一本加密的书', 'A sealed book')}</h2>
         <p className="nv-muted">{t('这本书加了密，解锁后才能读写。', 'This book is sealed: unlock it to read or write.')}</p>
-        {view?.deviceOn === true && view.device.available ? (
-          <Button variant="primary" icon="fingerprint" busy={busy === 'device'} disabled={busy !== undefined} pending={t(`请在系统弹出的窗口里用${methodName(view, t)}确认…`, `Confirm with ${methodName(view, t)} in the system prompt…`)} onClick={() => { open({ device: true }) }}>{t(`用${methodName(view, t)}解锁`, `Unlock with ${methodName(view, t)}`)}</Button>
-        ) : null}
-        <form className="nv-lock-form" onSubmit={(event) => { event.preventDefault(); if (password.length > 0 && busy === undefined) open({ password }) }}>
-          <input ref={field} className="nv-input" type="password" autoComplete="off" value={password} placeholder={t('这本书的密码', 'The book\'s password')} onChange={(event) => { setPassword(event.target.value); setWrong(undefined) }} />
-          <Button variant={view?.deviceOn === true && view.device.available ? 'outline' : 'primary'} icon="unlock" busy={busy === 'password'} disabled={password.length === 0 || busy !== undefined} pending={t('正在解锁…', 'Unlocking…')} onClick={() => { open({ password }) }}>{t('解锁', 'Unlock')}</Button>
-        </form>
-        {wrong !== undefined ? <p className="nv-note is-warn">{wrong}</p> : null}
+        <UnlockForm device={view?.device} deviceOn={view?.deviceOn === true} placeholder={t('这本书的密码', 'The book\'s password')} focusKey={lock.root} unlock={how => controller.unlock(how)} />
         {view?.conversations !== undefined && view.conversations.sealed + view.conversations.waiting > 0 ? <p className="nv-muted nv-small">{t(`${view.conversations.sealed} 段对话也加密收着，解锁后放回。`, `${view.conversations.sealed} conversation(s) are sealed with it and come back when it is unlocked.`)}{view.conversations.waiting > 0 ? t(` 还有 ${view.conversations.waiting} 段正开着，关闭后才会加密。`, ` ${view.conversations.waiting} more are in use and are sealed once they are let go.`) : ''}</p> : null}
-        {view === undefined ? <Spinner size={12} /> : view.deviceOn && !view.device.available ? <p className="nv-muted nv-small">{t('系统解锁现在不可用，请用密码。', 'System unlock is not available right now: use the password.')}</p> : null}
+        {view === undefined ? <Spinner size={12} /> : null}
         <div className="nv-row-wrap">
           <Button variant="ghost" size="sm" icon="book" onClick={() => { controller.closeProject() }}>{t('回书架', 'Back to the shelf')}</Button>
         </div>

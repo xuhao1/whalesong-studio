@@ -84,7 +84,7 @@ export async function renderSound(core: NovelCore, runtime: ProjectRuntime, para
   let script = await scriptOf(runtime, params.chapter)
   const manifest = await project.manifest()
   const lang = promptLanguage(manifest.language)
-  const plan = soundPlan(await core.settings.get())
+  const plan = soundPlan(await core.settingsOf(runtime))
   const kinds = new Set<SoundKind>(params.kinds ?? ['effect', 'music', ...(plan.beds === 'generate' ? ['bed' as const] : [])])
   const named = params.cues !== undefined && params.cues.length > 0 ? new Set(params.cues) : undefined
   const wanted = script.cues.filter(cue => (named !== undefined ? named.has(cue.id!) : kinds.has(kindOf(cue))))
