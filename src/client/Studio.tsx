@@ -19,6 +19,7 @@ import {
   Button, CrewRuns, cx, Empty, Menu, Modal, OverlayRootProvider, Popover, Progress, Spinner, StudioProvider, ThoughtButton, Toasts, useAction, useConfirm, useSnapshot, useStudio, useT,
   type StudioHost, type Translate,
 } from './ui'
+import { CoverProvider, CoverSwitch, RemoteButton, useCover, useCovering } from './Phone'
 import { BibleView } from './views/Bible'
 import { CastView } from './views/Cast'
 import { HomeView, Onboarding, useRemoveBook } from './views/Home'
@@ -146,9 +147,12 @@ export function Studio({ api, locale, host, sessionId, initial, arrival }: Studi
   const zh = locale.toLowerCase().startsWith('zh')
   const t: Translate = useMemo(() => (zhText, enText) => (zh ? zhText : enText), [zh])
   const value = useMemo(() => ({ controller, api, t, locale, host }), [controller, api, t, locale, host])
+  // On a small screen (and through the door for a phone) the page lies over DSH's own frame.
+  const cover = useCover(host.where === 'page')
   return (
-    <div ref={rootRef} className={cx('nv-root', host.where === 'page' && 'nv-root-page')} data-novel-studio="">
+    <div ref={rootRef} className={cx('nv-root', host.where === 'page' && 'nv-root-page', cover.cover && 'nv-cover')} data-novel-studio="">
       <StudioProvider value={value}>
+        <CoverProvider value={cover}>
         <OverlayRootProvider value={overlayRoot}>
           <Remount>
             <StaleHostNotice />
@@ -162,6 +166,7 @@ export function Studio({ api, locale, host, sessionId, initial, arrival }: Studi
             <Toasts />
           </Remount>
         </OverlayRootProvider>
+      </CoverProvider>
       </StudioProvider>
     </div>
   )
@@ -201,8 +206,11 @@ function JobNotice() {
       if ((found.looked ?? 0) > 0) controller.toast((found.fixed ?? 0) > 0 ? 'success' : 'info', t(`核对了 ${found.looked} 条审校意见：${found.fixed ?? 0} 条已修好，${found.changed ?? 0} 条按新正文更新`, `Looked again at ${found.looked} issue(s): ${found.fixed ?? 0} mended, ${found.changed ?? 0} brought up to the text`))
     } else if (ended.job.kind === 'bible') {
       // The planner looked through the names without a card: said, since it puts suggestions where the author settles them.
-      const found = (ended.job.result ?? {}) as { looked?: number; cards?: number; aliases?: number; walkOns?: number }
-      if ((found.looked ?? 0) > 0) controller.toast((found.cards ?? 0) + (found.aliases ?? 0) > 0 ? 'success' : 'info', t(`策划看了 ${found.looked} 个没立卡的名字：${found.cards ?? 0} 个建议立卡，${found.aliases ?? 0} 个是别名，${found.walkOns ?? 0} 个留作龙套`, `The planner looked at ${found.looked} name(s) without a card: ${found.cards ?? 0} worth one, ${found.aliases ?? 0} another name of somebody, ${found.walkOns ?? 0} left as walk-ons`))
+      const found = (ended.job.result ?? {}) as { looked?: number; cards?: number; aliases?: number; walkOns?: number; settled?: { looked: number; entered: number; merged: number; skipped: number } }
+      // What the digests proposed was settled: said, since things entered the bible that the author has not seen.
+      if (found.settled !== undefined) {
+        if (found.settled.looked > 0) controller.toast('success', t(`策划审定了 ${found.settled.looked} 条设定建议：收进 ${found.settled.entered}，并入 ${found.settled.merged}，没收 ${found.settled.skipped}——“审校 → 设定建议”里能改`, `The planner settled ${found.settled.looked} suggestion(s): ${found.settled.entered} entered, ${found.settled.merged} folded in, ${found.settled.skipped} left out — change it under Review → Suggestions`))
+      } else if ((found.looked ?? 0) > 0) controller.toast((found.cards ?? 0) + (found.aliases ?? 0) > 0 ? 'success' : 'info', t(`策划看了 ${found.looked} 个没立卡的名字：${found.cards ?? 0} 个建议立卡，${found.aliases ?? 0} 个是别名，${found.walkOns ?? 0} 个留作龙套`, `The planner looked at ${found.looked} name(s) without a card: ${found.cards ?? 0} worth one, ${found.aliases ?? 0} another name of somebody, ${found.walkOns ?? 0} left as walk-ons`))
     } else if (ended.job.kind === 'audio' && typeof output.rendered === 'number') {
       const failed = output.failed ?? 0
       controller.toast(failed > 0 ? 'info' : 'success', failed > 0
@@ -407,14 +415,16 @@ function MaximizeButton() {
 function BareHeader({ title }: { title?: string }) {
   const { controller, host } = useStudio()
   const t = useT()
-  // Nothing to show on the bookshelf of the global page; in a tab the bar carries the full-screen switch.
-  if (title === undefined && host.toggleMaximize === undefined) return null
+  const covering = useCovering()
+  // Nothing to show on the bookshelf of the global page — but the way back to DSH where the page covers it; in a tab the bar carries the full-screen switch.
+  if (title === undefined && host.toggleMaximize === undefined && !covering.offered) return null
   return (
     <header className="nv-header">
       {title !== undefined ? <Button variant="ghost" size="sm" icon="chevronLeft" onClick={() => { controller.setView('home') }}>{t('返回', 'Back')}</Button> : null}
       <span className="nv-header-title">{title ?? t('小说工坊', 'Novel Studio')}</span>
       <span className="nv-spacer" />
       {title === undefined ? <Button variant="ghost" size="sm" icon="settings" onClick={() => { controller.setView('settings') }} title={t('设置', 'Settings')} /> : null}
+      <CoverSwitch />
       <MaximizeButton />
     </header>
   )
@@ -472,6 +482,8 @@ function Header({ onSearch }: { onSearch: () => void }) {
         <JobsButton />
         <Button variant="ghost" size="sm" icon="search" onClick={onSearch} title={t('搜索与查找', 'Search and find')} />
         <Button variant="ghost" size="sm" icon="settings" className={cx((view === 'settings' || view === 'setup' || view === 'usage') && 'is-active')} onClick={() => { controller.setView('settings') }} title={t('设置', 'Settings')} />
+        <RemoteButton />
+        <CoverSwitch />
         <MaximizeButton />
       </div>
     </header>

@@ -23,6 +23,7 @@ import { Studio } from './Studio'
 import styles from './styles.css'
 import { createToolRow, NOVEL_TOOLS, type StudioTarget } from './ToolRow'
 import type { StudioHost } from './ui'
+import { throughDoor } from './Phone'
 
 const PACKAGE = __NOVEL_PACKAGE__
 const PANEL_ID = 'novel-studio'
@@ -280,7 +281,8 @@ export function apply(ctx: ClientContext): void {
   }
   ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: PANEL_ID }, StudioPage))
   ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({ name: 'sidebar.panellist', id: PANEL_ID, order: 15, label: title }, StudioGlyph))
-  if (pageWasOpen()) {
+  // (A page that came through the door for a phone opens on the Studio: that is what the door is for.)
+  if (pageWasOpen() || throughDoor()) {
     // Once the page is registered again.
     const timer = setTimeout(() => {
       try {

@@ -116,6 +116,21 @@ export function useLoad<T>(load: (signal: AbortSignal) => Promise<T>, deps: read
 }
 
 /** Track one async action: `busy` while it runs; failures become toasts. */
+/**
+ * The way from where a thing is worked on to where it is looked at. One button, the same on every page, set apart
+ * from the tools beside it: those change the thing, this one shows it as a reader has it.
+ * @param bare - without its word, where there is room for the mark alone (a row of a list).
+ */
+export function ViewButton({ onClick, title, bare }: { onClick: () => void; title?: string; bare?: boolean }) {
+  const t = useT()
+  return (
+    <button type="button" className={cx('nv-view-btn', bare === true && 'is-bare')} onClick={onClick} title={title ?? t('观看：读者看到的样子', 'View: as a reader has it')} aria-label={t('观看', 'View')}>
+      <Icon name="eye" size={14} />
+      {bare === true ? null : <span>{t('观看', 'View')}</span>}
+    </button>
+  )
+}
+
 export function useAction(): { busy: boolean; run: <T>(action: () => Promise<T>) => Promise<T | undefined> } {
   const { controller } = useStudio()
   const [busy, setBusy] = useState(false)

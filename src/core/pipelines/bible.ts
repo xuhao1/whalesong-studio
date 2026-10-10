@@ -9,7 +9,7 @@ import { clip } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { asArray, asList, asRecord, asText } from '../llm'
 import { assign } from '../crew'
-import { ProjectError } from '../project'
+import { ProjectError, type Project } from '../project'
 import { settleWalkOn } from '../walkons'
 import { characterLifeTask, expandCharacterTask, expandWorldTask, styleExtractTask, styleSampleTask, tiesTask, worldTidyTask } from '../prompts'
 import { TIE_ENDS, TIE_KINDS, type Tie, type TieKind } from '../../shared/ties'
@@ -101,7 +101,7 @@ export async function tidyWorld(core: NovelCore, runtime: ProjectRuntime, task: 
   return { same, kinds, entries: world.length }
 }
 
-export async function deriveTies(core: NovelCore, runtime: ProjectRuntime, params: { direction?: string }, task: TaskContext): Promise<TiesResult> {
+export async function deriveTies(core: NovelCore, runtime: ProjectRuntime, params: { direction?: string; plain?: boolean }, task: TaskContext): Promise<TiesResult> {
   const { project } = runtime
   const manifest = await project.manifest()
   const lang = promptLanguage(manifest.language)
@@ -132,6 +132,8 @@ export async function deriveTies(core: NovelCore, runtime: ProjectRuntime, param
     role: 'architect',
     label: L(lang, '理清关系：地点、家族、物品与人', 'Ties: places, houses, things and people'),
     tool: 'propose_ties',
+    // Asked while a book is taken in: from the bible and what the digests wrote, in one request.
+    ...(params.plain === true ? { plain: true } : {}),
     what: L(lang, '关系表：谁在哪里面、谁属于谁、谁住在哪、谁持有什么', 'the table of ties: what is in what, who belongs where, lives where, holds what'),
     prompt: tiesTask({
       lang,
@@ -405,6 +407,8 @@ export async function extractStyle(core: NovelCore, runtime: ProjectRuntime, par
   const { project } = runtime
   const manifest = await project.manifest()
   const lang = promptLanguage(manifest.language)
+  // Asked with no passage of the author's choosing: the book's own text is read, at three places.
+  if (params.sample.trim().length === 0) params = { ...params, sample: await styleSamples(project) }
   if (params.sample.trim().length < 80) throw new ProjectError('novel/invalid', 'the sample is too short to learn a style from — give at least a few paragraphs')
   const { value } = await assign(core, runtime, task, {
     role: 'analyst',
@@ -415,7 +419,7 @@ export async function extractStyle(core: NovelCore, runtime: ProjectRuntime, par
     plain: true,
     maxSteps: 8,
     what: L(lang, '从样章里提炼出的文风档案', 'the style profile learned from the sample'),
-    prompt: styleExtractTask({ lang, sample: clip(params.sample, 6000), ...(params.name !== undefined ? { name: params.name } : {}) }),
+    prompt: styleExtractTask({ lang, sample: clip(params.sample, 9000), ...(params.name !== undefined ? { name: params.name } : {}) }),
     temperature: 0.3,
     validate: raw => asRecord(raw),
   })
@@ -429,13 +433,41 @@ export async function extractStyle(core: NovelCore, runtime: ProjectRuntime, par
     name: params.name ?? asText(value.name) ?? (lang === 'zh' ? '提炼的文风' : 'Extracted style'),
     ...(pov !== undefined && POVS.includes(pov) ? { pov } : {}),
     ...(tense === 'past' || tense === 'present' ? { tense } : {}),
-    ...pickText(value, ['tone', 'diction', 'rhythm', 'imagery', 'dialogue', 'pacing']),
+    ...pickText(value, ['register', 'tone', 'diction', 'rhythm', 'imagery', 'dialogue', 'pacing']),
     ...(rules.length > 0 ? { rules } : {}),
     ...(avoid.length > 0 ? { avoid } : {}),
     ...(exemplars.length > 0 ? { exemplars } : {}),
   })
   if (params.activate === true) await project.updateManifest({ activeStyle: style.id })
   return style
+}
+
+/**
+ * Passages of the book to learn its style from: a stretch from its opening, and one from the middle of a chapter a
+ * third and two thirds of the way in — whole paragraphs, as written. One passage shows one scene's manner; a few show
+ * what holds across the book.
+ */
+export async function styleSamples(project: Project, room = 6600): Promise<string> {
+  const written = (await project.chapterInfos()).filter(chapter => chapter.hasText)
+  if (written.length === 0) return ''
+  const picks = [...new Set([0, Math.floor(written.length / 3), Math.floor((written.length * 2) / 3)].map(at => written[Math.min(written.length - 1, at)]!.id))]
+  const each = Math.floor(room / picks.length)
+  const parts: string[] = []
+  for (const [at, id] of picks.entries()) {
+    const paragraphs = (await project.chapterText(id)).split(/\n{2,}/u).map(paragraph => paragraph.trim()).filter(paragraph => paragraph.length > 0 && !paragraph.startsWith('![') && !paragraph.startsWith('#'))
+    if (paragraphs.length === 0) continue
+    // The opening as it opens; the others from their middle, where a chapter is under way.
+    let from = at === 0 ? 0 : Math.floor(paragraphs.length / 2)
+    const taken: string[] = []
+    let size = 0
+    while (from < paragraphs.length && (taken.length === 0 || size + paragraphs[from]!.length <= each)) {
+      taken.push(paragraphs[from]!)
+      size += paragraphs[from]!.length
+      from += 1
+    }
+    parts.push(clip(taken.join('\n\n'), each))
+  }
+  return parts.join('\n\n……\n\n')
 }
 
 /** Write a short passage in a style so the author can hear it before committing. */

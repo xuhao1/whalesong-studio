@@ -72,6 +72,7 @@ const FIELDS: Record<HistoryKind, Record<string, Label>> = {
     name: ['文风名称', 'Name'],
     pov: ['叙事视角', 'Point of view'],
     tense: ['时态', 'Tense'],
+    register: ['语体', 'Register'],
     tone: ['基调', 'Tone'],
     diction: ['用词', 'Diction'],
     rhythm: ['节奏', 'Rhythm'],
@@ -121,6 +122,37 @@ const FIELDS: Record<HistoryKind, Record<string, Label>> = {
     artAvoid: ['任何一张图里都不要出现', 'Never in a picture'],
     notes: ['作者备注', 'Notes'],
   },
+  volume: {
+    title: ['卷名', 'Title'],
+    synopsis: ['梗概', 'Synopsis'],
+    goal: ['这一卷要把故事带到哪', 'Where it leaves the story'],
+    chapters: ['章节与次序', 'Chapters, in order'],
+  },
+  line: {
+    title: ['线名', 'Title'],
+    premise: ['这条线讲的是什么', 'What sets it apart'],
+    choice: ['分出去时的抉择', 'The choice it leaves by'],
+    from: ['从哪一章之后分出', 'Leaves after'],
+    into: ['汇入哪一章', 'Arrives at'],
+    shelved: ['搁置', 'Put aside'],
+    chapters: ['章节与次序', 'Chapters, in order'],
+  },
+  ties: {
+    relations: ['关系', 'Ties'],
+  },
+  script: {
+    lines: ['台词与旁白', 'Lines'],
+    cues: ['声音提示', 'Sound cues'],
+    shape: ['切分方式', 'How it was cut'],
+    degraded: ['没能编排的部分', 'Passages cut by rule'],
+  },
+  board: {
+    style: ['画风', 'Art direction'],
+    panels: ['分镜', 'Panels'],
+    density: ['密度', 'Density'],
+    maxPanels: ['最多几格', 'Most panels'],
+    note: ['说明', 'Note'],
+  },
 }
 
 /** What the keys inside a field's records are called. */
@@ -149,19 +181,24 @@ const VALUES: Record<string, Record<string, Label>> = {
   },
 }
 
+/** How one thing stands to another, in a word between their names. */
+const TIE_WORD: Record<string, Label> = {
+  within: ['位于', 'lies in'], seat: ['坐落在', 'has its seat in'], member: ['属于', 'belongs to'], resides: ['住在', 'lives in'], holds: ['持有', 'holds'],
+}
+
 /** The ids a version names, as the names the author knows them by. */
 function useNames(project: ProjectState, t: Translate): (path: string, value: unknown) => unknown {
   return useMemo(() => {
     const people = new Map(project.characters.map(card => [card.id, card.name]))
     const entries = new Map(project.world.map(entry => [entry.id, entry.name]))
-    const chapters = new Map(project.chapters.map(chapter => [chapter.id, `${chapter.index}. ${chapter.title}`]))
+    const chapters = new Map([...(project.lines ?? []).flatMap(line => line.chapters), ...project.chapters].map(chapter => [chapter.id, `${chapter.index}. ${chapter.title}`]))
     const threads = new Map(project.outline.threads.map(thread => [thread.id, thread.title]))
     const lines = new Map<string, string>([['main', '★'], ...(project.outline.lines ?? []).map(line => [line.id, line.title] as [string, string])])
     const styles = new Map(project.styles.map(style => [style.id, style.name]))
     /** Which names the ids under a key are. */
     const book = (key: string): Map<string, string> | undefined => {
       if (['characters', 'pov', 'target'].includes(key)) return people
-      if (['chapter', 'from', 'planted', 'advanced', 'paid'].includes(key)) return chapters
+      if (['chapter', 'chapters', 'from', 'into', 'planted', 'advanced', 'paid'].includes(key)) return chapters
       if (key === 'threads') return threads
       if (key === 'lines') return lines
       if (key === 'related') return entries
@@ -187,6 +224,24 @@ function useSay(kind: HistoryKind, project: ProjectState, t: Translate): (field:
     // A plan's point of view is a person; a style's is a way of telling.
     if (kind === 'style' && field === 'pov' && typeof value === 'string' && VALUES.pov![value] !== undefined) return t(...VALUES.pov![value]!)
     if (typeof value === 'boolean') return value ? t('是', 'yes') : t('否', 'no')
+    // A table of ties, a script, a storyboard: a line each, as they are read — not a record's keys one under the other.
+    if (kind === 'ties' && field === 'relations' && Array.isArray(value)) {
+      const called = (end: { type?: string; id?: string } | undefined): string => (end?.type === 'character' ? project.characters.find(card => card.id === end.id)?.name : project.world.find(entry => entry.id === end?.id)?.name) ?? end?.id ?? '?'
+      return (value as { kind: string; from?: { type: string; id: string }; to?: { type: string; id: string }; since?: string; until?: string; note?: string }[])
+        .map(tie => `${called(tie.from)} ${TIE_WORD[tie.kind] !== undefined ? t(...TIE_WORD[tie.kind]!) : tie.kind} ${called(tie.to)}${tie.since !== undefined || tie.until !== undefined ? t(`（${tie.since !== undefined ? `${names('chapter', tie.since) as string} 起` : ''}${tie.until !== undefined ? ` 到 ${names('chapter', tie.until) as string}` : ''}）`, ` (${tie.since !== undefined ? `from ${names('chapter', tie.since) as string}` : ''}${tie.until !== undefined ? ` until ${names('chapter', tie.until) as string}` : ''})`) : ''}${tie.note !== undefined ? ` — ${tie.note}` : ''}`)
+        .sort().join('\n')
+    }
+    if (kind === 'script' && field === 'lines' && Array.isArray(value)) {
+      return (value as { speakerName?: string; speaker?: string; kind?: string; text?: string; direction?: string; skip?: boolean }[])
+        .map(line => `${line.speakerName ?? (line.speaker !== undefined ? project.characters.find(card => card.id === line.speaker)?.name ?? line.speaker : t('旁白', 'Narration'))}${t('：', ': ')}${line.text ?? ''}${line.direction !== undefined && line.direction.length > 0 ? t(`（${line.direction}）`, ` (${line.direction})`) : ''}${line.skip === true ? t('〔不念〕', ' [unspoken]') : ''}`).join('\n')
+    }
+    if (kind === 'script' && field === 'cues' && Array.isArray(value)) {
+      return (value as { kind?: string; caption?: string; note?: string; prompt?: string; ambience?: string }[]).map(cue => `${cue.kind ?? 'bed'}${t('：', ': ')}${cue.caption ?? cue.note ?? cue.prompt ?? cue.ambience ?? ''}`).join('\n')
+    }
+    if (kind === 'board' && field === 'panels' && Array.isArray(value)) {
+      return (value as { description?: string; prompt?: string; characters?: string[]; location?: string }[])
+        .map((panel, index) => `${index + 1}. ${panel.description ?? ''}${panel.prompt !== undefined && panel.prompt !== panel.description ? `\n   ${panel.prompt}` : ''}`).join('\n')
+    }
     return sayValue(names(field, value), key => (KEYS[key] !== undefined ? t(...KEYS[key]) : key))
   }
 }

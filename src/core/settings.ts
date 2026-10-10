@@ -6,7 +6,7 @@
  * a project may override the text model routing in its manifest.
  */
 import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import type { NovelSettings } from '../shared/types'
 import { KeyedMutex } from './util/async'
 import { readJson, writeJson } from './util/fs'
@@ -108,6 +108,11 @@ export class SettingsStore {
    * @param file - override of the settings file location (tests).
    */
   constructor(private readonly defaults: NovelSettings = DEFAULT_SETTINGS, private readonly file = join(resolveDshHome(), 'novel-writer', 'settings.json')) {}
+
+  /** The folder the settings are kept in: where the Studio keeps what is its own and no one book's. */
+  get folder(): string {
+    return dirname(this.file)
+  }
 
   async get(): Promise<NovelSettings> {
     if (this.current !== undefined) return this.current

@@ -18,7 +18,7 @@
 import {
   MAIN_LINE, STAGE_STEPS, TEXT_STEPS,
   type ArtStep, type BatchKind, type BatchRowView, type CharacterCard, type BatchStepState, type BatchStepView, type BatchView, type PromptLanguage, type StageStatus, type StageStep,
-  type StoryboardDensity, type TextStep,
+  type IssueSeverity, type StoryboardDensity, type TextStep,
 } from '../../shared/types'
 import { leadOf } from '../../shared/images'
 import { hashText, proseOnly } from '../../shared/text'
@@ -33,6 +33,7 @@ import { buildStoryboard, renderPanels } from './comic'
 import { digestChapter, updateArcs } from './digest'
 import { illustrate } from './illustrate'
 import { deriveBeats } from './plot'
+import { iterateChapters } from './iterate'
 import { reviewChapter } from './review'
 import { renderSound } from './sound'
 import { chapterVideo, produceVideo } from './video'
@@ -487,14 +488,28 @@ export interface TextBatchParams {
    * the text of the one before and what was learned from it — the surer way to a run of chapters that agree.
    * `together`: side by side, as many at once as the settings allow — faster; each is written from its own outline, the
    * outlines of the chapters before it that are being written beside it, and the text there was before the batch.
+   * `iterate`: in order, and then in rounds — every chapter written is reviewed, the planner mends what the reviews
+   * found across the chapters in one go, the chapters that changed are digested and reviewed again; up to `rounds`
+   * times, or until nothing of the gravity asked for (`atLeast`) is left. What a round changes is applied as it goes;
+   * each text it replaces is a version of its chapter.
    */
-  order?: 'sequence' | 'together'
+  order?: 'sequence' | 'together' | 'iterate'
+  /** With `iterate`: how many rounds at most (default 2, never more than 5). */
+  rounds?: number
+  /** With `iterate`: issues this grave or graver are worth a round (default `medium`). */
+  atLeast?: IssueSeverity
 }
 
 export async function textPlan(core: NovelCore, runtime: ProjectRuntime, params: TextBatchParams): Promise<BatchPlan> {
   const { project } = runtime
   const lang = promptLanguage((await project.manifest()).language)
   const wanted = new Set<TextStep>(params.steps)
+  // Written in rounds, a chapter is digested and reviewed whatever was ticked: a round goes by what the review found.
+  const rounds = params.order === 'iterate' && wanted.has('write')
+  if (rounds) {
+    wanted.add('digest')
+    wanted.add('review')
+  }
   if (wanted.size === 0) throw new ProjectError('novel/invalid', '`steps` names at least one of beats, write, digest, review')
   const redo = params.redo === true
   const all = await chaptersOf(runtime, params.chapters, params.line)
@@ -593,7 +608,13 @@ export async function textPlan(core: NovelCore, runtime: ProjectRuntime, params:
     steps,
     lanes: { beats: writing && !together ? 1 : text, write: together ? text : 1, digest: writing && !together ? 1 : text, review: text },
     // Where the digests ran side by side — no writing, or writing side by side — the arcs are brought up once, at the end.
-    ...(wanted.has('digest') && (!writing || together) ? { finish: async (sub: TaskContext) => { await updateArcs(core, runtime, sub) } } : {}),
+    // Written in rounds: once every chapter is written, digested and reviewed, the rounds begin.
+    ...(rounds ? {
+      finish: async (sub: TaskContext) => {
+        await iterateChapters(core, runtime, { chapters: chapters.map(chapter => chapter.id), ...(params.rounds !== undefined ? { rounds: params.rounds } : {}), ...(params.atLeast !== undefined ? { atLeast: params.atLeast } : {}), ...(params.focus !== undefined ? { focus: params.focus } : {}) }, sub)
+        await updateArcs(core, runtime, sub).catch((error: unknown) => { if (sub.signal?.aborted === true) throw error })
+      },
+    } : wanted.has('digest') && (!writing || together) ? { finish: async (sub: TaskContext) => { await updateArcs(core, runtime, sub) } } : {}),
   }
 }
 
@@ -640,7 +661,7 @@ export async function artPlan(core: NovelCore, runtime: ProjectRuntime, params: 
   }
   // Which of a person's two pictures waits for the other: the portrait for the sheet, unless the author has the
   // portrait lead — then the sheet is drawn after it, and against it.
-  const lead = leadOf(core.currentSettings().image)
+  const lead = leadOf(await core.imageOf(runtime))
   const portrayed = new Set<string>()
   if (lead === 'portrait') for (const ref of params.portraits ?? []) portrayed.add((await card(ref)).id)
   const sheetOf = new Map<string, string>()

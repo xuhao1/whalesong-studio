@@ -502,7 +502,7 @@ export async function buildFoundation(core: NovelCore, runtime: ProjectRuntime, 
       id: 'default',
       ...(styleName !== undefined ? { name: styleName } : {}),
       ...(pov !== undefined && POVS.includes(pov) ? { pov } : {}),
-      ...pickText(style, ['tone', 'diction', 'rhythm', 'imagery', 'dialogue', 'pacing']),
+      ...pickText(style, ['register', 'tone', 'diction', 'rhythm', 'imagery', 'dialogue', 'pacing']),
       ...(rules.length > 0 ? { rules } : {}),
       ...(avoid.length > 0 ? { avoid } : {}),
     })

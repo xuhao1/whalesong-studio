@@ -14,12 +14,14 @@ import { Icon } from '../icons'
 import { LANGUAGES, sheetsDrawn } from '../labels'
 import { DeletePicture } from '../PictureRecord'
 import { HistoryButton } from '../History'
+import { PrivateShelfSection } from '../PrivateShelf'
 import { useSheetsAsk } from '../SheetsAsk'
 import { jobLabel, jobPulse } from '../Studio'
 import {
   Button, Chip, crewLabel, cx, Field, Modal, Progress, ProjectImage, SectionTitle, Select, TextArea, TextInput, useAction, useConfirm, useKept, useProject, useRunningJob,
   useSnapshot, useStudio, useT, type Translate, plainEnter,
 } from '../ui'
+import { RemoteDialog } from '../Phone'
 import type { StudioController } from '../store'
 
 /**
@@ -206,7 +208,7 @@ function TalkDialog({ shelf, onClose, onNew }: { shelf: ShelfBook[]; onClose: ()
           <li key={book.root}>
             <button type="button" disabled={opening !== undefined} onClick={() => { talk(book) }}>
               <span className="nv-talk-cover">
-                {book.locked === true ? <Icon name="lock" size={16} /> : book.cover !== undefined && book.id !== undefined ? <img alt="" loading="lazy" src={controller.api.media(book.id, book.cover)} /> : <Icon name="book" size={16} />}
+                {book.locked === true ? <Icon name="lock" size={16} /> : book.sealed === true ? <Icon name="unlock" size={16} /> : book.cover !== undefined && book.id !== undefined ? <img alt="" loading="lazy" src={controller.api.media(book.id, book.cover)} /> : <Icon name="book" size={16} />}
               </span>
               <span className="nv-talk-text">
                 <strong>{book.title}</strong>
@@ -240,60 +242,28 @@ function Shelf({ onNew }: { onNew: () => void }) {
   const settings = useSnapshot(snapshot => snapshot.settings)
   const { run } = useAction()
   const shelf: ShelfBook[] = workspaces.flatMap(item => item.projects.map(project => ({ ...project, workspace: item.title })))
+  // The private shelf's books come with the others while it is open, and are shown apart.
+  const open = shelf.filter(book => book.private !== true)
+  const hidden = shelf.filter(book => book.private === true)
+  const privateShelf = useSnapshot(snapshot => snapshot.privateShelf)
   const removal = useRemoveBook()
   const [opening, setOpening] = useState<string | undefined>()
   const [talking, setTalking] = useState(false)
+  const [remote, setRemote] = useState(false)
   const canTalk = host.openChat !== undefined || host.startChat !== undefined
   const go = (root: string, how: 'read' | 'listen' | 'watch', at?: string): void => {
     setOpening(root)
     void run(async () => { await controller.readBook(root, how, at) }).finally(() => { setOpening(undefined) })
   }
-  return (
-    <div className="nv-onboard nv-home-page">
-      <section className="nv-home-hero">
-        <div className="nv-home-hero-text">
-          <div className="nv-home-brand">
-            <img src={studioIcon} alt="" width={44} height={44} />
-            <h1>{t('小说工坊', 'Novel Studio')}</h1>
-          </div>
-          <p>{t('长篇小说的设定、大纲、写作、修订与演出。', 'The bible, outline, writing, revision and staging of a long novel.')}</p>
-          <div className="nv-home-actions">
-            {canTalk ? (
-              <button type="button" className="nv-home-cta is-primary" onClick={() => { if (shelf.length === 0) onNew(); else setTalking(true) }}>
-                <Icon name="chat" size={18} />
-                <span><strong>{t('和总编对话', 'Talk to the showrunner')}</strong><small>{shelf.length === 0 ? t('先开一本书，对话跟着它', 'Start a book first; its conversation comes with it') : t('挑一本书，或开一本新的', 'Pick a book, or start a new one')}</small></span>
-              </button>
-            ) : null}
-            <button type="button" className="nv-home-cta" onClick={onNew}>
-              <Icon name="sparkles" size={18} />
-              <span><strong>{t('新创作', 'New work')}</strong><small>{t('开一本新书，或把写好的搬进来', 'Start a new book, or bring one in')}</small></span>
-            </button>
-          </div>
-        </div>
-        <img className="nv-home-hero-art" src={heroArt} alt="" />
-      </section>
-
-      {settings !== undefined && !settings.ready.text ? (
-        <p className="nv-note is-warn nv-onboard-note">
-          {t('还没有可用的文字模型，起草和导入分析都需要它。文字模型在 DSH 的"设置 → 模型"里接入；', 'No text model is available yet; drafting and import analysis need one. Text models are connected in DSH under Settings → Models; ')}
-          <button type="button" className="nv-link" onClick={() => { controller.setView('setup') }}>{t('看看还要配什么', 'see what else to set up')}</button>
-        </p>
-      ) : null}
-
-      <section className="nv-home-shelf">
-        <header className="nv-home-shelf-head">
-          <h2>{t('书架', 'Bookshelf')}<span className="nv-muted">{shelf.length > 0 ? shelf.length : ''}</span></h2>
-          <Button size="sm" variant="ghost" icon="settings" onClick={() => { controller.setView('settings') }}>{t('设置', 'Settings')}</Button>
-        </header>
-        
-        {shelf.length > 0 ? (
-          <div className="nv-shelf">
-            {shelf.map(project => (
+  /** A book as the shelf shows it; `extra` is laid over it (the private shelf's way to take a book off). */
+  const tile = (project: ShelfBook, extra?: ReactNode): ReactNode => (
               <div key={project.root} className={cx('nv-shelf-item', opening === project.root && 'is-opening')}>
                 <button type="button" className="nv-shelf-open" disabled={opening !== undefined} onClick={() => { setOpening(project.root); void run(async () => { await controller.readBook(project.root) }).finally(() => { setOpening(undefined) }) }} title={project.locked === true ? t(`打开《${project.title}》`, `Open "${project.title}"`) : t(`读《${project.title}》`, `Read "${project.title}"`)}>
                   <span className="nv-shelf-cover">
                     {project.locked === true
                       ? <span className="nv-shelf-blank is-locked"><Icon name="lock" size={22} /><em>{t('已上锁', 'Locked')}</em></span>
+                      // A sealed book shows no cover here, open or not: what it holds is not for whoever glances at the shelf.
+                      : project.sealed === true ? <span className="nv-shelf-blank is-sealed"><Icon name="unlock" size={22} /><em>{project.title.slice(0, 8)}</em></span>
                       : project.cover !== undefined && project.id !== undefined
                         ? <img alt="" loading="lazy" src={controller.api.media(project.id, project.cover)} />
                         : <span className="nv-shelf-blank"><Icon name="book" size={22} /><em>{project.title.slice(0, 8)}</em></span>}
@@ -317,11 +287,60 @@ function Shelf({ onNew }: { onNew: () => void }) {
                     {project.shows !== undefined && project.shows.read === undefined ? <span className="nv-muted">{t('还没有正文', 'Nothing written yet')}</span> : null}
                   </div>
                 )}
+                {extra}
                 <button type="button" className="nv-shelf-remove" title={t('删除这本书', 'Delete this book')} aria-label={t('删除这本书', 'Remove this book')} onClick={() => { removal.ask(project) }}>
                   <Icon name="trash" size={13} />
                 </button>
               </div>
-            ))}
+  )
+  return (
+    <div className="nv-onboard nv-home-page">
+      <section className="nv-home-hero">
+        <div className="nv-home-hero-text">
+          <div className="nv-home-brand">
+            <img src={studioIcon} alt="" width={44} height={44} />
+            <h1>{t('小说工坊', 'Novel Studio')}</h1>
+          </div>
+          <p>{t('长篇小说的设定、大纲、写作、修订与演出。', 'The bible, outline, writing, revision and staging of a long novel.')}</p>
+          <div className="nv-home-actions">
+            {canTalk ? (
+              <button type="button" className="nv-home-cta is-primary" onClick={() => { if (shelf.length === 0) onNew(); else setTalking(true) }}>
+                <Icon name="chat" size={18} />
+                <span><strong>{t('和总编对话', 'Talk to the showrunner')}</strong><small>{shelf.length === 0 ? t('先开一本书，对话跟着它', 'Start a book first; its conversation comes with it') : t('挑一本书，或开一本新的', 'Pick a book, or start a new one')}</small></span>
+              </button>
+            ) : null}
+            <button type="button" className="nv-home-cta" onClick={onNew}>
+              <Icon name="sparkles" size={18} />
+              <span><strong>{t('新创作', 'New work')}</strong><small>{t('开一本新书，或把写好的搬进来', 'Start a new book, or bring one in')}</small></span>
+            </button>
+            {host.where === 'page' ? (
+              <button type="button" className="nv-home-cta is-quiet" onClick={() => { setRemote(true) }} title={t('在手机上操作工坊…', 'Work the Studio from a phone…')}>
+                <Icon name="phone" size={18} />
+                <span><strong>{t('手机上用', 'On a phone')}</strong></span>
+              </button>
+            ) : null}
+          </div>
+          {remote ? <RemoteDialog onClose={() => { setRemote(false) }} /> : null}
+        </div>
+        <img className="nv-home-hero-art" src={heroArt} alt="" />
+      </section>
+
+      {settings !== undefined && !settings.ready.text ? (
+        <p className="nv-note is-warn nv-onboard-note">
+          {t('还没有可用的文字模型，起草和导入分析都需要它。文字模型在 DSH 的"设置 → 模型"里接入；', 'No text model is available yet; drafting and import analysis need one. Text models are connected in DSH under Settings → Models; ')}
+          <button type="button" className="nv-link" onClick={() => { controller.setView('setup') }}>{t('看看还要配什么', 'see what else to set up')}</button>
+        </p>
+      ) : null}
+
+      <section className="nv-home-shelf">
+        <header className="nv-home-shelf-head">
+          <h2>{t('书架', 'Bookshelf')}<span className="nv-muted">{open.length > 0 ? open.length : ''}</span></h2>
+          <Button size="sm" variant="ghost" icon="settings" onClick={() => { controller.setView('settings') }}>{t('设置', 'Settings')}</Button>
+        </header>
+        
+        {open.length > 0 || hidden.length > 0 ? (
+          <div className="nv-shelf">
+            {open.map(project => tile(project))}
             <button type="button" className="nv-shelf-new" onClick={onNew} title={t('开一本新书，或导入一本已有的', 'Start a new book, or bring in an existing one')}>
               <Icon name="plus" size={22} />
               <span>{t('新创作', 'New work')}</span>
@@ -339,6 +358,8 @@ function Shelf({ onNew }: { onNew: () => void }) {
         )}
         {removal.element}
       </section>
+
+      <PrivateShelfSection state={privateShelf} books={hidden} others={open} tile={tile} />
 
       <Credits />
       {talking ? <TalkDialog shelf={shelf} onClose={() => { setTalking(false) }} onNew={onNew} /> : null}
@@ -916,12 +937,17 @@ function RedigestDialog({ onClose }: { onClose: () => void }) {
   const { project, root } = useProject()
   const { busy, run } = useAction()
   const written = project.chapters.filter(chapter => chapter.hasText)
-  const [scope, setScope] = useState<'all' | 'range'>('all')
+  const [scope, setScope] = useState<'all' | 'range' | 'clean'>('all')
+  const [plans, setPlans] = useState(true)
+  const [reviews, setReviews] = useState(true)
+  const [style, setStyle] = useState(true)
+  const confirm = useConfirm()
   const [from, setFrom] = useState(String(written[0]?.index ?? 1))
   const [to, setTo] = useState(String(written.at(-1)?.index ?? 1))
   const first = Math.max(1, Math.round(Number(from)) || 1)
   const last = Math.max(first, Math.round(Number(to)) || first)
-  const picked = scope === 'all' ? written : written.filter(chapter => chapter.index >= first && chapter.index <= last)
+  const clean = scope === 'clean'
+  const picked = scope !== 'range' ? written : written.filter(chapter => chapter.index >= first && chapter.index <= last)
   const words = picked.reduce((sum, chapter) => sum + chapter.words, 0)
   const start = (): Promise<unknown> => run(async () => {
     await controller.api.call('ai.digest', { root, chapters: picked.map(chapter => chapter.id), force: true })
@@ -929,18 +955,43 @@ function RedigestDialog({ onClose }: { onClose: () => void }) {
     controller.toast('info', t(`场记开始重新收录 ${picked.length} 章`, `The scribe is digesting ${picked.length} chapter(s) again`))
     onClose()
   })
+  const reread = (): Promise<unknown> => run(async () => {
+    await controller.api.call('import.reread', { root, plans, reviews, style })
+    await controller.refreshJobs()
+    controller.toast('info', t('开始清理并从正文重读', 'Clearing, then reading the book again from its text'))
+    onClose()
+  })
+  const people = project.characters.length
+  const entries = project.world.length
   return (
     <Modal
       title={t('重新收录', 'Digest again')}
       onClose={onClose}
-      footer={<Button variant="primary" icon="refresh" busy={busy} disabled={picked.length === 0} pending={t('正在开始…', 'Starting…')} onClick={start}>{t(`重新收录 ${picked.length} 章`, `Digest ${picked.length} chapters again`)}</Button>}
+      footer={clean
+        ? <Button variant="danger" icon="refresh" busy={busy} disabled={written.length === 0} pending={t('正在开始…', 'Starting…')} onClick={() => { confirm.ask(t(`清掉 ${people} 张人物卡、${entries} 条设定，以及关系、线索、收录，然后从正文重读？卡片和条目能从“最近删除”或各自的历史版本找回。`, `Clear ${people} card(s), ${entries} entr${entries === 1 ? 'y' : 'ies'}, the ties, threads and digests, then read the book again from its text? Cards and entries come back from the removed ones, or their history.`), () => { void reread() }) }}>{t('清掉并重读', 'Clear and read again')}</Button>
+        : <Button variant="primary" icon="refresh" busy={busy} disabled={picked.length === 0} pending={t('正在开始…', 'Starting…')} onClick={start}>{t(`重新收录 ${picked.length} 章`, `Digest ${picked.length} chapters again`)}</Button>}
     >
-      <p>{t('场记把这些章重读一遍，重写收录结果。', 'The scribe reads these chapters again and writes their digests anew.')}</p>
-      <ul className="nv-plain-list nv-small">
-        <li><strong>{t('会被重写：', 'Written anew: ')}</strong>{t('摘要、人物状态、事实、线索动向、新名字。', 'Summaries, where each person stands, facts, how threads moved, new names.')}</li>
-        <li><strong>{t('不会动：', 'Left alone: ')}</strong>{t('正文、人物卡、设定、章纲里已填的项、审校结果。', 'The text, character cards, the bible, what the chapter outlines already say, review results.')}</li>
-        <li><strong>{t('新发现：', 'What it finds: ')}</strong>{t('新的人物、设定、线索照旧进“待确认”。', 'new people, entries and threads go to the suggestions as before.')}</li>
-      </ul>
+      {clean ? (
+        <>
+          <p>{t('只留正文，把从正文读出来的东西全部清掉，再整本重读一遍。', 'Keep the text alone, clear everything that was read off it, and take the book in again.')}</p>
+          <ul className="nv-plain-list nv-small">
+            <li><strong>{t('会清掉：', 'Cleared: ')}</strong>{t('收录、人物卡、设定条目、关系、线索、设定建议。', 'Digests, character cards, bible entries, ties, threads, suggestions.')}</li>
+            <li><strong>{t('不会动：', 'Left alone: ')}</strong>{t('正文和它的版本、图片、配音、分镜、成片、译名表、分卷和剧情线。', 'The text and its versions, pictures, voices, storyboards, videos, the glossary, volumes and plot lines.')}</li>
+            <li><strong>{t('图片：', 'Pictures: ')}</strong>{t('同名的新卡 / 新条目把原来的图接回去；没有同名的，图留在插图页。', 'A new card or entry of the same name takes its pictures back; the others stay in the gallery.')}</li>
+          </ul>
+          <label className="nv-check"><input type="checkbox" checked={plans} onChange={(event) => { setPlans(event.target.checked) }} /><span>{t('章纲里的梗概、出场人物、地点、时间也清空重填', 'Empty and refill the outlines\' synopsis, cast, place and time too')}</span></label>
+          <label className="nv-check"><input type="checkbox" checked={reviews} onChange={(event) => { setReviews(event.target.checked) }} /><span>{t('清掉审校意见', 'Clear what the reviews found')}</span></label>
+          <label className="nv-check"><input type="checkbox" checked={style} onChange={(event) => { setStyle(event.target.checked) }} /><span>{t('重新提炼文风', 'Learn the style anew')}</span></label>
+        </>
+      ) : (
+        <>
+          <p>{t('场记把这些章重读一遍，重写收录结果。', 'The scribe reads these chapters again and writes their digests anew.')}</p>
+          <ul className="nv-plain-list nv-small">
+            <li><strong>{t('会被重写：', 'Written anew: ')}</strong>{t('摘要、人物状态、事实、线索动向、新名字。', 'Summaries, where each person stands, facts, how threads moved, new names.')}</li>
+            <li><strong>{t('不会动：', 'Left alone: ')}</strong>{t('正文、人物卡、设定、章纲里已填的项、审校结果。', 'The text, character cards, the bible, what the chapter outlines already say, review results.')}</li>
+          </ul>
+        </>
+      )}
       <div className="nv-radio-list">
         <label className="nv-check">
           <input type="radio" name="redigest-scope" checked={scope === 'all'} onChange={() => { setScope('all') }} />
@@ -956,7 +1007,12 @@ function RedigestDialog({ onClose }: { onClose: () => void }) {
             {t('章', '')}
           </span>
         </label>
+        <label className="nv-check">
+          <input type="radio" name="redigest-scope" checked={clean} onChange={() => { setScope('clean') }} />
+          <span>{t('纯净重新收录：先清掉所有不是正文的，再整本重读', 'From the text alone: clear everything that is not the text, then read the whole book again')}</span>
+        </label>
       </div>
+      {confirm.element}
       <p className="nv-muted nv-small">{picked.length > 0
         ? t(`共 ${picked.length} 章、约 ${formatCount(words, locale)} 字。`, `${picked.length} chapter(s), about ${formatCount(words, locale)} words.`)
         : t('这个范围里没有带正文的章节。', 'No chapter with text lies in this stretch.')}</p>

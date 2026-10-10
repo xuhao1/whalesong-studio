@@ -14,6 +14,7 @@
  * Who may ask, and for which book, is the caller's to decide: this module
  * answers for a book that was already opened for whoever is asking.
  */
+import type { ChapterFigure } from '../shared/reader'
 import type { NovelCore, ProjectRuntime } from './core'
 import { playable } from './pipelines/audio'
 import { ProjectError } from './project'
@@ -89,6 +90,8 @@ export interface SharedChapterData {
   board?: { panels: Pick<ComicPanel, 'id' | 'lines' | 'begin' | 'end' | 'description' | 'camera' | 'image'>[] }
   /** Its finished video, when post-production cut one. */
   video?: SharedVideo
+  /** The pictures of people's moments that fall in this chapter, each where the chapter tells it. */
+  figures?: ChapterFigure[]
   /** The script was made from an earlier text. */
   stale: boolean
 }
@@ -328,11 +331,13 @@ export async function readChapter(runtime: ProjectRuntime, id: string, tts: Pick
   const script = stored !== undefined ? playable(stored, tts) : undefined
   const board = await project.comicBoard(id)
   const video = await chapterVideoWithSubtitles(runtime, id)
+  const figures = await project.chapterFigures(id, text)
   return {
     id,
     index: located.index,
     title: located.plan.title,
     text,
+    ...(figures.length > 0 ? { figures } : {}),
     ...(script !== undefined ? {
       script: {
         lines: script.lines.map(line => ({
@@ -456,7 +461,7 @@ export async function readAlbum(runtime: ProjectRuntime, options: { all?: boolea
       ...(text(card.abilities) !== undefined ? { abilities: text(card.abilities)! } : {}),
       ...(text(card.life) !== undefined ? { life: text(card.life)! } : {}),
       ...(card.visual?.portrait !== undefined ? { portrait: card.visual.portrait } : {}),
-      ...(card.visual?.sheet !== undefined ? { sheet: card.visual.sheet } : {}),
+      ...(card.visual?.sheet !== undefined ? { sheet: card.visual.sheet, ...(card.visual.sheetFront === true ? { sheetFront: true } : {}) } : {}),
       ...(looks.length > 0 ? { looks } : {}),
       ...(relationships.length > 0 ? { relationships } : {}),
     }

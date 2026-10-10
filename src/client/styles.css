@@ -10694,60 +10694,92 @@ button.nv-album-chapter:hover {
   gap: 4px;
 }
 
-/* ───────────── somebody's name in the text, and who they are ───────────── */
+/* ───────────── a name in the text, and who or what it is ───────────── */
 
-/* Each person's own colour is set on the name and on the card; until one is, the Studio's. */
+/* Each person's own colour is set on the name and on the card; the world's things share one quiet line. */
 .nv-name,
 .nv-namecard {
-  --nv-name: var(--nv-brand);
+  --nv-name: var(--nv-text-3);
 }
 
+/* A hairline under the word, most of it let through: there to be found, not to be seen first. */
 .nv-name {
   border-radius: 2px;
   cursor: pointer;
   text-decoration: underline;
-  text-decoration-color: var(--nv-name);
-  text-decoration-thickness: 0.09em;
-  text-underline-offset: 0.24em;
+  text-decoration-color: color-mix(in srgb, var(--nv-name) 46%, transparent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.3em;
+  transition: text-decoration-color 0.15s, background 0.15s;
+}
+
+.nv-name.is-thing {
+  text-decoration-style: dotted;
+  text-decoration-color: color-mix(in srgb, var(--nv-name) 70%, transparent);
 }
 
 .nv-name:hover,
 .nv-name.is-open {
-  background: color-mix(in srgb, var(--nv-name) 20%, transparent);
+  background: color-mix(in srgb, var(--nv-name) 14%, transparent);
+  text-decoration-color: var(--nv-name);
 }
 
 .nv-namecard {
   position: absolute;
   z-index: 5;
   display: flex;
-  gap: 10px;
-  width: 260px;
-  padding: 10px;
+  gap: 12px;
+  padding: 12px;
   border: 1px solid var(--nv-border);
-  border-top: 3px solid var(--nv-name);
+  border-top: 2px solid color-mix(in srgb, var(--nv-name) 70%, transparent);
   border-radius: var(--nv-radius);
   background: var(--nv-surface);
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
   color: var(--nv-text);
   font-size: 13px;
-  line-height: 1.5;
+  line-height: 1.55;
 }
 
 .nv-namecard-face {
   flex: none;
-  width: 72px;
-  height: 96px;
+  width: 132px;
+  height: 176px;
   border-radius: var(--nv-radius-s);
   object-fit: cover;
   object-position: top;
+}
+
+/* A place, a thing: its picture lies across the card, the words under it. */
+.nv-namecard.is-thing {
+  flex-direction: column;
+}
+
+.nv-namecard.is-thing .nv-namecard-face {
+  width: 100%;
+  height: auto;
+  max-height: 190px;
+  aspect-ratio: 16 / 9;
+  object-position: center;
 }
 
 .nv-namecard-body {
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
   min-width: 0;
+}
+
+.nv-namecard-body > strong {
+  font-size: 15px;
+}
+
+.nv-namecard-kind {
+  margin-left: 8px;
+  color: var(--nv-text-3);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 400;
 }
 
 .nv-namecard-line {
@@ -11174,4 +11206,378 @@ button.nv-album-chapter:hover {
   .nv-glossary-row > .nv-glossary-note {
     display: none;
   }
+}
+
+/* ───────────── somebody and theirs, on their own page ───────────── */
+
+.nv-graph.nv-around {
+  height: min(46vh, 380px);
+  min-height: 240px;
+  cursor: default;
+  touch-action: auto;
+}
+
+.nv-around .nv-graph-node.is-still {
+  cursor: default;
+}
+
+.nv-around .nv-around-initial {
+  fill: var(--nv-surface);
+  font-size: 15px;
+  font-weight: 600;
+  stroke: none;
+  pointer-events: none;
+}
+
+.nv-around .nv-around-me {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.nv-album-around {
+  margin: 4px 0 8px;
+}
+
+/* The way back to where a page was come to from stands before everything on its trail. */
+.nv-album-back {
+  margin-right: 10px;
+}
+
+/* Where the text names an entry: the chapters, each a way to the place in it. */
+.nv-named-in {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+/* The finer points older cards keep apart: behind a fold, with the way to write them into the fields above. */
+.nv-person-details {
+  margin-top: 8px;
+  padding: 6px 10px;
+  border: 1px dashed var(--nv-border);
+  border-radius: var(--nv-radius-s);
+}
+
+.nv-person-details > summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--nv-text-2);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.nv-person-details[open] > summary {
+  margin-bottom: 8px;
+}
+
+/* ───────────── the private shelf ───────────── */
+
+.nv-private-shelf {
+  margin-top: 26px;
+  padding-top: 18px;
+  border-top: 1px dashed var(--nv-border);
+}
+
+.nv-private-shelf .nv-home-shelf-head {
+  flex-wrap: wrap;
+}
+
+.nv-private-mark {
+  font-size: 14px;
+}
+
+/* A sealed book that is open: no cover on the shelf either — its name on plain boards. */
+.nv-shelf-blank.is-sealed {
+  color: var(--nv-text-3);
+}
+
+/* The way to take a book off the private shelf: under the bin, there when the tile is pointed at. */
+.nv-shelf-unshelve {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  padding: 2px 8px;
+  border: 1px solid var(--nv-border);
+  border-radius: 11px;
+  background: var(--nv-bg);
+  color: var(--nv-text-2);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.nv-shelf-item:hover .nv-shelf-unshelve,
+.nv-shelf-unshelve:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .nv-shelf-unshelve {
+    opacity: 0.85;
+  }
+}
+
+/* Somebody's moment, drawn, where the chapter tells it: a picture beside the text, no larger than a page of it. */
+.nv-figure.is-moment img {
+  max-width: min(100%, 520px);
+  max-height: 72vh;
+}
+
+/* ───────────── whose settings, and what a book has its own way with ───────────── */
+
+.nv-scope-card .nv-scope {
+  margin: 0;
+}
+
+.nv-own-count {
+  display: inline-block;
+  min-width: 16px;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--nv-violet);
+  color: #fff;
+  font-size: 11px;
+  line-height: 16px;
+  text-align: center;
+}
+
+.nv-own-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.nv-own-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.nv-own-chip > button {
+  padding: 0 2px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.nv-own-chip > button:hover {
+  opacity: 1;
+}
+
+/* A setting the book has its own way with: a line down its side and a word saying so. */
+.nv-own {
+  position: relative;
+  min-width: 0;
+}
+
+.nv-own.is-own {
+  padding-left: 10px;
+  border-left: 2px solid var(--nv-violet);
+}
+
+.nv-own-tag {
+  position: absolute;
+  top: 0;
+  right: 0;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--nv-violet) 16%, transparent);
+  color: var(--nv-violet);
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.nv-own-note {
+  margin: 2px 0 0;
+  color: var(--nv-violet);
+  font-size: 12px;
+}
+
+/* Under a book's own settings, what is the same for every book is out of the way. */
+.nv-settings.is-book [data-global] {
+  display: none;
+}
+
+/* ───────────── the way to where a thing is looked at ───────────── */
+
+/* Apart from the tools beside it — those change the thing, this one shows it — and plain to find: one shape, one colour, on every page. */
+.nv-view-btn {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  margin-left: 14px;
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--nv-brand) 50%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--nv-brand) 10%, transparent);
+  color: var(--nv-brand-text);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.nv-view-btn::before {
+  content: '';
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: -8px;
+  width: 1px;
+  background: var(--nv-border);
+}
+
+.nv-view-btn:hover {
+  border-color: var(--nv-brand);
+  background: color-mix(in srgb, var(--nv-brand) 18%, transparent);
+}
+
+.nv-view-btn.is-bare {
+  width: 28px;
+  justify-content: center;
+  padding: 0;
+}
+
+/* ───────────── the plot graph, moved by hand ───────────── */
+
+.nv-plot-svg {
+  touch-action: none;
+  user-select: none;
+}
+
+.nv-plot-svg.is-moving {
+  cursor: grabbing;
+}
+
+.nv-plot-station {
+  cursor: grab;
+}
+
+/* The end of a line, to be taken hold of: where it leaves, where it arrives. */
+.nv-plot-end {
+  fill: var(--nv-bg);
+  stroke: currentColor;
+  stroke-width: 2;
+  cursor: grab;
+  transition: r 0.12s ease;
+}
+
+.nv-plot-end:hover {
+  r: 7.5px;
+  fill: currentColor;
+}
+
+/* A chapter in the hand: where it stood is faint, the one carried follows the pointer. */
+.nv-plot-station.is-held {
+  opacity: 0.3;
+}
+
+.nv-plot-held {
+  pointer-events: none;
+  color: var(--nv-brand);
+}
+
+.nv-plot-held circle {
+  fill: var(--nv-brand);
+  stroke: var(--nv-bg);
+  stroke-width: 2;
+  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.3));
+}
+
+.nv-plot-held .nv-plot-index {
+  fill: #fff;
+}
+
+/* Where a chapter in the hand would land: a bar between two stations. */
+.nv-plot-slot {
+  stroke: var(--nv-brand);
+  stroke-width: 3;
+  stroke-linecap: round;
+  pointer-events: none;
+}
+
+/* An end of a line in the hand: the line as it would then run. */
+.nv-plot-pull {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 3;
+  stroke-dasharray: 5 5;
+  pointer-events: none;
+}
+
+.nv-plot-station.is-target circle {
+  r: 14.5px;
+  stroke: var(--nv-brand);
+  stroke-width: 3.5;
+}
+
+/* ── suggestions the planner settled ── */
+.nv-settled-part { margin-top: 18px; border-top: 1px solid var(--nv-border); padding-top: 10px; }
+.nv-fold-head { display: inline-flex; align-items: center; gap: 4px; background: none; border: 0; padding: 4px 8px 4px 2px; font: inherit; font-weight: 600; color: var(--nv-text); opacity: 0.7; cursor: pointer; border-radius: 6px; }
+.nv-fold-head:hover, .nv-fold-head.is-open { opacity: 1; }
+.nv-settled.is-out { opacity: 0.82; }
+.nv-settled .nv-suggestion-main p { margin: 4px 0 0; }
+
+/* ── the Studio over all of the screen (a phone), and the door for a phone ── */
+.nv-root.nv-cover {
+  position: fixed;
+  inset: 0;
+  z-index: 2147482000;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+}
+.nv-home-cta.is-quiet { background: transparent; border-style: dashed; }
+.nv-home-cta.is-quiet strong { font-weight: 500; }
+.nv-remote { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
+.nv-remote-side { flex: 1 1 220px; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.nv-remote-url { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 4px 8px; border-radius: 6px; background: var(--nv-surface); font-size: 12px; }
+.nv-remote .nv-link { margin-right: 8px; }
+.nv-code { margin: 0; padding: 8px 10px; border-radius: 6px; background: var(--nv-surface); font-size: 13px; }
+
+/* A finger, not a pointer: what is pressed is large enough to press, and a field typed into does not make the phone zoom. */
+@media (pointer: coarse) {
+  .nv-cover .nv-nav-item { height: 40px; min-width: 42px; justify-content: center; }
+  .nv-cover .nv-btn { height: 38px; }
+  .nv-cover .nv-btn-sm { height: 34px; padding: 0 10px; font-size: 13px; }
+  .nv-cover .nv-btn-icon { width: 38px; }
+  .nv-cover .nv-btn-sm.nv-btn-icon { width: 34px; }
+  .nv-cover .nv-tab { min-height: 38px; }
+  .nv-cover input:not([type='checkbox']):not([type='radio']):not([type='range']),
+  .nv-cover textarea,
+  .nv-cover select { font-size: 16px; }
+  .nv-cover .nv-check { min-height: 34px; align-items: center; }
+  .nv-cover .nv-list-row { min-height: 44px; }
+}
+
+/* On a screen as narrow as a phone's the bar gives its second row to the pages, spread across the width. */
+@container studio (max-width: 480px) {
+  .nv-cover .nv-header { padding: 4px 8px; }
+  .nv-cover .nv-header-stats { display: none; }
+  .nv-cover .nv-nav { margin: 0; order: 9; flex: 1 0 100%; }
+  .nv-cover .nv-nav-item { flex: 1 1 0; padding: 0 4px; }
+  .nv-cover .nv-page { padding-left: 10px; padding-right: 10px; }
+}
+
+/* The shelf on a phone: two books a row, not one filling the screen. */
+@container studio (max-width: 480px) {
+  .nv-home-page .nv-shelf { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 10px; }
+  .nv-home-actions { flex-wrap: wrap; }
 }

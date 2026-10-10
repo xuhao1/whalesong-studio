@@ -221,3 +221,49 @@ export function readAlong<C extends { id: string; line?: string }>(every: readon
   }
   return { line, chapters, ways }
 }
+
+/** A picture shown beside the text without being part of it: somebody's moment, drawn, where the chapter tells it. */
+export interface ChapterFigure {
+  /** The picture, as a path of the book's own files. */
+  path: string
+  /** What stands under it: the moment, and whose it is. */
+  caption: string
+  /** Where it stands: after the paragraph that begins at this offset of the text. */
+  after: number
+}
+
+/** Pairs of neighbouring characters of a text, without what is not letters: what two texts are compared by. */
+function pairsOf(text: string): Set<string> {
+  const letters = [...text.replace(/[\s\p{P}\p{S}]+/gu, '')]
+  const pairs = new Set<string>()
+  for (let at = 0; at + 1 < letters.length; at++) pairs.add(`${letters[at]}${letters[at + 1]}`)
+  return pairs
+}
+
+/**
+ * Where the pictures of people's moments stand in a chapter: each after the paragraph that tells most of what the
+ * moment says (by the words they share — the moment is written as a picture, not quoted from the page), a moment
+ * nothing of the chapter tells at its end. A picture the text shows already is not shown twice.
+ */
+export function placeFigures(text: string, moments: readonly { path: string; caption: string; told: string }[]): ChapterFigure[] {
+  const paragraphs = blocksOf(text).filter((block): block is Extract<Block, { kind: 'paragraph' }> => block.kind === 'paragraph')
+  if (paragraphs.length === 0) return []
+  const spoken = paragraphs.map(block => pairsOf(block.text))
+  const figures: ChapterFigure[] = []
+  for (const moment of moments) {
+    if (text.includes(moment.path) || figures.some(figure => figure.path === moment.path)) continue
+    const wanted = pairsOf(moment.told)
+    let best = paragraphs.length - 1
+    let most = 0
+    spoken.forEach((pairs, at) => {
+      let shared = 0
+      for (const pair of wanted) if (pairs.has(pair)) shared++
+      if (shared > most) {
+        most = shared
+        best = at
+      }
+    })
+    figures.push({ path: moment.path, caption: moment.caption, after: paragraphs[best]!.offset })
+  }
+  return figures
+}

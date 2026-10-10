@@ -232,4 +232,12 @@ describe('the code a phone scans', () => {
     expect(subtitleOf('零七。', 0.5)).toBe('零七。')
     expect(subtitleOf('He stopped. Then he went on.', 0.9)).toBe('He stopped. Then he went on.')
   })
+  it('shows somebody\'s moment, once drawn, after the paragraph of its chapter that tells it — beside the text, not in it', async () => {
+    const { placeFigures } = await import('../src/shared/reader')
+    const text = '雨停了。\n\n宝玉和黛玉在桃花树下，摊开一卷《会真记》。\n\n晚间，袭人来催。'
+    expect(placeFigures(text, [{ path: 'assets/images/a.png', caption: '共读西厢 · 黛玉', told: '共读西厢桃花树下，黛玉接过《会真记》，低头看得入神。' }])).toEqual([{ path: 'assets/images/a.png', caption: '共读西厢 · 黛玉', after: text.indexOf('宝玉和黛玉') }])
+    // One nothing of the chapter tells stands at its end; one the text shows already is not shown twice.
+    expect(placeFigures(text, [{ path: 'assets/images/b.png', caption: 'x', told: 'zzz' }])[0]!.after).toBe(text.indexOf('晚间'))
+    expect(placeFigures(`${text}\n\n![](assets/images/a.png)`, [{ path: 'assets/images/a.png', caption: 'x', told: '桃花树下' }])).toEqual([])
+  })
 })

@@ -10,6 +10,8 @@ The whale maid on the Studio's home page, as she was drawn — the full-size pic
 
 Drawn on 2026-10-08 with `qwen-image-3.0` (Aliyun Bailian), with the project's own icon art (`icon.png`, `docs/images/icon-alt.webp`) given as reference pictures so that she is the same figure. The figure follows the DeepSeek community's whale maid, DeepSeek-chan: 溟月 by 上善无形, in the DeepSeek maid design by ZipZipPipe.
 
+`home-create.webp` was drawn again on 2026-10-10: the same picture handed back as the reference, with one thing asked — her tail made small, as it is in the other two (it stood taller than she did).
+
 To make the copies the Studio ships:
 
 ```bash

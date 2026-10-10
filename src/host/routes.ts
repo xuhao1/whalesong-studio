@@ -80,7 +80,7 @@ export function mountRoutes(ctx: Context, service: NovelService): void {
       const handler = handlers[method as RpcMethod] as (params: unknown, signal: AbortSignal) => Promise<unknown>
       try {
         const session = typeof envelope?.session === 'string' && envelope.session.length > 0 ? envelope.session : undefined
-        const value = await calling.run({ ...(session !== undefined ? { session } : {}) }, async () => await handler(envelope?.params ?? {}, request.signal))
+        const value = await calling.run({ ...(session !== undefined ? { session } : {}), web: { host: request.headers.get('host') ?? '', cookie: request.headers.get('cookie') ?? '' } }, async () => await handler(envelope?.params ?? {}, request.signal))
         return reply({ ok: true, value: value ?? null })
       } catch (error) {
         const failure = failureOf(error, request.signal)

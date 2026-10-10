@@ -238,7 +238,7 @@ ${base.text}
   "storyTime": "本章的故事内时间，文中没有则留空",
   "locations": ["出现的地点"],
   "characters": [
-    {"name": "人物姓名（用已建档姓名；新人物用文中称呼）", "role": "他/她在本章做了什么", "stateAfter": "章末处境：身体、情绪、资源、决心等", "location": "章末所在", "emotion": "章末主导情绪", "learned": ["本章新得知的关键信息"], "quote": "一句最能体现其说话方式的原文台词，没有则空", "lifecycle": "enter|exit|death|return 之一，本章首次登场用 enter，离开故事舞台用 exit，死亡用 death，久别重返用 return，否则留空"}
+    {"name": "人物姓名（用已建档姓名；新人物用文中称呼）", "role": "他/她在本章做了什么", "stateAfter": "章末处境：身体、情绪、资源、决心等", "location": "章末所在", "emotion": "章末主导情绪", "learned": ["本章新得知的关键信息"], "quote": "一句最能体现其说话方式的原文台词，没有则空", "seen": "本章原文写到的这个人的样子：年纪、长相、身量、衣着、佩戴的东西——照原文的说法，原文没写就留空", "manner": "本章里显出来的性情与为人，一句话，原文没有依据就留空", "lifecycle": "enter|exit|death|return 之一，本章首次登场用 enter，离开故事舞台用 exit，死亡用 death，久别重返用 return，否则留空"}
   ],
   "facts": [
     {"subject": "主体", "statement": "本章确立、今后必须保持一致的事实", "kind": "state|relationship|knowledge|item|world|event"}
@@ -247,7 +247,7 @@ ${base.text}
     {"name": "人物姓名（同上）", "title": "这一幕叫什么，两到四个字", "picture": "写成一幅定格的画面，60-140字：在哪里、在做什么、手里拿着什么、光线与气氛；这个人是画面的主体，别人只作陪衬", "weight": "3、2 或 1：3 是读者一想起这个人就会想起的一幕，2 是值得画下来的一幕，1 是勉强算"}
   ],
 ${zhNamesShape.replace(/^\n/, '')}${zhNamesShape.length > 0 ? '\n' : ''}  "newEntities": [
-    {"name": "名称", "kind": "character|location|item|faction|term", "description": "正文中首次出现、值得建档的人物/地点/物品/组织/专有名词，一句话说明"${zhScope}}
+    {"name": "名称", "kind": "character|location|item|faction|term", "description": "正文中首次出现、值得建档的人物/地点/物品/组织/专有名词，一句话说明", "looks": "地点、物品：原文写到它看上去什么样，照原文的说法；没写就留空"${zhScope}}
   ],
   "threads": [
     {"title": "线索或伏笔的名称（若对应上面已有线索，用原名）", "action": "plant|advance|payoff", "note": "本章如何埋下/推进/回收"}
@@ -277,7 +277,7 @@ Output JSON (every field present; use empty arrays or strings when there is noth
   "storyTime": "in-story time of the chapter, empty if the text gives none",
   "locations": ["places that appear"],
   "characters": [
-    {"name": "use the name on file; for new people the name used in the text", "role": "what they did in this chapter", "stateAfter": "condition at chapter end: body, mood, resources, resolve", "location": "where they end up", "emotion": "dominant emotion at chapter end", "learned": ["key things they learned here"], "quote": "one line of theirs that best shows how they talk, or empty", "lifecycle": "one of enter|exit|death|return — enter on first appearance, exit when leaving the story, death, return after a long absence — else empty"}
+    {"name": "use the name on file; for new people the name used in the text", "role": "what they did in this chapter", "stateAfter": "condition at chapter end: body, mood, resources, resolve", "location": "where they end up", "emotion": "dominant emotion at chapter end", "learned": ["key things they learned here"], "quote": "one line of theirs that best shows how they talk, or empty", "seen": "what this chapter's text says of how they look: age, face, build, dress, what they wear or carry — in the text's own terms; empty where it says nothing", "manner": "how they show themselves to be in this chapter, one sentence; empty where the text gives no ground", "lifecycle": "one of enter|exit|death|return — enter on first appearance, exit when leaving the story, death, return after a long absence — else empty"}
   ],
   "facts": [
     {"subject": "who or what", "statement": "a fact established here that later chapters must respect", "kind": "state|relationship|knowledge|item|world|event"}
@@ -286,7 +286,7 @@ Output JSON (every field present; use empty arrays or strings when there is noth
     {"name": "the person's name (as above)", "title": "what the moment is called, in a few words", "picture": "the moment as one frozen picture, 40-90 words: where, doing what, holding what, the light and the mood; this person is its subject, others only beside them", "weight": "3, 2 or 1: 3 — a moment a reader thinks of when they think of this person; 2 — worth a picture; 1 — at a stretch"}
   ],
 ${enNamesShape.replace(/^\n/, '')}${enNamesShape.length > 0 ? '\n' : ''}  "newEntities": [
-    {"name": "name", "kind": "character|location|item|faction|term", "description": "a person/place/object/group/term that first appears here and deserves a bible entry, one sentence"${enScope}}
+    {"name": "name", "kind": "character|location|item|faction|term", "description": "a person/place/object/group/term that first appears here and deserves a bible entry, one sentence", "looks": "a place, a thing: what the text says it looks like, in the text's own terms; empty where it says nothing"${enScope}}
   ],
   "threads": [
     {"title": "name of the thread or foreshadowing (reuse the exact name when it matches an open thread)", "action": "plant|advance|payoff", "note": "how this chapter plants / advances / pays it off"}
@@ -381,7 +381,7 @@ ${base.idea}
   "logline": "一句话梗概（主角 + 目标 + 阻碍 + 代价）",
   "premise": "300字左右的故事核：世界的特别之处、核心冲突、情感内核、读者追读的理由",
   "themes": ["主题"],
-  "characters": [{"name": "姓名", "role": "protagonist|deuteragonist|antagonist|supporting", "gender": "性别", "age": "年龄", "tagline": "一句话人设", "personality": "性格", "motivation": "想要什么/真正需要什么", "flaw": "弱点", "arc": "人物弧光", "voice": "说话方式", "appearance": "外貌要点"}],
+  "characters": [{"name": "姓名", "role": "protagonist|deuteragonist|antagonist|supporting", "gender": "性别", "age": "年龄", "tagline": "一句话人设", "personality": "性格与为人：一段话，连同他的弱点、看重什么、绝不会做什么", "background": "来历与处境：一段话，连同他的本事和藏着的事", "motivation": "想要什么/真正需要什么", "arc": "人物弧光", "voice": "说话的样子：语气、句式、口头禅", "appearance": "外貌要点"}],
   "world": [{"name": "设定名", "category": "setting|location|faction|system|item|history|culture|rule|term", "importance": 1, "summary": "一句话", "body": "详细说明"}],
   "volumes": [{"title": "卷名", "synopsis": "本卷梗概", "goal": "本卷结束时故事到达哪里"}],
   "opening": [{"title": "章名", "synopsis": "梗概", "purpose": "作用", "characters": ["出场人物"]}],
@@ -402,7 +402,7 @@ Output JSON only:
   "logline": "one sentence: protagonist + goal + obstacle + stakes",
   "premise": "about 200 words: what is special about this world, the core conflict, the emotional core, why a reader keeps reading",
   "themes": ["theme"],
-  "characters": [{"name": "name", "role": "protagonist|deuteragonist|antagonist|supporting", "gender": "gender", "age": "age", "tagline": "one-line identity", "personality": "personality", "motivation": "want / need", "flaw": "flaw", "arc": "arc", "voice": "how they talk", "appearance": "looks"}],
+  "characters": [{"name": "name", "role": "protagonist|deuteragonist|antagonist|supporting", "gender": "gender", "age": "age", "tagline": "one-line identity", "personality": "who they are: a paragraph, their flaw, what they hold dear and what they would never do in it", "background": "where they come from and stand: a paragraph, what they can do and what they hide in it", "motivation": "want / need", "arc": "arc", "voice": "how they talk: tone, sentence shapes, pet phrases", "appearance": "looks"}],
   "world": [{"name": "entry name", "category": "setting|location|faction|system|item|history|culture|rule|term", "importance": 1, "summary": "one sentence", "body": "details"}],
   "volumes": [{"title": "volume title", "synopsis": "volume synopsis", "goal": "where the story stands when it ends"}],
   "opening": [{"title": "chapter title", "synopsis": "synopsis", "purpose": "purpose", "characters": ["names"]}],
@@ -421,14 +421,14 @@ export function expandCharacterTask(base: Base & { context: string; card: string
 ${base.card}
 
 只输出 JSON（只包含你新增或改进的字段）：
-{"tagline": "", "gender": "", "age": "", "appearance": "", "personality": "", "background": "", "motivation": "", "flaw": "", "arc": "", "voice": "", "abilities": "", "secrets": "", "persona": {"traits": [{"name": "特质", "level": 1到5}], "values": ["最看重的事，按优先级"], "speech": ["口头禅、句式、语域等说话习惯"], "taboos": ["绝不会做/说的事"], "underPressure": "压力下的典型反应"}, "relationships": [{"target": "对方姓名", "kind": "关系", "note": "说明"}], "visualPrompt": "用于生成立绘的外貌描述（发型发色、五官、体态、服饰、标志物），客观具体", "voiceDesign": "用于设计配音声线的描述（年龄感、音色、语速、气质）"}`, `Complete the character card below. Keep what is there; fill the gaps and give the character more dimension and inner conflict. It must agree with the bible and the written text.${base.direction !== undefined && base.direction.trim().length > 0 ? `\nThe author asks: ${base.direction.trim()}` : ''}
+{"tagline": "", "gender": "", "age": "", "appearance": "", "personality": "性格与为人：一段话——他的特质、弱点、最看重什么、绝不会做什么、压力下什么反应，都写在这一段里，不另列", "background": "来历与处境：一段话——出身、经历、现在的位置，他的本事和藏着的事也写在这里", "motivation": "", "arc": "", "voice": "说话的样子：语气、句式、口头禅", "relationships": [{"target": "对方姓名", "kind": "关系", "note": "说明"}], "visualPrompt": "用于生成立绘的外貌描述（发型发色、五官、体态、服饰、标志物），客观具体", "voiceDesign": "用于设计配音声线的描述（年龄感、音色、语速、气质）"}`, `Complete the character card below. Keep what is there; fill the gaps and give the character more dimension and inner conflict. It must agree with the bible and the written text.${base.direction !== undefined && base.direction.trim().length > 0 ? `\nThe author asks: ${base.direction.trim()}` : ''}
 
 ## Current card
 
 ${base.card}
 
 Output JSON only (include only fields you add or improve):
-{"tagline": "", "gender": "", "age": "", "appearance": "", "personality": "", "background": "", "motivation": "", "flaw": "", "arc": "", "voice": "", "abilities": "", "secrets": "", "persona": {"traits": [{"name": "trait", "level": 1-5}], "values": ["what they hold dearest, in order"], "speech": ["catchphrases, sentence shapes, register"], "taboos": ["what they would never do or say"], "underPressure": "typical reaction under pressure"}, "relationships": [{"target": "other character's name", "kind": "relationship", "note": "note"}], "visualPrompt": "objective, concrete looks for a portrait (hair, face, build, clothing, signature item)", "voiceDesign": "description for designing their speaking voice (age, timbre, pace, temperament)"}`)}`
+{"tagline": "", "gender": "", "age": "", "appearance": "", "personality": "who they are: one paragraph — traits, flaw, what they hold dearest, what they would never do, how they react under pressure, all in it and not listed apart", "background": "where they come from and stand: one paragraph — origin, what they went through, their place now, what they can do and what they hide", "motivation": "", "arc": "", "voice": "how they talk: tone, sentence shapes, pet phrases", "relationships": [{"target": "other character's name", "kind": "relationship", "note": "note"}], "visualPrompt": "objective, concrete looks for a portrait (hair, face, build, clothing, signature item)", "voiceDesign": "description for designing their speaking voice (age, timbre, pace, temperament)"}`)}`
 }
 
 /** How the things of the book's world stand to each other: the planner reads the bible and the digests and writes the ties down. */
@@ -611,21 +611,31 @@ Output JSON only:
 }
 
 export function styleExtractTask(base: { lang: PromptLanguage; sample: string; name?: string }): string {
-  return L(base.lang, `下面是一段作者希望模仿其笔触的文字。请像文体学者一样分析它的写法（不是内容），提炼成可以指导写作的文风档案。
+  return L(base.lang, `下面是从一部作品里摘出的原文（"……"隔开的是不同的地方）。请像文体学者一样分析它的写法（不是内容），提炼成可以指导写作的文风档案。
 
 """
 ${base.sample}
 """
+
+语体是这份档案里最要紧的一栏：照着它写的人，写出来的得是同一种语言。语体看原文的字面，不看它讲的是哪个年代的事，也不因为读得懂就算作现代白话：
+- 文言：单音词为主，之乎者也，省略多；
+- 浅近文言 / 半文半白；
+- 古白话（宋元话本、明清章回小说的白话）：有"了""的"，但满纸是"道""便""只见""却说""原来""因""遂""方""甚""这般"一类的词，称谓、套语、句式都是旧的；常带章回体的格式（回目、"话说""且说""欲知后事如何"），夹诗词韵文；
+- 民国白话（新旧掺杂，欧化句式初现）；
+- 现代白话 / 当代书面语；网络小说的口语体；方言写作；译文体……
+以原文里实际出现的词和句式为证；几种掺着用的，说清楚叙述用哪种、对白用哪种。
 
 只输出 JSON：
-{"name": "${base.name ?? '给这种文风起个名字'}", "pov": "first|third-limited|third-omniscient|second|multi", "tense": "past|present", "tone": "基调与叙述者态度", "diction": "用词特点（词汇层次、文白、方言、专业词）", "rhythm": "句长、断句与段落节奏", "imagery": "意象与修辞的密度和类型", "dialogue": "对白的写法与提示语习惯", "pacing": "叙事推进与详略", "rules": ["5-8条可执行的写作规则，体现这种笔触"], "avoid": ["这种文风里不会出现的写法"], "exemplars": ["从原文中摘出 1-2 段最能代表笔触的原句（原样摘录，每段不超过150字）"]}`, `Below is a passage whose touch the author wants to emulate. Analyze how it is written (not what it says), as a stylistician would, and distill a style profile that can guide writing.
+{"name": "${base.name ?? '给这种文风起个名字'}", "register": "语体：是哪一种（上面的叫法不贴切就用更准确的），哪个年代、哪种体裁的写法；再从原文里原样摘出 5-8 个最能标志它的词、称谓或句式", "pov": "first|third-limited|third-omniscient|second|multi", "tense": "past|present", "tone": "基调与叙述者态度", "diction": "用词特点（词汇层次、雅俗、方言、专业词）", "rhythm": "句长、断句与段落节奏", "imagery": "意象与修辞的密度和类型", "dialogue": "对白的写法与提示语习惯（谁说话怎么引出、称呼怎么用）", "pacing": "叙事推进与详略", "rules": ["5-8条可执行的写作规则，体现这种笔触；第一条写明用什么语体写"], "avoid": ["这种文风里不会出现的写法——包括不属于这种语体的词和句式"], "exemplars": ["从原文中摘出 1-2 段最能代表笔触的原句（原样摘录，每段不超过150字）"]}`, `Below are passages from one work (an ellipsis on a line of its own parts different places of it). Analyze how it is written (not what it says), as a stylistician would, and distill a style profile that can guide writing.
 
 """
 ${base.sample}
 """
 
+The register is what matters most in this profile: whoever writes by it has to write the same language. Judge it by the words on the page, not by the period the story is set in, and not as contemporary prose merely because it reads easily: archaic or early-modern English, the prose of a given century and genre (Augustan, Victorian, pulp, hard-boiled…), contemporary literary prose, colloquial web fiction, dialect writing, translationese… Say which, on the evidence of words and constructions that are actually there; where narration and dialogue differ, say which is which.
+
 Output JSON only:
-{"name": "${base.name ?? 'a name for this style'}", "pov": "first|third-limited|third-omniscient|second|multi", "tense": "past|present", "tone": "tone and narrator's attitude", "diction": "word choice (register, vocabulary, dialect, jargon)", "rhythm": "sentence length, breaks, paragraph rhythm", "imagery": "density and kind of imagery and rhetoric", "dialogue": "how dialogue is written and tagged", "pacing": "narrative movement and what gets detail", "rules": ["5-8 actionable rules that produce this touch"], "avoid": ["things this style never does"], "exemplars": ["1-2 verbatim excerpts (under 100 words each) that best show the touch"]}`)
+{"name": "${base.name ?? 'a name for this style'}", "register": "the register: which kind of language, of what period and genre; then 5-8 words, forms of address or constructions quoted from the passages that mark it", "pov": "first|third-limited|third-omniscient|second|multi", "tense": "past|present", "tone": "tone and narrator's attitude", "diction": "word choice (level, vocabulary, dialect, jargon)", "rhythm": "sentence length, breaks, paragraph rhythm", "imagery": "density and kind of imagery and rhetoric", "dialogue": "how dialogue is written, tagged and addressed", "pacing": "narrative movement and what gets detail", "rules": ["5-8 actionable rules that produce this touch; the first names the register to write in"], "avoid": ["things this style never does — words and constructions that are not of its register among them"], "exemplars": ["1-2 verbatim excerpts (under 100 words each) that best show the touch"]}`)
 }
 
 export function styleSampleTask(base: Base & { style: string; scene?: string }): string {
@@ -646,10 +656,10 @@ ${base.style}`)
  */
 export function castRoundTask(base: Base & { sightings: string; known: string; full: boolean }): string {
   const zhShape = base.full
-    ? '{"characters": [{"listed": "名单上的写法，原样照抄", "name": "最常用的正式姓名", "same_as": "", "aliases": ["其他称呼"], "role": "protagonist|deuteragonist|antagonist|supporting|minor|cameo", "gender": "", "age": "", "tagline": "一句话人设", "appearance": "", "personality": "", "background": "", "motivation": "", "flaw": "", "arc": "已发生的转变", "voice": "说话方式", "relationships": [{"target": "对方姓名", "kind": "关系", "note": ""}]}]}'
+    ? '{"characters": [{"listed": "名单上的写法，原样照抄", "name": "最常用的正式姓名", "same_as": "", "aliases": ["其他称呼"], "role": "protagonist|deuteragonist|antagonist|supporting|minor|cameo", "gender": "", "age": "", "tagline": "一句话人设", "appearance": "年纪、长相、衣着：照名单里“样子”的记载写", "personality": "性情与为人，连同他看重什么、弱点是什么", "background": "出身与来历，连同他的本事、藏着的事", "motivation": "想要什么", "arc": "已发生的转变", "voice": "说话方式", "relationships": [{"target": "对方姓名", "kind": "关系", "note": ""}]}]}'
     : '{"characters": [{"listed": "名单上的写法，原样照抄", "name": "最常用的正式姓名", "same_as": "", "aliases": ["其他称呼"], "role": "supporting|minor|cameo", "gender": "", "tagline": "一句话：是谁、和谁有关"}]}'
   const enShape = base.full
-    ? '{"characters": [{"listed": "the name as listed, copied exactly", "name": "most used proper name", "same_as": "", "aliases": ["other names"], "role": "protagonist|deuteragonist|antagonist|supporting|minor|cameo", "gender": "", "age": "", "tagline": "one-line identity", "appearance": "", "personality": "", "background": "", "motivation": "", "flaw": "", "arc": "change so far", "voice": "how they talk", "relationships": [{"target": "other name", "kind": "relationship", "note": ""}]}]}'
+    ? '{"characters": [{"listed": "the name as listed, copied exactly", "name": "most used proper name", "same_as": "", "aliases": ["other names"], "role": "protagonist|deuteragonist|antagonist|supporting|minor|cameo", "gender": "", "age": "", "tagline": "one-line identity", "appearance": "age, face, dress: from what the list says under looks", "personality": "temper and bearing, with what they hold dear and their flaw", "background": "where they come from, with what they can do and what they hide", "motivation": "what they want", "arc": "change so far", "voice": "how they talk", "relationships": [{"target": "other name", "kind": "relationship", "note": ""}]}]}'
     : '{"characters": [{"listed": "the name as listed, copied exactly", "name": "most used proper name", "same_as": "", "aliases": ["other names"], "role": "supporting|minor|cameo", "gender": "", "tagline": "one line: who they are, and to whom"}]}'
   const known = base.known.trim().length > 0 ? base.known : L(base.lang, '（还没有）', '(nobody yet)')
   return L(base.lang, `下面是从小说《${bare(base.title)}》各章的收录里统计出来的一批人物，以及每个人在哪些章节做了什么。请为名单上的每一个人整理${base.full ? '一张人物卡' : '一行简介'}。
@@ -733,6 +743,53 @@ Output JSON only:
 - Leave a field empty where nothing supports it; invent nothing.`)
 }
 
+/**
+ * What the digests propose for the bible, looked over side by side: which of it is worth an entry, which is another
+ * name of something the bible has, and which is not worth writing down.
+ */
+export function settleTask(base: Base & { suggestions: string; known: string; threads: string }): string {
+  const none = L(base.lang, '（还没有）', '(nothing yet)')
+  return L(base.lang, `收录小说《${bare(base.title)}》的章节时，记下了下面这些给设定集的建议。它们不再逐条等作者批准：你来定哪些收进设定集，作者之后看的是你收进去的那些。
+
+【建议】
+${base.suggestions}
+
+【设定集里已经有的】
+${base.known.trim().length > 0 ? base.known : none}
+
+【已有的线索】
+${base.threads.trim().length > 0 ? base.threads : none}
+
+每条建议是下面三种之一：
+- enter：收进设定集。新设定——故事要回到它、别处要和它对得上、或者画面里要画它的地点、组织、物件、规矩和名词；新线索——真埋下了、后面要回收的；线索状态——这一章确实回收或放弃了它。
+- merge：它其实是"设定集里已经有的"某一条的另一个叫法（into 写那一条的名字）；新线索和已有的某条线索是同一件事时也用它。
+- skip：不收。路过一次的地方、场面上的寻常物件、只是字面上的普通词、太笼统说不出是什么的，或者这本书的设定集用不着记的。
+
+只输出 JSON：
+{"verdicts": [{"n": 建议的序号, "verdict": "enter|merge|skip", "why": "一句话，写给作者看：凭什么这么定", "into": "verdict=merge 时：已有的那一条的名字", "category": "verdict=enter 且是新设定时：setting|location|faction|system|item|history|culture|rule|term|other 里最贴切的一个", "summary": "verdict=enter 且是新设定时：一句话说它是什么（照建议里写的，不添没有依据的）"}]}
+
+每条建议都要有一项，一条也不要漏。`, `While chapters of the novel "${bare(base.title)}" were digested, the suggestions below were noted for its bible. They no longer wait for the author one by one: you settle which of them enter the bible, and what the author looks at afterwards is what you entered.
+
+THE SUGGESTIONS
+${base.suggestions}
+
+WHAT THE BIBLE HAS ALREADY
+${base.known.trim().length > 0 ? base.known : none}
+
+THE THREADS THERE ARE
+${base.threads.trim().length > 0 ? base.threads : none}
+
+Every suggestion is one of three:
+- enter: into the bible. A new entry — a place, group, thing, rule or term the story returns to, that other chapters have to agree with, or that pictures will show; a new thread — one truly planted, to be paid off later; a thread's state — this chapter did pay it off or drop it.
+- merge: it is another name of something the bible has already ("into" names that entry); also for a new thread that is the same matter as one there is.
+- skip: left out. A place passed once, an ordinary object of a scene, a common word, something too vague to say what it is, or what this book's bible has no use for.
+
+Output JSON only:
+{"verdicts": [{"n": the suggestion's number, "verdict": "enter|merge|skip", "why": "one line, for the author: why this", "into": "for verdict=merge: the name of the entry it belongs to", "category": "for verdict=enter of a new entry: the closest of setting|location|faction|system|item|history|culture|rule|term|other", "summary": "for verdict=enter of a new entry: one line saying what it is (as the suggestion has it; nothing unsupported)"}]}
+
+One item for every suggestion, none left out.`)
+}
+
 /** The names on a cast list that stand for one person: asked once the cards are made, when every name can be seen beside every other. */
 export function castAliasTask(base: Base & { cast: string }): string {
   return L(base.lang, `下面是小说《${bare(base.title)}》人物表里所有人的名字——括号里是已经知道的别名，破折号后是一句话简介。其中有些其实是同一个人的不同称呼（比如"凤姐"和"王熙凤"、"史大姑娘"和"史湘云"）。请把它们找出来。
@@ -756,19 +813,27 @@ Only where you are sure. Relatives, spouses, master and servant, and namesakes a
  */
 export function worldMergeTask(base: Base & { sightings: string; first?: boolean }): string {
   const first = base.first !== false
-  return L(base.lang, `下面是从小说《${bare(base.title)}》各章提取到的一批地点、组织、物品与专有名词。请合并重复项，整理成世界观设定条目${first ? '，并补一条总览式的"世界概况"' : ''}。
+  return L(base.lang, `下面是收录小说《${bare(base.title)}》各章时记下的一批地点、组织、物品与专有名词（方括号里是类别，后面是出现在几章、各章怎么说它）。请定下哪些进设定集：名单上的每一项是下面三种去向之一。
 
+- 成条：故事要回到它、别处得和它对得上、或者画面里要画它的——有名有姓的地方、家族与组织、要紧的物件、这本书自己的规矩和名词。
+- 并入：和另一项是同一样东西的不同叫法（"宁府"和"宁国府"）——并成一条，别的叫法进 aliases。
+- 不收（skip）：只是说"在哪""用什么"的寻常东西——某间书房、一张床、路边的酒肆茶铺、"某人家""某人处""城外""郭外"这类只标方位的说法、场面上的寻常物件、字面上的普通词。只出现在一章、又没有自己名字的，多半是这一类。
+${first ? '\n另补一条总览式的"世界概况"。\n' : ''}
 ${base.sightings}
 
 只输出 JSON：
-{"entries": [{"name": "名称", "aliases": ["别名"], "category": "setting|location|faction|system|item|history|culture|rule|term|other", "importance": ${first ? '1或2或3' : '2或3'}, "summary": "一句话", "body": "根据原文整理的说明"}]}
-importance：${first ? '1=理解全书必须知道的核心设定（不超过 6 条），' : ''}2=常规，3=细节。名单上的每一项都要有着落：单独成条，或并进别的条目当别名。没有依据的内容不要编造。`, `Below is a batch of places, groups, objects and terms extracted chapter by chapter from the novel "${bare(base.title)}". Merge duplicates into world entries${first ? ', and add one overview entry describing the world at large' : ''}.
+{"entries": [{"name": "名称", "aliases": ["别名"], "category": "setting|location|faction|system|item|history|culture|rule|term|other", "importance": ${first ? '1或2或3' : '2或3'}, "summary": "一句话", "body": "根据原文整理的说明", "look": "地点、组织、物件：它看上去什么样（名单里"样子"写了的才填，照那里写的整理成一段；没写就留空）"}], "skip": [{"name": "不收的那一项（名单上的写法）", "why": "一句话"}]}
+importance：${first ? '1=理解全书必须知道的核心设定（不超过 6 条），' : ''}2=常规，3=细节。名单上的每一项都要有着落：成条、并入，或列进 skip。没有依据的内容不要编造。`, `Below is a batch of places, groups, objects and terms noted while the chapters of the novel "${bare(base.title)}" were digested (the kind in brackets, then in how many chapters it turns up and what they say of it). Settle which of them enter the bible: everything in the batch goes one of three ways.
 
+- An entry: what the story returns to, what other chapters have to agree with, what pictures will show — places with a name of their own, houses and groups, things that matter, this book's own rules and terms.
+- Folded in: another name of the same thing as another item — one entry, the other names its aliases.
+- Left out (skip): ordinary things that only say where or with what — a study, a bed, an inn by the road, "so-and-so's house", "outside the city", an ordinary object of a scene, a plain word. What turns up in one chapter and has no name of its own is mostly of this kind.
+${first ? '\nAdd one overview entry describing the world at large.\n' : ''}
 ${base.sightings}
 
 Output JSON only:
-{"entries": [{"name": "name", "aliases": ["aliases"], "category": "setting|location|faction|system|item|history|culture|rule|term|other", "importance": ${first ? '1' : '2'}, "summary": "one sentence", "body": "what the text establishes"}]}
-importance: ${first ? '1 = core canon needed to follow the book (6 at most), ' : ''}2 = normal, 3 = detail. Everything in the batch ends up somewhere: an entry of its own, or an alias of another. Do not invent beyond the text.`)
+{"entries": [{"name": "name", "aliases": ["aliases"], "category": "setting|location|faction|system|item|history|culture|rule|term|other", "importance": ${first ? '1' : '2'}, "summary": "one sentence", "body": "what the text establishes", "look": "for a place, group or thing: what it looks like (only where the batch gives its looks — put together from what is there; otherwise empty)"}], "skip": [{"name": "an item left out (as the batch writes it)", "why": "one line"}]}
+importance: ${first ? '1 = core canon needed to follow the book (6 at most), ' : ''}2 = normal, 3 = detail. Everything in the batch ends up somewhere: an entry, an alias, or under skip. Do not invent beyond the text.`)
 }
 
 export function volumesTask(base: Base & { summaries: string }): string {

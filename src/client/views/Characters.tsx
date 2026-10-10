@@ -12,19 +12,22 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { VoiceOption } from '../../shared/rpc'
 import type { CharacterCard, CharacterLook, CharacterRole, CharacterStage, LifeMark, SignatureScene, SortedNotes } from '../../shared/types'
 import { sceneFor, scenesOf } from '../../shared/art'
-import { leadOf } from '../../shared/images'
+import { detailsOf, foldDetails } from '../../shared/card'
+import { leadOf, withBookImage } from '../../shared/images'
 import { lifeEnd, lifeLine, type Life, type LifeEvent, type LifeStanding } from '../../shared/life'
 import { lines, options, useAssist } from '../forms'
 import { sceneOf, sheetsDrawn, type PortraitScene } from '../labels'
 import { DeletePicture, PictureViewer, usePictures } from '../PictureRecord'
 import { useSheetsAsk, type SheetsChoice } from '../SheetsAsk'
 import { TiesBlock } from '../Ties'
+import { AroundGraph, bondsOf } from '../reader/around'
 import { HistoryButton, RemovedCards } from '../History'
 import { LinesField, LineTags, type LinePicks } from '../LinesField'
 import { Icon } from '../icons'
 import {
   Button, Chip, cx, Empty, Field, Modal, ProjectImage, SectionTitle, Select, TextArea, TextInput, useAction, useConfirm, useLoad, useMediaUrl,
   useProject, useRunningJob, useSnapshot, useStudio, useT, plainEnter,
+  ViewButton,
 } from '../ui'
 
 export const ROLE_LABELS: Record<CharacterRole, [string, string]> = {
@@ -82,6 +85,8 @@ const GROUPS: { key: 'lead' | 'supporting' | 'minor'; roles: CharacterRole[]; la
 export function CardPhoto({ card, className }: { card: CharacterCard; className?: string }) {
   const mediaUrl = useMediaUrl()
   if (card.visual?.portrait !== undefined) return <ProjectImage className={cx('nv-photo', className)} path={card.visual.portrait} alt={card.name} />
+  // A sheet of the front view alone is their picture as it is.
+  if (card.visual?.sheet !== undefined && card.visual.sheetFront === true) return <ProjectImage className={cx('nv-photo', className)} path={card.visual.sheet} alt={card.name} />
   // A sheet shows the same person three times; its left third is the front view.
   if (card.visual?.sheet !== undefined) return <span className={cx('nv-photo is-sheet', className)} role="img" aria-label={card.name} style={{ backgroundImage: `url("${mediaUrl(card.visual.sheet)}")` }} />
   return <span className={cx('nv-photo is-empty', className)} aria-hidden="true">{card.name.slice(0, 1)}</span>
@@ -141,10 +146,10 @@ export function CharacterCards({ shown, grouped, searching, lives, picks }: { sh
     if (!controller.need('image')) return
     const todo = faceless.map(item => item.id)
     // The sheet comes first: whoever has none gets one before their portrait — said here, where the calls are counted.
-    const lead = settings !== undefined ? leadOf(settings.settings.image) : 'sheet'
+    const lead = settings !== undefined ? leadOf(withBookImage(settings.settings.image, project.manifest.image)) : 'sheet'
     const sheetless = lead === 'none' ? 0 : faceless.filter(item => item.visual?.sheet === undefined).length
     // So does their scene: whoever has none on their card has the director pick one from the book first.
-    const sceneless = settings?.settings.image.portraitScene === false || !project.chapters.some(chapter => chapter.hasText) ? 0 : faceless.filter(item => scenesOf(item).length === 0).length
+    const sceneless = (settings !== undefined && withBookImage(settings.settings.image, project.manifest.image).portraitScene === false) || !project.chapters.some(chapter => chapter.hasText) ? 0 : faceless.filter(item => scenesOf(item).length === 0).length
     confirm.ask(t(`给 ${todo.length} 个还没有定妆照的人物各画一张？${sheetless > 0 ? (lead === 'portrait' ? `其中 ${sheetless} 人画完会照着立绘补人设图。` : `其中 ${sheetless} 人会先画人设图。`) : ''}${sceneless > 0 ? `${sceneless} 人会先由导演找名场面。` : ''}`, `Draw a portrait for each of the ${todo.length} without one?${sheetless > 0 ? (lead === 'portrait' ? ` ${sheetless} get a design sheet after it, drawn against it.` : ` ${sheetless} get a design sheet first.`) : ''}${sceneless > 0 ? ` For ${sceneless} the director finds their signature scenes first.` : ''}`), () => {
       void controller.guard(async () => {
         setBatch({ done: 0, total: todo.length })
@@ -433,6 +438,10 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
     onChange: (event: { target: { value: string } }) => { set(key, event.target.value) },
   })
   const persona = draft.persona ?? {}
+  // The finer points older cards keep apart: shown while they hold something, to be folded into the three fields a card keeps.
+  const details = detailsOf(draft)
+  const zh = /[\u3400-\u9fff]/u.test(`${draft.name}${draft.personality ?? ''}${draft.background ?? ''}`) || project.manifest.language.toLowerCase().startsWith('zh')
+  const around = useMemo(() => project.characters.map(other => ({ id: other.id, name: other.name, role: other.role, face: other.visual?.portrait ?? other.visual?.sheet, sheet: other.visual?.portrait === undefined && other.visual?.sheet !== undefined && other.visual.sheetFront !== true })), [project.characters])
   const setPersona = (patch: Partial<NonNullable<CharacterCard['persona']>>): void => { set('persona', { ...persona, ...patch }) }
   const save = (): Promise<unknown> => run(async () => {
     // Empty strings clear fields on the Host; arrays are sent whole.
@@ -537,7 +546,9 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
   const portraitOf = draft.visual?.portrait !== undefined ? records.byPath.get(draft.visual.portrait) : undefined
   // Which of the two leads says which may have fallen behind: the portrait, where it is drawn against the sheet; the
   // sheet, where it is drawn against the portrait.
-  const lead = settings !== undefined ? leadOf(settings.settings.image) : 'sheet'
+  // The image settings as this book has them: the Studio's, with what the book has its own way with.
+  const image = settings !== undefined ? withBookImage(settings.settings.image, project.manifest.image) : undefined
+  const lead = image !== undefined ? leadOf(image) : 'sheet'
   const sheetOf = draft.visual?.sheet !== undefined ? records.byPath.get(draft.visual.sheet) : undefined
   const hasSheet = draft.visual?.sheet !== undefined
   const hasPortrait = draft.visual?.portrait !== undefined
@@ -558,7 +569,7 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
   })
   const anchorField = `nv-anchor-${card.id}`
   const sceneField = `nv-scene-${card.id}`
-  const scenic = settings?.settings.image.portraitScene !== false
+  const scenic = image?.portraitScene !== false
   const moments = scenesOf(draft)
   const marked = sceneFor(draft)
 
@@ -602,7 +613,7 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
         ) : null}
         <div className="nv-person-draw">
           <Button size="sm" variant={draft.visual?.portrait === undefined ? 'primary' : 'outline'} icon="image" disabled={dirty || (drawing !== undefined && !portraitBusy)} busy={portraitBusy} pending={t('正在画立绘…', 'Drawing the portrait…')} onClick={() => draw('portrait', t('立绘已生成', 'Portrait ready'))} title={dirty ? t('先保存当前修改', 'Save your edits first') : portraitAgainst === 'words' ? t('只照文字画', 'Drawn from the words alone') : hasSheet ? t('照着人设图画', 'Drawn against the design sheet') : t('先画人设图，再照着它画立绘', 'The design sheet is drawn first, then the portrait against it')}>{draft.visual?.portrait !== undefined ? t('重画立绘', 'Redraw portrait') : t('画立绘', 'Draw portrait')}</Button>
-          <Button size="sm" variant="outline" icon="users" disabled={dirty || (drawing !== undefined && !sheetBusy)} busy={sheetBusy} pending={t('正在画人设图…', 'Drawing the sheet…')} onClick={() => draw('sheet', t('人设图已生成', 'Design sheet ready'))} title={dirty ? t('先保存当前修改', 'Save your edits first') : sheetAgainst === 'portrait' ? t('三视图，照着立绘画', 'Three views, drawn against the portrait') : t('三视图，只照文字画：视觉锚点、画风和下面写的想法', 'Three views, drawn from the words alone: the visual anchor, the art direction and the ideas below')}>{draft.visual?.sheet !== undefined ? t('重画人设图', 'Redraw sheet') : t('生成人设图', 'Design sheet')}</Button>
+          <Button size="sm" variant="outline" icon="users" disabled={dirty || (drawing !== undefined && !sheetBusy)} busy={sheetBusy} pending={t('正在画人设图…', 'Drawing the sheet…')} onClick={() => draw('sheet', t('人设图已生成', 'Design sheet ready'))} title={dirty ? t('先保存当前修改', 'Save your edits first') : sheetAgainst === 'portrait' ? t(`${image?.sheet === 'front' ? '正面全身' : '三视图'}，照着立绘画`, `${image?.sheet === 'front' ? 'The front view' : 'Three views'}, drawn against the portrait`) : t(`${image?.sheet === 'front' ? '正面全身' : '三视图'}，只照文字画：视觉锚点、画风和下面写的想法`, `${image?.sheet === 'front' ? 'The front view' : 'Three views'}, drawn from the words alone: the visual anchor, the art direction and the ideas below`)}>{draft.visual?.sheet !== undefined ? t('重画人设图', 'Redraw sheet') : t('生成人设图', 'Design sheet')}</Button>
         </div>
         <label className="nv-person-moment" title={t('这一页画的立绘照着什么画；不选就是 设置 → 图像生成 里定的', 'What a portrait drawn from this page is held against; left alone, as Settings → Images has it')}>
           <span>{t('立绘照着', 'Portrait from')}</span>
@@ -695,13 +706,13 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
             <button type="button" className="nv-link" onClick={() => { controller.openCast('lives') }} title={t('所有人的履历表', 'Everyone\'s course in one table')}>{t('履历表', 'Life table')}</button>
             {' · '}
             <button type="button" className="nv-link" onClick={() => { controller.openCast('relations') }}>{t('关系图', 'Relationships')}</button>
-            {' · '}<button type="button" className="nv-link" onClick={() => { controller.openExplore({ type: 'character', id: card.id }) }} title={t('在“观看 → 人物”里看他', 'See them under Watch → People')}>{t('观看', 'View')}</button>
           </span>
         </div>
         <div className="nv-row">
           <HistoryButton kind="character" id={card.id} name={card.name} onRestored={() => { setDirty(false) }} />
           <Button variant="ghost" size="sm" icon="trash" busy={busy} onClick={() => { confirm.ask(t(`删除人物「${card.name}」？`, `Delete the character "${card.name}"?`), () => { void run(async () => { await controller.api.call('character.delete', { root, id: card.id }); onDeleted() }) }) }} title={t('删除这张人物卡', 'Delete this card')} />
           <Button variant="primary" busy={busy} pending={t('正在保存…', 'Saving…')} disabled={!dirty} onClick={save}>{t('保存', 'Save')}</Button>
+          <ViewButton onClick={() => { controller.openExplore({ type: 'character', id: card.id }) }} title={t('观看：这个人在“观看 → 人物”里的样子', 'View: as they are under Watch → People')} />
         </div>
       </header>
 
@@ -725,37 +736,48 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
       </div>
       <Field label={t('一句话人设', 'One-line identity')}><TextInput {...text('tagline')} /></Field>
 
-      <SectionTitle>{t('内在', 'Inner life')}</SectionTitle>
-      <Field label={t('性格', 'Personality')}><TextArea {...text('personality')} /></Field>
+      <SectionTitle>{t('这个人', 'Who they are')}</SectionTitle>
+      <Field label={t('性格与为人', 'How they are')} hint={t('性情、看重什么、弱点、绝不会做的事', 'Temper, what they hold dear, their flaw, what they would never do')}><TextArea {...text('personality')} /></Field>
+      <Field label={t('来历与处境', 'Where they come from')} hint={t('出身、经历、本事、藏着的事', 'Origins, what they have lived, what they can do, what they hide')}><TextArea {...text('background')} /></Field>
       <div className="nv-form-grid">
-        <Field label={t('动机（想要 / 需要）', 'Motivation (want / need)')}><TextArea {...text('motivation')} /></Field>
-        <Field label={t('弱点', 'Flaw')}><TextArea {...text('flaw')} /></Field>
+        <Field label={t('想要什么', 'What they want')} hint={t('想要的，和真正需要的', 'What they want, and what they need')}><TextArea {...text('motivation')} /></Field>
+        <Field label={t('会怎么变', 'How they change')} hint={t('人物弧光', 'Their arc')}><TextArea {...text('arc')} /></Field>
       </div>
-      <Field label={t('人物弧光', 'Arc')}><TextArea {...text('arc')} /></Field>
-      <Field label={t('背景', 'Background')}><TextArea {...text('background')} /></Field>
-      <div className="nv-form-grid">
-        <Field label={t('能力', 'Abilities')}><TextArea {...text('abilities')} /></Field>
-        <Field label={t('秘密', 'Secrets')} hint={t('作者知道、他人未必知道', 'Known to the author, not to everyone')}><TextArea {...text('secrets')} /></Field>
-      </div>
+      <Field label={t('说话的样子', 'How they speak')} hint={t('口吻、句式、口头禅；写手据此写对白', 'Register, sentence shape, catchphrases: the writer writes their lines by it')}><TextArea {...text('voice')} /></Field>
+      {details.length > 0 ? (
+        // What cards once kept apart: there while it holds something, and one press folds it into the fields above.
+        <details className="nv-fold nv-person-details">
+          <summary>{t(`细项 · ${details.length} 栏有内容`, `Finer points · ${details.length} filled`)}<Button size="sm" variant="ghost" icon="minimize" onClick={(event) => { event.preventDefault(); setDraft(foldDetails(draft, zh)); setDirty(true) }} title={t('写进上面三栏里，这几栏清空；点“保存”才生效', 'Written into the three fields above and cleared here; takes effect on Save')}>{t('并入上面的描述', 'Fold into the above')}</Button></summary>
+          <div className="nv-form-grid">
+            <Field label={t('弱点', 'Flaw')}><TextArea {...text('flaw')} /></Field>
+            <Field label={t('能力', 'Abilities')}><TextArea {...text('abilities')} /></Field>
+            <Field label={t('秘密', 'Secrets')}><TextArea {...text('secrets')} /></Field>
+            <Field label={t('特质', 'Traits')} hint={t('每行一个', 'One per line')}>
+              <TextArea value={(persona.traits ?? []).map(trait => `${trait.name}${trait.level !== undefined ? ` ${trait.level}` : ''}`).join('\n')} onChange={(event) => {
+                setPersona({ traits: lines(event.target.value).map((line) => {
+                  const match = /^(.*?)[\s:：]*([1-5])$/.exec(line)
+                  return match !== null && match[1] !== undefined && match[1].trim().length > 0 ? { name: match[1].trim(), level: Number(match[2]) } : { name: line }
+                }) })
+              }} />
+            </Field>
+            <Field label={t('看重的东西', 'Values')}><TextArea value={(persona.values ?? []).join('\n')} onChange={(event) => { setPersona({ values: lines(event.target.value) }) }} /></Field>
+            <Field label={t('说话习惯', 'Speech habits')}><TextArea value={(persona.speech ?? []).join('\n')} onChange={(event) => { setPersona({ speech: lines(event.target.value) }) }} /></Field>
+            <Field label={t('绝不会', 'Would never')}><TextArea value={(persona.taboos ?? []).join('\n')} onChange={(event) => { setPersona({ taboos: lines(event.target.value) }) }} /></Field>
+            <Field label={t('压力下的反应', 'Under pressure')}><TextArea value={persona.underPressure ?? ''} onChange={(event) => { setPersona({ underPressure: event.target.value }) }} /></Field>
+          </div>
+        </details>
+      ) : null}
 
-      <SectionTitle>{t('人格', 'Persona')}</SectionTitle>
-      <div className="nv-form-grid">
-        <Field label={t('特质', 'Traits')} hint={t('每行一个，可写强度：倔强 5', 'One per line, optional intensity: stubborn 5')}>
-          <TextArea value={(persona.traits ?? []).map(trait => `${trait.name}${trait.level !== undefined ? ` ${trait.level}` : ''}`).join('\n')} onChange={(event) => {
-            setPersona({ traits: lines(event.target.value).map((line) => {
-              const match = /^(.*?)[\s:：]*([1-5])$/.exec(line)
-              return match !== null && match[1] !== undefined && match[1].trim().length > 0 ? { name: match[1].trim(), level: Number(match[2]) } : { name: line }
-            }) })
-          }} />
-        </Field>
-        <Field label={t('看重的东西', 'Values')} hint={t('每行一个，按优先级', 'One per line, by priority')}><TextArea value={(persona.values ?? []).join('\n')} onChange={(event) => { setPersona({ values: lines(event.target.value) }) }} /></Field>
-        <Field label={t('说话习惯', 'Speech habits')} hint={t('口头禅、句式、语域', 'Catchphrases, sentence shape, register')}><TextArea value={(persona.speech ?? []).join('\n')} onChange={(event) => { setPersona({ speech: lines(event.target.value) }) }} /></Field>
-        <Field label={t('绝不会', 'Would never')}><TextArea value={(persona.taboos ?? []).join('\n')} onChange={(event) => { setPersona({ taboos: lines(event.target.value) }) }} /></Field>
-      </div>
-      <Field label={t('压力下的反应', 'Under pressure')}><TextInput value={persona.underPressure ?? ''} onChange={(event) => { setPersona({ underPressure: event.target.value }) }} /></Field>
-      <Field label={t('对白的声音', 'Voice on the page')} hint={t('写手据此写对白', 'The writer uses this for dialogue')}><TextArea {...text('voice')} /></Field>
-
-      <SectionTitle>{t('关系', 'Relationships')}</SectionTitle>
+      <SectionTitle actions={<button type="button" className="nv-link nv-small" onClick={() => { controller.openCast('relations') }}>{t('所有人的关系图', 'Everyone\'s graph')}</button>}>{t('关系', 'Relationships')}</SectionTitle>
+      {/* Theirs as a picture — what this card says of others and what the others' cards say of them — before the list it is edited in. */}
+      <AroundGraph
+        t={t}
+        person={{ id: card.id, name: draft.name, role: draft.role, face: card.visual?.portrait ?? card.visual?.sheet, sheet: card.visual?.portrait === undefined && card.visual?.sheet !== undefined && card.visual.sheetFront !== true }}
+        others={around}
+        bonds={bondsOf(card.id, project.characters.map(other => (other.id === card.id ? { id: other.id, relationships: draft.relationships } : other)))}
+        media={path => mediaUrl(path)}
+        onOpen={(id) => { controller.openCharacter(id) }}
+      />
       <RelationshipEditor value={draft.relationships ?? []} onChange={(value) => { set('relationships', value) }} />
 
       <StagesPanel

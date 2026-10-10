@@ -4,6 +4,7 @@ import { deriveGrowth } from '../core/pipelines/growth'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { readdir, readFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { HISTORY_KINDS } from '../shared/history'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core/core'
 import type { JobContext } from '../core/jobs'
 import { stockVoices } from '../core/media/voices'
@@ -27,7 +28,7 @@ import { publishSite, siteChaptersUpTo, siteDefaults, siteFolder } from '../core
 import { listChapters, listLines, listSides, readAlbum, readPosition, readSide, savePosition } from '../core/reader'
 import { albumCounts, albumEmpty } from '../shared/album'
 import { deriveArtDirection, deriveLook, deriveScenes, deriveVisual, illustrate, redrawPicture } from '../core/pipelines/illustrate'
-import { analyzeBook, importManuscript, readBookFile, importLine } from '../core/pipelines/import'
+import { analyzeBook, importManuscript, readBookFile, importLine, rereadBook } from '../core/pipelines/import'
 import { applyOutlineOps, type OutlineOp } from '../core/pipelines/outline'
 import {
   ensurePortrait, novelizePlay, paintPlayScene, playTurn, rewindPlay, setPlayOutcome, startPlay, voicePlayLine,
@@ -38,6 +39,8 @@ import { fixIssue, fixIssues, acceptProposal, rejectProposal, reviseBook, revise
 import { writeChapter } from '../core/pipelines/write'
 import { ProjectError } from '../core/project'
 import { siftCast } from '../core/pipelines/cast'
+import { overrule, settleSuggestions, settlesItself } from '../core/pipelines/settle'
+import { loopbackPort, signInOf } from './remote'
 import { comfyCatalog, comfyLastWorkflow, comfyTakeWorkflow, WORKFLOW_NOTE } from '../core/media/local'
 import { listWalkOns, settleWalkOn } from '../core/walkons'
 import { checkPassword, readStub, VaultError } from '../core/util/vault'
@@ -55,12 +58,24 @@ import type { NovelService } from './service'
 type Handlers = { [M in RpcMethod]: (params: RpcParams<M>, signal: AbortSignal) => Promise<RpcResult<M>> }
 
 /** What a request says about where it came from; set by the route for the time a handler runs. */
-export const calling = new AsyncLocalStorage<{ session?: string }>()
+export const calling = new AsyncLocalStorage<{ session?: string; /** Where the request reached DSH, and the sign-in it carried. */ web?: { host: string; cookie: string } }>()
 
 /** What a history is kept of, as a request names it. */
 function historyKind(value: unknown): HistoryKind {
-  if (value === 'character' || value === 'world' || value === 'style' || value === 'plan' || value === 'thread' || value === 'book') return value
-  throw new ProjectError('novel/invalid', 'a history is kept of: character, world, style, plan, thread, book')
+  const kind = HISTORY_KINDS.find(item => item === value)
+  if (kind !== undefined) return kind
+  throw new ProjectError('novel/invalid', `a history is kept of: ${HISTORY_KINDS.join(', ')}`)
+}
+
+/** Work on the private shelf, with what goes wrong said as a request can say it: a wrong or a weak password is no crash. */
+async function shelfWork(work: () => Promise<void>): Promise<void> {
+  try {
+    await work()
+  } catch (error) {
+    if (error instanceof VaultError) throw new ProjectError(error.code === 'wrong-key' ? 'novel/wrong-key' : 'novel/invalid', error.message)
+    if (error instanceof ProjectError) throw error
+    throw new ProjectError('novel/invalid', error instanceof Error ? error.message : String(error))
+  }
 }
 
 function requireString(value: unknown, name: string): string {
@@ -211,7 +226,8 @@ export function createHandlers(service: NovelService): Handlers {
     'workspace.info': async ({ sessionId }) => {
       const workspaces = await service.workspaces()
       const home = service.workspaceHome()
-      if (sessionId === undefined) return { workspaces, home, ...await staleNote() }
+      const shelf = await core.shelfState()
+      if (sessionId === undefined) return { workspaces, home, shelf, ...await staleNote() }
       const current = await service.workspaceOfSession(sessionId)
       const state = await service.sessions.get(sessionId)
       if (current !== undefined && !workspaces.some(workspace => workspace.path === current)) {
@@ -219,7 +235,7 @@ export function createHandlers(service: NovelService): Handlers {
       }
       // Found without opening it: a book in play that is locked is shown by its lock, not as a failure.
       const active = await service.bookOfSession(sessionId, current)
-      return { workspaces, home, ...(current !== undefined ? { current } : {}), ...(active !== undefined ? { active } : {}), mode: state.mode, ...await staleNote() }
+      return { workspaces, home, shelf, ...(current !== undefined ? { current } : {}), ...(active !== undefined ? { active } : {}), mode: state.mode, ...await staleNote() }
     },
     'workspace.create': async ({ name, path }) => await service.createWorkspace({ ...(name !== undefined ? { name } : {}), ...(path !== undefined ? { path } : {}) }),
     'project.create': async (params) => {
@@ -309,6 +325,38 @@ export function createHandlers(service: NovelService): Handlers {
         throw error
       }
       return await service.lockView(root)
+    },
+    'shelf.get': async () => await core.shelfState(),
+    'shelf.setup': async ({ password }) => {
+      const secret = requireString(password, 'password')
+      await shelfWork(async () => { await core.setupShelf(secret, await core.shelved((await service.workspaces()).map(workspace => workspace.path))) })
+      return await core.shelfState()
+    },
+    'shelf.open': async ({ password }) => {
+      await shelfWork(async () => { await core.openShelf(requireString(password, 'password')) })
+      return await core.shelfState()
+    },
+    'shelf.close': async () => {
+      await core.closeShelf()
+      return await core.shelfState()
+    },
+    'shelf.change': async ({ password, next }) => {
+      const [was, now] = [requireString(password, 'password'), requireString(next, 'next')]
+      await shelfWork(async () => { await core.rekeyShelf(was, now, await core.shelved((await service.workspaces()).map(workspace => workspace.path))) })
+      return await core.shelfState()
+    },
+    'shelf.add': async ({ root, own }) => {
+      const runtime = await open(root)
+      const how = typeof own === 'string' && own.length > 0 ? { own } : own === true ? { own: true as const } : {}
+      if (typeof how.own === 'string') await shelfWork(async () => { checkPassword(how.own as string) })
+      return job(runtime, 'seal', 'shelve', undefined, async (task) => {
+        const done = await core.shelveBook(runtime.project.root, how, (count) => { task.job?.progress(count, 0) })
+        return { files: done.files }
+      })
+    },
+    'shelf.remove': async ({ root, password }) => {
+      await shelfWork(async () => { await core.unshelveBook(requireString(root, 'root'), password) })
+      return await core.shelfState()
     },
     'conversation.open': async ({ root, workspace, create }) => {
       if (root === undefined && workspace === undefined) throw new ProjectError('novel/invalid', 'name a book (`root`) or a folder (`workspace`)')
@@ -452,6 +500,20 @@ export function createHandlers(service: NovelService): Handlers {
       return { ok: true }
     },
     'suggestion.dismiss': async ({ root, id }) => ({ ok: await dismissSuggestion(await open(root), id) }),
+    'import.reread': async ({ root, plans, reviews, style }) => {
+      const runtime = await open(root)
+      return job(runtime, 'import', 'reread', undefined, async task => await rereadBook(core, runtime, { ...(plans === false ? { plans: false } : {}), ...(reviews === false ? { reviews: false } : {}), ...(style === false ? { style: false } : {}) }, task))
+    },
+    'suggestion.settled': async ({ root }) => ({ items: await (await open(root)).project.settled(), auto: settlesItself(core) }),
+    'suggestion.settle': async ({ root }) => {
+      const runtime = await open(root)
+      return job(runtime, 'bible', 'settle suggestions', undefined, async task => await settleSuggestions(core, runtime, task))
+    },
+    'suggestion.overrule': async ({ root, id, to }) => {
+      const runtime = await open(root)
+      const item = await overrule(runtime, id, to === 'enter' ? 'enter' : 'undo')
+      return { item }
+    },
 
     // ── outline ──
     'outline.apply': async ({ root, ops }) => ({ results: await applyOutlineOps(await open(root), ops as unknown as OutlineOp[]) }),
@@ -471,10 +533,11 @@ export function createHandlers(service: NovelService): Handlers {
       const chapter = await project.findChapter(id)
       if (chapter === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${id}"`)
       const text = await project.chapterText(chapter.plan.id)
-      const [memory, review, versions, missing] = await Promise.all([
-        project.memory(chapter.plan.id), project.review(chapter.plan.id), project.versions(chapter.plan.id), missingImages(project, text),
+      const [memory, review, versions, missing, figures] = await Promise.all([
+        project.memory(chapter.plan.id), project.review(chapter.plan.id), project.versions(chapter.plan.id), missingImages(project, text), project.chapterFigures(chapter.plan.id, text),
       ])
       return {
+        ...(figures.length > 0 ? { figures } : {}),
         plan: chapter.plan,
         index: chapter.index,
         volumeId: chapter.volume.id,
@@ -779,12 +842,13 @@ export function createHandlers(service: NovelService): Handlers {
         ...(sheetFirst === false ? { sheetFirst: false } : {}),
       }, task))
     },
-    'batch.text': async ({ root, chapters, count, line, steps, brief, words, redo, focus, order }) => {
+    'batch.text': async ({ root, chapters, count, line, steps, brief, words, redo, focus, order, rounds, atLeast }) => {
       const runtime = await open(root)
       const wanted = (Array.isArray(steps) ? steps : []).filter((step): step is TextStep => TEXT_STEPS.includes(step))
       return await batch(runtime, 'text batch', async () => await textPlan(core, runtime, {
         steps: wanted,
         ...(order === 'together' ? { order: 'together' as const } : {}),
+        ...(order === 'iterate' ? { order: 'iterate' as const, ...(typeof rounds === 'number' && rounds > 0 ? { rounds } : {}), ...(atLeast === 'high' || atLeast === 'medium' || atLeast === 'low' ? { atLeast } : {}) } : {}),
         ...(Array.isArray(chapters) && chapters.length > 0 ? { chapters } : {}),
         ...(typeof count === 'number' && count > 0 ? { count } : {}),
         ...(typeof line === 'string' && line.length > 0 ? { line } : {}),
@@ -979,9 +1043,9 @@ export function createHandlers(service: NovelService): Handlers {
         return { chapterId: board.chapterId, panels: board.panels.length, ...(board.note !== undefined ? { note: board.note } : {}) }
       })
     },
-    'comic.render': async ({ root, chapter, panels, force, sheetFirst }) => {
+    'comic.render': async ({ root, chapter, panels, force, sheetFirst, things }) => {
       const runtime = await open(root)
-      return job(runtime, 'comic', 'draw panels', chapter, async task => await renderPanels(core, runtime, { chapter, ...(panels !== undefined ? { panels } : {}), ...(force !== undefined ? { force } : {}), ...(sheetFirst === false ? { sheetFirst: false } : {}) }, task))
+      return job(runtime, 'comic', 'draw panels', chapter, async task => await renderPanels(core, runtime, { chapter, ...(panels !== undefined ? { panels } : {}), ...(force !== undefined ? { force } : {}), ...(sheetFirst === false ? { sheetFirst: false } : {}), ...(typeof things === 'boolean' ? { things } : {}) }, task))
     },
     'comic.updatePanel': async ({ root, chapter, panel, patch }) => await updateComicPanel(await open(root), chapter, panel, patch),
     'comic.removePanel': async ({ root, chapter, panel }) => await removeComicPanel(await open(root), requireString(chapter, 'chapter'), requireString(panel, 'panel')),
@@ -1124,6 +1188,21 @@ export function createHandlers(service: NovelService): Handlers {
 
     // ── reading on other devices ──
     'share.status': async () => await service.share.status(),
+
+    // ── the Studio worked from a phone ──
+    'remote.status': async () => service.remote.status(loopbackPort(calling.getStore()?.web?.host) !== undefined),
+    'remote.open': async () => {
+      const web = calling.getStore()?.web
+      const port = loopbackPort(web?.host)
+      // The desktop app shows its pages without a web server: there is nothing to hand a phone on to.
+      if (port === undefined) throw new ProjectError('novel/invalid', 'DSH is not serving a web page here: start it as `dsh web` on this computer, open the Studio in that page, and open the door from there')
+      await service.remote.open({ port, cookie: signInOf(web?.cookie) })
+      return service.remote.status(true)
+    },
+    'remote.close': async () => {
+      await service.remote.close()
+      return service.remote.status(loopbackPort(calling.getStore()?.web?.host) !== undefined)
+    },
     'share.update': async ({ enabled, book, port, renew }) => await service.updateShare({
       ...(typeof enabled === 'boolean' ? { enabled } : {}),
       ...(book !== undefined && typeof book.root === 'string' ? { book: { root: book.root, shared: book.shared === true, ...(book.mode === 'edit' || book.mode === 'read' ? { mode: book.mode } : {}) } } : {}),

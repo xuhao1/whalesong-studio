@@ -27,7 +27,7 @@ import { L, promptLanguage, renderCharacter } from '../render'
  * @param params.direction - what the author asks: it guides the planner.
  * @returns the stretches; none where the planner found nothing to say — the card is then left as it was.
  */
-export async function deriveGrowth(core: NovelCore, runtime: ProjectRuntime, params: { character: string; direction?: string }, task: TaskContext): Promise<{ card: CharacterCard; stages: CharacterStage[] }> {
+export async function deriveGrowth(core: NovelCore, runtime: ProjectRuntime, params: { character: string; direction?: string; plain?: boolean }, task: TaskContext): Promise<{ card: CharacterCard; stages: CharacterStage[] }> {
   const { project } = runtime
   const card = await project.findCharacter(params.character)
   if (card === undefined) throw new ProjectError('novel/not-found', `no character matches "${params.character}"`)
@@ -39,10 +39,19 @@ export async function deriveGrowth(core: NovelCore, runtime: ProjectRuntime, par
   const lineTitle = along !== undefined ? (await project.findLine(along))?.title : undefined
   const { chapters, lives } = await project.lives(along)
   const plans = new Map((await project.chapters(along)).map(chapter => [chapter.plan.id, chapter.plan]))
+  // How the text showed them in a chapter — age, face, dress — as the digests wrote it down: where somebody turns, it is here.
+  const looked = new Map<number, string>()
+  const { whose } = await project.castResolver()
+  const located = await project.chapters(along)
+  for (const { chapter, memory } of await project.memories(located)) {
+    const seen = memory.characters.filter(moment => whose(moment, chapter.plan.id) === card.id).map(moment => moment.seen).filter((text): text is string => text !== undefined && text.trim().length > 0)
+    if (seen.length > 0) looked.set(chapter.index, clip(seen.join('；'), 200))
+  }
   const record = (lives[card.id]?.events ?? []).filter(event => event.index >= 1).map(event => [
     L(lang, `第 ${event.index} 章`, `Chapter ${event.index}`),
     event.what !== undefined ? L(lang, `：${event.what}`, `: ${event.what}`) : '',
     event.state !== undefined ? L(lang, `（章末：${event.state}）`, ` (at its end: ${event.state})`) : '',
+    looked.has(event.index) ? L(lang, `〔这一章里的样子：${looked.get(event.index)}〕`, ` [as shown here: ${looked.get(event.index)}]`) : '',
   ].join('')).join('\n')
   // The book's own clock, where its outline keeps one: years that pass between chapters are where somebody grows.
   const timed = chapters.flatMap((chapter) => {
@@ -64,6 +73,8 @@ export async function deriveGrowth(core: NovelCore, runtime: ProjectRuntime, par
       line: home,
       tool: 'set_growth',
       maxSteps: 24,
+      // Asked while a book is taken in: from what the digests wrote of this person chapter by chapter, in one request.
+      ...(params.plain === true ? { plain: true } : {}),
       what: L(lang, '这个人物在书里的各个时期：年纪、样子、身份从哪一章起变了', 'the stretches of this character\'s life in the book: where age, look and station turn'),
       system: architectSystem(lang),
       prompt: growthTask({

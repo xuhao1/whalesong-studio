@@ -145,6 +145,7 @@ export function renderStyle(style: StyleProfile | undefined, lang: PromptLanguag
     line(L(lang, '文风', 'Style'), style.name, lang),
     line(L(lang, '叙事视角', 'Point of view'), style.pov !== undefined ? POV_LABEL[style.pov][lang === 'zh' ? 0 : 1] : undefined, lang),
     line(L(lang, '时态', 'Tense'), style.tense === undefined ? undefined : style.tense === 'past' ? L(lang, '过去时叙述', 'past tense') : L(lang, '现在时叙述', 'present tense'), lang),
+    line(L(lang, '语体（全文都用它写）', 'Register (all of the text is written in it)'), style.register, lang),
     line(L(lang, '基调', 'Tone'), style.tone, lang),
     line(L(lang, '用词', 'Diction'), style.diction, lang),
     line(L(lang, '节奏', 'Rhythm'), style.rhythm, lang),

@@ -22,6 +22,7 @@ import { L, promptLanguage } from '../render'
 import { mapLimit } from '../util/async'
 import { scheduleSift } from './cast'
 import { keepNotedScenes } from './scenes'
+import { scheduleSettle } from './settle'
 
 const FACT_KINDS: FactKind[] = ['state', 'relationship', 'knowledge', 'item', 'world', 'event']
 const ENTITY_KINDS: EntityCandidate['kind'][] = ['character', 'location', 'item', 'faction', 'term']
@@ -131,6 +132,8 @@ export async function digestChapter(core: NovelCore, runtime: ProjectRuntime, re
     const location = asText(item.location)
     const emotion = asText(item.emotion)
     const quote = asText(item.quote)
+    const seen = asText(item.seen)
+    const manner = asText(item.manner)
     const learned = asList(item.learned)
     const settled = settle(name)
     moments.push({
@@ -143,6 +146,8 @@ export async function digestChapter(core: NovelCore, runtime: ProjectRuntime, re
       ...(emotion !== undefined ? { emotion } : {}),
       ...(learned.length > 0 ? { learned } : {}),
       ...(quote !== undefined ? { quote: quote.replace(/^["“「『]|["”」』]$/g, '') } : {}),
+      ...(seen !== undefined ? { seen: clip(seen, 240, '…') } : {}),
+      ...(manner !== undefined ? { manner: clip(manner, 160, '…') } : {}),
       ...(lifecycle === 'enter' || lifecycle === 'exit' || lifecycle === 'death' || lifecycle === 'return' ? { lifecycle } : {}),
     })
   }
@@ -183,7 +188,8 @@ export async function digestChapter(core: NovelCore, runtime: ProjectRuntime, re
     if (name === undefined || kind === undefined || !ENTITY_KINDS.includes(kind)) continue
     const scope = asText(item.scope)
     // A person among them goes by the name they are kept under above.
-    newEntities.push({ name: kind === 'character' ? renamed.get(name) ?? keptAs(name) : name, kind, description: asText(item.description) ?? '', ...(scope === 'line' || scope === 'world' ? { scope } : {}) })
+    const looks = kind === 'location' || kind === 'item' || kind === 'faction' ? asText(item.looks) : undefined
+    newEntities.push({ name: kind === 'character' ? renamed.get(name) ?? keptAs(name) : name, kind, description: asText(item.description) ?? '', ...(looks !== undefined ? { looks: clip(looks, 240, '…') } : {}), ...(scope === 'line' || scope === 'world' ? { scope } : {}) })
   }
   const threads: ThreadTouch[] = []
   for (const raw of asArray(value.threads)) {
@@ -224,6 +230,7 @@ export async function digestChapter(core: NovelCore, runtime: ProjectRuntime, re
   // Whoever this chapter names that has no card is on the list of walk-ons by now: once the digests have settled,
   // the planner looks through that list and says who is worth a card.
   scheduleSift(core, runtime, task)
+  scheduleSettle(core, runtime, task)
   return memory
 }
 

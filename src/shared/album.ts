@@ -39,6 +39,8 @@ export interface AlbumPerson {
   /** Pictures, as paths of the book's own files: the bust, the design sheet, the sheets of further looks. */
   portrait?: string
   sheet?: string
+  /** The sheet is the front view alone, not the person three times. */
+  sheetFront?: boolean
   looks?: { name: string; when?: string; sheet: string }[]
   /** Who they are to others: the other's id when they have a page of their own, and their name either way. */
   relationships?: { id?: string; name: string; kind: string; note?: string }[]

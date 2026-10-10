@@ -16,6 +16,7 @@ import {
 } from '../ui'
 import { NeedsSetup } from '../views/Settings'
 import type { LinePlayer, PlayerOptions, PlayerState } from './player'
+import { HistoryButton } from '../History'
 
 export { formatDuration, usePlayerOptions }
 
@@ -222,6 +223,7 @@ export function AudioDesk({ chapter, view, job, player, onBody, onChanged }: {
         {script !== undefined ? <Button variant="ghost" icon="trash" disabled={working} onClick={() => { confirmScript.ask(t('删除这一章的有声脚本？这一章的分镜会跟着失效；配音文件留着，重新编排后相同的句子直接复用。', 'Delete this chapter\'s script? Its storyboard goes with it; the voice files stay, and lines that come back the same reuse them.'), () => { void controller.guard(async () => { await controller.api.call('audio.clear', { root, chapter: chapter.id }); controller.toast('success', t('已删除这一章的有声脚本', 'The audio script is deleted')); onChanged?.() }) }) }} title={t('删除这一章的有声脚本', 'Delete this chapter\'s audio script')} /> : null}
         {confirmScript.element}
         <span className="nv-spacer" />
+        <HistoryButton kind="script" id={chapter.id} name={t(`第 ${chapter.index} 章 · 有声脚本`, `Chapter ${chapter.index} — the audio script`)} onRestored={onChanged} />
       </div>
       <NeedsSetup what="tts">{t('编排脚本不需要它，合成人声才需要。', 'Directing the script works without it; voicing the lines needs it.')}</NeedsSetup>
       {job !== undefined ? <JobProgress job={job} synthesizing={synthesizing} sounding={sounding} onStop={() => { void controller.cancelJob(job.id) }} /> : null}

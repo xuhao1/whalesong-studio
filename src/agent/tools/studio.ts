@@ -10,6 +10,7 @@ import { soundSetup } from '../../core/media/sound'
 import { addCue, updateCue } from '../../core/pipelines/sound'
 import { listWalkOns, settleWalkOn } from '../../core/walkons'
 import { siftCast } from '../../core/pipelines/cast'
+import { overrule, settleSuggestions, settlesItself } from '../../core/pipelines/settle'
 import { artDirectionOf } from '../../core/pipelines/illustrate'
 import { clearComicBoard, removeComicPanel, updateComicPanel } from '../../core/pipelines/comic'
 import { rewindPlay, setPlayOutcome } from '../../core/pipelines/play'
@@ -24,11 +25,10 @@ import type { NovelService } from '../../host/service'
 import { hostOf, PROJECT_HOMEPAGE, SERVICES, type ServiceId, type SetupPart } from '../../shared/services'
 import { FFMPEG_INSTALL } from '../../shared/text'
 import type { AmbiencePreset, CameraMove, HistoryKind, IllustrationInfo, IllustrationPiece, ModelRoute, NovelSettings, ProjectManifest, SoundKind, TextRole } from '../../shared/types'
-import { changedFields, sayValue } from '../../shared/history'
+import { changedFields, HISTORY_KINDS, sayValue } from '../../shared/history'
 import { brief, listOf, listParameter, novelTool, toJson } from './shared'
 
 /** What a history is kept of, as the showrunner names it. */
-const HISTORY_KINDS: readonly HistoryKind[] = ['character', 'world', 'style', 'plan', 'thread', 'book']
 
 /** What each part of a picture's subject is, said for the showrunner. */
 const PIECE_NAMES: Record<IllustrationPiece['of'], string> = {
@@ -367,20 +367,21 @@ export function studioTools(service: NovelService) {
         '- action=edit_cue / add_cue / delete_cue: the sound cues of the audio script of `chapter` — `id` is the cue (edit, delete), `fields` {kind: bed|effect|music, at (line id), caption (what the reader sees), prompt (what the sound model is asked for), ambience (the browser\'s stand-in bed), intensity 0-1}. A changed cue keeps its old clip until sound is made again (novel_audio action=sound cues=[id]).',
         '- action=walkons: the people the page names who have no character card — where each turns up, the voice the audio drama gave them, whether they look like an existing character under another name, and what the planner said of them when it last looked through the list.',
         '- action=sift_walkons: have the planner look through those names and say of each whether it is worth a card (then it waits among the suggestions, with the reason), another name of somebody (a suggestion to fold it in), or a walk-on (left on the list, with why). A digest proposes nobody for a card by itself; this pass runs by itself after chapters were digested, on the names not looked at yet. `fields` {all: true — look at every name again, also those already judged or proposed; direction — what the author asks of the pass}. Nothing is made or folded by it: the author accepts.',
+        '- action=settled: what became of the suggestions for the bible. They do not wait for the author one by one (unless the author turned that off in Settings): after chapters are digested the planner looks them over and enters what is worth entering — a place, thing, house or term, a thread, somebody worth a card — folds another name into what is there, and leaves the rest out, each with its reason. This lists what was entered, folded in and left out. `fields` {run: true — have the planner settle what waits, now}. `id` with `fields` {to: "undo" (take back what entered: the card or entry goes among the removed ones) | "enter" (enter what was left out)}: say otherwise of one of them. Tell the author what entered; a change to what somebody already wrote is never settled this way — that waits for them.',
         '- action=settle_walkon: settle one of them by `name` — `fields` {as: "card" (give them a card; role: minor|cameo), "alias" (they are character `of` under another name), "ignore" (not worth tracking), "restore"}. A new card keeps the voice they already had, and their lines in the audio scripts go to it.',
         '- action=delete_line: take line `id` out of the audio script of `chapter` (sound cues that began at it move to the next line; a storyboard panel that showed only it goes too). action=delete_script: throw the whole audio script of `chapter` away — the takes already spoken stay on disk and are reused if the same lines come back.',
         '- action=edit_panel: change panel `id` of the storyboard of `chapter` — `fields` {prompt, description, camera}. action=delete_panel: take panel `id` out (its lines go to the panel before it). action=delete_storyboard: throw the whole storyboard of `chapter` away — its pictures stay in the gallery (delete_image removes one).',
         '- action=audition: speak `text` so the author can hear a voice — `voice` (a voice id or description), or `character` to hear that character as their lines will sound; neither = the narrator (`direction` optional).',
         '- action=list_images / delete_image (`id`). action=show_image (`id`: a picture\'s id or its path): everything on record of how that picture was made — the parts its prompt was put together from, in the order sent (what kind of picture, the visual anchor or look restated, what was asked of this one, what the references are for, the art direction, what was kept out), which pictures went along as references, and the words the image model was sent. When the author asks why a picture came out as it did, read this before anything else: the answer is a word in the anchor, a reference picture, the art direction — or none of them.',
-        '- action=history: how a card, an entry of the bible, a style, a chapter\'s plan, a thread or the book\'s own info was before it was changed — `fields` {kind: character|world|style|plan|thread|book, of: its name or id (a chapter for plan; nothing for book)}. A version is kept each time what the thing says is about to change, named by when and by what changed it (the author, you, a job, a restore, its deletion). With `version`: the fields in which that version and the thing as it is now differ, both sides. Without `fields`: the cards and entries that were deleted and can be had back. Pictures are no part of a version — a picture stays until somebody deletes it. (A chapter\'s text has versions of its own: novel_read what=versions.)',
+        '- action=history: how a card, an entry of the bible, a style, a chapter\'s plan, a thread, the book\'s own info, a volume, a line of the plot, the table of ties, a chapter\'s audio script or its storyboard was before it was changed — `fields` {kind: character|world|style|plan|thread|book|volume|line|ties|script|board, of: its name or id (a chapter for plan, script and board; nothing for book and ties)}. A version is kept each time what the thing says is about to change, named by when and by what changed it (the author, you, a job, a restore, its deletion). With `version`: the fields in which that version and the thing as it is now differ, both sides. Without `fields`: the cards and entries that were deleted and can be had back. Pictures are no part of a version — a picture stays until somebody deletes it. (A chapter\'s text has versions of its own: novel_read what=versions.)',
         '- action=restore_history: put `version` of that thing back — `fields` {kind, of, only: [field paths, as action=history names them — "tagline", "visual.prompt"]}; without `only`, the whole version. A card that was deleted comes back as it last was. What the thing was until then is itself kept as a version, so this can be undone; its pictures stay as they are now. Say what you put back.',
         '- action=rewind_interlude / keep_interlude (as a side story) / delete_interlude (`session`).',
         '- action=lock_book: lock the book in play (or `book`) when it is sealed — its key is forgotten, and it cannot be read by anyone, you included, until the author unlocks it in the Studio. You cannot unlock a book, seal one or take a seal off: those are done by the author on the Studio\'s screens, where the password is typed.',
         '- action=delete_book: take the book in play (or `book`) off the shelf. Its own files — manuscript, bible, outline, pictures, audio — are moved to the system trash, where the author can put them back; anything else in its folder stays. Only when the author asked for exactly this; they are asked to confirm.',
       ].join('\n'),
-      mutating: args => args.action !== 'find' && args.action !== 'list_images' && args.action !== 'show_image' && args.action !== 'walkons' && args.action !== 'history',
+      mutating: args => args.action !== 'find' && args.action !== 'list_images' && args.action !== 'show_image' && args.action !== 'walkons' && args.action !== 'history' && !(args.action === 'settled' && args.id === undefined && (args.fields as { run?: unknown } | undefined)?.run !== true),
       parameters: {
-        action: { type: 'string', required: true, enum: ['find', 'restore_version', 'resolve_issue', 'delete_review', 'edit_line', 'delete_line', 'delete_script', 'edit_cue', 'add_cue', 'delete_cue', 'edit_panel', 'delete_panel', 'delete_storyboard', 'walkons', 'sift_walkons', 'settle_walkon', 'audition', 'list_images', 'show_image', 'delete_image', 'history', 'restore_history', 'rewind_interlude', 'keep_interlude', 'delete_interlude', 'lock_book', 'delete_book'] },
+        action: { type: 'string', required: true, enum: ['find', 'restore_version', 'resolve_issue', 'delete_review', 'edit_line', 'delete_line', 'delete_script', 'edit_cue', 'add_cue', 'delete_cue', 'edit_panel', 'delete_panel', 'delete_storyboard', 'walkons', 'sift_walkons', 'settled', 'settle_walkon', 'audition', 'list_images', 'show_image', 'delete_image', 'history', 'restore_history', 'rewind_interlude', 'keep_interlude', 'delete_interlude', 'lock_book', 'delete_book'] },
         chapter: { type: 'string' },
         id: { type: 'string', description: 'Line, cue, panel or image id (show_image also takes the picture\'s path).' },
         name: { type: 'string', description: 'settle_walkon: the name as the page writes it.' },
@@ -528,6 +529,24 @@ export function studioTools(service: NovelService) {
               data: toJson(done),
             }
           }
+          case 'settled': {
+            const runtime = await env.project()
+            if (typeof args.id === 'string' && args.id.length > 0) {
+              const item = await overrule(runtime, args.id, fields.to === 'enter' ? 'enter' : 'undo')
+              return { text: `"${item.title}" is now ${item.verdict === 'entered' ? 'in the bible' : item.verdict === 'undone' ? 'taken back out of it (a card or an entry is among the removed ones)' : item.verdict}.`, record: { summary: [`${item.verdict === 'entered' ? '收进' : '撤回'}设定建议：${item.title}`, `${item.verdict === 'entered' ? 'Entered' : 'Took back'} a suggestion: ${item.title}`] } }
+            }
+            let ran = ''
+            if (fields.run === true) {
+              const done = await env.job('bible', 'settle suggestions', undefined, async task => await settleSuggestions(env.core, runtime, task))
+              ran = `The planner settled ${done.looked} suggestion(s): ${done.entered.length} entered${done.entered.length > 0 ? ` (${done.entered.slice(0, 20).join(', ')})` : ''}, ${done.merged.length} folded in${done.merged.length > 0 ? ` (${done.merged.slice(0, 12).map(item => `${item.name} → ${item.into}`).join(', ')})` : ''}, ${done.skipped} left out.${done.failed.length > 0 ? ` Not done: ${done.failed.map(item => `${item.step} (${item.error})`).join('; ')}.` : ''}\n`
+            }
+            const items = await project.settled()
+            const waiting = (await project.suggestions()).length
+            if (items.length === 0) return { text: `${ran}Nothing has been settled of the suggestions yet${waiting > 0 ? ` (${waiting} wait${settlesItself(env.core) ? '; fields.run=true settles them now' : ' for the author: settling by the planner is off in Settings'})` : ''}.` }
+            const line = (item: (typeof items)[number]): string => `- [${item.id}] ${item.kind} "${item.title}"${item.verdict === 'merged' ? ` → folded into "${item.into ?? ''}"` : ''}${item.why !== undefined ? ` — ${brief(item.why, 120)}` : ''}`
+            const of = (verdicts: string[]): string => items.filter(item => verdicts.includes(item.verdict)).slice(0, 40).map(line).join('\n') || '(none)'
+            return { text: `${ran}Entered by the planner:\n${of(['entered', 'merged'])}\nLeft out:\n${of(['skipped', 'undone'])}${waiting > 0 ? `\n${waiting} suggestion(s) still wait.` : ''}`, data: toJson({ settled: items.slice(0, 120) }) }
+          }
           case 'settle_walkon': {
             const how = text('as') ?? 'card'
             if (!['card', 'alias', 'ignore', 'restore'].includes(how)) throw new ProjectError('novel/invalid', 'fields.as is card, alias, ignore or restore')
@@ -595,10 +614,15 @@ export function studioTools(service: NovelService) {
             const kind = HISTORY_KINDS.find(item => item === fields.kind)
             if (kind === undefined) throw new ProjectError('novel/invalid', `fields.kind is one of: ${HISTORY_KINDS.join(', ')}`)
             const of = text('of')?.trim() ?? ''
-            if (kind !== 'book' && of.length === 0) throw new ProjectError('novel/invalid', 'fields.of: the name or the id of the thing')
+            if (kind !== 'book' && kind !== 'ties' && of.length === 0) throw new ProjectError('novel/invalid', 'fields.of: the name or the id of the thing (for script and board: the chapter)')
             // The thing by the name the author knows it by — one that is gone, by the name it had.
             const gone = removed.find(item => item.kind === kind && (item.id === of || item.name === of))?.id
+            const outlined = await project.outline()
             const id = kind === 'book' ? 'novel'
+              : kind === 'ties' ? 'all'
+              : kind === 'script' || kind === 'board' ? (await project.findChapter(of))?.plan.id ?? of
+              : kind === 'volume' ? outlined.volumes.find(volume => volume.id === of || volume.title === of)?.id ?? of
+              : kind === 'line' ? (outlined.lines ?? []).find(line => line.id === of || line.title === of)?.id ?? of
               : kind === 'character' ? (await project.findCharacter(of))?.id ?? gone ?? of
                 : kind === 'world' ? (await project.findWorld(of))?.id ?? gone ?? of
                   : kind === 'style' ? (await project.findStyle(of))?.id ?? gone ?? of

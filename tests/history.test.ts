@@ -188,6 +188,102 @@ describe('the history of a card, an entry, a plan, the book', () => {
     expect(await project.manifest()).toMatchObject({ logline: '一封寄不出去的信', premise: '新的故事核' })
   })
 
+  it('keeps a volume, a line of the plot, the table of ties, a chapter\'s script and its storyboard the same way', async () => {
+    const { project } = bed.runtime
+    const [one, two, three] = [await project.addChapter({ title: '一' }), await project.addChapter({ title: '二' }), await project.addChapter({ title: '三' })]
+    const volume = (await project.outline()).volumes[0]!
+    // A volume: what it is called and says, and the order of its chapters — not what its chapters' plans say.
+    later(10)
+    await project.updateOutline((draft) => { draft.volumes[0]!.title = '上卷'; draft.volumes[0]!.synopsis = '她还在等' })
+    later(10)
+    await project.updateChapter(one.id, { synopsis: '只改了一章的章纲' })
+    later(10)
+    await project.moveChapter(three.id, { before: one.id })
+    const volumes = await project.history('volume', volume.id)
+    expect(volumes).toHaveLength(2)
+    expect(await project.historyOf('volume', volume.id, volumes[0]!.id)).toMatchObject({ title: '上卷', chapters: [one.id, two.id, three.id] })
+    expect(changedFields('volume', (await project.historyOf('volume', volume.id, volumes[0]!.id))!, await project.current('volume', volume.id)).map(field => field.path)).toEqual(['chapters'])
+    later(10)
+    await project.restoreHistory('volume', volume.id, volumes[0]!.id)
+    expect((await project.outline()).volumes[0]!.chapters.map(plan => plan.id)).toEqual([one.id, two.id, three.id])
+    // Its words alone, from the version before: the order stays as it is.
+    later(10)
+    await project.restoreHistory('volume', volume.id, volumes[1]!.id, ['title', 'synopsis'])
+    const back = (await project.outline()).volumes[0]!
+    expect(back.title).toBe(volume.title)
+    expect(back.synopsis).toBeUndefined()
+    expect(back.chapters.find(plan => plan.id === one.id)?.synopsis).toBe('只改了一章的章纲')
+
+    // A line beside the main one: where it leaves, what it is called.
+    later(10)
+    const line = await project.addLine({ title: '她把信寄了', from: two.id, choice: '当晚就寄' })
+    const own = await project.addChapter({ title: '第四封' }, { line: line.id })
+    later(10)
+    await project.updateLine(line.id, { title: '寄出去的那条线', from: one.id })
+    const lines = await project.history('line', line.id)
+    // A chapter that came to it kept nothing: only what it says of itself did.
+    expect(lines).toHaveLength(1)
+    later(10)
+    await project.restoreHistory('line', line.id, lines[0]!.id)
+    expect((await project.outline()).lines![0]).toMatchObject({ title: '她把信寄了', from: two.id, chapters: [{ id: own.id }] })
+
+    // The table of ties, whole: one history, and what is put back holds on to nothing that is gone.
+    const who = await project.saveCharacter({ name: '沈蘅' })
+    const shop = await project.saveWorld({ name: '断肠斋', category: 'location', importance: 2 })
+    const box = await project.saveWorld({ name: '七封匣', category: 'item', importance: 2 })
+    later(10)
+    await project.saveTie({ kind: 'resides', from: { type: 'character', id: who.id }, to: { type: 'world', id: shop.id } })
+    later(10)
+    await project.saveTie({ kind: 'holds', from: { type: 'character', id: who.id }, to: { type: 'world', id: box.id } })
+    later(10)
+    const held = (await project.ties()).find(tie => tie.kind === 'holds')!
+    await project.removeTie(held.id)
+    await project.deleteWorld(box.id)
+    const tables = await project.history('ties', 'all')
+    expect(tables).toHaveLength(3)
+    expect(((await project.historyOf('ties', 'all', tables[0]!.id))!.relations as unknown[])).toHaveLength(2)
+    later(10)
+    await project.restoreHistory('ties', 'all', tables[0]!.id)
+    expect((await project.ties()).map(tie => tie.kind)).toEqual(['resides'])
+
+    // A script: who says what — a take spoken for a line is no change of it, and stays with the line it was spoken for.
+    const script = { schema: 1 as const, chapterId: one.id, textHash: 'a', updatedAt: new Date().toISOString(), cues: [], lines: [{ id: 'l0', kind: 'narration' as const, text: '雨停了。' }, { id: 'l1', kind: 'dialogue' as const, speakerName: '沈蘅', text: '进来。' }] }
+    await project.saveAudioScript(script)
+    later(10)
+    await project.saveAudioScript({ ...script, textHash: 'b', lines: script.lines.map(line => ({ ...line, audio: `assets/audio/${line.id}.wav`, duration: 2 })) })
+    expect(await project.history('script', one.id)).toHaveLength(0)
+    later(10)
+    await changedBy('job-audio script', async () => { await project.saveAudioScript({ ...script, lines: [{ id: 'l0', kind: 'narration', text: '雨停了。', audio: 'assets/audio/l0.wav' }, { id: 'l9', kind: 'dialogue', speakerName: '沈蘅', text: '请进。' }] }) })
+    const scripts = await project.history('script', one.id)
+    expect(scripts.map(version => version.why)).toEqual(['job-audio-script'])
+    later(10)
+    await project.restoreHistory('script', one.id, scripts[0]!.id)
+    expect((await project.audioScript(one.id))!.lines).toMatchObject([{ id: 'l0', text: '雨停了。', audio: 'assets/audio/l0.wav' }, { id: 'l1', text: '进来。', audio: 'assets/audio/l1.wav' }])
+    // Taken away, it is had back from its history.
+    later(10)
+    await project.removeAudioScript(one.id)
+    expect((await project.history('script', one.id))[0]!.why).toBe('removed')
+    expect(await project.current('script', one.id)).toBeUndefined()
+    later(10)
+    await project.restoreHistory('script', one.id, (await project.history('script', one.id))[0]!.id)
+    expect((await project.audioScript(one.id))!.lines).toHaveLength(2)
+
+    // A storyboard: what its panels show; a panel drawn keeps nothing, and its picture stays when the panel's words are put back.
+    const art = await project.writeAsset('images/panel.png', PIXEL)
+    const board = { schema: 1 as const, chapterId: one.id, textHash: 'a', updatedAt: new Date().toISOString(), style: '水墨', panels: [{ id: 'p0', lines: ['l0'], description: '雨后的铺子', prompt: '雨后的铺子，门半开', camera: 'still' as const }] }
+    await project.saveComicBoard(board)
+    later(10)
+    await project.patchComicPanels(one.id, new Map([['p0', { image: art }]]))
+    expect(await project.history('board', one.id)).toHaveLength(0)
+    later(10)
+    await project.patchComicPanels(one.id, new Map([['p0', { prompt: '雪夜的铺子' }]]))
+    const boards = await project.history('board', one.id)
+    expect(boards).toHaveLength(1)
+    later(10)
+    await project.restoreHistory('board', one.id, boards[0]!.id)
+    expect((await project.comicBoard(one.id))!.panels[0]).toMatchObject({ prompt: '雨后的铺子，门半开', image: art })
+  })
+
   it('has a card that was deleted back as it last was', async () => {
     const { project } = bed.runtime
     const card = await project.saveCharacter({ name: '阿棠', role: 'supporting', tagline: '送信的姑娘' })

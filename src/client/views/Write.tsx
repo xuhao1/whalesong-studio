@@ -15,6 +15,7 @@ import { countWords, formatCount, fuzzyFind, normalizeProse, proseOnly } from '.
 import { MAIN_LINE, type ChapterInfo, type JobInfo, type ReviewIssue, type TextStep, type VersionInfo } from '../../shared/types'
 import { BatchMatrix, chapterJob, TextBatchDialog, useBatchJob } from '../Batch'
 import { DiffView, ProposalCard } from '../components/ProposalCard'
+import { ChapterTree } from '../ChapterTree'
 import { TranslateDialog } from '../Translate'
 import { Icon } from '../icons'
 import { jobKindLabel, jobPulse } from '../Studio'
@@ -25,7 +26,7 @@ import { PickPicture } from '../PlacePicture'
 import { Derive } from './Outline'
 import {
   Button, Chip, cx, Empty, Menu, Modal, Progress, Select, Spinner, Tabs, TextInput, ThoughtButton, ThoughtPanel, useAction, useConfirm, useJobStream, useJobTail, useLoad, useProject,
-  useLineView, useQuote, useSnapshot, useStudio, useT, useWidth, waysOn, type Translate, plainEnter,
+  useLineView, useQuote, useSnapshot, useStudio, useT, useWidth, waysOn, type Translate, plainEnter, ViewButton,
 } from '../ui'
 import { IssueList } from '../Issues'
 import { JobBar } from '../JobBar'
@@ -163,37 +164,24 @@ export function WriteView() {
   const allWritten = path.every(item => item.hasText)
   const unwritten = path.filter(item => !item.hasText).length
 
+  // The chapters, as the outline lists them: dragged into another order, a new one put in after any of them, several
+  // ticked and moved or removed together — one control for both pages.
   const list = (
     <aside className="nv-write-list">
-      {others.length > 0 ? (
-        <div className="nv-line-switch">
-          <Select value={lineId} options={[{ value: MAIN_LINE, label: `★ ${t('主线', 'Main line')}` }, ...others.map(item => ({ value: item.id, label: `${item.shelved === true ? '⏸ ' : ''}${item.title}` }))]} onChange={switchLine} />
-          <Button size="sm" variant="ghost" icon="branch" onClick={() => { controller.setView('outline') }} title={t('在大纲的“剧情图”里看所有的线', 'See every line on the plot graph, under Outline')} />
-        </div>
-      ) : null}
       {line !== undefined ? <p className="nv-muted nv-small nv-line-about">{line.choice !== undefined ? t(`抉择：${line.choice}`, `The choice: ${line.choice}`) : line.premise ?? t('这条线上的章节；灰色的是它和别的线共有的。', 'The chapters of this line; the dimmed ones it shares with another.')}</p> : null}
-      <ul className="nv-list">
-        {path.map((item) => {
-          const busy = jobsOf(jobs, item.id).length > 0
-          return (
-            <li key={item.id} className={cx('nv-list-item', line !== undefined && item.line !== line.id && 'is-shared')}>
-              <button type="button" className={cx('nv-list-row', item.id === chapter.id && 'is-active')} onClick={() => { controller.focusChapter(item.id) }} title={item.title}>
-                <span className="nv-list-index">{item.index}</span>
-                <span className="nv-person-text">
-                  <span className="nv-list-title">{item.title}</span>
-                  <span className="nv-list-meta">{item.hasText ? `${formatCount(item.words, locale)}${t(' 字', ' words')}` : t(...CHAPTER_STATUS[item.status])}{item.hasText && !item.digested ? t(' · 未收录', ' · undigested') : ''}</span>
-                </span>
-                {busy ? <Spinner size={12} /> : <span className={cx('nv-dot', `is-${item.status}`)} />}
-              </button>
-              <button type="button" className="nv-list-remove" disabled={busy} onClick={() => { removeChapter(item) }} title={t('删除这一章', 'Delete this chapter')} aria-label={t(`删除第 ${item.index} 章`, `Delete chapter ${item.index}`)}><Icon name="trash" size={12} /></button>
-            </li>
-          )
-        })}
-      </ul>
-      <button type="button" className="nv-add-row" onClick={addChapter}>+ {t('添加章节', 'Add chapter')}</button>
-      <button type="button" className={cx('nv-add-row', allWritten && 'is-suggested')} onClick={() => { setDeriving(true) }} title={t('让策划排出接下来的章纲', 'Have the planner plot the chapters to come')}><Icon name="sparkles" size={12} /> {t('推演后续章节', 'Derive the next chapters')}</button>
-      <button type="button" className={cx('nv-add-row', unwritten > 1 && 'is-suggested')} onClick={() => { setBatching(['beats', 'write', 'digest']) }} title={t('一章接一章地写下去', 'Write on, chapter after chapter')}><Icon name="layers" size={12} /> {unwritten > 0 ? t(`批量写作 · ${unwritten} 章`, `Write in batch · ${unwritten}`) : t('批量：节拍、收录、审校', 'Batch: beats, memory, review')}</button>
-      {batch?.status === 'running' ? <div className="nv-write-batch"><BatchMatrix job={batch} compact /></div> : null}
+      <ChapterTree
+        compact
+        active={chapter.id}
+        onOpen={(id) => { controller.focusChapter(id) }}
+        onLine={(next) => { switchLine(next) }}
+        footer={(
+          <>
+            <button type="button" className={cx('nv-add-row', allWritten && 'is-suggested')} onClick={() => { setDeriving(true) }} title={t('让策划排出接下来的章纲', 'Have the planner plot the chapters to come')}><Icon name="sparkles" size={12} /> {t('推演后续章节', 'Derive the next chapters')}</button>
+            <button type="button" className={cx('nv-add-row', unwritten > 1 && 'is-suggested')} onClick={() => { setBatching(['beats', 'write', 'digest']) }} title={t('一章接一章地写下去', 'Write on, chapter after chapter')}><Icon name="layers" size={12} /> {unwritten > 0 ? t(`批量写作 · ${unwritten} 章`, `Write in batch · ${unwritten}`) : t('批量：节拍、收录、审校', 'Batch: beats, memory, review')}</button>
+            {batch?.status === 'running' ? <div className="nv-write-batch"><BatchMatrix job={batch} compact /></div> : null}
+          </>
+        )}
+      />
     </aside>
   )
 
@@ -577,7 +565,8 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
           <span className="nv-muted nv-small" title={chapter.budget !== undefined ? t(`建议字数 ${chapter.budget}`, `Suggested length ${chapter.budget}`) : t('没有设建议字数，由写手判断', 'No suggested length: the writer judges')}>{formatCount(words, locale)}{chapter.budget !== undefined ? ` / ${formatCount(chapter.budget, locale)}` : ''}{t(' 字', ' words')}</span>
           <span className={cx('nv-save-state', `is-${saveState}`)}>{saveState === 'saving' ? t('保存中…', 'Saving…') : saveState === 'dirty' ? t('未保存', 'Unsaved') : t('已保存', 'Saved')}</span>
           <span className="nv-spacer" />
-          <Button size="sm" variant="ghost" icon="eye" title={t('观看：这一章在读者那里的样子', 'View: this chapter as a reader has it')} onClick={() => { void save(); controller.setView('read', chapter.id) }} />
+          <Button size="sm" variant="ghost" icon="globe" onClick={() => { void save().then(() => { setTranslating(true) }) }} title={t('把这一章（或这条线上的各章）译成另一种语言；原文留在“版本”里', 'Translate this chapter (or every chapter of the line); the original stays among its versions')}>{t('翻译', 'Translate')}</Button>
+          <ViewButton title={t('观看：这一章在读者那里的样子', 'View: this chapter as a reader has it')} onClick={() => { void save(); controller.setView('read', chapter.id) }} />
           <Menu icon="more" variant="ghost" size="sm" align="end" label={t('章节', 'Chapter')} items={[
             { label: t('推演后续章节', 'Derive the next chapters'), icon: 'sparkles', onSelect: onDerive },
             { label: t('从这一章另开一条线…', 'Open another line from here…'), icon: 'branch', onSelect: onBranch },

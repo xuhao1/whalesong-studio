@@ -11,7 +11,7 @@ import { ComicStage } from '../stage/Comic'
 import { Gallery } from '../stage/Gallery'
 import { PlayStage } from '../stage/Play'
 import type { StageTab } from '../store'
-import { Button, Tabs, useProject, useSnapshot, useStudio, useT } from '../ui'
+import { Button, Tabs, useProject, useSnapshot, useStudio, useT, ViewButton } from '../ui'
 
 type Tab = Exclude<StageTab, 'audio'>
 
@@ -56,18 +56,15 @@ export function StageView() {
           { value: 'gallery', label: t('插图', 'Illustrations'), icon: 'image' },
         ]} />
         <span className="nv-spacer" />
-        <Button
-          size="sm"
-          variant="ghost"
-          icon="eye"
+        <Button size="sm" variant="ghost" icon="headphones" onClick={() => { controller.openReader('listen', chapter?.id) }} title={t('有声剧在"观看"里：正文的"脚本"版面，点播放就听', 'The audio drama is in the viewer: the script face of the text, with the player under it')}>{t('有声剧', 'Audio drama')}</Button>
+        <ViewButton
           onClick={() => {
             // The same thing, as whoever reads the book has it: the chapter to watch, the side stories, the text.
             if (tab === 'play') controller.openAlbum({ section: 'sides' })
             else controller.openReader(tab === 'gallery' ? 'read' : 'watch', chapter?.id)
           }}
           title={tab === 'play' ? t('观看：留作番外的幕间在读者那里的样子', 'View: the interludes kept as side stories, as a reader has them') : t('观看：这一章在读者那里的样子', 'View: this chapter as a reader has it')}
-        >{t('观看', 'View')}</Button>
-        <Button size="sm" variant="ghost" icon="headphones" onClick={() => { controller.openReader('listen', chapter?.id) }} title={t('有声剧在"观看"里：正文的"脚本"版面，点播放就听', 'The audio drama is in the viewer: the script face of the text, with the player under it')}>{t('有声剧', 'Audio drama')}</Button>
+        />
       </div>
       {tab === 'production' ? <ProductionBoard onOpen={(id) => { controller.focusChapter(id); setTab('comic') }} /> : null}
       {tab === 'comic' ? <ComicStage key={chapter?.id ?? 'none'} chapter={chapter} /> : null}

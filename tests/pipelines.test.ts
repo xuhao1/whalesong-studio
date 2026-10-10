@@ -406,6 +406,55 @@ describe('pipelines', () => {
     expect(await project.findCharacter('沈璃')).toMatchObject({ appearance: '左撇子，惯用左手', personality: '倔强' })
   })
 
+  it('writes in rounds: what the reviews found is mended across the chapters and applied, what changed is reviewed again — until nothing is left, or the rounds are used up', async () => {
+    const { iterateChapters } = await import('../src/core/pipelines/iterate')
+    const { project } = bed.runtime
+    const one = await project.addChapter({ title: '雨夜' })
+    const two = await project.addChapter({ title: '下山' })
+    await project.saveChapterText(one.id, '她是左撇子，从小如此。')
+    await project.saveChapterText(two.id, '她右手握着剑下了山。')
+    const asked: string[] = []
+    // A reviewer that is content once the hand is right — or (stubborn) never.
+    let stubborn = false
+    bed.llm.responder = (request) => {
+      if (request.prompt.includes('审读')) {
+        const wrong = request.prompt.includes('右手握着剑') || (stubborn && request.prompt.includes('握着剑下了山'))
+        asked.push(request.prompt.includes('握着剑下了山') ? 'review 2' : 'review 1')
+        return JSON.stringify({ verdict: '', issues: wrong ? [{ severity: 'high', type: 'continuity', quote: '握着剑', explanation: '第一章写她是左撇子。' }] : [] })
+      }
+      if (request.prompt.includes('审校在这一章发现了下面的问题')) {
+        asked.push('rewrite 2')
+        return '她左手握着剑下了山。'
+      }
+      if (request.prompt.includes('发现了下面')) {
+        asked.push('plan')
+        return JSON.stringify({ chapters: [{ index: 2, reason: '右手改左手' }], note: '惯用手要一致。' })
+      }
+      asked.push('digest')
+      return JSON.stringify({ brief: '摘要', summary: '下山。', characters: [], facts: [], newEntities: [], threads: [] })
+    }
+    const result = await iterateChapters(bed.core, bed.runtime, { chapters: [one.id, two.id], rounds: 3 }, { origin: 'user' })
+    // Both are reviewed first; one round mends chapter two, which is digested and reviewed again — and found clean.
+    expect(asked.slice(0, 2).sort()).toEqual(['review 1', 'review 2'])
+    expect(asked.slice(2)).toEqual(['plan', 'rewrite 2', 'digest', 'review 2'])
+    expect(result).toMatchObject({ left: 0, ended: 'clean', rounds: [{ round: 1, issues: 1, chapters: 1, rewritten: [two.id], note: '惯用手要一致。' }] })
+    // What the round changed is the text; the draft it replaced is a version, and nothing waits to be accepted.
+    expect(await project.chapterText(two.id)).toBe('她左手握着剑下了山。')
+    expect((await project.versions(two.id)).map(version => version.reason)).toContain('before-revise')
+    expect((await project.proposals()).filter(proposal => proposal.status === 'pending')).toEqual([])
+    expect(await project.chapterText(one.id)).toBe('她是左撇子，从小如此。')
+
+    // A reviewer never content: the rounds are used up, and what is still open is said.
+    stubborn = true
+    await project.saveChapterText(two.id, '她右手握着剑下了山。')
+    await project.removeReview(two.id)
+    asked.length = 0
+    const worn = await iterateChapters(bed.core, bed.runtime, { chapters: [two.id], rounds: 2, atLeast: 'high' }, { origin: 'user' })
+    expect(worn.rounds.map(round => round.round)).toEqual([1, 2])
+    expect(worn).toMatchObject({ left: 1, ended: 'rounds' })
+    expect(asked.filter(what => what === 'plan')).toHaveLength(2)
+  })
+
   it('mends several things a review found together, across chapters, each chapter once', async () => {
     const { project } = bed.runtime
     const one = await project.addChapter({ title: '雨夜' })

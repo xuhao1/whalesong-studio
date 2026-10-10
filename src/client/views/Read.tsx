@@ -26,7 +26,7 @@ import { blocksOf } from '../../shared/reader'
 import { groupOf } from '../../shared/world'
 import { AlbumView, ViewerTabs } from '../reader/album'
 import { PlayTranscript, SideList, type SideRef } from '../reader/sides'
-import { ListenBar, ModeSwitch, ReaderPage, ReaderSettings, usePlayerOptions, useReaderPrefs, type ReaderPerson } from '../reader/parts'
+import { ListenBar, ModeSwitch, ReaderPage, ReaderSettings, usePlayerOptions, useReaderPrefs, type ReaderPerson, type ReaderThing } from '../reader/parts'
 import { useChapterPlayback } from '../reader/playback'
 import { ScriptPage } from '../reader/script'
 import { Film, place, Theater, WatchChoice, type ChapterFilm } from '../reader/theater'
@@ -40,6 +40,7 @@ import {
   Button, cx, Empty, OverlayRootProvider, Select, Spinner, useBookLine, useLoad, useMediaUrl, useOverlayRoot, useProject, useQuote, useSnapshot, useStudio, useT, useLineView, waysOn,
 } from '../ui'
 import { FullButton, FullFrame, useFull } from '../reader/full'
+import type { ViewerAt } from '../store'
 import { ShareDialog } from './Share'
 import { DERIVE_TIES_HINT, TiesReport, useDeriveTies } from '../Ties'
 
@@ -75,7 +76,7 @@ function Viewer() {
   const section = at.end?.type === 'character' ? 'people' : at.end?.type === 'world' ? 'world' : at.section
   if (section === 'sides' && sides > 0) return <SidesPage counts={counts} sides={kept.data!.sides} side={at.side} />
   if (section === 'text' || section === 'sides' || (section === 'people' && counts.people === 0) || (section === 'world' && world === 0)) return <ChapterReader counts={counts} sides={sides} />
-  return <AlbumPage at={{ section, ...(at.end !== undefined ? { end: at.end } : {}) }} counts={counts} sides={sides} />
+  return <AlbumPage at={{ section, ...(at.end !== undefined ? { end: at.end } : {}) }} back={at.back} counts={counts} sides={sides} />
 }
 
 /** The side stories in the Studio's viewer: as a reader has them, with the way to where they are played and kept. */
@@ -113,7 +114,7 @@ function SidesPage({ counts, sides, side }: { counts: AlbumCounts; sides: SideRe
 }
 
 /** The album in the Studio: what a reader is given, and beside it the author's ways to the pages where it is made. */
-function AlbumPage({ at, counts, sides }: { at: AlbumAt; counts: AlbumCounts; sides: number }) {
+function AlbumPage({ at, back, counts, sides }: { at: AlbumAt; /** The place in the text this was come to from. */ back: ViewerAt['back']; counts: AlbumCounts; sides: number }) {
   const { controller } = useStudio()
   const t = useT()
   const { project, root } = useProject()
@@ -156,8 +157,10 @@ function AlbumPage({ at, counts, sides }: { at: AlbumAt; counts: AlbumCounts; si
             album={album.data}
             media={path => mediaUrl(path)}
             at={at}
-            go={(next) => { controller.setAlbum(next) }}
-            onRead={(chapter) => { controller.openReader('read', chapter) }}
+            // Wherever the album is gone on to from here, the way back to the text goes along.
+            go={(next) => { controller.setAlbum({ ...next, ...(back !== undefined ? { back } : {}) }) }}
+            onRead={(chapter, names) => { if (names !== undefined && names.length > 0) controller.readAbout(chapter, names); else controller.openReader('read', chapter) }}
+            back={back !== undefined ? { label: t('回到正文', 'Back to the text'), go: () => { controller.backToText(back) } } : undefined}
             ways={ways}
             onWay={setWay}
             // Arranging a scene is the author's: a mark dropped on a place's picture is pinned there for every reader.
@@ -253,6 +256,19 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
     ...(card.tagline !== undefined ? { tagline: card.tagline } : {}),
     ...((card.visual?.portrait ?? card.visual?.sheet) !== undefined ? { portrait: card.visual?.portrait ?? card.visual?.sheet } : {}),
   })), [project.characters, lineId])
+  // And what of its world: every place, house, thing and idea the book has an entry for, but for those kept to other lines.
+  const things = useMemo<ReaderThing[]>(() => project.world.filter(entry => entry.lines === undefined || entry.lines.length === 0 || entry.lines.includes(lineId)).map(entry => ({
+    id: entry.id,
+    name: entry.name,
+    group: groupOf(entry.category),
+    ...(entry.aliases !== undefined && entry.aliases.length > 0 ? { aliases: entry.aliases } : {}),
+    ...(entry.summary !== undefined ? { summary: entry.summary } : {}),
+    ...(entry.visualImage !== undefined ? { image: entry.visualImage } : {}),
+  })), [project.world, lineId])
+  /** To the page of whoever a name in the text is — with the way back to this place in the text. */
+  const toPage = (type: 'character' | 'world', id: string): void => {
+    controller.setAlbum({ section: type === 'character' ? 'people' : 'world', end: { type, id }, ...(chapter !== undefined ? { back: { chapter: chapter.id, top: scroller.current?.scrollTop ?? 0 } } : {}) })
+  }
   // Where the story parts after this chapter: the lines that leave here and have a first chapter to read.
   const parting: ReturnType<typeof waysOn> = chapter === undefined ? { ways: [] } : waysOn(project, chapter, lineId)
   // A way is offered when its next chapter can be read: the reader is not sent past a gap.
@@ -317,9 +333,9 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
     scroller,
   })
 
-  // A new chapter starts at the top.
+  // A new chapter starts at the top — but one come back to, where it was left.
   useEffect(() => {
-    scroller.current?.scrollTo({ top: 0 })
+    if (jump?.top === undefined || jump.chapterId !== chapter?.id) scroller.current?.scrollTo({ top: 0 })
     setPicked(undefined)
     setNoted(undefined)
     setLooseOpen(false)
@@ -342,19 +358,29 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
     return () => { document.removeEventListener('keydown', onKey) }
   })
 
-  // Show the place a search hit points at.
+  // Show the place asked for: a search hit, where the chapter first names something, or where the page was left.
+  // (Shown, the request is forgotten — which runs this again: nothing here may hang on a clean-up.)
+  const flashing = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  useEffect(() => () => { clearTimeout(flashing.current) }, [])
   useEffect(() => {
     if (jump === undefined || chapter === undefined || jump.chapterId !== chapter.id || text === undefined) return
+    if (jump.top !== undefined) {
+      scroller.current?.scrollTo({ top: jump.top })
+      controller.consumeJump(jump.nonce)
+      return
+    }
     const blocks = blocksOf(text)
     if (blocks.length === 0) return
-    const target = [...blocks].reverse().find(block => block.offset <= jump.offset) ?? blocks[0]!
+    const found = jump.find !== undefined ? Math.min(...jump.find.map(name => text.indexOf(name)).filter(at => at >= 0)) : jump.offset
+    const offset = Number.isFinite(found) ? found : 0
+    const target = [...blocks].reverse().find(block => block.offset <= offset) ?? blocks[0]!
     const element = scroller.current?.querySelector<HTMLElement>(`[data-offset="${target.offset}"]`)
     if (element !== null && element !== undefined) {
       element.scrollIntoView({ block: 'center' })
       setFlash(target.offset)
-      const timer = setTimeout(() => { setFlash(undefined) }, 2400)
+      clearTimeout(flashing.current)
+      flashing.current = setTimeout(() => { setFlash(undefined) }, 2400)
       controller.consumeJump(jump.nonce)
-      return () => { clearTimeout(timer) }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jump?.nonce, text])
@@ -551,7 +577,10 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
           scroller={scroller}
           onSelect={onSelect}
           people={people}
-          onPerson={(id) => { controller.setAlbum({ section: 'people', end: { type: 'character', id } }) }}
+          onPerson={(id) => { toPage('character', id) }}
+          things={things}
+          onThing={(id) => { toPage('world', id) }}
+          figures={doc.data?.figures}
           marks={annotate && !engaged ? notes.marks : undefined}
           openMark={noted?.id}
           onMark={(id, at) => {

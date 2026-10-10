@@ -25,6 +25,7 @@ import { neighbours, STANDINGS, tiesAt, trail, type Standing, type Tie, type Tie
 import { MAIN_LINE, type CharacterRole } from '../../shared/types'
 import type { WorldGroup } from '../../shared/world'
 import { Icon, type IconName } from '../icons'
+import { AroundGraph, bondsOf } from './around'
 import type { Translate } from './parts'
 
 const cx = (...parts: (string | false | undefined | null)[]): string => parts.filter(Boolean).join(' ')
@@ -119,8 +120,13 @@ export interface AlbumProps {
   media: (path: string) => string
   at: AlbumAt
   go: (at: AlbumAt) => void
-  /** Open a chapter to be read: from a line of somebody's life, from where a place is named. */
-  onRead?: ((chapter: string) => void) | undefined
+  /**
+   * Open a chapter to be read: from a line of somebody's life, from where a place is named.
+   * `names`: what the page come from is called — the chapter opens where it first has one of them.
+   */
+  onRead?: ((chapter: string, names?: readonly string[]) => void) | undefined
+  /** Come here from somewhere to go back to — the place in the text where a name was pressed: said first on every page. */
+  back?: { label: string; go: () => void } | undefined
   /** The author's: the way to the page where a thing is edited. */
   onEdit?: ((end: TieEnd) => void) | undefined
   /** The author's: tools on the first page of the world. */
@@ -206,6 +212,7 @@ function Prose({ text }: { text: string }) {
 /** Somebody's picture: the bust, else the front view of their design sheet, else the first character of their name. */
 function Face({ person, media, className }: { person: AlbumPerson; media: (path: string) => string; className?: string }) {
   if (person.portrait !== undefined) return <img className={cx('nv-photo', className)} alt={person.name} loading="lazy" src={media(person.portrait)} />
+  if (person.sheet !== undefined && person.sheetFront === true) return <img className={cx('nv-photo', className)} alt={person.name} loading="lazy" src={media(person.sheet)} />
   // A sheet shows the same person three times; its left third is the front view.
   if (person.sheet !== undefined) return <span className={cx('nv-photo is-sheet', className)} role="img" aria-label={person.name} style={{ backgroundImage: `url("${media(person.sheet)}")` }} />
   return <span className={cx('nv-photo is-empty', className)} aria-hidden="true">{person.name.slice(0, 1)}</span>
@@ -216,7 +223,7 @@ function Face({ person, media, className }: { person: AlbumPerson; media: (path:
  * @param at - where it stands: one of its two halves, or the page of one thing.
  * @param go - how it goes elsewhere; whoever shows the album keeps where it is.
  */
-export function AlbumView({ t, album, media, at, go, onRead, onEdit, worldTools, onPin, readTo, ways, onWay }: AlbumProps) {
+export function AlbumView({ t, album, media, at, go, onRead, onEdit, worldTools, onPin, readTo, ways, onWay, back }: AlbumProps) {
   const [moment, setMoment] = useState<number | undefined>()
   // Another way through the story counts its chapters by itself: a chapter looked at on one is not that chapter on another.
   const along = album.line?.id ?? MAIN_LINE
@@ -338,10 +345,11 @@ export function AlbumView({ t, album, media, at, go, onRead, onEdit, worldTools,
       <img alt="" src={media(zoom)} />
     </button>
   ) : null
-  const chapterChip = (index: number): ReactNode => {
+  const backLink = back !== undefined ? <button type="button" className="nv-btn nv-btn-sm nv-btn-outline nv-album-back" onClick={back.go}><Icon name="chevronLeft" size={13} /><span>{back.label}</span></button> : null
+  const chapterChip = (index: number, names?: readonly string[]): ReactNode => {
     const chapter = byIndex.get(index)
     return chapter !== undefined && onRead !== undefined
-      ? <button key={index} type="button" className="nv-album-chapter" onClick={() => { onRead(chapter.id) }} title={chapter.title}>{index}</button>
+      ? <button key={index} type="button" className="nv-album-chapter" onClick={() => { onRead(chapter.id, names) }} title={names !== undefined ? t(`${chapter.title}——去读写到它的地方`, `${chapter.title} — to where it is named`) : chapter.title}>{index}</button>
       : <span key={index} className="nv-album-chapter is-still">{index}</span>
   }
 
@@ -405,7 +413,7 @@ export function AlbumView({ t, album, media, at, go, onRead, onEdit, worldTools,
 
   // ── somebody's page ──
   if (person !== undefined) {
-    return <PersonPage key={person.id} person={person} t={t} album={album} media={media} moment={moment} time={time} rows={rows} ties={ties} go={go} setZoom={setZoom} lightbox={lightbox} top={top} onEdit={onEdit} onRead={onRead} byIndex={byIndex} first={first} last={last} people={people} pager={pager} />
+    return <PersonPage key={person.id} person={person} t={t} album={album} media={media} moment={moment} time={time} rows={rows} ties={ties} go={go} setZoom={setZoom} lightbox={lightbox} top={top} onEdit={onEdit} onRead={onRead} byIndex={byIndex} first={first} last={last} people={people} pager={pager} backLink={backLink} />
   }
 
   // ── the page of a place, a house, a thing, an idea ──
@@ -444,6 +452,7 @@ export function AlbumView({ t, album, media, at, go, onRead, onEdit, worldTools,
     return (
       <div key={key} className="nv-explore nv-album is-page" ref={top}>
         <nav className="nv-explore-trail">
+          {backLink}
           <button type="button" className="nv-link" onClick={() => { go({ section: 'world' }) }}>{t('这个世界', 'This world')}</button>
           {up.map(id => <span key={id}><Icon name="chevronRight" size={11} /><button type="button" className="nv-link" onClick={() => { open({ type: 'world', id }) }}>{nameOf({ type: 'world', id })}</button></span>)}
           <span><Icon name="chevronRight" size={11} /><strong>{entry.name}</strong></span>
@@ -475,7 +484,7 @@ export function AlbumView({ t, album, media, at, go, onRead, onEdit, worldTools,
         {named.length > 0 ? (
           <p className="nv-album-named">
             <span className="nv-muted">{t(`正文里 ${named.length} 章写到它：`, `Named in ${named.length} chapters: `)}</span>
-            {shownChapters.map(chapterChip)}
+            {shownChapters.map(index => chapterChip(index, [entry.name, ...(entry.aliases ?? [])]))}
             {named.length > shownChapters.length ? <button type="button" className="nv-link nv-small" onClick={() => { setMore({ ...more, chapters: true }) }}>{t(`…另 ${named.length - shownChapters.length} 章`, `…${named.length - shownChapters.length} more`)}</button> : null}
           </p>
         ) : null}
@@ -523,6 +532,7 @@ export function AlbumView({ t, album, media, at, go, onRead, onEdit, worldTools,
     const there = album.people.filter(candidate => moment === undefined || standing(candidate) !== 'planned')
     return (
       <div key={key} className="nv-explore nv-album" ref={top}>
+        {backLink !== null ? <nav className="nv-explore-trail">{backLink}</nav> : null}
         <header className="nv-explore-top">
           <div>
             <h2>{t('人物', 'People')}</h2>
@@ -623,6 +633,7 @@ export function AlbumView({ t, album, media, at, go, onRead, onEdit, worldTools,
   const nothing = album.world.length === 0
   return (
     <div key={key} className="nv-explore nv-album" ref={top}>
+      {backLink !== null ? <nav className="nv-explore-trail">{backLink}</nav> : null}
       <header className="nv-explore-top">
         <div>
           <h2>{t('这个世界', 'This world')}</h2>
@@ -775,20 +786,22 @@ interface PersonPageProps {
   lightbox: ReactNode
   top: RefObject<HTMLDivElement>
   onEdit: ((end: TieEnd) => void) | undefined
-  onRead: ((chapter: string) => void) | undefined
+  onRead: ((chapter: string, names?: readonly string[]) => void) | undefined
   byIndex: Map<number, { id: string; index: number; title: string }>
   first: number
   last: number
   people: Map<string, AlbumPerson>
   /** The way to the page before and the page after. */
   pager: ReactNode
+  /** The way back to where this page was come to from. */
+  backLink: ReactNode
 }
 
 /** Somebody's page: their picture large, who they are, what they go through, and who and what stands around them. */
-function PersonPage({ person, t, album, media, moment, time, rows, ties, go, setZoom, lightbox, top, onEdit, onRead, byIndex, first, last, people, pager }: PersonPageProps) {
+function PersonPage({ person, t, album, media, moment, time, rows, ties, go, setZoom, lightbox, top, onEdit, onRead, byIndex, first, last, people, pager, backLink }: PersonPageProps) {
   const pictures = useMemo(() => [
     ...(person.portrait !== undefined ? [{ key: 'portrait', label: t('立绘', 'Portrait'), path: person.portrait, sheet: false }] : []),
-    ...(person.sheet !== undefined ? [{ key: 'sheet', label: t('人设图', 'Design sheet'), path: person.sheet, sheet: true }] : []),
+    ...(person.sheet !== undefined ? [{ key: 'sheet', label: t('人设图', 'Design sheet'), path: person.sheet, sheet: person.sheetFront !== true }] : []),
     ...(person.looks ?? []).map((look, index) => ({ key: `look-${index}`, label: look.name, path: look.sheet, sheet: true })),
   ], [person, t])
   const [shown, setShown] = useState(0)
@@ -804,6 +817,10 @@ function PersonPage({ person, t, album, media, moment, time, rows, ties, go, set
   const listed = all ? turns : turns.length > 10 ? [...turns.slice(0, 6), ...turns.slice(-3)] : turns
   const span = Math.max(1, last - first + 1)
   const relations = (person.relationships ?? []).filter(other => other.id === undefined || people.has(other.id))
+  // Theirs as a picture: what their own page says of others, and what the others' pages say of them.
+  const bonds = useMemo(() => bondsOf(person.id, album.people), [person.id, album.people])
+  const faces = useMemo(() => album.people.map(other => ({ id: other.id, name: other.name, role: other.role, face: other.portrait ?? other.sheet, sheet: other.portrait === undefined && other.sheet !== undefined && other.sheetFront !== true })), [album.people])
+  const called = [person.name, ...(person.aliases ?? [])]
   const facts = [person.gender, person.age].filter((fact): fact is string => fact !== undefined)
   const sections: { label: [string, string]; text: string | undefined }[] = [
     { label: ['外貌', 'How they look'], text: person.appearance },
@@ -814,6 +831,7 @@ function PersonPage({ person, t, album, media, moment, time, rows, ties, go, set
   return (
     <div className="nv-explore nv-album is-page" ref={top}>
       <nav className="nv-explore-trail">
+        {backLink}
         <button type="button" className="nv-link" onClick={() => { go({ section: 'people' }) }}>{t('人物', 'People')}</button>
         <span><Icon name="chevronRight" size={11} /><strong>{person.name}</strong></span>
       </nav>
@@ -849,6 +867,12 @@ function PersonPage({ person, t, album, media, moment, time, rows, ties, go, set
         </div>
       </section>
       {time}
+      {bonds.length > 0 ? (
+        <section className="nv-album-around">
+          <h3>{t('身边的人', 'Theirs')}<span className="nv-muted"> {new Set(bonds.map(bond => bond.with)).size}</span></h3>
+          <AroundGraph t={t} person={faces.find(face => face.id === person.id) ?? { id: person.id, name: person.name }} others={faces} bonds={bonds} media={media} onOpen={(id) => { go({ section: 'people', end: { type: 'character', id } }) }} />
+        </section>
+      ) : null}
       {life !== undefined && life.first !== undefined ? (
         <section className="nv-album-life">
           <h3>{t('这一路', 'What they go through')}</h3>
@@ -868,7 +892,7 @@ function PersonPage({ person, t, album, media, moment, time, rows, ties, go, set
                 const row = (
                   <li key={`${event.index}:${event.chapter}`} className={`is-${event.kind}`}>
                     {chapter !== undefined && onRead !== undefined
-                      ? <button type="button" className="nv-album-event-at" onClick={() => { onRead(chapter.id) }} title={chapter.title}>{t(`第 ${event.index} 章`, `Ch. ${event.index}`)}</button>
+                      ? <button type="button" className="nv-album-event-at" onClick={() => { onRead(chapter.id, called) }} title={chapter.title}>{t(`第 ${event.index} 章`, `Ch. ${event.index}`)}</button>
                       : <span className="nv-album-event-at">{event.index < 1 ? t('开始之前', 'Before') : t(`第 ${event.index} 章`, `Ch. ${event.index}`)}</span>}
                     <span className="nv-album-event-kind">{t(...EVENT_LABEL[event.kind])}</span>
                     <span className="nv-album-event-what">{[event.what, event.state].filter(Boolean).join(t('——', ' — '))}{event.where !== undefined ? <em> · {event.where}</em> : null}</span>

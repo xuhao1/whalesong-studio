@@ -14,6 +14,7 @@ import { Icon } from '../icons'
 import { BatchMatrix, batchOf, useBatchJob } from '../Batch'
 import {
   Button, Chip, cx, Empty, Field, Progress, SectionTitle, Select, Tabs, TextArea, TextInput, useAction, useBookLine, useConfirm, useKept, useLoad, useProject, useRunningJob, useSnapshot, useStudio, useT,
+  ViewButton,
 } from '../ui'
 import { JobBar } from '../JobBar'
 
@@ -131,19 +132,95 @@ function Suggestions() {
       {unsifted > 0 || due.length > 0 ? <Button size="sm" icon="sparkles" busy={sifting} pending={t('策划在筛…', 'The planner is looking…')} onClick={() => sift(unsifted > 0)} title={t('策划逐个看：值得立卡的留在这里并写明理由，是别名的改成并入建议，其余回到龙套名单', 'The planner looks at each: worth a card stays here with the reason, another name becomes a suggestion to fold it in, the rest go back to the walk-ons')}>{t('让策划筛一遍', 'Have the planner look')}</Button> : null}
     </div>
   )
+  // What the planner settled without asking: entered, folded into something there, left out — each to be changed here.
+  // (A Host from before suggestions were settled answers with an error: then they wait one by one, as they did.)
+  const settled = useLoad(async signal => await controller.api.call('suggestion.settled', { root }, signal).catch(() => undefined), [root, project.revision])
+  const settling = useRunningJob(job => job.kind === 'bible' && job.title === 'settle suggestions') !== undefined
+  const auto = settled.data?.auto === true
+  const record = settled.data?.items ?? []
+  const [more, setMore] = useKept<'entered' | 'skipped' | ''>('review.settled', 'entered')
+  const overrule = (id: string, to: 'undo' | 'enter'): void => {
+    void run(async () => {
+      await controller.api.call('suggestion.overrule', { root, id, to })
+      settled.reload()
+    })
+  }
+  const settleNow = (): Promise<unknown> => controller.guard(async () => {
+    await controller.api.call('suggestion.settle', { root })
+    await controller.refreshJobs()
+  })
+  const open = (target: { type: 'character' | 'world'; id: string }): void => {
+    if (target.type === 'character') controller.openCharacter(target.id)
+    else controller.openWorld(target.id)
+  }
+  const entered = record.filter(item => item.verdict === 'entered' || item.verdict === 'merged')
+  const outside = record.filter(item => item.verdict === 'skipped' || item.verdict === 'undone')
+  const row = (item: (typeof record)[number]) => {
+    const chapter = item.chapterId !== undefined ? index.get(item.chapterId) : undefined
+    const isIn = item.verdict === 'entered' || item.verdict === 'merged'
+    return (
+      <li key={item.id} className={cx('nv-suggestion nv-card nv-settled', !isIn && 'is-out')}>
+        <div className="nv-suggestion-main">
+          <div className="nv-row-wrap">
+            <Chip tone={item.kind.startsWith('new-') ? 'blue' : 'amber'}>{t(...SUGGESTION_KIND[item.kind])}</Chip>
+            <strong>{item.title}</strong>
+            {item.verdict === 'merged' ? <span className="nv-muted nv-small">{t(`并入「${item.into ?? ''}」`, `folded into "${item.into ?? ''}"`)}</span> : null}
+            {item.verdict === 'undone' ? <span className="nv-muted nv-small">{t('你撤回了', 'you took it back')}</span> : null}
+            {chapter !== undefined ? <button type="button" className="nv-link nv-small" onClick={() => { controller.setView('read', chapter.id) }}>{t(`第 ${chapter.index} 章`, `Ch. ${chapter.index}`)}</button> : null}
+          </div>
+          {item.why !== undefined && item.why.length > 0 ? <p>{t('策划：', 'Planner: ')}{item.why}</p> : null}
+          {item.detail.length > 0 && item.detail !== item.why ? <p className="nv-muted nv-small">{item.detail}</p> : null}
+        </div>
+        <div className="nv-row">
+          {isIn && item.target !== undefined ? <Button size="sm" variant="ghost" onClick={() => { open(item.target!) }}>{t('打开', 'Open')}</Button> : null}
+          {isIn && item.target === undefined && (item.kind === 'new-thread' || item.kind === 'thread-status') ? <Button size="sm" variant="ghost" onClick={() => { controller.setView('outline') }}>{t('去线索', 'Threads')}</Button> : null}
+          {isIn
+            ? <Button size="sm" variant="ghost" busy={busy} onClick={() => { overrule(item.id, 'undo') }}>{t('撤回', 'Take back')}</Button>
+            : <Button size="sm" variant="primary" busy={busy} onClick={() => { overrule(item.id, 'enter') }}>{t('收进', 'Enter')}</Button>}
+        </div>
+      </li>
+    )
+  }
+  const settledPart = record.length === 0 ? null : (
+    <section className="nv-settled-part">
+      <div className="nv-toolbar">
+        <button type="button" className={cx('nv-fold-head', more === 'entered' && 'is-open')} onClick={() => { setMore(more === 'entered' ? '' : 'entered') }}>
+          <Icon name={more === 'entered' ? 'chevronDown' : 'chevronRight'} size={14} />{t(`策划收进的 · ${entered.length}`, `Entered by the planner · ${entered.length}`)}
+        </button>
+        <button type="button" className={cx('nv-fold-head', more === 'skipped' && 'is-open')} onClick={() => { setMore(more === 'skipped' ? '' : 'skipped') }}>
+          <Icon name={more === 'skipped' ? 'chevronDown' : 'chevronRight'} size={14} />{t(`没收进的 · ${outside.length}`, `Left out · ${outside.length}`)}
+        </button>
+      </div>
+      {more === 'entered' ? (entered.length > 0 ? <ul className="nv-suggestion-list">{entered.map(row)}</ul> : <p className="nv-muted nv-small">{t('还没有。', 'Nothing yet.')}</p>) : null}
+      {more === 'skipped' ? (outside.length > 0 ? <ul className="nv-suggestion-list">{outside.map(row)}</ul> : <p className="nv-muted nv-small">{t('没有。', 'None.')}</p>) : null}
+    </section>
+  )
   // What the planner put here after looking through the book comes first: it is what was asked for, and it has reasons.
   const ordered = [...project.suggestions].sort((left, right) => Number(right.sifted === true) - Number(left.sifted === true))
+  // A change to what somebody wrote is the author's to say, whoever settles the rest.
+  const mine = project.suggestions.filter(item => item.kind === 'bible-edit').length
+  const theirs = project.suggestions.length - mine
   if (project.suggestions.length === 0) {
-    return <>{people}<Empty icon="sparkles" title={t('没有待处理的设定建议', 'No bible suggestions waiting')}>{t('策划筛出的新人物、收录时发现的地点和线索会列在这里。', 'New people the planner finds worth a card, and places and threads found while digesting, are listed here.')}</Empty></>
+    return (
+      <>
+        {people}
+        {record.length === 0
+          ? <Empty icon="sparkles" title={t('没有待处理的设定建议', 'No bible suggestions waiting')}>{auto ? t('收录时发现的人物、地点、物件和线索，由策划审定后直接收进设定；收进了什么会列在这里。', 'People, places, things and threads found while digesting are settled by the planner and entered; what entered is listed here.') : t('策划筛出的新人物、收录时发现的地点和线索会列在这里。', 'New people the planner finds worth a card, and places and threads found while digesting, are listed here.')}</Empty>
+          : <div className="nv-suggestions">{settledPart}</div>}
+      </>
+    )
   }
   return (
     <div className="nv-suggestions">
       {people}
       <div className="nv-toolbar">
-        <span className="nv-muted">{t('正文里有、设定里还没有的。采纳会写入设定或大纲。', 'In the text and not yet in the bible. Accepting writes it to the bible or the outline.')}</span>
+        <span className="nv-muted">{auto && theirs > 0
+          ? t(`${theirs} 条还没审定。`, `${theirs} not settled yet.`)
+          : t('正文里有、设定里还没有的。采纳会写入设定或大纲。', 'In the text and not yet in the bible. Accepting writes it to the bible or the outline.')}</span>
         <span className="nv-spacer" />
+        {settled.data !== undefined && theirs > 0 ? <Button size="sm" icon="sparkles" variant={auto ? 'primary' : 'outline'} busy={settling} pending={t('策划在审定…', 'The planner is settling…')} onClick={settleNow} title={t('策划逐条看：值得的收进设定，是别名的并入，其余不收；都列在下面，可以改', 'The planner looks at each: what is worth it enters the bible, another name is folded in, the rest is left out; all listed below, to be changed')}>{t(`让策划审定（${theirs}）`, `Have the planner settle (${theirs})`)}</Button> : null}
         <Button size="sm" variant="ghost" busy={busy} onClick={() => { settleAll(false) }}>{t('全部忽略', 'Dismiss all')}</Button>
-        <Button size="sm" variant="primary" icon="check" busy={busy} onClick={() => { settleAll(true) }}>{t('全部采纳', 'Accept all')}</Button>
+        <Button size="sm" variant={auto ? 'outline' : 'primary'} icon="check" busy={busy} onClick={() => { settleAll(true) }}>{t('全部采纳', 'Accept all')}</Button>
       </div>
       <ul className="nv-suggestion-list">
         {ordered.map((suggestion) => {
@@ -167,6 +244,7 @@ function Suggestions() {
           )
         })}
       </ul>
+      {settledPart}
     </div>
   )
 }
@@ -294,10 +372,9 @@ function Issues() {
         <span className="nv-list-side">
           {chapter.openIssues === undefined ? <Chip>{t('未审', 'Not reviewed')}</Chip> : chapter.openIssues === 0 ? <Chip tone="green">{t('无待办', 'Clear')}</Chip> : board.counts(chapter.id).length > 0 ? null : <Chip tone="amber">{t(`${chapter.openIssues} 个问题`, `${chapter.openIssues} open`)}</Chip>}
           <Button size="sm" variant="ghost" busy={reviewing.has(chapter.id)} disabled={batch !== undefined} onClick={() => controller.guard(async () => { await controller.api.call('ai.review', { root, chapter: chapter.id }); await controller.refreshJobs() })}>{chapter.openIssues === undefined ? t('审校', 'Review') : t('重审', 'Again')}</Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            icon="eye"
+          <Button size="sm" variant="ghost" icon="arrowRight" onClick={() => { controller.setView('write', chapter.id) }} title={t('打开这一章', 'Open the chapter')} />
+          <ViewButton
+            bare
             onClick={() => {
               // Looked at from the review: with what the review found marked in the text.
               try {
@@ -309,7 +386,6 @@ function Issues() {
             }}
             title={t('观看：在"观看"里读这一章，审校出的问题标在正文上', 'View: read the chapter in the viewer, with what the review found marked in the text')}
           />
-          <Button size="sm" variant="ghost" icon="arrowRight" onClick={() => { controller.setView('write', chapter.id) }} title={t('打开这一章', 'Open the chapter')} />
         </span>
       </div>
       {unfolded.includes(chapter.id) ? board.cards(chapter.id) : null}

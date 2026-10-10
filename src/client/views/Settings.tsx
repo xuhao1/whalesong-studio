@@ -12,7 +12,7 @@
  */
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import type { EndpointCheck, EndpointModel, KeyState, ModelKind, ModelOption, ProviderOption, SettingsView as SettingsData } from '../../shared/rpc'
-import type { ComfyCatalog } from '../../shared/types'
+import type { ComfyCatalog, BookImageSettings } from '../../shared/types'
 import { ASPECTS, DEFAULT_ART_STYLE, KIND_ASPECT, PICTURE_KINDS, PICTURE_TIERS, pictureSize, pixelSize, type PictureKind, type PictureTier } from '../../shared/art'
 import { fittedSize, imageSizes, leadOf, LOCAL_SIZES, localImages, sizeList, type ImageLimits, type PictureLead } from '../../shared/images'
 import { FFMPEG_INSTALL } from '../../shared/text'
@@ -165,12 +165,13 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
   // Where the text models and the crew's ways are saved: for every book, or with the book that is open.
   const book = useSnapshot(snapshot => snapshot.project?.manifest)
   const bookRoot = useSnapshot(snapshot => snapshot.root)
-  const [wanted, setScope] = useKept<'global' | 'book'>('settings.scope', 'global')
-  const scope: 'global' | 'book' = wanted === 'book' && book !== undefined && bookRoot !== undefined ? 'book' : 'global'
-  const [own, setOwn] = useState<{ models: Partial<TextModelRouting>; crew: CrewSettings }>(() => ({ models: book?.models ?? {}, crew: book?.crew ?? {} }))
+  const [own, setOwn] = useState<{ models: Partial<TextModelRouting>; crew: CrewSettings; image: BookImageSettings }>(() => ({ models: book?.models ?? {}, crew: book?.crew ?? {}, image: book?.image ?? {} }))
   const [ownDirty, setOwnDirty] = useState(false)
-  const bookHasOwn = book !== undefined && (Object.keys(book.models ?? {}).length > 0 || Object.values(book.crew ?? {}).some(value => value !== undefined && Object.keys(value).length > 0))
-  const updateOwn = (patch: Partial<{ models: Partial<TextModelRouting>; crew: CrewSettings }>): void => {
+  const bookHasOwn = book !== undefined && (Object.keys(book.models ?? {}).length > 0 || Object.values(book.crew ?? {}).some(value => value !== undefined && Object.keys(value).length > 0) || Object.keys(book.image ?? {}).length > 0)
+  // A book that has settings of its own is what the page opens on: they are what holds for the book in hand.
+  const [wanted, setScope] = useState<'global' | 'book'>(bookHasOwn ? 'book' : 'global')
+  const scope: 'global' | 'book' = wanted === 'book' && book !== undefined && bookRoot !== undefined ? 'book' : 'global'
+  const updateOwn = (patch: Partial<{ models: Partial<TextModelRouting>; crew: CrewSettings; image: BookImageSettings }>): void => {
     setOwn(previous => ({ ...previous, ...patch }))
     setOwnDirty(true)
   }
@@ -218,7 +219,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
     // What was set for the book goes into the book: its novel.json travels with it.
     if (ownDirty && bookRoot !== undefined) {
       const crew = Object.fromEntries(Object.entries(own.crew).filter(([, value]) => value !== undefined && Object.keys(value).length > 0))
-      await controller.api.call('project.update', { root: bookRoot, patch: { models: own.models, crew } })
+      await controller.api.call('project.update', { root: bookRoot, patch: { models: own.models, crew, image: own.image } })
       setOwnDirty(false)
       if (!dirty) {
         controller.toast('success', t(`已保存到《${bookTitle}》`, `Saved with "${bookTitle}"`))
@@ -236,11 +237,24 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
       textConcurrency: draft.textConcurrency ?? null,
       autoDigest: draft.autoDigest,
       siftCast: draft.siftCast !== false,
+      settleSuggestions: draft.settleSuggestions !== false,
       reviewAgentRevisions: draft.reviewAgentRevisions,
       agentFiles: draft.agentFiles ?? 'guide',
     }, Object.fromEntries(Object.values(typed).map(entry => [entry.url, entry.value.trim()])))
     controller.toast('success', t('设置已保存', 'Settings saved'))
   })
+
+  // What this book has its own way with, one by one: said at the top of the page, each with the way back.
+  const roleWord = (role: string): string => t(...(ROLE_NAME[role] ?? [role, role]))
+  const leadWord = (lead: PictureLead): string => (lead === 'portrait' ? t('立绘为准', 'the portrait leads') : lead === 'none' ? t('各画各的', 'neither leads') : t('人设图为准', 'the sheet leads'))
+  const differing: { key: string; label: string; reset: () => void }[] = [
+    ...Object.entries(own.models).filter(([, route]) => route !== undefined).map(([role, route]) => ({ key: `model:${role}`, label: t(`${roleWord(role)}的模型：${route!.model}`, `${roleWord(role)}'s model: ${route!.model}`), reset: () => { const { [role as TextRole]: _old, ...rest } = own.models; updateOwn({ models: rest }) } })),
+    ...Object.entries(own.crew).filter(([, value]) => value !== undefined && Object.keys(value).length > 0).map(([role]) => ({ key: `crew:${role}`, label: t(`${roleWord(role)}怎么干活`, `how ${roleWord(role)} works`), reset: () => { const { [role as CrewRole]: _old, ...rest } = own.crew; updateOwn({ crew: rest }) } })),
+    ...(own.image.lead !== undefined ? [{ key: 'image:lead', label: t(`人物的图：${leadWord(own.image.lead)}`, `pictures of people: ${leadWord(own.image.lead)}`), reset: () => { const { lead: _old, ...rest } = own.image; updateOwn({ image: rest }) } }] : []),
+    ...(own.image.sheet !== undefined ? [{ key: 'image:sheet', label: own.image.sheet === 'front' ? t('人设图只画正面', 'sheets show the front alone') : t('人设图画三视图', 'sheets show three views'), reset: () => { const { sheet: _old, ...rest } = own.image; updateOwn({ image: rest }) } }] : []),
+    ...(own.image.portraitScene !== undefined ? [{ key: 'image:scene', label: own.image.portraitScene ? t('立绘照名场面画', 'portraits show the signature scene') : t('立绘画素底定妆照', 'portraits are plain'), reset: () => { const { portraitScene: _old, ...rest } = own.image; updateOwn({ image: rest }) } }] : []),
+    ...(own.image.panelThings !== undefined ? [{ key: 'image:things', label: own.image.panelThings ? t('有声漫带上物品设定图', 'panels take things\' art along') : t('有声漫不带物品设定图', 'panels leave things\' art behind'), reset: () => { const { panelThings: _old, ...rest } = own.image; updateOwn({ image: rest }) } }] : []),
+  ]
 
   /** The model of a role as the page holds it: the book's own, or the one for every book. */
   const routeOf = (role: TextRole): ModelRoute | undefined => (scope === 'book' ? own.models[role] : draft.models[role])
@@ -268,7 +282,9 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
   const unable = view.crew !== undefined ? view.crew.roles.filter(item => (CREW_ROLES as readonly string[]).includes(item.role) && !(item.agent && view.crew!.loop)) : []
   const roleRow = (role: TextRole, label: string, hint: string): ReactNode => {
     const global = draft.models[role]
+    const mine = own.models[role]
     return (
+      <OwnMark key={`${scope}:${role}`} own={mine !== undefined} scope={scope} t={t} elsewhere={scope === 'global' && mine !== undefined ? t(`《${bookTitle}》另设：${mine.model}`, `"${bookTitle}" has its own: ${mine.model}`) : undefined}>
       <RoleRow
         key={`${scope}:${role}`}
         role={role}
@@ -292,11 +308,12 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
           update({ models: route !== undefined ? { ...rest, [role]: route } : rest })
         }}
       />
+      </OwnMark>
     )
   }
 
   return (
-    <div className="nv-page nv-settings" ref={page}>
+    <div className={cx('nv-page nv-settings', scope === 'book' && 'is-book')} ref={page}>
       <header className="nv-settings-head">
         <div>
           <h2>{t('小说工坊设置', 'Novel Studio settings')}</h2>
@@ -313,7 +330,28 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
 
       <Readiness view={view} t={t} />
 
-      <section className="nv-card">
+      {book !== undefined ? (
+        // Whose settings the page shows: those for every book, or what the book in hand has its own way with.
+        <section className="nv-card nv-scope-card">
+          <div className="nv-scope">
+            <span className="nv-scope-label">{t('在看谁的设置', 'Whose settings')}</span>
+            <div className="nv-segmented" role="radiogroup">
+              <button type="button" role="radio" aria-checked={scope === 'global'} className={cx('nv-segment', scope === 'global' && 'is-active')} onClick={() => { setScope('global') }}>{t('全局：所有的书', 'Every book')}</button>
+              <button type="button" role="radio" aria-checked={scope === 'book'} className={cx('nv-segment', scope === 'book' && 'is-active')} onClick={() => { setScope('book') }}>{t(`这本书：《${bookTitle}》`, `This book: "${bookTitle}"`)}{differing.length > 0 ? <span className="nv-own-count">{differing.length}</span> : null}</button>
+            </div>
+          </div>
+          {differing.length > 0 ? (
+            <div className="nv-own-list">
+              <span className="nv-muted nv-small">{scope === 'book' ? t('和全局不同的：', 'Its own, apart from every book\'s:') : t(`《${bookTitle}》里另设了（盖过这里的）：`, `"${bookTitle}" has its own (which hold over these):`)}</span>
+              {differing.map(item => (
+                <span key={item.key} className="nv-chip nv-chip-violet nv-own-chip">{item.label}<button type="button" onClick={item.reset} title={t('恢复成全局的', 'Back to what every book has')} aria-label={t('恢复成全局的', 'Back to what every book has')}>×</button></span>
+              ))}
+            </div>
+          ) : <p className="nv-muted nv-small">{scope === 'book' ? t('这本书还没有自己的设置：下面每一项都沿用全局。在这里改的只对这本书生效，随书保存。', 'This book has no settings of its own yet: everything below follows every book\'s. What is changed here holds for this book alone, and is kept with it.') : t('对所有的书生效。', 'For every book.')}</p>}
+        </section>
+      ) : null}
+
+      <section className="nv-card" data-global="">
         <SectionTitle actions={(
           <>
             <Button size="sm" variant="ghost" icon="sparkles" onClick={() => { controller.setView('setup') }}>{t('引导页', 'Guide')}</Button>
@@ -330,7 +368,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
         <RecommendedCard view={view.recommended} />
       </section>
 
-      <section className="nv-card" data-section="reading">
+      <section className="nv-card" data-section="reading" data-global="">
         <SectionTitle>{t('阅读体验', 'Reading')}</SectionTitle>
         
         <ReadingPanel t={t} />
@@ -338,20 +376,6 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
 
       <section className="nv-card" data-section="text">
         <SectionTitle>{t('模型', 'Models')}</SectionTitle>
-        {book !== undefined ? (
-          <div className="nv-scope">
-            <span className="nv-scope-label">{t('模型的设置保存到', 'The models are saved')}</span>
-            <div className="nv-segmented" role="radiogroup">
-              <button type="button" role="radio" aria-checked={scope === 'global'} className={cx('nv-segment', scope === 'global' && 'is-active')} onClick={() => { setScope('global') }}>{t('全局：所有的书', 'for every book')}</button>
-              <button type="button" role="radio" aria-checked={scope === 'book'} className={cx('nv-segment', scope === 'book' && 'is-active')} onClick={() => { setScope('book') }}>{t(`只跟这本书：《${bookTitle}》`, `with this book: "${bookTitle}"`)}</button>
-            </div>
-            <p className="nv-muted nv-small">{scope === 'book'
-              ? t('只对这本书生效；没单独设的沿用全局。接口和密钥始终是全局的。', 'For this book only; what is not set here follows the global settings. Endpoints and keys are always global.')
-              : bookHasOwn
-                ? t(`《${bookTitle}》有自己的设置，会盖过这里的。`, `"${bookTitle}" has settings of its own, which override these.`)
-                : t('对所有的书生效。', 'For every book.')}</p>
-          </div>
-        ) : null}
         <p className="nv-muted nv-small">{t('文字模型来自 DSH 的“设置 → 模型”。总编用对话自己选的模型。', 'Text models come from DSH Settings → Models. The showrunner uses the conversation\'s own model.')}</p>
         {advanced ? null : (
           <>
@@ -473,8 +497,55 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
         ) : null}
       </section>
 
+      {scope === 'book' ? (
+        <section className="nv-card" data-section="book-image">
+          <SectionTitle>{t('图像：这本书自己的', 'Pictures: this book\'s own')}</SectionTitle>
+          <p className="nv-muted nv-small">{t('绘图服务、模型、清晰度是全局的；下面四项可以随书。', 'The image service, its model and the fineness are for every book; these four a book may have its own way with.')}</p>
+          <div className="nv-form-grid">
+            <OwnMark own={own.image.lead !== undefined} scope={scope} t={t}>
+              <Field label={t('人物的图以哪张为准', 'Which picture of a person leads')}>
+                <Select<PictureLead | ''> value={own.image.lead ?? ''} options={[
+                  { value: '', label: t(`沿用全局：${leadWord(leadOf(draft.image))}`, `As for every book: ${leadWord(leadOf(draft.image))}`) },
+                  { value: 'sheet', label: t('人设图为准', 'The design sheet') },
+                  { value: 'portrait', label: t('立绘为准', 'The portrait') },
+                  { value: 'none', label: t('各画各的', 'Neither') },
+                ]} onChange={(lead) => { const { lead: _old, ...rest } = own.image; updateOwn({ image: lead === '' ? rest : { ...rest, lead } }) }} />
+              </Field>
+            </OwnMark>
+            <OwnMark own={own.image.sheet !== undefined} scope={scope} t={t}>
+              <Field label={t('人设图画什么', 'What a design sheet shows')} hint={t('小的绘图模型画不好并排的三个视图时，选只画正面', 'Where a small image model cannot keep three views alike: the front alone')}>
+                <Select<'turn' | 'front' | ''> value={own.image.sheet ?? ''} options={[
+                  { value: '', label: t(`沿用全局：${draft.image.sheet === 'front' ? '只画正面' : '三视图'}`, `As for every book: ${draft.image.sheet === 'front' ? 'the front alone' : 'three views'}`) },
+                  { value: 'turn', label: t('三视图：正面、侧面、背面', 'Three views: front, side, back') },
+                  { value: 'front', label: t('只画正面一个人', 'The front view alone') },
+                ]} onChange={(sheet) => { const { sheet: _old, ...rest } = own.image; updateOwn({ image: sheet === '' ? rest : { ...rest, sheet } }) }} />
+              </Field>
+            </OwnMark>
+            <OwnMark own={own.image.portraitScene !== undefined} scope={scope} t={t}>
+              <Field label={t('立绘画什么', 'What a portrait shows')}>
+                <Select<'yes' | 'no' | ''> value={own.image.portraitScene === undefined ? '' : own.image.portraitScene ? 'yes' : 'no'} options={[
+                  { value: '', label: t(`沿用全局：${draft.image.portraitScene === false ? '素底定妆照' : '名场面'}`, `As for every book: ${draft.image.portraitScene === false ? 'a plain likeness' : 'the signature scene'}`) },
+                  { value: 'yes', label: t('名场面', 'The signature scene') },
+                  { value: 'no', label: t('素底定妆照', 'A plain likeness') },
+                ]} onChange={(value) => { const { portraitScene: _old, ...rest } = own.image; updateOwn({ image: value === '' ? rest : { ...rest, portraitScene: value === 'yes' } }) }} />
+              </Field>
+            </OwnMark>
+            <OwnMark own={own.image.panelThings !== undefined} scope={scope} t={t}>
+              <Field label={t('有声漫的画面带不带物品设定图', 'Things\' art with a motion comic\'s panels')}>
+                <Select<'yes' | 'no' | ''> value={own.image.panelThings === undefined ? '' : own.image.panelThings ? 'yes' : 'no'} options={[
+                  { value: '', label: t(`沿用全局：${draft.image.panelThings === false ? '不带' : '带上'}`, `As for every book: ${draft.image.panelThings === false ? 'left behind' : 'taken along'}`) },
+                  { value: 'yes', label: t('带上', 'Taken along') },
+                  { value: 'no', label: t('不带', 'Left behind') },
+                ]} onChange={(value) => { const { panelThings: _old, ...rest } = own.image; updateOwn({ image: value === '' ? rest : { ...rest, panelThings: value === 'yes' } }) }} />
+              </Field>
+            </OwnMark>
+          </div>
+          <p className="nv-muted nv-small">{t('其余的设置（接口、密钥、语音、检索、并发……）对每本书都一样：切到“全局”去改。', 'Everything else (endpoints, keys, speech, retrieval, how much at once…) is the same for every book: change it under Every book.')}</p>
+        </section>
+      ) : null}
+
       {advanced ? (
-      <section className="nv-card" data-section="parallel">
+      <section className="nv-card" data-section="parallel" data-global="">
         <SectionTitle>{t('并发：同时发出多少个请求', 'How much at once')}</SectionTitle>
         <p className="nv-muted nv-small">{t(`每一类请求同时最多发出几个。默认 ${PARALLEL_DEFAULT}，最多 ${PARALLEL_MAX}；被限流时自动降速重试。`, `How many requests of each kind go out at once. ${PARALLEL_DEFAULT} by default, ${PARALLEL_MAX} at most; when rate-limited it slows down and retries.`)}</p>
         <div className="nv-form-grid">
@@ -497,7 +568,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
       ) : null}
 
       {advanced ? (
-      <section className="nv-card" data-section="context">
+      <section className="nv-card" data-section="context" data-global="">
         <SectionTitle>{t('上下文与记忆', 'Context and memory')}</SectionTitle>
         <p className="nv-muted nv-small">{t('写一章时带的前文：最近若干整章的原文，加更早章节的梗概。', 'What a chapter is written with: the latest chapters whole, and summaries of the ones before.')}</p>
         <div className="nv-form-grid">
@@ -538,6 +609,10 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
         <label className="nv-check">
           <input type="checkbox" checked={draft.siftCast !== false} onChange={(event) => { update({ siftCast: event.target.checked }) }} />
           <span>{t('收录之后，让策划筛一遍没立卡的新名字', 'After digests, have the planner look through the new names without a card')}</span>
+        </label>
+        <label className="nv-check">
+          <input type="checkbox" checked={draft.settleSuggestions !== false} onChange={(event) => { update({ settleSuggestions: event.target.checked }) }} />
+          <span>{t('设定建议由策划审定后自动收进（不勾：逐条等我采纳）', 'Suggestions for the bible are settled by the planner and entered (off: each waits for me)')}</span>
         </label>
         <label className="nv-check">
           <input type="checkbox" checked={draft.reviewAgentRevisions} onChange={(event) => { update({ reviewAgentRevisions: event.target.checked }) }} />
@@ -589,7 +664,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
 function Fold({ id, title, summary, ready, open, toggle, children }: { id: string; title: string; summary: string; ready: boolean; open: boolean; toggle: () => void; children: ReactNode }) {
   const t = useT()
   return (
-    <section className={cx('nv-card nv-fold', open && 'is-open')} data-section={id}>
+    <section className={cx('nv-card nv-fold', open && 'is-open')} data-section={id} data-global="">
       <button type="button" className="nv-fold-head" aria-expanded={open} onClick={toggle}>
         <strong>{title}</strong>
         <Chip tone={ready ? 'green' : 'neutral'}>{ready ? t('可用', 'ready') : t('可选', 'optional')}</Chip>
@@ -813,6 +888,16 @@ function EndpointField({ value, placeholder, hint, onChange, t }: { value: strin
 
 /** Where a role's model comes from: the chat model, one of the providers the Harness reaches (`harness:<id>`), or an endpoint named here. */
 type RoleSource = '' | `harness:${string}` | ServiceId
+
+/**
+ * A setting, marked where the book in hand has its own way with it: under the book's settings, that this one is the
+ * book's own; under those for every book, that the book has another (`elsewhere`), which is what holds for it.
+ */
+function OwnMark({ own, scope, elsewhere, t, children }: { own: boolean; scope: 'global' | 'book'; elsewhere?: string | undefined; t: Translate; children: ReactNode }) {
+  if (scope === 'book' && own) return <div className="nv-own is-own"><span className="nv-own-tag">{t('本书', 'This book')}</span>{children}</div>
+  if (scope === 'global' && elsewhere !== undefined) return <div className="nv-own is-elsewhere">{children}<p className="nv-own-note">{elsewhere}</p></div>
+  return <>{children}</>
+}
 
 function RoleRow({ role, label, hint, route, models, providers, fallback, keys, onChange, t, unset, extra }: {
   role: TextRole
@@ -1350,9 +1435,23 @@ function ImageSection({ value, keys, onChange, t, advanced }: { value: ImageSett
           </Field>
         ) : null}
         {value.provider !== 'none' ? (
+          <Field label={t('人设图画什么', 'What a design sheet shows')} hint={t('小的绘图模型画不好并排的三个视图时，选只画正面', 'Where a small image model cannot keep three views alike: the front alone')}>
+            <Select<'turn' | 'front'> value={value.sheet === 'front' ? 'front' : 'turn'} options={[
+              { value: 'turn', label: t('三视图：正面、侧面、背面', 'Three views: front, side, back') },
+              { value: 'front', label: t('只画正面一个人', 'The front view alone') },
+            ]} onChange={(sheet) => { const { sheet: _old, ...rest } = value; onChange(sheet === 'front' ? { ...rest, sheet } : rest) }} />
+          </Field>
+        ) : null}
+        {value.provider !== 'none' ? (
           <label className="nv-check">
             <input type="checkbox" checked={value.portraitScene !== false} onChange={(event) => { const { portraitScene: _old, ...rest } = value; onChange(event.target.checked ? rest : { ...rest, portraitScene: false }) }} />
             <span>{t('立绘照名场面画（不勾：素底定妆照）', 'Portraits show the signature scene (unticked: a plain likeness)')}</span>
+          </label>
+        ) : null}
+        {value.provider !== 'none' ? (
+          <label className="nv-check">
+            <input type="checkbox" checked={value.panelThings !== false} onChange={(event) => { const { panelThings: _old, ...rest } = value; onChange(event.target.checked ? rest : { ...rest, panelThings: false }) }} />
+            <span>{t('有声漫的画面带上物品的设定图', 'A motion comic\'s panels take the art of the things they show along')}</span>
           </label>
         ) : null}
         {(value.provider === 'openai' || value.provider === 'openrouter') && !own ? (

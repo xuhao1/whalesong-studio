@@ -5,7 +5,7 @@
  * and stays current through one long-poll on the Host's change counters.
  * Views read a snapshot and call actions; they never talk to the wire.
  */
-import type { EndpointCheck, JobStarted, LockView, RpcMethod, RpcParams, SettingsView, WorkspaceInfo } from '../shared/rpc'
+import type { EndpointCheck, JobStarted, LockView, PrivateShelfState, RpcMethod, RpcParams, SettingsView, WorkspaceInfo } from '../shared/rpc'
 import { parseRecommended, setRecommended } from '../shared/recommended'
 import type { ServiceId, SetupPart } from '../shared/services'
 import { MAIN_LINE, type GateKind, type GateState, type JobInfo, type ProjectState, type WorkMode } from '../shared/types'
@@ -24,6 +24,8 @@ export interface ViewerAt {
   end?: { type: 'character' | 'world'; id: string }
   /** The side story that is open. */
   side?: string
+  /** Come here from the text — a name pressed in a chapter: where that was, to go back to. Of this visit only. */
+  back?: { chapter: string; top: number }
 }
 
 /** `lives`: everyone's life chapter by chapter — what the lifecycle board and the presence grid were, in one table. */
@@ -65,6 +67,8 @@ export interface StudioSnapshot {
   status: 'loading' | 'ready' | 'error'
   error?: string
   workspaces: WorkspaceInfo[]
+  /** The private shelf: whether one is set up, and whether it is open. Absent from a Host that has none. */
+  privateShelf?: PrivateShelfState
   /** Workspace of the session this Studio belongs to (sidebar tabs). */
   sessionWorkspace?: string
   /** Workspace the Studio is looking at. */
@@ -120,7 +124,16 @@ export interface StudioSnapshot {
   /** Tab of the cast view a link asked for. */
   castTab?: CastTab
   /** A place in the manuscript a view was asked to show (a search hit, a review quote). */
-  jump?: { chapterId: string; offset: number; length: number; nonce: number }
+  jump?: {
+    chapterId: string
+    offset: number
+    length: number
+    nonce: number
+    /** Names to look for: the place shown is where the chapter first has one of them. */
+    find?: readonly string[]
+    /** A place the page was scrolled to, to be put back as it was (nothing is flashed). */
+    top?: number
+  }
   /**
    * The conversation a book was just given, for the Studio to say so once:
    * where the author goes to talk the book over with the showrunner.
@@ -472,6 +485,7 @@ export class StudioController {
     const workspace = this.snapshot.workspace ?? info.current ?? info.workspaces.find(candidate => candidate.projects.length > 0)?.path ?? info.workspaces[0]?.path
     this.set({
       workspaces: info.workspaces,
+      ...(info.shelf !== undefined ? { privateShelf: info.shelf } : {}),
       ...(info.active !== undefined ? { sessionBook: info.active } : {}),
       ...(info.current !== undefined ? { sessionWorkspace: info.current } : {}),
       ...(workspace !== undefined ? { workspace } : {}),
@@ -844,6 +858,17 @@ export class StudioController {
     this.set({ view, chapterId, jump: { chapterId, offset, length, nonce: Date.now() }, ...(view === 'read' ? { album: { section: 'text' as const } } : {}) })
   }
 
+  /** Open a chapter in the reader where it first names somebody or something. */
+  readAbout(chapterId: string, names: readonly string[]): void {
+    this.navigated = true
+    this.set({ view: 'read', readMode: 'read', chapterId, album: { section: 'text' }, jump: { chapterId, offset: 0, length: 0, nonce: Date.now(), find: names.filter(name => name.trim().length > 0) } })
+  }
+
+  /** Back to the text where it was left for somebody's page. */
+  backToText(back: { chapter: string; top: number }): void {
+    this.set({ view: 'read', chapterId: back.chapter, album: { section: 'text' }, jump: { chapterId: back.chapter, offset: 0, length: 0, nonce: Date.now(), top: back.top } })
+  }
+
   /** Forget a jump once a view has shown it, so coming back to the chapter does not replay it. */
   consumeJump(nonce: number): void {
     if (this.snapshot.jump?.nonce !== nonce) return
@@ -946,7 +971,7 @@ export class StudioController {
       const watched = before === 'running' || (before === undefined && Date.parse(job.startedAt) >= this.since - 2000)
       if (!watched || job.origin !== 'user' || this.followed.has(job.id)) continue
       if (job.status === 'failed') this.report(new Error(job.error ?? 'failed'))
-      else if (job.status === 'done' && (job.kind === 'audio' || job.kind === 'comic' || job.kind === 'batch' || (job.kind === 'review' && job.title === 'recheck issues') || (job.kind === 'bible' && job.title === 'sift cast'))) this.set({ jobEnded: { job, nonce: Date.now() } })
+      else if (job.status === 'done' && (job.kind === 'audio' || job.kind === 'comic' || job.kind === 'batch' || (job.kind === 'review' && job.title === 'recheck issues') || (job.kind === 'bible' && (job.title === 'sift cast' || job.title === 'settle suggestions')))) this.set({ jobEnded: { job, nonce: Date.now() } })
     }
   }
 

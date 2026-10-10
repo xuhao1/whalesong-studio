@@ -23,6 +23,9 @@
  *              Windows Hello, the computer's own password)
  *   grant      the key that unwraps it is a token another device was given
  *              after it showed the password once
+ *   shelf      the key that unwraps it is the key of the private shelf the
+ *              book stands on, which that shelf's password opens — one
+ *              password for every book on it
  *
  * Beside them the stub carries a drop: a public key anything may be encrypted
  * to while the book is locked — the conversations about the book, which are
@@ -56,7 +59,7 @@ export class VaultError extends Error {
 // ───────────────────────────── the stub ─────────────────────────────
 
 export interface SealSlot {
-  kind: 'password' | 'device' | 'grant'
+  kind: 'password' | 'device' | 'grant' | 'shelf'
   /** Which device or grant this is; absent for the password. */
   id?: string
   /** What the author sees it as: a computer's name, "phone, 7 Oct". */
@@ -85,7 +88,21 @@ export interface SealedStub {
     pending?: boolean
     /** A way to put something under the seal while the book is locked; absent in books sealed before there was one, until they are next unlocked. */
     drop?: DropKeys
+    /** The book stands on a private shelf: not shown among the books until that shelf is opened. */
+    shelf?: ShelfMark
   }
+}
+
+/**
+ * That a book stands on a private shelf, and which. A book the shelf's key opens carries a copy of the shelf's own
+ * slot — its key, wrapped with the shelf's password — so that the password opens the book wherever it is taken,
+ * whatever becomes of the shelf's own file.
+ */
+export interface ShelfMark {
+  id: string
+  /** The book has a password of its own besides: the shelf shows it, and does not open it. */
+  own?: boolean
+  slot?: SealSlot
 }
 
 /**
@@ -113,6 +130,7 @@ export async function readStub(root: string): Promise<SealedStub | undefined> {
       slots: Array.isArray(raw.sealed.slots) ? raw.sealed.slots : [],
       ...(raw.sealed.pending === true ? { pending: true } : {}),
       ...(drop !== undefined && drop !== null && typeof drop.publicKey === 'string' && typeof drop.wrapped === 'string' ? { drop: { publicKey: drop.publicKey, wrapped: drop.wrapped } } : {}),
+      ...(raw.sealed.shelf !== undefined && raw.sealed.shelf !== null && typeof raw.sealed.shelf.id === 'string' ? { shelf: { id: raw.sealed.shelf.id, ...(raw.sealed.shelf.own === true ? { own: true } : {}), ...(raw.sealed.shelf.slot !== undefined ? { slot: raw.sealed.shelf.slot } : {}) } } : {}),
     },
   }
 }
@@ -250,7 +268,7 @@ export async function passwordSlot(password: string, key: Buffer): Promise<SealS
 }
 
 /** A slot opened by a 32-byte secret held elsewhere: a credential store, another device. */
-export function secretSlot(kind: 'device' | 'grant', id: string, secret: Buffer, key: Buffer, label?: string): SealSlot {
+export function secretSlot(kind: 'device' | 'grant' | 'shelf', id: string, secret: Buffer, key: Buffer, label?: string): SealSlot {
   return { kind, id, wrapped: wrap(secret, key), at: new Date().toISOString(), ...(label !== undefined ? { label } : {}) }
 }
 
@@ -261,11 +279,32 @@ export async function openWithPassword(stub: SealedStub, password: string): Prom
     const key = unwrap(await stretch(password, Buffer.from(slot.salt, 'base64'), slot.n ?? SCRYPT_N), slot.wrapped)
     if (key !== undefined) return key
   }
+  // A book of a private shelf opens with the shelf's password too: the password opens the shelf's key (the copy of
+  // it the book carries), and that key opens the book.
+  const shelf = stub.sealed.shelf
+  if (shelf?.slot !== undefined) {
+    const shelfKey = await openSlot(shelf.slot, password)
+    if (shelfKey !== undefined) {
+      try {
+        return openWithSecret(stub, 'shelf', shelf.id, shelfKey)
+      } catch {
+        // The shelf's password, and a book that keeps to its own: not opened by it.
+      } finally {
+        shelfKey.fill(0)
+      }
+    }
+  }
   throw new VaultError('wrong-key', 'that is not the password of this book')
 }
 
+/** What a password slot holds, opened with a password; nothing where the password is not its. */
+export async function openSlot(slot: SealSlot, password: string): Promise<Buffer | undefined> {
+  if (slot.kind !== 'password' || slot.salt === undefined) return undefined
+  return unwrap(await stretch(password, Buffer.from(slot.salt, 'base64'), slot.n ?? SCRYPT_N), slot.wrapped)
+}
+
 /** @throws VaultError `wrong-key` when the secret opens no such slot. */
-export function openWithSecret(stub: SealedStub, kind: 'device' | 'grant', id: string, secret: Buffer): Buffer {
+export function openWithSecret(stub: SealedStub, kind: 'device' | 'grant' | 'shelf', id: string, secret: Buffer): Buffer {
   for (const slot of stub.sealed.slots) {
     if (slot.kind !== kind || slot.id !== id) continue
     const key = unwrap(secret, slot.wrapped)

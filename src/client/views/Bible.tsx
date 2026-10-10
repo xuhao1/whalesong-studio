@@ -21,7 +21,7 @@ import { containment, type Nested } from '../../shared/ties'
 import { DERIVE_TIES_HINT, TiesBlock, TiesReport, useDeriveTies } from '../Ties'
 import {
   Button, Chip, cx, Empty, Field, Modal, ProjectImage, SectionTitle, Select, Tabs, TextArea, TextInput, useAction, useBookLine, useConfirm, useKept, useLoad,
-  useProject, useRunningJob, useSnapshot, useStudio, useT, plainEnter,
+  useProject, useRunningJob, useSnapshot, useStudio, useT, plainEnter, ViewButton,
 } from '../ui'
 
 /** The bible's own choices beside the line in hand: every line at once, and what is filed under no line. */
@@ -264,6 +264,7 @@ function World({ group }: { group: WorldGroup }) {
               <button type="button" className={cx(!asTree && 'is-active')} onClick={() => { setLayout('weight') }}>{t('按分量', 'By weight')}</button>
               <button type="button" className={cx(asTree && 'is-active')} onClick={() => { setLayout('tree') }} title={t('按包含关系：大的在上，里面的缩进在下面', 'By what is in what: the larger above, what is in it indented below')}>{t('按包含关系', 'By what is in what')}</button>
             </div>
+            <HistoryButton kind="ties" id="all" name={t('关系表', 'The table of ties')} />
             <Button size="sm" variant="ghost" icon="sparkles" busy={ties.busy} pending={t('策划正在理关系…', 'The planner is working out the ties…')} onClick={ties.derive} title={t(...DERIVE_TIES_HINT)}>{t('再理一遍关系', 'Work the ties out again')}</Button>
           </div>
         ) : (group === 'places' || group === 'factions') && mine.length > 1 ? (
@@ -436,7 +437,8 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
     else controller.openCharacter(of.id)
   }
   const index = useMemo(() => new Map([...project.chapters, ...(project.lines ?? []).flatMap(line => line.chapters)].map(chapter => [chapter.id, chapter.index])), [project.chapters, project.lines])
-  const where = seen.map(id => index.get(id)).filter((value): value is number => value !== undefined)
+  const named = seen.map(id => [id, index.get(id)] as const).filter((pair): pair is readonly [string, number] => pair[1] !== undefined)
+  const [allNamed, setAllNamed] = useState(false)
   return (
     <div className="nv-editor-form">
       {picture !== undefined && draft.visualImage !== undefined ? (
@@ -448,18 +450,23 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
         <div className="nv-person-title">
           <h2>{draft.name}<Chip tone="neutral">{t(...CATEGORY_LABELS[draft.category])}</Chip><LineTags lines={draft.lines} />{group !== 'ideas' ? <Chip tone={(draft.weight ?? derived) === 'core' ? 'green' : (draft.weight ?? derived) === 'major' ? 'blue' : 'neutral'}>{t(...WEIGHT_LABELS[draft.weight ?? derived])}</Chip> : null}{draft.importance === 1 ? <Chip tone="amber">{t('★ 随上下文', '★ In context')}</Chip> : null}</h2>
           {draft.summary !== undefined && draft.summary.length > 0 ? <p className="nv-person-tagline">{draft.summary}</p> : null}
-          <span className="nv-muted nv-small">
-            {where.length > 0
-              ? t(`正文里 ${where.length} 章写到它：第 ${where.slice(0, 12).join('、')}${where.length > 12 ? ' …' : ''} 章`, `Named in ${where.length} chapters: ${where.slice(0, 12).join(', ')}${where.length > 12 ? '…' : ''}`)
-              : t('正文里还没有写到它', 'Not named in the text yet')}
+          {/* Where the text has it: each chapter a way to the place in it that first names this. */}
+          <span className="nv-muted nv-small nv-named-in">
+            {named.length > 0 ? (
+              <>
+                <span>{t(`正文里 ${named.length} 章写到它：`, `Named in ${named.length} chapters: `)}</span>
+                {(allNamed ? named : named.slice(0, 24)).map(([id, at]) => <button key={id} type="button" className="nv-album-chapter" onClick={() => { controller.readAbout(id, [draft.name, ...(draft.aliases ?? [])]) }} title={t(`去读第 ${at} 章写到它的地方`, `To where chapter ${at} names it`)}>{at}</button>)}
+                {!allNamed && named.length > 24 ? <button type="button" className="nv-link nv-small" onClick={() => { setAllNamed(true) }}>{t(`…另 ${named.length - 24} 章`, `…${named.length - 24} more`)}</button> : null}
+              </>
+            ) : t('正文里还没有写到它', 'Not named in the text yet')}
           </span>
         </div>
         <div className="nv-row">
-          <Button variant="ghost" size="sm" icon="eye" onClick={() => { controller.openExplore({ type: 'world', id: entry.id }) }} title={t('在“观看 → 世界”里看它', 'See it under Watch → World')}>{t('观看', 'View')}</Button>
           {project.world.length > 1 ? <Button variant="ghost" size="sm" icon="branch" onClick={() => { setMerging(true) }} title={t('和另一条合并', 'Merge with another entry')}>{t('合并…', 'Merge…')}</Button> : null}
           <HistoryButton kind="world" id={entry.id} name={entry.name} onRestored={() => { setDirty(false) }} />
           <Button variant="ghost" size="sm" icon="trash" onClick={() => { confirm.ask(t(`删除设定「${entry.name}」？`, `Delete the entry "${entry.name}"?`), () => { void run(async () => { await controller.api.call('world.delete', { root, id: entry.id }); onDeleted() }) }) }} />
           <Button variant="primary" busy={busy} pending={t('正在保存…', 'Saving…')} disabled={!dirty} onClick={save}>{t('保存', 'Save')}</Button>
+          <ViewButton onClick={() => { controller.openExplore({ type: 'world', id: entry.id }) }} title={t('观看：它在“观看 → 世界”里的样子', 'View: as it is under Watch → World')} />
         </div>
       </header>
       {group !== 'ideas' ? <TiesBlock of={{ type: 'world', id: entry.id }} /> : null}
@@ -656,8 +663,8 @@ function StyleEditor({ style, active, onDeleted }: { style: StyleProfile; active
     setDraft(previous => ({ ...previous, [key]: value }))
     setDirty(true)
   }
-  const text = (key: 'tone' | 'diction' | 'rhythm' | 'imagery' | 'dialogue' | 'pacing' | 'body') => ({ value: draft[key] ?? '', onChange: (event: { target: { value: string } }) => { set(key, event.target.value) } })
-  const payload = useMemo(() => ({ ...draft, tone: draft.tone ?? '', diction: draft.diction ?? '', rhythm: draft.rhythm ?? '', imagery: draft.imagery ?? '', dialogue: draft.dialogue ?? '', pacing: draft.pacing ?? '', body: draft.body ?? '', rules: draft.rules ?? [], avoid: draft.avoid ?? [], exemplars: draft.exemplars ?? [] }), [draft])
+  const text = (key: 'register' | 'tone' | 'diction' | 'rhythm' | 'imagery' | 'dialogue' | 'pacing' | 'body') => ({ value: draft[key] ?? '', onChange: (event: { target: { value: string } }) => { set(key, event.target.value) } })
+  const payload = useMemo(() => ({ ...draft, register: draft.register ?? '', tone: draft.tone ?? '', diction: draft.diction ?? '', rhythm: draft.rhythm ?? '', imagery: draft.imagery ?? '', dialogue: draft.dialogue ?? '', pacing: draft.pacing ?? '', body: draft.body ?? '', rules: draft.rules ?? [], avoid: draft.avoid ?? [], exemplars: draft.exemplars ?? [] }), [draft])
   const save = (activate = false): Promise<unknown> => run(async () => {
     await controller.api.call('style.save', { root, style: payload, activate })
     setDirty(false)
@@ -683,6 +690,7 @@ function StyleEditor({ style, active, onDeleted }: { style: StyleProfile; active
           <Select value={draft.tense ?? 'past'} options={[{ value: 'past', label: t('过去时', 'Past') }, { value: 'present', label: t('现在时', 'Present') }]} onChange={(value) => { set('tense', value) }} />
         </Field>
       </div>
+      <Field label={t('语体', 'Register')} hint={t('文言、古白话、现代白话……全文都用它写', 'Classical, early vernacular, modern prose… all of the text is written in it')}><TextArea {...text('register')} /></Field>
       <Field label={t('基调', 'Tone')}><TextArea {...text('tone')} /></Field>
       <div className="nv-form-grid">
         <Field label={t('用词', 'Diction')}><TextArea {...text('diction')} /></Field>

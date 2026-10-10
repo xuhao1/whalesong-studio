@@ -31,8 +31,12 @@ export interface ReaderPrefs {
   notes: boolean
   /** Pressing play over the prose turns the page to the script, where who says what is laid out line by line. Left out: it does. */
   follow?: boolean
-  /** The names of people the book has a card for are underlined in the text, each in a colour of their own, and open who they are when pressed. Left out: they are. */
+  /** The people the book has a card for are underlined where a chapter first names them, each in a colour of their own, and say who they are when pressed. Left out: they are. */
   names?: boolean
+  /** The same for the places, the houses, the things and the ideas of the book's world. Left out: they are. */
+  things?: boolean
+  /** The pictures of people's moments are shown in the text, where the chapter tells them. Left out: they are. */
+  moments?: boolean
 }
 
 const PREFS_KEY = 'novel-studio:reader'
@@ -174,6 +178,13 @@ export function ReaderSettings({ prefs, update, options, updateOptions, t, extra
           ))}
         </div>
       </div>
+      <div className="nv-reader-settings-row">
+        <span className="nv-reader-settings-label" title={t('每一章里第一次写到的地方标一道细线，点一下看是谁、是什么。不标的也一样：选中名字（手机上长按）就能看', 'A thin line where a chapter first names them; press one to see who or what it is. Unmarked ones too: select the name (long-press on a phone)')}>{t('标出', 'Mark')}</span>
+        <div className="nv-seg" role="group">
+          <button type="button" aria-pressed={prefs.names !== false} className={cx(prefs.names !== false && 'is-active')} onClick={() => { update({ names: prefs.names === false }) }}>{t('人物', 'People')}</button>
+          <button type="button" aria-pressed={prefs.things !== false} className={cx(prefs.things !== false && 'is-active')} onClick={() => { update({ things: prefs.things === false }) }}>{t('地点、物品与设定', 'Places, things, lore')}</button>
+        </div>
+      </div>
       <button type="button" className="nv-link nv-reader-settings-more" aria-expanded={more} onClick={() => { setMore(value => !value) }}>
         <Icon name={more ? 'chevronUp' : 'chevronDown'} size={12} />
         <span>{more ? t('收起', 'Less') : t('更多：播放、声音、注记', 'More: playback, sound, notes')}</span>
@@ -192,9 +203,9 @@ export function ReaderSettings({ prefs, update, options, updateOptions, t, extra
             <input type="checkbox" checked={prefs.notes} onChange={(event) => { update({ notes: event.target.checked }) }} />
             <span>{t('正文旁显示声音注记', 'Sound notes beside the text')}</span>
           </label>
-          <label className="nv-check" title={t('有人物卡的人，名字在正文里各用一种颜色的下划线标出，点一下看他是谁', 'People the book has a card for are underlined in the text, each in a colour of their own; press a name to see who they are')}>
-            <input type="checkbox" checked={prefs.names !== false} onChange={(event) => { update({ names: event.target.checked }) }} />
-            <span>{t('在正文里标出人物的名字', 'Mark people\'s names in the text')}</span>
+          <label className="nv-check" title={t('人物的名场面画成立绘之后，出现在这一章写到它的那一段后面', 'Somebody\'s moment, once drawn, stands after the paragraph of the chapter that tells it')}>
+            <input type="checkbox" checked={prefs.moments !== false} onChange={(event) => { update({ moments: event.target.checked }) }} />
+            <span>{t('正文里显示名场面的图', 'Pictures of moments in the text')}</span>
           </label>
           <label className="nv-check" title={t('人声之下的一切：环境声、音效、配乐', 'Everything under the voice: ambience, effects, music')}>
             <input type="checkbox" checked={options.ambienceOn} onChange={(event) => { updateOptions({ ambienceOn: event.target.checked }) }} />
@@ -291,12 +302,18 @@ export interface ReaderPageProps {
   /** A mark was pressed; `at` is where it sits on the scrolled page. */
   onMark?: ((id: string, at: { top: number; bottom: number; left: number }) => void) | undefined
   /**
-   * The people of the story the book has a card for, the weightiest first: wherever the text names one — by name or
+   * The people of the story the book has a card for, the weightiest first: where a chapter first names one — by name or
    * by another name they go by — the name is underlined in that person's colour, and pressed, says who they are.
    */
   people?: readonly ReaderPerson[] | undefined
   /** Go to somebody's own page (the album); offered on their card where there is such a page to go to. */
   onPerson?: ((id: string) => void) | undefined
+  /** The pictures of people's moments that fall in this chapter: each shown after the paragraph it is told in — beside the text, not part of it. */
+  figures?: readonly { path: string; caption: string; after: number }[] | undefined
+  /** The places, houses, things and ideas of the book's world: marked where a chapter first names one, as people are. */
+  things?: readonly ReaderThing[] | undefined
+  /** Go to the page of one of them. */
+  onThing?: ((id: string) => void) | undefined
 }
 
 /** Somebody the text may name, as much of them as a reader is shown at a glance. */
@@ -310,8 +327,43 @@ export interface ReaderPerson {
   portrait?: string | undefined
 }
 
-/** The colours people's names are underlined in: ten apart enough to tell at a glance, on paper and at night alike. */
+/** Something of the world the text may name: a place, a house, a thing, an idea. */
+export interface ReaderThing {
+  id: string
+  name: string
+  aliases?: readonly string[] | undefined
+  group: 'places' | 'factions' | 'items' | 'ideas'
+  /** What it is, in a line. */
+  summary?: string | undefined
+  /** Its design picture, as a path of the book's own files. */
+  image?: string | undefined
+}
+
+/** Whoever or whatever a name in the text is. */
+interface Named {
+  /** `character:<id>` or `world:<id>`: one mark a chapter, whichever of its names comes first. */
+  key: string
+  id: string
+  type: 'character' | 'world'
+  name: string
+  aliases: readonly string[]
+  group?: ReaderThing['group']
+  line?: string | undefined
+  picture?: string | undefined
+  /** People's colours; the world's things share one quiet line. */
+  hue?: number
+}
+
+const THING_LABEL: Record<ReaderThing['group'], [string, string]> = {
+  places: ['地点', 'Place'],
+  factions: ['家族 / 组织', 'House'],
+  items: ['物品', 'Thing'],
+  ideas: ['设定', 'Lore'],
+}
+
+/** The colours people's names are underlined in: ten apart enough to tell, quiet enough to read past. */
 const NAME_HUES = [4, 205, 135, 32, 275, 172, 330, 58, 238, 98]
+const tint = (hue: number | undefined): string | undefined => (hue !== undefined ? `hsl(${hue} 34% 50%)` : undefined)
 
 /** A name is somebody's when it is long enough to be one: a single character is as often a word. */
 const nameable = (name: string): boolean => [...name.trim()].length >= 2
@@ -320,57 +372,127 @@ const nameable = (name: string): boolean => [...name.trim()].length >= 2
 const literal = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 /** One chapter on the page. In listening mode every sentence of the prose can be pressed, and the one being spoken is lit. */
-export function ReaderPage({ t, bookTitle, chapter, text, prefs, media, lines, active, onLine, sound, sounding, pace, flash, scroller, footer, children, onSelect, marks, openMark, onMark, people, onPerson }: ReaderPageProps) {
+export function ReaderPage({ t, bookTitle, chapter, text, prefs, media, lines, active, onLine, sound, sounding, pace, flash, scroller, footer, children, onSelect, marks, openMark, onMark, people, onPerson, things, onThing, figures }: ReaderPageProps) {
   const blocks = useMemo<Block[]>(() => (text !== undefined ? blocksOf(text) : []), [text])
-  // Whose name is whose: every name and other name of the people this text may speak of, the longest tried first
-  // (so that "林黛玉" is not read as "黛玉" with a word before it), each with the colour its person is marked in.
+  // The pictures of moments, by the paragraph each stands after.
+  const pictured = useMemo(() => {
+    const placed = new Map<number, { path: string; caption: string }[]>()
+    if (prefs.moments === false) return placed
+    for (const figure of figures ?? []) placed.set(figure.after, [...(placed.get(figure.after) ?? []), figure])
+    return placed
+  }, [figures, prefs.moments])
+  const momentsAfter = (offset: number): ReactNode => (pictured.get(offset) ?? []).map(figure => (
+    <figure key={`moment-${figure.path}`} className="nv-figure is-moment">
+      <img alt={figure.caption} loading="lazy" src={media(figure.path)} />
+      <figcaption>{figure.caption}</figcaption>
+    </figure>
+  ))
+  // Whose name is whose: every name and other name the text has of the book's people and of its world, the longest
+  // tried first (so that "林黛玉" is not read as "黛玉" with a word before it). A name a person shares with a place is
+  // the person's; one two people share is the weightier one's.
   const naming = useMemo(() => {
-    if (people === undefined || people.length === 0 || prefs.names === false || text === undefined) return undefined
-    const whose = new Map<string, { person: ReaderPerson; hue: number }>()
-    people.forEach((person, index) => {
-      for (const name of [person.name, ...(person.aliases ?? [])]) {
+    if (text === undefined || ((people?.length ?? 0) === 0 && (things?.length ?? 0) === 0)) return undefined
+    const whose = new Map<string, Named>()
+    const take = (names: readonly string[], who: Named): void => {
+      for (const name of names) {
         const known = name.trim()
-        // Only names the text has; and a name two people share is the weightier one's.
-        if (nameable(known) && !whose.has(known) && text.includes(known)) whose.set(known, { person, hue: NAME_HUES[index % NAME_HUES.length]! })
+        if (nameable(known) && !whose.has(known) && text.includes(known)) whose.set(known, who)
       }
+    }
+    ;(people ?? []).forEach((person, index) => {
+      take([person.name, ...(person.aliases ?? [])], { key: `character:${person.id}`, id: person.id, type: 'character', name: person.name, aliases: person.aliases ?? [], line: person.tagline, picture: person.portrait, hue: NAME_HUES[index % NAME_HUES.length]! })
     })
+    for (const thing of things ?? []) {
+      take([thing.name, ...(thing.aliases ?? [])], { key: `world:${thing.id}`, id: thing.id, type: 'world', name: thing.name, aliases: thing.aliases ?? [], group: thing.group, line: thing.summary, picture: thing.image })
+    }
     if (whose.size === 0) return undefined
     return { whose, find: new RegExp([...whose.keys()].sort((left, right) => right.length - left.length).map(literal).join('|'), 'g') }
-  }, [people, prefs.names, text])
-  // The person whose card is open, and where on the scrolled page their name was pressed.
-  const [shown, setShown] = useState<{ person: ReaderPerson; hue: number; top: number; left: number } | undefined>()
+  }, [people, things, text])
+  const marking = { character: prefs.names !== false, world: prefs.things !== false }
+  // Whose card is open, and where on the scrolled page their name was pressed (or selected).
+  const [shown, setShown] = useState<{ who: Named; top: number; left: number; width: number } | undefined>()
   useEffect(() => { setShown(undefined) }, [text, naming])
-  /** A run of text with the names in it marked. */
+  /** Open the card of whoever a name is, under where the name stands. */
+  const open = (who: Named, box: { bottom: number; left: number }, again = false): void => {
+    const host = scroller.current
+    if (host === null) return
+    const frame = host.getBoundingClientRect()
+    const width = Math.min(340, frame.width - 16)
+    const top = box.bottom - frame.top + host.scrollTop + 6
+    setShown(previous => (again && previous?.who.key === who.key && Math.abs(previous.top - top) < 2 ? undefined : { who, top, width, left: Math.max(8, Math.min(frame.width - width - 8, box.left - frame.left)) }))
+  }
+  // A name selected — dragged over, or long-pressed on a touch screen — says who it is too: the way to somebody whose
+  // name is not marked here (marked once a chapter, or not at all), without a line under every name on the page.
+  useEffect(() => {
+    if (naming === undefined) return
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const look = (): void => {
+      const selection = document.getSelection()
+      const host = scroller.current
+      if (selection === null || selection.isCollapsed || selection.rangeCount === 0 || host === null || !host.contains(selection.anchorNode)) return
+      const picked = selection.toString().trim()
+      const length = [...picked].length
+      if (length < 2 || length > 12) return
+      let who = naming.whose.get(picked)
+      if (who === undefined) {
+        // A longer stretch with a name in it; or a piece of a name ("黛玉" of "林黛玉") only one of them has.
+        const inside = picked.match(naming.find)?.[0]
+        if (inside !== undefined) who = naming.whose.get(inside)
+        else {
+          const having = new Map([...naming.whose].filter(([name]) => name.includes(picked)).map(([, named]) => [named.key, named]))
+          if (having.size === 1) who = [...having.values()][0]
+        }
+      }
+      if (who === undefined) return
+      open(who, selection.getRangeAt(0).getBoundingClientRect())
+    }
+    const onChange = (): void => {
+      clearTimeout(timer)
+      timer = setTimeout(look, 420)
+    }
+    document.addEventListener('selectionchange', onChange)
+    return () => {
+      clearTimeout(timer)
+      document.removeEventListener('selectionchange', onChange)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [naming, scroller])
+  // Pressing anywhere else puts the card away.
+  useEffect(() => {
+    if (shown === undefined) return
+    const away = (event: Event): void => {
+      const target = event.target as Element | null
+      if (target?.closest?.('.nv-namecard, .nv-name') == null) setShown(undefined)
+    }
+    document.addEventListener('pointerdown', away)
+    return () => { document.removeEventListener('pointerdown', away) }
+  }, [shown])
+  // Marked where a chapter first names them, and no more: a page is to be read, not to be a net of lines.
+  const met = new Set<string>()
+  /** A run of text with the first names in it marked. */
   const named = (run: string): ReactNode => {
-    if (naming === undefined) return run
+    if (naming === undefined || (!marking.character && !marking.world)) return run
     const out: ReactNode[] = []
     let last = 0
     for (const match of run.matchAll(naming.find)) {
       const found = naming.whose.get(match[0])
-      if (found === undefined) continue
+      if (found === undefined || !marking[found.type] || met.has(found.key)) continue
+      met.add(found.key)
       const at = match.index
       if (at > last) out.push(run.slice(last, at))
+      const colour = tint(found.hue)
       out.push(
         <span
           key={at}
-          className={cx('nv-name', shown?.person.id === found.person.id && 'is-open')}
-          style={{ ['--nv-name' as string]: `hsl(${found.hue} 62% 48%)` }}
-          data-person={found.person.id}
+          className={cx('nv-name', found.type === 'world' && 'is-thing', shown?.who.key === found.key && 'is-open')}
+          style={colour !== undefined ? { ['--nv-name' as string]: colour } : undefined}
+          data-named={found.key}
           onClick={(event) => {
             // A selection is being made, not a name pressed.
             if ((window.getSelection()?.toString().length ?? 0) > 0) return
             // Theirs, and not the line's or the note's the name stands in.
             event.stopPropagation()
-            const host = scroller.current
-            if (host === null) return
-            const box = event.currentTarget.getBoundingClientRect()
-            const frame = host.getBoundingClientRect()
-            setShown(previous => (previous?.person.id === found.person.id && Math.abs(previous.top - (box.bottom - frame.top + host.scrollTop + 6)) < 2 ? undefined : {
-              person: found.person,
-              hue: found.hue,
-              top: box.bottom - frame.top + host.scrollTop + 6,
-              left: Math.max(8, Math.min(frame.width - 268, box.left - frame.left)),
-            }))
+            open(found, event.currentTarget.getBoundingClientRect(), true)
           }}
         >{match[0]}</span>,
       )
@@ -460,7 +582,7 @@ export function ReaderPage({ t, bookTitle, chapter, text, prefs, media, lines, a
           if (block.kind === 'heading') return <h3 key={block.offset} data-offset={block.offset}>{block.text}</h3>
           if (!listening || ranges.length === 0) {
             const noted = !listening && marks !== undefined && marks.length > 0 ? segmentsOf(block, marks) : undefined
-            if (noted === undefined || !noted.some(segment => segment.line !== undefined)) return [noteRow(block.offset), <p key={block.offset} data-offset={block.offset} className={cx(flash === block.offset && 'is-flash')}>{named(block.text)}</p>]
+            if (noted === undefined || !noted.some(segment => segment.line !== undefined)) return [noteRow(block.offset), <p key={block.offset} data-offset={block.offset} className={cx(flash === block.offset && 'is-flash')}>{named(block.text)}</p>, momentsAfter(block.offset)]
             return [noteRow(block.offset), (
               <p key={block.offset} data-offset={block.offset} className={cx(flash === block.offset && 'is-flash')}>
                 {noted.map((segment, at) => segment.line === undefined
@@ -483,7 +605,7 @@ export function ReaderPage({ t, bookTitle, chapter, text, prefs, media, lines, a
                       >{named(segment.text)}</mark>
                     ))}
               </p>
-            )]
+            ), momentsAfter(block.offset)]
           }
           return [noteRow(block.offset), (
             <p key={block.offset} data-offset={block.offset} className={cx(flash === block.offset && 'is-flash')}>
@@ -505,7 +627,7 @@ export function ReaderPage({ t, bookTitle, chapter, text, prefs, media, lines, a
                     >{named(segment.text)}</span>
                   ))}
             </p>
-          )]
+          ), momentsAfter(block.offset)]
         })}
         {text !== undefined ? (
           <footer className="nv-reader-foot">
@@ -514,21 +636,26 @@ export function ReaderPage({ t, bookTitle, chapter, text, prefs, media, lines, a
           </footer>
         ) : null}
       </article>
-      {shown !== undefined ? (
-        // Who the name is: their face, who they are in a line, and the way to their own page.
-        <aside className="nv-namecard" style={{ top: shown.top, left: shown.left, ['--nv-name' as string]: `hsl(${shown.hue} 62% 48%)` }} role="dialog" aria-label={shown.person.name}>
-          {shown.person.portrait !== undefined ? <img className="nv-namecard-face" alt={shown.person.name} loading="lazy" src={media(shown.person.portrait)} /> : null}
-          <div className="nv-namecard-body">
-            <strong>{shown.person.name}</strong>
-            {shown.person.tagline !== undefined && shown.person.tagline.trim().length > 0 ? <span className="nv-namecard-line">{shown.person.tagline}</span> : null}
-            {shown.person.aliases !== undefined && shown.person.aliases.filter(nameable).length > 0 ? <span className="nv-muted nv-small">{t('又叫：', 'Also: ')}{shown.person.aliases.filter(nameable).join(t('、', ', '))}</span> : null}
-            <span className="nv-namecard-go">
-              {onPerson !== undefined ? <button type="button" className="nv-link" onClick={() => { const id = shown.person.id; setShown(undefined); onPerson(id) }}>{t('看这个人', 'Their page')}</button> : null}
-              <button type="button" className="nv-link nv-muted" onClick={() => { setShown(undefined) }}>{t('关闭', 'Close')}</button>
-            </span>
-          </div>
-        </aside>
-      ) : null}
+      {shown !== undefined ? (() => {
+        // Who or what the name is: the picture, a line, and the way to the page of their own.
+        const { who } = shown
+        const to = who.type === 'character' ? onPerson : onThing
+        const also = who.aliases.filter(nameable)
+        return (
+          <aside className={cx('nv-namecard', who.type === 'world' && 'is-thing', who.picture === undefined && 'is-bare')} style={{ top: shown.top, left: shown.left, width: shown.width, ...(tint(who.hue) !== undefined ? { ['--nv-name' as string]: tint(who.hue)! } : {}) }} role="dialog" aria-label={who.name}>
+            {who.picture !== undefined ? <img className="nv-namecard-face" alt={who.name} src={media(who.picture)} /> : null}
+            <div className="nv-namecard-body">
+              <strong>{who.name}{who.group !== undefined ? <em className="nv-namecard-kind">{t(...THING_LABEL[who.group])}</em> : null}</strong>
+              {who.line !== undefined && who.line.trim().length > 0 ? <span className="nv-namecard-line">{who.line}</span> : null}
+              {also.length > 0 ? <span className="nv-muted nv-small">{t('又叫：', 'Also: ')}{also.join(t('、', ', '))}</span> : null}
+              <span className="nv-namecard-go">
+                {to !== undefined ? <button type="button" className="nv-link" onClick={() => { setShown(undefined); to(who.id) }}>{who.type === 'character' ? t('看这个人', 'Their page') : t('看它的页面', 'Its page')}</button> : null}
+                <button type="button" className="nv-link nv-muted" onClick={() => { setShown(undefined) }}>{t('关闭', 'Close')}</button>
+              </span>
+            </div>
+          </aside>
+        )
+      })() : null}
       {children}
     </div>
   )

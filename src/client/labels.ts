@@ -237,6 +237,8 @@ const JOB_TITLES: [RegExp, Label][] = [
   [/^digest( |$)/, ['收录记忆', 'Digesting']],
   [/^recheck issues$/, ['核对审校意见', 'Checking the review again']],
   [/^sift cast$/, ['筛新名字', 'Sifting the new names']],
+  [/^settle suggestions$/, ['审定设定建议', 'Settling the suggestions']],
+  [/^reread$/, ['纯净重新收录', 'Reading the book again']],
   [/^art direction$/, ['定画风', 'Setting the art direction']],
   [/^growth /, ['读成长轨迹', 'Reading their growth']],
   [/^signature scenes /, ['找名场面', 'Finding their scenes']],

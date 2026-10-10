@@ -102,6 +102,11 @@ describe('translating a book', () => {
     const noted = (await project.translations())[one.id]!
     expect(noted).toMatchObject({ from: 'zh', to: 'en' })
     expect(await project.versionText(one.id, noted.version!)).toBe('雨夜，沈蘅在断肠斋后间写信。\n\n阿棠把信送了出去。')
+    // However many versions come after and are let go in their turn, the original is not one of them.
+    await project.snapshot(one.id, 'edit', '后来的一稿')
+    await (project as unknown as { pruneVersions(id: string, keep: number): Promise<void> }).pruneVersions(one.id, 0)
+    expect((await project.versions(one.id)).map(version => version.reason)).toEqual(['before-translate'])
+    expect(await project.versionText(one.id, noted.version!)).toBe('雨夜，沈蘅在断肠斋后间写信。\n\n阿棠把信送了出去。')
     // The cards go by their names in the translation too — whatever tells people by name still tells them.
     expect(result.named).toBe(3)
     expect((await project.findCharacter('沈蘅'))!.aliases).toEqual(['Shen Heng'])

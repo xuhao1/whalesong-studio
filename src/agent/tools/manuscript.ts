@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { digestPending } from '../../core/pipelines/digest'
 import { correctMemory, editChapter, type EditAction, type MemoryPatch } from '../../core/pipelines/edit'
-import { analyzeBook, importManuscript, readBookFile, importLine } from '../../core/pipelines/import'
+import { analyzeBook, importManuscript, readBookFile, importLine, rereadBook } from '../../core/pipelines/import'
 import { reviewChapter } from '../../core/pipelines/review'
 import { acceptProposal, rejectProposal, fixIssues, mendInTurn, reviseBook, reviseChapter, reviseSpan } from '../../core/pipelines/revise'
 import { writeChapter } from '../../core/pipelines/write'
@@ -379,7 +379,7 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
       ].join('\n'),
       mutating: true,
       parameters: {
-        action: { type: 'string', enum: ['import', 'analyze', 'line'], description: 'import (default); analyze for the analysis alone on a book that has its chapters; line to import a manuscript as another line of this book\'s plot — a story different from its first chapter, in the same world (same bible, same people where they are the same).' },
+        action: { type: 'string', enum: ['import', 'analyze', 'line', 'reread'], description: 'import (default); reread to read the book again from nothing but its text — everything read off it (digests, cards, entries, ties, threads, suggestions, what reviews found, what the outlines took from the chapters) is cleared first and the book is taken in anew; pictures come back onto the card or entry of the same name, the text and what was made for the eye and the ear stay. Only when the author asked for exactly this; analyze for the analysis alone on a book that has its chapters; line to import a manuscript as another line of this book\'s plot — a story different from its first chapter, in the same world (same bible, same people where they are the same).' },
         title: { type: 'string', description: 'line: what the line is called (left out: the manuscript\'s own title).' },
         premise: { type: 'string', description: 'line: what the line tells, in a sentence.' },
         path: { type: 'string', description: 'File inside the session workspace.' },
@@ -390,6 +390,15 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
       },
       async run(args, env) {
         const runtime = await env.project()
+        if (args.action === 'reread') {
+          const result = await env.job('import', 'reread', undefined, async task => await rereadBook(env.core, runtime, {}, task))
+          const now = await runtime.project.state()
+          return {
+            text: `Read again from the text alone. Cleared: ${result.cleared.characters} card(s), ${result.cleared.world} entr(ies), ${result.cleared.ties} tie(s), ${result.cleared.threads} thread(s), the digests of ${result.cleared.digests} chapter(s). Now: ${now.characters.length} card(s), ${now.world.length} entr(ies). Pictures went back onto ${result.pictures.people} card(s) and ${result.pictures.things} entr(ies)${result.without.length > 0 ? `; no card or entry bears these names now, their pictures are in the gallery: ${result.without.slice(0, 20).join(', ')}` : ''}.${result.analysis.failed.length > 0 ? ` Not done: ${result.analysis.failed.map(item => `${item.step} (${item.error})`).join('; ')}.` : ''} A cleared card or entry can be had back from the removed ones (novel_manage action=history).`,
+            data: toJson(result),
+            record: { summary: [`纯净重新收录：现在 ${now.characters.length} 张人物卡、${now.world.length} 条设定`, `Read again from the text alone: ${now.characters.length} cards, ${now.world.length} entries`] },
+          }
+        }
         if (args.action === 'analyze') {
           const steps = ANALYZE_STEPS.filter(step => listOf(args.steps)?.includes(step) === true)
           const result = await env.job('import', 'analyze', undefined, async task => await analyzeBook(env.core, runtime, steps.length > 0 ? { steps } : {}, task))

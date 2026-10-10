@@ -480,7 +480,10 @@ export function TextBatchDialog({ chapters, preset, line, onClose }: { chapters:
   const [redo, setRedo] = useState(false)
   const [started, setStarted] = useState(false)
   // One after the other unless the author chooses otherwise; what they chose is kept.
-  const [order, setOrder] = useKept<'sequence' | 'together'>('batch.order', 'sequence')
+  const [order, setOrder] = useKept<'sequence' | 'together' | 'iterate'>('batch.order', 'sequence')
+  // Written in rounds: how many at most, and how grave an issue is worth one.
+  const [rounds, setRounds] = useKept<number>('batch.rounds', 2)
+  const [atLeast, setAtLeast] = useKept<'high' | 'medium' | 'low'>('batch.atLeast', 'medium')
   const [last, setLast] = useState<Parameters<typeof controller.api.call<'batch.text'>>[1] | undefined>()
   const toggleStep = (step: TextStep): void => {
     const next = new Set(steps)
@@ -503,6 +506,7 @@ export function TextBatchDialog({ chapters, preset, line, onClose }: { chapters:
       ...(/^\d+$/.test(words) && Number(words) > 0 ? { words: Number(words) } : {}),
       ...(redo ? { redo: true } : {}),
       ...(writing && order === 'together' ? { order: 'together' as const } : {}),
+      ...(writing && order === 'iterate' ? { order: 'iterate' as const, rounds, atLeast } : {}),
     }
     setLast(params)
     await controller.api.call('batch.text', params)
@@ -522,11 +526,12 @@ export function TextBatchDialog({ chapters, preset, line, onClose }: { chapters:
         <span className="nv-muted nv-small">{amount > 0 ? t(`将处理 ${amount} 章`, `${amount} chapters`) : t('没有要处理的章节', 'Nothing to do for any chapter')}{writing && amount > 1 ? (order === 'together' ? t(' · 并发：各章照章纲同时写', ' · side by side, each from its outline') : t(' · 顺序：后一章读得到前一章', ' · in order, each knowing the one before')) : ''}</span>
         <span className="nv-spacer" />
         <div className="nv-split-btn">
-          <Button variant="primary" icon="sparkles" busy={busy} disabled={running || steps.size === 0 || amount === 0} pending={t('正在开始…', 'Starting…')} onClick={start}>{writing ? (order === 'together' ? t('并发写', 'Write side by side') : t('顺序写', 'Write in order')) : t('开始', 'Start')}</Button>
+          <Button variant="primary" icon="sparkles" busy={busy} disabled={running || steps.size === 0 || amount === 0} pending={t('正在开始…', 'Starting…')} onClick={start}>{writing ? (order === 'together' ? t('并发写', 'Write side by side') : order === 'iterate' ? t(`多轮迭代写（最多 ${rounds} 轮）`, `Write in rounds (${rounds} at most)`) : t('顺序写', 'Write in order')) : t('开始', 'Start')}</Button>
           {writing ? (
             <Menu icon="chevronDown" variant="primary" size="md" align="end" items={[
               { label: t(`${order === 'sequence' ? '✓ ' : ''}顺序：一章接一章，前后更一致`, `${order === 'sequence' ? '✓ ' : ''}In order: chapter after chapter, more of a piece`), onSelect: () => { setOrder('sequence') } },
               { label: t(`${order === 'together' ? '✓ ' : ''}并发：同时写，更快`, `${order === 'together' ? '✓ ' : ''}Side by side: at once, faster`), onSelect: () => { setOrder('together') } },
+              { label: t(`${order === 'iterate' ? '✓ ' : ''}多轮迭代：写完再审校、统一修、重审`, `${order === 'iterate' ? '✓ ' : ''}In rounds: written, then reviewed, mended together, reviewed again`), onSelect: () => { setOrder('iterate') } },
             ]} />
           ) : null}
         </div>
@@ -544,6 +549,25 @@ export function TextBatchDialog({ chapters, preset, line, onClose }: { chapters:
               </label>
             ))}
           </div>
+          {writing && order === 'iterate' ? (
+            // What writing in rounds does, and what it costs: said where it is chosen.
+            <div className="nv-note nv-rounds">
+              <p><strong>{t('多轮迭代', 'Writing in rounds')}</strong>{t('：各章照顺序写完、收录、审校之后，策划把审校出来的问题放在一起看，统一定下怎么改（可以跨章），每章重写一次；改过的章节重新收录、重新审校，再来一轮——直到没有这一级的问题，或轮数用完。', ': once the chapters are written in order, digested and reviewed, the planner reads what the reviews found side by side and settles how to mend it (across chapters where need be); each chapter is rewritten once, digested and reviewed again — and so on, until nothing of this gravity is left or the rounds are used up.')}</p>
+              <p className="nv-muted nv-small">{t('每一轮的修改直接写进正文（下一轮要接着它改），被换掉的每一稿都留在这一章的“版本”里。比只写一遍慢得多、花得多：一轮 = 策划一趟 + 每个改到的章节各一次重写、收录、审校。', 'What a round changes goes into the text (the next round goes on from it); every draft it replaces stays among the chapter\'s versions. Much slower and dearer than writing once: a round is one run of the planner, and a rewrite, a digest and a review for each chapter it changes.')}</p>
+              <div className="nv-form-grid">
+                <Field label={t('最多几轮', 'Rounds at most')}>
+                  <Select<string> value={String(rounds)} options={[1, 2, 3, 4, 5].map(count => ({ value: String(count), label: t(`${count} 轮`, `${count}`) }))} onChange={(value) => { setRounds(Number(value)) }} />
+                </Field>
+                <Field label={t('修哪些问题', 'Which issues are mended')}>
+                  <Select<'high' | 'medium' | 'low'> value={atLeast} options={[
+                    { value: 'high', label: t('只修严重的', 'The grave ones only') },
+                    { value: 'medium', label: t('中等及以上', 'Medium and graver') },
+                    { value: 'low', label: t('全部', 'All of them') },
+                  ]} onChange={setAtLeast} />
+                </Field>
+              </div>
+            </div>
+          ) : null}
           <div className="nv-form-grid">
             <Field label={t('哪些章节', 'Which chapters')}>
               <Select value={scope} options={[

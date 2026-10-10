@@ -15,6 +15,8 @@
  * Every write is atomic and bumps the project revision that the UI long-polls on.
  * Files edited by hand or by other tools are picked up through a directory watch.
  */
+import { scenesOf } from '../shared/art'
+import { placeFigures, type ChapterFigure } from '../shared/reader'
 import { watch, type FSWatcher } from 'node:fs'
 import { basename, join } from 'node:path'
 import {
@@ -23,7 +25,7 @@ import {
   type ActivityEntry, type BookShows, type ChapterTranslation, type GlossaryTerm, type HistoryKind, type HistoryVersion, type Timestamp, type CharacterLook, type CharacterMoment, type LifeMark, type ShowCount,
   type AudioScript, type CastPresence, type ChapterInfo, type ChapterMemory, type ChapterPlan, type ChapterReview, type ChapterStatus, type CharacterCard,
   type ComicBoard, type ComicPanel, type IllustrationInfo, type Outline, type PlaySession, type PlotLine, type PlotLineInfo, type PlotLineOrigin, type PlotThread, type ProjectManifest, type ProjectState, type ProjectStats, type Proposal, type RemovedChapter,
-  type StyleProfile, type Suggestion, type ThreadTouch, type VersionInfo, type VoiceCast, type Volume, type WorldEntry,
+  type SettledSuggestion, type StyleProfile, type Suggestion, type ThreadTouch, type VersionInfo, type VoiceCast, type Volume, type WorldEntry,
 } from '../shared/types'
 import { lifeOf, statusAt, type Life } from '../shared/life'
 import type { LinePerson, LineThread, LineWorld } from '../shared/worldline'
@@ -115,6 +117,8 @@ export interface ChapterPlace {
 const ACTIVITY_KEPT = 5000
 /** Versions that are kept of a chapter's text, and of any one card, entry or plan: enough that nobody meets the end of them while writing a book. */
 const VERSIONS_KEPT = 400
+/** Why a chapter's text was kept when it is the text a translation took the place of. */
+export const ORIGINAL_REASON = 'before-translate'
 /** The author's own saves of a card are kept as versions at most this often: the version before a sitting, not one a press. */
 const EDIT_WINDOW_MS = 5 * 60_000
 
@@ -534,6 +538,11 @@ export class Project {
       const last = (await this.files.listDir(dir)).filter(name => /\.(md|json)$/.test(name)).sort().at(-1)
       const at = last?.includes('__edit.') === true ? Date.parse(isoOf(last.slice(0, last.indexOf('__')))) : Number.NaN
       if (Number.isFinite(at) && Date.now() - at < EDIT_WINDOW_MS) return
+    } else if (kind === 'ties') {
+      // The table of ties is written a row at a time: one pass over it is one version — the table as it was before the pass began.
+      const last = (await this.files.listDir(dir)).filter(name => /\.(md|json)$/.test(name)).sort().at(-1)
+      const at = last?.includes(`__${why}.`) === true ? Date.parse(isoOf(last.slice(0, last.indexOf('__')))) : Number.NaN
+      if (Number.isFinite(at) && Date.now() - at < EDIT_WINDOW_MS) return
     }
     const path = join(dir, `${new Date().toISOString().replace(/[:.]/g, '-')}__${why}.${ext}`)
     await this.own(path, async () => { await this.files.writeAtomic(path, before) })
@@ -594,8 +603,13 @@ export class Project {
     if (kind === 'world') return (await this.world()).find(entry => entry.id === id) as unknown as Record<string, unknown> | undefined
     if (kind === 'style') return (await this.styles()).find(style => style.id === id) as unknown as Record<string, unknown> | undefined
     if (kind === 'book') return await this.manifest() as unknown as Record<string, unknown>
+    if (kind === 'ties') return { relations: await this.ties() }
+    if (kind === 'script') return await this.audioScript(id) as unknown as Record<string, unknown> | undefined
+    if (kind === 'board') return await this.comicBoard(id) as unknown as Record<string, unknown> | undefined
     const outline = await this.outline()
     if (kind === 'thread') return outline.threads.find(thread => thread.id === id) as unknown as Record<string, unknown> | undefined
+    if (kind === 'volume') return shelfOf(outline.volumes.find(volume => volume.id === id))
+    if (kind === 'line') return shelfOf((outline.lines ?? []).find(line => line.id === id))
     return holders(outline).flatMap(holder => holder.chapters).find(plan => plan.id === id) as unknown as Record<string, unknown> | undefined
   }
 
@@ -653,7 +667,39 @@ export class Project {
         await this.updateManifest(patch as Partial<ProjectManifest>, { exact: true })
         return
       }
+      if (kind === 'ties') {
+        // Ties to what the book no longer has are not put back: they would hold on to nothing.
+        const [people, things] = [new Set((await this.characters()).map(card => card.id)), new Set((await this.world()).map(entry => entry.id))]
+        const there = (end: Tie['from']): boolean => (end.type === 'character' ? people : things).has(end.id)
+        const were = Array.isArray(old.relations) ? (old.relations as Tie[]).filter(tie => there(tie.from) && there(tie.to)) : []
+        await this.writeTies(() => were)
+        return
+      }
+      if (kind === 'script' || kind === 'board') {
+        const now = (kind === 'script' ? await this.audioScript(id) : await this.comicBoard(id)) as unknown as Record<string, unknown> | undefined
+        const next = { ...mixed(now ?? {}), schema: 1, chapterId: id, updatedAt: new Date().toISOString() }
+        if (kind === 'script') await this.saveAudioScript(next as unknown as AudioScript)
+        else await this.saveComicBoard(next as unknown as ComicBoard)
+        return
+      }
       await this.updateOutline((draft) => {
+        if (kind === 'volume' || kind === 'line') {
+          const holder = kind === 'volume' ? draft.volumes.find(volume => volume.id === id) : (draft.lines ?? []).find(line => line.id === id)
+          if (holder === undefined) throw new ProjectError('novel/not-found', `no ${kind} "${id}"`)
+          const { chapters, id: _id, ...words } = mixed(shelfOf(holder)!)
+          // What it is called and says, as the version has it; what the version has not, it has no longer.
+          const record = holder as unknown as Record<string, unknown>
+          for (const key of Object.keys(record)) if (key !== 'id' && key !== 'chapters' && key !== 'createdAt' && key !== 'origin' && key !== 'play' && !(key in words)) delete record[key]
+          Object.assign(record, words)
+          // Its chapters in the order the version has them — those it still holds; what came to it since stays after them.
+          // (A chapter moved elsewhere since is not pulled back: where a chapter is, is a move of its own.)
+          const order = Array.isArray(chapters) ? chapters.map(String) : []
+          const rank = (plan: ChapterPlan): number => { const at = order.indexOf(plan.id); return at < 0 ? order.length : at }
+          holder.chapters = holder.chapters.map((plan, at) => ({ plan, at })).sort((left, right) => rank(left.plan) - rank(right.plan) || left.at - right.at).map(item => item.plan)
+          const knot = knotIn(draft)
+          if (knot !== undefined) throw new ProjectError('novel/invalid', knot)
+          return
+        }
         if (kind === 'thread') {
           const at = draft.threads.findIndex(thread => thread.id === id)
           if (at < 0) throw new ProjectError('novel/not-found', `no thread "${id}"`)
@@ -824,10 +870,20 @@ export class Project {
     })
   }
 
+  /** Empty the table of ties; what it said stays in its history. */
+  async clearTies(): Promise<number> {
+    const before = (await this.ties()).length
+    if (before > 0) await this.writeTies(() => [])
+    return before
+  }
+
   private async writeTies(mutate: (current: Tie[]) => Tie[]): Promise<Tie[]> {
     const path = this.path('bible', TIES_FILE)
     return await this.mutex.run(path, async () => {
-      const next = mutate(await this.ties())
+      const current = await this.ties()
+      const next = mutate(current)
+      // The table as it was, where this changed what it says: one history for the whole of it.
+      if (said('ties', { relations: current }) !== said('ties', { relations: next })) await this.keep('ties', 'all', `${JSON.stringify({ relations: current }, null, 2)}\n`, 'json')
       await this.writeDoc(path, { schema: 1, relations: next })
       return next
     })
@@ -1153,6 +1209,19 @@ export class Project {
       for (const plan of holders(current).flatMap(holder => holder.chapters)) {
         const now = plansNow.get(plan.id)
         if (now !== undefined && said('plan', plan as unknown as Record<string, unknown>) !== said('plan', now as unknown as Record<string, unknown>)) await this.keep('plan', plan.id, `${JSON.stringify(plan, null, 2)}\n`, 'json')
+      }
+      // And each volume, each line beside the main one: what it is called and says, and its chapters in their order.
+      for (const [kind, were, are] of [['volume', current.volumes, next.volumes], ['line', current.lines ?? [], next.lines ?? []]] as const) {
+        const now = new Map(are.map(holder => [holder.id, holder]))
+        for (const holder of were) {
+          const [before, after] = [shelfOf(holder)!, shelfOf(now.get(holder.id))]
+          if (after === undefined) continue
+          // Its words, or the order of the chapters it had and still has: a chapter that came to it or left it is
+          // no change of the volume (a book being written gains a chapter every day; where a chapter is, is a move of its own).
+          const [were, are] = [before.chapters as string[], after.chapters as string[]]
+          const reordered = were.filter(id => are.includes(id)).join('\n') !== are.filter(id => were.includes(id)).join('\n')
+          if (reordered || said(kind, { ...before, chapters: [] }) !== said(kind, { ...after, chapters: [] })) await this.keep(kind, holder.id, `${JSON.stringify(before, null, 2)}\n`, 'json')
+        }
       }
       const threadsNow = new Map(next.threads.map(thread => [thread.id, thread]))
       for (const thread of current.threads) {
@@ -2092,7 +2161,8 @@ export class Project {
 
   private async pruneVersions(chapterId: string, keep = VERSIONS_KEPT): Promise<void> {
     const dir = this.statePath('versions', chapterId)
-    const names = (await this.files.listDir(dir)).filter(name => name.endsWith('.md'))
+    // A chapter as it was before it was translated is its original: never let go, however many versions come after.
+    const names = (await this.files.listDir(dir)).filter(name => name.endsWith('.md') && !name.endsWith(`__${ORIGINAL_REASON}.md`))
     for (const name of names.slice(0, Math.max(0, names.length - keep))) await this.files.removePath(join(dir, name))
   }
 
@@ -2185,6 +2255,50 @@ export class Project {
     return dropped
   }
 
+  /**
+   * Forget what was read off the text: the digests of these chapters and the summaries of stretches made of them, what
+   * waits to be suggested and what was settled of it, what was said of the names without a card, the note of an
+   * analysis — and, where asked, what a review found. The text and what was made from it for the eye and the ear stay.
+   */
+  async forgetReading(chapters: readonly string[], also: { reviews?: boolean } = {}): Promise<{ digests: number; reviews: number; suggestions: number }> {
+    let digests = 0
+    let reviews = 0
+    for (const id of chapters) {
+      if (await this.memory(id) !== undefined) {
+        await this.removeState('memory', `${id}.json`)
+        digests += 1
+      }
+      if (also.reviews === true && await this.removeReview(id)) reviews += 1
+    }
+    const suggestions = (await this.suggestions()).length
+    for (const file of [['memory', 'arcs.json'], ['suggestions.json'], ['settled.json'], ['walkons.json'], ['analysis.json']]) await this.removeState(...file).catch(() => undefined)
+    return { digests, reviews, suggestions }
+  }
+
+  /** What was settled of the suggestions without the author being asked, the latest first. */
+  async settled(): Promise<SettledSuggestion[]> {
+    return (await this.readState<SettledSuggestion[]>('settled.json')) ?? []
+  }
+
+  /** Keep word of suggestions that were settled; the oldest give way once there are a great many. */
+  async noteSettled(items: Omit<SettledSuggestion, 'at'>[]): Promise<void> {
+    if (items.length === 0) return
+    const at = new Date().toISOString()
+    await this.updateState<SettledSuggestion[]>(['settled.json'], [], current => [...items.map(item => ({ ...item, at })), ...current.filter(old => !items.some(item => item.id === old.id))].slice(0, 600))
+  }
+
+  /** Say otherwise of one that was settled: taken back, or entered after all. */
+  async resettle(id: string, verdict: SettledSuggestion['verdict'], target?: SettledSuggestion['target']): Promise<SettledSuggestion | undefined> {
+    let found: SettledSuggestion | undefined
+    await this.updateState<SettledSuggestion[]>(['settled.json'], [], current => current.map((item) => {
+      if (item.id !== id) return item
+      const { target: _was, ...rest } = item
+      found = { ...rest, verdict, ...(target !== undefined ? { target } : {}), at: new Date().toISOString() }
+      return found
+    }))
+    return found
+  }
+
   async takeSuggestion(id: string): Promise<Suggestion | undefined> {
     let taken: Suggestion | undefined
     await this.updateState<Suggestion[]>(['suggestions.json'], [], (current) => {
@@ -2256,6 +2370,17 @@ export class Project {
     return true
   }
 
+  /**
+   * The pictures of people's moments that fall in a chapter, each where the chapter tells it: shown beside the text
+   * to whoever reads it, without being written into it.
+   */
+  async chapterFigures(chapterId: string, text?: string): Promise<ChapterFigure[]> {
+    const moments = (await this.characters()).flatMap(card => scenesOf(card)
+      .filter(scene => scene.chapter === chapterId && scene.portrait !== undefined)
+      .map(scene => ({ path: scene.portrait!, caption: scene.title.length > 0 ? `${scene.title} · ${card.name}` : card.name, told: `${scene.title}${scene.text}` })))
+    return moments.length > 0 ? placeFigures(text ?? await this.chapterText(chapterId), moments) : []
+  }
+
   // ───────────── stage documents ─────────────
 
   async audioScript(chapterId: string): Promise<AudioScript | undefined> {
@@ -2263,12 +2388,28 @@ export class Project {
   }
 
   async saveAudioScript(script: AudioScript, notify = true): Promise<void> {
+    await this.keepDoc('script', script.chapterId, await this.audioScript(script.chapterId), script)
     await this.writeState(['audio', `${script.chapterId}.json`], script, notify)
+  }
+
+  /**
+   * A chapter's script or storyboard as it was, kept where what is about to be written says something else: who says
+   * what and how, what a panel shows. A take spoken or a picture drawn changes nothing of that, and keeps nothing.
+   * @param next - what is about to be written; left out when the thing is taken away.
+   */
+  private async keepDoc(kind: 'script' | 'board', id: string, before: object | undefined, next?: object): Promise<void> {
+    if (before === undefined) return
+    if (next !== undefined && said(kind, before as Record<string, unknown>) === said(kind, next as Record<string, unknown>)) return
+    const kept = async (): Promise<void> => { await this.keep(kind, id, `${JSON.stringify(before, null, 2)}\n`, 'json') }
+    if (next === undefined) await this.because('removed', kept)
+    else await kept()
   }
 
   /** Take a chapter's audio script away; the takes spoken for it stay on disk, where a script made again finds them. */
   async removeAudioScript(chapterId: string): Promise<boolean> {
-    if ((await this.audioScript(chapterId)) === undefined) return false
+    const script = await this.audioScript(chapterId)
+    if (script === undefined) return false
+    await this.keepDoc('script', chapterId, script)
     await this.removeState('audio', `${chapterId}.json`)
     return true
   }
@@ -2288,6 +2429,7 @@ export class Project {
   }
 
   async saveComicBoard(board: ComicBoard, notify = true): Promise<void> {
+    await this.keepDoc('board', board.chapterId, await this.comicBoard(board.chapterId), board)
     await this.writeState(['comic', `${board.chapterId}.json`], board, notify)
   }
 
@@ -2315,6 +2457,7 @@ export class Project {
           return merged
         }),
       }
+      await this.keepDoc('board', chapterId, current, next)
       await this.writeDoc(path, next)
       return next
     })
@@ -2322,7 +2465,9 @@ export class Project {
 
   /** Take a chapter's storyboard away; the pictures drawn for it stay in the gallery. */
   async removeComicBoard(chapterId: string): Promise<boolean> {
-    if ((await this.comicBoard(chapterId)) === undefined) return false
+    const board = await this.comicBoard(chapterId)
+    if (board === undefined) return false
+    await this.keepDoc('board', chapterId, board)
     await this.removeState('comic', `${chapterId}.json`)
     return true
   }
@@ -3145,6 +3290,11 @@ function storiesOf(outline: Outline): (line: string | undefined) => string {
     return root
   }
   return line => walk(line ?? MAIN_LINE, new Set())
+}
+
+/** A volume, or a line beside the main one, as a version is about it: what it is called and says, and its chapters by id, in their order. */
+function shelfOf(holder: Volume | PlotLine | undefined): Record<string, unknown> | undefined {
+  return holder !== undefined ? { ...holder, chapters: holder.chapters.map(plan => plan.id) } : undefined
 }
 
 function holders(outline: Outline): { chapters: ChapterPlan[] }[] {

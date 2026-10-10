@@ -23,6 +23,7 @@ import { chapterJob, inBatch, type ChapterJob } from '../Batch'
 import { useSheetsAsk } from '../SheetsAsk'
 import { PictureViewer } from '../PictureRecord'
 import { VideoCard } from './Video'
+import { HistoryButton } from '../History'
 
 export function ComicStage({ chapter }: { chapter: ChapterInfo | undefined }) {
   const { controller } = useStudio()
@@ -50,6 +51,15 @@ export function ComicStage({ chapter }: { chapter: ChapterInfo | undefined }) {
   const drawingAll = draws.some(item => item.result?.all === true)
   // What is set up decides which steps one click can do.
   const ready = useSnapshot(snapshot => snapshot.settings?.ready)
+  // Whether the art of the things a panel shows goes along with it: as the book has it, else the Studio — to be said otherwise here, and kept with the book.
+  const studioImage = useSnapshot(snapshot => snapshot.settings?.settings.image)
+  const withThings = (project.manifest.image?.panelThings ?? studioImage?.panelThings) !== false
+  const setWithThings = (on: boolean): void => {
+    void controller.guard(async () => {
+      await controller.api.call('project.update', { root, patch: { image: { ...project.manifest.image, panelThings: on } } })
+      await controller.refreshProject()
+    })
+  }
   const board = useLoad(async signal => chapter !== undefined ? await controller.api.call('comic.board', { root, chapter: chapter.id }, signal) : undefined, [root, chapter?.id, project.revision, job === undefined])
   const audio = useLoad(async signal => chapter !== undefined ? await controller.api.call('audio.script', { root, chapter: chapter.id }, signal) : undefined, [root, chapter?.id, project.revision, job === undefined])
   const lines = useMemo(() => audio.data?.script?.lines ?? [], [audio.data])
@@ -125,7 +135,7 @@ export function ComicStage({ chapter }: { chapter: ChapterInfo | undefined }) {
     return run(async () => {
       await sheets.before([{ kind: 'panels', chapter: chapter.id, ...params }], async (choice) => {
         player.stop()
-        await controller.api.call('comic.render', { root, chapter: chapter.id, ...params, ...choice })
+        await controller.api.call('comic.render', { root, chapter: chapter.id, ...params, ...choice, things: withThings })
         await controller.refreshJobs()
       })
     })
@@ -162,6 +172,8 @@ export function ComicStage({ chapter }: { chapter: ChapterInfo | undefined }) {
             <Button variant={!unfinished && (board.data.stale || changed) ? 'primary' : 'outline'} icon="sparkles" busy={storyboarding} disabled={working} pending={t('正在编排分镜…', 'Storyboarding…')} onClick={() => cut(panels.length > 0)}>
               {panels.length === 0 ? t('生成分镜', 'Storyboard it') : board.data.stale ? t('按新正文重做分镜', 'Redo the storyboard') : changed ? t('按这个密度重做分镜', 'Redo with this cut') : t('重做分镜', 'Redo the storyboard')}
             </Button>
+            {/* There whether or not the chapter has a storyboard now: one that was redone or taken away is had back here. */}
+            <HistoryButton kind="board" id={chapter.id} name={t(`第 ${chapter.index} 章 · 分镜`, `Chapter ${chapter.index} — the storyboard`)} onRestored={() => { board.reload() }} />
           </div>
         </div>
         {panels.length > 0 ? (
@@ -169,6 +181,10 @@ export function ComicStage({ chapter }: { chapter: ChapterInfo | undefined }) {
             <Button icon="image" busy={drawingAll || (drawing && draws.length === 0)} pending={t('正在绘制…', 'Drawing…')} disabled={remaking || drawingAll || drawn === panels.length} onClick={() => render()}>{drawn === 0 ? t(`绘制全部 ${panels.length} 格`, `Draw all ${panels.length} panels`) : drawn < panels.length ? t(`绘制剩余 ${panels.length - drawn} 格`, `Draw the other ${panels.length - drawn}`) : t('全部已绘', 'All drawn')}</Button>
             {lines.some(item => item.audio === undefined) ? <Button icon="mic" busy={voicing} disabled={remaking} pending={t('正在合成配音…', 'Voicing…')} onClick={() => (!controller.need('tts') ? undefined : run(async () => { await controller.api.call('audio.synthesize', { root, chapter: chapter.id }); await controller.refreshJobs() }))}>{t('合成配音', 'Synthesize voices')}</Button> : null}
             <Button variant="ghost" icon="headphones" onClick={() => { controller.openReader('listen', chapter.id) }}>{t('去"听"里制作配音', 'Voices are made under Listen')}</Button>
+            <label className="nv-check" title={t('画面里出现了有设定图的物品时，把物品图也当参考图发给绘图模型；不勾就只照文字画它。这本书记住这个选择', 'Where a panel shows a thing that has design art, the art goes along as a reference; unticked, the thing is drawn from its words alone. Kept with this book')}>
+              <input type="checkbox" checked={withThings} onChange={(event) => { setWithThings(event.target.checked) }} />
+              <span>{t('带上物品设定图', 'Things\' art goes along')}</span>
+            </label>
             <span className="nv-spacer" />
             <Button variant="ghost" icon="trash" disabled={working} onClick={() => { confirm.ask(t('删除这一章的分镜？画好的图还留在图库里。', 'Delete this chapter\'s storyboard? Pictures already drawn stay in the gallery.'), () => { void run(async () => { player.stop(); await controller.api.call('comic.clear', { root, chapter: chapter.id }); controller.toast('success', t('已删除这一章的分镜', 'The storyboard is deleted')); board.reload() }) }) }} title={t('删除这一章的分镜', 'Delete this chapter\'s storyboard')} />
           </div>

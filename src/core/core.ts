@@ -4,6 +4,7 @@
  * and provider factories. It has no knowledge of Cordis or HTTP — the Host
  * half wires it to the Harness, tests drive it directly.
  */
+import { withBookImage } from '../shared/images'
 import { mkdir, rename, rmdir, stat } from 'node:fs/promises'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 import { imageParallel } from '../shared/images'
@@ -28,8 +29,9 @@ import { Gate, type GateKind, type GateOptions, type GateState } from './util/ga
 import { moveToTrash, type Trashed } from './util/trash'
 import {
   dropOpen, newDrop, newKey, openWithPassword, openWithSecret, passwordSlot, readStub, SEALED_SUFFIX, SealedFiles, sealTree, secretSlot, unsealTree, VaultError, writeStub,
-  type SealedStub, type SealSlot,
+  type SealedStub, type SealSlot, type ShelfMark,
 } from './util/vault'
+import { PrivateShelf, type ShelfFile } from './shelf'
 
 /** A stub's seal as it stands once nothing is being sealed or unsealed any more. */
 function unpending(sealed: SealedStub['sealed']): SealedStub['sealed'] {
@@ -97,6 +99,8 @@ export class NovelCore {
   private readonly rootsById = new Map<string, string>()
   /** Keys of the sealed books that are unlocked right now. They live here and nowhere else, and go when the process does. */
   private readonly bookKeys = new Map<string, Buffer>()
+  /** The private shelf: books not shown among the others until its password is given. */
+  private readonly shelf: PrivateShelf
   /**
    * Sealed books that were opened by another device — its grant, or the
    * password typed on it — and by nobody at this computer. They can be served
@@ -126,6 +130,7 @@ export class NovelCore {
     this.llm = retrying(meterLlm(createRoutedLlm(options.llm, options.credentials), (event) => { this.usage.record(event) }))
     this.roles = options.roles
     this.settings = options.settings ?? new SettingsStore()
+    this.shelf = new PrivateShelf(join(this.settings.folder, 'private-shelf.json'))
     this.unsubscribe = this.settings.onChange(() => { void this.refreshSettings() })
     // A gate that slows down or picks up again is something whoever watches the jobs should see.
     for (const gate of Object.values(this.gates)) gate.onChange(() => { this.jobs.touch() })
@@ -336,10 +341,14 @@ export class NovelCore {
     const key = resolve(root)
     const stub = await readStub(key)
     if (stub === undefined) return { sealed: false, locked: false, ways: [] }
+    const mark = stub.sealed.shelf
+    // A book of the private shelf is not named while that shelf is closed.
+    const hidden = mark !== undefined && this.shelf.held()?.id !== mark.id && !this.bookKeys.has(key)
     return {
       sealed: true,
       locked: !this.bookKeys.has(key) || this.deviceOnly.has(key),
-      title: stub.title,
+      title: hidden ? '' : stub.title,
+      ...(mark !== undefined ? { shelf: { own: mark.own === true } } : {}),
       ways: stub.sealed.slots.map(slot => ({ kind: slot.kind, ...(slot.id !== undefined ? { id: slot.id } : {}), ...(slot.label !== undefined ? { label: slot.label } : {}), ...(slot.at !== undefined ? { at: slot.at } : {}) })),
     }
   }
@@ -396,6 +405,11 @@ export class NovelCore {
     if (manifest === undefined) throw new ProjectError('novel/no-project', `no novel project in ${root}`)
     const bookKey = newKey()
     const slot = await passwordSlot(input.password, bookKey)
+    return await this.sealUnder(key, manifest, bookKey, [slot], input.label, undefined, onProgress)
+  }
+
+  /** Put a plain book's files under a key: what `sealBook` and a private shelf both do, each with its own way of opening it. */
+  private async sealUnder(key: string, manifest: ProjectManifest, bookKey: Buffer, slots: SealSlot[], label: string | undefined, shelf: ShelfMark | undefined, onProgress?: (done: number) => void): Promise<{ files: number }> {
     return await this.exclusive(key, async () => {
       // The key is put in safekeeping before the first file is sealed with it: the manifest goes under the seal, then
       // `novel.json` says the book is sealed and how it opens. Cut off after this point, the work is finished at the next unlock.
@@ -403,13 +417,126 @@ export class NovelCore {
       await store.writeJson(join(key, MANIFEST_FILE), manifest)
       // With the drop, what is not the Studio's own to encrypt — the conversations about the book — can be put under the seal while it is locked.
       const drop = newDrop(bookKey)
-      const stub: SealedStub = { schema: 1, id: manifest.id, title: input.label?.trim() || manifest.title, sealed: { v: 1, slots: [slot], pending: true, drop } }
+      const sealed = { v: 1 as const, slots, drop, ...(shelf !== undefined ? { shelf } : {}) }
+      const stub: SealedStub = { schema: 1, id: manifest.id, title: label?.trim() || manifest.title, sealed: { ...sealed, pending: true } }
       await writeStub(key, stub)
       const files = await sealTree(key, BOOK_ENTRIES, bookKey, onProgress)
-      await writeStub(key, { ...stub, sealed: { v: 1, slots: [slot], drop } })
+      await writeStub(key, { ...stub, sealed })
       this.bookKeys.set(key, bookKey)
       return { files: files + 1 }
     })
+  }
+
+  // ───────────── the private shelf ─────────────
+
+  /** How the private shelf stands: whether one was set up here, and whether it is open now. */
+  async shelfState(): Promise<{ set: boolean; open: boolean }> {
+    const file = await this.shelf.file()
+    return { set: file !== undefined, open: file !== undefined && this.shelf.open }
+  }
+
+  /** The books under these folders that stand on a private shelf — any shelf, open or not: read off their stubs alone. */
+  async shelved(workspaces: readonly string[]): Promise<string[]> {
+    const roots: string[] = []
+    for (const workspace of workspaces) {
+      const base = resolve(workspace)
+      const folders = [base, ...(await listDir(base).catch(() => [] as string[])).filter(name => !name.startsWith('.') && name !== 'node_modules').map(name => join(base, name))]
+      for (const folder of folders) if ((await readStub(folder).catch(() => undefined))?.sealed.shelf !== undefined && !roots.includes(folder)) roots.push(folder)
+    }
+    return roots
+  }
+
+  /**
+   * Set the private shelf up, open. Books among `roots` that stand on a shelf whose file is gone are on it again
+   * where the password is that shelf's (a book carries what it takes).
+   * @throws VaultError `weak`; ProjectError `novel/invalid` where there is a shelf already.
+   */
+  async setupShelf(password: string, roots: readonly string[] = []): Promise<void> {
+    if (await this.shelf.file() !== undefined) throw new ProjectError('novel/invalid', 'a private shelf is set up here already')
+    const carried: ShelfFile[] = []
+    for (const root of roots) {
+      const mark = (await readStub(resolve(root)))?.sealed.shelf
+      if (mark?.slot !== undefined && !carried.some(file => file.id === mark.id)) carried.push({ schema: 1, id: mark.id, slot: mark.slot })
+    }
+    await this.shelf.setup(password, carried)
+  }
+
+  /** @throws VaultError `wrong-key`. */
+  async openShelf(password: string): Promise<void> {
+    await this.shelf.unlock(password)
+  }
+
+  /** Close the private shelf: every book on it that is open is locked, and the shelf's key forgotten. */
+  async closeShelf(): Promise<void> {
+    const held = this.shelf.held()
+    if (held !== undefined) {
+      for (const key of [...this.bookKeys.keys()]) {
+        if ((await readStub(key))?.sealed.shelf?.id === held.id) await this.lockBook(key)
+      }
+    }
+    this.shelf.lock()
+  }
+
+  /** Another password for the private shelf. Books on it that are within reach (`roots`) carry the new one from now on. */
+  async rekeyShelf(password: string, next: string, roots: readonly string[] = []): Promise<void> {
+    const file = await this.shelf.change(password, next)
+    for (const root of roots) {
+      const key = resolve(root)
+      const stub = await readStub(key)
+      if (stub?.sealed.shelf?.id === file.id && stub.sealed.shelf.slot !== undefined) await writeStub(key, { ...stub, sealed: { ...stub.sealed, shelf: { ...stub.sealed.shelf, slot: file.slot } } })
+    }
+  }
+
+  /**
+   * Put a book on the private shelf. A plain book is sealed for it — under the shelf's key, or under a password of
+   * its own (`own`) where it is to ask for one besides. A book that is sealed already (and unlocked) keeps its seal:
+   * the shelf's key is added to what opens it, unless it is to keep to its own password (`own: true`, or a new one).
+   * @throws ProjectError `novel/locked` while the shelf is closed, or the book sealed and locked.
+   */
+  async shelveBook(root: string, how: { own?: string | true } = {}, onProgress?: (done: number) => void): Promise<{ files: number }> {
+    const key = resolve(root)
+    const held = this.shelf.held()
+    if (held === undefined) throw new ProjectError('novel/locked', 'open the private shelf first')
+    const stub = await readStub(key)
+    const own = how.own !== undefined
+    const mark: ShelfMark = own ? { id: held.id, own: true } : { id: held.id, slot: held.slot }
+    if (stub === undefined) {
+      const manifest = await readJson<ProjectManifest>(join(key, MANIFEST_FILE))
+      if (manifest === undefined) throw new ProjectError('novel/no-project', `no novel project in ${root}`)
+      if (how.own === true) throw new ProjectError('novel/invalid', 'a book that is to ask for a password of its own needs one')
+      const bookKey = newKey()
+      const slots = typeof how.own === 'string' ? [await passwordSlot(how.own, bookKey)] : [secretSlot('shelf', held.id, held.key, bookKey)]
+      const done = await this.sealUnder(key, manifest, bookKey, slots, undefined, mark, onProgress)
+      return done
+    }
+    const bookKey = this.bookKeys.get(key)
+    if (bookKey === undefined) throw new ProjectError('novel/locked', 'unlock the book first')
+    let slots = stub.sealed.slots.filter(slot => slot.kind !== 'shelf')
+    if (typeof how.own === 'string') slots = [await passwordSlot(how.own, bookKey), ...slots.filter(slot => slot.kind !== 'password')]
+    if (!own) slots = [...slots, secretSlot('shelf', held.id, held.key, bookKey)]
+    if (own && !slots.some(slot => slot.kind === 'password')) throw new ProjectError('novel/invalid', 'a book that is to ask for a password of its own needs one')
+    await writeStub(key, { ...stub, sealed: { ...unpending(stub.sealed), slots, shelf: mark } })
+    this.lockChanged(key)
+    return { files: 0 }
+  }
+
+  /**
+   * Take a book off the private shelf: it is shown among the others again. It stays sealed — by the password it
+   * has, or by the one given here where the shelf's key was all that opened it.
+   * @throws ProjectError `novel/locked` while it is locked; `novel/invalid` where it would be left with nothing to open it.
+   */
+  async unshelveBook(root: string, password?: string): Promise<void> {
+    const key = resolve(root)
+    const stub = await readStub(key)
+    if (stub?.sealed.shelf === undefined) return
+    const bookKey = this.bookKeys.get(key)
+    if (bookKey === undefined) throw new ProjectError('novel/locked', 'unlock the book first')
+    let slots = stub.sealed.slots.filter(slot => slot.kind !== 'shelf')
+    if (password !== undefined && password.length > 0) slots = [await passwordSlot(password, bookKey), ...slots.filter(slot => slot.kind !== 'password')]
+    if (!slots.some(slot => slot.kind === 'password')) throw new ProjectError('novel/invalid', 'off the shelf the book needs a password of its own: give it one, or take its seal off instead')
+    const { shelf: _shelf, ...sealed } = unpending(stub.sealed)
+    await writeStub(key, { ...stub, sealed: { ...sealed, slots } })
+    this.lockChanged(key)
   }
 
   /**
@@ -450,7 +577,7 @@ export class NovelCore {
   /**
    * @param scope - `device`: the book is opened for the reader on other devices only; at this computer it stays locked.
    */
-  async unlockBook(root: string, how: { password: string } | { kind: 'device' | 'grant'; id: string; secret: Buffer }, scope?: 'device'): Promise<void> {
+  async unlockBook(root: string, how: { password: string } | { kind: 'device' | 'grant' | 'shelf'; id: string; secret: Buffer }, scope?: 'device'): Promise<void> {
     const key = resolve(root)
     const stub = await readStub(key)
     if (stub === undefined) return
@@ -526,6 +653,8 @@ export class NovelCore {
   async lockAll(): Promise<number> {
     const open = [...this.bookKeys.keys()]
     for (const key of open) await this.lockBook(key)
+    // The private shelf with them: stepping away closes everything a password opened.
+    this.shelf.lock()
     return open.length
   }
 
@@ -547,7 +676,7 @@ export class NovelCore {
       slots = [...slots.filter(existing => !(existing.kind === slot.kind && existing.id === slot.id)), slot]
     } else if ('remove' in change) {
       slots = slots.filter(slot => !(slot.kind === change.remove.kind && (change.remove.id === undefined || slot.id === change.remove.id)))
-      if (!slots.some(slot => slot.kind === 'password')) throw new ProjectError('novel/invalid', 'a sealed book always keeps a password: it is what opens it when everything else is gone')
+      if (!slots.some(slot => slot.kind === 'password' || slot.kind === 'shelf')) throw new ProjectError('novel/invalid', 'a sealed book always keeps a password: it is what opens it when everything else is gone')
     } else if (change.label.trim().length > 0) title = change.label.trim()
     await writeStub(key, { ...stub, title, sealed: { ...unpending(stub.sealed), slots } })
     return await this.lockOf(key)
@@ -572,10 +701,18 @@ export class NovelCore {
       if (!(await exists(join(root, MANIFEST_FILE)))) return
       try {
         const stub = await readStub(root)
+        const mark = stub?.sealed.shelf
+        const onShelf = mark !== undefined ? { private: true as const, ...(mark.own === true ? { own: true as const } : {}) } : {}
+        if (mark !== undefined) {
+          // A book of the private shelf: among the books only while that shelf is open — and opened by it, unless it keeps to a password of its own.
+          const held = this.shelf.held()
+          if (held === undefined || held.id !== mark.id) return
+          if (!this.bookKeys.has(resolve(root)) && mark.own !== true) await this.unlockBook(root, { kind: 'shelf', id: held.id, secret: held.key }).catch((error: unknown) => { this.log(`the private shelf could not open the book at ${root}`, error) })
+        }
         if (stub !== undefined && (!this.bookKeys.has(resolve(root)) || this.deviceOnly.has(resolve(root)))) {
           // Locked: on the shelf under the name its author chose to show, and nothing more.
           this.rootsById.set(stub.id, resolve(root))
-          refs.push({ root, title: stub.title, relative: relative(base, root) || '.', id: stub.id, sealed: true, locked: true })
+          refs.push({ root, title: stub.title, relative: relative(base, root) || '.', id: stub.id, sealed: true, locked: true, ...onShelf })
           return
         }
         const runtime = await this.tryRuntime(root)
@@ -584,7 +721,8 @@ export class NovelCore {
         const cover = await runtime.project.cover()
         // What there is to read, hear and watch: the shelf leads straight to each. A book that cannot be counted is on the shelf all the same.
         const shows = await runtime.project.shows().catch(() => undefined)
-        refs.push({ root, title: manifest.title, relative: relative(base, root) || '.', id: manifest.id, ...(cover !== undefined ? { cover } : {}), ...(shows !== undefined ? { shows } : {}), ...(stub !== undefined ? { sealed: true } : {}) })
+        // A sealed book shows no cover on the shelf, open or not: what it holds is not for whoever glances at the shelf.
+        refs.push({ root, title: manifest.title, relative: relative(base, root) || '.', id: manifest.id, ...(cover !== undefined && stub === undefined ? { cover } : {}), ...(shows !== undefined ? { shows } : {}), ...(stub !== undefined ? { sealed: true } : {}), ...onShelf })
       } catch (error) {
         this.log(`skipping unreadable project at ${root}`, error)
       }
@@ -633,6 +771,11 @@ export class NovelCore {
 
   currentSettings(): NovelSettings {
     return this.snapshot
+  }
+
+  /** The image settings as they hold for a book: the Studio's, with what the book has its own way with (`novel.json`'s `image`). */
+  async imageOf(runtime: ProjectRuntime): Promise<NovelSettings['image']> {
+    return withBookImage(this.snapshot.image, (await runtime.project.manifest()).image)
   }
 
   async route(role: TextRole, runtime: ProjectRuntime | undefined, task?: Pick<TaskContext, 'agentRoute'>): Promise<ModelRoute> {

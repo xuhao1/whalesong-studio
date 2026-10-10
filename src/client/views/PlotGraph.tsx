@@ -10,7 +10,7 @@
  * shows what can be done there: write on, derive more, open a line, join one
  * to another, make one the main line.
  */
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import type { OutlineOpInput } from '../../shared/rpc'
 import { MAIN_LINE, type ChapterInfo, type ChapterPlan, type PlotLine, type PlotLineOrigin } from '../../shared/types'
 import {
@@ -20,6 +20,7 @@ import { MoveChapters } from '../MoveChapters'
 import { Derive } from './Outline'
 import { readBase64 } from './Home'
 import { LineWorldPanel } from './Worldline'
+import { HistoryButton } from '../History'
 
 const STEP_X = 76
 const LANE_Y = 86
@@ -119,6 +120,19 @@ function layout(volumes: { chapters: ChapterPlan[] }[], lines: readonly PlotLine
 const x = (column: number): number => PAD_X + column * STEP_X
 const y = (lane: number): number => PAD_Y + lane * LANE_Y
 
+/** A point on such a path, so far along it (0 at the station it leaves, 1 at the one it arrives at): where a handle sits. */
+function along(fromX: number, fromY: number, toX: number, toY: number, far: number): { x: number; y: number } {
+  const mid = (fromX + toX) / 2
+  const near = 1 - far
+  const at = (a: number, b: number, c: number, d: number): number => near ** 3 * a + 3 * near ** 2 * far * b + 3 * near * far ** 2 * c + far ** 3 * d
+  return { x: at(fromX, mid, mid, toX), y: at(fromY, fromY, toY, toY) }
+}
+
+/** What is being moved by hand on the graph: a chapter to another place, or the end of a line to another chapter. */
+type Held =
+  | { kind: 'chapter'; id: string; x: number; y: number }
+  | { kind: 'from' | 'into'; line: string; x: number; y: number }
+
 /** A path that leaves one station and arrives at another on a different lane: out level, across in a curve, in level. */
 function bend(fromX: number, fromY: number, toX: number, toY: number): string {
   const mid = (fromX + toX) / 2
@@ -152,6 +166,79 @@ export function PlotGraph() {
     const at = own.findIndex(plan => plan.id === from.plan.id)
     return at < 0 ? [from.plan.id] : own.slice(at).map(plan => plan.id)
   }
+  // ── moving things by hand: a chapter taken to another place, the end of a line to another chapter ──
+  const svg = useRef<SVGSVGElement>(null)
+  const grab = useRef<{ what: Held; x: number; y: number; moved: boolean } | undefined>(undefined)
+  // The click that ends a move is not a click on the chapter.
+  const dropped = useRef(false)
+  const [held, setHeld] = useState<Held | undefined>()
+  const pointOf = (event: { clientX: number; clientY: number }): { x: number; y: number } => {
+    const box = svg.current?.getBoundingClientRect()
+    return { x: event.clientX - (box?.left ?? 0), y: event.clientY - (box?.top ?? 0) }
+  }
+  /** The chapter nearest a point of the graph, of those that may be let go on; none where the point is far from any. */
+  const nearest = (point: { x: number; y: number }, fits: (node: Station) => boolean): Station | undefined => {
+    let best: Station | undefined
+    let least = 54 ** 2
+    for (const node of graph.stations.values()) {
+      if (!fits(node)) continue
+      const far = (x(node.column) - point.x) ** 2 + ((y(node.lane) - point.y) * 1.4) ** 2
+      if (far < least) {
+        least = far
+        best = node
+      }
+    }
+    return best
+  }
+  /** Where what is held would land: beside a chapter, or — an end of a line — on one. */
+  const landing = (() => {
+    if (held === undefined) return undefined
+    if (held.kind === 'chapter') {
+      const node = nearest(held, candidate => candidate.plan.id !== held.id)
+      return node !== undefined ? { node, side: held.x < x(node.column) ? 'before' as const : 'after' as const } : undefined
+    }
+    // An end of a line lands on a chapter that is not the line's own.
+    const node = nearest(held, candidate => candidate.line !== held.line)
+    return node !== undefined ? { node, side: 'on' as const } : undefined
+  })()
+  const take = (what: Held, event: React.PointerEvent): void => {
+    if (event.button !== 0) return
+    grab.current = { what, x: event.clientX, y: event.clientY, moved: false }
+    try {
+      svg.current?.setPointerCapture(event.pointerId)
+    } catch {
+      // A pointer that cannot be held: its moves still arrive while it is over the graph.
+    }
+  }
+  const carry = (event: React.PointerEvent): void => {
+    const from = grab.current
+    if (from === undefined) return
+    // A hand is never quite still: a few pixels are still a click.
+    if (!from.moved && Math.hypot(event.clientX - from.x, event.clientY - from.y) < 6) return
+    from.moved = true
+    setHeld({ ...from.what, ...pointOf(event) })
+  }
+  const letGo = (): void => {
+    const from = grab.current
+    const now = held
+    const to = landing
+    grab.current = undefined
+    setHeld(undefined)
+    if (from === undefined || !from.moved || now === undefined) return
+    dropped.current = true
+    setTimeout(() => { dropped.current = false }, 0)
+    if (now.kind === 'chapter') {
+      if (to === undefined || to.side === 'on') return
+      void run(async () => { await apply([{ op: 'move-chapters', chapters: [now.id], [to.side]: to.node.plan.id }]) })
+      return
+    }
+    const line = lines.find(candidate => candidate.id === now.line)
+    if (line === undefined) return
+    // Let go on a chapter: the line leaves after it, or arrives at it. Let go on nothing: it leaves from the first
+    // page — or arrives nowhere — where it did otherwise before.
+    if (to !== undefined) void run(async () => { await apply([{ op: 'update-line', line: line.id, [now.kind]: to.node.plan.id }]) })
+    else if ((now.kind === 'from' ? line.from : line.into) !== undefined) void run(async () => { await apply([{ op: 'update-line', line: line.id, [now.kind]: null }]) })
+  }
   const station = picked?.kind === 'chapter' ? graph.stations.get(picked.id) : undefined
   const track = picked?.kind === 'line' ? graph.tracks.find(candidate => candidate.id === picked.id) : station !== undefined ? graph.tracks.find(candidate => candidate.id === (station.line ?? MAIN_LINE)) : undefined
   const width = PAD_X + graph.columns * STEP_X + 40
@@ -175,7 +262,7 @@ export function PlotGraph() {
           <strong>{t('剧情图', 'The plot, as a graph')}</strong>
           <span className="nv-muted nv-small">{lines.length === 0
             ? t('故事现在只有一条线。点任意一章，可以从那里另开一条线，或重写这之后的大纲。', 'The story has one line. Click any chapter to open another line from it, or to plot what follows anew.')
-            : t(`主线之外有 ${lines.length} 条线。实心的站是写了正文的章节。`, `${lines.length} line(s) beside the main one. A filled stop is a written chapter.`)}</span>
+            : t(`主线之外有 ${lines.length} 条线。实心的站是写了正文的章节。`, `${lines.length} line(s) beside the main one. A filled stop is a written chapter.`)}{' '}{t('拖一章到别处：换位置或换线；拖一条线两头的小圆点：改它从哪一章分出、汇入哪一章。', 'Drag a chapter elsewhere to move it, also onto another line; drag the small dot at either end of a line to change where it leaves and where it arrives.')}</span>
           <span className="nv-spacer" />
           <Button size="sm" variant="ghost" icon="upload" onClick={() => { setImporting(true) }} title={t('把一份写好的稿子导入成这本书里的另一条线，共用人物和设定', 'Import a finished manuscript as another line of this book, sharing its people and its world')}>{t('导入另一条故事线', 'Import another story line')}</Button>
           <Button size="sm" icon="branch" onClick={() => { setEditing('new') }}>{t('开一条新线', 'Open a line')}</Button>
@@ -184,7 +271,7 @@ export function PlotGraph() {
 
       <div className="nv-plot-scroll">
         {/* Drawn in its own units and never stretched: a short story sits at the left edge, a long one scrolls. */}
-        <svg className="nv-plot-svg" width={width} height={height} role="img" aria-label={t('剧情图', 'Plot graph')}>
+        <svg ref={svg} className={cx('nv-plot-svg', held !== undefined && 'is-moving')} width={width} height={height} role="img" aria-label={t('剧情图', 'Plot graph')} onPointerMove={carry} onPointerUp={letGo} onPointerCancel={() => { grab.current = undefined; setHeld(undefined) }}>
           {/* tracks first, stations on top */}
           {graph.tracks.map((item) => {
             const first = item.stations[0]
@@ -211,6 +298,28 @@ export function PlotGraph() {
                     {last !== undefined && into === undefined ? <path d={`M ${x(last.column)} ${y(item.lane)} L ${x(last.column) + 26} ${y(item.lane)}`} className="nv-plot-rail is-open" /> : null}
                   </>
                 )}
+                {/* Its two ends, to be taken hold of: where it leaves, and where it arrives (or would). */}
+                {item.line !== undefined ? (() => {
+                  const mine = item.line
+                  const leave = from !== undefined
+                    ? along(x(from.column), y(from.lane), x(first?.column ?? from.column + 1), y(item.lane), 0.32)
+                    : { x: x(0) - 30, y: y(item.lane) }
+                  const arrive = into !== undefined && last !== undefined
+                    ? along(x(last.column), y(item.lane), x(into.column), y(into.lane), 0.68)
+                    : last !== undefined ? { x: x(last.column) + 26, y: y(item.lane) } : undefined
+                  return (
+                    <>
+                      <circle className="nv-plot-end" cx={leave.x} cy={leave.y} r={5.5} onPointerDown={(event) => { take({ kind: 'from', line: mine.id, ...pointOf(event) }, event) }}>
+                        <title>{t('拖到另一章上：改成从那一章之后分出。拖到空白处：从故事开头就是另一条路', 'Drag onto another chapter: the line leaves after it. Onto nothing: it goes its own way from the first page')}</title>
+                      </circle>
+                      {arrive !== undefined ? (
+                        <circle className="nv-plot-end" cx={arrive.x} cy={arrive.y} r={5.5} onPointerDown={(event) => { take({ kind: 'into', line: mine.id, ...pointOf(event) }, event) }}>
+                          <title>{t('拖到另一条线的一章上：汇入那一章。拖到空白处：不汇入', 'Drag onto a chapter of another line: the line arrives at it. Onto nothing: it arrives nowhere')}</title>
+                        </circle>
+                      ) : null}
+                    </>
+                  )
+                })() : null}
                 {/* The line's name, on its own track and to the left of where it begins: clear of the stations, their titles and the curve it leaves by. */}
                 {(() => {
                   const edge = item.line === undefined ? PAD_X - 44 : (from !== undefined ? x(from.column) : PAD_X - 30) - 12
@@ -232,7 +341,21 @@ export function PlotGraph() {
             const written = node.info?.hasText === true
             const active = picked?.kind === 'chapter' && picked.id === node.plan.id
             return (
-              <g key={node.plan.id} className={cx('nv-plot-station', written && 'is-written', active && 'is-active', node.plan.status === 'idea' && 'is-idea')} style={{ color: item.colour }} transform={`translate(${x(node.column)} ${y(node.lane)})`} onClick={() => { setPicked({ kind: 'chapter', id: node.plan.id }); controller.focusChapter(node.plan.id) }} role="button" tabIndex={0} onKeyDown={(event) => { if (event.key === 'Enter') setPicked({ kind: 'chapter', id: node.plan.id }) }}>
+              <g
+                key={node.plan.id}
+                className={cx('nv-plot-station', written && 'is-written', active && 'is-active', node.plan.status === 'idea' && 'is-idea', held?.kind === 'chapter' && held.id === node.plan.id && 'is-held', landing?.side === 'on' && landing.node.plan.id === node.plan.id && 'is-target')}
+                style={{ color: item.colour }}
+                transform={`translate(${x(node.column)} ${y(node.lane)})`}
+                onPointerDown={(event) => { take({ kind: 'chapter', id: node.plan.id, ...pointOf(event) }, event) }}
+                onClick={() => {
+                  if (dropped.current) return
+                  setPicked({ kind: 'chapter', id: node.plan.id })
+                  controller.focusChapter(node.plan.id)
+                }}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(event) => { if (event.key === 'Enter') setPicked({ kind: 'chapter', id: node.plan.id }) }}
+              >
                 <title>{`${node.info?.index ?? ''}. ${node.plan.title}${node.plan.synopsis !== undefined ? `\n${node.plan.synopsis}` : ''}`}</title>
                 <circle r={RADIUS} />
                 <text className="nv-plot-index" y={4}>{node.info?.index ?? ''}</text>
@@ -240,6 +363,24 @@ export function PlotGraph() {
               </g>
             )
           }))}
+          {/* What is in the hand, and where it would land. */}
+          {held?.kind === 'chapter' ? (
+            <g className="nv-plot-held" transform={`translate(${held.x} ${held.y})`}>
+              <circle r={RADIUS} />
+              <text className="nv-plot-index" y={4}>{graph.stations.get(held.id)?.info?.index ?? ''}</text>
+            </g>
+          ) : null}
+          {held?.kind === 'chapter' && landing !== undefined && landing.side !== 'on' ? (
+            <line className="nv-plot-slot" x1={x(landing.node.column) + (landing.side === 'before' ? -STEP_X / 2 : STEP_X / 2)} x2={x(landing.node.column) + (landing.side === 'before' ? -STEP_X / 2 : STEP_X / 2)} y1={y(landing.node.lane) - 20} y2={y(landing.node.lane) + 20} />
+          ) : null}
+          {held !== undefined && held.kind !== 'chapter' ? (() => {
+            // The end of the line in the hand, drawn from where the line itself is to where the hand has it.
+            const own = graph.tracks.find(candidate => candidate.id === held.line)
+            const anchor = held.kind === 'from' ? own?.stations[0] : own?.stations.at(-1)
+            const start = anchor !== undefined ? { x: x(anchor.column), y: y(anchor.lane) } : { x: held.x, y: held.y }
+            const end = landing !== undefined ? { x: x(landing.node.column), y: y(landing.node.lane) } : { x: held.x, y: held.y }
+            return <path className="nv-plot-pull" style={{ color: own?.colour }} d={held.kind === 'from' ? bend(end.x, end.y, start.x, start.y) : bend(start.x, start.y, end.x, end.y)} />
+          })() : null}
         </svg>
       </div>
 
@@ -287,6 +428,7 @@ export function PlotGraph() {
                 <Button size="sm" icon="star" disabled={busy} pending={t('正在设为主线…', 'Making it the main line…')} onClick={() => { confirm.ask(t(`把「${track.line!.title}」设为主线？原来主线上被替换的那一段会变成一条线。`, `Make "${track.line!.title}" the main line? The stretch of the main line it replaces becomes a line of its own.`), () => { void run(async () => { await apply([{ op: 'promote-line', line: track.line!.id }]); setPicked(undefined); controller.toast('success', t('已设为主线', 'It is the main line now')) }) }) }}>{t('设为主线', 'Make it the main line')}</Button>
                 <Button size="sm" icon="merge" onClick={() => { setJoining(track.line) }}>{track.line.into !== undefined ? t('改汇入的地方', 'Change where it arrives') : t('汇入另一条线…', 'Join another line…')}</Button>
                 <Button size="sm" icon="pen" onClick={() => { setEditing(track.line) }}>{t('改名和说明', 'Rename')}</Button>
+                <HistoryButton kind="line" id={track.line.id} name={track.line.title} />
                 <Button size="sm" variant="ghost" icon={track.line.shelved === true ? 'play' : 'pause'} pending={t('正在保存…', 'Saving…')} onClick={() => run(async () => { await apply([{ op: 'update-line', line: track.line!.id, shelved: track.line!.shelved !== true }]) })} title={t('搁置的线保留在图上，只是写下一章时不再列出来', 'A line put aside stays on the graph; it is only no longer offered when the next chapter is chosen')}>{track.line.shelved === true ? t('重新启用', 'Take it up again') : t('搁置', 'Put aside')}</Button>
                 <Button size="sm" variant="ghost" icon="trash" onClick={() => { confirm.ask(t(`删除「${track.line!.title}」和它的 ${track.line!.chapters.length} 章？有正文的章节会先各存一份历史版本。`, `Delete "${track.line!.title}" and its ${track.line!.chapters.length} chapter(s)? Written chapters are each kept as a version first.`), () => { void run(async () => { await apply([{ op: 'remove-line', line: track.line!.id }]); setPicked(undefined) }) }) }}>{t('删除这条线', 'Delete the line')}</Button>
               </>

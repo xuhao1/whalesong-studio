@@ -395,7 +395,7 @@ export async function sheetsAhead(core: NovelCore, runtime: ProjectRuntime, asks
   const people = new Map<string, string>()
   let unknown = 0
   // Where the portrait leads, a portrait draws no sheet before it — it draws theirs after it, against it, where they have none.
-  const portraitLeads = leadOf(core.currentSettings().image) === 'portrait'
+  const portraitLeads = leadOf(await core.imageOf(runtime)) === 'portrait'
   let following = 0
   for (const ask of asks) {
     let cards: CharacterCard[]
@@ -430,7 +430,7 @@ export async function sheetsAhead(core: NovelCore, runtime: ProjectRuntime, asks
   return { people: [...people].map(([id, name]) => ({ id, name })), unknown, ...(after ? { after: true as const } : {}) }
 }
 
-export async function renderPanels(core: NovelCore, runtime: ProjectRuntime, params: { chapter: string; panels?: string[]; force?: boolean; concurrency?: number; /** `false`: this once, no design sheet is drawn first. */ sheetFirst?: boolean }, task: TaskContext): Promise<RenderPanelsResult> {
+export async function renderPanels(core: NovelCore, runtime: ProjectRuntime, params: { chapter: string; panels?: string[]; force?: boolean; concurrency?: number; /** `false`: this once, no design sheet is drawn first. */ sheetFirst?: boolean; /** Whether the art of the things a panel shows goes along; left out: as the book (else the Studio) has it. */ things?: boolean }, task: TaskContext): Promise<RenderPanelsResult> {
   const { project } = runtime
   await requireImages(core)
   let board = await buildStoryboard(core, runtime, { chapter: params.chapter }, task)
@@ -450,6 +450,8 @@ export async function renderPanels(core: NovelCore, runtime: ProjectRuntime, par
   // Drawn as this chapter has them: the look — and the sheet — of the stretch of their life that holds here.
   const characters = await castAt(runtime, board.chapterId, first.drawn.length > 0 ? await project.characters() : cards)
   const mostReferences = referencesOf((await core.settings.get()).image.references)
+  // Whether the art of the things a panel shows goes along: this drawing's own word for it, else the book's, else the Studio's (yes).
+  const thingArt = params.things ?? (await core.imageOf(runtime)).panelThings !== false
   let rendered = 0
   let failed = 0
   let unheld = 0
@@ -471,7 +473,7 @@ export async function renderPanels(core: NovelCore, runtime: ProjectRuntime, par
     try {
       // What the director wrote for the panel, and after it how everyone in it looks in what they wear there, how its
       // place and the things it shows look — as the bible has them now; with their design sheets and art along.
-      const makings = panelMakings(panel, { characters, world, most: mostReferences, lang })
+      const makings = panelMakings(panel, { characters, world, most: mostReferences, lang, thingArt })
       const info = await renderImage(core, runtime, {
         subject: makings.subject,
         ...(makings.pieces !== undefined ? { pieces: makings.pieces } : {}),

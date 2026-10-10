@@ -16,6 +16,7 @@
  * adds who is missing, fills what is empty and folds together only cards that
  * nobody has worked on.
  */
+import { mapLimit, serializer } from '../util/async'
 import type { CharacterCard, Suggestion, WalkOn, WalkOnVerdict } from '../../shared/types'
 import { clip, sameName } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
@@ -24,6 +25,7 @@ import { asArray, asList, asRecord, asText } from '../llm'
 import { architectSystem, castAliasTask, castRoundTask, castSiftTask } from '../prompts'
 import { L, promptLanguage } from '../render'
 import { fillPlans } from './digest'
+import { scheduleSettle } from './settle'
 import { pickText } from './plot'
 import { foldName, listWalkOns, noteVerdicts } from '../walkons'
 
@@ -70,6 +72,9 @@ interface Sighting {
   last: number
   notes: string[]
   quotes: string[]
+  /** How the chapters say they look, and how they show themselves to be: what a card is written from. */
+  looks: string[]
+  manners: string[]
   /** The card that already stands for this name, when it is a thin one to be filled. */
   card?: CharacterCard
 }
@@ -90,7 +95,7 @@ export async function castSightings(runtime: ProjectRuntime): Promise<{ open: Si
   }
   const open = new Map<string, Sighting>()
   const known = new Map<string, number>()
-  const seen = (raw: string, chapter: { id: string; index: number } | undefined, note?: string, quote?: string): void => {
+  const seen = (raw: string, chapter: { id: string; index: number } | undefined, note?: string, quote?: string, looks?: string, manner?: string): void => {
     const name = clean(raw)
     const key = fold(name)
     if (key.length === 0 || name.length > 24) return
@@ -103,7 +108,7 @@ export async function castSightings(runtime: ProjectRuntime): Promise<{ open: Si
     const at = card !== undefined ? fold(card.name) : key
     let entry = open.get(at)
     if (entry === undefined) {
-      entry = { name: card?.name ?? name, chapters: [], first: chapter?.index ?? 0, last: chapter?.index ?? 0, notes: [], quotes: [], ...(card !== undefined ? { card } : {}) }
+      entry = { name: card?.name ?? name, chapters: [], first: chapter?.index ?? 0, last: chapter?.index ?? 0, notes: [], quotes: [], looks: [], manners: [], ...(card !== undefined ? { card } : {}) }
       open.set(at, entry)
     }
     if (chapter !== undefined && !entry.chapters.includes(chapter.id)) {
@@ -114,10 +119,13 @@ export async function castSightings(runtime: ProjectRuntime): Promise<{ open: Si
     const text = note?.trim()
     if (text !== undefined && text.length > 0 && entry.notes.length < 5) entry.notes.push(chapter !== undefined ? `${L(lang, `第${chapter.index}章`, `ch.${chapter.index}`)}: ${clip(text, 110)}` : clip(text, 110))
     if (quote !== undefined && quote.trim().length > 0 && entry.quotes.length < 2) entry.quotes.push(clip(quote.trim(), 60))
+    // What the chapters say of how they look and how they are: the first few, each by its chapter — a card is written from these.
+    if (looks !== undefined && looks.trim().length > 0 && entry.looks.length < 4) entry.looks.push(chapter !== undefined ? `${L(lang, `第${chapter.index}章`, `ch.${chapter.index}`)}: ${clip(looks.trim(), 160)}` : clip(looks.trim(), 160))
+    if (manner !== undefined && manner.trim().length > 0 && entry.manners.length < 4) entry.manners.push(clip(manner.trim(), 100))
   }
   for (const { chapter, memory } of memories) {
     const here = { id: chapter.plan.id, index: chapter.index }
-    for (const moment of memory.characters) seen(moment.name, here, [moment.role, moment.stateAfter].filter(Boolean).join(' → '), moment.quote)
+    for (const moment of memory.characters) seen(moment.name, here, [moment.role, moment.stateAfter].filter(Boolean).join(' → '), moment.quote, moment.seen, moment.manner)
     // Named as new but not acting: worth a note, not a chapter to their count.
     for (const entity of memory.newEntities) if (entity.kind === 'character') seen(entity.name, undefined, entity.description)
   }
@@ -128,8 +136,10 @@ export async function castSightings(runtime: ProjectRuntime): Promise<{ open: Si
 /**
  * Give the people of the book their cards.
  * @param onRound - told before each request to the planner: which round of how many, and who it is about.
+ * @param options.only - write whole cards for these people alone, however seldom the digests saw them: those the
+ * planner found worth a card when it looked through the names, whose cards are a line so far.
  */
-export async function mergeCast(core: NovelCore, runtime: ProjectRuntime, task: TaskContext, onRound?: (done: number, total: number, label: string) => void): Promise<CastResult> {
+export async function mergeCast(core: NovelCore, runtime: ProjectRuntime, task: TaskContext, onRound?: (done: number, total: number, label: string) => void, options: { only?: readonly string[] } = {}): Promise<CastResult> {
   const { project } = runtime
   const manifest = await project.manifest()
   const lang = promptLanguage(manifest.language)
@@ -140,21 +150,34 @@ export async function mergeCast(core: NovelCore, runtime: ProjectRuntime, task: 
   // How large a part earns what: in a long book coming back three times is a part and twice a face; a short one has no room for such distinctions.
   const long = chapters > 12
   // A short book's few most present people are its cast, however seldom the digests saw them.
-  const whole = open.filter((entry, rank) => entry.chapters.length >= (long ? 3 : 2) || (!long && rank < 8 && entry.chapters.length >= 1))
+  const only = options.only
+  const whole = only !== undefined
+    ? open.filter(entry => only.some(name => sameName(name, entry.name)))
+    : open.filter((entry, rank) => entry.chapters.length >= (long ? 3 : 2) || (!long && rank < 8 && entry.chapters.length >= 1))
   const wholeNames = new Set(whole.map(entry => entry.name))
   // A line for whoever came back once and has no card. A thin card whose person has not grown is left as it is: asking about it again would say the same again.
-  const lined = open.filter(entry => !wholeNames.has(entry.name) && entry.card === undefined && entry.chapters.length === 2)
-  result.walkOns = open.filter(entry => entry.card === undefined && !wholeNames.has(entry.name)).length - lined.length
+  const lined = only !== undefined ? [] : open.filter(entry => !wholeNames.has(entry.name) && entry.card === undefined && entry.chapters.length === 2)
+  result.walkOns = only !== undefined ? 0 : open.filter(entry => entry.card === undefined && !wholeNames.has(entry.name)).length - lined.length
+  if (whole.length === 0 && lined.length === 0) return result
 
   const rounds: { full: boolean; people: Sighting[] }[] = []
   for (let at = 0; at < whole.length; at += FULL_ROUND) rounds.push({ full: true, people: whole.slice(at, at + FULL_ROUND) })
   for (let at = 0; at < lined.length; at += LIGHT_ROUND) rounds.push({ full: false, people: lined.slice(at, at + LIGHT_ROUND) })
 
   const base = { lang, language: manifest.language, title: manifest.title }
-  for (const [at, round] of rounds.entries()) {
+  // Everything a round is asked is in its task — what the digests noted of each of these people — so a round is one
+  // request, and rounds go out side by side: nobody reads the book again for a card. In two waves: those the book is
+  // carried by first, then everybody else, who are then told who the leads are (a name of the page is often another
+  // name of one of them). Cards are written one round at a time all the same (`inTurn`).
+  let started = 0
+  const inTurn = serializer()
+  const numbered = [...rounds.entries()]
+  for (const wave of [numbered.filter(([, round]) => round.full), numbered.filter(([, round]) => !round.full)]) {
+  if (wave.length === 0) continue
+  await mapLimit(wave, Math.max(1, core.parallel('text')), async ([at, round]) => {
     task.signal?.throwIfAborted()
     const names = round.people.slice(0, 3).map(entry => entry.name).join(lang === 'zh' ? '、' : ', ')
-    onRound?.(at, rounds.length, L(lang, `${names}${round.people.length > 3 ? ` 等 ${round.people.length} 人` : ''}`, `${names}${round.people.length > 3 ? ` and ${round.people.length - 3} more` : ''}`))
+    onRound?.(started++, rounds.length, L(lang, `${names}${round.people.length > 3 ? ` 等 ${round.people.length} 人` : ''}`, `${names}${round.people.length > 3 ? ` and ${round.people.length - 3} more` : ''}`))
     try {
       const cards = await project.characters()
       // Who is known already, so that another name of theirs is recognized: everyone but the ones this round is about.
@@ -162,17 +185,20 @@ export async function mergeCast(core: NovelCore, runtime: ProjectRuntime, task: 
       const known = cards
         .filter(card => !asked.has(fold(card.name)))
         .map(card => `${card.name}${card.aliases !== undefined && card.aliases.length > 0 ? `（${card.aliases.join(lang === 'zh' ? '、' : ', ')}）` : ''}${card.tagline !== undefined ? ` — ${clip(card.tagline, 40)}` : ''}`)
-      const sightings = round.people.map(entry => `- ${entry.name} (${L(lang, `出场 ${entry.chapters.length} 章${entry.first > 0 ? `，第${entry.first}–${entry.last}章` : ''}`, `${entry.chapters.length} chapters${entry.first > 0 ? `, ch.${entry.first}–${entry.last}` : ''}`)})${entry.notes.length > 0 ? `\n  ${entry.notes.join('\n  ')}` : ''}${entry.quotes.length > 0 ? `\n  ${L(lang, '台词', 'lines')}: ${entry.quotes.map(quote => `"${quote}"`).join(' ')}` : ''}`)
-      const { value } = await assign(core, runtime, task, {
+      const sightings = round.people.map(entry => `- ${entry.name} (${L(lang, `出场 ${entry.chapters.length} 章${entry.first > 0 ? `，第${entry.first}–${entry.last}章` : ''}`, `${entry.chapters.length} chapters${entry.first > 0 ? `, ch.${entry.first}–${entry.last}` : ''}`)})${entry.notes.length > 0 ? `\n  ${entry.notes.join('\n  ')}` : ''}${entry.looks.length > 0 ? `\n  ${L(lang, '样子', 'looks')}: ${entry.looks.join(L(lang, '；', '; '))}` : ''}${entry.manners.length > 0 ? `\n  ${L(lang, '为人', 'manner')}: ${entry.manners.join(L(lang, '；', '; '))}` : ''}${entry.quotes.length > 0 ? `\n  ${L(lang, '台词', 'lines')}: ${entry.quotes.map(quote => `"${quote}"`).join(' ')}` : ''}`)
+      const { value } = await core.through('text', async () => await assign(core, runtime, task, {
         role: 'architect',
         label: L(lang, `整理人物表 ${at + 1}/${rounds.length}`, `The cast ${at + 1}/${rounds.length}`),
         tool: 'submit_cast',
+        // All of it is in the task: asked in one request, whatever the role is set to.
+        plain: true,
         what: L(lang, '这一批人物的人物卡', 'the cards of these characters'),
         system: architectSystem(lang),
         prompt: castRoundTask({ ...base, sightings: sightings.join('\n'), known: clip(known.join('\n'), 12_000), full: round.full }),
         temperature: 0.2,
         validate: raw => asRecord(raw),
-      })
+      }), task.signal !== undefined ? { signal: task.signal } : {})
+      await inTurn(async () => {
       result.rounds += 1
       const items = asArray(value.characters).map(asRecord).map((item) => {
         const name = asText(item.name) ?? asText(item.listed)
@@ -197,7 +223,7 @@ export async function mergeCast(core: NovelCore, runtime: ProjectRuntime, task: 
           const note = asText(relation.note)
           return other !== undefined && kind !== undefined ? { target: other, kind, ...(note !== undefined ? { note } : {}) } : undefined
         }).filter((relation): relation is NonNullable<typeof relation> => relation !== undefined)
-        const texts = pickText(item, round.full ? ['gender', 'age', 'tagline', 'appearance', 'personality', 'background', 'motivation', 'flaw', 'arc', 'voice'] : ['gender', 'tagline'])
+        const texts = pickText(item, round.full ? ['gender', 'age', 'tagline', 'appearance', 'personality', 'background', 'motivation', 'arc', 'voice'] : ['gender', 'tagline'])
         // The proper name leads the card; the name the chapters use stays beside it, so that their digests still find it.
         const other = sameName(name, sighting.name) ? [] : [sighting.name]
         const before = sighting.card ?? (await project.findCharacter(name))
@@ -229,19 +255,24 @@ export async function mergeCast(core: NovelCore, runtime: ProjectRuntime, task: 
         if (sighting.card !== undefined) await project.deleteCharacter(sighting.card.id)
         result.merged += 1
       }
+      })
     } catch (error) {
       if (task.signal?.aborted === true) throw error
       result.failed.push({ step: `cast ${at + 1}/${rounds.length}`, error: error instanceof Error ? error.message : String(error) })
     }
+  }, task.signal)
   }
   // With every card made, each name is seen beside every other: what a batch could not know — that two of its names, or a name of it and one of another batch, are one person — shows now.
   task.signal?.throwIfAborted()
   onRound?.(rounds.length, rounds.length + 1, L(lang, '认别名', 'other names of the same person'))
-  try {
-    result.merged += await foldAliases(core, runtime, task)
-  } catch (error) {
-    if (task.signal?.aborted === true) throw error
-    result.failed.push({ step: 'cast aliases', error: error instanceof Error ? error.message : String(error) })
+  // (Asked about a few people by name, the list was looked through for other names when they were found.)
+  if (only === undefined) {
+    try {
+      result.merged += await foldAliases(core, runtime, task)
+    } catch (error) {
+      if (task.signal?.aborted === true) throw error
+      result.failed.push({ step: 'cast aliases', error: error instanceof Error ? error.message : String(error) })
+    }
   }
   onRound?.(rounds.length + 1, rounds.length + 1, '')
   await relinkMemories(runtime)
@@ -524,6 +555,8 @@ export async function siftCast(core: NovelCore, runtime: ProjectRuntime, params:
     }
   }
   task.job?.progress(rounds.length, rounds.length)
+  // Whom it found worth a card, and whose name is another's, are settled like the rest of what the digests proposed.
+  if (result.cards.length + result.aliases.length > 0) scheduleSettle(core, runtime, task, 1500)
   if (result.looked > 0) {
     await project.addActivity({
       by: 'crew',

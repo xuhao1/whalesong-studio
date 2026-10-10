@@ -65,6 +65,8 @@ export interface ProjectManifest {
   models?: Partial<TextModelRouting>
   /** This book's own way of working its crew: a role named here is set so for this book, whatever the Studio-wide settings say. */
   crew?: CrewSettings
+  /** This book's own way with its pictures, where it differs from the Studio's (which picture of a person leads, what a design sheet shows…). */
+  image?: BookImageSettings
   /** Free-form notes that always travel with the project digest. */
   notes?: string
   createdAt: Timestamp
@@ -109,6 +111,8 @@ export interface CharacterLook {
   when?: string
   /** Project-relative path of the design sheet (front, side and back) of this look. */
   sheet?: string
+  /** The sheet shows the front view alone (drawn so: `image.sheet`), not the person three times. */
+  sheetFront?: boolean
 }
 
 /** A moment of the book a person is remembered by, written as the picture a portrait of it would be. */
@@ -149,6 +153,8 @@ export interface CharacterVisual {
    * person from picture to picture.
    */
   sheet?: string
+  /** The sheet shows the front view alone (drawn so: `image.sheet`), not the person three times. */
+  sheetFront?: boolean
   /** Further looks (outfits), each with a sheet derived from the main one. */
   looks?: CharacterLook[]
   /** Project-relative path of the bust portrait (avatars, the interlude stage); the reference when there is no sheet. */
@@ -238,7 +244,7 @@ export interface CharacterStage {
   /** Who they are in it — station, bearing, temper — where that is not what the card says. */
   persona?: string
   /** Their look in it as an image model is told, with the design sheet and the portrait drawn of it. */
-  visual?: { prompt?: string; negative?: string; sheet?: string; portrait?: string }
+  visual?: { prompt?: string; negative?: string; sheet?: string; sheetFront?: boolean; portrait?: string }
 }
 
 export interface CharacterCard {
@@ -381,6 +387,11 @@ export interface StyleProfile {
   name: string
   pov?: NarrativePov
   tense?: 'past' | 'present'
+  /**
+   * The kind of language it is written in — classical, the vernacular of the old chaptered novels, modern prose… —
+   * with the period and form it belongs to and the words that mark it. The first thing a writer has to keep to.
+   */
+  register?: string
   /** Emotional temperature and attitude of the narration. */
   tone?: string
   /** Word choice and register. */
@@ -601,6 +612,10 @@ export interface CharacterMoment {
   learned?: string[]
   /** A line worth keeping as a voice reference. */
   quote?: string
+  /** What the chapter says of how they look: age, face, build, dress, what they carry — only what the text has. What their card is written from, without the book being read again for it. */
+  seen?: string
+  /** How they show themselves to be in the chapter: temper, bearing, what they hold to. */
+  manner?: string
   /** Lifecycle hint detected from the text. */
   lifecycle?: 'enter' | 'exit' | 'death' | 'return'
 }
@@ -626,6 +641,8 @@ export interface EntityCandidate {
   name: string
   kind: 'character' | 'location' | 'item' | 'faction' | 'term'
   description: string
+  /** What the chapter says it looks like — a place, a thing — where it says so. */
+  looks?: string
   /**
    * In a book of several lines, whose the digest took it to be: `line` — of the story it was found in alone; `world` —
    * of the world the lines share. Absent in a book of one line, and where the digest did not say.
@@ -703,6 +720,27 @@ export interface Suggestion {
 }
 
 /**
+ * A suggestion as it was settled without the author being asked: what the planner did with it and why, kept so that
+ * the author sees what entered the bible by itself — to open it, change it, take it back — and what was left out, to
+ * enter it after all.
+ */
+export interface SettledSuggestion {
+  id: string
+  kind: Suggestion['kind']
+  title: string
+  detail: string
+  chapterId?: string
+  payload: Record<string, unknown>
+  /** `entered`: it is in the bible now. `merged`: it became another name of something there (`into`). `skipped`: left out. `undone`: entered, and taken back by the author. */
+  verdict: 'entered' | 'merged' | 'skipped' | 'undone'
+  why?: string
+  into?: string
+  /** What it became, or was folded into. */
+  target?: { type: 'character' | 'world'; id: string }
+  at: Timestamp
+}
+
+/**
  * A name or a term of the book and what it is called in another language: what keeps a translation saying one thing
  * one way from the first chapter to the last. Settled before chapters are translated, sent along with every chapter
  * that has the word in it, and added to when a translation meets a name it has no rendering for.
@@ -735,7 +773,12 @@ export interface ChapterTranslation {
 }
 
 /** What a history is kept of: a card, an entry of the bible, a style, a chapter's plan, a thread, what the book says of itself. (A chapter's text has versions of its own.) */
-export type HistoryKind = 'character' | 'world' | 'style' | 'plan' | 'thread' | 'book'
+/**
+ * `volume`, `line`: a volume of the main line, a line beside it — what it is called and says, and its chapters in
+ * their order (by id). `ties`: the table of how the world's things stand to each other, whole (its one id is `all`).
+ * `script`, `board`: a chapter's audio script, its storyboard, by the chapter's id.
+ */
+export type HistoryKind = 'character' | 'world' | 'style' | 'plan' | 'thread' | 'book' | 'volume' | 'line' | 'ties' | 'script' | 'board'
 
 /** One version of a thing: the thing as it was until `at`, when something changed it. */
 export interface HistoryVersion {
@@ -1060,7 +1103,26 @@ export interface ImageSettings {
    * viewer, on a plain ground.
    */
   portraitScene?: boolean
+  /**
+   * What a design sheet shows. `turn` (default): the person three times — front, side, back. `front`: the front view
+   * alone — one figure, which a small image model draws where three in a row are beyond it.
+   */
+  sheet?: 'turn' | 'front'
+  /**
+   * The design art of the things a panel of a motion comic shows goes along with it as reference pictures. Unset:
+   * yes. `false`: panels are held against people and places only.
+   */
+  panelThings?: boolean
 }
+
+/**
+ * A book's own way with its pictures, where it is not the Studio's: whatever is named here holds for this book,
+ * whatever the settings for every book say (`novel.json`, so it travels with the book).
+ */
+export type BookImageSettings = Pick<ImageSettings, 'lead' | 'portraitScene' | 'sheet' | 'panelThings'>
+
+/** What of the image settings a book may have its own way with. */
+export const BOOK_IMAGE_KEYS: readonly (keyof BookImageSettings)[] = ['lead', 'portraitScene', 'sheet', 'panelThings']
 
 /** How an author's loose notes on a picture of somebody were sorted. */
 export interface SortedNotes {
@@ -1197,6 +1259,12 @@ export interface NovelSettings {
   recheckIssues?: boolean
   /** After chapters are digested, have the planner look through the names that have no card yet and say who is worth one. Unset: yes. */
   siftCast?: boolean
+  /**
+   * What the digests propose for the bible — a new place, thing, house or term, a thread, somebody worth a card — is
+   * looked over by the planner and entered where it is worth entering, each on record with its reason; the author
+   * changes or takes back what entered. Off: every suggestion waits to be accepted one by one. Unset: on.
+   */
+  settleSuggestions?: boolean
   /** Manuscript revisions requested by the agent wait for review instead of applying directly. */
   reviewAgentRevisions: boolean
   /**
@@ -1762,6 +1830,8 @@ export interface IllustrationPiece {
    */
   of: 'frame' | 'look' | 'outfit' | 'expression' | 'ask' | 'composed' | 'scene' | 'change' | 'place' | 'thing'
   text: string
+  /** What the words were introduced by in the prompt, on the line of their own they stood on (`「沈蘅」的样子：`). Not part of the words. */
+  label?: string
   /**
    * Where the words were taken from. A `look`: what is written for an image model (`anchor` — a visual anchor, a
    * place's look), or, lacking that, the prose of the card (`card`). A `scene`: the one kept on the person's card
@@ -2078,6 +2148,10 @@ export interface ProjectRef {
   sealed?: boolean
   /** Sealed, and not unlocked: only the name on the shelf can be shown. */
   locked?: boolean
+  /** It stands on the private shelf: listed only while that shelf is open. */
+  private?: boolean
+  /** On the private shelf, and with a password of its own besides: the shelf shows it and does not open it. */
+  own?: boolean
   /** What of the book there is to read, hear and watch right now. Absent on a locked book, and from a Host that did not count yet. */
   shows?: BookShows
 }
@@ -2108,5 +2182,7 @@ export interface BookLock {
   /** The name the shelf shows while it is locked. */
   title?: string
   /** The ways the book opens: a password, this computer's own unlock, a device that was let in. */
-  ways: { kind: 'password' | 'device' | 'grant'; id?: string; label?: string; at?: string }[]
+  ways: { kind: 'password' | 'device' | 'grant' | 'shelf'; id?: string; label?: string; at?: string }[]
+  /** It stands on the private shelf; `own`: with a password of its own besides, which is what opens it. */
+  shelf?: { own: boolean }
 }

@@ -24,7 +24,7 @@ import type {
   UsageSummary,
   TtsProviderKind,
   AmbiencePreset, AudioCue, AudioLine, AudioScript, BookLock, ChapterMemory, ChapterPlan, ChapterReview, IssueSeverity, CharacterCard, CharacterRole, ComicBoard, ComicPanel, LifeMark, SheetsAsk,
-  ChapterVideo, CrewRole, GateKind, GateState, IllustrationInfo, JobInfo, ModelRoute, NovelSettings, PlaySession, PlayTurn, ProjectManifest, ProjectRef, ProjectState, RecommendedState,
+  ChapterVideo, CrewRole, GateKind, GateState, IllustrationInfo, JobInfo, SettledSuggestion, ModelRoute, NovelSettings, PlaySession, PlayTurn, ProjectManifest, ProjectRef, ProjectState, RecommendedState,
   Proposal, SearchHit, SearchSource, SoundKind, StageStatus, StageStep, StoryboardDensity, StyleProfile, TextRole, TextStep, VersionInfo, WalkOn, WorkMode, WorldEntry, HistoryKind, HistoryVersion, GlossaryTerm, ChapterTranslation,
 } from './types'
 
@@ -32,6 +32,12 @@ import type {
  * How a book is locked, as a screen needs it: besides the book's own state,
  * what this computer can do to unlock it.
  */
+/** How the private shelf stands: whether one was set up on this computer, and whether it is open now. */
+export interface PrivateShelfState {
+  set: boolean
+  open: boolean
+}
+
 export interface LockView extends BookLock {
   /** This computer's own unlock: a fingerprint or face, or the computer's password. */
   device: { available: boolean; biometrics: boolean; method: 'touch-id' | 'windows-hello' | 'password' | 'none'; host: string }
@@ -155,6 +161,20 @@ export interface ShareStatus {
   /** The books that can be read there, and whether they can also be changed from there. */
   books: { root: string; id: string; title: string; /** read: nothing can be changed from another device. edit: text can be edited and interludes played there. */ mode?: 'read' | 'edit'; /** The book is sealed: a device shows its password once before it is let in. */ sealed?: boolean }[]
   /** Why it is not listening although it is switched on. */
+  error?: string
+}
+
+/** The door through which a phone on the network works the Studio: DSH's own page of this computer, handed on. */
+export interface RemoteStatus {
+  /** DSH serves a web page here that can be handed on (it runs as `dsh web`); not so in the desktop app. */
+  possible: boolean
+  running: boolean
+  port?: number
+  /** Addresses a device on the same network opens, the likeliest first. Each carries the door's token. */
+  urls: string[]
+  since?: string
+  /** When it closes by itself. */
+  until?: string
   error?: string
 }
 
@@ -306,6 +326,8 @@ export interface CrewView {
 }
 
 export interface ChapterDocument {
+  /** The pictures of people's moments that fall in this chapter, each where the chapter tells it: shown beside the text, not part of it. */
+  figures?: { path: string; caption: string; after: number }[]
   plan: ChapterPlan
   index: number
   volumeId: string
@@ -358,7 +380,7 @@ export interface HelpView {
 
 export interface NovelRpc {
   // ── workspace & project ──
-  'workspace.info': { params: { sessionId?: string }; result: { workspaces: WorkspaceInfo[]; current?: string; active?: string; mode?: WorkMode; /** Folder a new workspace is created in by default. */ home?: string; /** The Host runs a build that is no longer the installed one. */ stale?: boolean; /** …and can put the installed one up itself (`host.reload`), without DSH restarting. */ reloadable?: boolean } }
+  'workspace.info': { params: { sessionId?: string }; result: { workspaces: WorkspaceInfo[]; /** The private shelf; absent from a Host that has none. */ shelf?: PrivateShelfState; current?: string; active?: string; mode?: WorkMode; /** Folder a new workspace is created in by default. */ home?: string; /** The Host runs a build that is no longer the installed one. */ stale?: boolean; /** …and can put the installed one up itself (`host.reload`), without DSH restarting. */ reloadable?: boolean } }
   /** Register a folder as a Harness workspace: an existing `path`, or a new folder called `name` under the default location. */
   'workspace.create': { params: { name?: string; path?: string }; result: WorkspaceInfo }
   'project.create': { params: { workspace: string; title: string; language?: string; genre?: string; logline?: string; premise?: string; author?: string; idea?: string; /** The title is a placeholder: let the drafted foundation name the book. */ untitled?: boolean; sessionId?: string; /** Seal the book the moment it exists: everything written to it from then on is ciphertext. `label` is the name the shelf shows while it is locked. */ seal?: { password: string; label?: string } }; result: { root: string; jobId?: string; sealed?: boolean } }
@@ -382,6 +404,21 @@ export interface NovelRpc {
   'lock.close': { params: { root: string }; result: LockView }
   /** Change how an unlocked book opens: a new password, the name on the shelf, this computer's unlock on or off, or a device's grant withdrawn. */
   'lock.change': { params: { root: string; password?: string; label?: string; device?: boolean; forget?: { kind: 'grant' | 'device'; id: string } }; result: LockView }
+  // ── the private shelf: books not shown among the others until its password is given ──
+  'shelf.get': { params: Record<string, never>; result: PrivateShelfState }
+  /** Set it up (opened at once). Books already here that stand on a shelf this password opens are on it again. */
+  'shelf.setup': { params: { password: string }; result: PrivateShelfState }
+  'shelf.open': { params: { password: string }; result: PrivateShelfState }
+  /** Close it: every book on it is locked and leaves the shelf's list. */
+  'shelf.close': { params: Record<string, never>; result: PrivateShelfState }
+  'shelf.change': { params: { password: string; next: string }; result: PrivateShelfState }
+  /**
+   * Put a book on it (the shelf has to be open). A plain book is sealed for it. `own`: the book asks for a password
+   * of its own besides — a string sets one, `true` keeps the one a sealed book has.
+   */
+  'shelf.add': { params: { root: string; own?: string | boolean }; result: JobStarted }
+  /** Take a book off it: shown among the others again, still sealed. `password`: what opens it from now on, where the shelf's key was all that did. */
+  'shelf.remove': { params: { root: string; password?: string }; result: PrivateShelfState }
   /**
    * The conversation to talk to the showrunner in. With `root`: the one that is on that book already, else (with `create`) a new one — a novelist's, in the book's workspace, named after the book and put on it. With `workspace` alone: a new novelist's conversation in that folder.
    * `sessionId` is absent where there is none and none was to be made, or this Harness cannot make one.
@@ -447,6 +484,14 @@ export interface NovelRpc {
   'cast.settle': { params: { root: string; name: string; /** Which of two walk-ons by one name: the story they are of. */ story?: string; action: 'card' | 'alias' | 'ignore' | 'restore'; target?: string; role?: CharacterRole }; result: { walkons: WalkOn[]; card?: CharacterCard; lines: number } }
   'suggestion.accept': { params: { root: string; id: string }; result: { ok: boolean } }
   'suggestion.dismiss': { params: { root: string; id: string }; result: { ok: boolean } }
+  /** Read the book again from nothing but its text: what was read off it is cleared first, then it is taken in anew. */
+  'import.reread': { params: { root: string; plans?: boolean; reviews?: boolean; style?: boolean }; result: { jobId: string } }
+  /** What was settled of the suggestions without the author being asked, the latest first. */
+  'suggestion.settled': { params: { root: string }; result: { items: SettledSuggestion[]; auto: boolean } }
+  /** Have the planner settle what waits, now. */
+  'suggestion.settle': { params: { root: string }; result: { jobId: string } }
+  /** Say otherwise of one that was settled: `undo` takes back what entered, `enter` enters what was left out. */
+  'suggestion.overrule': { params: { root: string; id: string; to: 'undo' | 'enter' }; result: { item: SettledSuggestion } }
 
   // ── outline ──
   'outline.apply': { params: { root: string; ops: OutlineOpInput[] }; result: { results: { op: string; ok: boolean; id?: string; message: string }[] } }
@@ -537,7 +582,7 @@ export interface NovelRpc {
   /** Script, voices, sound, storyboard, panels, video — whichever are named — for the chapters named (all written ones when left out). */
   'batch.stage': { params: { root: string; chapters?: string[]; line?: string; steps?: StageStep[]; force?: boolean; density?: StoryboardDensity; maxPanels?: number; direction?: string; subtitles?: boolean; sheetFirst?: boolean }; result: JobStarted }
   /** Beats, writing, memory, review for a run of chapters. Writing goes chapter after chapter; the rest side by side. */
-  'batch.text': { params: { root: string; chapters?: string[]; count?: number; line?: string; steps: TextStep[]; brief?: string; words?: number; redo?: boolean; focus?: string; /** Writing: one chapter after the other (default), or side by side. */ order?: 'sequence' | 'together' }; result: JobStarted }
+  'batch.text': { params: { root: string; chapters?: string[]; count?: number; line?: string; steps: TextStep[]; brief?: string; words?: number; redo?: boolean; focus?: string; /** Writing: one chapter after the other (default), or side by side. */ order?: 'sequence' | 'together' | 'iterate'; /** With `iterate`: rounds of review and mending at most, and how grave an issue is worth one. */ rounds?: number; atLeast?: 'high' | 'medium' | 'low' }; result: JobStarted }
   /** Design sheets, portraits and voices for characters, reference art for places, design art for things, an illustration per chapter, a cover. */
   'batch.art': { params: { root: string; sheets?: string[]; portraits?: string[]; voices?: string[]; places?: string[]; items?: string[]; scenes?: string[]; cover?: boolean; insert?: boolean; force?: boolean; sheetFirst?: boolean }; result: JobStarted }
 
@@ -610,7 +655,7 @@ export interface NovelRpc {
   // ── stage: motion comic ──
   'comic.board': { params: { root: string; chapter: string }; result: { board?: ComicBoard; stale: boolean } }
   'comic.build': { params: { root: string; chapter: string; force?: boolean; /** How finely to cut; the book's own setting when left out. */ density?: StoryboardDensity; maxPanels?: number }; result: JobStarted }
-  'comic.render': { params: { root: string; chapter: string; panels?: string[]; force?: boolean; /** false: this once, no design sheet is drawn first. */ sheetFirst?: boolean }; result: JobStarted }
+  'comic.render': { params: { root: string; chapter: string; panels?: string[]; force?: boolean; /** false: this once, no design sheet is drawn first. */ sheetFirst?: boolean; /** false: this once, the art of the things a panel shows does not go along. */ things?: boolean }; result: JobStarted }
   'comic.updatePanel': { params: { root: string; chapter: string; panel: string; patch: Partial<Pick<ComicPanel, 'prompt' | 'description' | 'camera'>> }; result: ComicBoard }
   /** Take one panel out; its lines go to a neighbour. */
   'comic.removePanel': { params: { root: string; chapter: string; panel: string }; result: ComicBoard }
@@ -686,6 +731,10 @@ export interface NovelRpc {
 
   // ── reading on other devices ──
   'share.status': { params: Record<string, never>; result: ShareStatus }
+  /** The door for working the Studio from a phone. `open` / `close` it; it is never remembered across a restart. */
+  'remote.status': { params: Record<string, never>; result: RemoteStatus }
+  'remote.open': { params: Record<string, never>; result: RemoteStatus }
+  'remote.close': { params: Record<string, never>; result: RemoteStatus }
   /** Switch the reader for other devices on or off, share or stop sharing a book, move it to another port, or replace its address (`renew`) so earlier links stop working. */
   'share.update': { params: { enabled?: boolean; book?: { root: string; shared: boolean; mode?: 'read' | 'edit' }; port?: number; renew?: boolean }; result: ShareStatus }
 

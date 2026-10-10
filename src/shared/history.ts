@@ -7,6 +7,9 @@
  */
 import type { HistoryKind } from './types'
 
+/** Everything a history is kept of. */
+export const HISTORY_KINDS: readonly HistoryKind[] = ['character', 'world', 'style', 'plan', 'thread', 'book', 'volume', 'line', 'ties', 'script', 'board']
+
 /**
  * Where a thing names its pictures. They are no part of what a version keeps or puts back: a picture is kept for as
  * long as nobody deletes it, whatever becomes of the card that showed it. `[]` goes through a list, element by element.
@@ -17,6 +20,10 @@ export const PICTURE_FIELDS: Partial<Record<HistoryKind, readonly string[]>> = {
   // Where the marks stand on a place's picture goes with the picture.
   world: ['visualImage', 'events[].image', 'spots'],
   book: ['cover'],
+  // What was spoken and drawn for a script's lines and a storyboard's panels are files made for them, as a card's
+  // pictures are: a script put back keeps the takes of the lines it still has, a storyboard the pictures of its panels.
+  script: ['lines[].audio', 'lines[].duration', 'lines[].renderKey', 'lines[].error', 'lines[].takes', 'lines[].check', 'lines[].voiced', 'cues[].audio', 'cues[].duration', 'cues[].renderKey', 'cues[].error'],
+  board: ['panels[].image', 'panels[].error'],
 }
 
 /**
@@ -26,6 +33,9 @@ export const PICTURE_FIELDS: Partial<Record<HistoryKind, readonly string[]>> = {
 export const KEPT_FIELDS: Partial<Record<HistoryKind, readonly string[]>> = {
   character: ['firstAppearance', 'lastAppearance'],
   plan: ['status'],
+  // Which text a script or a storyboard was made of says whether it is stale, not what it is.
+  script: ['textHash'],
+  board: ['textHash'],
 }
 
 /** Everything of a thing a version is not about: it is neither compared nor put back — the thing keeps it as it is now. */
@@ -93,7 +103,7 @@ export interface HistoryField {
 }
 
 /** What a thing is told by, and never differs in. */
-const NAMING = new Set(['id', 'schema', 'createdAt'])
+const NAMING = new Set(['id', 'schema', 'createdAt', 'chapterId'])
 
 /**
  * The fields a version and the thing as it is now differ in — what a version can be put back by. A record inside

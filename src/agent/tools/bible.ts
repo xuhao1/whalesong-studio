@@ -26,7 +26,7 @@ const TIE_WORDS: Record<TieKind, [string, string]> = {
   holds: ['持有', 'holds'],
 }
 
-const STYLE_FIELDS = 'name, pov (first|third-limited|third-omniscient|second|multi), tense (past|present), tone, diction, rhythm, imagery, dialogue, pacing, rules[], avoid[], exemplars[{label,text}], body'
+const STYLE_FIELDS = 'name, pov (first|third-limited|third-omniscient|second|multi), tense (past|present), register (the kind of language: classical, the vernacular of the old novels, modern prose… with its markers), tone, diction, rhythm, imagery, dialogue, pacing, rules[], avoid[], exemplars[{label,text}], body'
 
 export function bibleTools(service: NovelService): ToolDefinition[] {
   return [

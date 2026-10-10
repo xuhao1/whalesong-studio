@@ -18,7 +18,7 @@
 import { mapLimit } from '../util/async'
 import { deriveGrowth } from './growth'
 import type { StyleProfile, WorldCategory, WorldEntry } from '../../shared/types'
-import { ANALYZE_STEPS, analysisSteps, type AnalyzeStep } from '../../shared/types'
+import { ANALYZE_STEPS, analysisSteps, type AnalyzeStep, type SettledSuggestion } from '../../shared/types'
 import { clip, countWords, sameName } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { asArray, asList, asRecord, asText } from '../llm'
@@ -29,7 +29,9 @@ import { L, languageName, promptLanguage } from '../render'
 import { errorMessage } from '../util/async'
 import type { JobContext } from '../jobs'
 import { translateChapters } from './translate'
-import { deriveTies, extractStyle } from './bible'
+import { deriveTies, extractStyle, styleSamples } from './bible'
+import { keepNotedScenes } from './scenes'
+import { settleSuggestions, settlesItself } from './settle'
 import { mergeCast } from './cast'
 import { digestPending, updateArcs } from './digest'
 import { pickText } from './plot'
@@ -288,6 +290,8 @@ export interface AnalyzeResult {
   growth?: { people: number; stages: number }
   /** The look settled for the book's pictures. */
   art?: string
+  /** What was done with the suggestions the digests left: entered, folded into something there, left out. */
+  settled?: { entered: number; merged: number; skipped: number }
   failed: { step: string; error: string }[]
 }
 
@@ -351,6 +355,8 @@ export async function analyzeBook(core: NovelCore, runtime: ProjectRuntime, para
       result.merged = cast.merged
       result.walkOns = cast.walkOns
       failed.push(...cast.failed)
+      // What the digests noted as somebody's signature scene had no card to go on until now.
+      await keepNotedScenes(runtime, (await project.characters()).map(card => card.id)).catch((error: unknown) => { core.log('could not bring the noted scenes onto the new cards', error) })
       await finished('cast', cast.failed.length === 0)
     } catch (error) {
       if (task.signal?.aborted === true) throw error
@@ -363,34 +369,38 @@ export async function analyzeBook(core: NovelCore, runtime: ProjectRuntime, para
   if (steps.includes('world')) {
     within(0, L(lang, '整理世界观', 'collecting the world'))
     let ok = true
+    const entered: Omit<SettledSuggestion, 'at'>[] = []
     try {
       const known = await project.world()
       const has = (name: string): boolean => known.some(entry => sameName(entry.name, name) || entry.aliases?.some(alias => sameName(alias, name)) === true)
-      const seen = new Map<string, { kind: string; count: number; notes: string[] }>()
-      const note = (name: string, kind: string, text: string): void => {
+      const seen = new Map<string, { kind: string; count: number; notes: string[]; looks: string[] }>()
+      const note = (name: string, kind: string, text: string, looks?: string): void => {
         if (has(name)) return
-        const entry = seen.get(name) ?? { kind, count: 0, notes: [] }
+        const entry = seen.get(name) ?? { kind, count: 0, notes: [], looks: [] }
         entry.count += 1
         if (entry.notes.length < 3) entry.notes.push(clip(text, 100))
+        if (looks !== undefined && looks.trim().length > 0 && entry.looks.length < 2) entry.looks.push(clip(looks, 160))
         seen.set(name, entry)
       }
       for (const { memory } of memories) {
-        for (const entity of memory.newEntities.filter(candidate => candidate.kind !== 'character')) note(entity.name, entity.kind, entity.description)
+        for (const entity of memory.newEntities.filter(candidate => candidate.kind !== 'character')) note(entity.name, entity.kind, entity.description, entity.looks)
         for (const fact of memory.facts.filter(candidate => candidate.kind === 'world')) note(fact.subject, 'term', fact.statement)
       }
       // What the text comes back to most leads; a long book's world is asked for in rounds, like its cast.
       const ranked = [...seen.entries()].sort((left, right) => right[1].count - left[1].count)
-      const rounds: [string, { kind: string; count: number; notes: string[] }][][] = []
+      const rounds: [string, { kind: string; count: number; notes: string[]; looks: string[] }][][] = []
       for (let start = 0; start < ranked.length; start += WORLD_ROUND) rounds.push(ranked.slice(start, start + WORLD_ROUND))
       for (const [round, names] of rounds.entries()) {
         task.signal?.throwIfAborted()
         within(round / rounds.length, `${L(lang, '整理世界观', 'collecting the world')} ${round + 1}/${rounds.length}`)
         try {
-          const lines = names.map(([name, entry]) => `- ${name} [${entry.kind}] ${entry.notes.join('；')}`)
+          const lines = names.map(([name, entry]) => `- ${name} [${entry.kind}] ${L(lang, `${entry.count} 章`, `${entry.count} ch.`)} ${entry.notes.join('；')}${entry.looks.length > 0 ? L(lang, ` ｜样子：${entry.looks.join('；')}`, ` | looks: ${entry.looks.join('; ')}`) : ''}`)
           const { value } = await assign(core, runtime, task, {
             role: 'architect',
             label: L(lang, `整理世界观 ${round + 1}/${rounds.length}`, `The world ${round + 1}/${rounds.length}`),
             tool: 'submit_world',
+            // What the digests wrote of each thing is in the task: one request a round, whatever the role is set to.
+            plain: true,
             what: L(lang, '合并整理后的设定条目', 'the world entries, merged and sorted'),
             system: architectSystem(lang),
             prompt: worldMergeTask({ ...base, sightings: lines.join('\n'), first: round === 0 }),
@@ -404,15 +414,28 @@ export async function analyzeBook(core: NovelCore, runtime: ProjectRuntime, para
             const category = asText(item.category) as WorldCategory | undefined
             const importance = Number(item.importance)
             const aliases = asList(item.aliases)
-            await project.saveWorld({
+            const saved = await project.saveWorld({
               name,
               category: category !== undefined && CATEGORIES.includes(category) ? category : 'other',
               // Core canon travels with every request: only what the text comes back to most may be named so.
               importance: importance === 1 && round === 0 ? 1 : importance === 3 ? 3 : 2,
               ...(aliases.length > 0 ? { aliases } : {}),
               ...pickText(item, ['summary', 'body']),
+              // What it looks like, where the text says: a picture of it starts from this.
+              ...(asText(item.look) !== undefined ? { visualPrompt: asText(item.look)! } : {}),
             } as Partial<WorldEntry> & { name: string })
             result.worldEntries += 1
+            entered.push({ id: `import:${saved.id}`, kind: 'new-world', title: saved.name, detail: saved.summary ?? '', payload: { name: saved.name, category: saved.category }, verdict: 'entered', target: { type: 'world', id: saved.id } })
+          }
+          // What the planner found not worth an entry: on record, for the author to enter after all.
+          for (const raw of asArray(value.skip)) {
+            const item = asRecord(raw)
+            const name = asText(item.name)
+            const was = name !== undefined ? names.find(([listed]) => sameName(listed, name)) : undefined
+            if (name === undefined || was === undefined) continue
+            const kind = was[1].kind as WorldCategory
+            const why = asText(item.why)
+            entered.push({ id: `import:skip:${name}`, kind: 'new-world', title: name, detail: was[1].notes.join('；'), payload: { name, category: CATEGORIES.includes(kind) ? kind : 'other', ...(was[1].notes[0] !== undefined ? { summary: was[1].notes[0] } : {}) }, verdict: 'skipped', ...(why !== undefined ? { why } : {}) })
           }
         } catch (error) {
           if (task.signal?.aborted === true) throw error
@@ -421,6 +444,7 @@ export async function analyzeBook(core: NovelCore, runtime: ProjectRuntime, para
         }
       }
       await project.pruneSuggestions()
+      await project.noteSettled(entered)
     } catch (error) {
       if (task.signal?.aborted === true) throw error
       ok = false
@@ -441,7 +465,7 @@ export async function analyzeBook(core: NovelCore, runtime: ProjectRuntime, para
     await mapLimit(due, core.parallel('text'), async (card) => {
       try {
         const inner: TaskContext = { origin: task.origin, ...(task.signal !== undefined ? { signal: task.signal } : {}), ...(task.agentRoute !== undefined ? { agentRoute: task.agentRoute } : {}) }
-        stages += (await deriveGrowth(core, runtime, { character: card.id }, inner)).stages.length
+        stages += (await deriveGrowth(core, runtime, { character: card.id, plain: true }, inner)).stages.length
       } catch (error) {
         if (task.signal?.aborted === true) throw error
         ok = false
@@ -460,7 +484,7 @@ export async function analyzeBook(core: NovelCore, runtime: ProjectRuntime, para
     within(0, L(lang, '理清地点、家族、人物之间的关系', 'working out how the world stands'))
     let ok = true
     try {
-      const ties = await deriveTies(core, runtime, {}, task)
+      const ties = await deriveTies(core, runtime, { plain: true }, task)
       result.ties = { added: ties.added, total: ties.total, events: ties.events }
     } catch (error) {
       if (task.signal?.aborted === true) throw error
@@ -566,11 +590,10 @@ export async function analyzeBook(core: NovelCore, runtime: ProjectRuntime, para
     within(0, L(lang, '提炼文风', 'learning the style'))
     let ok = true
     try {
-      // A chapter from the middle shows the settled voice better than an opening.
-      const written = (await project.chapterInfos()).filter(chapter => chapter.hasText)
-      const sample = written[Math.min(written.length - 1, Math.floor(written.length / 3))]
-      if (sample !== undefined) {
-        const style: StyleProfile = await extractStyle(core, runtime, { sample: clip(await project.chapterText(sample.id), 5000), name: L(lang, '原作文风', 'Source style'), activate: true }, task)
+      // Passages from three places of the book: what holds across them is its style, not one scene's manner.
+      const sample = await styleSamples(project)
+      if (sample.trim().length >= 80) {
+        const style: StyleProfile = await extractStyle(core, runtime, { sample, name: L(lang, '原作文风', 'Source style'), activate: true }, task)
         result.style = style.name
       }
     } catch (error) {
@@ -596,6 +619,17 @@ export async function analyzeBook(core: NovelCore, runtime: ProjectRuntime, para
     }
     await finished('art', ok)
   }
+  // What the digests proposed and no pass above made of: looked over by the planner and entered where it is worth it.
+  if (settlesItself(core) && (steps.includes('world') || steps.includes('cast') || steps.includes('digest'))) {
+    try {
+      const settled = await settleSuggestions(core, runtime, { ...task, job: undefined } as TaskContext)
+      result.settled = { entered: settled.entered.length, merged: settled.merged.length, skipped: settled.skipped }
+      failed.push(...settled.failed)
+    } catch (error) {
+      if (task.signal?.aborted === true) throw error
+      failed.push({ step: 'settle', error: error instanceof Error ? error.message : String(error) })
+    }
+  }
   try {
     await updateArcs(core, runtime, task)
   } catch (error) {
@@ -603,6 +637,115 @@ export async function analyzeBook(core: NovelCore, runtime: ProjectRuntime, para
     failed.push({ step: 'arcs', error: error instanceof Error ? error.message : String(error) })
   }
   task.job?.progress(from + at, total)
+  return result
+}
+
+export interface RereadParams {
+  /** Empty what the chapter outlines took from the text too (synopsis, who is in it, where, when, its threads). Default true. */
+  plans?: boolean
+  /** Forget what the reviews found. Default true. */
+  reviews?: boolean
+  /** Learn the style anew. Default true. */
+  style?: boolean
+}
+
+export interface RereadResult {
+  cleared: { digests: number; characters: number; world: number; ties: number; threads: number; reviews: number; suggestions: number; plans: number }
+  analysis: AnalyzeResult
+  /** Cards and entries of a name there was before, that have their pictures again. */
+  pictures: { people: number; things: number }
+  /** Who had pictures and has no card now: the pictures are in the gallery still. */
+  without: string[]
+}
+
+const PERSON_PICTURES = ['prompt', 'negative', 'sheet', 'sheetFront', 'looks', 'portrait', 'portraits', 'sprites'] as const
+const THING_PICTURES = ['visualPrompt', 'visualImage', 'spots'] as const
+
+/**
+ * Read the book again from nothing but its text: everything that was read off it — digests, cards, entries, ties,
+ * threads, suggestions, what reviews found, what the outlines took from the chapters — is cleared, and the book is
+ * taken in anew. The text stays, with its versions, and so does what was made for the eye and the ear: pictures stay
+ * in the gallery and come back onto the card or entry of the same name; voices are kept by a person's name. A card or
+ * an entry that is cleared is in the list of removed ones (or, where the name comes back, in its history).
+ */
+export async function rereadBook(core: NovelCore, runtime: ProjectRuntime, params: RereadParams, task: TaskContext): Promise<RereadResult> {
+  const { project } = runtime
+  const lang = promptLanguage((await project.manifest()).language)
+  task.job?.progress(0, ANALYZE_STEPS.length + 1, L(lang, '清掉从正文读出来的东西', 'clearing what was read off the text'))
+  // Every chapter of every line.
+  const infos = await project.chapterInfos()
+  const outline = await project.outline()
+  for (const line of outline.lines ?? []) {
+    for (const info of await project.chapterInfos(line.id)) if (!infos.some(known => known.id === info.id)) infos.push(info)
+  }
+  const characters = await project.characters()
+  const world = await project.world()
+  // What was drawn of whom, by every name they went by: it goes back onto whoever is called so afterwards.
+  const drawn = characters.flatMap((card) => {
+    const visual = Object.fromEntries(PERSON_PICTURES.flatMap(key => (card.visual?.[key] !== undefined ? [[key, card.visual[key]]] : [])))
+    return Object.keys(visual).length > 0 ? [{ name: card.name, names: [card.name, ...(card.aliases ?? [])], visual }] : []
+  })
+  const shown = world.flatMap((entry) => {
+    // What was drawn of it, with the words it was drawn from; a look nobody drew yet is read off the text anew.
+    if (entry.visualImage === undefined) return []
+    const pictures = Object.fromEntries(THING_PICTURES.flatMap(key => (entry[key] !== undefined ? [[key, entry[key]]] : [])))
+    return [{ name: entry.name, names: [entry.name, ...(entry.aliases ?? [])], pictures }]
+  })
+  const ties = await project.clearTies()
+  for (const card of characters) await project.deleteCharacter(card.id)
+  for (const entry of world) await project.deleteWorld(entry.id)
+  const threads = outline.threads.length
+  if (threads > 0) await project.updateOutline((draft) => { draft.threads = [] })
+  let plans = 0
+  if (params.plans !== false) {
+    for (const info of infos.filter(candidate => candidate.hasText)) {
+      const plan = (await project.findChapter(info.id))?.plan
+      if (plan === undefined || (plan.synopsis === undefined && plan.location === undefined && plan.time === undefined && (plan.characters ?? []).length === 0 && (plan.threads ?? []).length === 0)) continue
+      await project.updateChapter(info.id, { synopsis: '', location: '', time: '', characters: [], threads: [] })
+      plans += 1
+    }
+  } else {
+    // Outlines kept: who is in a chapter and what it carries pointed at cards and threads that are gone.
+    for (const info of infos) {
+      const plan = (await project.findChapter(info.id))?.plan
+      if (plan !== undefined && ((plan.characters ?? []).length > 0 || (plan.threads ?? []).length > 0)) await project.updateChapter(info.id, { characters: [], threads: [] })
+    }
+  }
+  const forgot = await project.forgetReading(infos.map(info => info.id), { reviews: params.reviews !== false })
+  task.signal?.throwIfAborted()
+  const analysis = await analyzeBook(core, runtime, { fresh: true, ...(params.style === false ? { style: false } : {}) }, task, { from: 1, total: ANALYZE_STEPS.length + 1 })
+  // The pictures, back onto whoever bears the name now.
+  const pictures = { people: 0, things: 0 }
+  const without: string[] = []
+  const cards = await project.characters()
+  for (const had of drawn) {
+    const card = cards.find(candidate => had.names.some(name => sameName(candidate.name, name) || (candidate.aliases ?? []).some(alias => sameName(alias, name))))
+    if (card === undefined) {
+      without.push(had.name)
+      continue
+    }
+    await project.saveCharacter({ id: card.id, visual: had.visual })
+    pictures.people += 1
+  }
+  const entries = await project.world()
+  for (const had of shown) {
+    const entry = entries.find(candidate => had.names.some(name => sameName(candidate.name, name) || (candidate.aliases ?? []).some(alias => sameName(alias, name))))
+    if (entry === undefined) {
+      without.push(had.name)
+      continue
+    }
+    await project.saveWorld({ id: entry.id, ...had.pictures })
+    pictures.things += 1
+  }
+  await project.addActivity({
+    by: 'crew',
+    tool: 'reread',
+    summary: L(lang,
+      `纯净重新收录：清掉 ${characters.length} 张人物卡、${world.length} 条设定、${ties} 条关系、${threads} 条线索、${forgot.digests} 章的收录，从正文重读了一遍；现在 ${cards.length} 张人物卡、${entries.length} 条设定。`,
+      `Read again from the text alone: ${characters.length} card(s), ${world.length} entr${world.length === 1 ? 'y' : 'ies'}, ${ties} tie(s), ${threads} thread(s) and the digests of ${forgot.digests} chapter(s) cleared; now ${cards.length} card(s) and ${entries.length} entr${entries.length === 1 ? 'y' : 'ies'}.`),
+  }).catch((error: unknown) => { core.log('could not put the rereading on the book\'s record', error) })
+  const result: RereadResult = { cleared: { digests: forgot.digests, characters: characters.length, world: world.length, ties, threads, reviews: forgot.reviews, suggestions: forgot.suggestions, plans }, analysis, pictures, without }
+  task.job?.result({ reread: { cleared: result.cleared, pictures, without: without.slice(0, 40), characters: cards.length, world: entries.length, failed: analysis.failed.length } })
   return result
 }
 

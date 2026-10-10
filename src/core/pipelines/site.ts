@@ -199,6 +199,7 @@ function mediaOf(chapter: SharedChapterData): string[] {
   for (const line of chapter.script?.lines ?? []) if (line.audio !== undefined) paths.push(line.audio)
   for (const cue of chapter.script?.cues ?? []) if (cue.audio !== undefined) paths.push(cue.audio)
   for (const panel of chapter.board?.panels ?? []) if (panel.image !== undefined) paths.push(panel.image)
+  for (const figure of chapter.figures ?? []) paths.push(figure.path)
   if (chapter.video !== undefined) paths.push(chapter.video.path, ...(chapter.video.subtitles !== undefined ? [chapter.video.subtitles] : []))
   return paths
 }

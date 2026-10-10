@@ -13,7 +13,7 @@
  */
 import { providerDefault } from './recommended'
 import { privateAddress } from './services'
-import { parallelOf, type ImageSettings } from './types'
+import { BOOK_IMAGE_KEYS, parallelOf, type BookImageSettings, type ImageSettings } from './types'
 
 /** OpenAI's own image models, wherever they are reached: a gateway on the author's network that hands on to them is no model of the author's. */
 const GPT_IMAGE = /^(gpt-image|dall-e|chatgpt-image)/i
@@ -198,6 +198,14 @@ export function fittedSize(settings: ImageSettings, wanted: string, limits?: Ima
 /** How many pictures are out at once: one for a server of the author's own, whatever number is set; else the author's number. */
 export function imageParallel(settings: ImageSettings): number {
   return localImages(settings) ? 1 : parallelOf(settings.concurrency)
+}
+
+/** The image settings as they hold for a book: the Studio's, with what the book has its own way with. */
+export function withBookImage<T extends BookImageSettings>(settings: T, book: BookImageSettings | undefined): T {
+  if (book === undefined) return settings
+  const own = Object.fromEntries(BOOK_IMAGE_KEYS.filter(key => book[key] !== undefined).map(key => [key, book[key]]))
+  // A book that says which picture leads says so whatever an older switch of the Studio's had it at.
+  return { ...settings, ...own, ...(book.lead !== undefined ? { sheetFirst: undefined } : {}) }
 }
 
 /** Which picture of a person leads; see `ImageSettings.lead`. */

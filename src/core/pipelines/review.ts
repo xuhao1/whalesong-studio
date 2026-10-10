@@ -34,7 +34,7 @@ export async function reviewChapter(core: NovelCore, runtime: ProjectRuntime, pa
   })
   const style = await project.activeStyle()
   const styleNote = style !== undefined
-    ? `\n\n## ${L(lang, '设定的文风', 'Style profile')}\n\n${[style.tone, style.diction, style.rhythm, ...(style.rules ?? []), ...(style.avoid ?? []).map(item => `${L(lang, '避免', 'avoid')}: ${item}`)].filter(Boolean).join('\n')}`
+    ? `\n\n## ${L(lang, '设定的文风', 'Style profile')}\n\n${[style.register, style.tone, style.diction, style.rhythm, ...(style.rules ?? []), ...(style.avoid ?? []).map(item => `${L(lang, '避免', 'avoid')}: ${item}`)].filter(Boolean).join('\n')}`
     : ''
   const { value } = await assign(core, runtime, task, {
     role: 'analyst',

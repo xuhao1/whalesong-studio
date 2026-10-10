@@ -19,13 +19,13 @@ import { createRoot } from 'react-dom/client'
 import { Icon } from '../client/icons'
 import { AlbumView, ViewerTabs, type ViewerHalf } from '../client/reader/album'
 import { PlayTranscript, SideList, type SidePlay, type SideRef } from '../client/reader/sides'
-import { ListenBar, ModeSwitch, ReaderPage, ReaderSettings, setReaderDefaults, usePlayerOptions, useReaderPrefs, type ReaderPerson, type ReadMode, type Translate } from '../client/reader/parts'
+import { ListenBar, ModeSwitch, ReaderPage, ReaderSettings, setReaderDefaults, usePlayerOptions, useReaderPrefs, type ReaderPerson, type ReaderThing, type ReadMode, type Translate } from '../client/reader/parts'
 import { useChapterPlayback } from '../client/reader/playback'
 import { ScriptPage } from '../client/reader/script'
 import { Film, place, Theater, WatchChoice, type ChapterFilm, type TheaterPanel } from '../client/reader/theater'
 import studioStyles from '../client/styles.css'
 import { albumEmpty, type Album, type AlbumAt, type AlbumCounts } from '../shared/album'
-import { readAlong, type ReaderLine, type ReaderWay } from '../shared/reader'
+import { blocksOf, readAlong, type ReaderLine, type ReaderWay } from '../shared/reader'
 import type { AudioCue, AudioLine, PlayTurn } from '../shared/types'
 import ownStyles from './reader.css'
 
@@ -70,6 +70,8 @@ interface ChapterData {
   title: string
   text: string
   script?: { lines: AudioLine[]; cues: AudioCue[] }
+  /** The pictures of people's moments that fall in this chapter; absent from a Host or a site from before there were any. */
+  figures?: { path: string; caption: string; after: number }[]
   board?: { panels: TheaterPanel[] }
   /** Its finished video; absent from a Host or a site that carries none. */
   video?: { path: string; subtitles?: string; burned?: boolean; version: string }
@@ -185,6 +187,31 @@ function go(place: Place): void {
     : place.side !== undefined ? `${book}/sides${typeof place.side === 'string' ? `/${encodeURIComponent(place.side)}` : ''}`
       : place.album !== undefined ? `${book}/${place.album.end?.type === 'character' ? 'people' : place.album.end?.type === 'world' ? 'world' : place.album.section}${place.album.end !== undefined ? `/${encodeURIComponent(place.album.end.id)}` : ''}`
         : `${book}${place.chapter !== undefined ? `/${encodeURIComponent(place.chapter)}` : ''}`
+}
+
+/**
+ * What one page hands the next, for this visit: where the text was left for somebody's page (to go back to), and what
+ * a chapter is opened to find (where it first names something).
+ */
+interface Passed {
+  back?: { book: string; chapter: string; top: number; restore?: boolean }
+  find?: { book: string; chapter: string; names: string[] }
+}
+
+function passed(): Passed {
+  try {
+    return JSON.parse(sessionStorage.getItem('novel-reader:passed') ?? '{}') as Passed
+  } catch {
+    return {}
+  }
+}
+
+function pass(next: Passed): void {
+  try {
+    sessionStorage.setItem('novel-reader:passed', JSON.stringify(next))
+  } catch {
+    // Not kept: the page opens at its top, as it did before.
+  }
 }
 
 /** Where the reader left each book, kept on this device — and when, so that a later place left on another device is told from it. */
@@ -414,6 +441,8 @@ function AlbumScreen({ book, chapters, counts, sides, at, lines, line, onLine, t
     return await get<Album>(base, signal)
   }, [book.id, line])
   const url = useCallback((path: string) => media(book.id, path), [book.id])
+  // Come here from a name pressed in the text: the way back to that place.
+  const from = useMemo(() => { const kept = passed().back; return kept !== undefined && kept.book === book.id && chapters.some(candidate => candidate.id === kept.chapter) ? kept : undefined }, [book.id, chapters])
   const section = at.end?.type === 'character' ? 'people' : at.end?.type === 'world' ? 'world' : at.section
   useEffect(() => {
     document.title = `${section === 'people' ? t('人物', 'People') : t('世界', 'World')} · ${book.title}`
@@ -435,7 +464,12 @@ function AlbumScreen({ book, chapters, counts, sides, at, lines, line, onLine, t
                 media={url}
                 at={at}
                 go={(next) => { go({ book: book.id, album: next }) }}
-                onRead={(chapter) => { if (chapters.some(candidate => candidate.id === chapter)) go({ book: book.id, chapter }) }}
+                onRead={(chapter, names) => {
+                  if (!chapters.some(candidate => candidate.id === chapter)) return
+                  if (names !== undefined && names.length > 0) pass({ ...passed(), find: { book: book.id, chapter, names: [...names] } })
+                  go({ book: book.id, chapter })
+                }}
+                back={from !== undefined ? { label: t('回到正文', 'Back to the text'), go: () => { pass({ ...passed(), back: { ...from, restore: true } }); go({ book: book.id, chapter: from.chapter }) } } : undefined}
                 readTo={album.data.chapters.find(chapter => chapter.id === remembered(book.id).chapter)?.index}
                 ways={lines}
                 onWay={onLine}
@@ -532,12 +566,16 @@ function Chapter({ book, chapters, chapter, ways, onLine, line, known, t }: { bo
   // Who the text may name: the people of the album — those a reader has met, as the line being read has them. Read
   // once for the book; a book served without an album simply marks no names.
   const cast = useLoad(async (signal) => {
-    if (!known) return [] as ReaderPerson[]
+    if (!known) return { people: [] as ReaderPerson[], things: [] as ReaderThing[] }
     const base = `api/books/${encodeURIComponent(book.id)}/album`
     let album: Album | undefined
     if (line !== MAIN) album = await get<Album>(`${base}/${encodeURIComponent(line)}`, signal).catch(() => undefined)
     album ??= await get<Album>(base, signal).catch(() => undefined)
-    return (album?.people ?? []).map((person): ReaderPerson => ({ id: person.id, name: person.name, ...(person.aliases !== undefined ? { aliases: person.aliases } : {}), ...(person.tagline !== undefined ? { tagline: person.tagline } : {}), ...(person.portrait ?? person.sheet) !== undefined ? { portrait: person.portrait ?? person.sheet } : {} }))
+    return {
+      people: (album?.people ?? []).map((person): ReaderPerson => ({ id: person.id, name: person.name, ...(person.aliases !== undefined ? { aliases: person.aliases } : {}), ...(person.tagline !== undefined ? { tagline: person.tagline } : {}), ...(person.portrait ?? person.sheet) !== undefined ? { portrait: person.portrait ?? person.sheet } : {} })),
+      // And what of its world the text may name: its places, houses, things and ideas.
+      things: (album?.world ?? []).map((entry): ReaderThing => ({ id: entry.id, name: entry.name, group: entry.group, ...(entry.aliases !== undefined ? { aliases: entry.aliases } : {}), ...(entry.summary !== undefined ? { summary: entry.summary } : {}), ...(entry.image !== undefined ? { image: entry.image } : {}) })),
+    }
   }, [book.id, line, known])
   const [prefs, updatePrefs] = useReaderPrefs()
   const [options, updateOptions] = usePlayerOptions()
@@ -596,6 +634,37 @@ function Chapter({ book, chapters, chapter, ways, onLine, line, known, t }: { bo
     setDraft(undefined)
     setNotice(undefined)
   }, [chapter.id])
+  /** To the page of whoever a name in the text is — leaving word of this place in the text, to come back to. */
+  const toPage = (type: 'character' | 'world', id: string): void => {
+    pass({ ...passed(), back: { book: book.id, chapter: chapter.id, top: scroller.current?.scrollTop ?? 0 } })
+    go({ book: book.id, album: { section: type === 'character' ? 'people' : 'world', end: { type, id } } })
+  }
+  // Opened to come back to where it was left, or to find where it first names something: once the text is on the page.
+  const [flash, setFlash] = useState<number | undefined>()
+  const arrived = data.data?.text
+  useEffect(() => {
+    if (arrived === undefined) return
+    const { back, find, ...rest } = passed()
+    if (back?.restore === true && back.book === book.id && back.chapter === chapter.id) {
+      pass({ ...rest, ...(find !== undefined ? { find } : {}) })
+      const frame = requestAnimationFrame(() => { scroller.current?.scrollTo({ top: back.top }) })
+      return () => { cancelAnimationFrame(frame) }
+    }
+    if (find === undefined || find.book !== book.id || find.chapter !== chapter.id) return
+    pass({ ...rest, ...(back !== undefined ? { back } : {}) })
+    const at = Math.min(...find.names.map(name => arrived.indexOf(name)).filter(found => found >= 0))
+    if (!Number.isFinite(at)) return
+    const blocks = blocksOf(arrived)
+    const target = [...blocks].reverse().find(block => block.offset <= at) ?? blocks[0]
+    if (target === undefined) return
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const frame = requestAnimationFrame(() => {
+      scroller.current?.querySelector<HTMLElement>(`[data-offset="${target.offset}"]`)?.scrollIntoView({ block: 'center' })
+      setFlash(target.offset)
+      timer = setTimeout(() => { setFlash(undefined) }, 2400)
+    })
+    return () => { cancelAnimationFrame(frame); clearTimeout(timer) }
+  }, [arrived, book.id, chapter.id])
   useEffect(() => {
     document.title = `${chapter.title} · ${book.title}`
   }, [chapter.title, book.title])
@@ -739,8 +808,12 @@ function Chapter({ book, chapters, chapter, ways, onLine, line, known, t }: { bo
           pace={engaged ? pace : undefined}
           scroller={scroller}
           footer={turn}
-          people={cast.data}
-          onPerson={(id) => { go({ book: book.id, album: { section: 'people', end: { type: 'character', id } } }) }}
+          flash={flash}
+          people={cast.data?.people}
+          things={cast.data?.things}
+          figures={data.data?.figures}
+          onPerson={(id) => { toPage('character', id) }}
+          onThing={(id) => { toPage('world', id) }}
         />
       )}
       {mode !== 'watch' && !editing && script !== undefined ? (
