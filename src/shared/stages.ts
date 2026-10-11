@@ -79,6 +79,25 @@ export function inStage<T extends CharacterCard>(card: T, stage: CharacterStage 
   }
 }
 
+/**
+ * The card as a picture that has them in it goes by, in one stretch of their life — the picture of a passage, a panel,
+ * somebody else's moment. As {@link inStage} reads it, but held against a design sheet wherever they have one: the
+ * stretch's own, else the card's. Never, while they have a sheet, against a portrait of that stretch — which is as
+ * often as not one of their moments: a scene, with others in it, and no picture to hold a face against.
+ *
+ * `lookApart`: the sheet that goes along is the card's, and the stretch says something of its own about how they look
+ * — their line is then written out in words, whatever picture goes along, for that picture does not show it.
+ * (A stretch that looks wholly otherwise — a child grown up — wants a sheet of its own; until it has one, the card's
+ * sheet gives the face and the words give the rest.)
+ */
+export function inPictureAt<T extends CharacterCard>(card: T, stage: CharacterStage | undefined): T & { lookApart?: boolean } {
+  const staged = inStage(card, stage)
+  const main = card.visual?.sheet
+  if (stage === undefined || stage.visual?.sheet !== undefined || main === undefined) return staged
+  const visual = { ...(staged.visual ?? {}), sheet: main, ...(card.visual?.sheetFront === true ? { sheetFront: true } : {}) }
+  return { ...staged, visual, ...(looksApart(stage) ? { lookApart: true } : {}) }
+}
+
 /** A stretch in a line of words: 少年（约十三岁）· 从第 23 章起. */
 export function stageLine(stage: CharacterStage, index: number | undefined, zh: boolean): string {
   const since = stage.from === undefined ? (zh ? '故事开始时' : 'as the story begins') : index !== undefined ? (zh ? `从第 ${index} 章起` : `from chapter ${index}`) : ''

@@ -1188,7 +1188,10 @@ const lookFrom = (card: CharacterCard): NonNullable<IllustrationPiece['from']> =
 /** How somebody looks — in what they wear there, where it is not their usual — as a part of a picture they are in. */
 function personPiece(card: CharacterCard, options: { look?: CharacterLook | undefined; secondary?: boolean; /** Written out whatever picture goes along: the words have just been changed, and no picture shows that yet. */ written?: boolean } = {}): IllustrationPiece | undefined {
   const words = looksOf(card, options.look)
-  const shown = options.written === true ? undefined : referenceOf(card, options.look)?.path
+  // (Read in a stretch of their life that says something of its own about their looks while the sheet along is the
+  // card's — `lookApart`: that sheet does not show it, so they are written out.)
+  const apart = (card as { lookApart?: boolean }).lookApart === true && options.look?.sheet === undefined
+  const shown = options.written === true || apart ? undefined : referenceOf(card, options.look)?.path
   // Nothing says how they look, and no picture shows it: there is nothing to say of them.
   if (words.length === 0 && shown === undefined) return undefined
   const standing = looksOf(card)

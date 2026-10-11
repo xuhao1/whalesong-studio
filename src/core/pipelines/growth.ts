@@ -138,10 +138,13 @@ export async function deriveGrowth(core: NovelCore, runtime: ProjectRuntime, par
   }
 }
 
-/** For one chapter: the card of each character as the stretch of their life that holds there has them. */
+/**
+ * For one chapter: the card of each character as the stretch of their life that holds there has them — for a picture
+ * that has them in it, so held against a design sheet wherever they have one ({@link inPictureAt}).
+ */
 export async function castAt<T extends CharacterCard>(runtime: ProjectRuntime, chapterId: string | undefined, cards: readonly T[]): Promise<T[]> {
   if (!cards.some(card => (card.stages?.length ?? 0) > 0)) return [...cards]
-  const { inStage } = await import('../../shared/stages')
+  const { inPictureAt } = await import('../../shared/stages')
   const path = (chapterId !== undefined ? await runtime.project.pathOf(chapterId) : await runtime.project.chapters()).map(chapter => chapter.plan.id)
-  return cards.map(card => inStage(card, stageAt(card, chapterId, path)))
+  return cards.map(card => inPictureAt(card, stageAt(card, chapterId, path)))
 }

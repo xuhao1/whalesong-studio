@@ -10,7 +10,7 @@ import { sheetsAhead } from '../src/core/pipelines/comic'
 import { artDirectionOf, deriveArtDirection, deriveLook, deriveScenes, deriveVisual, illustrate, looksOf, forgetFittedPrompts } from '../src/core/pipelines/illustrate'
 import { castAt, deriveGrowth } from '../src/core/pipelines/growth'
 import { packContext } from '../src/core/context'
-import { inStage, stageAt } from '../src/shared/stages'
+import { inPictureAt, inStage, stageAt } from '../src/shared/stages'
 import type { CharacterStage } from '../src/shared/types'
 import { reconcileLooks, upsertLooks } from '../src/core/project'
 import { DEFAULT_SETTINGS } from '../src/core/settings'
@@ -1263,6 +1263,22 @@ describe('design sheets and looks', () => {
     expect([other.appearance, other.visual?.sheet, other.visual?.portrait]).toEqual(['剃了发的中年僧人，面容清瘦，眼窝深陷，披一领大红猩猩毡斗篷，赤着脚站在雪地里，神情空茫', undefined, undefined])
     // (A stretch of an earlier version that still keeps phrases for image models is drawn from those, as it was.)
     expect(looksOf(inStage(kept, { id: 'y', title: '旧', appearance: '白发', visual: { prompt: 'old man, white hair' } }))).toBe('old man, white hair')
+    // In a picture that only has him in it he is held against a design sheet wherever he has one — the stretch's own,
+    // else the card's — and never against a portrait of that stretch: a moment of his, as often as not. Where the
+    // card's sheet stands in, what the stretch says of his looks is marked as not shown by it.
+    const monk = { id: 'w', title: '出家之后', appearance: '剃了发的中年僧人，面容清瘦，眼窝深陷，披一领大红猩猩毡斗篷，赤着脚站在雪地里，神情空茫', visual: { portrait: 'assets/images/moment.png' } }
+    expect(inStage(kept, monk).visual).toMatchObject({ portrait: 'assets/images/moment.png' })
+    expect(inStage(kept, monk).visual?.sheet).toBeUndefined()
+    const pictured = inPictureAt(kept, monk)
+    expect([pictured.visual?.sheet, pictured.lookApart, pictured.appearance]).toEqual([main.path, true, monk.appearance])
+    expect(inPictureAt(kept, { id: 'z', title: '老年', appearance: '须发皆白' })).toMatchObject({ lookApart: true, visual: { sheet: main.path } })
+    // (A stretch with a sheet of its own is shown by it; one that says nothing of looks is who the card's sheet shows; no stretch, the card.)
+    expect([late[0]!.visual?.sheet, (late[0] as { lookApart?: boolean }).lookApart]).toEqual([sheet.path, undefined])
+    expect(inPictureAt(kept, { id: 'q', title: '入京' }).lookApart).toBeUndefined()
+    expect(inPictureAt(kept, undefined)).toBe(kept)
+    // Somebody with no sheet at all has only the portrait to be held against, as before.
+    const sheetless = { ...kept, visual: { portrait: 'assets/images/first.png' } }
+    expect(inPictureAt(sheetless, monk).visual).toEqual({ portrait: 'assets/images/moment.png' })
 
     // Looked over again: a stretch that still holds keeps its id and what was written and drawn of it.
     bed.llm.responder = () => JSON.stringify({ stages: [{ title: '幼年', chapter: 1, age: '七岁', was: 1 }, { title: '少年', chapter: 3, age: '十三岁', appearance: '身量长开，束发戴冠', was: 2 }, { title: '出家', chapter: 4, age: '十九岁', what: '离家' }] })
@@ -1411,6 +1427,17 @@ describe('what a picture is told, and what goes along with it', () => {
     // His sheet goes along, and what is different in this stretch is said in words.
     expect(again.parts?.references?.map(reference => reference.path)).toContain(sheetsOfHis)
     expect(again.parts!.subject).toContain('病愈：气色好了，腰间多了一块玉')
+    // A stretch that looks wholly otherwise, with a portrait of its own — one of his moments — and no sheet: he is held
+    // against the card's sheet all the same, never against that portrait, and how he looks then is in the words.
+    const hisMoment = await project.writeAsset('images/portrait-宝玉-moment.png', PIXEL)
+    await project.saveCharacter({ id: jia.id, stages: [{ id: 'weak', title: '病中', appearance: '清减了些，面色发白' }, { id: 'monk', title: '出家之后', from: chapter.id, appearance: '剃了发的青年僧人，面容清瘦，眼窝深陷，披一领大红猩猩毡斗篷，赤着脚站在雪地里，神情空茫', visual: { portrait: hisMoment } }] })
+    const beside = images.calls.length
+    const monked = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: lin.id }, task)
+    expect(images.calls.length).toBe(beside + 1)
+    expect(monked.parts?.references?.map(reference => reference.path)).toContain(sheetsOfHis)
+    expect(monked.parts?.references?.map(reference => reference.path)).not.toContain(hisMoment)
+    expect(monked.parts!.subject.split('\n')).toContain('人物「宝玉」（陪衬）：剃了发的青年僧人，面容清瘦，眼窝深陷，披一领大红猩猩毡斗篷，赤着脚站在雪地里，神情空茫')
+    expect((await project.findCharacter(jia.id))!.visual?.sheet).toBe(sheetsOfHis)
     await project.saveCharacter({ id: jia.id, stages: [] })
     // The author has looks written out every time: both are, each under their name, with their pictures along all the same.
     await bed.core.settings.update({ image: { ...bed.core.currentSettings().image, looks: 'always' } })

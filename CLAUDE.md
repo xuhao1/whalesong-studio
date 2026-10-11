@@ -29,6 +29,10 @@
 
 ## 测试时不能碰的东西
 
+**只在自己的开发实例里动手，不碰作者的东西**（作者 2026-10-11："不要去动我的主文件！你在你自己的实例改！"）。规矩写在 [`AGENTS.md`](./AGENTS.md)，下面这一行把它接进来：
+
+@AGENTS.md
+
 - 作者真实的书在 `/Users/xuhao/develop/novel_writer`（含导入的《红楼梦》）：**可以读来排查，绝不能写**。
 - 作者真实的 `~/.dsh`：不改；`settings.json`、`.credentials.yaml` 里的值不读出来、不打印。
 - 百炼的 key 在 zshrc 里叫 `QWEN_DSH_NOVEL`：用 `zsh -ic 'printf %s "$QWEN_DSH_NOVEL"'` 取，不回显；调用量保持小。`OPENROUTER_API_KEY` 没被允许使用。
