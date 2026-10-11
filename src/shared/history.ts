@@ -18,7 +18,7 @@ export const PICTURE_FIELDS: Partial<Record<HistoryKind, readonly string[]>> = {
   // …and the sample a voice was auditioned with: a file made for the card, like its pictures.
   character: ['visual.portrait', 'visual.face', 'visual.portraits', 'visual.sheet', 'visual.sheetFront', 'visual.mainSheet', 'visual.sheets', 'visual.fronts', 'visual.looks[].sheet', 'visual.looks[].sheetFront', 'visual.scenes[].portrait', 'stages[].visual.sheet', 'stages[].visual.sheetFront', 'stages[].visual.portrait', 'voiceProfile.sample'],
   // Where the marks stand on a place's picture goes with the picture.
-  world: ['visualImage', 'events[].image', 'spots'],
+  world: ['visualImage', 'visualImages', 'visualMain', 'events[].image', 'spots'],
   book: ['cover'],
   // What was spoken and drawn for a script's lines and a storyboard's panels are files made for them, as a card's
   // pictures are: a script put back keeps the takes of the lines it still has, a storyboard the pictures of its panels.

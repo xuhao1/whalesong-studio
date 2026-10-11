@@ -1799,37 +1799,51 @@ Output JSON only: {"title": "", "chapter": 0, "scene": "", ${shot.keys}, "why": 
  * @param base.references - how many reference pictures go along (none: nothing may be said of any).
  * @param base.avoid - what must not appear, where that goes to the model apart from the prompt.
  */
-export function imagePromptTask(base: Base & { brief: string; avoid: string[]; to: PromptLanguage; tokens?: number; estimate: number; model: string; references: number }): string {
+/**
+ * @param base.asked - what the author asked of this one picture, in their words: worked into the parts of the prompt it speaks of — what the brief says against it gives way — and not kept as a line of its own.
+ */
+export function imagePromptTask(base: Base & { brief: string; avoid: string[]; to: PromptLanguage; tokens?: number; estimate: number; model: string; references: number; asked?: string }): string {
+  const asked = base.asked?.trim() ?? ''
   const avoid = base.avoid.join(base.lang === 'zh' ? '、' : ', ')
   const zhTo = base.to === 'zh' ? '中文' : '英文（English）'
   const enTo = base.to === 'zh' ? 'Chinese' : 'English'
   const fit = base.tokens !== undefined
   const share = fit ? Math.max(10, Math.floor(base.tokens! * 100 / base.estimate / 5) * 5) : 100
-  return L(base.lang, `《${bare(base.title)}》要画一张图。下面是工坊排好的画图说明：一行一段，每段行首是它的名字（用途、画面、环境、构图、人物、某人此刻穿着、地点、物件、这一张的要求、画风、参考图、不要出现——有哪段算哪段）。请把它写成发给绘图模型（${base.model}）的提示词：画出来的应当是同一张图。${fit ? `这个模型一次只读得进大约 ${base.tokens} 个 token，超出的部分它看不到；这份说明现在大约 ${base.estimate} 个。` : ''}
+  return L(base.lang, `《${bare(base.title)}》要画一张图。下面是工坊排好的画图说明：一行一段，每段行首是它的名字（用途、画面、环境、构图、人物、某人此刻穿着、地点、物件、这一张的要求、画风、参考图、不要出现——有哪段算哪段）。请把它写成发给绘图模型（${base.model}）的提示词：${asked.length > 0 ? '画出来的应当是这张图，照作者对这一张的要求改过' : '画出来的应当是同一张图'}。${fit ? `这个模型一次只读得进大约 ${base.tokens} 个 token，超出的部分它看不到；这份说明现在大约 ${base.estimate} 个。` : ''}
 
 ## 画图说明
 ${base.brief}
-${avoid.length > 0 ? `\n## 画面里不要出现（另外交给模型，不写进提示词；这里只是让你知道该绕开什么）\n${avoid}\n` : ''}
-写成的提示词：
-1. 分段和次序照原样：一段一行，行首保留那一段的名字；说明里没有的段不添。模型从头读起，所以这个次序不要动。
+${asked.length > 0 ? `\n## 作者对这一张的要求（说明里照原话带着它，在「这一张的要求」或「画面」那一行）\n${asked}\n` : ''}${avoid.length > 0 ? `\n## 画面里不要出现（另外交给模型，不写进提示词；这里只是让你知道该绕开什么）\n${avoid}\n` : ''}
+写成的提示词：${asked.length > 0 ? `
+0. 作者的要求不是另加的一行，是要改进提示词里去的。只动它说到的那几段；别的段——连同行首的段名（「人物「某某」」这样带着名字的照样带着）——照说明原样，不拆、不并、不改写：
+   - 姿势、动作、神情、手里拿的东西：改「画面」；说明里没有「画面」这一段时（人设图就没有），改「构图」里说姿势的那半句，不要为它新加一段。
+   - 地点、时间、天气、光线：改「环境」；说明里没有这一段时，只有作者的要求说到了这些，才加一段「环境」，放在「画面」后面。「画风」里的话不搬到别的段里去；说明要的是素净的背景而作者没说要别的，背景就还是素净的。
+   - 景别、取景：改「构图」。长相、发式：改这个人「人物」那一行。穿戴：改「此刻穿着」；没有这一段时写在他「人物」那一行里。
+   说明里原有的写法和作者的要求对不上的，以作者的要求为准，改掉——两种说法不要都留着（要求手里拿着东西，就不再写两手垂在身侧）。指着参考图的人（"见图1"）被要求改了某一处，在他那一行里写明这一处照文字、不照图。改完之后，提示词里没有「这一张的要求」这一段，也没有哪一行是把作者的话原样抄下来的。` : ''}
+1. 分段和次序照原样：一段一行，行首保留那一段的名字；说明里没有的段不添${asked.length > 0 ? '（第 0 条说的除外）' : ''}。模型从头读起，所以这个次序不要动。
 2. 全文用${zhTo}写，段名也是。说明里用别的语言写的内容译过来——人物的外貌常是一串英文短语——特征一样不丢：年纪、脸、发式、体型、衣着的款式颜色纹样、随身的东西。人名、地名、物名不译。
 3. 同一件事只说一次。「画面」写这一刻：谁在做什么；「环境」写在哪、什么光线和气氛（没有这一段时这些在「画面」里）；「人物」写每个人长什么样；「此刻穿着」写这个人这一刻的穿戴。两处重复的留在该在的那一段；说法不一样时，动作和神情以「画面」为准，穿戴以「此刻穿着」为准（没有这一段时以「画面」为准），长相以「人物」为准。
-4. 只写眼睛看得见的。不添说明里没有的内容，不改画的是什么；解释、客套和不影响画面的话去掉。
+4. 只写眼睛看得见的。${asked.length > 0 ? '除了作者的要求带来的改动，' : ''}不添说明里没有的内容，不改画的是什么；解释、客套和不影响画面的话去掉。
 5. ${base.references > 0 ? `这张图带 ${base.references} 张参考图：「参考图」那一段留着——${base.to === 'zh' ? '「图1」「图2」' : '"Image 1", "Image 2"'}这样的编号和它各是谁一个不少，哪些照图画、哪些照文字，意思不变，可以写得更紧。` : '这张图不带参考图：提示词里不要出现“参考图”这一段，也不要有任何说到参考图的话。'}
 6. ${avoid.length > 0 ? '提示词里不要有「不要出现」这一段，也不要把下面那份清单抄进来：它另有一栏交给模型，写进提示词反而会把那些东西招来。能靠把画面里实际有的东西说清楚来避开的，就在前面那样写（写明是明制的发髻，而不是写“没有辫子”）。' : '「不要出现」那一段，说明里有就留着，放在最后：能靠把画面里实际有的东西说清楚来避开的，就在前面那样写（写明是明制的发髻，而不是写“没有辫子”）；非点名不可的才列，短短一行。'}
 7. ${fit ? `篇幅：现在量出来是 ${base.estimate}，要到 ${base.tokens} 以内——大约是现在的 ${share}%。放不下时先并重复的、去掉修饰，再压各段的长短；「画面」、每个人最认得出的特征和「画风」留到最后。不用自己数：交上来时会量，超了会告诉你超出多少。` : '篇幅：和说明差不多，或者更紧；不要为了显得丰富而添话。'}
 
 只输出 JSON：
-{"prompt": "写成的整段提示词"}`, `A picture is to be drawn for "${bare(base.title)}". Below is the brief the Studio laid out for it: a line a part, each under its name (purpose, the picture, the surroundings, framing, the people, what one of them wears in this moment, the place, the objects, what was asked of this one, the art direction, the reference pictures, what must not appear — whichever of them it has). Write it out as the prompt for the image model (${base.model}): the picture it asks for is to be the same picture.${fit ? ` This model reads about ${base.tokens} tokens of a prompt and never sees what lies beyond; the brief comes to about ${base.estimate}.` : ''}
+{"prompt": "写成的整段提示词"}`, `A picture is to be drawn for "${bare(base.title)}". Below is the brief the Studio laid out for it: a line a part, each under its name (purpose, the picture, the surroundings, framing, the people, what one of them wears in this moment, the place, the objects, what was asked of this one, the art direction, the reference pictures, what must not appear — whichever of them it has). Write it out as the prompt for the image model (${base.model}): ${asked.length > 0 ? 'the picture it asks for is to be this picture, changed by what the author asked of it' : 'the picture it asks for is to be the same picture'}.${fit ? ` This model reads about ${base.tokens} tokens of a prompt and never sees what lies beyond; the brief comes to about ${base.estimate}.` : ''}
 
 ## The brief
 ${base.brief}
-${avoid.length > 0 ? `\n## Must not appear in the picture (given to the model apart from the prompt, and not written into it; here for you to steer around)\n${avoid}\n` : ''}
-The prompt you write:
-1. Keeps the parts and their order: a line a part, each under its name; no part is added that the brief does not have. The model reads from the top, so the order stays.
+${asked.length > 0 ? `\n## What the author asked of this one (the brief carries it in their words, in the part "Asked of this one" or "The picture")\n${asked}\n` : ''}${avoid.length > 0 ? `\n## Must not appear in the picture (given to the model apart from the prompt, and not written into it; here for you to steer around)\n${avoid}\n` : ''}
+The prompt you write:${asked.length > 0 ? `
+0. Has what the author asked worked into it — not added as a line. Only the parts it speaks of are touched; every other part — with its name as the brief has it (a person's line keeps the person's name) — stays as the brief has it: not split, not merged, not reworded.
+   - Pose, action, expression, what is in the hands: in "The picture"; where the brief has no such part (a design sheet has none), in the half of the framing that says how they stand — no part is added for it.
+   - Place, time, weather, light: in "Surroundings"; where the brief has no such part, one is added — after the picture — only if the author speaks of these. Nothing of the art direction is moved into another part; where the brief asks for a plain ground and the author asked for nothing else, the ground stays plain.
+   - How close and from where: in the framing. Face and hair: in that person's line. What is worn: in "wearing in this moment"; in the person's line, with no such part.
+   Where the brief says otherwise, what the author asked holds and the brief's wording goes — never both (asked to hold something, the hands are no longer "at the sides"). Of somebody who is pointed to by a reference picture ("see Image 1") and asked to differ from it in something, their line says that this goes by the words, not the picture. Once it is worked in, the prompt has no part "Asked of this one", and no line that is the author's sentence copied out.` : ''}
+1. Keeps the parts and their order: a line a part, each under its name; no part is added that the brief does not have${asked.length > 0 ? ' (but for what 0 says)' : ''}. The model reads from the top, so the order stays.
 2. Is in ${enTo} throughout, the names of the parts too. What the brief has in another language is translated — how a person looks is often a run of English phrases — with no feature lost: age, face, hair, build, the cut, colour and pattern of what they wear, what they carry. Names of people, places and things are not translated.
 3. Says each thing once. "The picture" has the moment: who does what; "Surroundings" has where, in what light and mood (with no such part, the picture has these); the people's lines have how each of them looks; "wearing in this moment" has what that person has on in it. What is said in two parts stays in the one it belongs to; where they differ, action and expression go by the picture, what is worn by "wearing in this moment" (with no such part, by the picture), looks by the person's line.
-4. Says only what the eye can see. Adds nothing the brief does not have and does not change what the picture shows; explanations, courtesies and words that change nothing in the picture go.
+4. Says only what the eye can see. ${asked.length > 0 ? 'But for what the author asked, it adds' : 'Adds'} nothing the brief does not have and does not change what the picture shows; explanations, courtesies and words that change nothing in the picture go.
 5. ${base.references > 0 ? `${base.references} reference picture(s) go along with this one: the part on them stays — every number (${base.to === 'zh' ? '图1, 图2' : 'Image 1, Image 2'}) with who or what it shows, what is to follow a picture and what the words — tightened if you like, with nothing of its meaning lost.` : 'No reference picture goes along with this one: the prompt has no part on reference pictures, and says nothing of any.'}
 6. ${avoid.length > 0 ? 'Has no part on what must not appear, and none of the list below copied into it: that goes to the model in a field of its own, and written into the prompt it would call those things up. Where saying plainly what is there keeps a thing out, say that earlier on (the Ming topknot, not "no queue").' : 'Keeps the part on what must not appear where the brief has one, last: where saying plainly what is there keeps a thing out, say that earlier on (the Ming topknot, not "no queue"); only what has to be named is listed, in one short line.'}
 7. ${fit ? `Its length: the brief measures ${base.estimate} and the prompt has to come to ${base.tokens} or less — about ${share}% of that. Where it does not fit, merge what is said twice and drop ornament first, then shorten the parts; the picture, what each person is most known by and the art direction are the last to give way. No need to count: what you hand in is measured, and you are told by how much it is over if it is.` : 'Its length: about that of the brief, or tighter; nothing is added to make it seem richer.'}

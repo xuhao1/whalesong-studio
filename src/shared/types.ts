@@ -422,8 +422,17 @@ export interface WorldEntry {
   tags?: string[]
   /** What a picture of it shows: a place (the background of comics and interludes), a thing (its shape, material, marks). */
   visualPrompt?: string
-  /** Project-relative path of its design picture — a place's, a thing's; sent along when a scene is set there or shows it. */
+  /**
+   * Project-relative path of its main design picture — a place's, a house's, a thing's: sent along when a scene is
+   * set there or shows it, and what stands for it in the lists and in the viewer. It is `visualMain` where the author
+   * chose one, else what it was; a picture newly drawn where none is chosen. Kept by the Studio: say which with
+   * `visualMain` (`shared/arts.ts`).
+   */
   visualImage?: string
+  /** Every design picture kept of it, the newest first: the main one and those kept without being in use. Left out while the main one is the only one. */
+  visualImages?: string[]
+  /** The design picture the author chose as the main one — it stays whatever is drawn after. Left out: see `visualImage`. */
+  visualMain?: string
   /**
    * Where on that picture the marks of what stands in the place were put by
    * the author: by `world:<id>` or `character:<id>`, as fractions of the
@@ -2174,7 +2183,7 @@ export interface IllustrationSent {
    * to about `tokens`; or could not (`failed`), and it went as it was, the model reading as far as it reads.
    * Tokens are the Studio's estimate: it has no model's tokenizer.
    */
-  compact?: { /** What the model reads at most. Absent: it has no limit that is known — the director wrote the prompt out all the same (`promptWrite: 'always'`). */ limit?: number; from: number; tokens?: number; failed?: boolean; /** What the director wrote was still over, and its end — the least of it, by the order it was written in — was left off. */ cut?: boolean }
+  compact?: { /** What the model reads at most. Absent: it has no limit that is known — the director wrote the prompt out all the same (`promptWrite: 'always'`). */ limit?: number; from: number; tokens?: number; failed?: boolean; /** What the director wrote was still over, and its end — the least of it, by the order it was written in — was left off. */ cut?: boolean; /** The director wrote it to work in what the author asked of this one picture. */ asked?: boolean }
   /**
    * How it was sampled, where the Studio built the graph itself (a model on a ComfyUI server, no workflow named), and
    * where the steps and the guidance came from: the `settings`, the `server`'s own last run of that model, or the

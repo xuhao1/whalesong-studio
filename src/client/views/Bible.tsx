@@ -17,7 +17,8 @@ import { Icon, type IconName } from '../icons'
 import { WORLD_CATEGORY as CATEGORY_LABELS } from '../labels'
 import { MergeDialog, TidyDialog } from '../WorldTidy'
 import { HistoryButton, RemovedCards } from '../History'
-import { DeletePicture, PictureViewer, type LookOf } from '../PictureRecord'
+import { DeletePicture, PictureViewer, usePictures, type LookOf } from '../PictureRecord'
+import { artsOf, isArtOf } from '../../shared/arts'
 import { ManyModels } from '../Trial'
 import { clip as clipText } from '../../shared/text'
 import { containment, type Nested } from '../../shared/ties'
@@ -412,7 +413,8 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
     setDirty(true)
   }
   const save = (): Promise<unknown> => run(async () => {
-    await controller.api.call('world.save', { root, entry: { ...draft, summary: draft.summary ?? '', body: draft.body ?? '', visualPrompt: draft.visualPrompt ?? '', aliases: draft.aliases ?? [], tags: draft.tags ?? [], weight: draft.weight ?? ('' as never), ...(draft.events !== undefined ? { events: draft.events.filter(event => event.what.trim().length > 0).map(event => ({ ...event, what: event.what.trim() })) } : {}) } })
+    const { visualImage: _main, visualImages: _kept, visualMain: _chosen, ...written } = draft
+    await controller.api.call('world.save', { root, entry: { ...written, summary: draft.summary ?? '', body: draft.body ?? '', visualPrompt: draft.visualPrompt ?? '', aliases: draft.aliases ?? [], tags: draft.tags ?? [], weight: draft.weight ?? ('' as never), ...(draft.events !== undefined ? { events: draft.events.filter(event => event.what.trim().length > 0).map(event => ({ ...event, what: event.what.trim() })) } : {}) } })
     setDirty(false)
     controller.toast('success', t('已保存', 'Saved'))
   })
@@ -427,10 +429,41 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
   const turning = drawingJob?.title.includes(' at ') === true ? drawingJob.title.slice(drawingJob.title.indexOf(' at ') + 4) : undefined
   // The director writing down how it looks: said on the button that asked, and while a drawing has it done first.
   const looking = useRunningJob(job => job.kind === 'bible' && job.target === entry.id && job.title.startsWith('look ')) !== undefined
+  // Every design picture kept of it — the main one, and those kept without being in use — and those the gallery still
+  // has of it that are on no list: drawn before pictures were kept side by side (a picture drawn again used to take
+  // the one before off the entry), or drawn to compare and not taken.
+  const records = usePictures()
+  const kept = artsOf(draft)
+  const turnPictures = new Set((draft.events ?? []).map(event => event.image).filter((path): path is string => path !== undefined))
+  const strays = [...records.byPath.values()]
+    .filter(image => (image.kind === 'location' || image.kind === 'item') && image.target === entry.id && !kept.some(art => art.path === image.path) && !turnPictures.has(image.path) && isArtOf(entry.id, image.path))
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+    .map(image => ({ path: image.path, main: false, chosen: false, waiting: image.trial?.hang !== undefined }))
+  const arts: { path: string; main: boolean; chosen?: boolean; waiting?: boolean }[] = [...kept, ...strays]
+  // The one looked at: the one picked in the row, else the main one.
+  const [picked, setPicked] = useState<string | undefined>()
+  useEffect(() => { setPicked(undefined) }, [entry.id])
+  const art = arts.find(item => item.path === picked) ?? arts.find(item => item.main) ?? arts[0]
+  const artName = house ? t('设定图', 'design art') : picture === 'item' ? t('物品设定图', 'object art') : t('场景设定图', 'place art')
   const draw = (): Promise<unknown> | undefined => (!controller.need('image') ? undefined : controller.guard(async () => {
-    await controller.run('image.create', { root, kind: picture ?? 'location', target: entry.id })
-    controller.toast('success', house ? t('设定图已生成', 'Design art ready') : picture === 'item' ? t('物品设定图已生成', 'Object art ready') : t('场景设定图已生成', 'Place art ready'))
+    const job = await controller.run('image.create', { root, kind: picture ?? 'location', target: entry.id })
+    const out = job.result?.output as { path?: string; spare?: boolean } | undefined
+    // One drawn while another is the chosen main picture waits beside it: said, with the way to use it.
+    controller.toast('success', out?.spare === true
+      ? t('画好了，先不启用：主设定图是你选定的那张。要用新的，点它再点"设为主设定图"', 'Drawn, not in use yet: the main picture is the one you chose. To use the new one, pick it and make it the main picture')
+      : house ? t('设定图已生成', 'Design art ready') : picture === 'item' ? t('物品设定图已生成', 'Object art ready') : t('场景设定图已生成', 'Place art ready'))
+    if (out?.path !== undefined) setPicked(out.path)
   }))
+  /** Say which of its design pictures is the main one — or, with none named, let go of the choice. */
+  const setMain = (path: string | undefined): void => {
+    void controller.guard(async () => {
+      await controller.api.call('world.save', { root, entry: { id: entry.id, visualMain: path ?? '' } })
+      await controller.refreshProject()
+      controller.toast('success', path !== undefined
+        ? t('这张是主设定图了：画到它的图照着这张，列表和观看页也用它', 'This is the main picture now: pictures that show it are drawn against this one, and it stands for it in the lists and the viewer')
+        : t('不再选定：下次新画的会顶替它', 'No longer chosen: the next one drawn takes its place'))
+    })
+  }
   const drawTurn = (event: WorldEvent): Promise<unknown> | undefined => (!controller.need('image') ? undefined : controller.guard(async () => {
     await controller.run('image.create', { root, kind: picture ?? 'location', target: entry.id, event: `${event.chapter}:${event.kind}` })
     controller.toast('success', t('它这时的样子画好了', 'Drawn as it is then'))
@@ -450,10 +483,45 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
   const [allNamed, setAllNamed] = useState(false)
   return (
     <div className="nv-editor-form">
-      {picture !== undefined && draft.visualImage !== undefined ? (
+      {picture !== undefined && art !== undefined ? (
         <button type="button" className={cx('nv-entry-picture', picture === 'item' && 'is-item')} onClick={() => { setShown(undefined); setViewing(true) }} title={t('点开看大图', 'Open it large')}>
-          <ProjectImage path={draft.visualImage} alt={draft.name} />
+          <ProjectImage path={art.path} alt={draft.name} />
         </button>
+      ) : null}
+      {/* Its design pictures side by side: the main one, those kept, those drawn to compare. Picking one shows it above. */}
+      {picture !== undefined && art !== undefined && arts.length > 1 ? (
+        <>
+          <div className="nv-person-thumbs nv-entry-arts" role="group" aria-label={t('它的设定图', 'Its design pictures')}>
+            {arts.map((item) => {
+              const label = item.main ? t('主', 'Main') : item.waiting === true ? t('对比 · 待采纳', 'Compared') : t('未启用', 'Not in use')
+              return (
+                <button key={item.path} type="button" className={cx(item.path === art.path && 'is-active', picture !== 'item' && 'is-wide', !item.main && 'is-spare')} onClick={() => { setPicked(item.path) }} title={label}>
+                  <ProjectImage path={item.path} alt={label} />
+                  <span>{label}</span>
+                </button>
+              )
+            })}
+          </div>
+          <div className="nv-person-picture-tools">
+            {art.main
+              ? (
+                  <>
+                    <Chip tone="blue" title={t('画到它的图照着这张；列表、观看页里代表它的也是这张', 'Pictures that show it are drawn against this one; it stands for it in the lists and the viewer')}>{t('主设定图', 'Main picture')}</Chip>
+                    {art.chosen === true
+                      ? <button type="button" className="nv-link nv-small" disabled={dirty} title={t('不选定：下次新画的会顶替它', 'Unchoose: the next one drawn takes its place')} onClick={() => { setMain(undefined) }}>{t('取消选定', 'Unchoose')}</button>
+                      : <Button size="sm" variant="ghost" disabled={dirty} title={dirty ? t('先保存当前修改', 'Save your edits first') : t('选定后，再画新的也不换', 'Chosen, it stays whatever is drawn after')} onClick={() => { setMain(art.path) }}>{t('选定', 'Choose it')}</Button>}
+                  </>
+                )
+              : (
+                  <>
+                    <Chip title={art.waiting === true ? t('对比时画的，还没采纳', 'Drawn to compare, not taken yet') : t('留着，没有哪张图照着它画', 'Kept; no picture is drawn against it')}>{art.waiting === true ? t('对比 · 待采纳', 'Compared') : t('未启用', 'Not in use')}</Chip>
+                    <Button size="sm" variant="ghost" disabled={dirty} title={dirty ? t('先保存当前修改', 'Save your edits first') : t('画到它的图改照这张；列表、观看页也用它', 'Pictures that show it are drawn against this one from now on; it stands for it in the lists and the viewer')} onClick={() => { setMain(art.path) }}>{t('设为主设定图', 'Make it the main picture')}</Button>
+                  </>
+                )}
+            <span className="nv-spacer" />
+            <DeletePicture bare path={art.path} disabled={dirty || drawing} onDone={() => { setPicked(undefined) }} />
+          </div>
+        </>
       ) : null}
       <header className="nv-detail-head nv-person-head">
         <div className="nv-person-title">
@@ -564,10 +632,11 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
               {(draft.visualPrompt ?? '').trim().length > 0 ? t('让导演重写', 'Have the director rewrite') : t('让导演照正文写', 'Have the director write it')}
             </Button>
             <Button size="sm" icon="image" disabled={dirty || drawing} busy={drawing && turning === undefined} pending={house ? t('正在画设定图…', 'Drawing it…') : picture === 'item' ? t('正在画物品设定图…', 'Drawing the object…') : t('正在画场景设定图…', 'Drawing the place…')} onClick={draw} title={dirty ? t('先保存当前修改', 'Save your edits first') : undefined}>
-              {draft.visualImage !== undefined ? t('重画设定图', 'Redraw') : house ? t('画设定图', 'Draw its design art') : picture === 'item' ? t('画物品设定图', 'Draw the object') : t('画场景设定图', 'Draw the place')}
+              {draft.visualImage !== undefined ? t('再画一张设定图', 'Draw another') : house ? t('画设定图', 'Draw its design art') : picture === 'item' ? t('画物品设定图', 'Draw the object') : t('画场景设定图', 'Draw the place')}
             </Button>
             <ManyModels disabled={dirty} title={t('多模型：几个绘图服务各画一张设定图来比', 'Several models: its design art from each image service, to compare')} ask={() => (controller.need('image') ? { title: `${entry.name} · ${t('设定图', 'design art')}`, method: 'image.create', params: { kind: picture ?? 'location', target: entry.id } } : undefined)} />
-            {draft.visualImage !== undefined ? <DeletePicture bare path={draft.visualImage} disabled={dirty || drawing} /> : null}
+            {/* (With several kept, the one to delete is the one picked in the row above, by the button there.) */}
+            {draft.visualImage !== undefined && arts.length <= 1 ? <DeletePicture bare path={draft.visualImage} disabled={dirty || drawing} /> : null}
           </div>
         </Field>
       ) : null}
@@ -583,11 +652,11 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
           onClose={() => { setViewing(false) }}
           onEditLook={editLook}
         />
-      ) : viewing && draft.visualImage !== undefined ? (
+      ) : viewing && art !== undefined ? (
         <PictureViewer
-          path={draft.visualImage}
-          title={draft.name}
-          note={house ? t('这个家族 / 组织的设定图。', 'The design art of this house or organisation.') : picture === 'item' ? t('物品设定图，画到它的图以此为参考。', 'The thing\'s art: pictures showing it are drawn against this.') : t('场景设定图。发生在这里的画面会把它当参考图。', 'Place art. Pictures set here are drawn with it as a reference image.')}
+          path={art.path}
+          title={`${draft.name} · ${artName}`}
+          note={!art.main ? t('留着的一张设定图，没有启用。', 'A design picture kept of it, not in use.') : house ? t('这个家族 / 组织的设定图。', 'The design art of this house or organisation.') : picture === 'item' ? t('物品设定图，画到它的图以此为参考。', 'The thing\'s art: pictures showing it are drawn against this.') : t('场景设定图。发生在这里的画面会把它当参考图。', 'Place art. Pictures set here are drawn with it as a reference image.')}
           onClose={() => { setViewing(false) }}
           onEditLook={editLook}
         />

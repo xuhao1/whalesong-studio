@@ -18,6 +18,7 @@
 import { sceneOfPicture, scenesOf } from '../shared/art'
 import { figureSpots, placeFigures, spotsNear, type ChapterFigure, type PortraitPlace } from '../shared/reader'
 import { mainSheetOf, sheetFronts, sheetPool } from '../shared/sheets'
+import { artPool, mainArtOf } from '../shared/arts'
 import { pixelsOf } from './media/pixels'
 import { watch, type FSWatcher } from 'node:fs'
 import { basename, join } from 'node:path'
@@ -1172,10 +1173,51 @@ export class Project {
       const merged = mergeCard<WorldEntry>(existing ?? { id, name: input.name!.trim(), category: 'other', importance: 2 }, input)
       merged.id = id
       merged.updatedAt = new Date().toISOString()
+      this.settleArt(merged, existing, input as Record<string, unknown>)
       const { body, ...data } = merged
       await this.saveCard('world', id, data, body)
       return merged
     })
+  }
+
+  /**
+   * The design pictures of a place, a house or a thing are kept together, like a person's design sheets. A picture
+   * named alone (`visualImage`) is a new one: it goes first, and those before it stay; a list handed in
+   * (`visualImages`) is the author's — which are kept, in what order. Which is the main one (`visualImage`): the one
+   * the author chose (`visualMain`), while it is among them — a picture drawn after a choice was made does not take
+   * its place, and one chosen that was not among them joins them; with no choice made, a picture newly named is the
+   * main one, and otherwise the main picture stays what it was. Where it is taken away, the one kept right behind it
+   * is next.
+   * @param said - what this save says of the entry, as it came.
+   */
+  private settleArt(merged: WorldEntry, existing: WorldEntry | undefined, said: Record<string, unknown>): void {
+    const before = existing !== undefined ? artPool(existing) : []
+    const known = new Set(before)
+    const named = typeof said.visualImage === 'string' ? said.visualImage.trim() : ''
+    const cleared = 'visualImage' in said && said.visualImage !== undefined && named.length === 0
+    let pool = Array.isArray(said.visualImages)
+      ? [...new Set(said.visualImages.filter((path): path is string => typeof path === 'string' && path.trim().length > 0).map(path => path.trim()))]
+      // (One of its own already, named again, stays where it is: which is the main one is said with `visualMain`.)
+      : named.length > 0 ? (known.has(named) ? before : [named, ...before])
+        // The main picture named as nothing: that one taken away, the others kept.
+        : cleared ? before.filter(path => path !== existing?.visualImage) : before
+    const wanted = 'visualMain' in said && said.visualMain !== undefined ? (typeof said.visualMain === 'string' ? said.visualMain.trim() : '') : existing?.visualMain ?? ''
+    // Chosen out of the gallery — one drawn before pictures were kept side by side, or drawn to compare: it joins them.
+    if ('visualMain' in said && wanted.length > 0 && !pool.includes(wanted)) pool = [wanted, ...pool]
+    const was = existing?.visualImage
+    // With no choice in the way, a picture newly named is the main one; else the one there was — or, that one gone,
+    // the one that stood right behind it (before it, where nothing stood behind).
+    const current = named.length > 0 && !known.has(named) ? named
+      : was === undefined || pool.includes(was) ? was
+        : before.slice(before.indexOf(was) + 1).find(path => pool.includes(path)) ?? before.slice(0, Math.max(0, before.indexOf(was))).reverse().find(path => pool.includes(path))
+    const main = mainArtOf(pool, wanted.length > 0 ? wanted : undefined, current)
+    if (main.path !== undefined) merged.visualImage = main.path
+    else delete merged.visualImage
+    if (main.chosen) merged.visualMain = main.path!
+    else delete merged.visualMain
+    // The list is written where it says more than the main picture does by itself.
+    if (pool.length > 1 || (pool.length === 1 && pool[0] !== main.path)) merged.visualImages = pool
+    else delete merged.visualImages
   }
 
   async deleteWorld(ref: string): Promise<boolean> {
@@ -1229,7 +1271,9 @@ export class Project {
       // As heavy as the heaviest of them: one of them travelling with every request means the place does.
       importance: Math.min(keep.importance, ...folded.map(other => other.importance)) as WorldEntry['importance'],
       ...(keep.weight === undefined && folded.find(other => other.weight !== undefined)?.weight !== undefined ? { weight: folded.find(other => other.weight !== undefined)!.weight! } : {}),
-      ...(pictured !== undefined ? { visualImage: pictured.visualImage!, ...(keep.visualPrompt === undefined && pictured.visualPrompt !== undefined ? { visualPrompt: pictured.visualPrompt } : {}) } : {}),
+      ...(pictured !== undefined && keep.visualPrompt === undefined && pictured.visualPrompt !== undefined ? { visualPrompt: pictured.visualPrompt } : {}),
+      // The pictures of all of them are pictures of the one thing: kept side by side, its own first.
+      ...(folded.some(other => artPool(other).length > 0) ? { visualImages: [...new Set([...artPool(keep), ...folded.flatMap(other => artPool(other))])] } : {}),
       ...(related.length > 0 ? { related } : {}),
       ...(Object.keys(spots).length > 0 ? { spots } : {}),
       ...(course.length > 0 ? { events: course } : {}),
@@ -2988,10 +3032,13 @@ export class Project {
     for (const entry of await this.world()) {
       const turns = entry.events ?? []
       const turned = turns.some(turn => turn.image === gone)
-      if (entry.visualImage !== gone && !turned) continue
+      const arts = artPool(entry)
+      const pictured = arts.includes(gone)
+      if (!pictured && !turned) continue
       await this.saveWorld({
         id: entry.id,
-        ...(entry.visualImage === gone ? { visualImage: '' } : {}),
+        // Out of the design pictures kept of it — the main one or not: where it was the main one, the next is.
+        ...(pictured ? (arts.length > 1 ? { visualImages: arts.filter(item => item !== gone) } : { visualImage: '', visualImages: [] }) : {}),
         ...(turned ? { events: turns.map(({ image, ...turn }) => (image === undefined || image === gone ? turn : { ...turn, image })) } : {}),
       })
       held.push(entry.name)
@@ -3058,10 +3105,18 @@ export class Project {
     for (const entry of await this.world()) {
       const turns = entry.events ?? []
       const turned = turns.some(turn => turn.image === old)
-      if (entry.visualImage !== old && !turned) continue
+      const arts = artPool(entry)
+      const pictured = arts.includes(old)
+      if (!pictured && !turned) continue
       await this.saveWorld({
         id: entry.id,
-        ...(entry.visualImage === old ? { visualImage: next } : {}),
+        // Among its design pictures it is put before the old one, which stays, not in use: what the old one was —
+        // the main picture, chosen or for being first — the new one is.
+        ...(pictured ? {
+          visualImages: arts.flatMap(item => (item === old ? [next, old] : [item])),
+          ...(entry.visualImage === old ? { visualImage: next } : {}),
+          ...(entry.visualMain === old ? { visualMain: next } : {}),
+        } : {}),
         ...(turned ? { events: turns.map(turn => (turn.image === old ? { ...turn, image: next } : turn)) } : {}),
       })
       held.push(entry.name)

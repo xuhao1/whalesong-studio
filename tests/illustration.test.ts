@@ -778,7 +778,8 @@ describe('design sheets and looks', () => {
     // The sheet is on record as drawn from how she looked then — before the scar.
     await project.addIllustration({ id: 'img-sheet-kept', path: sheet, kind: 'sheet', target: card.id, prompt: 'sheet', createdAt: new Date().toISOString(), parts: { subject: 'sheet', pieces: [{ of: 'look', text: '高瘦，黑发盘在脑后', from: 'card', name: '沈砚' }] } })
     const SCARRED = '高瘦，黑发盘在脑后，左眉有一道旧疤，常年穿一件灰布袍。'
-    bed.llm.responder = () => JSON.stringify({
+    const WORKED = '用途：小说人物立绘（定妆照）：只画「沈砚」一个人\n画面：她回头看向身后，肩上落着雪\n环境：雪夜，远处一点灯火\n构图：半身像\n人物「沈砚」：高瘦，黑发盘在脑后，左眉有一道旧疤，常年穿一件灰布袍\n参考图：图1 是沈砚；脸和体型照图'
+    const sorting = (): string => JSON.stringify({
       appearance: SCARRED,
       negative: 'halo',
       picture: '雪夜，回头看向身后',
@@ -786,9 +787,12 @@ describe('design sheets and looks', () => {
       once: ['雪夜', '回头看'],
       unused: [],
     })
+    // (Two things are asked of the director: to sort the notes, and — what is of this one picture — to work it into the prompt.)
+    const writes = (request: { prompt: string }): boolean => request.prompt.includes('下面是工坊排好的画图说明')
+    bed.llm.responder = request => (writes(request) ? JSON.stringify({ prompt: WORKED }) : sorting())
     const portrait = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id, notes: '左眉有道疤，常年穿灰布袍；这张要雪夜，回头看' }, task)
     // The director was handed the notes, her appearance as it stood, and what kind of picture is about to be drawn.
-    const asked = bed.llm.requests.at(-1)!.prompt
+    const asked = bed.llm.requests.find(request => !writes(request))!.prompt
     for (const part of ['左眉有道疤，常年穿灰布袍；这张要雪夜，回头看', '## 这个人现在的外貌（写手照它写，每一张有此人的图也照它画）\n高瘦，黑发盘在脑后。', '立绘：画的是这个人在书里的一幕', '不要添构图、景别这类他没说的', '"appearance": "分完之后的整段外貌']) expect(asked, part).toContain(part)
     expect(asked).not.toContain('视觉锚点')
     expect(portrait.sorted).toEqual({ kept: ['左眉有道疤', '常年灰布袍'], once: ['雪夜', '回头看'], unused: [], picture: '雪夜，回头看向身后' })
@@ -797,15 +801,30 @@ describe('design sheets and looks', () => {
     expect(after.appearance).toBe(SCARRED)
     expect(after.visual?.prompt).toBeUndefined()
     expect(after.visual?.sheet).toBe(sheet)
-    // Of this picture: in this picture — and nowhere in the look.
+    // Of this picture: in this picture — and nowhere in the look. It is not put beside the other lines as one more:
+    // whoever writes the prompt is handed it as what the author asked, and works it into the parts it speaks of.
     expect(portrait.parts?.subject).toContain('雪夜，回头看向身后')
+    const working = bed.llm.requests.find(writes)!.prompt
+    expect(working).toContain('## 作者对这一张的要求（说明里照原话带着它，在「这一张的要求」或「画面」那一行）\n雪夜，回头看向身后')
+    expect(working).toContain('0. 作者的要求不是另加的一行，是要改进提示词里去的')
+    expect(working).toContain('地点、时间、天气、光线：改「环境」')
+    expect(working).toContain('只动它说到的那几段')
+    expect(images.calls.at(-1)!.prompt).toContain(WORKED)
+    expect(images.calls.at(-1)!.prompt).not.toContain('画面：雪夜，回头看向身后')
+    expect(portrait.written).toContain('环境：雪夜，远处一点灯火')
+    expect(portrait.sent?.compact).toMatchObject({ asked: true })
+    expect(portrait.sent?.compact?.failed).toBeUndefined()
     // Her sheet goes along, but it was drawn before the scar: what the words now say of her is written out, not left to it.
     expect(portrait.parts?.subject).toContain('左眉有一道旧疤')
     expect(portrait.parts?.subject).not.toContain('纯净的浅色背景')
     expect(JSON.stringify(after)).not.toContain('雪夜')
     // The next portrait, asked for nothing in particular, has the scar and no snow — written out still: her sheet was
     // drawn from what she looked like before, and a line that only pointed to it would lose the scar.
+    const written = bed.llm.requests.filter(writes).length
     const plain = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id }, task)
+    // (Nothing was asked of it: its brief goes as laid out, and nobody writes it.)
+    expect(bed.llm.requests.filter(writes)).toHaveLength(written)
+    expect(plain.sent?.compact).toBeUndefined()
     expect(plain.sorted).toBeUndefined()
     expect(plain.parts?.subject).toContain('左眉有一道旧疤')
     expect(plain.parts?.subject).toContain('素净的浅色背景')
@@ -818,6 +837,37 @@ describe('design sheets and looks', () => {
     expect(drawn.sorted).toEqual({ kept: [], once: [], unused: ['雪夜'] })
     expect(drawn.parts?.subject).not.toContain('雪夜')
     expect((await project.findCharacter(card.id))!.appearance).toBe(SCARRED)
+
+    // A sheet she asks something of: the line is in the brief, and the director writes the prompt with it worked in —
+    // "arms at the sides" and "a hand on the hilt" are not both said. A prompt handed in that still has the line is
+    // not taken; one that will not come leaves the brief as it is, the line in the author's words, and the record says so.
+    const HILT = '用途：人物设定图（三视图）：「沈砚」\n构图：同一个人的全身站姿画三次——正面、侧面、背面，右手按着腰间的刀柄，左手自然垂下\n人物「沈砚」：高瘦，黑发盘在脑后，左眉有一道旧疤，常年穿一件灰布袍，腰间佩一把短刀'
+    let tries = 0
+    bed.llm.responder = (request) => {
+      if (!writes(request)) return JSON.stringify({ appearance: SCARRED, negative: 'halo', picture: '右手按着刀柄', kept: [], once: ['右手按着刀柄'], unused: [] })
+      tries += 1
+      return JSON.stringify({ prompt: tries === 1 ? `${HILT}\n这一张的要求：右手按着刀柄` : HILT })
+    }
+    const armed = await illustrate(bed.core, bed.runtime, { kind: 'sheet', target: card.id, notes: '右手按着刀柄' }, task)
+    expect(tries).toBe(2)
+    expect(armed.parts?.subject).toContain('这一张的要求：右手按着刀柄')
+    expect(images.calls.at(-1)!.prompt).toContain(HILT)
+    expect(images.calls.at(-1)!.prompt).not.toContain('这一张的要求')
+    expect(armed.sent?.compact).toMatchObject({ asked: true })
+    bed.llm.responder = (request) => { if (writes(request)) throw new Error('the director is away'); return JSON.stringify({ appearance: SCARRED, negative: 'halo', picture: '右手按着刀柄', kept: [], once: ['右手按着刀柄'], unused: [] }) }
+    forgetFittedPrompts()
+    const lined = await illustrate(bed.core, bed.runtime, { kind: 'sheet', target: card.id, notes: '右手按着刀柄' }, task)
+    expect(images.calls.at(-1)!.prompt).toContain('这一张的要求：右手按着刀柄')
+    expect(lined.sent?.compact).toMatchObject({ asked: true, failed: true })
+    // Where the author has prompts never rewritten, this one is not either: the line goes as it is.
+    await bed.core.settings.update({ image: { ...bed.core.currentSettings().image, promptWrite: 'never' } })
+    const asIs = bed.llm.requests.filter(writes).length
+    bed.llm.responder = () => JSON.stringify({ appearance: SCARRED, negative: 'halo', picture: '右手按着刀柄', kept: [], once: ['右手按着刀柄'], unused: [] })
+    const never = await illustrate(bed.core, bed.runtime, { kind: 'sheet', target: card.id, notes: '右手按着刀柄' }, task)
+    expect(bed.llm.requests.filter(writes)).toHaveLength(asIs)
+    expect(images.calls.at(-1)!.prompt).toContain('这一张的要求：右手按着刀柄')
+    expect(never.sent?.compact).toBeUndefined()
+    await bed.core.settings.update({ image: { ...bed.core.currentSettings().image, promptWrite: 'fit' } })
 
     // A card of an earlier version, with phrases for image models beside the appearance: what the ideas change is
     // written into the appearance with those phrases folded in, and the phrases are gone.
@@ -834,6 +884,7 @@ describe('design sheets and looks', () => {
     const unsorted = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id, notes: '披一件红斗篷' }, task)
     expect(unsorted.sorted).toEqual({ kept: [], once: ['披一件红斗篷'], unused: [], picture: '披一件红斗篷', unsorted: true })
     expect(unsorted.parts?.subject).toContain('披一件红斗篷')
+    expect(images.calls.at(-1)!.prompt).toContain('画面：披一件红斗篷')
     expect((await project.findCharacter(card.id))!.appearance).toBe(SCARRED)
     expect(images.calls).toHaveLength(calls + 1)
   })
@@ -1022,8 +1073,11 @@ describe('design sheets and looks', () => {
     await bed.core.settings.update({ image: { ...bed.core.currentSettings().image, portraits: 'plain' } })
     const before = bed.llm.requests.length
     expect((await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id }, task)).prompt).toContain('面向镜头，素净的浅色背景')
-    expect((await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id, prompt: '雪夜' }, task)).prompt).toContain('用途：小说人物立绘（定妆照）：只画「黛玉」一个人\n画面：雪夜\n构图：半身像\n')
     expect(bed.llm.requests.length).toBe(before)
+    expect((await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id, prompt: '雪夜' }, task)).prompt).toContain('用途：小说人物立绘（定妆照）：只画「黛玉」一个人\n画面：雪夜\n构图：半身像\n')
+    // (Nobody picks a moment; what was asked of this one is handed to whoever writes its prompt, to be worked in.)
+    expect(bed.llm.requests.length).toBe(before + 1)
+    expect(bed.llm.requests.at(-1)!.prompt).toContain('## 作者对这一张的要求（说明里照原话带着它，在「这一张的要求」或「画面」那一行）\n雪夜')
     await bed.core.settings.update({ image: { ...bed.core.currentSettings().image, portraits: 'scene' } })
 
     // Looked over again on request, with what the author wants of the list: the ones kept go along; one that still

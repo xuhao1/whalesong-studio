@@ -1022,6 +1022,12 @@ export interface RenderInput {
    */
   verbatim?: boolean
   /**
+   * What the author asked of this one picture, in their words (a portrait, a design sheet): the brief carries it as
+   * a line, and whoever writes the prompt works it into the parts it speaks of — where prompts are written at all
+   * (`image.promptWrite` not `never`), the director writes this one whether or not the brief would fit.
+   */
+  asked?: string
+  /**
    * With `verbatim`: whom the prompt points to by a picture's number ("见图1") and how they look in words. Where no
    * picture goes along after all, the pointer gives way to the words — a pointer to nothing describes nobody.
    */
@@ -1196,39 +1202,44 @@ const avoidLine = (avoid: readonly string[], lang: PromptLanguage): string => `$
  * @param input.avoid - what is kept out, where that travels apart from the prompt: for the director to steer around.
  * @returns the prompt to send, and what was done for the record.
  */
-async function writePrompt(core: NovelCore, runtime: ProjectRuntime, provider: ImageProvider, input: { prompt: string; avoid: string[]; references: number; lang: PromptLanguage; /** The author's own sentence, said of a picture that goes along: theirs to word, and rewritten only where the model could not read it all. */ own?: boolean }, task: TaskContext): Promise<{ prompt: string; compact?: NonNullable<IllustrationSent['compact']> }> {
+async function writePrompt(core: NovelCore, runtime: ProjectRuntime, provider: ImageProvider, input: { prompt: string; avoid: string[]; references: number; lang: PromptLanguage; /** What the author asked of this one picture: worked into the prompt, whether or not the brief fits. */ asked?: string; /** The author's own sentence, said of a picture that goes along: theirs to word, and rewritten only where the model could not read it all. */ own?: boolean }, task: TaskContext): Promise<{ prompt: string; compact?: NonNullable<IllustrationSent['compact']> }> {
   const asIs = { prompt: input.prompt }
   const mode = promptWriteOf(await core.imageOf(runtime))
   if (mode === 'never') return asIs
+  // What the author asked of this one picture is worked into the prompt by whoever writes it — not left as a line
+  // beside lines that say otherwise: asked, the director writes the prompt whether or not the brief would fit.
+  const asked = input.asked?.trim() ?? ''
   const room = await provider.prompting?.(task.signal).catch(() => undefined)
   const from = promptTokens(input.prompt)
   // Counted by estimate, so held to a little under what the model reads.
   const limit = room?.tokens !== undefined ? Math.max(1, Math.floor(room.tokens * PROMPT_HEADROOM)) : undefined
   const over = limit !== undefined && from > limit
-  if (!over && (mode === 'fit' || input.own === true)) return asIs
+  if (!over && asked.length === 0 && (mode === 'fit' || input.own === true)) return asIs
   const manifest = await runtime.project.manifest()
   const lang = promptLanguage(manifest.language)
   const withPictures = input.references > 0 && room?.references !== 0
   // The same picture asked for again — drawn again, a panel redone — is not written again.
-  const key = hashText(`${provider.model}\n${limit ?? ''}\n${input.lang}\n${withPictures}\n${input.prompt}\n${input.avoid.join('|')}`)
-  const record = (text: string, more: { cut?: boolean } = {}): NonNullable<IllustrationSent['compact']> => ({ ...(room?.tokens !== undefined ? { limit: room.tokens } : {}), from, tokens: promptTokens(text), ...more })
+  const key = hashText(`${provider.model}\n${limit ?? ''}\n${input.lang}\n${withPictures}\n${input.prompt}\n${input.avoid.join('|')}\n${asked}`)
+  const record = (text: string, more: { cut?: boolean } = {}): NonNullable<IllustrationSent['compact']> => ({ ...(room?.tokens !== undefined ? { limit: room.tokens } : {}), from, tokens: promptTokens(text), ...(asked.length > 0 ? { asked: true } : {}), ...more })
   const before = fittedPrompts.get(key)
   if (before !== undefined) return { prompt: before, compact: record(before) }
   // The nearest the director came, where every try was over: written with what matters first, it loses least at its end.
   let nearest: string | undefined
-  const restore = task.job?.note(over
-    ? L(lang, `导演在把提示词压到 ${limit} 个 token 以内（现在约 ${from} 个）…`, `The director is bringing the prompt within ${limit} tokens (about ${from} now)…`)
-    : L(lang, '导演在把画图说明写成提示词…', 'The director is writing the prompt from the brief…'))
+  const restore = task.job?.note(asked.length > 0
+    ? L(lang, '导演在照你对这一张的要求改提示词…', 'The director is working what you asked of this one into the prompt…')
+    : over
+      ? L(lang, `导演在把提示词压到 ${limit} 个 token 以内（现在约 ${from} 个）…`, `The director is bringing the prompt within ${limit} tokens (about ${from} now)…`)
+      : L(lang, '导演在把画图说明写成提示词…', 'The director is writing the prompt from the brief…'))
   try {
     const { value } = await assign(core, runtime, task, {
       role: 'director',
-      label: over ? L(lang, '压缩提示词', 'Fitting a prompt') : L(lang, '写提示词', 'Writing a prompt'),
+      label: asked.length > 0 ? L(lang, '照要求改提示词', 'A prompt, by what was asked') : over ? L(lang, '压缩提示词', 'Fitting a prompt') : L(lang, '写提示词', 'Writing a prompt'),
       tool: 'fit_prompt',
       // All of it is in the task: asked in one request, whatever the role is set to.
       plain: true,
       maxSteps: 6,
       what: limit !== undefined ? L(lang, `同一张图的提示词，不超过 ${limit} 个 token`, `the same picture's prompt, in no more than ${limit} tokens`) : L(lang, '同一张图的提示词', 'the same picture\'s prompt'),
-      prompt: imagePromptTask({ lang, language: manifest.language, title: manifest.title, brief: input.prompt, avoid: input.avoid, to: input.lang, ...(limit !== undefined ? { tokens: limit } : {}), estimate: from, model: provider.model, references: withPictures ? input.references : 0 }),
+      prompt: imagePromptTask({ lang, language: manifest.language, title: manifest.title, brief: input.prompt, avoid: input.avoid, to: input.lang, ...(limit !== undefined ? { tokens: limit } : {}), estimate: from, model: provider.model, references: withPictures ? input.references : 0, ...(asked.length > 0 ? { asked } : {}) }),
       temperature: 0.2,
       validate: (raw) => {
         // What is kept out travels apart from this prompt: a line of it written in all the same is taken out again —
@@ -1236,6 +1247,8 @@ async function writePrompt(core: NovelCore, runtime: ProjectRuntime, provider: I
         const handed = asText(asRecord(raw).prompt)
         const text = handed !== undefined && input.avoid.length > 0 ? withoutAvoidLine(handed) : handed
         if (text === undefined || text.length === 0) throw new Error('"prompt" is empty')
+        // Worked in, what the author asked is no line of its own any more.
+        if (asked.length > 0 && /^\s*(这一张的要求|Asked of this one)\s*[:：]/m.test(text)) throw new Error('the prompt still has a part "这一张的要求 / Asked of this one": work what the author asked into the parts it speaks of, and leave that part out')
         // Every reference picture is still spoken of by its number: a prompt that lost one sends a picture nothing explains.
         if (withPictures) {
           for (let at = 1; at <= input.references; at++) {
@@ -1261,7 +1274,7 @@ async function writePrompt(core: NovelCore, runtime: ProjectRuntime, provider: I
       return { prompt: cut, compact: record(cut, { cut: true }) }
     }
     core.log(over ? `could not bring a prompt within ${limit} tokens; it goes as it is` : 'the director could not write the prompt out; the brief goes as it is', error)
-    return { ...asIs, compact: { ...(room?.tokens !== undefined ? { limit: room.tokens } : {}), from, failed: true } }
+    return { ...asIs, compact: { ...(room?.tokens !== undefined ? { limit: room.tokens } : {}), from, failed: true, ...(asked.length > 0 ? { asked: true } : {}) } }
   } finally {
     restore?.()
   }
@@ -1364,7 +1377,7 @@ export async function renderImage(core: NovelCore, runtime: ProjectRuntime, inpu
     const brief = tail.length > 0 ? `${subject}\n${tail}` : subject
     // Written out by the director where the author has prompts written, or where the model reads less than the brief
     // comes to. The author's own prompt is theirs to word: rewritten only where the model could not read it all.
-    const fitted = await writePrompt(core, runtime, provider, { prompt: brief, avoid: lastLine !== undefined ? [] : avoid, references: held.length, lang: plang, ...(input.verbatim === true ? { own: true } : {}) }, task)
+    const fitted = await writePrompt(core, runtime, provider, { prompt: brief, avoid: lastLine !== undefined ? [] : avoid, references: held.length, lang: plang, ...(input.verbatim === true ? { own: true } : input.asked !== undefined ? { asked: input.asked } : {}) }, task)
     const result = await provider.generate({
       prompt: fitted.prompt,
       // Said in the prompt already, it is not to be written after it again; else it goes in the field the service has for it.
@@ -2270,9 +2283,13 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
       if (beside.place?.visualImage !== undefined) sheet.push({ path: beside.place.visualImage, label: L(plang, `场所「${beside.place.name}」`, `the place "${beside.place.name}"`) })
       for (const entry of beside.things) if (entry.visualImage !== undefined) sheet.push({ path: entry.visualImage, label: L(plang, `物品「${entry.name}」`, `the object "${entry.name}"`) })
       if (first.drawn.length > 0) task.job?.note(L(lang, '人设图画好了，照着它画立绘…', 'The sheet is drawn; now the portrait, against it…'))
+      // A likeness the author asked something of (a snowy night, a look over the shoulder): theirs is the picture's
+      // line as they said it — for whoever writes the prompt to work into the parts it speaks of. (In a moment, what
+      // they asked went into the choosing and the framing of it already.)
+      const likenessAsked = !(scene !== undefined && scene.length > 0) && direction !== undefined && direction.trim().length > 0 ? direction.trim() : undefined
       const momentTitle = shown !== undefined && 'text' in shown ? shown.title : undefined
       const moment = scene !== undefined && scene.length > 0 ? { ...(momentTitle !== undefined ? { title: momentTitle } : {}), ...(drawnOf !== undefined && drawnOf.id !== 'kept' ? { scene: drawnOf.id } : {}), ...(momentAt !== undefined ? { chapter: momentAt } : {}) } : undefined
-      const render = async (trial?: NonNullable<IllustrationInfo['trial']>): Promise<IllustrationInfo> => await renderImage(core, runtime, { ...composed, kind: 'portrait', target: card.id, name: `portrait-${card.id}`, size: params.size ?? pictureSize((await core.imageOf(runtime)), 'portrait'), art, avoid: [...(params.avoid ?? []), ...negativesOf([card, ...others])], references: sheet, ...(moment !== undefined ? { moment } : {}), ...(trial !== undefined ? { trial } : {}) }, task)
+      const render = async (trial?: NonNullable<IllustrationInfo['trial']>): Promise<IllustrationInfo> => await renderImage(core, runtime, { ...composed, kind: 'portrait', target: card.id, name: `portrait-${card.id}`, size: params.size ?? pictureSize((await core.imageOf(runtime)), 'portrait'), art, avoid: [...(params.avoid ?? []), ...negativesOf([card, ...others])], references: sheet, ...(moment !== undefined ? { moment } : {}), ...(trial !== undefined ? { trial } : {}), ...(likenessAsked !== undefined ? { asked: likenessAsked } : {}) }, task)
       if (params.trials !== undefined && params.trials.length > 0) {
         // Tried with several services: the pictures stand beside their portraits for the author to choose from; the card keeps what it has.
         const hang: PictureHang = { as: 'portrait', character: card.id, ...(stage !== undefined ? { stage: stage.id } : {}) }
@@ -2347,6 +2364,9 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
         piece('outfit', look?.prompt),
         piece('ask', look === undefined ? direction : undefined),
       ], plang),
+      // What was asked of this sheet is for whoever writes its prompt to work in: beside "arms at the sides, calm" a
+      // line saying "one hand on the hilt" is two things said of one figure.
+      ...(look === undefined && direction !== undefined && direction.trim().length > 0 ? { asked: direction.trim() } : {}),
       kind: 'sheet',
       target: card.id,
       name: `sheet-${card.id}${look !== undefined ? `-${look.id}` : stage !== undefined ? `-${stage.id}` : ''}`,
@@ -2409,8 +2429,8 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
     const placesTried = await tryWith(placeInput, placeHang)
     if (placesTried !== undefined) return placesTried
     const info = await renderImage(core, runtime, placeInput, task)
-    await hangArt(project, info.path, placeHang)
-    return done(info)
+    const hung = await hangArt(project, info.path, placeHang)
+    return hung.spare ? { ...done(info), spare: true } : done(info)
   }
 
   if (params.kind === 'item') {
@@ -2439,8 +2459,8 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
     const thingsTried = await tryWith(thingInput, thingHang)
     if (thingsTried !== undefined) return thingsTried
     const info = await renderImage(core, runtime, thingInput, task)
-    await hangArt(project, info.path, thingHang)
-    return done(info)
+    const hung = await hangArt(project, info.path, thingHang)
+    return hung.spare ? { ...done(info), spare: true } : done(info)
   }
 
   if (params.kind === 'cover') {
@@ -2629,13 +2649,20 @@ async function hangSheet(project: ProjectRuntime['project'], path: string, hang:
   return { spare: false }
 }
 
-/** Where the art of a place, a house or a thing goes: the entry's own — or, of one turn of its course, that turn's. */
-async function hangArt(project: ProjectRuntime['project'], path: string, hang: Extract<PictureHang, { as: 'art' }>): Promise<WorldEntry> {
+/**
+ * Where the art of a place, a house or a thing goes: among the entry's own design pictures, first — the main one
+ * unless the author chose another, which then stays (`spare`) — or, of one turn of its course, that turn's.
+ * @param take - the author took this very picture (of several drawn to compare): it is the main one, over one chosen before.
+ */
+async function hangArt(project: ProjectRuntime['project'], path: string, hang: Extract<PictureHang, { as: 'art' }>, take = false): Promise<{ entry: WorldEntry; spare: boolean }> {
   const entry = await project.findWorld(hang.entry)
   if (entry === undefined) throw new ProjectError('novel/not-found', `no world entry matches "${hang.entry}"`)
-  if (hang.event !== undefined) await keepTurnPicture(project, entry, await turnOf(project, entry, hang.event), path)
-  else await project.saveWorld({ id: entry.id, visualImage: path })
-  return entry
+  if (hang.event !== undefined) {
+    await keepTurnPicture(project, entry, await turnOf(project, entry, hang.event), path)
+    return { entry, spare: false }
+  }
+  const kept = await project.saveWorld({ id: entry.id, visualImage: path, ...(take && entry.visualMain !== undefined ? { visualMain: path } : {}) })
+  return { entry, spare: kept.visualImage !== path }
 }
 
 /** Put the picture of a passage into the chapter's text, after the paragraph the passage ends in — at the top where the passage is no longer found. */
@@ -2689,7 +2716,7 @@ async function hangAs(runtime: ProjectRuntime, record: IllustrationInfo, hang: P
   } else if (hang.as === 'sheet') {
     await hangSheet(project, record.path, hang)
     held.push((await project.findCharacter(hang.character))?.name ?? hang.character)
-  } else if (hang.as === 'art') held.push((await hangArt(project, record.path, hang)).name)
+  } else if (hang.as === 'art') held.push((await hangArt(project, record.path, hang, true)).entry.name)
   else if (hang.as === 'cover') {
     await project.updateManifest({ cover: record.path })
     held.push((await project.manifest()).title)

@@ -8274,6 +8274,11 @@ blockquote.nv-passage-quote {
   object-fit: cover;
 }
 
+/* The design pictures kept of an entry, in a row under the one shown: a place's are wide, and shown whole. */
+.nv-entry-arts img {
+  object-position: center;
+}
+
 /* A thing is drawn alone on a plain ground: shown whole, at the size of a picture on a page. */
 .nv-entry-picture.is-item {
   width: min(100%, 320px);

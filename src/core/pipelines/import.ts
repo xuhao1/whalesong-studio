@@ -659,7 +659,7 @@ export interface RereadResult {
 }
 
 const PERSON_PICTURES = ['prompt', 'negative', 'sheet', 'sheetFront', 'mainSheet', 'sheets', 'fronts', 'looks', 'portrait', 'portraits', 'face', 'sprites'] as const
-const THING_PICTURES = ['visualPrompt', 'visualImage', 'spots'] as const
+const THING_PICTURES = ['visualPrompt', 'visualImage', 'visualImages', 'visualMain', 'spots'] as const
 
 /**
  * Read the book again from nothing but its text: everything that was read off it — digests, cards, entries, ties,

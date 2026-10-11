@@ -401,7 +401,9 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
         <span>{image.imported === true ? t('从电脑导入的：不是这里画的，没有提示词', 'Brought in from this computer: not drawn here, and without a prompt') : image.model ?? t('（没记下模型）', '(model not recorded)')}{service !== undefined ? ` · ${t(...service)}` : ''}</span>
         {sent?.sampling !== undefined ? <span>{t(`${sent.sampling.steps} 步 · 引导 ${sent.sampling.guidance} · ${sent.sampling.sampler}/${sent.sampling.scheduler}`, `${sent.sampling.steps} steps · guidance ${sent.sampling.guidance} · ${sent.sampling.sampler}/${sent.sampling.scheduler}`)}{sent.sampling.from === 'server' ? t('（照服务器上这个模型上次跑的）', ' (as the server last ran this model)') : sent.sampling.from === 'builtin' ? t('（内置的默认值）', ' (the built-in figures)') : ''}</span> : null}
         {sent?.seed !== undefined ? <span>{t(`种子 ${sent.seed}`, `seed ${sent.seed}`)}</span> : null}
-        {sent?.compact !== undefined ? <span>{sent.compact.limit === undefined
+        {sent?.compact?.asked === true ? <span>{sent.compact.failed === true ? t('导演没能把这一张的要求改进提示词：要求作为一行照原话发了', 'the director could not work what was asked into the prompt: it went as a line, in the author\'s words') : t('导演照这一张的要求改写了提示词', 'the director rewrote the prompt by what was asked of this one')}</span> : null}
+        {/* (Written by what was asked and within what the model reads: the line above has said it.) */}
+        {sent?.compact !== undefined && !(sent.compact.asked === true && (sent.compact.limit === undefined || sent.compact.from <= sent.compact.limit)) ? <span>{sent.compact.limit === undefined
           // No limit of the model's in play: the director wrote the brief out as the prompt because the author has prompts written.
           ? (sent.compact.failed === true
               ? t('导演没能把画图说明写成提示词：照工坊排好的原样发了', 'the director could not write the prompt out: the brief went as the Studio laid it out')

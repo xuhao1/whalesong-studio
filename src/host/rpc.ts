@@ -481,7 +481,13 @@ export function createHandlers(service: NovelService): Handlers {
       const runtime = await open(root)
       return job(runtime, 'bible', `growth ${id}`, id, async task => await deriveGrowth(core, runtime, { character: id, ...(direction !== undefined && direction.length > 0 ? { direction } : {}) }, task))
     },
-    'world.save': async ({ root, entry }) => await (await open(root)).project.saveWorld(entry),
+    'world.save': async ({ root, entry }) => {
+      const { project } = await open(root)
+      const saved = await project.saveWorld(entry)
+      // A picture chosen as the main one that was drawn to compare and still waited to be taken: it is taken.
+      if (typeof entry.visualMain === 'string' && entry.visualMain.trim().length > 0 && saved.visualMain === entry.visualMain.trim()) await project.tookTrial(saved.visualMain)
+      return saved
+    },
     'world.merge': async ({ root, keep, fold }) => {
       const runtime = await open(root)
       return await runtime.project.mergeWorld(requireString(keep, 'keep'), Array.isArray(fold) ? fold.filter((item): item is string => typeof item === 'string') : [])
