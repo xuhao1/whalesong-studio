@@ -117,3 +117,80 @@ export function movedPicture(text: string, line: number, after: number): string 
   if (to === picture.after) return text
   return withPicture(withoutPicture(text, line), picture, to)
 }
+
+// ───────────────────────────── the text laid out to be written in ─────────────────────────────
+
+/**
+ * Prose to type in: the lines between two pictures (or before the first, or after the last), from the first of them
+ * to the end of the last — the empty lines the author left around a picture are its own, shown and kept.
+ */
+export interface ProseBlock {
+  kind: 'prose'
+  /** Where its words begin and end in the text. */
+  start: number
+  end: number
+  /**
+   * It has no line of its own yet — a picture stands on the text's first line, or on its last, or two stand on lines
+   * one after the other — and what is typed here is given one: before the picture that follows (`lead`), or after
+   * the one before (`tail`).
+   */
+  gap?: 'lead' | 'tail'
+}
+
+/** A picture: the line of markup it is in the text, whole. */
+export interface PictureBlock {
+  kind: 'picture'
+  start: number
+  end: number
+  /** Which of the text's lines it is, as {@link embeddedPictures} says it. */
+  line: number
+  path: string
+  alt: string
+}
+
+export type TextBlock = ProseBlock | PictureBlock
+
+/**
+ * A chapter's text as the page it is written on lays it out: prose and pictures in turn — prose first and last, also
+ * where there is none (a place to type before a picture on the first line, between two that stand on lines one after
+ * the other, after one on the last).
+ */
+export function textBlocks(text: string): TextBlock[] {
+  const blocks: TextBlock[] = []
+  let offset = 0
+  /** Where the prose being gathered began; `undefined` while no line of it was seen since the last picture. */
+  let from: number | undefined
+  let to = 0
+  text.split('\n').forEach((line, at) => {
+    const picture = PICTURE_LINE.exec(line.trim())
+    if (picture === null) {
+      if (from === undefined) from = offset
+      to = offset + line.length
+    } else {
+      blocks.push(from !== undefined ? { kind: 'prose', start: from, end: to } : { kind: 'prose', start: offset, end: offset, gap: 'lead' })
+      blocks.push({ kind: 'picture', start: offset, end: offset + line.length, line: at, path: picture[2]!, alt: picture[1] ?? '' })
+      from = undefined
+    }
+    offset += line.length + 1
+  })
+  blocks.push(from !== undefined ? { kind: 'prose', start: from, end: to } : { kind: 'prose', start: text.length, end: text.length, gap: 'tail' })
+  return blocks
+}
+
+/** The text with one of its stretches of prose reading otherwise. Typed where there was no line, the words get one. */
+export function withProse(text: string, block: Pick<ProseBlock, 'start' | 'end' | 'gap'>, words: string): string {
+  if (block.gap === undefined) return text.slice(0, block.start) + words + text.slice(block.end)
+  if (words.length === 0) return text
+  return block.gap === 'tail' ? `${text.slice(0, block.start)}\n${words}${text.slice(block.end)}` : `${text.slice(0, block.start)}${words}\n${text.slice(block.end)}`
+}
+
+/** The text with the picture on that line being another picture, or called otherwise. A line that is no picture is left as it is. */
+export function pictureChanged(text: string, line: number, to: { path?: string; alt?: string }): string {
+  const lines = text.split('\n')
+  const picture = line >= 0 && line < lines.length ? PICTURE_LINE.exec(lines[line]!.trim()) : null
+  if (picture === null) return text
+  const path = to.path !== undefined && to.path.length > 0 && !/[)\s]/.test(to.path) ? to.path : picture[2]!
+  const alt = (to.alt ?? picture[1] ?? '').replace(/[\]\n]/g, ' ')
+  lines[line] = `${lines[line]!.slice(0, lines[line]!.length - lines[line]!.trimStart().length)}![${alt}](${path})`
+  return lines.join('\n')
+}

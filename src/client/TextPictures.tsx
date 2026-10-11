@@ -9,12 +9,85 @@
  * another put in out of everything the book has drawn. All of it is done in
  * the text the author has open: it is their edit, saved as any other is.
  */
-import { useMemo, useState } from 'react'
-import { embeddedPictures, movedPicture, proseLines, withoutPicture, withPicture, type EmbeddedPicture } from '../shared/embedded'
+import { useEffect, useMemo, useState } from 'react'
+import { embeddedPictures, movedPicture, pictureChanged, proseLines, withoutPicture, withPicture, type EmbeddedPicture, type PictureBlock } from '../shared/embedded'
 import { clip } from '../shared/text'
 import { PictureViewer } from './PictureRecord'
 import { PickPicture } from './PlacePicture'
-import { Button, cx, Modal, ProjectImage, useT } from './ui'
+import { Button, cx, Modal, plainEnter, ProjectImage, useMediaUrl, useT } from './ui'
+
+/** What a picture chosen out of the gallery is called in the text, where the text has no word for the one it replaces. */
+const captionOf = (image: { prompt: string }): string => [...image.prompt.replace(/\s+/g, ' ')].slice(0, 40).join('')
+
+/**
+ * A picture in the chapter being written, shown where it stands in the text: looked at large — with the record of
+ * its making, and everything that can be done with a picture there —, exchanged for another of the book, moved a
+ * line up or down, taken out. Its line of markup is changed in the text the author has open; the picture drawn again
+ * from here is the one the text then has.
+ */
+export function TextFigure({ chapter, text, block, onText }: { chapter: string; text: string; block: PictureBlock; onText: (next: string) => void }) {
+  const t = useT()
+  const mediaUrl = useMediaUrl()
+  const [viewing, setViewing] = useState(false)
+  const [picking, setPicking] = useState(false)
+  // Its file is not in the book (deleted in the gallery, or the path mistyped): said, with the way to take the line out.
+  const [missing, setMissing] = useState(false)
+  // Asked for anew after something was done to it where it was opened: taken out of the book there, its file is gone.
+  const [asked, setAsked] = useState(0)
+  useEffect(() => { setMissing(false); setAsked(0) }, [block.path])
+  const url = mediaUrl(block.path)
+  const [caption, setCaption] = useState(block.alt)
+  const [held, setHeld] = useState(block.alt)
+  if (held !== block.alt) {
+    setHeld(block.alt)
+    setCaption(block.alt)
+  }
+  const after = useMemo(() => embeddedPictures(text).find(item => item.line === block.line)?.after ?? 0, [text, block.line])
+  const most = useMemo(() => proseLines(text).length, [text])
+  const named = (): void => { if (caption.trim() !== block.alt) onText(pictureChanged(text, block.line, { alt: caption.trim() })) }
+  return (
+    <figure className={cx('nv-editor-figure', missing && 'is-missing')}>
+      {missing ? (
+        <p className="nv-editor-figure-gone nv-small">{t(`这张图已经不在书里了：${block.path}`, `This picture is no longer in the book: ${block.path}`)}</p>
+      ) : (
+        <button type="button" className="nv-editor-figure-open" onClick={() => { setViewing(true) }} title={t('点开：看大图和来历，重画、照着改、对比', 'Open it: the picture large and how it was made — redraw it, change it, compare')}>
+          <img alt={block.alt} loading="lazy" src={asked === 0 ? url : `${url}${url.includes('?') ? '&' : '?'}again=${asked}`} onError={() => { setMissing(true) }} />
+        </button>
+      )}
+      <figcaption>
+        <input className="nv-editor-figure-caption" value={caption} placeholder={t('图下的说明（可不填）', 'A caption (optional)')} onChange={(event) => { setCaption(event.target.value) }} onBlur={named} onKeyDown={(event) => { if (plainEnter(event)) (event.target as HTMLInputElement).blur() }} />
+        <span className="nv-editor-figure-tools">
+          <Button size="sm" variant="ghost" icon="layers" title={t('换成这本书里的另一张图', 'Another of the book\'s pictures in its place')} onClick={() => { setPicking(true) }}>{t('换一张…', 'Another…')}</Button>
+          <Button size="sm" variant="ghost" icon="arrowUp" disabled={after === 0} title={t('上移一段', 'Up one line')} onClick={() => { onText(movedPicture(text, block.line, after - 1)) }} />
+          <Button size="sm" variant="ghost" icon="arrowDown" disabled={after >= most} title={t('下移一段', 'Down one line')} onClick={() => { onText(movedPicture(text, block.line, after + 1)) }} />
+          <Button size="sm" variant="ghost" icon="x" title={missing ? t('从正文里取下这一行', 'Take this line out of the text') : t('从正文里取下（图还在图库里）', 'Take it out of the text (it stays in the gallery)')} onClick={() => { onText(withoutPicture(text, block.line)) }} />
+        </span>
+      </figcaption>
+      {viewing ? (
+        <PictureViewer
+          path={block.path}
+          title={t('正文里的图', 'A picture in the text')}
+          onClose={() => { setViewing(false) }}
+          // Drawn again from here, the picture that came of it is the one the text has.
+          onChanged={(now) => {
+            if (now !== undefined && now !== block.path) onText(pictureChanged(text, block.line, { path: now }))
+            else if (now === undefined) setAsked(Date.now())
+          }}
+        />
+      ) : null}
+      {picking ? (
+        <PickPicture
+          chapter={chapter}
+          onClose={() => { setPicking(false) }}
+          onPick={(image) => {
+            setPicking(false)
+            onText(pictureChanged(text, block.line, { path: image.path, ...(block.alt.length === 0 ? { alt: captionOf(image) } : {}) }))
+          }}
+        />
+      ) : null}
+    </figure>
+  )
+}
 
 /**
  * @param text - the chapter's text as the editor has it.
@@ -59,7 +132,7 @@ export function TextPictures({ chapter, text, onText, caret, onReveal }: { chapt
           onClose={() => { setPicking(false) }}
           onPick={(image) => {
             setPicking(false)
-            onText(withPicture(text, { path: image.path, alt: [...image.prompt.replace(/\s+/g, ' ')].slice(0, 40).join('') }, caret()))
+            onText(withPicture(text, { path: image.path, alt: captionOf(image) }, caret()))
           }}
         />
       ) : null}

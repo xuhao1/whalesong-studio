@@ -9,7 +9,7 @@
  * going on to the next asks which way; and a run of chapters can be written,
  * given beats or reviewed in one go.
  */
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ChapterDocument } from '../../shared/rpc'
 import { countWords, formatCount, fuzzyFind, normalizeProse, proseOnly } from '../../shared/text'
 import { MAIN_LINE, type ChapterInfo, type JobInfo, type PictureGuide, type ReviewIssue, type TextStep, type VersionInfo } from '../../shared/types'
@@ -27,7 +27,8 @@ import { MoveChapters } from '../MoveChapters'
 import { framedOf, framedWord, PassagePictureDialog } from '../PassagePicture'
 import { useSheetsAsk } from '../SheetsAsk'
 import { PickPicture } from '../PlacePicture'
-import { TextPictures } from '../TextPictures'
+import { TextFigure, TextPictures } from '../TextPictures'
+import { ChapterText, type ChapterTextHandle } from '../ChapterText'
 import { FindBar } from '../FindBar'
 import { embeddedPictures, proseLines } from '../../shared/embedded'
 import { Derive } from './Outline'
@@ -66,26 +67,6 @@ function versionReason(reason: string, t: Translate): string {
   // A draft written to be compared with others: kept as a version, named by the model that wrote it.
   if (label === undefined && reason.startsWith('trial-')) return t(`对比稿（${reason.slice(6)}）`, `a draft to compare (${reason.slice(6)})`)
   return label !== undefined ? t(...label) : reason
-}
-
-/**
- * Scroll a textarea so the character at `offset` is in view. A textarea cannot
- * report where a character sits, so the text before it is measured: collapsed
- * to no height of its own, the box's scroll height is exactly that text.
- */
-function scrollToOffset(element: HTMLTextAreaElement, offset: number): void {
-  const full = element.value
-  const { flex, height, paddingBottom } = element.style
-  element.style.flex = 'none'
-  element.style.height = '0px'
-  element.style.paddingBottom = '0px'
-  element.value = full.slice(0, offset)
-  const top = element.scrollHeight
-  element.value = full
-  element.style.flex = flex
-  element.style.height = height
-  element.style.paddingBottom = paddingBottom
-  element.scrollTop = Math.max(0, top - element.clientHeight / 2)
 }
 
 function jobsOf(jobs: JobInfo[], chapterId: string): JobInfo[] {
@@ -274,7 +255,7 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
   const [spanGuides, setSpanGuides] = useState<PictureGuide[]>([])
   const [viewing, setViewing] = useState<VersionInfo | undefined>()
   const [appending, setAppending] = useState(false)
-  const area = useRef<HTMLTextAreaElement>(null)
+  const area = useRef<ChapterTextHandle>(null)
   // Where the author last put the caret in the text: a picture put in from the gallery goes after that line.
   const caretAt = useRef<number | undefined>(undefined)
   // Finding words in this chapter (Cmd+F / Ctrl+F): what it was opened with, and the match it last selected in the text.
@@ -282,11 +263,11 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
   const finder = useRef<{ go: (step: number) => void; focus: () => void } | null>(null)
   const matched = useRef<{ start: number; end: number } | undefined>(undefined)
   const openFind = (): void => {
-    const element = area.current
-    const picked = element !== null && element.selectionEnd > element.selectionStart ? element.value.slice(element.selectionStart, element.selectionEnd) : ''
+    const at = area.current?.selection()
+    const picked = at !== undefined && at.end > at.start ? (text ?? '').slice(at.start, at.end) : ''
     // Opened again while it is open: back to its words.
     if (finding !== undefined) finder.current?.focus()
-    else setFinding({ start: picked.includes('\n') || picked.length > 80 ? '' : picked, from: element?.selectionStart ?? 0 })
+    else setFinding({ start: picked.includes('\n') || picked.length > 80 ? '' : picked, from: at?.start ?? 0 })
   }
   // The chapter's title, while it is being changed where it stands (a double click on it).
   const [renaming, setRenaming] = useState<string | undefined>()
@@ -392,11 +373,7 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
     if (element === null) return
     const start = Math.min(jump.offset, text.length)
     const end = Math.min(start + jump.length, text.length)
-    // Measuring swaps the value for a moment, which drops the selection: scroll first, select after.
-    scrollToOffset(element, start)
-    element.focus({ preventScroll: true })
-    element.setSelectionRange(start, end)
-    setSelection(end > start ? { start, end } : undefined)
+    element.select(start, end, true)
     controller.consumeJump(jump.nonce)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jump?.nonce, text === undefined])
@@ -406,25 +383,9 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
   // A text box shows its selection only while the caret is in it: the moment the author goes to say what to do with
   // the passage — a button of the bar, the box for how to rewrite it, a dialog — it would look as if nothing were
   // selected any more. So, whenever the caret is elsewhere, the passage is marked behind the text: the same words, laid
-  // out the same, under the box.
+  // out the same, under the box ({@link ChapterText}).
   const [inText, setInText] = useState(false)
   const marked = !inText && selection !== undefined && text !== undefined && selected.trim().length > 0 ? selection : undefined
-  const mirror = useRef<HTMLDivElement>(null)
-  const layMark = useCallback((): void => {
-    const from = area.current
-    const to = mirror.current
-    if (from === null || to === null) return
-    // As wide as the text is laid out in the box (its scroll bar, where it has one, takes room), and scrolled as far.
-    to.style.width = `${from.clientWidth}px`
-    to.scrollTop = from.scrollTop
-  }, [])
-  useLayoutEffect(layMark)
-  useEffect(() => {
-    if (marked === undefined || area.current === null || typeof ResizeObserver === 'undefined') return undefined
-    const watch = new ResizeObserver(layMark)
-    watch.observe(area.current)
-    return () => { watch.disconnect() }
-  }, [marked === undefined, layMark])
   const proposals = project.proposals.filter(proposal => proposal.chapterId === chapter.id)
   const openIssues = (doc.data?.review?.issues ?? []).filter(issue => issue.resolved !== true)
   const plan = doc.data?.plan
@@ -552,14 +513,7 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
             onText={(next) => { setText(next); setSelection(undefined) }}
             // After the line the author last put the caret in; where they never did, at the end.
             caret={() => proseLines(text.slice(0, caretAt.current ?? text.length)).length}
-            onReveal={(offset) => {
-              const element = area.current
-              if (element === null) return
-              const end = text.indexOf('\n', offset)
-              scrollToOffset(element, offset)
-              element.focus()
-              element.setSelectionRange(offset, end < 0 ? text.length : end)
-            }}
+            onReveal={(offset) => { area.current?.reveal(offset) }}
           />
         ) : null}
         {panel === 'plan' && plan !== undefined ? (
@@ -802,14 +756,9 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
             control={finder}
             onClose={() => { setFinding(undefined); matched.current = undefined; area.current?.focus() }}
             onShow={(at, length, enter) => {
-              const element = area.current
-              if (element === null) return
               matched.current = { start: at, end: at + length }
               // Entered, the match is selected with the caret in the text (a text box shows its selection only then).
-              // (Brought into view first: measuring where it is sets the box's text for a moment, and with it the caret.)
-              scrollToOffset(element, at)
-              if (enter) element.focus()
-              element.setSelectionRange(at, at + length)
+              area.current?.select(at, at + length, enter)
             }}
           />
         ) : null}
@@ -822,35 +771,30 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
             <span className="nv-caret" />
           </div>
         ) : (
-          <div className="nv-editor-wrap">
-          {marked !== undefined ? <div ref={mirror} className="nv-editor nv-editor-mark" aria-hidden="true">{text.slice(0, marked.start)}<mark>{text.slice(marked.start, marked.end)}</mark>{text.slice(marked.end)}{'\u200b'}</div> : null}
-          <textarea
+          // The text, with its pictures shown where they stand: prose to type in, and each picture's line the picture.
+          <ChapterText
             ref={area}
-            className="nv-editor"
-            spellCheck={false}
-            value={text}
+            text={text}
             placeholder={t('在这里写，或让写手按章纲起草。', 'Write here, or have the writer draft from the outline.')}
-            onChange={(event) => { setText(event.target.value) }}
+            marked={marked}
+            onText={setText}
             onFocus={() => { setInText(true) }}
             onBlur={() => { setInText(false) }}
-            onScroll={layMark}
-            onSelect={(event) => {
-              const { selectionStart, selectionEnd } = event.currentTarget
-              caretAt.current = selectionEnd
-              setSelection(selectionEnd > selectionStart ? { start: selectionStart, end: selectionEnd } : undefined)
-              if (selectionEnd === selectionStart) setCustom(undefined)
+            onSelect={({ start, end }) => {
+              caretAt.current = end
+              setSelection(end > start ? { start, end } : undefined)
+              if (end === start) setCustom(undefined)
             }}
-            onKeyDown={(event) => {
+            onKeyDown={(event, at) => {
               if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
                 event.preventDefault()
                 void save()
                 return
               }
               if (finding === undefined) return
-              const { selectionStart, selectionEnd } = event.currentTarget
               // While the match the find bar selected is still what is selected, Enter goes on to the next one — it
               // does not write a line break over the word found. Once the author has moved or typed, keys are theirs.
-              if (event.key === 'Enter' && !event.nativeEvent.isComposing && matched.current !== undefined && matched.current.start === selectionStart && matched.current.end === selectionEnd) {
+              if (event.key === 'Enter' && !event.nativeEvent.isComposing && matched.current !== undefined && matched.current.start === at.start && matched.current.end === at.end) {
                 event.preventDefault()
                 finder.current?.go(event.shiftKey ? -1 : 1)
               } else if (event.key === 'Escape') {
@@ -858,8 +802,8 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
                 setFinding(undefined)
               }
             }}
+            picture={block => <TextFigure chapter={chapter.id} text={text} block={block} onText={(next) => { setText(next); setSelection(undefined) }} />}
           />
-          </div>
         )}
       </section>
 

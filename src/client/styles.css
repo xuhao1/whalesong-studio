@@ -2151,62 +2151,172 @@ button.nv-stat:hover {
   font-weight: 600;
 }
 
-.nv-editor {
+/* The text of a chapter where it is written: prose to type in and, where a picture's line of markup stands, the
+   picture. All of it scrolls as one page. */
+.nv-editor-blocks {
   flex: 1;
-  width: 100%;
+  min-width: 0;
   min-height: 0;
   padding: 22px max(22px, calc((100% - 44em) / 2)) 30vh;
   overflow: auto;
-  border: 0;
-  outline: none;
   background: var(--nv-bg);
   color: var(--nv-text);
   font-family: var(--nv-prose-font);
   font-size: 16px;
   line-height: 2;
+  cursor: text;
+}
+
+/* A stretch of prose: a text box, and behind it the same words laid out the same — which is what makes the box as
+   tall as they are, and where a passage stays marked while the caret is elsewhere (a text box shows its selection
+   only while it has the caret). */
+.nv-editor-prose {
+  display: grid;
+}
+
+.nv-editor-prose > .nv-editor-ghost,
+.nv-editor-prose > textarea {
+  grid-area: 1 / 1 / 2 / 2;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font: inherit;
+  letter-spacing: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.nv-editor-prose > textarea {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  outline: none;
+  background: transparent;
+  color: inherit;
   resize: none;
 }
 
-.nv-editor::placeholder {
+.nv-editor-prose > textarea::placeholder {
   color: var(--nv-text-3);
 }
 
-/* The editor, and behind it the passage that stays marked while the caret is elsewhere (a text box shows its
-   selection only while it has the caret): the same words laid out the same, under a box that lets them show through. */
-.nv-editor-wrap {
-  position: relative;
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-  background: var(--nv-bg);
-}
-
-.nv-editor-wrap > textarea.nv-editor {
-  position: relative;
-  background: transparent;
-}
-
-.nv-editor-mark {
-  position: absolute;
-  top: 0;
-  left: 0;
-  flex: none;
-  height: 100%;
-  margin: 0;
-  overflow: hidden;
-  background: transparent;
+.nv-editor-ghost {
   color: transparent;
-  white-space: pre-wrap;
-  overflow-wrap: break-word;
   pointer-events: none;
   user-select: none;
 }
 
-.nv-editor-mark mark {
+.nv-editor-ghost mark {
   background: color-mix(in srgb, var(--nv-brand) 24%, transparent);
   color: transparent;
+}
+
+/* A picture where it stands in the text. */
+.nv-editor-picture {
+  cursor: default;
+}
+
+.nv-editor-figure {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  border-radius: var(--nv-radius);
+  font-family: var(--dsw-font-family, system-ui, sans-serif);
+  line-height: 1.5;
+}
+
+.nv-editor-picture.is-shown .nv-editor-figure {
+  outline: 2px solid var(--nv-brand);
+  outline-offset: 6px;
+}
+
+.nv-editor-figure-open {
+  display: block;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: var(--nv-radius);
+  background: none;
+  cursor: zoom-in;
+}
+
+.nv-editor-figure-open > img {
+  display: block;
+  max-width: 100%;
+  max-height: min(62vh, 460px);
+  border-radius: var(--nv-radius);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 18%);
+}
+
+.nv-editor-figure-open:focus-visible {
+  outline: 2px solid var(--nv-brand);
+  outline-offset: 2px;
+}
+
+.nv-editor-figure-gone {
+  margin: 0;
+  padding: 10px 14px;
+  border: 1px dashed var(--nv-border);
+  border-radius: var(--nv-radius);
+  color: var(--nv-text-2);
+}
+
+.nv-editor-figure > figcaption {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+}
+
+.nv-editor-figure-caption {
+  flex: 0 1 22em;
+  min-width: 8em;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--nv-radius-s);
+  outline: none;
+  background: transparent;
+  color: var(--nv-text-2);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: center;
+}
+
+.nv-editor-figure-caption:hover,
+.nv-editor-figure-caption:focus {
+  border-color: var(--nv-border);
+  background: var(--nv-surface);
+}
+
+.nv-editor-figure-caption::placeholder {
+  color: var(--nv-text-3);
+}
+
+/* What can be done with it: there when the picture is pointed at or worked in — and always where nothing points. */
+.nv-editor-figure-tools {
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+  opacity: 0.35;
+  transition: opacity 120ms;
+}
+
+.nv-editor-figure:hover .nv-editor-figure-tools,
+.nv-editor-figure:focus-within .nv-editor-figure-tools {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .nv-editor-figure-tools {
+    opacity: 1;
+  }
 }
 
 .nv-live {
@@ -4119,7 +4229,7 @@ button.nv-stat:hover {
     opacity: 1;
   }
 
-  .nv-editor,
+  .nv-editor-blocks,
   .nv-live {
     padding: 16px 16px 30vh;
   }
