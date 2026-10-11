@@ -467,14 +467,14 @@ export function expandCharacterTask(base: Base & { context: string; card: string
 ${base.card}
 
 只输出 JSON（只包含你新增或改进的字段）：
-{"tagline": "", "gender": "", "age": "", "appearance": "", "personality": "性格与为人：一段话——他的特质、弱点、最看重什么、绝不会做什么、压力下什么反应，都写在这一段里，不另列", "background": "来历与处境：一段话——出身、经历、现在的位置，他的本事和藏着的事也写在这里", "motivation": "", "arc": "", "voice": "说话的样子：语气、句式、口头禅", "relationships": [{"target": "对方姓名", "kind": "关系", "note": "说明"}], "visualPrompt": "用于生成立绘的外貌描述（发型发色、五官、体态、服饰、标志物），客观具体", "voiceDesign": "用于设计配音声线的描述（年龄感、音色、语速、气质）"}`, `Complete the character card below. Keep what is there; fill the gaps and give the character more dimension and inner conflict. It must agree with the bible and the written text.${base.direction !== undefined && base.direction.trim().length > 0 ? `\nThe author asks: ${base.direction.trim()}` : ''}
+{"tagline": "", "gender": "", "age": "", "appearance": "外貌：一段话——年龄感、体型、脸、发式、平常的衣着、随身的标志物；只写看得见的，写手照它写、画图也照它画", "personality": "性格与为人：一段话——他的特质、弱点、最看重什么、绝不会做什么、压力下什么反应，都写在这一段里，不另列", "background": "来历与处境：一段话——出身、经历、现在的位置，他的本事和藏着的事也写在这里", "motivation": "", "arc": "", "voice": "说话的样子：语气、句式、口头禅", "relationships": [{"target": "对方姓名", "kind": "关系", "note": "说明"}], "voiceDesign": "用于设计配音声线的描述（年龄感、音色、语速、气质）"}`, `Complete the character card below. Keep what is there; fill the gaps and give the character more dimension and inner conflict. It must agree with the bible and the written text.${base.direction !== undefined && base.direction.trim().length > 0 ? `\nThe author asks: ${base.direction.trim()}` : ''}
 
 ## Current card
 
 ${base.card}
 
 Output JSON only (include only fields you add or improve):
-{"tagline": "", "gender": "", "age": "", "appearance": "", "personality": "who they are: one paragraph — traits, flaw, what they hold dearest, what they would never do, how they react under pressure, all in it and not listed apart", "background": "where they come from and stand: one paragraph — origin, what they went through, their place now, what they can do and what they hide", "motivation": "", "arc": "", "voice": "how they talk: tone, sentence shapes, pet phrases", "relationships": [{"target": "other character's name", "kind": "relationship", "note": "note"}], "visualPrompt": "objective, concrete looks for a portrait (hair, face, build, clothing, signature item)", "voiceDesign": "description for designing their speaking voice (age, timbre, pace, temperament)"}`)}`
+{"tagline": "", "gender": "", "age": "", "appearance": "how they look: one paragraph — the age they seem, build, face, hair, what they usually wear, what they carry; only what can be seen — the writer writes them by it and every picture of them is drawn by it", "personality": "who they are: one paragraph — traits, flaw, what they hold dearest, what they would never do, how they react under pressure, all in it and not listed apart", "background": "where they come from and stand: one paragraph — origin, what they went through, their place now, what they can do and what they hide", "motivation": "", "arc": "", "voice": "how they talk: tone, sentence shapes, pet phrases", "relationships": [{"target": "other character's name", "kind": "relationship", "note": "note"}], "voiceDesign": "description for designing their speaking voice (age, timbre, pace, temperament)"}`)}`
 }
 
 /** How the things of the book's world stand to each other: the planner reads the bible and the digests and writes the ties down. */
@@ -1384,58 +1384,57 @@ Output JSON only: {"look": ""}`)
 }
 
 /**
- * A character's visual anchor: how they look, in phrases an image model draws
- * the same way every time.
- * @param base.artStyle - the book's art direction: where it fixes a period or a form of dress, the anchor is written in that form, over what the card and the source text say.
- * @param base.current - the anchor as it stands, when one is written again: what it has that nothing speaks against is kept, so that pictures already drawn still fit.
+ * How a character looks, written down once as their appearance: prose in the book's own language, concrete enough
+ * that a writer and an image model both go by it. There is one such text of a person — no second description beside
+ * it written for image models alone.
+ * @param base.artStyle - the book's art direction: where it fixes a period or a form of dress, the appearance is written in that form, over what the card and the source text say.
+ * @param base.legacy - the phrases an earlier version kept for image models (a "visual anchor"): folded into the appearance — where the two differ, the phrases hold, as pictures were drawn from them.
  */
-export function visualAnchorTask(base: Base & { card: string; avoid?: string[]; direction?: string; artStyle?: string; current?: string; currentNegative?: string }): string {
+export function appearanceTask(base: Base & { card: string; avoid?: string[]; direction?: string; artStyle?: string; legacy?: string; currentNegative?: string }): string {
   const avoid = (base.avoid ?? []).join(', ')
-  const again = base.current !== undefined && base.current.trim().length > 0
+  const legacy = base.legacy !== undefined && base.legacy.trim().length > 0
   const styled = (base.artStyle?.trim() ?? '').length > 0
-  return L(base.lang, `请把下面这个人物的外貌，${again ? '重新写成' : '改写成'}给绘图模型用的"视觉锚点"：以后每一张有此人的图都会原样带上它，所以它必须具体、稳定、画得出来。
+  return L(base.lang, `请写下这个人物的外貌：一段话，用${base.language}写。写手照它写这个人，每一张有此人的图也照它画——所以它必须具体、稳定、画得出来。人物卡上已经有外貌的，是把它写准、写全，不是另起一段。
 
 ## 人物
 ${base.card}
-${again ? `\n## 现在的视觉锚点（要重写的就是它）\n${base.current!.trim()}${base.currentNegative !== undefined && base.currentNegative.trim().length > 0 ? `\n这个人身上不要画出：${base.currentNegative.trim()}` : ''}\n` : ''}${base.direction !== undefined && base.direction.length > 0 ? `\n## 作者的要求\n${base.direction}\n` : ''}${artSection(base.lang, base.artStyle)}
+${legacy ? `\n## 以前另写给绘图模型的短语（"视觉锚点"，现在并进外貌）\n${base.legacy!.trim()}\n已经画好的图是照它画的：它写到的特征都要在外貌里；它和人物卡的外貌说法不一样时，以它为准。\n` : ''}${base.currentNegative !== undefined && base.currentNegative.trim().length > 0 ? `\n这个人身上不要画出：${base.currentNegative.trim()}\n` : ''}${base.direction !== undefined && base.direction.length > 0 ? `\n## 作者的要求\n${base.direction}\n` : ''}${artSection(base.lang, base.artStyle)}
 ## 这本书的画面里不能出现
 ${avoid.length > 0 ? avoid : '（无特别限制）'}
 
 要求：
-1. prompt：英文，逗号分隔的短语，40-70 个词。只写看得见的：年龄感与体型、脸、发色与发型（把发型拆成具体的形状，不要用风格名）、肤色、衣着（款式、材质、颜色、新旧）、随身的标志物。
-2. 不要写姓名、性格、身份、经历；不要用机构名、教派、头衔之类的词——绘图模型会按现实里最常见的样子去画。比如"教会式的发髻"要写成它实际的形状，"白甲"要写清是什么材质、什么结构、有没有纹饰。
-3. 原文没写的细节可以补全，但要与人物相称，并且一旦写下就是定论。${styled ? `
+1. appearance：一段通顺的话，${legacy ? '以把上面那些短语里的特征写全为先，不必压短' : '80–200 字'}。只写看得见的：年纪与体型、脸、发色与发式（写成具体的形状，不用风格名）、肤色、平常的衣着（款式、材质、颜色、新旧）、随身的标志物。
+2. 不写性格、身份、经历；也不写他站在哪里、身后有什么、正在做什么——那是某一张画面的事，写进外貌就会出现在他的每一张图里（人物卡的外貌里有这类话的，不带过来）。机构名、教派、头衔之类的词不能代替描写——"教会式的发髻"要写成它实际的形状，"白甲"要写清是什么材质、什么结构、有没有纹饰。
+3. 人物卡的外貌里已有的写法，与作者的要求${styled ? '、画风' : ''}都不冲突的照旧保留；原文没写的细节可以补全，但要与人物相称，并且一旦写下就是定论。${styled ? `
 4. 画风里对年代、地域和形制有规定的（哪个朝代、哪种式样），是这本书的定论，这个人的头发和衣着一律写成那种形制。人物卡或原文的写法与它冲突时，以画风为准：
    - 属于形制的：头发怎么梳、束不束、编不编辫、剃不剃，头上戴什么；衣服的款式——上身下身各穿什么、领、襟、袖、下摆、怎么系；鞋帽的样式。
-   - 人物卡或原文写的发式、款式若不是那种形制里有的（比如别的朝代才有的发式和衣服），不要照搬，也不要折中成两样都有：换成那种形制下，同样年龄、身份的人会有的发式和款式，写成具体的样子，并且点明朝代。
+   - 人物卡或原文写的发式、款式若不是那种形制里有的（比如别的朝代才有的发式和衣服），不要照搬，也不要折中成两样都有：换成那种形制下，同样年龄、身份的人会有的发式和款式，写成具体的样子。
    - 这个人自己的东西留着，放到新的款式上：颜色、纹样、材质、贵贱、佩戴和随身的东西。
    - 画风里说"怎么画"的部分（画种、笔触、用色、光线）不要写进来。` : ''}
-${styled ? 5 : 4}. 只写这个人"长什么样"，不写"此刻在做什么"：不要动作、姿势、此刻的表情和手里临时拿的东西；不要气味、声音、气质这类看不见的东西；也不要画风、光线、镜头、画质之类的词——那些由全书的画风统一附上。
-${styled ? 6 : 5}. negative：英文，逗号分隔，0-10 项。写这段描述最容易被画错、而这个人物身上不该有的东西（例如不该有的纹章、饰物、发型、年龄感）${styled ? '；画风规定了形制时，把最容易混进来的别的形制也列进去（比如另一个朝代的发式和服饰）' : ''}。${again ? `
-${styled ? 7 : 6}. 这是重写：现在的锚点里，与人物卡、作者的要求${styled ? '和画风' : ''}都不冲突的写法照旧保留（已经画好的图是照它画的）；有冲突的和明显写错的地方要改${styled ? '——锚点和 negative 里不合画风所定形制的发式、款式，一处也不要留' : ''}。` : ''}
+${styled ? 5 : 4}. 只写这个人"长什么样"，不写"此刻在做什么"：不要动作、姿势、此刻的表情和手里临时拿的东西；不要气味、声音、气质这类看不见的东西；也不要画风、光线、镜头、画质之类的词。
+${styled ? 6 : 5}. negative：0–10 项，逗号分隔。写这段外貌最容易被画错、而这个人物身上不该有的东西（例如不该有的纹章、饰物、发式、年龄感）${styled ? '；画风规定了形制时，把最容易混进来的别的形制也列进去（比如另一个朝代的发式和服饰）' : ''}。${base.currentNegative !== undefined && base.currentNegative.trim().length > 0 ? '现在那几项还成立的照旧留着。' : ''}
 
-只输出 JSON：{"prompt": "", "negative": ""}`, `Rewrite this character's appearance as a "visual anchor" for an image model: it will be restated as is in every picture that shows them, so it must be concrete, stable and drawable.
+只输出 JSON：{"appearance": "", "negative": ""}`, `Write down how this character looks: one paragraph, in ${base.language}. The writer writes them by it and every picture of them is drawn by it — so it must be concrete, stable and drawable. Where the card has an appearance already, this is that appearance made exact and whole, not another paragraph beside it.
 
 ## Character
 ${base.card}
-${again ? `\n## Their visual anchor as it stands (this is what is written again)\n${base.current!.trim()}${base.currentNegative !== undefined && base.currentNegative.trim().length > 0 ? `\nNever drawn on them: ${base.currentNegative.trim()}` : ''}\n` : ''}${base.direction !== undefined && base.direction.length > 0 ? `\n## The author asks\n${base.direction}\n` : ''}${artSection(base.lang, base.artStyle)}
+${legacy ? `\n## Phrases kept for image models before (a "visual anchor"), now folded into the appearance\n${base.legacy!.trim()}\nPictures already drawn were drawn from these: every feature they name is in the appearance; where they and the card's appearance differ, they hold.\n` : ''}${base.currentNegative !== undefined && base.currentNegative.trim().length > 0 ? `\nNever drawn on them: ${base.currentNegative.trim()}\n` : ''}${base.direction !== undefined && base.direction.length > 0 ? `\n## The author asks\n${base.direction}\n` : ''}${artSection(base.lang, base.artStyle)}
 ## Must not appear in this book's pictures
 ${avoid.length > 0 ? avoid : '(nothing in particular)'}
 
 Rules:
-1. prompt: English, comma-separated phrases, 40-70 words. Only what can be seen: apparent age and build, face, hair colour and style (spell the style out as a shape, not as a style name), skin, clothing (cut, material, colour, wear), signature items.
-2. No names, personality, role or history; no names of institutions, orders or titles — an image model draws the most common real-world version of such words. Describe "a church-style bun" as its actual shape; say what "white armour" is made of, how it is built and whether it carries any emblem.
-3. Details the source leaves open may be filled in, in keeping with the character; once written they are canon.${styled ? `
+1. appearance: one paragraph of plain prose, ${legacy ? 'as long as it takes to have every feature of those phrases in it' : '60–140 words'}. Only what can be seen: age and build, face, hair colour and how it is worn (spelled out as a shape, not as a style name), skin, what they usually wear (cut, material, colour, wear), what they always have about them.
+2. No personality, role or history; nor where they stand, what is behind them or what they are doing — that is of one picture, and written into an appearance it turns up in every picture of them (where the card's appearance says such things, they are not carried over). The name of an institution, an order or a title does not stand in for a description — "a church-style bun" is written as its actual shape; "white armour" as what it is made of, how it is built and whether it carries any emblem.
+3. What the card's appearance has that nothing here speaks against — the author's wish${styled ? ', the art direction' : ''} — stays as it is; details the source leaves open may be filled in, in keeping with the character, and once written they are canon.${styled ? `
 4. Where the art direction fixes a period, a region or a form of dress (which dynasty, which fashion), that is settled for this book, and this person's hair and clothing are written in that form throughout. Where the card or the source text says otherwise, the art direction holds:
    - Of the form: how the hair is dressed — bound or loose, braided or not, shaved or not — and what is worn on the head; the cut of the clothes — what is worn above and below, collar, lapels, sleeves, hem, how it is fastened; the make of shoes and hats.
-   - A hairstyle or a cut the card or the source text has that does not belong to that form (the hair and the garments of another dynasty, say) is not carried over, and not blended in so that both are there: put in its place what somebody of that age and standing wears in that form, written as what it looks like, with the period named.
+   - A hairstyle or a cut the card or the source text has that does not belong to that form (the hair and the garments of another dynasty, say) is not carried over, and not blended in so that both are there: put in its place what somebody of that age and standing wears in that form, written as what it looks like.
    - What is this person's own stays, and goes onto the new cut: colours, patterns, materials, how rich or plain, what they wear and carry.
-   - What the art direction says of how to paint (medium, brushwork, palette, light) stays out.` : ''}
-${styled ? 5 : 4}. Say what the person looks like, not what they are doing: no action, pose, passing expression or thing they happen to hold; nothing that cannot be seen (smell, sound, temperament); and no words about art style, lighting, camera or image quality — the book's art direction adds those to every picture.
-${styled ? 6 : 5}. negative: English, comma-separated, 0-10 items: what this description is most likely to be drawn as by mistake and what this character must not have (an emblem, an ornament, a hairstyle, an age)${styled ? '; where the art direction fixes a form, also the other forms most likely to creep in (the hair and dress of another dynasty, say)' : ''}.${again ? `
-${styled ? 7 : 6}. This is a rewrite: what the anchor has that neither the card, nor what the author asks${styled ? ', nor the art direction' : ''} speaks against stays as it is (pictures already drawn were drawn from it); what conflicts and what is plainly wrong is changed${styled ? ' — no hairstyle and no cut that is not of the form the art direction fixes is left in the anchor or in negative' : ''}.` : ''}
+   - What the art direction says of how to draw (the medium, the brushwork, the palette, the light) is not written in.` : ''}
+${styled ? 5 : 4}. Only how they look, not what they are doing: no action, pose, passing expression or anything held for the moment; nothing that cannot be seen (scent, voice, air); no words about art style, light, camera or image quality.
+${styled ? 6 : 5}. negative: 0–10 items, comma-separated. What this appearance is most easily drawn wrong as and must not be on this person (an emblem, an ornament, a hairstyle, an age they do not have)${styled ? '; where the art direction fixes a form, the other forms most easily mixed in go here too (the hair and dress of another dynasty, say)' : ''}.${base.currentNegative !== undefined && base.currentNegative.trim().length > 0 ? ' Those there are that still hold stay.' : ''}
 
-Output JSON only: {"prompt": "", "negative": ""}`)
+Output JSON only: {"appearance": "", "negative": ""}`)
 }
 
 /**
@@ -1562,7 +1561,81 @@ function scenePictureRules(styled: boolean): { zh: string[]; en: string[] } {
   }
 }
 
-type SceneBase = Base & { name: string; card: string; anchor?: string; record: string; scenes?: { title: string; chapter?: number; text: string }[]; direction?: string; avoid?: string[]; artStyle?: string }
+/**
+ * How a moment is made ready for its picture — one frame: the instant in a few words, what the person wears in it,
+ * what is around them, who and what else is in it. The same wherever the director does it: for a moment a card
+ * keeps ({@link momentShotTask}) and for one it picks by what the author asked ({@link portraitSceneTask}).
+ * @param words - the language the frame is written in: the one the image prompts of the book are in.
+ */
+function shotRules(words: PromptLanguage, styled: boolean): { zh: string[]; en: string[]; keys: string } {
+  const inZh = words === 'zh' ? '中文' : '英文（English）'
+  const inEn = words === 'zh' ? 'Chinese' : 'English'
+  return {
+    zh: [
+      `action：这一刻的画面，一两句，不超过 60 字——这个人什么姿势、在做什么、什么神情、手里拿着什么。画面里还有别的人，就各用半句交代他在哪、在做什么。写一个定格的瞬间：不写前因后果，不写对白、心里想的和比喻，不写眼睛看不见的。用${inZh}写。`,
+      `outfit：这个人此刻的穿戴，一句话，不超过 40 字——衣服的款式和颜色、头上戴的、头发怎样、此刻身上有什么不同（淋湿、带伤、戴孝、沾了泥）。照正文写：这一幕或它之前交代过的，照交代的；任务里的正文没有交代，用你的工具到这一章和前面的章节里去查；查过仍然没有另外交代，就是平常那一身——照"平常的样子"里的衣着简要写出来。只写看得见的衣着和头发，不写长相、气味和质感的形容。他这时穿的正是下面列出的某一身造型：在 look 里写那身造型的名字（没有列出造型，或者哪一身都不是：look 留空）。用${inZh}写。`,
+      `setting：周围的环境，一两句，不超过 60 字——在哪（室内还是室外、什么样的地方）、身边有什么、什么时辰和天气、光从哪里来。照正文写，正文没有的不添。用${inZh}写。`,
+      'people：画面里别的人的名字（没有就空）。place：设定里对得上的地点名（没有就空）。things：画面里出现的、设定里有的物件名。只写任务里列出来的名字——它们有设定图的会作为参考图带上；它们长什么样，仍然要在 action / setting 里写出来。',
+      ...(styled ? ['画风里对年代、形制有规定的（发式、服饰、建筑、器物属于哪个朝代、哪种式样），穿戴和环境里这些东西照它写；正文的写法与它不一样时以画风为准。'] : []),
+      '只有读过这本书才懂的名字，写成它实际的样子；"不能出现"的东西不写。不写画风、镜头、画质。未成年的人物不写亲热和裸露的画面。',
+    ],
+    en: [
+      `action: the instant shown, a sentence or two, 40 words at most — how this person holds themselves, what they are doing, the expression, what is in their hands. Anybody else in the frame gets half a sentence: where they are, what they do. One instant held still: nothing of what led to it or follows, no speech, no thoughts, no similes, nothing the eye cannot see. Written in ${inEn}.`,
+      `outfit: what this person wears in it, one sentence, 30 words at most — the cut and colour of the clothes, what is on their head, how their hair is, what is different about them just now (soaked, wounded, in mourning, muddied). As the text has it: what the moment or the text before it says, as said; where the text in the task does not say, look it up with your tools in this chapter and the ones before; where it still says nothing else, it is what they usually wear — said briefly, from the clothing in "how they usually look". Only clothing and hair the eye sees: nothing of their features, of scent, of how things feel. Where what they wear is one of the looks listed below: put that look's name in look (no looks listed, or none of them: look stays empty). Written in ${inEn}.`,
+      `setting: what is around them, a sentence or two, 40 words at most — where (indoors or out, what kind of place), what is near, the hour and the weather, where the light comes from. As the text has it; nothing the text does not have. Written in ${inEn}.`,
+      'people: the names of anybody else in the frame (none: empty). place: the place of the bible it is set in (none: empty). things: the things of the bible that are in the frame. Only names listed in the task — the design art of those that have any goes along with the picture; what they look like is still to be said in action / setting.',
+      ...(styled ? ['Where the art direction fixes a period or a form (which dynasty or fashion hair, dress, buildings and objects belong to), clothing and surroundings are written in that form; where the text says otherwise, the art direction holds.'] : []),
+      'A name only a reader of the book understands is written as what it looks like; nothing from "must not appear". No words about art style, camera or image quality. Somebody who is not yet an adult is not written into a moment of intimacy or nudity.',
+    ],
+    keys: '"action": "", "outfit": "", "look": "", "setting": "", "people": [], "place": "", "things": []',
+  }
+}
+
+/**
+ * One of somebody's moments, made ready for its portrait: the director reads the text around it — handed with the
+ * task, and the rest of the book with its tools — and says it as one frame. A moment as a card keeps it is told the
+ * way the book tells it; a picture needs the instant, what they have on in it, and what is around them.
+ * @param base.moment - the moment as kept: what it is called, where it is, how it is told.
+ * @param base.passage - the paragraph of the chapter that tells it, with what stands before and after.
+ * @param base.person - who the portrait is of: name, standing look, the looks (outfits) they have, how the chapter has them.
+ * @param base.words - the language the frame is written in.
+ */
+export function momentShotTask(base: Base & { name: string; moment: string; chapter?: string; before?: string; passage?: string; after?: string; person: string; cast?: string; places?: string; ask?: string; artStyle?: string; avoid?: string[]; words: PromptLanguage }): string {
+  const avoid = (base.avoid ?? []).join(base.lang === 'zh' ? '、' : ', ')
+  const rules = shotRules(base.words, (base.artStyle?.trim() ?? '').length > 0)
+  const told = base.passage !== undefined && base.passage.trim().length > 0
+  return L(base.lang, `要给《${bare(base.title)}》里的「${base.name}」画一张立绘，画的是下面这一幕。请把它整理成一格画面：这一刻在做什么，此刻穿着什么，周围是什么样。
+
+## 这一幕
+${base.moment}
+${base.chapter !== undefined ? `\n## 它所在的这一章\n${base.chapter}\n` : ''}${base.before !== undefined && base.before.length > 0 ? `\n## 正文：这一幕之前（穿戴、地方多半在这里交代）\n${base.before}\n` : ''}${told ? `\n## 正文：讲到这一幕的地方\n${base.passage}\n` : '\n（任务里没有这一幕的正文：用 book_search / book_read 到书里找到它再写。）\n'}${base.after !== undefined && base.after.length > 0 ? `\n## 正文：紧接着\n${base.after}\n` : ''}
+## 这个人
+${base.person}
+${base.cast !== undefined && base.cast.length > 0 ? `\n## 这一章里别的人（名字｜身份｜平常的样子）\n${base.cast}\n` : ''}${base.places !== undefined && base.places.length > 0 ? `\n## 设定里的地点与物件（这一幕前后写到的）\n${base.places}\n` : ''}${base.ask !== undefined && base.ask.length > 0 ? `\n## 作者对这一张的要求\n${base.ask}\n` : ''}${artSection(base.lang, base.artStyle)}
+## 这本书的画面里不能出现
+${avoid.length > 0 ? avoid : '（无特别限制）'}
+
+交回的内容：
+${[...rules.zh, 'why：一句话，不超过 50 字——穿戴和环境是照正文哪里定的；哪一样正文没有交代、照平常写的，也说一声。'].map((rule, at) => `${at + 1}. ${rule}`).join('\n')}
+
+只输出 JSON：{${rules.keys}, "why": ""}`, `A portrait of ${base.name} in "${bare(base.title)}" is to be drawn, of the moment below. Make one frame of it: what is being done in that instant, what they have on, what is around them.
+
+## The moment
+${base.moment}
+${base.chapter !== undefined ? `\n## The chapter it is in\n${base.chapter}\n` : ''}${base.before !== undefined && base.before.length > 0 ? `\n## The text before the moment (what they wear and where they are is mostly said here)\n${base.before}\n` : ''}${told ? `\n## The text where the moment is told\n${base.passage}\n` : '\n(The text of the moment is not in the task: find it in the book with book_search / book_read, then write.)\n'}${base.after !== undefined && base.after.length > 0 ? `\n## The text right after\n${base.after}\n` : ''}
+## The person
+${base.person}
+${base.cast !== undefined && base.cast.length > 0 ? `\n## Others of the chapter (name | who | how they usually look)\n${base.cast}\n` : ''}${base.places !== undefined && base.places.length > 0 ? `\n## Places and things of the bible (named around the moment)\n${base.places}\n` : ''}${base.ask !== undefined && base.ask.length > 0 ? `\n## What the author asks of this one\n${base.ask}\n` : ''}${artSection(base.lang, base.artStyle)}
+## Must not appear in this book's pictures
+${avoid.length > 0 ? avoid : '(nothing in particular)'}
+
+To hand in:
+${[...rules.en, 'why: one sentence, 35 words at most — where in the text the clothing and the surroundings are from; and which of them the text does not say, so that it is as usual.'].map((rule, at) => `${at + 1}. ${rule}`).join('\n')}
+
+Output JSON only: {${rules.keys}, "why": ""}`)
+}
+
+type SceneBase = Base & { name: string; card: string; anchor?: string; record: string; scenes?: { title: string; chapter?: number; text: string }[]; direction?: string; avoid?: string[]; artStyle?: string; /** {@link portraitSceneTask}: the looks (outfits) they have, by name; and the language the frame is written in. */ looks?: string; words?: PromptLanguage }
 
 function sceneList(lang: PromptLanguage, scenes: NonNullable<SceneBase['scenes']>): string {
   return scenes.map((scene, at) => L(lang, `${at + 1}. ${scene.title}${scene.chapter !== undefined ? `（第 ${scene.chapter} 章）` : ''}：${scene.text}`, `${at + 1}. ${scene.title}${scene.chapter !== undefined ? ` (chapter ${scene.chapter})` : ''}: ${scene.text}`)).join('\n')
@@ -1646,17 +1719,23 @@ export function portraitSceneTask(base: SceneBase): string {
   const styled = (base.artStyle?.trim() ?? '').length > 0
   const kept = base.scenes !== undefined && base.scenes.length > 0
   const rules = scenePictureRules(styled)
+  const shot = shotRules(base.words ?? base.lang, styled)
+  const looks = base.looks !== undefined && base.looks.length > 0
   const zh = [
     '只从这本书里挑：正文里真写了的一幕，照原文那一段来写。上面的记载只是线索，而且可能只收录了一部分章节。',
     `作者的要求是给你的引导，按它来挑、来写：它点名了哪一幕，就是那一幕；它说的是光线、时间、天气、气氛、神态、姿态这一类，就挑合得上这个要求的那一幕，并照它来写${kept ? '——记着的第一幕合得上，就还用它，按要求调整；合不上，就在记着的别的几幕里、或者书里另挑一幕合得上的' : ''}；它不要某一类画面，就避开。它要的根本不是书里的哪一幕（比如素底、面向镜头的定妆照），就照它说的写成画面，不必硬套一幕。`,
     ...rules.zh,
     'title：几个字点明是哪一幕。chapter：它在第几章（数字；不是书里的一幕就写 0）。scene：用这本书的语言写成一段，60–140 字。why：一句话告诉作者为什么是这一幕，以及他的要求是怎么用上的。',
+    '定下这一幕之后，再把它整理成一格画面（画的时候用的是这一格）——读它所在的那段正文和之前的正文来写：',
+    ...shot.zh,
   ]
   const en = [
     'From this book only: a moment the text really has, written as that passage has it. The notes above are leads, and possibly of some chapters only.',
     `What the author asks is your guide — pick by it and write by it: a moment it names is the moment; where it speaks of light, time of day, weather, mood, expression or bearing, pick the moment that answers to it and write it so${kept ? ' — the first one kept where that answers, adjusted as asked; another of those kept, or of the book, where it does not' : ''}; a kind of picture it does not want is left aside. Where what it asks for is no moment of the book at all (a plain ground, facing the viewer), write the picture as asked and force no moment onto it.`,
     ...rules.en,
     'title: which moment, in a few words. chapter: the chapter it is in (a number; 0 where it is no moment of the book). scene: one paragraph in the language of the book, 40–100 words. why: one sentence telling the author why this moment, and how what they asked was used.',
+    'The moment settled, make one frame of it (the picture is drawn from the frame) — read the passage it is in and the text before it:',
+    ...shot.en,
   ]
   return L(base.lang, `要给《${bare(base.title)}》里的「${base.name}」画一张立绘。请按作者对这一张的要求，定下它画哪一幕，并写成画面。
 
@@ -1665,7 +1744,7 @@ ${base.card}
 
 ## 这个人的样子（立绘里会原样带上，不必复述）
 ${base.anchor !== undefined && base.anchor.length > 0 ? base.anchor : '（还没有写下来）'}
-
+${looks ? `\n## 这个人的造型（另有人设图的几身穿戴）\n${base.looks}\n` : ''}
 ## 各章的收录里对这个人的记载
 ${base.record.length > 0 ? base.record : '（还没有哪一章的收录记到这个人——到原文里去找。）'}
 ${kept ? `\n## 人物卡上记着的名场面（第一幕是没有别的要求时立绘画的那一幕）\n${sceneList(base.lang, base.scenes!)}\n` : ''}
@@ -1678,14 +1757,14 @@ ${avoid.length > 0 ? avoid : '（无特别限制）'}
 要求：
 ${zh.map((rule, at) => `${at + 1}. ${rule}`).join('\n')}
 
-只输出 JSON：{"title": "", "chapter": 0, "scene": "", "why": ""}`, `A portrait of ${base.name} in "${bare(base.title)}" is to be drawn. By what the author asks of this one, settle which moment it shows, and write it as a picture.
+只输出 JSON：{"title": "", "chapter": 0, "scene": "", ${shot.keys}, "why": ""}`, `A portrait of ${base.name} in "${bare(base.title)}" is to be drawn. By what the author asks of this one, settle which moment it shows, and write it as a picture.
 
 ## Character
 ${base.card}
 
 ## How they look (restated as is in the portrait; do not write it again)
 ${base.anchor !== undefined && base.anchor.length > 0 ? base.anchor : '(not written down yet)'}
-
+${looks ? `\n## Their looks (outfits that have a design sheet of their own)\n${base.looks}\n` : ''}
 ## What the chapter digests noted of them
 ${base.record.length > 0 ? base.record : '(No chapter digest names them yet — look in the text.)'}
 ${kept ? `\n## The signature scenes kept on their card (the first is what a portrait shows where nothing else is asked)\n${sceneList(base.lang, base.scenes!)}\n` : ''}
@@ -1698,7 +1777,7 @@ ${avoid.length > 0 ? avoid : '(nothing in particular)'}
 Rules:
 ${en.map((rule, at) => `${at + 1}. ${rule}`).join('\n')}
 
-Output JSON only: {"title": "", "chapter": 0, "scene": "", "why": ""}`)
+Output JSON only: {"title": "", "chapter": 0, "scene": "", ${shot.keys}, "why": ""}`)
 }
 
 /**
@@ -1726,7 +1805,7 @@ export function imagePromptTask(base: Base & { brief: string; avoid: string[]; t
   const enTo = base.to === 'zh' ? 'Chinese' : 'English'
   const fit = base.tokens !== undefined
   const share = fit ? Math.max(10, Math.floor(base.tokens! * 100 / base.estimate / 5) * 5) : 100
-  return L(base.lang, `《${bare(base.title)}》要画一张图。下面是工坊排好的画图说明：一行一段，每段行首是它的名字（用途、画面、构图、人物、地点、物件、这一张的要求、画风、参考图、不要出现——有哪段算哪段）。请把它写成发给绘图模型（${base.model}）的提示词：画出来的应当是同一张图。${fit ? `这个模型一次只读得进大约 ${base.tokens} 个 token，超出的部分它看不到；这份说明现在大约 ${base.estimate} 个。` : ''}
+  return L(base.lang, `《${bare(base.title)}》要画一张图。下面是工坊排好的画图说明：一行一段，每段行首是它的名字（用途、画面、环境、构图、人物、某人此刻穿着、地点、物件、这一张的要求、画风、参考图、不要出现——有哪段算哪段）。请把它写成发给绘图模型（${base.model}）的提示词：画出来的应当是同一张图。${fit ? `这个模型一次只读得进大约 ${base.tokens} 个 token，超出的部分它看不到；这份说明现在大约 ${base.estimate} 个。` : ''}
 
 ## 画图说明
 ${base.brief}
@@ -1734,14 +1813,14 @@ ${avoid.length > 0 ? `\n## 画面里不要出现（另外交给模型，不写�
 写成的提示词：
 1. 分段和次序照原样：一段一行，行首保留那一段的名字；说明里没有的段不添。模型从头读起，所以这个次序不要动。
 2. 全文用${zhTo}写，段名也是。说明里用别的语言写的内容译过来——人物的外貌常是一串英文短语——特征一样不丢：年纪、脸、发式、体型、衣着的款式颜色纹样、随身的东西。人名、地名、物名不译。
-3. 同一件事只说一次。「画面」写这一刻：谁在做什么、在哪、什么光线和气氛；「人物」写每个人长什么样。两处重复的留在该在的那一段；说法不一样时，动作、神情和此刻的穿戴以「画面」为准，长相以「人物」为准。
+3. 同一件事只说一次。「画面」写这一刻：谁在做什么；「环境」写在哪、什么光线和气氛（没有这一段时这些在「画面」里）；「人物」写每个人长什么样；「此刻穿着」写这个人这一刻的穿戴。两处重复的留在该在的那一段；说法不一样时，动作和神情以「画面」为准，穿戴以「此刻穿着」为准（没有这一段时以「画面」为准），长相以「人物」为准。
 4. 只写眼睛看得见的。不添说明里没有的内容，不改画的是什么；解释、客套和不影响画面的话去掉。
 5. ${base.references > 0 ? `这张图带 ${base.references} 张参考图：「参考图」那一段留着——${base.to === 'zh' ? '「图1」「图2」' : '"Image 1", "Image 2"'}这样的编号和它各是谁一个不少，哪些照图画、哪些照文字，意思不变，可以写得更紧。` : '这张图不带参考图：提示词里不要出现“参考图”这一段，也不要有任何说到参考图的话。'}
 6. ${avoid.length > 0 ? '提示词里不要有「不要出现」这一段，也不要把下面那份清单抄进来：它另有一栏交给模型，写进提示词反而会把那些东西招来。能靠把画面里实际有的东西说清楚来避开的，就在前面那样写（写明是明制的发髻，而不是写“没有辫子”）。' : '「不要出现」那一段，说明里有就留着，放在最后：能靠把画面里实际有的东西说清楚来避开的，就在前面那样写（写明是明制的发髻，而不是写“没有辫子”）；非点名不可的才列，短短一行。'}
 7. ${fit ? `篇幅：现在量出来是 ${base.estimate}，要到 ${base.tokens} 以内——大约是现在的 ${share}%。放不下时先并重复的、去掉修饰，再压各段的长短；「画面」、每个人最认得出的特征和「画风」留到最后。不用自己数：交上来时会量，超了会告诉你超出多少。` : '篇幅：和说明差不多，或者更紧；不要为了显得丰富而添话。'}
 
 只输出 JSON：
-{"prompt": "写成的整段提示词"}`, `A picture is to be drawn for "${bare(base.title)}". Below is the brief the Studio laid out for it: a line a part, each under its name (purpose, the picture, framing, the people, the place, the objects, what was asked of this one, the art direction, the reference pictures, what must not appear — whichever of them it has). Write it out as the prompt for the image model (${base.model}): the picture it asks for is to be the same picture.${fit ? ` This model reads about ${base.tokens} tokens of a prompt and never sees what lies beyond; the brief comes to about ${base.estimate}.` : ''}
+{"prompt": "写成的整段提示词"}`, `A picture is to be drawn for "${bare(base.title)}". Below is the brief the Studio laid out for it: a line a part, each under its name (purpose, the picture, the surroundings, framing, the people, what one of them wears in this moment, the place, the objects, what was asked of this one, the art direction, the reference pictures, what must not appear — whichever of them it has). Write it out as the prompt for the image model (${base.model}): the picture it asks for is to be the same picture.${fit ? ` This model reads about ${base.tokens} tokens of a prompt and never sees what lies beyond; the brief comes to about ${base.estimate}.` : ''}
 
 ## The brief
 ${base.brief}
@@ -1749,7 +1828,7 @@ ${avoid.length > 0 ? `\n## Must not appear in the picture (given to the model ap
 The prompt you write:
 1. Keeps the parts and their order: a line a part, each under its name; no part is added that the brief does not have. The model reads from the top, so the order stays.
 2. Is in ${enTo} throughout, the names of the parts too. What the brief has in another language is translated — how a person looks is often a run of English phrases — with no feature lost: age, face, hair, build, the cut, colour and pattern of what they wear, what they carry. Names of people, places and things are not translated.
-3. Says each thing once. "The picture" has the moment: who does what, where, in what light and mood; the people's lines have how each of them looks. What is said in both stays in the part it belongs to; where the two differ, action, expression and what is worn at this moment go by the picture, looks by the person's line.
+3. Says each thing once. "The picture" has the moment: who does what; "Surroundings" has where, in what light and mood (with no such part, the picture has these); the people's lines have how each of them looks; "wearing in this moment" has what that person has on in it. What is said in two parts stays in the one it belongs to; where they differ, action and expression go by the picture, what is worn by "wearing in this moment" (with no such part, by the picture), looks by the person's line.
 4. Says only what the eye can see. Adds nothing the brief does not have and does not change what the picture shows; explanations, courtesies and words that change nothing in the picture go.
 5. ${base.references > 0 ? `${base.references} reference picture(s) go along with this one: the part on them stays — every number (${base.to === 'zh' ? '图1, 图2' : 'Image 1, Image 2'}) with who or what it shows, what is to follow a picture and what the words — tightened if you like, with nothing of its meaning lost.` : 'No reference picture goes along with this one: the prompt has no part on reference pictures, and says nothing of any.'}
 6. ${avoid.length > 0 ? 'Has no part on what must not appear, and none of the list below copied into it: that goes to the model in a field of its own, and written into the prompt it would call those things up. Where saying plainly what is there keeps a thing out, say that earlier on (the Ming topknot, not "no queue").' : 'Keeps the part on what must not appear where the brief has one, last: where saying plainly what is there keeps a thing out, say that earlier on (the Ming topknot, not "no queue"); only what has to be named is listed, in one short line.'}
@@ -1759,7 +1838,7 @@ Output JSON only:
 {"prompt": "the whole prompt, written out"}`)
 }
 
-export function lookNotesTask(base: Base & { card: string; anchor?: string; negative?: string; notes: string; picture: 'portrait' | 'sheet'; avoid?: string[]; artStyle?: string }): string {
+export function lookNotesTask(base: Base & { card: string; appearance?: string; legacy?: string; negative?: string; notes: string; picture: 'portrait' | 'sheet'; avoid?: string[]; artStyle?: string }): string {
   const avoid = (base.avoid ?? []).join(', ')
   const zhPicture = base.picture === 'sheet'
     ? '人设图（三视图）：同一个人的全身站姿画三次——正面、侧面、背面，素底，表情平静。它没有背景、天气、时间、动作和镜头，这类想法这张图用不上。'
@@ -1767,14 +1846,16 @@ export function lookNotesTask(base: Base & { card: string; anchor?: string; nega
   const enPicture = base.picture === 'sheet'
     ? 'a design sheet (turnaround): the same person standing, full body, three times — front, side, back — on a plain ground, with a neutral expression. It has no setting, weather, time of day, action or camera: ideas of that kind have no place in it.'
     : 'a portrait: it shows the person in a moment of the book, the person being the subject. Which moment, what setting, time of day, weather, light, pose and expression — the author\'s ideas may guide all of it: what is of this one picture is handed to the director, who picks and writes the moment by it.'
+  const has = base.appearance !== undefined && base.appearance.trim().length > 0
+  const legacy = base.legacy !== undefined && base.legacy.trim().length > 0
   return L(base.lang, `作者在给《${bare(base.title)}》的一个人物画图之前，随手写下了一些想法。它们混在一起：有的说的是这个人本身，有的只是这一张图想要的样子。请把它们分开。
 
 ## 人物
 ${base.card}
 
-## 这个人现在的视觉锚点（每一张有此人的图都会原样带上）
-${base.anchor !== undefined && base.anchor.length > 0 ? base.anchor : '（还没有——请根据上面人物卡里的外貌和作者的想法写出来）'}
-${base.negative !== undefined && base.negative.length > 0 ? `\n这个人身上不要画出：${base.negative}\n` : ''}
+## 这个人现在的外貌（写手照它写，每一张有此人的图也照它画）
+${has ? base.appearance!.trim() : '（还没有——请根据上面的人物卡和作者的想法写出来）'}
+${legacy ? `\n以前另写给绘图模型的短语（现在并进外貌；它和外貌说法不一样时以它为准）：${base.legacy!.trim()}\n` : ''}${base.negative !== undefined && base.negative.length > 0 ? `\n这个人身上不要画出：${base.negative}\n` : ''}
 ## 现在要画的这一张
 ${zhPicture}
 
@@ -1785,45 +1866,45 @@ ${artSection(base.lang, base.artStyle)}
 ${avoid.length > 0 ? avoid : '（无特别限制）'}
 
 怎么分：
-1. **属于这个人本身的**——以后每一张图里都该是这样：长相、年龄感、体型、肤色、发色与发型、疤痕胎记、平常的衣着（款式、材质、颜色、新旧）、随身的标志物。把它们融进视觉锚点：保留锚点里原有的内容，只改动作者这次说到的地方；和原来的写法冲突时，以作者这次说的为准。
-2. **只属于这一张图的**——换一张图就不一定是这样：时间、天气、季节、地点与背景、光线、姿势与动作、此刻的神态、构图与镜头、这一次临时穿戴或拿在手里的东西、气氛。它们不进视觉锚点，写进 picture。
+1. **属于这个人本身的**——以后每一张图里都该是这样：长相、年龄感、体型、肤色、发色与发式、疤痕胎记、平常的衣着（款式、材质、颜色、新旧）、随身的标志物。把它们写进外貌：原有的内容保留，只改动作者这次说到的地方；和原来的写法冲突时，以作者这次说的为准。
+2. **只属于这一张图的**——换一张图就不一定是这样：时间、天气、季节、地点与背景、光线、姿势与动作、此刻的神态、构图与镜头、这一次临时穿戴或拿在手里的东西、气氛。它们不进外貌，写进 picture。
 3. 分不清时看作者的说法："这张 / 这次 / 这幅 / 这里"说的是这一张图；"总是 / 平时 / 一直 / 常年"，或者没有限定、说的又是长相和平常衣着的，是这个人本身。
 4. 现在要画的这一张用不上的想法（见上面对这一张图的说明），不要硬塞进 picture，列进 unused。
 5. 作者没有说到的，不要替他添。${(base.artStyle?.trim() ?? '').length > 0 ? `
-6. 新写进锚点的部分，形制要合这本书的画风：画风里对年代、形制有规定的（发式、服饰属于哪个朝代、哪种式样），就写成那种形制下具体的样子。作者这次明说要的样子与画风不一样时，以作者这次说的为准。` : ''}
+6. 新写进外貌的部分，形制要合这本书的画风：画风里对年代、形制有规定的（发式、服饰属于哪个朝代、哪种式样），就写成那种形制下具体的样子。作者这次明说要的样子与画风不一样时，以作者这次说的为准。` : ''}
 
-anchor 的写法：英文，逗号分隔的短语，40-70 个词，只写看得见的；不写姓名、性格、身份、经历，不用机构名、教派、头衔之类的词（绘图模型会按现实里最常见的样子去画，要写成它实际的形状和材质）；不写动作、姿势、此刻的表情，不写画风、光线、镜头、画质。没有任何想法属于这个人本身、而锚点已经有了时，anchor 原样照抄。
+appearance 的写法：用${base.language}写的一段话，只写看得见的；不写性格、身份、经历，不用机构名、教派、头衔之类的词代替描写（要写成它实际的形状和材质）；不写动作、姿势、此刻的表情，不写画风、光线、镜头、画质。没有任何想法属于这个人本身、而外貌已经有了时，appearance 原样照抄${legacy ? '（旧短语里有、外貌里没有的特征仍然并进来）' : ''}。
 
 只输出 JSON：
-{"anchor": "分完之后的整段视觉锚点", "negative": "这个人身上不该画出的东西（英文，逗号分隔）；没有变化就照抄原来的，没有就留空", "appearance": "kept 里那几点当中，人物卡的外貌还没有写到的：用${base.language}写成一句短话，可以直接接在原有外貌后面。只写作者说的那几点——外貌里已经有的不重复，作者没说的材质、新旧、来历之类不要添。都已经有了就留空", "picture": "只属于这一张图的要求：用${base.language}、尽量用作者自己的话写成一句，只写作者说到的，不要添构图、景别这类他没说的；没有就留空", "kept": ["进了这个人形象的每一点，用作者的话，几个字一条"], "once": ["只用在这一张图上的每一点，几个字一条"], "unused": ["这一张图用不上的每一点，几个字一条"]}`, `Before a picture of a character of "${bare(base.title)}" is drawn, the author jotted down some ideas. They are mixed: some are about the person, some only about what this one picture should be. Sort them.
+{"appearance": "分完之后的整段外貌：原有的写法照旧，作者这次说到的那几点写进去——只写他说的，没说的材质、新旧、来历之类不要添", "negative": "这个人身上不该画出的东西（逗号分隔）；没有变化就照抄原来的，没有就留空", "picture": "只属于这一张图的要求：用${base.language}、尽量用作者自己的话写成一句，只写作者说到的，不要添构图、景别这类他没说的；没有就留空", "kept": ["进了这个人外貌的每一点，用作者的话，几个字一条"], "once": ["只用在这一张图上的每一点，几个字一条"], "unused": ["这一张图用不上的每一点，几个字一条"]}`, `Before drawing a character of "${bare(base.title)}", the author jotted down some ideas. They are mixed: some are of the person, some only of how this one picture should be. Sort them.
 
 ## Character
 ${base.card}
 
-## Their visual anchor as it stands (restated as is in every picture that shows them)
-${base.anchor !== undefined && base.anchor.length > 0 ? base.anchor : '(none yet — write one from the appearance on the card above and the author\'s ideas)'}
-${base.negative !== undefined && base.negative.length > 0 ? `\nNever drawn on them: ${base.negative}\n` : ''}
+## How they look as it stands (the writer writes them by it, and every picture of them is drawn by it)
+${has ? base.appearance!.trim() : '(nothing yet — write it from the card above and the author\'s ideas)'}
+${legacy ? `\nPhrases kept for image models before (now folded into the appearance; where they and the appearance differ, they hold): ${base.legacy!.trim()}\n` : ''}${base.negative !== undefined && base.negative.length > 0 ? `\nNever drawn on them: ${base.negative}\n` : ''}
 ## The picture about to be drawn
 ${enPicture}
 
-## The author's ideas, as jotted down
+## What the author jotted down
 ${base.notes}
 ${artSection(base.lang, base.artStyle)}
 ## Must not appear in this book's pictures
 ${avoid.length > 0 ? avoid : '(nothing in particular)'}
 
 How to sort:
-1. **Of the person** — so in every picture from now on: face, apparent age, build, skin, hair colour and style, scars and marks, what they usually wear (cut, material, colour, wear), signature items. Work these into the visual anchor: keep what the anchor has, change only what the author speaks of now; where the two disagree, what the author says now holds.
-2. **Of this one picture** — not necessarily so in the next: time of day, weather, season, place and background, light, pose and action, a passing expression, composition and camera, what they wear or hold this once, mood. None of it goes into the anchor; it goes into picture.
-3. Where it is hard to tell, go by how the author put it: "in this one / this time / here" speaks of the picture; "always / usually / all year round", or no such word about looks and usual clothing, speaks of the person.
-4. An idea the picture about to be drawn has no place for (see what is said of it above) is not forced into picture: list it under unused.
+1. **Of the person** — true in every picture of them from now on: features, apparent age, build, skin, hair colour and how it is worn, scars and marks, what they usually wear (cut, material, colour, wear), what they always have about them. Write these into the appearance: what it has stays, and only what the author spoke of this time changes; where the two differ, what the author says now holds.
+2. **Of this one picture** — not necessarily so in the next: time of day, weather, season, place and setting, light, pose and action, a passing expression, framing and camera, what is worn or held this once, mood. These do not go into the appearance: they go into picture.
+3. Where it is hard to tell, go by how the author put it: "this one / this time / here" is of the picture; "always / usually / all year", or features and usual clothing said without any such word, are of the person.
+4. Ideas the picture about to be drawn has no place for (see what it is, above) are not forced into picture: list them under unused.
 5. Add nothing the author did not speak of.${(base.artStyle?.trim() ?? '').length > 0 ? `
-6. What is newly written into the anchor is in the form the book's art direction fixes: where it names a period or a form of dress (which dynasty or fashion hair and clothing belong to), write it as it is in that form. Where the author's idea now plainly asks for something else, the author's word now holds.` : ''}
+6. What is newly written into the appearance is in the form the book's art direction fixes: where it names a period or a form of dress (which dynasty or fashion hair and clothing belong to), write what that form looks like. Where the author asks outright for something else this time, the author holds.` : ''}
 
-The anchor: English, comma-separated phrases, 40-70 words, only what can be seen; no names, personality, role or history, no names of institutions, orders or titles (an image model draws the most common real-world version of such words — say its actual shape and material); no action, pose or passing expression, no art style, light, camera or image quality. Where no idea is of the person and there is an anchor already, copy the anchor as it is.
+The appearance: one paragraph in ${base.language}, only what can be seen; no personality, role or history, and no name of an institution, an order or a title standing in for a description (write its actual shape and material); no action, pose or passing expression, no words about art style, light, camera or image quality. Where no idea is of the person and there is an appearance already, appearance is that, copied as it stands${legacy ? ' (with what the older phrases have and it lacks folded in all the same)' : ''}.
 
 Output JSON only:
-{"anchor": "the whole visual anchor once sorted", "negative": "what must not be drawn on them (English, comma-separated); copy what there is where nothing changes, leave empty where there is none", "appearance": "of the points under kept, those the card's appearance does not have yet: one short sentence in ${base.language} that can follow it directly. Only what the author said — nothing the appearance already says, and no material, wear or history the author did not speak of. Empty where it has them all", "picture": "what is asked of this one picture: one line in ${base.language}, in the author's own words as far as it goes — only what the author spoke of, no framing or shot size added; empty where there is nothing", "kept": ["each point that went into how the person looks, in the author's words, a few words each"], "once": ["each point used for this one picture only, a few words each"], "unused": ["each point this picture has no place for, a few words each"]}`)
+{"appearance": "the whole appearance once sorted: what it had as it was, with the points the author spoke of this time written in — only what the author said, and no material, wear or history they did not speak of", "negative": "what must not be drawn on them (comma-separated); copy what there is where nothing changes, leave empty where there is none", "picture": "what is asked of this one picture: one line in ${base.language}, in the author's own words as far as it goes — only what the author spoke of, no framing or shot size added; empty where there is nothing", "kept": ["each point that went into how the person looks, in the author's words, a few words each"], "once": ["each point used for this one picture only, a few words each"], "unused": ["each point this picture has no place for, a few words each"]}`)
 }
 
 export function directorSystem(base: Base & { style: string; player?: string }): string {

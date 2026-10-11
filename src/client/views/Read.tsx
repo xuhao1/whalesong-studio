@@ -666,6 +666,7 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
           chapter={chapter}
           quote={picturing}
           onClose={() => { setPicturing(undefined) }}
+          onChanged={() => { doc.reload() }}
           onDraw={(asked) => {
             const chosen = picturing
             setPicturing(undefined)

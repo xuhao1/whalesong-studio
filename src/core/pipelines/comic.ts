@@ -13,7 +13,7 @@
  * so a half-minute of narration is not one frozen picture.
  */
 import { castAt } from './growth'
-import type { AudioLine, CameraMove, CharacterCard, ComicBoard, ComicPanel, StoryboardDensity, SheetsAsk } from '../../shared/types'
+import type { AudioLine, CameraMove, CharacterCard, ComicBoard, ComicPanel, ImageTrial, StoryboardDensity, SheetsAsk } from '../../shared/types'
 import { MAIN_LINE, PANEL_SECONDS, referencesOf, STORYBOARD_DENSITIES } from '../../shared/types'
 import { leadOf } from '../../shared/images'
 import { clip, hashText, newId, sameName } from '../../shared/text'
@@ -26,7 +26,7 @@ import { storyboardTask } from '../prompts'
 import { L, promptLanguage } from '../render'
 import { mapLimit, serializer } from '../util/async'
 import { buildAudioScript } from './audio'
-import { artDirectionOf, lackingSheets, looksOf, panelMakings, promptLangOf, renderImage, requireImages, sheetsBefore, sheetsFirst, wardrobeOf } from './illustrate'
+import { artDirectionOf, drawTrials, lackingSheets, looksOf, panelMakings, promptLangOf, renderImage, requireImages, sheetsBefore, sheetsFirst, wardrobeOf, type RenderInput } from './illustrate'
 import { pictureSize } from '../../shared/art'
 import { groupOf } from '../../shared/world'
 
@@ -381,6 +381,9 @@ export interface RenderPanelsResult {
   sheets?: string[]
   /** How many of the panels just drawn went without reference pictures they were to be held against: the image service did not take them. */
   unheld?: number
+  /** Drawn to compare services: the round the pictures are of, and how many there are — none of them is a panel's picture until taken. */
+  round?: string
+  tried?: number
 }
 
 /** Draw the panels of a chapter's storyboard that have no picture yet. */
@@ -430,7 +433,7 @@ export async function sheetsAhead(core: NovelCore, runtime: ProjectRuntime, asks
   return { people: [...people].map(([id, name]) => ({ id, name })), unknown, ...(after ? { after: true as const } : {}) }
 }
 
-export async function renderPanels(core: NovelCore, runtime: ProjectRuntime, params: { chapter: string; panels?: string[]; force?: boolean; concurrency?: number; /** `false`: this once, no design sheet is drawn first. */ sheetFirst?: boolean; /** Whether the art of the things a panel shows goes along; left out: as the book (else the Studio) has it. */ things?: boolean }, task: TaskContext): Promise<RenderPanelsResult> {
+export async function renderPanels(core: NovelCore, runtime: ProjectRuntime, params: { chapter: string; panels?: string[]; force?: boolean; concurrency?: number; /** `false`: this once, no design sheet is drawn first. */ sheetFirst?: boolean; /** Whether the art of the things a panel shows goes along; left out: as the book (else the Studio) has it. */ things?: boolean; /** Draw each of these panels once with each of these services, to compare them: no panel takes any of the pictures until the author does ({@link hangPicture}). */ trials?: ImageTrial[]; /** With `trials`: the press of a button the pictures are of — taken together, by service. */ trialBatch?: string }, task: TaskContext): Promise<RenderPanelsResult> {
   const { project } = runtime
   await requireImages(core, runtime)
   let board = await buildStoryboard(core, runtime, { chapter: params.chapter }, task)
@@ -458,6 +461,10 @@ export async function renderPanels(core: NovelCore, runtime: ProjectRuntime, par
   let failed = 0
   let unheld = 0
   let done = 0
+  // Drawn to be compared: by which services, and the round the pictures are of (taken together, by service).
+  const trying = params.trials !== undefined && params.trials.length > 0 ? params.trials : undefined
+  const round = params.trialBatch ?? newId('round')
+  let tried = 0
   task.job?.progress(0, todo.length, L(lang, '绘制画面', 'drawing panels'))
   // Which panels this drawing is on: another may be started for the others meanwhile, and the page shows which is which.
   task.job?.result({ chapterId: board.chapterId, drawing: todo.map(panel => panel.id), ...(wanted === undefined ? { all: true } : {}) })
@@ -476,21 +483,30 @@ export async function renderPanels(core: NovelCore, runtime: ProjectRuntime, par
       // What the director wrote for the panel, and after it how everyone in it looks in what they wear there, how its
       // place and the things it shows look — as the bible has them now; with their design sheets and art along.
       const makings = panelMakings(panel, { characters, world, most: mostReferences, lang: panelLang, thingArt })
-      const info = await renderImage(core, runtime, {
+      const input: RenderInput = {
         subject: makings.subject,
         ...(makings.pieces !== undefined ? { pieces: makings.pieces } : {}),
         kind: 'panel',
         target: board.chapterId,
-        size: pictureSize((await core.imageOf(runtime)), 'panel'),
         name: `panel-${board.chapterId}-${hashText(panel.id).slice(0, 4)}`,
         // A panel is a picture of the book like any other: on record, in the gallery, drawn again and changed from there.
         art,
         avoid: makings.avoid,
         references: makings.references,
-      }, task)
-      updates.set(panel.id, { image: info.path })
-      rendered += 1
-      if ((info.parts?.left?.length ?? 0) > 0) unheld += 1
+      }
+      if (trying !== undefined) {
+        // Tried with several services: each draws it at its own size for a panel; the panel keeps what it has (or
+        // nothing) until the author takes one of them.
+        const made = await drawTrials(core, runtime, trying, async trial => await renderImage(core, runtime, { ...input, size: pictureSize((await core.imageOf(runtime)), 'panel'), trial: { ...trial, hang: { as: 'panel', chapter: board.chapterId, panel: panel.id }, batch: round } }, task), task)
+        if (made.first === undefined) throw new Error(made.pictures.map(picture => `${picture.label}: ${picture.error ?? 'no picture'}`).join('; '))
+        tried += made.pictures.filter(picture => picture.path !== undefined).length
+        rendered += 1
+      } else {
+        const info = await renderImage(core, runtime, { ...input, size: pictureSize((await core.imageOf(runtime)), 'panel') }, task)
+        updates.set(panel.id, { image: info.path })
+        rendered += 1
+        if ((info.parts?.left?.length ?? 0) > 0) unheld += 1
+      }
     } catch (error) {
       if (task.signal?.aborted === true) throw error
       updates.set(panel.id, { error: error instanceof Error ? error.message : String(error) })
@@ -500,8 +516,8 @@ export async function renderPanels(core: NovelCore, runtime: ProjectRuntime, par
     task.job?.progress(done, todo.length)
     await flush()
   }, task.signal)
-  task.job?.result({ chapterId: board.chapterId, rendered, failed })
-  return { chapterId: board.chapterId, panels: board.panels.length, rendered, failed, ...(first.drawn.length > 0 ? { sheets: first.drawn } : {}), ...(unheld > 0 ? { unheld } : {}) }
+  task.job?.result({ chapterId: board.chapterId, rendered, failed, ...(trying !== undefined ? { round, tried } : {}) })
+  return { chapterId: board.chapterId, panels: board.panels.length, rendered, failed, ...(first.drawn.length > 0 ? { sheets: first.drawn } : {}), ...(unheld > 0 ? { unheld } : {}), ...(trying !== undefined ? { round, tried } : {}) }
 }
 
 /** Change one panel of a chapter's storyboard by hand; a new prompt drops the old picture. */

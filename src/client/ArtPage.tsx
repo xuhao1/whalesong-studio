@@ -49,7 +49,7 @@ export function ArtPage() {
   })
   const everything = mergeAvoid(legacyAvoid, manifest.artAvoid)
   // Whose look is already written down: a changed art direction does not reach these by itself.
-  const anchored = project.characters.filter(card => (card.visual?.prompt ?? '').trim().length > 0)
+  const anchored = project.characters.filter(card => (card.appearance ?? '').trim().length > 0 || (card.visual?.prompt ?? '').trim().length > 0)
   const looked = project.world.filter(entry => (entry.visualPrompt ?? '').trim().length > 0)
   const kinds: [PictureKind, [string, string]][] = [['cover', ['封面', 'cover']], ['portrait', ['立绘', 'portraits']], ['sheet', ['人设图', 'design sheets']], ['location', ['地点', 'places']], ['scene', ['章节插图', 'scenes']], ['panel', ['分镜', 'panels']]]
   return (
@@ -77,10 +77,10 @@ export function ArtPage() {
         </div>
         {anchored.length + looked.length > 0 ? (
           <details className="nv-art-written">
-            <summary>{t(`已写下的形象不会跟着变：${anchored.length} 人、${looked.length} 处`, `Looks already written do not follow: ${anchored.length} people, ${looked.length} places and things`)}</summary>
+            <summary>{t(`已写下的外貌和样子不会跟着变：${anchored.length} 人、${looked.length} 处`, `Looks already written do not follow: ${anchored.length} people, ${looked.length} places and things`)}</summary>
             <p className="nv-muted nv-small">{t('改了年代、形制之后，点名字过去让导演重写，再重画。', 'After changing a period or its forms, open each one, have the director rewrite it, and redraw.')}</p>
             <div className="nv-chips">
-              {anchored.map(card => <Chip key={card.id} onClick={() => { controller.openCharacter(card.id) }} title={card.visual?.prompt}>{card.name}</Chip>)}
+              {anchored.map(card => <Chip key={card.id} onClick={() => { controller.openCharacter(card.id) }} title={card.appearance ?? card.visual?.prompt}>{card.name}</Chip>)}
               {looked.map(entry => <Chip key={entry.id} tone="blue" onClick={() => { controller.openWorld(entry.id) }} title={entry.visualPrompt}>{entry.name}</Chip>)}
             </div>
           </details>

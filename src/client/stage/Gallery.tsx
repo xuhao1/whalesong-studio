@@ -9,6 +9,7 @@ import {
   Button, Chip, Empty, Field, Modal, ProjectImage, Select, Spinner, TextArea, TextInput, useAction, useConfirm, useLoad, useProject, useSnapshot, useStudio, useT,
 } from '../ui'
 import { ArtBatchDialog, batchOf } from '../Batch'
+import { ManyModels } from '../Trial'
 import { sheetsDrawn } from '../labels'
 import { useSheetsAsk, type SheetsChoice } from '../SheetsAsk'
 import { NeedsSetup } from '../views/Settings'
@@ -112,6 +113,39 @@ export function Gallery() {
       }),
     )
   }
+  // Pictures drawn to be compared that nobody has taken yet: each thing's, side by side — and, of one press that drew
+  // many things, all a service drew at once.
+  const waiting = useMemo(() => {
+    const things = new Map<string, IllustrationInfo[]>()
+    for (const image of images.data?.images ?? []) {
+      if (image.trial?.hang === undefined) continue
+      things.set(image.trial.id, [...(things.get(image.trial.id) ?? []), image])
+    }
+    const rounds = new Map<string, { labels: Set<string>; things: Set<string> }>()
+    for (const [id, pictures] of things) {
+      const round = pictures[0]!.trial!.batch
+      if (round === undefined) continue
+      const of = rounds.get(round) ?? { labels: new Set<string>(), things: new Set<string>() }
+      of.things.add(id)
+      for (const picture of pictures) of.labels.add(picture.trial!.label)
+      rounds.set(round, of)
+    }
+    return { things: [...things.values()], rounds: [...rounds].filter(([, of]) => of.things.size > 1), count: [...things.values()].reduce((sum, pictures) => sum + pictures.length, 0) }
+  }, [images.data])
+  const [dropOthers, setDropOthers] = useState(false)
+  const takeOne = (image: IllustrationInfo, among: IllustrationInfo[]): Promise<unknown> => run(async () => {
+    const others = dropOthers ? among.filter(other => other.path !== image.path).map(other => other.path) : []
+    const done = await controller.api.call('trial.adopt', { root, path: image.path, ...(others.length > 0 ? { others } : {}) })
+    await controller.refreshProject()
+    images.reload()
+    controller.toast('success', t(`用了「${image.trial!.label}」画的这张${done.replaced.length > 0 ? `，挂到了 ${done.replaced.join('、')} 上` : ''}${done.removed > 0 ? `；另外 ${done.removed} 张删掉了` : ''}`, `Took the one by ${image.trial!.label}${done.replaced.length > 0 ? `, now on ${done.replaced.join(', ')}` : ''}${done.removed > 0 ? `; the other ${done.removed} deleted` : ''}`))
+  })
+  const takeRound = (round: string, label: string): Promise<unknown> => run(async () => {
+    const done = await controller.api.call('trial.adoptRound', { root, round, label, ...(dropOthers ? { others: true } : {}) })
+    await controller.refreshProject()
+    images.reload()
+    controller.toast('success', t(`这一批用了「${label}」画的 ${done.taken} 张${done.removed > 0 ? `；另外 ${done.removed} 张删掉了` : ''}`, `Took the ${done.taken} by ${label}${done.removed > 0 ? `; the other ${done.removed} deleted` : ''}`))
+  })
   const nameOf = (image: IllustrationInfo): string | undefined => {
     if (image.target === undefined) return undefined
     return project.characters.find(card => card.id === image.target)?.name
@@ -129,20 +163,22 @@ export function Gallery() {
       : []
     await sheets.before(asks, draw)
   })
-  const draw = async (choice: SheetsChoice): Promise<void> => {
-    setCreating(false)
-    controller.toast('info', t('开始绘制…', 'Drawing…'))
+  /** The picture asked for in the form, as the call that draws it. */
+  const asked = () => {
     const extra = splitAvoid(avoid)
-    const job = await controller.run('image.create', {
-      root,
+    return {
       kind,
       ...(target.length > 0 ? { target } : {}),
       ...(prompt.trim().length > 0 ? { prompt: prompt.trim() } : {}),
       ...(ofCharacter && look.length > 0 ? { look } : {}),
       ...(kind === 'custom' && cast.length > 0 ? { characters: cast } : {}),
       ...(extra.length > 0 ? { avoid: extra } : {}),
-      ...choice,
-    })
+    }
+  }
+  const draw = async (choice: SheetsChoice): Promise<void> => {
+    setCreating(false)
+    controller.toast('info', t('开始绘制…', 'Drawing…'))
+    const job = await controller.run('image.create', { root, ...asked(), ...choice })
     if (sheetsDrawn(job, t).length > 0) controller.toast('info', `${t('画好了', 'The picture is ready')}${sheetsDrawn(job, t)}`)
     setPrompt('')
     setAvoid('')
@@ -187,6 +223,37 @@ export function Gallery() {
       ) : null}
       <NeedsSetup what="image" />
       <ArtDirection />
+      {waiting.things.length > 0 ? (
+        <details className="nv-waiting" open>
+          <summary>{t(`待采纳的对比图 · ${waiting.count} 张（${waiting.things.length} 样）`, `To take · ${waiting.count} pictures of ${waiting.things.length}`)}</summary>
+          <div className="nv-waiting-bar">
+            {waiting.rounds.map(([round, of]) => (
+              <span key={round} className="nv-row-wrap">
+                <span className="nv-muted nv-small">{t(`这一批（${of.things.size} 样）都用`, `This round of ${of.things.size}, all by`)}</span>
+                {[...of.labels].map(label => <Button key={label} size="sm" variant="outline" icon="check" busy={busy} onClick={() => takeRound(round, label)}>{label}</Button>)}
+              </span>
+            ))}
+            <label className="nv-check nv-small">
+              <input type="checkbox" checked={dropOthers} onChange={(event) => { setDropOthers(event.target.checked) }} />
+              <span>{t('采纳时把别的服务画的删掉', 'When taken, delete what the other services drew')}</span>
+            </label>
+          </div>
+          {waiting.things.map(pictures => (
+            <div key={pictures[0]!.trial!.id} className="nv-waiting-row">
+              <span className="nv-waiting-of"><Chip>{t(...KIND[pictures[0]!.kind])}</Chip>{nameOf(pictures[0]!) ?? ''}{pictures[0]!.moment?.title !== undefined ? ` · ${pictures[0]!.moment.title}` : ''}</span>
+              {pictures.map(image => (
+                <figure key={image.id} className="nv-waiting-cell">
+                  <button type="button" className="nv-waiting-picture" onClick={() => { setOpen(image) }} title={t('点开看大图', 'Open it large')}><ProjectImage path={image.path} alt={image.trial!.label} /></button>
+                  <figcaption>
+                    <span className="nv-small">{image.trial!.label}</span>
+                    <Button size="sm" variant="outline" icon="check" busy={busy} onClick={() => takeOne(image, pictures)}>{t('用这张', 'Take')}</Button>
+                  </figcaption>
+                </figure>
+              ))}
+            </div>
+          ))}
+        </details>
+      ) : null}
       {images.data === undefined ? <div className="nv-center"><Spinner /></div> : list.length === 0 ? (
         <Empty icon="image" title={t('还没有图片', 'No pictures yet')}>{t('还没有图。先给主要人物画人设图、给常去的地点画设定图，之后的图以它们为参考。', 'No pictures yet. Start with design sheets for the main characters and art for the usual places; later pictures are drawn against them.')}</Empty>
       ) : (
@@ -222,7 +289,12 @@ export function Gallery() {
       ) : null}
 
       {creating ? (
-        <Modal title={t('画一张', 'New picture')} onClose={() => { setCreating(false) }} footer={<Button variant="primary" busy={busy} disabled={(kind === 'custom' && prompt.trim().length === 0) || ((ofCharacter || kind === 'location') && target.length === 0)} onClick={create}>{t('绘制', 'Draw')}</Button>}>
+        <Modal title={t('画一张', 'New picture')} onClose={() => { setCreating(false) }} footer={(
+          <>
+            <ManyModels label={t('多模型…', 'Several models…')} disabled={(kind === 'custom' && prompt.trim().length === 0) || ((ofCharacter || kind === 'location') && target.length === 0)} ask={() => ({ title: `${t('画一张', 'New picture')}${targets.find(item => item.value === target) !== undefined ? ` · ${targets.find(item => item.value === target)!.label}` : ''}`, method: 'image.create', params: asked() })} onChanged={() => { images.reload() }} />
+            <Button variant="primary" busy={busy} disabled={(kind === 'custom' && prompt.trim().length === 0) || ((ofCharacter || kind === 'location') && target.length === 0)} onClick={create}>{t('绘制', 'Draw')}</Button>
+          </>
+        )}>
           <Field label={t('画什么', 'What')} hint={kind === 'sheet' ? t('正面、侧面、背面三视图，之后的图以它为参考。', 'Front, side and back on one sheet; later pictures are drawn against it.') : undefined}>
             <Select value={kind} options={[
               { value: 'cover', label: t('封面', 'Cover') },

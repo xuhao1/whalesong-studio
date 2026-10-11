@@ -2910,8 +2910,22 @@ export class Project {
   async cover(): Promise<string | undefined> {
     const chosen = (await this.manifest()).cover
     if (chosen !== undefined && chosen.length > 0 && await this.has(chosen)) return chosen
-    const drawn = (await this.illustrations()).filter(item => item.kind === 'cover').at(-1)?.path
+    // (A cover drawn only to be compared with others is no cover until the author takes it.)
+    const drawn = (await this.illustrations()).filter(item => item.kind === 'cover' && item.trial?.hang === undefined).at(-1)?.path
     return drawn !== undefined && await this.has(drawn) ? drawn : undefined
+  }
+
+  /**
+   * A picture drawn to be compared was taken: it is a picture like any other from here on — its record no longer says
+   * where it waits to go, and it stands in the text where the others of its kind would.
+   */
+  async tookTrial(path: string): Promise<void> {
+    await this.updateState<IllustrationInfo[]>(['illustrations.json'], [], current => current.map((item) => {
+      if (item.path !== path || item.trial?.hang === undefined) return item
+      const { hang: _hung, ...trial } = item.trial
+      return { ...item, trial }
+    }))
+    await this.holdFigure(path, false)
   }
 
   async addIllustration(info: IllustrationInfo): Promise<void> {

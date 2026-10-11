@@ -60,7 +60,7 @@ const lanes = new Map<string, ReturnType<typeof serializer>>()
 
 /**
  * Put what the digests noted among these people's signature scenes, where nobody has taken their list in hand.
- * A moment that stays keeps the portrait drawn of it.
+ * A moment that stays keeps the portrait drawn of it, and the frame made of it.
  * @returns whose list changed.
  */
 export async function keepNotedScenes(runtime: ProjectRuntime, ids: readonly string[]): Promise<string[]> {
@@ -85,9 +85,13 @@ export async function keepNotedScenes(runtime: ProjectRuntime, ids: readonly str
       const drawn = kept.filter(scene => scene.portrait !== undefined)
       const named = noted.map(scene => (scene.title.trim().length > 0 ? drawn.find(before => before.chapter === scene.chapter && before.title.trim() === scene.title.trim()) : undefined))
       const taken = new Set(named.flatMap(before => (before !== undefined ? [before.portrait!] : [])))
+      // …and the frame the director made of it for its picture (`shot`): it is of the moment's words, and holds while
+      // they stand (a frame of words told otherwise since is made again with the next picture — {@link shotOf}).
+      const framed = kept.filter(scene => scene.shot !== undefined)
       const next = noted.map((scene, at) => {
         const portrait = (named[at] ?? drawn.find(before => before.id === scene.id && !taken.has(before.portrait!)))?.portrait
-        return portrait !== undefined ? { ...scene, portrait } : scene
+        const shot = (framed.find(before => before.chapter === scene.chapter && before.title.trim() === scene.title.trim() && before.title.trim().length > 0) ?? framed.find(before => before.text === scene.text))?.shot
+        return { ...scene, ...(portrait !== undefined ? { portrait } : {}), ...(shot !== undefined ? { shot } : {}) }
       })
       // …and one that was drawn is not dropped because the digests now weigh others more, or tell its chapter in
       // other words: its picture is there, and it is one of their moments still. It stays, after those noted now —

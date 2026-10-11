@@ -462,8 +462,8 @@ export interface NovelRpc {
   /** Write down something of a character's life at a chapter (absent: before the story begins), over what its digest says; without `kind` the mark of that chapter is taken back. */
   'character.mark': { params: { root: string; id: string; chapter?: string; kind?: LifeMark['kind']; what?: string }; result: CharacterCard }
   'character.expand': { params: { root: string; id: string; direction?: string }; result: JobStarted }
-  /** Distill a character's appearance into a visual anchor for image generation. */
-  'character.visual': { params: { root: string; id: string; direction?: string }; result: JobStarted }
+  /** Have the director write how somebody looks — their appearance, one paragraph — from the card, the book and the art direction (`stage`: in one stretch of their life). Phrases an earlier version kept for image models are folded into it. */
+  'character.visual': { params: { root: string; id: string; direction?: string; stage?: string }; result: JobStarted }
   /** Have the director find, in the book, the moments somebody is remembered by — their signature scenes — and keep them on their card (`visual.scenes`), the most their own first. A job; its result is the list, or says the book has none yet. */
   'character.scene': { params: { root: string; id: string; direction?: string }; result: JobStarted }
   /** Have the planner find the stretches of somebody's life in the book — how old they are as they enter, where they turn in age, look and station — and keep them on their card (`stages`). A job. */
@@ -510,6 +510,12 @@ export interface NovelRpc {
   'image.comfyTake': { params: { baseURL?: string; path: string }; result: { workflow: string; model?: string; nodes: string[]; images: number } }
   /** Have the planner look through the names without a card and say who is worth one. `all`: every name again, also those already looked at or proposed. */
   'cast.sift': { params: { root: string; all?: boolean; direction?: string }; result: JobStarted }
+  /**
+   * Give a card to each of these names of the page — one, or a list picked together — and have the planner write the
+   * cards whole from what the digests noted of them: how they look, who they are, what they want. `role`: how large a
+   * part (a minor character where nothing is said).
+   */
+  'cast.card': { params: { root: string; people: { name: string; story?: string }[]; role?: CharacterRole }; result: JobStarted }
   'cast.settle': { params: { root: string; name: string; /** Which of two walk-ons by one name: the story they are of. */ story?: string; action: 'card' | 'alias' | 'ignore' | 'restore'; target?: string; role?: CharacterRole }; result: { walkons: WalkOn[]; card?: CharacterCard; lines: number } }
   'suggestion.accept': { params: { root: string; id: string }; result: { ok: boolean } }
   'suggestion.dismiss': { params: { root: string; id: string }; result: { ok: boolean } }
@@ -635,11 +641,11 @@ export interface NovelRpc {
   /** Where the stage production of each written chapter stands, and what each step lacks to run at all. */
   'batch.overview': { params: { root: string; line?: string }; result: { chapters: StageStatus[]; missing: Partial<Record<StageStep, string>> } }
   /** Script, voices, sound, storyboard, panels, video — whichever are named — for the chapters named (all written ones when left out). */
-  'batch.stage': { params: { root: string; chapters?: string[]; line?: string; steps?: StageStep[]; force?: boolean; density?: StoryboardDensity; maxPanels?: number; direction?: string; subtitles?: boolean; sheetFirst?: boolean }; result: JobStarted }
+  'batch.stage': { params: { root: string; chapters?: string[]; line?: string; steps?: StageStep[]; force?: boolean; density?: StoryboardDensity; maxPanels?: number; direction?: string; subtitles?: boolean; sheetFirst?: boolean; /** The panels are drawn once with each of these services, to compare them: nothing is a panel's picture until taken. */ trials?: ImageTrial[]; /** With `trials`: a name for this round of pictures, the caller's — they can be taken together by it (`trial.adoptRound`). */ trialBatch?: string }; result: JobStarted }
   /** Beats, writing, memory, review for a run of chapters. Writing goes chapter after chapter; the rest side by side. */
   'batch.text': { params: { root: string; chapters?: string[]; count?: number; line?: string; steps: TextStep[]; brief?: string; words?: number; redo?: boolean; focus?: string; /** Writing: one chapter after the other (default), or side by side. */ order?: 'sequence' | 'together' | 'iterate'; /** With `iterate`: rounds of review and mending at most, and how grave an issue is worth one. */ rounds?: number; atLeast?: 'high' | 'medium' | 'low' }; result: JobStarted }
   /** Design sheets, portraits and voices for characters, reference art for places, design art for things, an illustration per chapter, a cover. */
-  'batch.art': { params: { root: string; sheets?: string[]; portraits?: string[]; voices?: string[]; places?: string[]; items?: string[]; scenes?: string[]; cover?: boolean; insert?: boolean; force?: boolean; sheetFirst?: boolean }; result: JobStarted }
+  'batch.art': { params: { root: string; sheets?: string[]; portraits?: string[]; voices?: string[]; places?: string[]; items?: string[]; scenes?: string[]; cover?: boolean; insert?: boolean; force?: boolean; sheetFirst?: boolean; /** Every picture of the round is drawn once with each of these services, to compare them: nothing hangs until taken. */ trials?: ImageTrial[]; /** With `trials`: a name for this round of pictures, the caller's — they can be taken together by it (`trial.adoptRound`). */ trialBatch?: string }; result: JobStarted }
 
   // ── jobs ──
   /** `gates`: the kinds of request that have work waiting or a service pushing back right now. */
@@ -649,7 +655,7 @@ export interface NovelRpc {
   'jobs.cancel': { params: { id: string }; result: { cancelled: boolean } }
 
   // ── stage: illustration ──
-  'image.create': { params: { root: string; kind: 'portrait' | 'sheet' | 'scene' | 'location' | 'item' | 'cover' | 'custom'; target?: string; quote?: string; prompt?: string; size?: string; insert?: boolean; /** Portrait, sheet: the author's loose ideas — what is of the person goes into their look, what is of this picture directs it only. */ notes?: string; /** Sheet: which look (outfit) to draw. */ look?: string; looks?: Record<string, string>; characters?: string[]; avoid?: string[]; raw?: boolean; /** false: this once, no design sheet is drawn first. */ sheetFirst?: boolean; /** What this picture of a person is drawn against, this once: a sheet against their `portrait` or from the `words` alone; a portrait against their `sheet` or from the `words` alone. Left out: by `image.lead`. */ from?: 'portrait' | 'sheet' | 'words'; /** Portrait: true — the plain likeness alone; false — their signature scene alone. Left out: what `image.portraits` says (by default both, one of each). */ plain?: boolean; /** Portrait: which of their signature scenes it shows (by id). */ scene?: string; /** Portrait, sheet: which stretch of their life it shows (a stage's id). */ stage?: string; /** Location, item: the turn of its course to draw it at (`<chapter>` or `<chapter>:<kind>`); the picture is kept with that turn. */ event?: string; /** Portrait: draw it once with each of these services, to compare them; none becomes their portrait until the author takes it. */ trials?: ImageTrial[] }; result: JobStarted }
+  'image.create': { params: { root: string; kind: 'portrait' | 'sheet' | 'scene' | 'location' | 'item' | 'cover' | 'custom'; target?: string; quote?: string; prompt?: string; size?: string; insert?: boolean; /** Portrait, sheet: the author's loose ideas — what is of the person goes into their look, what is of this picture directs it only. */ notes?: string; /** Sheet: which look (outfit) to draw. */ look?: string; looks?: Record<string, string>; characters?: string[]; avoid?: string[]; raw?: boolean; /** false: this once, no design sheet is drawn first. */ sheetFirst?: boolean; /** What this picture of a person is drawn against, this once: a sheet against their `portrait` or from the `words` alone; a portrait against their `sheet` or from the `words` alone. Left out: by `image.lead`. */ from?: 'portrait' | 'sheet' | 'words'; /** Portrait: true — the plain likeness alone; false — their signature scene alone. Left out: what `image.portraits` says (by default both, one of each). */ plain?: boolean; /** Portrait: which of their signature scenes it shows (by id). */ scene?: string; /** Portrait, sheet: which stretch of their life it shows (a stage's id). */ stage?: string; /** Location, item: the turn of its course to draw it at (`<chapter>` or `<chapter>:<kind>`); the picture is kept with that turn. */ event?: string; /** Any kind: draw it once with each of these services, to compare them; none hangs anywhere until the author takes it (`trial.adopt`). */ trials?: ImageTrial[]; /** With `trials`: a name for the round this picture is one thing of, the caller's — its pictures can be taken together by it (`trial.adoptRound`). */ trialBatch?: string }; result: JobStarted }
   /**
    * Whose design sheets what is about to be drawn would draw first — asked before any of it is started, so that the author
    * can be told and say yes, or not this time. `unknown`: asks that cannot be told yet (panels with no storyboard).
@@ -660,7 +666,7 @@ export interface NovelRpc {
    * along, to be drawn again with this one thing changed. The new picture takes the old one's place wherever it
    * hangs; the old one stays in the gallery. A job; its result names whose picture the new one is (`replaced`).
    */
-  'image.redraw': { params: { root: string; picture: string; subject?: string; change?: string; /** The whole prompt, as the author rewrote it ({@link PictureWhole}): sent as it stands, with the pictures the one before went with. Not with `subject` or `change`. */ prompt?: string; /** With `prompt`: everything to keep out. Left out: what the picture kept out before. */ avoid?: string[]; /** Draw it as it is with each of these services, to compare them: nothing is replaced. */ trials?: ImageTrial[] }; result: JobStarted }
+  'image.redraw': { params: { root: string; picture: string; subject?: string; change?: string; /** The whole prompt, as the author rewrote it ({@link PictureWhole}): sent as it stands, with the pictures the one before went with. Not with `subject` or `change`. */ prompt?: string; /** With `prompt`: everything to keep out. Left out: what the picture kept out before. */ avoid?: string[]; /** With `prompt`: the pictures that go along instead of those it went with — some left out, others of the book added — in the order they are numbered. Left out: the ones it went with. */ references?: { path: string; label?: string }[]; /** Draw it as it is with each of these services, to compare them: nothing is replaced. */ trials?: ImageTrial[] }; result: JobStarted }
   /** Everything a picture was drawn from — the prompt whole, what was kept out, the pictures that went along — for its author to rewrite and draw it again by (`image.redraw` with `prompt`). */
   'image.whole': { params: { root: string; picture: string }; result: PictureWhole }
   /** The image services there are to try for a book — the one that draws for it now, and the ones set up before — and whether each can draw right now. */
@@ -679,6 +685,11 @@ export interface NovelRpc {
    * person's first portrait. `others`: the rest of the comparison, deleted with that.
    */
   'trial.adopt': { params: { root: string; path: string; instead?: string; others?: string[] }; result: { ok: boolean; replaced: string[]; removed: number } }
+  /**
+   * Take, of a round that drew many things at once with several services, every picture one service drew: each goes
+   * where it would have gone drawn the usual way. `others`: delete what the other services drew of the same things.
+   */
+  'trial.adoptRound': { params: { root: string; round: string; label: string; others?: boolean }; result: { taken: number; removed: number } }
   /** Have several of DSH's models write the same chapter at once; the chapter keeps its text, the drafts are kept among its versions (job result: `drafts`). */
   'trial.write': { params: { root: string; chapter?: string; brief?: string; mode?: 'draft' | 'continue'; words?: number; line?: string; guides?: PictureGuide[]; with: { provider: string; model: string; reasoningEffort?: string }[] }; result: JobStarted }
   /** One draft of such a comparison, whole: its text. */
@@ -708,6 +719,13 @@ export interface NovelRpc {
   'history.removed': { params: { root: string }; result: { removed: { kind: HistoryKind; id: string; name: string; at: string; version: string }[] } }
   /** Throw away for good what is kept of a card or an entry that was deleted: it can no longer be had back. */
   'history.forget': { params: { root: string; kind: HistoryKind; id: string }; result: { ok: boolean } }
+  /**
+   * Take in a picture of somebody made elsewhere — a file of the author's — as their portrait or their design sheet:
+   * kept among the book's pictures, and hung where one drawn here would be (`look`: that look's sheet; `stage`: that
+   * stretch's; `scene`: the portrait of that moment of theirs). `front`: a sheet that is the front view alone (left
+   * out: told by its shape). `spare`: it waits beside a main sheet the author chose.
+   */
+  'image.import': { params: { root: string; kind: 'portrait' | 'sheet'; target: string; mediaType: string; data: string; look?: string; stage?: string; scene?: string; front?: boolean }; result: { path: string; held: string[]; spare?: boolean } }
   'image.place': { params: { root: string; picture: string; chapter: string; after?: number; quote?: string; alt?: string }; result: { chapter: string; after: number } }
   /** `released`: whose picture it was — the cards and entries it was taken off, by name. Absent from a Host before the picture was taken off them. */
   /** Take a picture out of the book — by the id of its record, or by its path where it has none: its file, its record, and off every card and entry that shows it (`released`: whose it was). */
@@ -738,7 +756,7 @@ export interface NovelRpc {
   // ── stage: motion comic ──
   'comic.board': { params: { root: string; chapter: string }; result: { board?: ComicBoard; stale: boolean } }
   'comic.build': { params: { root: string; chapter: string; force?: boolean; /** How finely to cut; the book's own setting when left out. */ density?: StoryboardDensity; maxPanels?: number }; result: JobStarted }
-  'comic.render': { params: { root: string; chapter: string; panels?: string[]; force?: boolean; /** false: this once, no design sheet is drawn first. */ sheetFirst?: boolean; /** false: this once, the art of the things a panel shows does not go along. */ things?: boolean }; result: JobStarted }
+  'comic.render': { params: { root: string; chapter: string; panels?: string[]; force?: boolean; /** false: this once, no design sheet is drawn first. */ sheetFirst?: boolean; /** false: this once, the art of the things a panel shows does not go along. */ things?: boolean; /** Each of these panels is drawn once with each of these services, to compare them: no panel takes a picture until the author takes one. */ trials?: ImageTrial[]; /** With `trials`: a name for this round of pictures, the caller's — they can be taken together by it (`trial.adoptRound`). */ trialBatch?: string }; result: JobStarted }
   'comic.updatePanel': { params: { root: string; chapter: string; panel: string; patch: Partial<Pick<ComicPanel, 'prompt' | 'description' | 'camera'>> }; result: ComicBoard }
   /** Take one panel out; its lines go to a neighbour. */
   'comic.removePanel': { params: { root: string; chapter: string; panel: string }; result: ComicBoard }

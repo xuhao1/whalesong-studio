@@ -10,6 +10,7 @@
  * if they want anything, and whether the picture goes into the text.
  */
 import { useState } from 'react'
+import { ManyModels } from './Trial'
 import { Button, Modal, TextArea, useT } from './ui'
 
 /** What the director settled of a passage's picture, as the job that drew it says it. */
@@ -40,7 +41,7 @@ export function framedOf(job: { result?: Record<string, unknown> } | undefined):
  * @param quote - the passage, as marked.
  * @param onDraw - draw it: with what the author asked of it (nothing, where they asked nothing), into the text or not.
  */
-export function PassagePictureDialog({ chapter, quote, onDraw, onClose }: { chapter: { index: number }; quote: string; onDraw: (asked: { ask?: string; insert: boolean }) => void; onClose: () => void }) {
+export function PassagePictureDialog({ chapter, quote, onDraw, onClose, onChanged }: { chapter: { id: string; index: number }; quote: string; onDraw: (asked: { ask?: string; insert: boolean }) => void; onClose: () => void; /** One of several pictures drawn to be compared was taken (and, asked into the text, stands there now). */ onChanged?: () => void }) {
   const t = useT()
   const [ask, setAsk] = useState('')
   const [insert, setInsert] = useState(true)
@@ -51,6 +52,7 @@ export function PassagePictureDialog({ chapter, quote, onDraw, onClose }: { chap
       footer={(
         <>
           <Button variant="ghost" onClick={onClose}>{t('取消', 'Cancel')}</Button>
+          <ManyModels label={t('多模型…', 'Several models…')} title={t('多模型：几个绘图服务各画一张这一段来比；采纳的那张才放进正文', 'Several models: this passage from each image service, to compare; the one taken is the one placed in the text')} ask={{ title: t(`第 ${chapter.index} 章的一段`, `a passage of chapter ${chapter.index}`), method: 'image.create', params: { kind: 'scene', target: chapter.id, quote, ...(ask.trim().length > 0 ? { prompt: ask.trim() } : {}), ...(insert ? { insert: true } : {}) } }} {...(onChanged !== undefined ? { onChanged } : {})} />
           <Button variant="primary" icon="image" onClick={() => { onDraw({ ...(ask.trim().length > 0 ? { ask: ask.trim() } : {}), insert }) }}>{t('画这一段', 'Draw it')}</Button>
         </>
       )}

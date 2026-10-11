@@ -2,7 +2,7 @@
 /** Bilingual labels for domain enums, shared by the views. */
 import type { RpcMethod } from '../shared/rpc'
 import type {
-  AmbiencePreset, CameraMove, ChapterStatus, IssueSeverity, IssueType, JobInfo, ProjectState, StoryboardDensity, Suggestion, TakeIssue,
+  AmbiencePreset, CameraMove, ChapterStatus, IssueSeverity, IssueType, JobInfo, ProjectState, SceneShot, StoryboardDensity, Suggestion, TakeIssue,
   ThreadKind, ThreadStatus, WorldCategory,
 } from '../shared/types'
 
@@ -254,7 +254,9 @@ const JOB_TITLES: [RegExp, Label][] = [
   [/^analyze$/, ['分析全书', 'Reading the book']],
   [/^index$/, ['建立语义索引', 'Indexing']],
   [/^expand /, ['AI 补全设定卡', 'Completing the card']],
-  [/^visual anchor /, ['提炼视觉锚点', 'Distilling the visual anchor']],
+  [/^appearance /, ['写外貌', 'Writing the appearance']],
+  // (What that job was called by an earlier version: versions it left behind are still named by it.)
+  [/^visual anchor /, ['写外貌', 'Writing the appearance']],
   [/^extract style$/, ['提炼文风', 'Extracting the style']],
   [/^style sample$/, ['试写文风样段', 'Writing a style sample']],
   [/^illustrate sheet$/, ['绘制人设图', 'Drawing the design sheet']],
@@ -350,15 +352,20 @@ export interface PortraitScene {
   chapter?: string
   /** Why this moment, in the director's words. */
   why?: string
+  /** The one frame the director made of it for the picture. */
+  shot?: SceneShot
+  /** No frame could be made of it, and why: drawn of the moment as it is told. */
+  unframed?: string
   none?: string
 }
 
 export function sceneOf(job: { result?: Record<string, unknown> } | undefined): PortraitScene | undefined {
   const scene = job?.result?.scene
   if (typeof scene !== 'object' || scene === null) return undefined
-  const { text, title, id, found, asked, chapter, why, none } = scene as Record<string, unknown>
+  const { text, title, id, found, asked, chapter, why, none, shot, unframed } = scene as Record<string, unknown>
   const said = (value: unknown): value is string => typeof value === 'string' && value.length > 0
-  if (said(text)) return { text, ...(said(title) ? { title } : {}), ...(said(id) ? { id } : {}), ...(typeof found === 'number' ? { found } : {}), ...(said(asked) ? { asked } : {}), ...(said(chapter) ? { chapter } : {}), ...(said(why) ? { why } : {}) }
+  const framed = typeof shot === 'object' && shot !== null && said((shot as { action?: unknown }).action) && said((shot as { of?: unknown }).of) ? shot as SceneShot : undefined
+  if (said(text)) return { text, ...(said(title) ? { title } : {}), ...(said(id) ? { id } : {}), ...(typeof found === 'number' ? { found } : {}), ...(said(asked) ? { asked } : {}), ...(said(chapter) ? { chapter } : {}), ...(said(why) ? { why } : {}), ...(framed !== undefined ? { shot: framed } : {}), ...(said(unframed) ? { unframed } : {}) }
   return typeof none === 'string' ? { none } : undefined
 }
 
@@ -398,7 +405,7 @@ export function whyLabel(why: string, t: (zh: string, en: string) => string): st
   if (why === 'restore') return t('恢复旧版本之前', 'Before a version was put back')
   if (why === 'removed') return t('删除之前', 'Before it was deleted')
   if (why === 'job' || why.startsWith('job-')) {
-    // A title comes here with everything but its Latin words worn off: "visual anchor 沈蘅" is "visual-anchor".
+    // A title comes here with everything but its Latin words worn off: "card walk-ons 沈蘅" is "card-walk-ons".
     const raw = why.slice(4)
     const spaced = raw.replace(/-/g, ' ')
     const known = [raw, spaced, `${spaced} `].map(title => JOB_TITLES.find(([pattern]) => pattern.test(title))?.[1]).find(label => label !== undefined)

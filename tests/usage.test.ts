@@ -88,8 +88,9 @@ describe('the usage ledger', () => {
   it('counts the calls a book makes: text by role, pictures by model', async () => {
     const images = new FakeImages()
     bed = await createTestBed({ settings: { image: { ...DEFAULT_SETTINGS.image, provider: 'codex' } }, bridges: images.bridges })
-    bed.llm.responder = () => ({ text: '{"prompt": "lean woman", "negative": ""}', finish: 'stop', usage: { inputTokens: 1200, outputTokens: 40 } })
-    const card = await bed.runtime.project.saveCharacter({ name: '沈砚', appearance: '高瘦' })
+    bed.llm.responder = () => ({ text: '{"appearance": "高瘦的女子，黑发低挽", "negative": ""}', finish: 'stop', usage: { inputTokens: 1200, outputTokens: 40 } })
+    // (Nothing says how she looks yet: the director writes her appearance before she is drawn — a text call, then the picture.)
+    const card = await bed.runtime.project.saveCharacter({ name: '沈砚' })
     await illustrate(bed.core, bed.runtime, { kind: 'sheet', target: card.id }, { origin: 'user' })
     const events = await bed.core.usage.read()
     expect(events.map(event => event.kind)).toEqual(['text', 'image'])
@@ -97,7 +98,7 @@ describe('the usage ledger', () => {
     expect(events[0]!.estimated).toBeUndefined()
     expect(events[1]).toMatchObject({ kind: 'image', model: 'gpt-image', via: 'codex', images: 1, book: bed.runtime.project.root })
     // An endpoint that reports nothing is counted by the length of the text.
-    bed.llm.responder = () => '{"prompt": "lean woman, taller", "negative": ""}'
+    bed.llm.responder = () => '{"appearance": "高瘦的女子，比先前写的更高些", "negative": ""}'
     const { deriveVisual } = await import('../src/core/pipelines/illustrate')
     await deriveVisual(bed.core, bed.runtime, { character: card.id }, { origin: 'user' })
     const last = (await bed.core.usage.read()).at(-1)!

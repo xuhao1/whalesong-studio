@@ -31,7 +31,8 @@ export const PICTURE_FIELDS: Partial<Record<HistoryKind, readonly string[]>> = {
  * off the digests), where a chapter stands (it follows its text). No change of these is a change of the thing.
  */
 export const KEPT_FIELDS: Partial<Record<HistoryKind, readonly string[]>> = {
-  character: ['firstAppearance', 'lastAppearance'],
+  // …and the frame the director made of one of their moments for its portrait: made of the moment and the text around it, and made anew when they change.
+  character: ['firstAppearance', 'lastAppearance', 'visual.scenes[].shot'],
   // …and that somebody looked in the references for it: said of the looking, not of the plan (the notes themselves are the plan's).
   plan: ['status', 'referencesRead'],
   // Which text a script or a storyboard was made of says whether it is stale, not what it is.

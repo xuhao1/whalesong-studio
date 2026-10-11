@@ -18,8 +18,12 @@ const MOST = 12
 /** A picture brought in is sent no larger than this on its long edge: enough for a model to read, small enough to send. */
 const LONG_EDGE = 2048
 
-/** A picture file as it is sent to the Host: scaled down where it is very large, as JPEG (or PNG where it has transparency to keep). */
-async function encoded(file: File): Promise<{ mediaType: string; data: string }> {
+/**
+ * A picture file as it is sent to the Host: scaled down where it is very large, as JPEG (or PNG where it has transparency to keep).
+ * @param asIs - up to how many bytes it goes as it is, and how long its long edge may be otherwise: a picture to steer
+ *   by is only read; one that becomes a picture of the book is kept as fine as it came.
+ */
+export async function encoded(file: File, asIs = 1_500_000, longEdge = LONG_EDGE): Promise<{ mediaType: string; data: string }> {
   const base64 = (buffer: ArrayBuffer): string => {
     const bytes = new Uint8Array(buffer)
     let text = ''
@@ -28,10 +32,10 @@ async function encoded(file: File): Promise<{ mediaType: string; data: string }>
   }
   const plain = async (): Promise<{ mediaType: string; data: string }> => ({ mediaType: file.type, data: base64(await file.arrayBuffer()) })
   // A small picture of a kind the Host takes goes as it is; an animation is never redrawn.
-  if (file.type === 'image/gif' || (file.size <= 1_500_000 && ['image/png', 'image/jpeg', 'image/webp'].includes(file.type))) return await plain()
+  if (file.type === 'image/gif' || (file.size <= asIs && ['image/png', 'image/jpeg', 'image/webp'].includes(file.type))) return await plain()
   try {
     const bitmap = await createImageBitmap(file)
-    const scale = Math.min(1, LONG_EDGE / Math.max(bitmap.width, bitmap.height))
+    const scale = Math.min(1, longEdge / Math.max(bitmap.width, bitmap.height))
     const canvas = document.createElement('canvas')
     canvas.width = Math.max(1, Math.round(bitmap.width * scale))
     canvas.height = Math.max(1, Math.round(bitmap.height * scale))

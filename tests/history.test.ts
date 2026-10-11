@@ -103,7 +103,7 @@ describe('the history of a card, an entry, a plan, the book', () => {
     await changedBy('job-自定义的一件事', async () => { await project.saveCharacter({ id: card.id, tagline: '丙' }) })
     const whys = (await project.history('character', card.id)).map(version => version.why)
     expect(whys).toEqual(['job', 'job-what-if', 'job-visual-anchor'])
-    expect(whys.map(why => whyLabel(why, zh))).toEqual(['一项任务修改之前', '"推演"如果""修改之前', '"提炼视觉锚点"修改之前'])
+    expect(whys.map(why => whyLabel(why, zh))).toEqual(['一项任务修改之前', '"推演"如果""修改之前', '"写外貌"修改之前'])
     expect(['edit', 'agent', 'restore', 'removed', 'job-sift-cast'].map(why => whyLabel(why, zh))).toEqual(['你修改之前', '总编修改之前', '恢复旧版本之前', '删除之前', '"筛新名字"修改之前'])
     expect(whyLabel('job-no-such-job', zh)).toBe('"no such job"修改之前')
   })

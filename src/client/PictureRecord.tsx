@@ -19,11 +19,12 @@
  * It is the author's alone. Nothing of it goes to a reader: prompts do not
  * leave the book through the shared reader or a published site.
  */
-import { ImageTrialDialog } from './Trial'
+import { ImageTrialDialog, ManyModels } from './Trial'
+import { GuidePictures } from './Guides'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { lookWords, pictureWords, resolveArtStyle, sceneOfPicture, scenePictures, splitAvoid, tidyPart, type ArtSource, scenesOf, sceneWords } from '../shared/art'
 import { sheetsOf } from '../shared/sheets'
-import type { IllustrationInfo, IllustrationPiece, PictureWhole } from '../shared/types'
+import type { IllustrationInfo, IllustrationPiece, PictureGuide, PictureWhole } from '../shared/types'
 import { Button, Chip, cx, Modal, Spinner, TextArea, TextInput, useAction, useConfirm, useLoad, useMediaUrl, useProject, useSnapshot, useStudio, useT, plainEnter } from './ui'
 import { leftBehind } from './labels'
 import { PlacePicture } from './PlacePicture'
@@ -63,6 +64,7 @@ const PIECE: Record<Exclude<IllustrationPiece['of'], 'look'>, [string, string]> 
   ask: ['这一张的要求', 'Asked of this one'],
   composed: ['导演写的画面', 'Composed by the director'],
   scene: ['名场面', 'Signature scene'],
+  setting: ['环境', 'Surroundings'],
   change: ['改哪一处', 'What to change'],
   place: ['地点的样子', 'How the place looks'],
   thing: ['物件的样子', 'How a thing looks'],
@@ -127,6 +129,8 @@ function RedrawPicture({ image, mode, onDone, onBusy, onCancel }: { image: Illus
   const [whole, setWhole] = useState<PictureWhole | 'older' | undefined>(mode === 'words' ? undefined : 'older')
   const [words, setWords] = useState(mode === 'words' ? '' : pictureWords(image).subject)
   const [avoid, setAvoid] = useState('')
+  // The pictures that go along with the whole prompt: those it went with, until the author leaves one out or adds one.
+  const [refs, setRefs] = useState<PictureGuide[]>([])
   // Which of the two is in the field, where the director wrote the prompt out of a brief: what was sent, or the brief.
   const [brief, setBrief] = useState(false)
   const [change, setChange] = useState('')
@@ -139,6 +143,7 @@ function RedrawPicture({ image, mode, onDone, onBusy, onCancel }: { image: Illus
       setWhole(got)
       setWords(got.prompt)
       setAvoid(got.avoid.join(t('、', ', ')))
+      setRefs(got.references.map(reference => ({ path: reference.path, note: reference.label })))
     }).catch(() => {
       if (!live) return
       setWhole('older')
@@ -150,12 +155,16 @@ function RedrawPicture({ image, mode, onDone, onBusy, onCancel }: { image: Illus
   }, [image.id, mode, root])
   const all = whole !== undefined && whole !== 'older' ? whole : undefined
   const ready = mode === 'words' ? whole !== undefined && words.trim().length > 0 : change.trim().length > 0
+  /** What the form says, as the call that draws it again. */
+  // Other pictures than it went with — one left out, one added, another order, another word for one: said with the call.
+  const repictured = all !== undefined && JSON.stringify(refs.map(guide => [guide.path, guide.note ?? ''])) !== JSON.stringify(all.references.map(reference => [reference.path, reference.label]))
+  const redrawn = () => (mode !== 'words' ? { change: change.trim() } : all !== undefined ? { prompt: words.trim(), avoid: splitAvoid(avoid), ...(repictured ? { references: refs.map(guide => ({ path: guide.path, ...(guide.note !== undefined && guide.note.length > 0 ? { label: guide.note } : {}) })) } : {}) } : { subject: words.trim() })
   const go = (): void => {
     if (!ready || busy || !controller.need('image')) return
     onBusy(true)
     void run(async () => {
       try {
-        const job = await controller.run('image.redraw', { root, picture: image.id, ...(mode !== 'words' ? { change: change.trim() } : all !== undefined ? { prompt: words.trim(), avoid: splitAvoid(avoid) } : { subject: words.trim() }) })
+        const job = await controller.run('image.redraw', { root, picture: image.id, ...redrawn() })
         await controller.refreshProject()
         const replaced = Array.isArray(job.result?.replaced) ? job.result.replaced.filter((name): name is string => typeof name === 'string') : []
         // A person's design sheets are kept side by side: the one drawn from stays among them, not in use.
@@ -183,7 +192,10 @@ function RedrawPicture({ image, mode, onDone, onBusy, onCancel }: { image: Illus
             <span>{t('不要出现', 'Keep out')}</span>
             <TextArea value={avoid} minRows={1} maxRows={5} disabled={busy} placeholder={t('没有', 'Nothing')} onChange={(event) => { setAvoid(event.target.value) }} />
           </label>
-          <p className="nv-muted nv-small">{t('发出去的就是这两栏。', 'These two fields are what is sent.')}{all.references.length > 0 ? t(`照旧带 ${all.references.length} 张参考图：${all.references.map(reference => reference.label).join('、')}。`, ` ${all.references.length} reference picture(s) go along as before: ${all.references.map(reference => reference.label).join(', ')}.`) : ''}</p>
+<GuidePictures value={refs} onChange={setRefs} disabled={busy} chapter={image.kind === 'scene' || image.kind === 'panel' ? image.target : undefined} />
+          <p className="nv-muted nv-small">{repictured
+            ? t('参考图换过了：提示词里“见图 N”的编号和“参考图：”那一行会照这里的次序重写；每张图后面那一栏是它在那一行里的叫法。', 'The pictures were changed: the numbers the prompt points to and its line on which picture is which are rewritten in this order; the field beside each is what that line calls it.')
+            : t('发出去的就是这两栏，带上面这几张参考图。', 'These two fields are what is sent, with the pictures above.')}</p>
         </>
       ) : mode === 'words' ? (
         <>
@@ -198,6 +210,7 @@ function RedrawPicture({ image, mode, onDone, onBusy, onCancel }: { image: Illus
       )}
       <span className="nv-row">
         <Button variant="ghost" disabled={busy} onClick={onCancel}>{t('取消', 'Cancel')}</Button>
+        <ManyModels label={t('多模型…', 'Several models…')} disabled={!ready || busy} title={t('多模型：照这里写的，由几个绘图服务各画一张来比；采纳的那张顶替原图', 'Several models: as written here, by each image service, to compare; the one taken goes in this picture\'s place')} ask={() => (controller.need('image') ? { title: mode === 'words' ? t('改提示词重画', 'redrawn from its prompt') : t('照着这张改', 'this picture changed'), method: 'image.redraw', params: { picture: image.id, ...redrawn() }, instead: image.path } : undefined)} onChanged={() => { void controller.refreshProject() }} />
         <Button variant="primary" icon="image" busy={busy} disabled={!ready} pending={t('正在画…', 'Drawing…')} onClick={go}>{mode === 'words' ? t('照这段重画', 'Draw from these words') : t('照着它改', 'Draw it changed')}</Button>
       </span>
     </div>
@@ -311,9 +324,8 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
     // the pointer); a whole prompt of the author's own is theirs, and is not held against the card.
     const then = look?.byPicture === true ? look.standing : look?.text
     const same = image.verbatim === true || look?.byPicture === true && then === undefined ? undefined : then !== undefined ? tidyPart(then) === now : told !== undefined && !told.subject.endsWith('…') && now.length > 0 ? told.subject.includes(now) : undefined
-    const anchored = (card.visual?.prompt ?? '').length > 0
-    if (same === true) standing.push({ tone: 'ok', text: anchored ? t('视觉锚点和现在的一样。', 'The visual anchor is the same as now.') : t('外貌和现在的一样。', 'The appearance is as it is now.') })
-    else if (same === false) standing.push(withAction({ tone: 'warn', text: t('视觉锚点在这张图之后改过。', 'The visual anchor was changed after this picture.') }, editLook !== undefined ? { label: t('看现在的视觉锚点', 'See the anchor as it is'), run: editLook } : undefined))
+    if (same === true) standing.push({ tone: 'ok', text: t('外貌和现在的一样。', 'The appearance is as it is now.') })
+    else if (same === false) standing.push(withAction({ tone: 'warn', text: t('外貌在这张图之后改过。', 'The appearance was changed after this picture.') }, editLook !== undefined ? { label: t('看现在的外貌', 'See the appearance as it is'), run: editLook } : undefined))
     // The moment a portrait shows: the one on the card now, or another.
     const scenePiece = parts?.pieces?.find(piece => piece.of === 'scene')
     const shownScene = scenePiece?.text
@@ -386,7 +398,7 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
         <span className="nv-muted nv-small">{new Date(image.createdAt).toLocaleString()}</span>
       </header>
       <p className="nv-picture-made nv-small">
-        <span>{image.model ?? t('（没记下模型）', '(model not recorded)')}{service !== undefined ? ` · ${t(...service)}` : ''}</span>
+        <span>{image.imported === true ? t('从电脑导入的：不是这里画的，没有提示词', 'Brought in from this computer: not drawn here, and without a prompt') : image.model ?? t('（没记下模型）', '(model not recorded)')}{service !== undefined ? ` · ${t(...service)}` : ''}</span>
         {sent?.sampling !== undefined ? <span>{t(`${sent.sampling.steps} 步 · 引导 ${sent.sampling.guidance} · ${sent.sampling.sampler}/${sent.sampling.scheduler}`, `${sent.sampling.steps} steps · guidance ${sent.sampling.guidance} · ${sent.sampling.sampler}/${sent.sampling.scheduler}`)}{sent.sampling.from === 'server' ? t('（照服务器上这个模型上次跑的）', ' (as the server last ran this model)') : sent.sampling.from === 'builtin' ? t('（内置的默认值）', ' (the built-in figures)') : ''}</span> : null}
         {sent?.seed !== undefined ? <span>{t(`种子 ${sent.seed}`, `seed ${sent.seed}`)}</span> : null}
         {sent?.compact !== undefined ? <span>{sent.compact.limit === undefined
@@ -460,13 +472,14 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
         {parts !== undefined ? (
           <dl className="nv-parts">
             {parts.pieces !== undefined && parts.pieces.length > 0 ? parts.pieces.map((piece, index) => (
-              <PieceRow key={index} label={piece.of === 'look' ? (piece.name !== undefined && piece.name.length > 0 ? t(`「${piece.name}」的样子${piece.secondary === true ? '（陪衬）' : ''}`, `How ${piece.name} looks${piece.secondary === true ? ' (secondary)' : ''}`) : person ? t('这个人的样子', 'How they look') : t('它的样子', 'How it looks')) : piece.name !== undefined && (piece.of === 'place' || piece.of === 'thing') ? t(`「${piece.name}」的样子`, `How "${piece.name}" looks`) : image.verbatim === true && piece.of === 'composed' ? t('整段提示词（你改写的）', 'The whole prompt, as you rewrote it') : t(...PIECE[piece.of])} chip={piece.of === 'scene' ? (piece.from === 'asked' ? t('导演按这一张的要求挑的', 'picked by the director for this picture') : t('人物卡上的名场面', 'one of the card\'s signature scenes')) : piece.of !== 'look' ? undefined : piece.byPicture === true ? t('照参考图，没有另写', 'left to their picture, not written out') : person
-                ? (piece.from === 'anchor' ? t('视觉锚点', 'visual anchor') : t('人物卡的外貌（还没有视觉锚点）', 'the card\'s appearance (no anchor yet)'))
+              <PieceRow key={index} label={piece.of === 'look' ? (piece.name !== undefined && piece.name.length > 0 ? t(`「${piece.name}」的样子${piece.secondary === true ? '（陪衬）' : ''}`, `How ${piece.name} looks${piece.secondary === true ? ' (secondary)' : ''}`) : person ? t('这个人的样子', 'How they look') : t('它的样子', 'How it looks')) : piece.name !== undefined && (piece.of === 'place' || piece.of === 'thing') ? t(`「${piece.name}」的样子`, `How "${piece.name}" looks`) : image.verbatim === true && piece.of === 'composed' ? t('整段提示词（你改写的）', 'The whole prompt, as you rewrote it') : piece.of === 'outfit' && piece.from === 'shot' ? t(`${piece.name !== undefined ? `「${piece.name}」` : ''}此刻穿着`, `${piece.name !== undefined ? `${piece.name}, ` : ''}wearing in this moment`) : t(...PIECE[piece.of])} chip={piece.of === 'scene' ? `${piece.from === 'asked' ? t('导演按这一张的要求挑的', 'picked by the director for this picture') : t('人物卡上的名场面', 'one of the card\'s signature scenes')}${piece.told !== undefined ? t(' · 导演整理成一格', ' · made into one frame by the director') : ''}` : piece.from === 'shot' ? t('导演照这一幕前后的正文整理的', 'read by the director off the text around the moment') : piece.of !== 'look' ? undefined : piece.byPicture === true ? t('照参考图，没有另写', 'left to their picture, not written out') : person
+                ? (piece.from === 'anchor' ? t('当时的视觉锚点（旧）', 'the visual anchor of the time (old)') : t('人物卡的外貌', 'the card\'s appearance'))
                 : (piece.from === 'anchor' ? t('条目上的"样子"', 'the entry\'s look') : t('条目的名字和概括', 'the entry\'s name and summary'))}
               >
                 {piece.text}
                 {piece.of === 'look' && editLook !== undefined ? <> <button type="button" className="nv-link nv-small" onClick={editLook}>{t('去改', 'Change it')}</button></> : null}
                 {piece.of === 'scene' && piece.asked !== undefined ? <span className="nv-muted nv-small"> —— {t(`你当时写的要求：${piece.asked}`, `What you asked then: ${piece.asked}`)}</span> : null}
+                {piece.of === 'scene' && piece.told !== undefined ? <span className="nv-muted nv-small"> —— {t(`这一幕原来的写法（没有发）：${piece.told}`, `The moment as it is told (not sent): ${piece.told}`)}</span> : null}
                 {piece.of === 'scene' && onEditLook !== undefined && card !== undefined ? <> <button type="button" className="nv-link nv-small" onClick={() => { onEditLook({ kind: 'character', id: card.id, what: 'scene' }) }}>{piece.from === 'asked' ? t('看名场面', 'See their scenes') : t('去改', 'Change it')}</button></> : null}
               </PieceRow>
             )) : <PieceRow label={t('画面内容', 'Subject')}>{parts.subject}</PieceRow>}
@@ -606,11 +619,12 @@ export function PictureViewer({ path, title, note, footer, start, onClose, onEdi
         {image !== undefined ? (
           <>
             {/* Pressed again, a way stays open (a second click that closed it looked like nothing happening); its form has the way out. */}
-            <Button variant={redraw === 'words' ? 'primary' : 'outline'} icon="type" disabled={drawing} onClick={() => { setRedraw('words') }} title={t('把这张图的提示词拿出来改，照改过的画一张', 'Rewrite this picture\'s words and draw it from them')}>{t('改提示词重画', 'Rewrite and redraw')}</Button>
+            {/* (A picture brought in has no words to be drawn again from: it can be changed, as a picture.) */}
+            {image.imported === true ? null : <Button variant={redraw === 'words' ? 'primary' : 'outline'} icon="type" disabled={drawing} onClick={() => { setRedraw('words') }} title={t('把这张图的提示词拿出来改，照改过的画一张', 'Rewrite this picture\'s words and draw it from them')}>{t('改提示词重画', 'Rewrite and redraw')}</Button>}
             <Button variant={redraw === 'change' ? 'primary' : 'outline'} icon="wand" disabled={drawing} onClick={() => { setRedraw('change') }} title={t('把这张图和你写的一句话发给绘图模型：只改那一处', 'Send this picture with a sentence of yours: that one thing is changed')}>{t('照着这张改', 'Change this picture')}</Button>
           </>
         ) : null}
-        {image !== undefined ? <Button variant="outline" icon="layers" disabled={drawing} onClick={() => { if (controller.need('image')) setComparing(true) }} title={t('用几个绘图服务把这张图各画一遍，并排着比，采纳一张', 'Have several image services each draw this picture, compare them side by side, and take one')}>{t('对比…', 'Compare…')}</Button> : null}
+        {image !== undefined && image.imported !== true ? <Button variant="outline" icon="layers" disabled={drawing} onClick={() => { if (controller.need('image')) setComparing(true) }} title={t('用几个绘图服务把这张图各画一遍，并排着比，采纳一张', 'Have several image services each draw this picture, compare them side by side, and take one')}>{t('对比…', 'Compare…')}</Button> : null}
         <DeletePicture path={at} onDone={gone} disabled={drawing} />
       </>
     ) : undefined}>

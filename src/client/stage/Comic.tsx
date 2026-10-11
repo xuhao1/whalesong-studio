@@ -22,6 +22,7 @@ import { place, secondsOf, Theater, useCurrentPanel } from '../reader/theater'
 import { useLinePlayer } from './player'
 import { chapterJob, inBatch, type ChapterJob } from '../Batch'
 import { useSheetsAsk } from '../SheetsAsk'
+import { ManyModels } from '../Trial'
 import { PictureViewer } from '../PictureRecord'
 import { VideoCard } from './Video'
 import { HistoryButton } from '../History'
@@ -170,6 +171,9 @@ export function ComicStage({ chapter }: { chapter: ChapterInfo | undefined }) {
             {unfinished ? (
               <Button variant="primary" icon="layers" busy={job?.batch === true} disabled={working} pending={t('正在一键制作…', 'Producing…')} onClick={makeAll} title={t(`一次做完这一章的有声漫：脚本${ready?.tts === true ? '、配音' : ''}${ready?.sound === true ? '、声音' : ''}、分镜${ready?.image === true ? '、画面' : ''}`, `This chapter's motion comic in one go: script${ready?.tts === true ? ', voices' : ''}${ready?.sound === true ? ', sound' : ''}, storyboard${ready?.image === true ? ', pictures' : ''}`)}>{t('一键制作这一章', 'Produce this chapter')}</Button>
             ) : null}
+            {unfinished && ready?.image === true ? (
+              <ManyModels disabled={working} title={t('多模型：一键制作这一章，画面由几个绘图服务各画一张来比（采纳之后画面才算数）', 'Several models: produce this chapter with every panel drawn by each image service, to compare (a panel has its picture once one is taken)')} ask={{ title: t(`第 ${chapter.index} 章 · 一键制作`, `Chapter ${chapter.index} — produce`), method: 'batch.stage', many: true, params: { chapters: [chapter.id], steps: ['script', ...(ready?.tts === true ? ['voice'] : []), ...(ready?.sound === true ? ['sound'] : []), 'storyboard', 'panels'], density, ...(limit !== undefined ? { maxPanels: limit } : {}) } }} onChanged={() => { board.reload() }} />
+            ) : null}
             <Button variant={!unfinished && (board.data.stale || changed) ? 'primary' : 'outline'} icon="sparkles" busy={storyboarding} disabled={working} pending={t('正在编排分镜…', 'Storyboarding…')} onClick={() => cut(panels.length > 0)}>
               {panels.length === 0 ? t('生成分镜', 'Storyboard it') : board.data.stale ? t('按新正文重做分镜', 'Redo the storyboard') : changed ? t('按这个密度重做分镜', 'Redo with this cut') : t('重做分镜', 'Redo the storyboard')}
             </Button>
@@ -180,6 +184,7 @@ export function ComicStage({ chapter }: { chapter: ChapterInfo | undefined }) {
         {panels.length > 0 ? (
           <div className="nv-row-wrap">
             <Button icon="image" busy={drawingAll || (drawing && draws.length === 0)} pending={t('正在绘制…', 'Drawing…')} disabled={remaking || drawingAll || drawn === panels.length} onClick={() => render()}>{drawn === 0 ? t(`绘制全部 ${panels.length} 格`, `Draw all ${panels.length} panels`) : drawn < panels.length ? t(`绘制剩余 ${panels.length - drawn} 格`, `Draw the other ${panels.length - drawn}`) : t('全部已绘', 'All drawn')}</Button>
+            <ManyModels disabled={remaking} title={drawn === panels.length ? t('多模型：每一格由几个绘图服务各再画一张来比', 'Several models: every panel again by each image service, to compare') : t('多模型：还没画的每一格由几个绘图服务各画一张来比', 'Several models: every panel not yet drawn by each image service, to compare')} ask={() => (controller.need('image') ? { title: t(`第 ${chapter.index} 章 · ${drawn === panels.length ? panels.length : panels.length - drawn} 格画面`, `Chapter ${chapter.index} — ${drawn === panels.length ? panels.length : panels.length - drawn} panels`), method: 'comic.render', many: true, params: { chapter: chapter.id, things: withThings, ...(drawn === panels.length ? { force: true } : {}) } } : undefined)} onChanged={() => { board.reload() }} />
             {lines.some(item => item.audio === undefined) ? <Button icon="mic" busy={voicing} disabled={remaking} pending={t('正在合成配音…', 'Voicing…')} onClick={() => (!controller.need('tts') ? undefined : run(async () => { await controller.api.call('audio.synthesize', { root, chapter: chapter.id }); await controller.refreshJobs() }))}>{t('合成配音', 'Synthesize voices')}</Button> : null}
             <Button variant="ghost" icon="headphones" onClick={() => { controller.openReader('listen', chapter.id) }}>{t('去"听"里制作配音', 'Voices are made under Listen')}</Button>
             <label className="nv-check" title={t('画面里出现了有设定图的物品时，把物品图也当参考图发给绘图模型；不勾就只照文字画它。这本书记住这个选择', 'Where a panel shows a thing that has design art, the art goes along as a reference; unticked, the thing is drawn from its words alone. Kept with this book')}>
@@ -226,6 +231,7 @@ export function ComicStage({ chapter }: { chapter: ChapterInfo | undefined }) {
             actions={(
               <>
                 <Button size="sm" icon="refresh" disabled={remaking || [...picked].every(id => drawingNow.has(id))} onClick={() => render({ panels: [...picked].filter(id => !drawingNow.has(id)), force: true })} title={t('把选中的这些格重新画一遍', 'Draw the chosen panels again')}>{t(`重画选中的 ${picked.size} 格`, `Redraw the ${picked.size} chosen`)}</Button>
+                <ManyModels disabled={remaking || picked.size === 0} title={t('多模型：选中的每一格由几个绘图服务各画一张来比', 'Several models: every chosen panel by each image service, to compare')} ask={() => (controller.need('image') ? { title: t(`第 ${chapter.index} 章 · 选中的 ${picked.size} 格`, `Chapter ${chapter.index} — the ${picked.size} chosen`), method: 'comic.render', many: picked.size > 1, params: { chapter: chapter.id, panels: [...picked], force: true, things: withThings } } : undefined)} onChanged={() => { board.reload() }} />
                 <Button size="sm" variant="danger" icon="trash" disabled={working || picked.size === 0} onClick={() => {
                   const ids = [...picked]
                   confirm.ask(t(`删除选中的 ${ids.length} 格？它们的台词并到相邻的格里。`, `Delete the ${ids.length} chosen panel(s)? Their lines join the neighbours.`), () => {
@@ -255,6 +261,7 @@ export function ComicStage({ chapter }: { chapter: ChapterInfo | undefined }) {
                     {panel.image !== undefined ? <Button size="sm" variant="ghost" icon="image" onClick={() => { setViewing(panel.image) }} title={t('看大图和它的来历；改提示词重画、照着这张改、删除都在里面', 'Open it large with the record of its making; rewriting, changing and deleting are there')} /> : null}
                     <Button size="sm" variant="ghost" icon="pen" onClick={() => { setEditing(panel) }} title={t('修改这一格', 'Edit this panel')} />
                     <Button size="sm" variant="ghost" icon="refresh" disabled={remaking || drawingNow.has(panel.id)} pending={t('正在开始重画…', 'Starting…')} onClick={() => render({ panels: [panel.id], force: true })} title={drawingNow.has(panel.id) ? t('这一格正在画', 'This panel is being drawn') : t('重画这一格', 'Draw this panel again')} />
+                    <ManyModels disabled={remaking} title={t('多模型：这一格由几个绘图服务各画一张来比', 'Several models: this panel by each image service, to compare')} ask={() => (controller.need('image') ? { title: t(`第 ${chapter.index} 章 · 这一格`, `Chapter ${chapter.index} — this panel`), method: 'comic.render', params: { chapter: chapter.id, panels: [panel.id], force: true, things: withThings }, ...(panel.image !== undefined ? {} : {}) } : undefined)} onChanged={() => { board.reload() }} />
                   </div>
                 </div>
               </li>

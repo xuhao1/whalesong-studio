@@ -16,6 +16,7 @@ import { DeletePicture } from '../PictureRecord'
 import { HistoryButton } from '../History'
 import { PrivateShelfSection } from '../PrivateShelf'
 import { useSheetsAsk } from '../SheetsAsk'
+import { ManyModels } from '../Trial'
 import { jobLabel, jobPulse } from '../Studio'
 import {
   Button, Chip, crewLabel, cx, Field, Modal, Progress, ProjectImage, SectionTitle, Select, TextArea, TextInput, useAction, useConfirm, useKept, useProject, useRunningJob,
@@ -689,6 +690,7 @@ export function HomeView() {
             <Button size="sm" variant={project.cover === undefined ? 'primary' : 'outline'} icon="image" busy={painting} pending={t('绘制中…', 'Painting…')} onClick={paintCover} title={t('画一张封面', 'Draw a cover')}>
               {project.cover === undefined ? t('生成封面', 'Paint a cover') : t('重画', 'Repaint')}
             </Button>
+            <ManyModels title={t('多模型：几个绘图服务各画一张封面来比', 'Several models: a cover from each image service, to compare')} ask={() => (controller.need('image') ? { title: t('封面', 'the cover'), method: 'image.create', params: { kind: 'cover' } } : undefined)} onChanged={() => { void controller.refreshProject() }} />
             {project.cover !== undefined ? <DeletePicture bare path={project.cover} disabled={painting} /> : null}
           </div>
         </div>

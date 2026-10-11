@@ -44,7 +44,7 @@ const FIELDS: Record<HistoryKind, Record<string, Label>> = {
     'life': ['履历', 'Their life'],
     'lifeMarks': ['手记的履历', 'Marks of their life'],
     'stages': ['成长', 'Stretches of their life'],
-    'visual.prompt': ['视觉锚点', 'Visual anchor'],
+    'visual.prompt': ['旧的视觉锚点（现在只有外貌）', 'The old visual anchor (there is only the appearance now)'],
     'visual.negative': ['这个人物身上不要画出', 'Not to be drawn on them'],
     'visual.looks': ['造型', 'Looks'],
     'visual.scenes': ['名场面', 'Signature scenes'],

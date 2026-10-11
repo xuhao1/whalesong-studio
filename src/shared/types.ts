@@ -138,6 +138,32 @@ export interface CharacterLook {
   sheetFront?: boolean
 }
 
+/**
+ * A moment made ready for a picture: what the director read off the text around it — the instant itself in a few
+ * words, what the person wears in it, what is around them, who and what else is in the frame. A moment as kept is
+ * told as the book tells it; a picture needs it said as one frame.
+ */
+export interface SceneShot {
+  /** The instant shown: who does what — posture, gesture, expression, what is in hand. Short. */
+  action: string
+  /** What the person wears and carries in it, as the text around the moment has it. Absent: as they usually look. */
+  outfit?: string
+  /** One of their looks (outfits), by name, where the moment has them in it. */
+  look?: string
+  /** Around them: where, what is near, the hour and the weather, where the light comes from. */
+  setting?: string
+  /** Who else is in the frame, by name. */
+  people?: string[]
+  /** The place of the bible it is set in, by name. */
+  place?: string
+  /** Things of the bible it shows, by name. */
+  things?: string[]
+  /** What it was read off, in a sentence — the director's, for the author. */
+  why?: string
+  /** The words of the moment it was made of (their hash): it is made anew once they say something else. */
+  of: string
+}
+
 /** A moment of the book a person is remembered by, written as the picture a portrait of it would be. */
 export interface SignatureScene {
   /** Stable id within the character. */
@@ -152,6 +178,8 @@ export interface SignatureScene {
   why?: string
   /** Project-relative path of the portrait drawn of it. */
   portrait?: string
+  /** The moment as one frame, as the director made it ready for its portrait: kept, so that it is drawn the same again — and the author's to change. */
+  shot?: SceneShot
   /**
    * `digest`: put together from what the chapters' digests noted (`ChapterMemory.scenes`), nobody having looked the
    * list over. A list that is all of this kind is brought up to date as chapters are digested; a moment the author
@@ -162,9 +190,10 @@ export interface SignatureScene {
 
 export interface CharacterVisual {
   /**
-   * The character's visual anchor: a short, concrete, drawable description
-   * (build, face, hair, clothing, signature items) restated in every image
-   * prompt that shows them. Written for an image model, not for a reader.
+   * Kept by cards of an earlier version only: phrases written of them for image models beside the appearance (a
+   * "visual anchor"). There is one text of how somebody looks now — the card's `appearance`. While a card still has
+   * this, pictures of them go by it, as they did; it goes when it is folded into the appearance, when the author
+   * rewrites the appearance, or when they drop it. Nothing writes it any more.
    */
   prompt?: string
   /** What must not be drawn on or around this character (things the description tends to evoke by mistake). */
@@ -2037,9 +2066,11 @@ export interface IllustrationPiece {
    * `change`: what was to change in a picture that went along to be changed — with that picture, all that was said.
    * `place`: how the place the picture is set in looks, as the bible has it. `thing`: how a thing it shows looks.
    * `use`: what kind of picture it is and what it is for — said first. `picture`: the picture in the author's own
-   * words (a picture of their own prompt).
+   * words (a picture of their own prompt). `setting`: what is around whoever the picture is of — where, what is
+   * near, the light — as the director read it off the text. An `outfit` `from` a `shot` is what the person wears in
+   * the moment the picture is of, read off the text around it: it stands after their own line, under their name.
    */
-  of: 'use' | 'picture' | 'frame' | 'look' | 'outfit' | 'expression' | 'ask' | 'composed' | 'scene' | 'change' | 'place' | 'thing'
+  of: 'use' | 'picture' | 'frame' | 'look' | 'outfit' | 'expression' | 'ask' | 'composed' | 'scene' | 'setting' | 'change' | 'place' | 'thing'
   text: string
   /** What the words were introduced by in the prompt, on the line of their own they stood on (`人物「沈蘅」：`). Not part of the words. */
   label?: string
@@ -2064,10 +2095,16 @@ export interface IllustrationPiece {
    * Where the words were taken from. A `look`: what is written for an image model (`anchor` — a visual anchor, a
    * place's look), or, lacking that, the prose of the card (`card`). A `scene`: the one kept on the person's card
    * (`card`), or one the director picked for this picture alone, guided by what the author asked of it (`asked`).
+   * A `setting`, and an `outfit` of the moment: the frame the director made of the moment ({@link SceneShot}) — `shot`.
    */
-  from?: 'anchor' | 'card' | 'asked'
+  from?: 'anchor' | 'card' | 'asked' | 'shot'
   /** A `scene` picked for this picture alone: what the author asked, which guided the pick. It is not itself part of the prompt. */
   asked?: string
+  /**
+   * A `scene` the director made into one frame for the picture ({@link SceneShot}): the moment as it was told — on
+   * the card, or by the pick — which the frame was made of. `text` is the instant as sent; nothing of this was.
+   */
+  told?: string
 }
 
 /** What an image prompt was assembled from, so the history shows where every part came from. */
@@ -2157,6 +2194,8 @@ export interface IllustrationInfo {
   /** Chapter / character / world entry it belongs to. */
   target?: string
   createdAt: Timestamp
+  /** Brought in from outside — a file of the author's — not drawn here: there is no prompt, and nothing to draw it again from. */
+  imported?: boolean
   model?: string
   /** The image service it was drawn with. */
   provider?: ImageProviderKind
@@ -2174,11 +2213,31 @@ export interface IllustrationInfo {
   verbatim?: boolean
   /** A portrait of one of somebody's moments: which (its name, its id on their card) and the chapter it is from — where the picture stands in the text. */
   moment?: { title?: string; scene?: string; chapter?: string }
-  /** Drawn to compare services: one of several pictures of the same thing, each by another (`label`: which); `id` is the same for the pictures of one comparison. */
-  trial?: { id: string; label: string }
+  /**
+   * Drawn to compare services: one of several pictures of the same thing, each by another (`label`: which); `id` is
+   * the same for the pictures of one comparison. `hang`: where it goes once the author takes it — it hangs nowhere
+   * until then, and the field is gone once it does. `batch`: the pictures of one press of a button that drew many
+   * things at once (every panel of a chapter, a round of portraits): they can be taken together, by service.
+   */
+  trial?: { id: string; label: string; hang?: PictureHang; batch?: string }
   /** The picture of a passage of a chapter: the passage it was drawn of (`quote`; absent where the chapter as a whole was), and what told the director who is in it and where (`why`). */
   passage?: { quote?: string; why?: string }
 }
+
+/**
+ * Where a picture goes once it is the one in use — said with a picture drawn to be compared, so that taking it puts it
+ * where one drawn the usual way would have been put: somebody's portrait (of a stretch of their life), their design
+ * sheet (of a look, of a stretch), the art of an entry of the bible (of one turn of its course: `event`), the cover,
+ * the text of a chapter after the passage it is of, a panel of a storyboard. `gallery`: nowhere but the gallery.
+ */
+export type PictureHang =
+  | { as: 'portrait'; character: string; stage?: string }
+  | { as: 'sheet'; character: string; look?: CharacterLook; stage?: string; front?: boolean }
+  | { as: 'art'; entry: string; event?: string }
+  | { as: 'cover' }
+  | { as: 'passage'; chapter: string; quote?: string; alt?: string; insert?: boolean }
+  | { as: 'panel'; chapter: string; panel: string }
+  | { as: 'gallery' }
 
 /** One service a picture is tried with: what the author reads it as, and the service itself (its part of the image settings). */
 export interface ImageTrial {

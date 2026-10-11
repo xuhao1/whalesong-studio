@@ -27,7 +27,7 @@ import { L, promptLanguage } from '../render'
 import { fillPlans } from './digest'
 import { scheduleSettle } from './settle'
 import { pickText } from './plot'
-import { foldName, listWalkOns, noteVerdicts } from '../walkons'
+import { foldName, listWalkOns, noteVerdicts, settleWalkOn } from '../walkons'
 
 export interface CastResult {
   /** Cards made for people who had none. */
@@ -280,6 +280,67 @@ export async function mergeCast(core: NovelCore, runtime: ProjectRuntime, task: 
   await fillPlans(runtime).catch(() => {})
   await project.pruneSuggestions()
   return result
+}
+
+/**
+ * Give a card to each of these names of the page, and have the cards written whole: how each looks, who they are,
+ * what they want — from what the digests of their chapters noted of them, the way every card of an intake is written
+ * ({@link mergeCast}). A card made of a name alone says nothing a picture or a writer could go by.
+ * @param params.people - the names, as the walk-on list has them (`story`: which of two by one name).
+ * @param params.role - how large a part they are given: a minor character, where nothing is said.
+ */
+export async function cardWalkOns(core: NovelCore, runtime: ProjectRuntime, params: { people: readonly { name: string; story?: string }[]; role?: CharacterCard['role'] }, task: TaskContext): Promise<{ carded: { id: string; name: string }[]; written: number; lines: number; failed: { step: string; error: string }[] }> {
+  const { project } = runtime
+  const lang = promptLanguage((await project.manifest()).language)
+  const carded: { id: string; name: string }[] = []
+  const failed: { step: string; error: string }[] = []
+  let lines = 0
+  task.job?.progress(0, params.people.length + 1, L(lang, '立卡', 'making cards'))
+  for (const [at, person] of params.people.entries()) {
+    task.signal?.throwIfAborted()
+    try {
+      const settled = await settleWalkOn(project, { name: person.name, action: 'card', ...(person.story !== undefined ? { story: person.story } : {}), role: params.role ?? 'minor' })
+      if (settled.card !== undefined) carded.push({ id: settled.card.id, name: settled.card.name })
+      lines += settled.lines
+    } catch (error) {
+      failed.push({ step: person.name, error: error instanceof Error ? error.message : String(error) })
+    }
+    task.job?.progress(at + 1, params.people.length + 1)
+  }
+  let written = 0
+  if (carded.length > 0) {
+    const restore = task.job?.note(L(lang, `策划在照收录的记载给 ${carded.length} 个人写卡…`, `The planner is writing ${carded.length} card(s) from what the digests noted…`))
+    try {
+      const cast = await mergeCast(core, runtime, { origin: task.origin, ...(task.signal !== undefined ? { signal: task.signal } : {}), ...(task.agentRoute !== undefined ? { agentRoute: task.agentRoute } : {}) }, undefined, { only: carded.map(card => card.name) })
+      written = cast.made + cast.filled
+      failed.push(...cast.failed)
+      // Whoever the digests noted too little of for that — somebody the page only names, who never stood in a scene —
+      // is read up in the book by the planner itself: an agent's work, a card at a time, side by side.
+      const { expandCharacter } = await import('./bible')
+      const bare: { id: string; name: string }[] = []
+      for (const item of carded) if (((await project.findCharacter(item.id))?.appearance ?? '').trim().length === 0) bare.push(item)
+      await mapLimit(bare, Math.max(1, await core.parallelFor('text', runtime)), async (item) => {
+        task.signal?.throwIfAborted()
+        try {
+          await expandCharacter(core, runtime, { character: item.id, apply: true }, task)
+          if (((await project.findCharacter(item.id))?.appearance ?? '').trim().length > 0) written += 1
+        } catch (error) {
+          if (task.signal?.aborted === true) throw error
+          failed.push({ step: item.name, error: error instanceof Error ? error.message : String(error) })
+        }
+      }, task.signal)
+      // The moments the digests noted of them are theirs now.
+      const { keepNotedScenes } = await import('./scenes')
+      await keepNotedScenes(runtime, carded.map(card => card.id)).catch(() => [])
+    } catch (error) {
+      if (task.signal?.aborted === true) throw error
+      failed.push({ step: 'cards', error: error instanceof Error ? error.message : String(error) })
+    } finally {
+      restore?.()
+    }
+  }
+  task.job?.progress(params.people.length + 1, params.people.length + 1)
+  return { carded, written, lines, failed }
 }
 
 /** How many names one request is asked to look through for people listed twice. */

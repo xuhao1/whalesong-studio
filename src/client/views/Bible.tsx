@@ -18,6 +18,8 @@ import { WORLD_CATEGORY as CATEGORY_LABELS } from '../labels'
 import { MergeDialog, TidyDialog } from '../WorldTidy'
 import { HistoryButton, RemovedCards } from '../History'
 import { DeletePicture, PictureViewer, type LookOf } from '../PictureRecord'
+import { ManyModels } from '../Trial'
+import { clip as clipText } from '../../shared/text'
 import { containment, type Nested } from '../../shared/ties'
 import { DERIVE_TIES_HINT, TiesBlock, TiesReport, useDeriveTies } from '../Ties'
 import {
@@ -499,6 +501,7 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
                 onClick={() => drawTurn(event)}
                 title={dirty ? t('先保存当前修改', 'Save your edits first') : event.what.trim().length === 0 ? t('先写上发生了什么', 'Say what happened first') : t('画它在这件事之后的样子', 'Draw it as it is after this event')}
               >{event.image !== undefined ? t('重画', 'Redraw') : t('画这时的样子', 'Draw it then')}</Button>
+              <ManyModels disabled={dirty || event.what.trim().length === 0} title={t('多模型：几个绘图服务各画一张它这时的样子', 'Several models: as it is then, from each image service')} ask={() => (controller.need('image') ? { title: `${entry.name} · ${clipText(event.what, 16)}`, method: 'image.create', params: { kind: picture ?? 'location', target: entry.id, event: `${event.chapter}:${event.kind}` } } : undefined)} />
             </span>
           ) } : {})}
         />
@@ -563,6 +566,7 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
             <Button size="sm" icon="image" disabled={dirty || drawing} busy={drawing && turning === undefined} pending={house ? t('正在画设定图…', 'Drawing it…') : picture === 'item' ? t('正在画物品设定图…', 'Drawing the object…') : t('正在画场景设定图…', 'Drawing the place…')} onClick={draw} title={dirty ? t('先保存当前修改', 'Save your edits first') : undefined}>
               {draft.visualImage !== undefined ? t('重画设定图', 'Redraw') : house ? t('画设定图', 'Draw its design art') : picture === 'item' ? t('画物品设定图', 'Draw the object') : t('画场景设定图', 'Draw the place')}
             </Button>
+            <ManyModels disabled={dirty} title={t('多模型：几个绘图服务各画一张设定图来比', 'Several models: its design art from each image service, to compare')} ask={() => (controller.need('image') ? { title: `${entry.name} · ${t('设定图', 'design art')}`, method: 'image.create', params: { kind: picture ?? 'location', target: entry.id } } : undefined)} />
             {draft.visualImage !== undefined ? <DeletePicture bare path={draft.visualImage} disabled={dirty || drawing} /> : null}
           </div>
         </Field>

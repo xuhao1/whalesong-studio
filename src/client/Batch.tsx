@@ -32,6 +32,7 @@ import {
 } from './ui'
 import { CharacterPicker, defaultCastFilter, matchesCast, useCastFilter } from './CharacterPicker'
 import { useSheetsAsk } from './SheetsAsk'
+import { ManyModels } from './Trial'
 
 /** The batch a job carries, when it is one. */
 export function batchOf(job: JobInfo | undefined): BatchView | undefined {
@@ -390,6 +391,10 @@ export function ProductionBoard({ onOpen }: { onOpen: (chapterId: string) => voi
           <Button variant="primary" icon="sparkles" busy={busy} disabled={count === 0 || order.length === 0} pending={t('正在开始…', 'Starting…')} onClick={() => start({ chapters: going.map(status => status.id), steps: order, force })}>
             {t(`一键制作 ${count} 章`, `Produce ${count} chapters`)}
           </Button>
+          {order.includes('panels') ? (
+            // The pictures of the round by several image services: no video is cut of panels that have no picture taken yet.
+            <ManyModels disabled={count === 0} title={t('多模型：画面由几个绘图服务各画一张来比（采纳之后画面才算数；成片要等采纳后再剪）', 'Several models: every panel by each image service, to compare (a panel has its picture once one is taken; cut the video after that)')} ask={() => (controller.need('image') ? { title: t(`一键制作 ${count} 章`, `Produce ${count} chapters`), method: 'batch.stage', many: true, params: { ...(line !== MAIN_LINE ? { line } : {}), chapters: going.map(status => status.id), steps: order.filter(step => step !== 'video'), ...(force ? { force: true } : {}), ...(order.includes('storyboard') ? { density, ...(saved?.maxPanels !== undefined ? { maxPanels: saved.maxPanels } : {}) } : {}) } } : undefined)} />
+          ) : null}
         </div>
         {chosen.has('video') ? (
           <Field label={t('对成片的要求', 'What to ask of the cut')}>
@@ -670,8 +675,8 @@ export function ArtBatchDialog({ onClose }: { onClose: () => void }) {
   const ready = useReady()
   const total = rows.filter(row => picked.has(row.key)).reduce((sum, row) => sum + row.count, 0)
   const sheets = useSheetsAsk()
-  const start = (): Promise<unknown> => run(async () => {
-    const mine = {
+  /** What is chosen, as the call that draws it. */
+  const chosenArt = () => ({
       root,
       ...(picked.has('sheets') && lists.sheets.length > 0 ? { sheets: lists.sheets } : {}),
       ...(picked.has('portraits') && lists.portraits.length > 0 ? { portraits: lists.portraits } : {}),
@@ -680,7 +685,9 @@ export function ArtBatchDialog({ onClose }: { onClose: () => void }) {
       ...(picked.has('items') && lists.items.length > 0 ? { items: lists.items } : {}),
       ...(picked.has('scenes') && lists.scenes.length > 0 ? { scenes: lists.scenes, ...(insert ? { insert: true } : {}) } : {}),
       ...(picked.has('cover') && noCover ? { cover: true } : {}),
-    }
+  })
+  const start = (): Promise<unknown> => run(async () => {
+    const mine = chosenArt()
     // Whose design sheets the portraits, the chapters' pictures and the cover would draw first — beyond the sheets this
     // batch lists as steps of its own — is asked before anything is started.
     await sheets.before([
@@ -707,6 +714,7 @@ export function ArtBatchDialog({ onClose }: { onClose: () => void }) {
       <>
         <span className="nv-muted nv-small">{total > 0 ? t(`共 ${total} 项`, `${total} in all`) : t('选中的这些都已经有了', 'Everything chosen is there already')}</span>
         <span className="nv-spacer" />
+        <ManyModels label={t('多模型…', 'Several models…')} disabled={total === 0} title={t('多模型：选中的每一张由几个绘图服务各画一张来比（声线不在其中）', 'Several models: every picture chosen by each image service, to compare (voices are not part of it)')} ask={() => { if (!controller.need('image')) return undefined; const { root: _root, voices: _voices, ...pictures } = chosenArt(); return { title: t(`批量绘制 ${total} 项`, `A batch of ${total}`), method: 'batch.art', many: true, params: pictures } }} />
         <Button variant="primary" icon="sparkles" busy={busy} disabled={running || total === 0} pending={t('正在开始…', 'Starting…')} onClick={start}>{t('开始', 'Start')}</Button>
       </>
     )}>

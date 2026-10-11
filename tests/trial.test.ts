@@ -10,6 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { imageSetups, trialDerive, trialWrite, withModel } from '../src/core/pipelines/trial'
 import { DEFAULT_SETTINGS } from '../src/core/settings'
 import type { ImageTrial } from '../src/shared/types'
+import { hashText, proseOnly } from '../src/shared/text'
 import { createTestBed, PIXEL } from './support/harness'
 
 const B64 = Buffer.from(PIXEL).toString('base64')
@@ -110,6 +111,94 @@ describe('pictures tried with several services', () => {
       expect((await project.findCharacter(card.id))!.visual?.portrait).toBe(kept)
       // Without services to try and without anything to change, a redraw still has to be told what to draw.
       await expect(redrawPicture(bed.core, bed.runtime, { picture: kept }, { origin: 'user' })).rejects.toThrow(/say what to draw/)
+    } finally {
+      await bed.cleanup()
+    }
+  })
+
+  it('tries any kind of picture — a sheet, design art, the picture of a turn, a cover, a passage, a panel, one of the author\'s own — hangs none of them, and puts the one taken where one drawn the usual way would be', async () => {
+    const bed = await createTestBed({ settings: { image: { provider: 'openai', baseURL: base, model: 'in-force', local: true, lead: 'none' } } })
+    try {
+      const { project } = bed.runtime
+      const { illustrate, hangPicture } = await import('../src/core/pipelines/illustrate')
+      const { renderPanels } = await import('../src/core/pipelines/comic')
+      const task = { origin: 'user' as const }
+      const two = [setup('a'), setup('b')]
+      const waiting = async (): Promise<string[]> => (await project.illustrations()).filter(item => item.trial?.hang !== undefined).map(item => item.path)
+      const record = async (path: string) => (await project.illustrations()).find(item => item.path === path)!
+      bed.llm.responder = () => JSON.stringify({ prompt: 'slender woman, low bun', negative: '' })
+      const card = await project.saveCharacter({ name: '沈蘅', role: 'protagonist', appearance: '清瘦，低髻', visual: { prompt: 'slender woman, low bun, grey qipao' } })
+
+      // A design sheet: the card has none after, whatever was drawn; taken, it is her sheet.
+      const sheets = await illustrate(bed.core, bed.runtime, { kind: 'sheet', target: card.id, trials: two }, task)
+      expect(sheets.tried!.map(picture => picture.label)).toEqual(['mine · a', 'mine · b'])
+      expect((await project.findCharacter(card.id))!.visual?.sheet).toBeUndefined()
+      expect((await record(sheets.tried![1]!.path!)).trial).toMatchObject({ label: 'mine · b', hang: { as: 'sheet', character: card.id } })
+      expect(await hangPicture(bed.runtime, await record(sheets.tried![1]!.path!))).toEqual(['沈蘅'])
+      expect((await project.findCharacter(card.id))!.visual?.sheet).toBe(sheets.tried![1]!.path)
+      // Taken, its record no longer says it waits, and it is out of the text no longer.
+      expect((await record(sheets.tried![1]!.path!)).trial).toEqual({ id: (await record(sheets.tried![0]!.path!)).trial!.id, label: 'mine · b' })
+      expect(await project.hiddenFigures()).toEqual([sheets.tried![0]!.path])
+      expect(await waiting()).toEqual([sheets.tried![0]!.path])
+      // A sheet of a look that the drawing itself names: taken, the look is on the card with it.
+      const dressed = await illustrate(bed.core, bed.runtime, { kind: 'sheet', target: card.id, look: '丧服', prompt: 'plain white mourning robe', trials: [setup('a')] }, task)
+      expect((await project.findCharacter(card.id))!.visual?.looks ?? []).toEqual([])
+      await hangPicture(bed.runtime, await record(dressed.tried![0]!.path!))
+      expect((await project.findCharacter(card.id))!.visual?.looks).toMatchObject([{ name: '丧服', prompt: 'plain white mourning robe', sheet: dressed.tried![0]!.path }])
+
+      // The art of a place, and the picture of one turn of its course.
+      const chapter = await project.addChapter({ title: '旧铺' })
+      await project.saveChapterText(chapter.id, '铺子里只点一盏灯。\n\n沈蘅在柜台后写信。\n\n门外有人敲门。')
+      const shop = await project.saveWorld({ name: '旧书铺', category: 'location', visualPrompt: '窄门面，木柜台，一盏煤油灯', events: [{ chapter: chapter.id, kind: 'decline', what: '铺子关张，门板上了锁' }] })
+      const art = await illustrate(bed.core, bed.runtime, { kind: 'location', target: shop.id, trials: two }, task)
+      expect((await project.findWorld(shop.id))!.visualImage).toBeUndefined()
+      await hangPicture(bed.runtime, await record(art.tried![0]!.path!))
+      expect((await project.findWorld(shop.id))!.visualImage).toBe(art.tried![0]!.path)
+      bed.llm.responder = () => JSON.stringify({ look: '门板上了锁，招牌蒙尘' })
+      const turned = await illustrate(bed.core, bed.runtime, { kind: 'location', target: shop.id, event: `${chapter.id}:decline`, trials: [setup('b')] }, task)
+      expect((await project.findWorld(shop.id))!.events![0]!.image).toBeUndefined()
+      expect((await record(turned.tried![0]!.path!)).trial!.hang).toEqual({ as: 'art', entry: shop.id, event: `${chapter.id}:decline` })
+      await hangPicture(bed.runtime, await record(turned.tried![0]!.path!))
+      expect((await project.findWorld(shop.id))!.events![0]!.image).toBe(turned.tried![0]!.path)
+      expect((await project.findWorld(shop.id))!.visualImage).toBe(art.tried![0]!.path)
+
+      // A cover: one drawn to be compared is not the book's cover — the latest drawn is, among those that are not waiting.
+      bed.llm.responder = () => JSON.stringify({ prompt: '雨夜的旧书铺，窗里一盏灯' })
+      const covers = await illustrate(bed.core, bed.runtime, { kind: 'cover', sheetFirst: false, trials: two }, task)
+      expect(await project.cover()).toBeUndefined()
+      await hangPicture(bed.runtime, await record(covers.tried![1]!.path!))
+      expect(await project.cover()).toBe(covers.tried![1]!.path)
+
+      // The picture of a passage, asked into the text: it stands there once taken, after the passage — and once only.
+      bed.llm.responder = () => JSON.stringify({ picture: '沈蘅在柜台后低头写信，灯在手边', people: ['沈蘅'], place: '旧书铺', things: [], why: '上一段写她在柜台后' })
+      const passage = await illustrate(bed.core, bed.runtime, { kind: 'scene', target: chapter.id, quote: '沈蘅在柜台后写信。', insert: true, sheetFirst: false, trials: two }, task)
+      expect(passage.inserted).toBe(false)
+      expect(await project.chapterText(chapter.id)).not.toContain('![')
+      await hangPicture(bed.runtime, await record(passage.tried![0]!.path!))
+      await hangPicture(bed.runtime, await record(passage.tried![0]!.path!))
+      const text = await project.chapterText(chapter.id)
+      expect(text.split('\n\n').map(block => (block.startsWith('![') ? 'picture' : block))).toEqual(['铺子里只点一盏灯。', '沈蘅在柜台后写信。', 'picture', '门外有人敲门。'])
+      expect(text).toContain(`](${passage.tried![0]!.path})`)
+
+      // One of the author's own prompt: it hangs nowhere, taken or not.
+      const own = await illustrate(bed.core, bed.runtime, { kind: 'custom', prompt: '雨夜的码头', trials: [setup('a')] }, task)
+      expect((await record(own.tried![0]!.path!)).trial!.hang).toEqual({ as: 'gallery' })
+      expect(await hangPicture(bed.runtime, await record(own.tried![0]!.path!))).toEqual([])
+
+      // The panels of a storyboard, every one by every service: no panel has a picture until one is taken — one by
+      // one, or all a service drew, at once.
+      // (A script and a storyboard of the text as it is: nothing is asked of a model for them.)
+      const textHash = hashText(proseOnly(await project.chapterText(chapter.id)))
+      await project.saveAudioScript({ schema: 1, chapterId: chapter.id, textHash, updatedAt: new Date().toISOString(), lines: [{ id: 'l1', kind: 'narration', text: '铺子里只点一盏灯。' }], cues: [] } as never)
+      await project.saveComicBoard({ schema: 1, chapterId: chapter.id, textHash, updatedAt: new Date().toISOString(), style: '', panels: [{ id: 'p1', lines: ['l1'], prompt: '柜台上的一盏灯', description: '灯', camera: 'still' }, { id: 'p2', lines: ['l1'], prompt: '门外的雨', description: '雨', camera: 'still' }] } as never)
+      const panels = await renderPanels(bed.core, bed.runtime, { chapter: chapter.id, sheetFirst: false, trials: two }, task)
+      expect(panels).toMatchObject({ rendered: 2, failed: 0, tried: 4 })
+      expect((await project.comicBoard(chapter.id))!.panels.map(panel => panel.image)).toEqual([undefined, undefined])
+      const round = (await project.illustrations()).filter(item => item.trial?.batch === panels.round)
+      expect(round.map(item => [(item.trial!.hang as { panel: string }).panel, item.trial!.label]).sort()).toEqual([['p1', 'mine · a'], ['p1', 'mine · b'], ['p2', 'mine · a'], ['p2', 'mine · b']])
+      for (const item of round.filter(entry => entry.trial!.label === 'mine · b')) await hangPicture(bed.runtime, item)
+      const board = (await project.comicBoard(chapter.id))!
+      expect(board.panels.map(panel => round.find(item => item.path === panel.image)?.trial!.label)).toEqual(['mine · b', 'mine · b'])
     } finally {
       await bed.cleanup()
     }

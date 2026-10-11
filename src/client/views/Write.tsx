@@ -27,6 +27,9 @@ import { MoveChapters } from '../MoveChapters'
 import { framedOf, framedWord, PassagePictureDialog } from '../PassagePicture'
 import { useSheetsAsk } from '../SheetsAsk'
 import { PickPicture } from '../PlacePicture'
+import { TextPictures } from '../TextPictures'
+import { FindBar } from '../FindBar'
+import { embeddedPictures, proseLines } from '../../shared/embedded'
 import { Derive } from './Outline'
 import {
   Button, Chip, cx, Empty, Menu, Modal, Progress, Select, Spinner, Tabs, TextInput, ThoughtButton, ThoughtPanel, useAction, useConfirm, useJobStream, useJobTail, useLoad, useProject,
@@ -35,7 +38,7 @@ import {
 import { IssueList } from '../Issues'
 import { JobBar } from '../JobBar'
 
-type PanelTab = 'plan' | 'memory' | 'issues' | 'versions' | 'proposals'
+type PanelTab = 'plan' | 'memory' | 'issues' | 'versions' | 'proposals' | 'pictures'
 
 const PRESETS: { id: string; label: [string, string]; instruction: [string, string] }[] = [
   { id: 'polish', label: ['润色', 'Polish'], instruction: ['润色这段文字：情节、信息与人物语气都不变，改善用词、节奏与画面感，去掉陈词滥调。', 'Polish this passage: keep the events, information and voices; improve diction, rhythm and imagery; remove clichés.'] },
@@ -272,6 +275,52 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
   const [viewing, setViewing] = useState<VersionInfo | undefined>()
   const [appending, setAppending] = useState(false)
   const area = useRef<HTMLTextAreaElement>(null)
+  // Where the author last put the caret in the text: a picture put in from the gallery goes after that line.
+  const caretAt = useRef<number | undefined>(undefined)
+  // Finding words in this chapter (Cmd+F / Ctrl+F): what it was opened with, and the match it last selected in the text.
+  const [finding, setFinding] = useState<{ start: string; from: number } | undefined>()
+  const finder = useRef<{ go: (step: number) => void; focus: () => void } | null>(null)
+  const matched = useRef<{ start: number; end: number } | undefined>(undefined)
+  const openFind = (): void => {
+    const element = area.current
+    const picked = element !== null && element.selectionEnd > element.selectionStart ? element.value.slice(element.selectionStart, element.selectionEnd) : ''
+    // Opened again while it is open: back to its words.
+    if (finding !== undefined) finder.current?.focus()
+    else setFinding({ start: picked.includes('\n') || picked.length > 80 ? '' : picked, from: element?.selectionStart ?? 0 })
+  }
+  // The chapter's title, while it is being changed where it stands (a double click on it).
+  const [renaming, setRenaming] = useState<string | undefined>()
+  const rename = async (): Promise<void> => {
+    const title = renaming?.trim() ?? ''
+    setRenaming(undefined)
+    if (title.length === 0 || title === chapter.title) return
+    try {
+      const { results } = await controller.api.call('outline.apply', { root, ops: [{ op: 'update-chapter', chapter: chapter.id, title }] })
+      const failed = results.find(result => !result.ok)
+      if (failed !== undefined) controller.toast('error', failed.message)
+      await controller.refreshProject()
+    } catch (reason) {
+      controller.toast('error', reason instanceof Error ? reason.message : String(reason))
+    }
+  }
+  const openFindRef = useRef(openFind)
+  openFindRef.current = openFind
+  useEffect(() => {
+    // The page's own find: the text box has none where the Studio runs as a desktop app, and a browser's would search the whole window.
+    const onKey = (event: KeyboardEvent): void => {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey) return
+      const key = event.key.toLowerCase()
+      if (key === 'f' && !event.shiftKey) {
+        event.preventDefault()
+        openFindRef.current()
+      } else if (key === 'g' && finder.current !== null) {
+        event.preventDefault()
+        finder.current.go(event.shiftKey ? -1 : 1)
+      }
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => { window.removeEventListener('keydown', onKey, true) }
+  }, [])
   const live = useRef<HTMLDivElement>(null)
   const confirm = useConfirm()
   const textRef = useRef<string | undefined>(undefined)
@@ -467,11 +516,30 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
             { value: 'issues', label: t('问题', 'Issues'), badge: openIssues.length },
             { value: 'proposals', label: t('提案', 'Proposals'), badge: proposals.length },
             { value: 'versions', label: t('版本', 'Versions') },
+            { value: 'pictures', label: t('配图', 'Pictures'), badge: embeddedPictures(text).length },
           ]}
         />
         {!panelInline ? <Button variant="ghost" size="sm" icon="x" onClick={() => { setPanelOpen(false) }} /> : null}
       </div>
       <div className="nv-panel-body">
+        {panel === 'pictures' ? (
+          // The pictures in this chapter's text, shown and moved beside it: every change is made in the text open here.
+          <TextPictures
+            chapter={chapter.id}
+            text={text}
+            onText={(next) => { setText(next); setSelection(undefined) }}
+            // After the line the author last put the caret in; where they never did, at the end.
+            caret={() => proseLines(text.slice(0, caretAt.current ?? text.length)).length}
+            onReveal={(offset) => {
+              const element = area.current
+              if (element === null) return
+              const end = text.indexOf('\n', offset)
+              scrollToOffset(element, offset)
+              element.focus()
+              element.setSelectionRange(offset, end < 0 ? text.length : end)
+            }}
+          />
+        ) : null}
         {panel === 'plan' && plan !== undefined ? (
           <div className="nv-panel-section">
             {plan.synopsis !== undefined ? <p>{plan.synopsis}</p> : <p className="nv-muted">{t('这一章还没有梗概。', 'No synopsis for this chapter yet.')}</p>}
@@ -572,15 +640,36 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
     <>
       <section className="nv-write-main">
         <header className="nv-write-toolbar">
-          {compact ? (
-            <Select className="nv-chapter-select" value={chapter.id} options={path.map(item => ({ value: item.id, label: `${item.index}. ${item.title}` }))} onChange={(value) => { controller.focusChapter(value) }} />
-          ) : <h2 className="nv-write-title"><span className="nv-muted">{chapter.index}</span> {chapter.title}</h2>}
+          {compact && renaming === undefined ? (
+            <>
+              <Select className="nv-chapter-select" value={chapter.id} options={path.map(item => ({ value: item.id, label: `${item.index}. ${item.title}` }))} onChange={(value) => { controller.focusChapter(value) }} />
+              {/* (Narrow, the title is the list of chapters: its name is changed from the button beside it.) */}
+              <Button size="sm" variant="ghost" icon="pen" title={t('改标题', 'Rename')} aria-label={t('改标题', 'Rename')} onClick={() => { setRenaming(chapter.title) }} />
+            </>
+          ) : renaming !== undefined ? (
+            <span className="nv-write-title nv-write-rename">
+              <span className="nv-muted">{chapter.index}</span>
+              <input
+                autoFocus
+                className="nv-write-rename-input"
+                value={renaming}
+                onChange={(event) => { setRenaming(event.target.value) }}
+                onFocus={(event) => { event.currentTarget.select() }}
+                onBlur={() => { void rename() }}
+                onKeyDown={(event) => {
+                  // (An IME confirming a word with Enter is not done with the title.)
+                  if (event.key === 'Enter' && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.blur() } else if (event.key === 'Escape') { event.preventDefault(); setRenaming(undefined) }
+                }}
+              />
+            </span>
+          ) : <h2 className="nv-write-title" title={t('双击改标题', 'Double-click to rename')} onDoubleClick={() => { setRenaming(chapter.title) }}><span className="nv-muted">{chapter.index}</span> {chapter.title}</h2>}
           <Chip tone={CHAPTER_STATUS_TONE[chapter.status]}>{t(...CHAPTER_STATUS[chapter.status])}</Chip>
           {translated !== undefined ? <Chip tone="violet" title={t('这一章是译文；原文在“版本”里，章节菜单里可以恢复', 'This chapter is a translation; its original is among the versions, and the chapter menu puts it back')}>{translated.from !== undefined ? t(`译自${languageLabel(translated.from)}`, `From ${languageLabel(translated.from)}`) : t('译文', 'Translated')}</Chip> : null}
           <span className="nv-muted nv-small" title={chapter.budget !== undefined ? t(`建议字数 ${chapter.budget}`, `Suggested length ${chapter.budget}`) : t('没有设建议字数，由写手判断', 'No suggested length: the writer judges')}>{formatCount(words, locale)}{chapter.budget !== undefined ? ` / ${formatCount(chapter.budget, locale)}` : ''}{t(' 字', ' words')}</span>
           <span className={cx('nv-save-state', `is-${saveState}`)}>{saveState === 'saving' ? t('保存中…', 'Saving…') : saveState === 'dirty' ? t('未保存', 'Unsaved') : t('已保存', 'Saved')}</span>
           <span className="nv-spacer" />
           <Button size="sm" variant="ghost" icon="globe" onClick={() => { void save().then(() => { setTranslating(true) }) }} title={t('把这一章（或这条线上的各章）译成另一种语言；原文留在“版本”里', 'Translate this chapter (or every chapter of the line); the original stays among its versions')}>{t('翻译', 'Translate')}</Button>
+          <Button size="sm" variant="ghost" icon="image" onClick={() => { showPanel('pictures') }} title={t('这一章正文里的图：看、挪位置、取下，或从图库再插一张', 'The pictures in this chapter\'s text: see them, move them, take one out, or put in another from the gallery')}>{t(`配图 ${embeddedPictures(text).length}`, `Pictures ${embeddedPictures(text).length}`)}</Button>
           <ChapterPortraits chapter={chapter.id} />
           <ViewButton title={t('观看：这一章在读者那里的样子', 'View: this chapter as a reader has it')} onClick={() => { void save(); controller.setView('read', chapter.id) }} />
           <Menu icon="more" variant="ghost" size="sm" align="end" label={t('章节', 'Chapter')} items={[
@@ -682,6 +771,26 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
         ) : null}
         {doc.data.missingImages.length > 0 ? <div className="nv-banner is-warn"><span>{t('正文引用的图片不存在：', 'Images referenced by the text are missing: ')}{doc.data.missingImages.join(', ')}</span></div> : null}
 
+        {finding !== undefined && writing === undefined ? (
+          <FindBar
+            key={chapter.id}
+            text={text}
+            start={finding.start}
+            from={finding.from}
+            control={finder}
+            onClose={() => { setFinding(undefined); matched.current = undefined; area.current?.focus() }}
+            onShow={(at, length, enter) => {
+              const element = area.current
+              if (element === null) return
+              matched.current = { start: at, end: at + length }
+              // Entered, the match is selected with the caret in the text (a text box shows its selection only then).
+              // (Brought into view first: measuring where it is sets the box's text for a moment, and with it the caret.)
+              scrollToOffset(element, at)
+              if (enter) element.focus()
+              element.setSelectionRange(at, at + length)
+            }}
+          />
+        ) : null}
         {writing !== undefined ? (
           <div className="nv-live nv-prose" ref={live}>
             {stream.length === 0 && thought.length === 0 ? <p className="nv-muted nv-live-wait"><Spinner size={12} /> {jobPulse(writing, t) ?? t('准备中…', 'Getting ready…')}</p> : null}
@@ -700,6 +809,7 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
             onChange={(event) => { setText(event.target.value) }}
             onSelect={(event) => {
               const { selectionStart, selectionEnd } = event.currentTarget
+              caretAt.current = selectionEnd
               setSelection(selectionEnd > selectionStart ? { start: selectionStart, end: selectionEnd } : undefined)
               if (selectionEnd === selectionStart) setCustom(undefined)
             }}
@@ -707,6 +817,18 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
               if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
                 event.preventDefault()
                 void save()
+                return
+              }
+              if (finding === undefined) return
+              const { selectionStart, selectionEnd } = event.currentTarget
+              // While the match the find bar selected is still what is selected, Enter goes on to the next one — it
+              // does not write a line break over the word found. Once the author has moved or typed, keys are theirs.
+              if (event.key === 'Enter' && !event.nativeEvent.isComposing && matched.current !== undefined && matched.current.start === selectionStart && matched.current.end === selectionEnd) {
+                event.preventDefault()
+                finder.current?.go(event.shiftKey ? -1 : 1)
+              } else if (event.key === 'Escape') {
+                event.preventDefault()
+                setFinding(undefined)
               }
             }}
           />

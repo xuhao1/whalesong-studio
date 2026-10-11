@@ -51,10 +51,15 @@ export function inStage<T extends CharacterCard>(card: T, stage: CharacterStage 
   const front = stage.visual?.sheet !== undefined ? stage.visual.sheetFront === true : sheet !== undefined && card.visual?.sheetFront === true
   const portrait = stage.visual?.portrait ?? (apart ? undefined : card.visual?.portrait)
   const visual = { ...kept, ...(prompt !== undefined ? { prompt } : {}), ...(negative !== undefined ? { negative } : {}), ...(sheet !== undefined ? { sheet } : {}), ...(front ? { sheetFront: true } : {}), ...(portrait !== undefined ? { portrait } : {}) }
+  // How they look in it: what the stretch says — whole where it says enough to be a look by itself, else after how
+  // they usually look, as what is different then.
+  const own = stage.appearance?.trim() ?? ''
+  const usual = card.appearance?.trim() ?? ''
+  const appearance = own.length === 0 ? undefined : own.length >= 40 || usual.length === 0 ? own : `${usual}；${stage.title}：${own}`
   return {
     ...card,
     ...(stage.age !== undefined ? { age: stage.age } : {}),
-    ...(stage.appearance !== undefined ? { appearance: stage.appearance } : {}),
+    ...(appearance !== undefined ? { appearance } : {}),
     ...(Object.keys(visual).length > 0 ? { visual } : { visual: undefined }),
   }
 }

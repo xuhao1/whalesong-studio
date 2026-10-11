@@ -29,7 +29,7 @@ import { publishSite, siteChaptersUpTo, siteDefaults, siteFolder } from '../core
 import { listChapters, listLines, listSides, readAlbum, readPosition, readSide, savePosition } from '../core/reader'
 import { albumCounts, albumEmpty } from '../shared/album'
 import { sceneOfPicture, scenesOf } from '../shared/art'
-import { deriveArtDirection, deriveLook, deriveScenes, deriveVisual, illustrate, pictureWhole, redrawPicture } from '../core/pipelines/illustrate'
+import { deriveArtDirection, deriveLook, deriveScenes, deriveVisual, hangPicture, illustrate, importPicture, pictureWhole, redrawPicture } from '../core/pipelines/illustrate'
 import { analyzeBook, importManuscript, readBookFile, importLine, rereadBook } from '../core/pipelines/import'
 import { applyOutlineOps, type OutlineOp } from '../core/pipelines/outline'
 import {
@@ -44,7 +44,7 @@ import { cleanGuides } from '../core/pipelines/guides'
 import { consultReferences } from '../core/pipelines/consult'
 import { addBookReference, addTextReference, referenceShelf, removeReference, setReferenceUse, updateReference } from '../core/references'
 import { ProjectError } from '../core/project'
-import { siftCast } from '../core/pipelines/cast'
+import { cardWalkOns, siftCast } from '../core/pipelines/cast'
 import { overrule, settleSuggestions, settlesItself } from '../core/pipelines/settle'
 import { loopbackPort, signInOf } from './remote'
 import { comfyCatalog, comfyLastWorkflow, comfyTakeWorkflow, WORKFLOW_NOTE } from '../core/media/local'
@@ -469,9 +469,9 @@ export function createHandlers(service: NovelService): Handlers {
       const runtime = await open(root)
       return job(runtime, 'bible', `life ${id}`, id, async task => await writeLife(core, runtime, { character: requireString(id, 'id'), ...(typeof line === 'string' && line.length > 0 ? { line } : {}) }, task))
     },
-    'character.visual': async ({ root, id, direction }) => {
+    'character.visual': async ({ root, id, direction, stage }) => {
       const runtime = await open(root)
-      return job(runtime, 'bible', `visual anchor ${id}`, id, async task => await deriveVisual(core, runtime, { character: id, ...(direction !== undefined && direction.length > 0 ? { direction } : {}) }, task))
+      return job(runtime, 'bible', `appearance ${id}`, id, async task => await deriveVisual(core, runtime, { character: id, ...(direction !== undefined && direction.length > 0 ? { direction } : {}), ...(typeof stage === 'string' && stage.length > 0 ? { stage } : {}) }, task))
     },
     'character.scene': async ({ root, id, direction }) => {
       const runtime = await open(root)
@@ -536,6 +536,12 @@ export function createHandlers(service: NovelService): Handlers {
     'cast.sift': async ({ root, all, direction }) => {
       const runtime = await open(root)
       return job(runtime, 'bible', 'sift cast', undefined, async task => await siftCast(core, runtime, { ...(all === true ? { all: true } : {}), ...(typeof direction === 'string' && direction.trim().length > 0 ? { direction: direction.trim() } : {}) }, task))
+    },
+    'cast.card': async ({ root, people, role }) => {
+      const runtime = await open(root)
+      const wanted = (Array.isArray(people) ? people : []).filter(item => item !== null && typeof item === 'object' && typeof item.name === 'string' && item.name.trim().length > 0).map(item => ({ name: item.name, ...(typeof item.story === 'string' ? { story: item.story } : {}) }))
+      if (wanted.length === 0) throw new ProjectError('novel/invalid', 'name whom to give a card')
+      return job(runtime, 'bible', 'card walk-ons', undefined, async task => await cardWalkOns(core, runtime, { people: wanted, ...(role !== undefined ? { role } : {}) }, task))
     },
     'cast.settle': async ({ root, name, story, action, target, role }) => {
       const { project } = await open(root)
@@ -937,7 +943,7 @@ export function createHandlers(service: NovelService): Handlers {
       const [chapters, missing] = await Promise.all([stageOverview(core, runtime, typeof line === 'string' && line.length > 0 ? line : undefined), stageReadiness(core, runtime, await userTask(session, {}))])
       return { chapters, missing }
     },
-    'batch.stage': async ({ root, chapters, line, steps, force, density, maxPanels, direction, subtitles, sheetFirst }) => {
+    'batch.stage': async ({ root, chapters, line, steps, force, density, maxPanels, direction, subtitles, sheetFirst, trials, trialBatch }) => {
       const runtime = await open(root)
       const wanted = Array.isArray(steps) ? steps.filter((step): step is StageStep => STAGE_STEPS.includes(step)) : undefined
       return await batch(runtime, 'stage batch', async task => await stagePlan(core, runtime, {
@@ -950,6 +956,7 @@ export function createHandlers(service: NovelService): Handlers {
         ...(typeof direction === 'string' && direction.trim().length > 0 ? { direction: direction.trim() } : {}),
         ...(subtitles === false ? { subtitles: false } : {}),
         ...(sheetFirst === false ? { sheetFirst: false } : {}),
+        ...(Array.isArray(trials) && trials.length > 0 ? { trials, ...(typeof trialBatch === 'string' && trialBatch.length > 0 ? { trialBatch } : {}) } : {}),
       }, task))
     },
     'batch.text': async ({ root, chapters, count, line, steps, brief, words, redo, focus, order, rounds, atLeast }) => {
@@ -968,7 +975,7 @@ export function createHandlers(service: NovelService): Handlers {
         ...(typeof focus === 'string' && focus.trim().length > 0 ? { focus: focus.trim() } : {}),
       }))
     },
-    'batch.art': async ({ root, sheets, portraits, voices, places, items, scenes, cover, insert, force, sheetFirst }) => {
+    'batch.art': async ({ root, sheets, portraits, voices, places, items, scenes, cover, insert, force, sheetFirst, trials, trialBatch }) => {
       const runtime = await open(root)
       const list = (value: unknown): string[] | undefined => Array.isArray(value) && value.length > 0 ? value.filter((item): item is string => typeof item === 'string') : undefined
       return await batch(runtime, 'art batch', async () => await artPlan(core, runtime, {
@@ -982,6 +989,7 @@ export function createHandlers(service: NovelService): Handlers {
         ...(insert === true ? { insert: true } : {}),
         ...(force === true ? { force: true } : {}),
         ...(sheetFirst === false ? { sheetFirst: false } : {}),
+        ...(Array.isArray(trials) && trials.length > 0 ? { trials, ...(typeof trialBatch === 'string' && trialBatch.length > 0 ? { trialBatch } : {}) } : {}),
       }))
     },
 
@@ -1027,17 +1035,31 @@ export function createHandlers(service: NovelService): Handlers {
       // A picture of one turn of a place's course says so: the page that asked marks that turn as being drawn.
       return job(runtime, 'illustrate', `illustrate ${params.kind}${params.event !== undefined ? ` at ${params.event}` : ''}`, params.target, async task => await illustrate(core, runtime, params, task))
     },
+    'image.import': async ({ root, kind, target, mediaType, data, look, stage, scene, front }) => {
+      if (kind !== 'portrait' && kind !== 'sheet') throw new ProjectError('novel/invalid', 'a picture is brought in as a portrait or as a design sheet')
+      if (!['image/png', 'image/jpeg', 'image/webp'].includes(String(mediaType))) throw new ProjectError('novel/invalid', 'a picture brought in is a PNG, JPEG or WebP')
+      const taken = await importPicture(await open(root), {
+        kind,
+        target: requireString(target, 'target'),
+        data: Buffer.from(requireString(data, 'data'), 'base64'),
+        ...(typeof look === 'string' && look.length > 0 ? { look } : {}),
+        ...(typeof stage === 'string' && stage.length > 0 ? { stage } : {}),
+        ...(typeof scene === 'string' && scene.length > 0 ? { scene } : {}),
+        ...(typeof front === 'boolean' ? { front } : {}),
+      })
+      return { path: taken.info.path, held: taken.held, ...(taken.spare === true ? { spare: true } : {}) }
+    },
     'image.whole': async ({ root, picture }) => {
       const { held: _held, ...whole } = await pictureWhole(core, await open(root), picture)
       return whole
     },
-    'image.redraw': async ({ root, picture, subject, change, prompt, avoid, trials }) => {
+    'image.redraw': async ({ root, picture, subject, change, prompt, avoid, references, trials }) => {
       const runtime = await open(root)
       const record = (await runtime.project.pictures()).find(item => item.id === picture || item.path === picture)
       // Drawn as it is by several services, to compare them — or drawn anew from words rewritten or one thing changed.
       const tried = Array.isArray(trials) && trials.length > 0 ? trials : undefined
       // Named as the drawing of a picture of its kind is: the page that shows whose it is says that it is being drawn.
-      return job(runtime, 'illustrate', `illustrate ${record?.kind ?? 'picture'}`, record?.target, async task => await redrawPicture(core, runtime, { picture, ...(subject !== undefined ? { subject } : {}), ...(change !== undefined ? { change } : {}), ...(prompt !== undefined ? { prompt } : {}), ...(Array.isArray(avoid) ? { avoid: avoid.filter((item): item is string => typeof item === 'string') } : {}), ...(tried !== undefined ? { trials: tried } : {}) }, task))
+      return job(runtime, 'illustrate', `illustrate ${record?.kind ?? 'picture'}`, record?.target, async task => await redrawPicture(core, runtime, { picture, ...(subject !== undefined ? { subject } : {}), ...(change !== undefined ? { change } : {}), ...(prompt !== undefined ? { prompt } : {}), ...(Array.isArray(avoid) ? { avoid: avoid.filter((item): item is string => typeof item === 'string') } : {}), ...(Array.isArray(references) ? { references: references.filter(item => item !== null && typeof item === 'object' && typeof item.path === 'string').map(item => ({ path: item.path, ...(typeof item.label === 'string' ? { label: item.label } : {}) })) } : {}), ...(tried !== undefined ? { trials: tried } : {}) }, task))
     },
     // ── the same piece of work by several services or models, to be compared ──
     'trial.setups': async ({ root }) => {
@@ -1101,7 +1123,9 @@ export function createHandlers(service: NovelService): Handlers {
         replaced = await project.replacePicture(instead, taken)
         // A portrait that hung nowhere all the same is one of theirs: it joins the others, first.
       }
-      if (replaced.length === 0 && record.kind === 'portrait' && record.target !== undefined) {
+      // Drawn anew to be compared, it says itself where it goes: where one drawn the usual way would have been put.
+      if (replaced.length === 0 && record.trial?.hang !== undefined) replaced = await hangPicture(await open(root), record)
+      else if (replaced.length === 0 && record.kind === 'portrait' && record.target !== undefined) {
         const card = await project.findCharacter(record.target)
         if (card !== undefined) {
           // Of a moment of theirs, it is that moment's picture from here on — the moment its record says it is of,
@@ -1113,6 +1137,7 @@ export function createHandlers(service: NovelService): Handlers {
         }
       }
       // Taken, it is a picture like any other: it stands in the text where the others of its kind would.
+      await project.tookTrial(taken)
       await project.holdFigure(taken, false)
       let removed = 0
       for (const other of Array.isArray(others) ? others : []) {
@@ -1125,6 +1150,31 @@ export function createHandlers(service: NovelService): Handlers {
         }
       }
       return { ok: true, replaced, removed }
+    },
+    'trial.adoptRound': async ({ root, round, label, others }) => {
+      const runtime = await open(root)
+      const { project } = runtime
+      const wanted = requireString(round, 'round')
+      const by = requireString(label, 'label')
+      // What still waits of the round: taken one by one before, a picture is no longer the round's to give.
+      const waiting = (await project.pictures()).filter(item => item.trial?.batch === wanted && item.trial.hang !== undefined)
+      let taken = 0
+      let removed = 0
+      for (const record of waiting.filter(item => item.trial!.label === by)) {
+        await hangPicture(runtime, record)
+        taken += 1
+        if (others !== true) continue
+        // What the other services drew of the same thing goes.
+        for (const other of waiting.filter(item => item.trial!.id === record.trial!.id && item.path !== record.path)) {
+          try {
+            await project.removePicture({ path: other.path })
+            removed += 1
+          } catch (error) {
+            service.log(`could not delete ${other.path}`, error)
+          }
+        }
+      }
+      return { taken, removed }
     },
     'trial.write': async ({ root, chapter, brief, mode, words, line, guides, with: routes }) => {
       const runtime = await open(root)
@@ -1300,9 +1350,9 @@ export function createHandlers(service: NovelService): Handlers {
         return { chapterId: board.chapterId, panels: board.panels.length, ...(board.note !== undefined ? { note: board.note } : {}) }
       })
     },
-    'comic.render': async ({ root, chapter, panels, force, sheetFirst, things }) => {
+    'comic.render': async ({ root, chapter, panels, force, sheetFirst, things, trials, trialBatch }) => {
       const runtime = await open(root)
-      return job(runtime, 'comic', 'draw panels', chapter, async task => await renderPanels(core, runtime, { chapter, ...(panels !== undefined ? { panels } : {}), ...(force !== undefined ? { force } : {}), ...(sheetFirst === false ? { sheetFirst: false } : {}), ...(typeof things === 'boolean' ? { things } : {}) }, task))
+      return job(runtime, 'comic', 'draw panels', chapter, async task => await renderPanels(core, runtime, { chapter, ...(panels !== undefined ? { panels } : {}), ...(force !== undefined ? { force } : {}), ...(sheetFirst === false ? { sheetFirst: false } : {}), ...(typeof things === 'boolean' ? { things } : {}), ...(Array.isArray(trials) && trials.length > 0 ? { trials, ...(typeof trialBatch === 'string' && trialBatch.length > 0 ? { trialBatch } : {}) } : {}) }, task))
     },
     'comic.updatePanel': async ({ root, chapter, panel, patch }) => await updateComicPanel(await open(root), chapter, panel, patch),
     'comic.removePanel': async ({ root, chapter, panel }) => await removeComicPanel(await open(root), requireString(chapter, 'chapter'), requireString(panel, 'panel')),

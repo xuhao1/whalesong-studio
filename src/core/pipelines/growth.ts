@@ -105,7 +105,10 @@ export async function deriveGrowth(core: NovelCore, runtime: ProjectRuntime, par
       if (same !== undefined) taken.add(same.id)
       const age = asText(item.age)
       const what = asText(item.what)
-      const appearance = asText(item.appearance)
+      // How they look in a stretch that still holds is what its own words say — the author's, or the director's who
+      // wrote them out whole: pictures were drawn from them, and a second reading of the book does not rewrite them.
+      // What the planner says of it fills a stretch that says nothing yet.
+      const appearance = (same?.appearance ?? '').trim().length > 0 ? same!.appearance : asText(item.appearance)
       const persona = asText(item.persona)
       stages.push({
         id: same?.id ?? newId('stage'),

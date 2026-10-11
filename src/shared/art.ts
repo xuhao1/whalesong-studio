@@ -5,7 +5,8 @@
  * (which shows exactly what will be applied, and where it comes from) — a
  * picture must never carry words its author cannot see.
  */
-import type { IllustrationInfo, IllustrationParts, SignatureScene } from './types'
+import type { IllustrationInfo, IllustrationParts, SceneShot, SignatureScene } from './types'
+import { hashText } from './text'
 
 /** What a book starts from until its author writes an art direction of their own. */
 export const DEFAULT_ART_STYLE = {
@@ -60,13 +61,29 @@ export function pictureWords(image: Pick<IllustrationInfo, 'prompt' | 'parts'>):
 }
 
 /**
- * How somebody looks, in the words every picture of them restates: their visual
- * anchor — written for an image model — or, lacking one, the prose of the card.
+ * How somebody looks, in the words every picture of them goes by: their appearance, as their card has it. (A card of
+ * an earlier version may still keep phrases written for image models beside it — a "visual anchor": while it does,
+ * those are what pictures go by, as they did, until they are folded into the appearance or the appearance is changed.)
  */
 export function lookWords(card: { visual?: { prompt?: string | undefined } | undefined; appearance?: string | undefined; gender?: string | undefined; age?: string | undefined }): string {
-  const anchor = card.visual?.prompt
-  const base = anchor !== undefined && anchor.length > 0 ? [anchor] : [card.appearance, card.gender, card.age]
-  return base.filter((value): value is string => value !== undefined && value.length > 0).join('，')
+  const legacy = card.visual?.prompt?.trim() ?? ''
+  if (legacy.length > 0) return legacy
+  // (A paragraph ends in a full stop: what is added after it is added to the sentence, not after the stop.)
+  const appearance = (card.appearance ?? '').trim().replace(/[\s。．.；;，,、]+$/u, '')
+  if (appearance.length === 0) return ''
+  // A sex and an age the paragraph does not already give are said after it: a short appearance often names neither.
+  const cjk = /[\u3400-\u9fff]/u.test(appearance)
+  const gender = card.gender?.trim() ?? ''
+  const years = card.age?.trim() ?? ''
+  const age = /^\d+$/u.test(years) ? (cjk ? `${years}岁` : `aged ${years}`) : years
+  const more = [gender, age].filter(value => value.length > 0 && !appearance.includes(value))
+  return [appearance, ...more].join(cjk ? '，' : ', ')
+}
+
+/** The phrases an earlier version kept of somebody for image models, where their card still has them. */
+export const legacyLook = (card: { visual?: { prompt?: string | undefined } | undefined }): string | undefined => {
+  const kept = card.visual?.prompt?.trim() ?? ''
+  return kept.length > 0 ? kept : undefined
 }
 
 /**
@@ -79,11 +96,19 @@ export function sceneOfPicture<S extends SignatureScene>(scenes: readonly S[], p
   const own = scenes.find(scene => scene.portrait === path)
   if (own !== undefined || record === undefined) return own
   const title = record.moment?.title?.trim() ?? ''
-  const said = record.parts?.pieces?.find(piece => piece.of === 'scene')?.text
+  // (A moment made into one frame for the picture is on record as it was told, beside the frame that was sent.)
+  const piece = record.parts?.pieces?.find(part => part.of === 'scene')
+  const said = piece?.told ?? piece?.text
   return (title.length > 0 ? scenes.find(scene => scene.title.trim() === title && (record.moment?.chapter === undefined || scene.chapter === undefined || record.moment.chapter === scene.chapter)) : undefined)
     ?? (said !== undefined ? scenes.find(scene => scene.text.trim().length > 0 && said.includes(tidyPart(scene.text))) : undefined)
     ?? (record.moment?.scene !== undefined ? scenes.find(scene => scene.id === record.moment!.scene) : undefined)
 }
+
+/** What a frame is made of: the words of its moment. A frame made of other words is of another telling, and is made again. */
+export const shotKey = (told: string): string => hashText(tidyPart(told))
+
+/** The frame a moment keeps ({@link SceneShot}), where it is still of the moment as it is told now. */
+export const shotOf = (scene: Pick<SignatureScene, 'text' | 'shot'>): SceneShot | undefined => (scene.shot !== undefined && scene.shot.action.trim().length > 0 && scene.shot.of === shotKey(scene.text) ? scene.shot : undefined)
 
 /**
  * The pictures drawn of one of somebody's moments, among their portraits: the one that is the moment's own first —

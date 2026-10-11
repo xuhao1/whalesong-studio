@@ -588,6 +588,11 @@ function WalkOns({ cards }: { cards: CharacterCard[] }) {
   const sifting = useRunningJob(job => job.kind === 'bible' && job.title === 'sift cast') !== undefined
   const index = useMemo(() => new Map(project.chapters.map(chapter => [chapter.id, chapter.index])), [project.chapters])
   const light = cards.filter(card => card.role === 'minor' || card.role === 'cameo')
+  // Several names picked at once, to be given cards together.
+  const [picking, setPicking] = useState(false)
+  const [picked, setPicked] = useState<ReadonlySet<string>>(new Set())
+  const keyOf = (item: WalkOn): string => `${item.name}\u0000${item.story ?? ''}`
+  const carding = useRunningJob(job => job.kind === 'bible' && job.title === 'card walk-ons') !== undefined
   if (loaded.data === undefined) {
     return <div className="nv-center">{loaded.error !== undefined ? <p className="nv-muted">{t('这个版本的工坊服务还不会整理龙套——重启一次 DSH 就有了。', 'This Studio service cannot list walk-ons yet — restart DSH once.')}</p> : <Spinner />}</div>
   }
@@ -600,11 +605,25 @@ function WalkOns({ cards }: { cards: CharacterCard[] }) {
     await controller.api.call('cast.sift', { root, ...(again ? { all: true } : {}) })
     await controller.refreshJobs()
   })
-  const settle = (item: WalkOn, action: 'card' | 'alias' | 'ignore' | 'restore', extra: { target?: string; role?: 'minor' | 'cameo' } = {}): Promise<unknown> => controller.guard(async () => {
+  const settle = (item: WalkOn, action: 'alias' | 'ignore' | 'restore', extra: { target?: string } = {}): Promise<unknown> => controller.guard(async () => {
     const result = await controller.api.call('cast.settle', { root, name: item.name, ...(item.story !== undefined ? { story: item.story } : {}), action, ...extra })
     loaded.set({ walkons: result.walkons })
-    if (action === 'card' && result.card !== undefined) controller.toast('success', t(`已为「${item.name}」立卡${result.lines > 0 ? `，有声脚本里的 ${result.lines} 句台词归到了这张卡` : ''}`, `Card created for ${item.name}${result.lines > 0 ? `; ${result.lines} script lines now belong to it` : ''}`))
     if (action === 'alias') controller.toast('success', t(`「${item.name}」已并入「${cards.find(card => card.id === extra.target)?.name ?? ''}」的别名`, `"${item.name}" is now an alias of ${cards.find(card => card.id === extra.target)?.name ?? ''}`))
+  })
+  /** A card for each of these — and the planner writes them whole, from what the digests noted: looks, who they are, what they want. */
+  const card = (items: WalkOn[], role: 'minor' | 'cameo'): Promise<unknown> => controller.guard(async () => {
+    if (items.length === 0) return
+    const job = await controller.run('cast.card', { root, people: items.map(item => ({ name: item.name, ...(item.story !== undefined ? { story: item.story } : {}) })), role })
+    setPicked(new Set())
+    loaded.reload()
+    await controller.refreshProject()
+    const output = job.result?.output as { carded?: { name: string }[]; written?: number; lines?: number; failed?: { step: string; error: string }[] } | undefined
+    const made = output?.carded?.length ?? 0
+    const failed = output?.failed ?? []
+    controller.toast(failed.length > 0 ? 'info' : 'success', t(
+      `立了 ${made} 张卡，策划照收录的记载写全了 ${output?.written ?? 0} 张${(output?.lines ?? 0) > 0 ? `；有声脚本里的 ${output!.lines} 句台词归到了这些卡` : ''}${failed.length > 0 ? `；没做成：${failed.map(item => item.step).slice(0, 4).join('、')}` : ''}`,
+      `${made} card(s) made; ${output?.written ?? 0} written whole by the planner from the digests${(output?.lines ?? 0) > 0 ? `; ${output!.lines} script lines now belong to them` : ''}${failed.length > 0 ? `; not done: ${failed.map(item => item.step).slice(0, 4).join(', ')}` : ''}`,
+    ))
   })
   const where = (item: WalkOn): string => {
     const numbers = item.chapters.map(id => index.get(id)).filter((value): value is number => value !== undefined)
@@ -614,7 +633,8 @@ function WalkOns({ cards }: { cards: CharacterCard[] }) {
   const row = (item: WalkOn) => {
     const near = item.near !== undefined ? cards.find(card => card.id === item.near) : undefined
     return (
-      <li key={`${item.name}\u0000${item.story ?? ''}`} className={cx('nv-walkon', item.ignored === true && 'is-ignored')}>
+      <li key={`${item.name}\u0000${item.story ?? ''}`} className={cx('nv-walkon', item.ignored === true && 'is-ignored', picking && picked.has(keyOf(item)) && 'is-picked')}>
+        {picking && item.ignored !== true ? <input type="checkbox" className="nv-walkon-pick" checked={picked.has(keyOf(item))} aria-label={t(`选中「${item.name}」`, `Pick ${item.name}`)} onChange={() => { setPicked((previous) => { const next = new Set(previous); if (!next.delete(keyOf(item))) next.add(keyOf(item)); return next }) }} /> : null}
         <div className="nv-walkon-main">
           <span className="nv-list-title">{item.name}</span>
           {item.story !== undefined ? <span className="nv-muted nv-small">{project.outline.lines?.find(line => line.id === item.story)?.title ?? ''}</span> : null}
@@ -641,8 +661,8 @@ function WalkOns({ cards }: { cards: CharacterCard[] }) {
         ) : (
           <div className="nv-row">
             <Menu label={t('立卡', 'Give a card')} icon="plus" variant="outline" align="end" items={[
-              { label: t('作为小人物（有名有姓、偶尔出场）', 'As a minor character (named, now and then)'), onSelect: () => { void settle(item, 'card', { role: 'minor' }) } },
-              { label: t('作为龙套（露一面就走）', 'As a cameo (seen once)'), onSelect: () => { void settle(item, 'card', { role: 'cameo' }) } },
+              { label: t('作为小人物（有名有姓、偶尔出场）', 'As a minor character (named, now and then)'), onSelect: () => { void card([item], 'minor') } },
+              { label: t('作为龙套（露一面就走）', 'As a cameo (seen once)'), onSelect: () => { void card([item], 'cameo') } },
             ]} />
             {cards.length > 0 ? (
               <Menu label={t('是别名', 'Alias of')} icon="link" align="end" items={[...(near !== undefined ? [near] : []), ...cards.filter(card => card.id !== near?.id)].slice(0, 30).map(card => ({ label: card.name, onSelect: () => { void settle(item, 'alias', { target: card.id }) } }))} />
@@ -662,7 +682,25 @@ function WalkOns({ cards }: { cards: CharacterCard[] }) {
             {quote !== undefined ? <Button size="sm" icon="quote" onClick={() => { quote(t(`这些名字在正文里出现了但还没有人物卡：${listed.slice(0, 20).map(item => item.name).join('、')}。请判断哪些值得立卡、哪些其实是已有人物的别名、哪些不用管，并替我处理。\n`, `These names are on the page without a character card: ${listed.slice(0, 20).map(item => item.name).join(', ')}. Decide which deserve a card, which are aliases of existing characters and which can be left alone, and settle them for me.\n`)) }}>{t('交给总编', 'Hand to the showrunner')}</Button> : null}
           </>
         ) : undefined}>{t(`正文里有名字、还没立卡的人（${listed.length}）`, `Named on the page, no card yet (${listed.length})`)}</SectionTitle>
-        <p className="nv-muted nv-small">{t('值得跟踪的立卡，是别名的并进去，其余不用管。', 'Give a card to those worth following, fold aliases in, leave the rest.')}</p>
+        <p className="nv-muted nv-small">{t('值得跟踪的立卡，是别名的并进去，其余不用管。立卡后策划照收录的记载把外貌、为人这些写全。', 'Give a card to those worth following, fold aliases in, leave the rest. A card made here is written whole by the planner — looks, who they are — from what the digests noted.')}</p>
+        {listed.length > 0 ? (
+          <div className="nv-pick-bar">
+            <Button size="sm" variant={picking ? 'primary' : 'ghost'} icon="check" onClick={() => { setPicking(value => !value); setPicked(new Set()) }}>{picking ? t('完成', 'Done') : t('多选', 'Select')}</Button>
+            {picking ? (
+              <>
+                <span>{t(`已选 ${listed.filter(item => picked.has(keyOf(item))).length} 人`, `${listed.filter(item => picked.has(keyOf(item))).length} picked`)}</span>
+                <button type="button" className="nv-link" onClick={() => { setPicked(new Set(listed.map(keyOf))) }}>{t(`全选（${listed.length}）`, `All ${listed.length}`)}</button>
+                {listed.some(item => item.verdict?.is === 'card') ? <button type="button" className="nv-link" onClick={() => { setPicked(new Set(listed.filter(item => item.verdict?.is === 'card').map(keyOf))) }}>{t('选策划说值得立卡的', 'Those the planner found worth a card')}</button> : null}
+                <button type="button" className="nv-link" onClick={() => { setPicked(new Set()) }}>{t('清空', 'None')}</button>
+                <span className="nv-spacer" />
+                {carding || listed.filter(item => picked.has(keyOf(item))).length === 0 ? <Button size="sm" variant="primary" icon="plus" disabled busy={carding}>{carding ? t('正在立卡…', 'Making cards…') : t('给选中的人立卡', 'Cards for those picked')}</Button> : <Menu label={t(`给选中的 ${listed.filter(item => picked.has(keyOf(item))).length} 人立卡`, `Cards for the ${listed.filter(item => picked.has(keyOf(item))).length} picked`)} icon="plus" variant="primary" align="end" items={[
+                  { label: t('作为小人物（有名有姓、偶尔出场）', 'As minor characters (named, now and then)'), onSelect: () => { void card(listed.filter(item => picked.has(keyOf(item))), 'minor') } },
+                  { label: t('作为龙套（露一面就走）', 'As cameos (seen once)'), onSelect: () => { void card(listed.filter(item => picked.has(keyOf(item))), 'cameo') } },
+                ]} />}
+              </>
+            ) : null}
+          </div>
+        ) : null}
         {listed.length === 0 ? <Empty icon="users" title={t('没有漏掉的人', 'Nobody is missing a card')}>{t('写了新章节并收录记忆之后，新冒出来的名字会出现在这里。', 'New names show up here after new chapters are digested.')}</Empty> : <ul className="nv-walkon-list">{listed.map(row)}</ul>}
         {ignored.length > 0 ? (
           <>

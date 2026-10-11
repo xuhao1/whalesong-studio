@@ -360,8 +360,10 @@ export async function expandCharacter(core: NovelCore, runtime: ProjectRuntime, 
     for (const relation of relationships) if (!merged.some(existing => existing.target === relation.target)) merged.push(relation)
     changes.relationships = merged
   }
-  const visualPrompt = asText(value.visualPrompt)
-  if (visualPrompt !== undefined) changes.visual = { ...card.visual, prompt: visualPrompt }
+  // There is one text of how somebody looks — the appearance. A model that still hands a second one in (as cards of an
+  // earlier version had) has it taken for the appearance where it wrote none, and dropped otherwise.
+  const looks = asText(value.visualPrompt)
+  if (looks !== undefined && changes.appearance === undefined && (card.appearance ?? '').trim().length === 0) changes.appearance = looks
   const voiceDesign = asText(value.voiceDesign)
   if (voiceDesign !== undefined) changes.voiceProfile = { ...card.voiceProfile, designPrompt: voiceDesign }
   const applied = params.apply !== false

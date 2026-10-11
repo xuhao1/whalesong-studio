@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { isThinCard, mergeCast, scheduleSift, siftCast, siftDue } from '../src/core/pipelines/cast'
+import { cardWalkOns, isThinCard, mergeCast, scheduleSift, siftCast, siftDue } from '../src/core/pipelines/cast'
 import { acceptSuggestion } from '../src/core/pipelines/bible'
 import { listWalkOns, settleWalkOn } from '../src/core/walkons'
 import { analyzeBook } from '../src/core/pipelines/import'
@@ -288,6 +288,54 @@ describe('who is worth a card', () => {
     await settleWalkOn(project, { name: '板儿', action: 'ignore' })
     expect((await siftDue(bed.runtime, true)).map(item => item.name)).not.toContain('板儿')
     expect((await listWalkOns(project, { ignored: true })).find(item => item.name === '板儿')?.verdict?.is).toBe('walkon')
+  })
+
+  it('gives cards to the names the author picks, and has them written whole from what the digests noted', async () => {
+    const { project } = bed.runtime
+    const ids: string[] = []
+    for (let n = 1; n <= 2; n++) ids.push((await project.addChapter({ title: `第${n}回` })).id)
+    const memory = (chapterId: string, names: [string, string, string?][]) => ({ schema: 1 as const, chapterId, textHash: 'x', updatedAt: '', brief: '', summary: '', facts: [], threads: [], newEntities: [], characters: names.map(([name, role, seen]) => ({ character: name, name, role, ...(seen !== undefined ? { seen } : {}) })) })
+    await project.saveMemory(memory(ids[0]!, [['刘姥姥', '进荣国府打抽丰', '七十来岁的乡下老妇，粗布衣裳'], ['门子', '通报一声'], ['周瑞家的', '引路']]))
+    await project.saveMemory(memory(ids[1]!, [['刘姥姥', '带着板儿见了凤姐'], ['板儿', '躲在姥姥身后', '五六岁的男孩']]))
+    // The planner writes the cards of those picked — and of nobody else — from what it is handed of them.
+    bed.llm.responder = () => JSON.stringify({ characters: [
+      { listed: '刘姥姥', name: '刘姥姥', role: 'minor', gender: '女', age: '七十多岁', tagline: '乡下来打抽丰的老妇', appearance: '七十来岁，粗布衣裳，脸上堆着笑', personality: '世故而不失本分', background: '乡下庄户人家', motivation: '求一点接济', voice: '村话，会凑趣' },
+      { listed: '板儿', name: '板儿', role: 'cameo', gender: '男', age: '五六岁', tagline: '刘姥姥的外孙', appearance: '五六岁的男孩，怯生生的', personality: '怕生' },
+    ] })
+    const done = await cardWalkOns(bed.core, bed.runtime, { people: [{ name: '刘姥姥' }, { name: '板儿' }], role: 'minor' }, { origin: 'user' })
+    expect(done).toMatchObject({ carded: [{ name: '刘姥姥' }, { name: '板儿' }], written: 2, failed: [] })
+    // One request, about the two picked: what the digests said of each, their looks with it.
+    expect(bed.llm.requests).toHaveLength(1)
+    const asked = bed.llm.requests[0]!.prompt
+    for (const part of ['刘姥姥', '进荣国府打抽丰', '七十来岁的乡下老妇，粗布衣裳', '板儿', '五六岁的男孩']) expect(asked, part).toContain(part)
+    expect(asked).not.toContain('- 门子')
+    // The cards say how they look and who they are — not a name alone.
+    const granny = (await project.findCharacter('刘姥姥'))!
+    expect(granny).toMatchObject({ role: 'minor', appearance: '七十来岁，粗布衣裳，脸上堆着笑', personality: '世故而不失本分', tagline: '乡下来打抽丰的老妇', voice: '村话，会凑趣' })
+    expect((await project.findCharacter('板儿'))!).toMatchObject({ appearance: '五六岁的男孩，怯生生的' })
+    // They are off the list of names without a card; the others are on it still.
+    expect((await listWalkOns(project)).map(item => item.name).sort()).toEqual(['周瑞家的', '门子'])
+    // No planner to be had: the cards are made all the same, and what was not written is said.
+    bed.llm.responder = () => { throw new Error('no model') }
+    const bare = await cardWalkOns(bed.core, bed.runtime, { people: [{ name: '门子' }], role: 'cameo' }, { origin: 'user' })
+    expect(bare.carded).toMatchObject([{ name: '门子' }])
+    expect(bare.written).toBe(0)
+    expect(bare.failed.length).toBeGreaterThan(0)
+    expect((await project.findCharacter('门子'))!.role).toBe('cameo')
+    // Somebody the notes say too little of to write from: the planner reads the book for them, as it does to complete
+    // any card. How they look is the appearance and nothing beside it — a second text handed in for image models (as
+    // cards once had) is taken for the appearance where none was written.
+    bed.llm.responder = request => request.prompt.includes('请补全下面这张人物卡')
+      ? JSON.stringify({ tagline: '周瑞的妻子，凤姐跟前走动的人', visualPrompt: '五十来岁的妇人，青布衫，收拾得利落', personality: '会看眼色' })
+      : JSON.stringify({ characters: [] })
+    const read = await cardWalkOns(bed.core, bed.runtime, { people: [{ name: '周瑞家的' }], role: 'minor' }, { origin: 'user' })
+    expect(read).toMatchObject({ carded: [{ name: '周瑞家的' }], written: 1, failed: [] })
+    const completing = bed.llm.requests.find(request => request.prompt.includes('请补全下面这张人物卡'))!.prompt
+    expect(completing).toContain('"appearance": "外貌：一段话')
+    expect(completing).not.toContain('visualPrompt')
+    const wife = (await project.findCharacter('周瑞家的'))!
+    expect(wife).toMatchObject({ appearance: '五十来岁的妇人，青布衫，收拾得利落', tagline: '周瑞的妻子，凤姐跟前走动的人', personality: '会看眼色' })
+    expect(wife.visual?.prompt).toBeUndefined()
   })
 
   it('looks through the new names by itself once digests have settled, where the author lets it', async () => {

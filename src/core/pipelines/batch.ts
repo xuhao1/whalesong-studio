@@ -17,11 +17,11 @@
  */
 import {
   MAIN_LINE, STAGE_STEPS, TEXT_STEPS,
-  type ArtStep, type BatchKind, type BatchRowView, type CharacterCard, type BatchStepState, type BatchStepView, type BatchView, type PromptLanguage, type StageStatus, type StageStep,
+  type ArtStep, type BatchKind, type BatchRowView, type CharacterCard, type BatchStepState, type BatchStepView, type BatchView, type ImageTrial, type PromptLanguage, type StageStatus, type StageStep,
   type IssueSeverity, type StoryboardDensity, type TextStep,
 } from '../../shared/types'
 import { leadOf, portraitsOf } from '../../shared/images'
-import { hashText, proseOnly } from '../../shared/text'
+import { hashText, newId, proseOnly } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import type { JobContext } from '../jobs'
 import { soundSetup } from '../media/sound'
@@ -295,6 +295,10 @@ export interface StageBatchParams {
   sheetFirst?: boolean
   /** false: videos without subtitles. Left out: with them. */
   subtitles?: boolean
+  /** The panels are drawn once with each of these services, to compare them: no panel takes a picture until the author takes one (so no video is cut of them in the same run). */
+  trials?: ImageTrial[]
+  /** With `trials`: the name the round's pictures go by, where whoever asked gave one. */
+  trialBatch?: string
 }
 
 /** What each step of the stage needs that may not be there, as the author would be told. */
@@ -330,6 +334,8 @@ export async function stagePlan(core: NovelCore, runtime: ProjectRuntime, params
   const wanted = new Set<StageStep>(params.steps !== undefined && params.steps.length > 0 ? params.steps : STAGE_STEPS.filter(step => step !== 'video' && missing[step] === undefined))
   const columns = STAGE_STEPS.filter(step => wanted.has(step))
   const force = params.force === true ? { force: true } : {}
+  // Panels drawn to be compared: the round their pictures are of, whatever chapter — taken together, by service.
+  const round = params.trialBatch ?? newId('round')
   const steps: BatchStep[] = []
   for (const chapter of chapters) {
     const id = chapter.id
@@ -396,7 +402,7 @@ export async function stagePlan(core: NovelCore, runtime: ProjectRuntime, params
         after: after('storyboard'),
         skip: unavailable('panels'),
         async run(sub) {
-          const result = await renderPanels(core, runtime, { chapter: id, ...force, ...(params.sheetFirst === false ? { sheetFirst: false } : {}) }, sub)
+          const result = await renderPanels(core, runtime, { chapter: id, ...force, ...(params.sheetFirst === false ? { sheetFirst: false } : {}), ...(params.trials !== undefined && params.trials.length > 0 ? { trials: params.trials, trialBatch: round } : {}) }, sub)
           const note = L(lang, `绘制 ${result.rendered} 格，共 ${result.panels} 格`, `${result.rendered} drawn of ${result.panels}`)
           if (result.failed > 0) throw new Error(L(lang, `${result.failed} 格没有画出来（${note}）`, `${result.failed} panels were not drawn (${note})`))
           return note
@@ -639,6 +645,10 @@ export interface ArtBatchParams {
   force?: boolean
   /** false: this once, no design sheet is drawn first for whoever lacks one — not for a portrait, not for a scene, not for the cover. */
   sheetFirst?: boolean
+  /** Every picture of the round is drawn once with each of these services, to compare them: nothing hangs anywhere until the author takes it. */
+  trials?: ImageTrial[]
+  /** With `trials`: the name the round's pictures go by, where whoever asked gave one. */
+  trialBatch?: string
 }
 
 export async function artPlan(core: NovelCore, runtime: ProjectRuntime, params: ArtBatchParams): Promise<BatchPlan> {
@@ -653,6 +663,8 @@ export async function artPlan(core: NovelCore, runtime: ProjectRuntime, params: 
     if (!rows.some(entry => entry.id === id)) rows.push({ id, label, kind })
   }
   const noImages = await core.imageProvider(runtime) === undefined ? L(lang, '还没有配置图像模型', 'no image model is set up') : undefined
+  // Drawn to be compared: by which services, and the round the pictures are of — they can be taken together, by service.
+  const trying = params.trials !== undefined && params.trials.length > 0 ? { trials: params.trials, trialBatch: params.trialBatch ?? newId('round') } : {}
   const noVoices = await core.ttsProvider(runtime).then(provider => provider === undefined ? L(lang, '还没有配置语音模型', 'no speech model is set up') : provider.designVoice === undefined ? L(lang, '现在的语音模型不能设计声线', 'the speech model in use cannot design voices') : undefined)
   const card = async (ref: string) => {
     const found = await project.findCharacter(ref)
@@ -676,7 +688,7 @@ export async function artPlan(core: NovelCore, runtime: ProjectRuntime, params: 
       after: portrayed.has(who.id) ? [key(who.id, 'portrait')] : [],
       skip: async () => noImages ?? (!redo && (await project.findCharacter(who.id))?.visual?.sheet !== undefined ? L(lang, '已有人设图', 'has a design sheet') : undefined),
       async run(sub) {
-        await illustrate(core, runtime, { kind: 'sheet', target: who.id }, sub)
+        await illustrate(core, runtime, { kind: 'sheet', target: who.id, ...trying }, sub)
         return undefined
       },
     })
@@ -708,7 +720,7 @@ export async function artPlan(core: NovelCore, runtime: ProjectRuntime, params: 
         return !lacking.plain && !(lacking.scene && written) ? L(lang, '素底定妆和名场面都有了', 'has a likeness and their scene') : undefined
       },
       async run(sub) {
-        await illustrate(core, runtime, { kind: 'portrait', target: who.id, ...asIs, ...(force ? {} : { fill: true }) }, sub)
+        await illustrate(core, runtime, { kind: 'portrait', target: who.id, ...asIs, ...(force ? {} : { fill: true }), ...trying }, sub)
         return undefined
       },
     })
@@ -737,7 +749,7 @@ export async function artPlan(core: NovelCore, runtime: ProjectRuntime, params: 
       op: 'place',
       skip: async () => noImages ?? (!force && (await project.findWorld(entry.id))?.visualImage !== undefined ? L(lang, '已有场景设定图', 'has place art') : undefined),
       async run(sub) {
-        await illustrate(core, runtime, { kind: 'location', target: entry.id }, sub)
+        await illustrate(core, runtime, { kind: 'location', target: entry.id, ...trying }, sub)
         return undefined
       },
     })
@@ -752,7 +764,7 @@ export async function artPlan(core: NovelCore, runtime: ProjectRuntime, params: 
       op: 'item',
       skip: async () => noImages ?? (!force && (await project.findWorld(entry.id))?.visualImage !== undefined ? L(lang, '已有物品设定图', 'has design art') : undefined),
       async run(sub) {
-        await illustrate(core, runtime, { kind: 'item', target: entry.id }, sub)
+        await illustrate(core, runtime, { kind: 'item', target: entry.id, ...trying }, sub)
         return undefined
       },
     })
@@ -768,7 +780,7 @@ export async function artPlan(core: NovelCore, runtime: ProjectRuntime, params: 
         after: references,
         skip: () => noImages ?? (!chapter.hasText ? L(lang, '这一章还没有正文', 'this chapter has no text yet') : !force && pictures.some(picture => picture.kind === 'scene' && picture.target === chapter.id) ? L(lang, '已有插图', 'has an illustration') : undefined),
         async run(sub) {
-          const result = await illustrate(core, runtime, { kind: 'scene', target: chapter.id, ...(params.insert === true ? { insert: true } : {}), ...asIs }, sub)
+          const result = await illustrate(core, runtime, { kind: 'scene', target: chapter.id, ...(params.insert === true ? { insert: true } : {}), ...asIs, ...trying }, sub)
           return result.inserted ? L(lang, '已放进正文', 'placed in the text') : undefined
         },
       })
@@ -782,7 +794,7 @@ export async function artPlan(core: NovelCore, runtime: ProjectRuntime, params: 
       after: [...sheetOf.values()],
       skip: async () => noImages ?? (!force && await project.cover() !== undefined ? L(lang, '已有封面', 'has a cover') : undefined),
       async run(sub) {
-        await illustrate(core, runtime, { kind: 'cover', ...asIs }, sub)
+        await illustrate(core, runtime, { kind: 'cover', ...asIs, ...trying }, sub)
         return undefined
       },
     })
