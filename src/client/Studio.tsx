@@ -678,6 +678,9 @@ function JobsButton() {
                   {job.status === 'running' ? <JobBar job={job} /> : null}
                   {job.error !== undefined ? <span className="nv-job-error">{job.error}</span> : null}
                   {batchOf(job) !== undefined ? <details className="nv-job-batch"><summary>{t('逐项进度', 'Step by step')}</summary><BatchMatrix job={job} compact /></details> : null}
+                  {job.title === 'derive chapters preview' && job.status === 'done' && project?.derived !== undefined && job.project === project.root
+                    ? <button type="button" className="nv-link nv-small" onClick={() => { setOpen(false); controller.showDerived() }}>{t(`看推演出的 ${project.derived.chapters} 章（还没加入大纲）`, `See the ${project.derived.chapters} chapter(s) derived (not in the outline yet)`)}</button>
+                    : null}
                   <CrewRuns job={job} />
                 </div>
                 <ThoughtButton job={job} label />

@@ -35,7 +35,7 @@ import { applyOutlineOps, type OutlineOp } from '../core/pipelines/outline'
 import {
   ensurePortrait, novelizePlay, paintPlayScene, playTurn, rewindPlay, setPlayOutcome, startPlay, voicePlayLine,
 } from '../core/pipelines/play'
-import { buildFoundation, planOfText, deriveBeats, deriveChapters, whatIf } from '../core/pipelines/plot'
+import { buildFoundation, derivedPlan, deriveBeats, deriveChapters, keepDerivedPlan, planOfText, settleDerivedPlan, whatIf } from '../core/pipelines/plot'
 import { clearReview, listReviews, noteIssue, recheckIssues, resolveIssue, reviewChapter } from '../core/pipelines/review'
 import { fixIssue, fixIssues, acceptProposal, rejectProposal, reviseBook, reviseChapter, reviseSpan, mendInTurn } from '../core/pipelines/revise'
 import { writeChapter } from '../core/pipelines/write'
@@ -787,20 +787,65 @@ export function createHandlers(service: NovelService): Handlers {
         return { chapterId: review.chapterId, issues: review.issues.length, verdict: review.verdict }
       })
     },
-    'ai.deriveChapters': async ({ root, count, direction, volume, apply, line, after, mode, title, choice, guides }) => {
+    'ai.deriveChapters': async ({ root, count, direction, volume, apply, line, after, mode, title, choice, guides, revise }) => {
       const runtime = await open(root)
-      return job(runtime, 'derive', 'derive chapters', undefined, async task => await deriveChapters(core, runtime, {
-        ...(count !== undefined ? { count } : {}),
-        ...(direction !== undefined ? { direction } : {}),
-        ...(volume !== undefined ? { volume } : {}),
-        ...(apply !== undefined ? { apply } : {}),
-        ...(typeof line === 'string' && line.length > 0 ? { line } : {}),
-        ...(typeof after === 'string' && after.length > 0 ? { after } : {}),
-        ...(mode === 'append' || mode === 'replace' || mode === 'branch' ? { mode } : {}),
-        ...(typeof title === 'string' && title.trim().length > 0 ? { title } : {}),
-        ...(typeof choice === 'string' && choice.trim().length > 0 ? { choice } : {}),
-        ...(Array.isArray(guides) ? { guides: cleanGuides(guides) } : {}),
-      }, task))
+      // What the author says of the plan that waits to be looked at: that plan is what is adjusted.
+      const said = typeof revise === 'string' ? revise.trim() : ''
+      const waiting = said.length > 0 ? await derivedPlan(runtime) : undefined
+      if (said.length > 0 && waiting === undefined) throw new ProjectError('novel/not-found', 'no derived plan is waiting to be adjusted — derive one first')
+      const preview = apply === false || waiting !== undefined
+      const where = waiting !== undefined ? waiting.volume : volume
+      const wanted = waiting !== undefined ? waiting.direction : direction
+      return job(runtime, 'derive', preview ? 'derive chapters preview' : 'derive chapters', undefined, async (task, context) => {
+        const result = await deriveChapters(core, runtime, {
+          ...(count !== undefined ? { count } : {}),
+          ...(wanted !== undefined ? { direction: wanted } : {}),
+          ...(where !== undefined ? { volume: where } : {}),
+          ...(preview ? { apply: false } : apply !== undefined ? { apply } : {}),
+          ...(waiting !== undefined ? { revise: { chapters: waiting.chapters, ...(waiting.rationale !== undefined ? { rationale: waiting.rationale } : {}), feedback: said } } : {}),
+          ...(typeof line === 'string' && line.length > 0 ? { line } : {}),
+          ...(typeof after === 'string' && after.length > 0 ? { after } : {}),
+          ...(mode === 'append' || mode === 'replace' || mode === 'branch' ? { mode } : {}),
+          ...(typeof title === 'string' && title.trim().length > 0 ? { title } : {}),
+          ...(typeof choice === 'string' && choice.trim().length > 0 ? { choice } : {}),
+          ...(Array.isArray(guides) ? { guides: cleanGuides(guides) } : {}),
+        }, task)
+        // Looked at before it is added: kept with the book, so that it is there whenever its author comes back to it.
+        if (preview && result.chapters.length > 0) {
+          await keepDerivedPlan(runtime, {
+            at: new Date().toISOString(),
+            job: context.id,
+            chapters: result.chapters,
+            ...(result.rationale !== undefined ? { rationale: result.rationale } : {}),
+            ...(where !== undefined && where.length > 0 ? { volume: where } : {}),
+            ...(wanted !== undefined && wanted.trim().length > 0 ? { direction: wanted.trim() } : {}),
+            ...(waiting !== undefined ? { feedback: [...(waiting.feedback ?? []), said] } : {}),
+            ...(result.pictures !== undefined ? { pictures: result.pictures } : waiting?.pictures !== undefined ? { pictures: waiting.pictures } : {}),
+            ...(result.referenced !== undefined ? { referenced: result.referenced } : waiting?.referenced !== undefined ? { referenced: waiting.referenced } : {}),
+          })
+        }
+        return result
+      })
+    },
+    'outline.derived': async ({ root }) => {
+      const plan = await derivedPlan(await open(root))
+      return plan !== undefined ? { plan } : {}
+    },
+    'outline.settleDerived': async ({ root }) => ({ settled: await settleDerivedPlan(core, await open(root)) }),
+    'outline.keepDerived': async ({ root, chapters, rationale, volume, direction }) => {
+      const runtime = await open(root)
+      if (!Array.isArray(chapters) || chapters.length === 0 || chapters.some(chapter => typeof chapter?.title !== 'string')) throw new ProjectError('novel/invalid', 'a derived plan is its chapters: none were given')
+      // Another planner's than the one kept for the plan before: nobody is there to go on from this one.
+      await settleDerivedPlan(core, runtime)
+      const plan = {
+        at: new Date().toISOString(),
+        chapters,
+        ...(typeof rationale === 'string' && rationale.trim().length > 0 ? { rationale } : {}),
+        ...(typeof volume === 'string' && volume.length > 0 ? { volume } : {}),
+        ...(typeof direction === 'string' && direction.trim().length > 0 ? { direction: direction.trim() } : {}),
+      }
+      await keepDerivedPlan(runtime, plan)
+      return { plan }
     },
     'ai.deriveBeats': async ({ root, chapter, direction }) => {
       const runtime = await open(root)

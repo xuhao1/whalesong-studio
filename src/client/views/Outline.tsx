@@ -3,9 +3,9 @@
 import { DeriveTrialDialog } from '../Trial'
 import { GuidePictures, picturesReadWord, referencesLookedWord } from '../Guides'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { OutlineOpInput } from '../../shared/rpc'
+import type { OutlineOpInput, RpcParams } from '../../shared/rpc'
 import { formatCount, sameName } from '../../shared/text'
-import { chapterBudgetOf, MAIN_LINE, type Beat, type ChapterInfo, type ChapterMemory, type ChapterPlan, type ChapterStatus, type CharacterCard, type PictureGuide, type PicturesRead, type PlotLine, type PlotThread, type ReferencesLooked, type ThreadKind, type ThreadStatus, type Volume } from '../../shared/types'
+import { chapterBudgetOf, MAIN_LINE, type Beat, type ChapterInfo, type DerivedChapter, type DerivedPlan, type JobInfo, type ChapterMemory, type ChapterPlan, type ChapterStatus, type CharacterCard, type PictureGuide, type PicturesRead, type PlotLine, type PlotThread, type ReferencesLooked, type ThreadKind, type ThreadStatus, type Volume } from '../../shared/types'
 import { byWeight, CharacterPicker, useCastFilter } from '../CharacterPicker'
 import { Icon } from '../icons'
 import { ChapterTree, useOutlineOps } from '../ChapterTree'
@@ -66,6 +66,9 @@ function Chapters({ onGraph }: { onGraph: () => void }) {
   const plans = home !== undefined ? home.chapters : main
   // What comes next is asked of the planner here, for the line shown: the chapters and their deriving are one page.
   const [deriving, setDeriving] = useState(false)
+  // Asked for from elsewhere — a finished derivation in the list of jobs: opened, on what was derived.
+  const deriveAsked = useSnapshot(snapshot => snapshot.deriveAsked)
+  useEffect(() => { if (deriveAsked !== undefined) setDeriving(true) }, [deriveAsked])
   // On a phone the chapters and a chapter's plan are one at a time.
   const split = useSplit()
 
@@ -86,7 +89,7 @@ function Chapters({ onGraph }: { onGraph: () => void }) {
           onOpen={(id) => { setDeriving(false); controller.focusChapter(id) }}
           onLine={() => { setDeriving(false) }}
           onGraph={onGraph}
-          tools={<Button size="sm" variant={deriving ? 'primary' : 'outline'} icon="sparkles" onClick={() => { setDeriving(!deriving) }} title={t('让策划排出这条线接下来的章纲，或问一个"如果"', 'Have the planner plot what comes next on this line, or ask a what-if')}>{t('推演', 'Derive')}</Button>}
+          tools={<Button size="sm" variant={deriving ? 'primary' : 'outline'} icon="sparkles" onClick={() => { setDeriving(!deriving) }} title={project.derived !== undefined ? t(`上次推演出的 ${project.derived.chapters} 章还没加入大纲：点开就在`, `${project.derived.chapters} chapter(s) derived before are not in the outline yet: they are here`) : t('让策划排出这条线接下来的章纲，或问一个"如果"', 'Have the planner plot what comes next on this line, or ask a what-if')}>{project.derived !== undefined ? t(`推演 · ${project.derived.chapters} 章待看`, `Derive · ${project.derived.chapters} to read`) : t('推演', 'Derive')}</Button>}
           note={fillable.data !== undefined && fillable.data.chapters > 0 ? (
             <div className="nv-note nv-outline-fill">
               <span>{t(`${fillable.data.chapters} 章的章纲还有空项，收录结果里有。`, `${fillable.data.chapters} chapter outline(s) have empty items the digests can fill.`)}</span>
@@ -530,19 +533,6 @@ function ThreadEditor({ thread, onClose }: { thread: PlotThread | undefined; onC
 
 // ───────────────────────────── derive ─────────────────────────────
 
-interface DerivedChapter {
-  title: string
-  synopsis?: string
-  purpose?: string
-  pov?: string
-  location?: string
-  time?: string
-  characters: string[]
-  beats: Beat[]
-  threads: { title: string; action: string }[]
-  /** The author's pictures this chapter goes by, as the planner said. */
-  guides?: PictureGuide[]
-}
 
 interface Branch {
   title: string
@@ -570,6 +560,9 @@ export function planOfTextWord(read: PlanRead | undefined, t: (zh: string, en: s
     ? t(`章纲照正文更新了：${changed.map(name => name[0]).join('、')}改了；${beats}。原来的在章纲的历史版本里。`, `The plan goes by the text now: ${changed.map(name => name[1]).join(', ')} changed; ${beats}. What was there is in the plan's history.`)
     : t(`章纲和正文对得上，别的没改；${beats}。原来的在章纲的历史版本里。`, `The plan fits the text, nothing else changed; ${beats}. What was there is in the plan's history.`)
 }
+
+/** How many forms that derive chapters are open, by book: a derivation that comes back while none is says so in a notice. */
+const openForms = new Map<string, number>()
 
 /**
  * The planner's two questions: what comes next, and what if. The Outline has
@@ -610,7 +603,51 @@ export function Derive({ onApplied, only, preset }: {
   const direct = mode !== 'append' || wanted > 12 || line !== MAIN_LINE || after.length > 0
   const [stream, setStream] = useState('')
   const [working, setWorking] = useState<'chapters' | 'whatif' | undefined>()
-  const [derived, setDerived] = useState<{ chapters: DerivedChapter[]; rationale?: string; volume: string } | undefined>()
+  // What was derived to be looked at is kept with the book until it is added or discarded: this form closed — the
+  // Studio, even — and opened again shows it. (`local`: what this form was just handed, for a Host that keeps nothing.)
+  const kept = useLoad(async signal => (await controller.api.call('outline.derived', { root }, signal)).plan, [root, project.derived?.at])
+  const [local, setLocal] = useState<DerivedPlan | undefined>()
+  const derived: DerivedPlan | undefined = local ?? kept.data
+  // (What the Host keeps of the same derivation says more — what was said of it before: once it is read, it is what shows.)
+  useEffect(() => { if (local?.job !== undefined && kept.data?.job === local.job) setLocal(undefined) }, [kept.data, local])
+  const settle = async (): Promise<void> => {
+    setLocal(undefined)
+    await controller.api.call('outline.settleDerived', { root }).catch(() => {})
+    kept.reload()
+    await controller.refreshProject().catch(() => {})
+  }
+  // What the author says of the plan that is shown: the planner adjusts it.
+  const [feedback, setFeedback] = useState('')
+  // The form may be closed while the planner works: what it derives is kept, and the author is told when it is back.
+  const here = useRef(true)
+  useEffect(() => {
+    here.current = true
+    openForms.set(root, (openForms.get(root) ?? 0) + 1)
+    return () => {
+      here.current = false
+      openForms.set(root, Math.max(0, (openForms.get(root) ?? 1) - 1))
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  // A derivation still at work that this form did not start — asked for from one that was closed since: followed, so that it is seen at work and seen when back.
+  const jobs = useSnapshot(snapshot => snapshot.jobs)
+  const mine = useRef<Set<string>>(new Set())
+  const atWork = jobs.find(job => job.status === 'running' && job.kind === 'derive' && job.title === 'derive chapters preview' && job.project === root)?.id
+  useEffect(() => {
+    if (atWork === undefined || mine.current.has(atWork)) return undefined
+    mine.current.add(atWork)
+    setWorking('chapters')
+    setStream('')
+    const follower = controller.follow(atWork, text => { if (here.current) setStream(text) })
+    void follower.done.catch(() => undefined).then(() => {
+      if (!here.current) return
+      kept.reload()
+      setWorking(undefined)
+      setStream('')
+    })
+    return undefined
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [atWork])
   const [skipped, setSkipped] = useState<Set<number>>(new Set())
   // The same chapters planned by several models at once, to be compared.
   const [comparing, setComparing] = useState(false)
@@ -629,7 +666,6 @@ export function Derive({ onApplied, only, preset }: {
     const brief = (override ?? direction).trim()
     setWorking('chapters')
     setStream('')
-    setDerived(undefined)
     setSkipped(new Set())
     setApplied(undefined)
     setRead(undefined)
@@ -656,12 +692,47 @@ export function Derive({ onApplied, only, preset }: {
         setApplied({ added: output?.added?.length ?? 0, ...(output?.line !== undefined ? { line: output.line } : {}), ...(output?.replaced !== undefined ? { replaced: output.replaced } : {}) })
         return
       }
-      const info = await controller.run('ai.deriveChapters', { root, apply: false, count: Math.max(1, Math.min(12, wanted)), ...(brief.length > 0 ? { direction: brief } : {}), ...(volume.length > 0 ? { volume } : {}), ...(guides.length > 0 ? { guides } : {}) }, setStream)
-      const output = info.result?.output as { chapters?: DerivedChapter[]; rationale?: string; pictures?: PicturesRead; referenced?: ReferencesLooked } | undefined
-      setRead(output?.pictures)
-      setLooked(output?.referenced)
-      if (output?.chapters !== undefined) setDerived({ chapters: output.chapters, ...(output.rationale !== undefined ? { rationale: output.rationale } : {}), volume })
+      await looked_at({ root, apply: false, count: Math.max(1, Math.min(12, wanted)), ...(brief.length > 0 ? { direction: brief } : {}), ...(volume.length > 0 ? { volume } : {}), ...(guides.length > 0 ? { guides } : {}) }, volume)
     }).finally(() => { setWorking(undefined); setStream('') })
+  }
+  /** One derivation to be looked at — a first plan, or the one shown adjusted: started, followed, and shown when it is back. */
+  const looked_at = async (params: RpcParams<'ai.deriveChapters'>, where: string): Promise<void> => {
+    const started = await controller.api.call('ai.deriveChapters', params)
+    mine.current.add(started.jobId)
+    void controller.refreshJobs()
+    let info: JobInfo
+    try {
+      info = await controller.follow(started.jobId, (text) => { if (here.current) setStream(text) }).done
+    } finally {
+      void controller.refreshJobs()
+    }
+    const output = info.result?.output as { chapters?: DerivedChapter[]; rationale?: string; pictures?: PicturesRead; referenced?: ReferencesLooked; resumed?: boolean } | undefined
+    if (!here.current) {
+      // Nobody was looking when it came back: it waits with the book, and its author hears where — unless the form
+      // is open again by now, and shows it.
+      if ((output?.chapters?.length ?? 0) > 0 && (openForms.get(root) ?? 0) === 0) controller.toast('success', t(`推演好了（${output!.chapters!.length} 章）：再打开“推演”就能看到，加不加进大纲由你定。`, `The derivation is back (${output!.chapters!.length} chapters): open Derive again to read it and decide what goes into the outline.`), 12_000)
+      await controller.refreshProject().catch(() => {})
+      return
+    }
+    setRead(output?.pictures)
+    setLooked(output?.referenced)
+    if (output?.chapters !== undefined) setLocal({ at: new Date().toISOString(), job: started.jobId, chapters: output.chapters, ...(output.rationale !== undefined ? { rationale: output.rationale } : {}), ...(where.length > 0 ? { volume: where } : {}) })
+    kept.reload()
+    if (params.revise !== undefined) {
+      controller.toast('success', output?.resumed === true
+        ? t('照意见调整好了：是上次推演的那位策划接着改的。', 'Adjusted by what you said: the planner that derived it went on from where it was.')
+        : t('照意见调整好了：上次的那位策划已经不在了，另起了一位，把上一版和你的意见交给了它。', 'Adjusted by what you said: the planner that derived it was gone, so another was handed the plan and your word.'))
+      setFeedback('')
+    }
+  }
+  const revise = (): void => {
+    const said = feedback.trim()
+    if (said.length === 0 || derived === undefined) return
+    setWorking('chapters')
+    setStream('')
+    setSkipped(new Set())
+    setApplied(undefined)
+    void controller.guard(async () => { await looked_at({ root, revise: said }, derived.volume ?? '') }).finally(() => { setWorking(undefined); setStream('') })
   }
   const ask = (): void => {
     setWorking('whatif')
@@ -693,7 +764,7 @@ export function Derive({ onApplied, only, preset }: {
           op: 'add-chapter',
           title: chapter.title,
           status: 'outlined',
-          ...(derived.volume.length > 0 ? { volume: derived.volume } : {}),
+          ...(derived.volume !== undefined && derived.volume.length > 0 ? { volume: derived.volume } : {}),
           ...(chapter.synopsis !== undefined ? { synopsis: chapter.synopsis } : {}),
           ...(chapter.purpose !== undefined ? { purpose: chapter.purpose } : {}),
           ...(chapter.pov !== undefined ? { pov: chapter.pov } : {}),
@@ -709,7 +780,7 @@ export function Derive({ onApplied, only, preset }: {
       const results = await apply(ops)
       const first = results.find(result => result.op === 'add-chapter')?.id
       if (first !== undefined) controller.focusChapter(first)
-      setDerived(undefined)
+      await settle()
       controller.toast('success', t('已加入大纲', 'Added to the outline'))
       onApplied()
     })
@@ -754,7 +825,15 @@ export function Derive({ onApplied, only, preset }: {
           {!direct ? <Button variant="outline" icon="layers" disabled={working !== undefined} onClick={() => { setComparing(true) }} title={t('让几个模型各推演一版，并排着看，采纳一版——采纳之前什么都不进大纲', 'Have several models each plan these chapters, read the plans side by side and take one — nothing enters the outline before that')}>{t('对比…', 'Compare…')}</Button> : null}
           <Button variant="primary" icon="sparkles" busy={working === 'chapters'} disabled={working !== undefined} onClick={() => { derive() }}>{t('推演', 'Derive')}</Button>
         </div>
-        {comparing ? <DeriveTrialDialog<{ label: string; provider: string; model: string; chapters?: DerivedChapter[]; rationale?: string; seconds: number; error?: string }> count={Math.max(1, Math.min(12, wanted))} direction={direction} volume={volume} guides={guides} onClose={() => { setComparing(false) }} onTake={(plan) => { setSkipped(new Set()); setApplied(undefined); setDerived({ chapters: plan.chapters ?? [], ...(plan.rationale !== undefined ? { rationale: `${plan.label}：${plan.rationale}` } : {}), volume }) }} /> : null}
+        {comparing ? <DeriveTrialDialog<{ label: string; provider: string; model: string; chapters?: DerivedChapter[]; rationale?: string; seconds: number; error?: string }> count={Math.max(1, Math.min(12, wanted))} direction={direction} volume={volume} guides={guides} onClose={() => { setComparing(false) }} onTake={(plan) => {
+          setSkipped(new Set())
+          setApplied(undefined)
+          const taken = { chapters: plan.chapters ?? [], ...(plan.rationale !== undefined ? { rationale: `${plan.label}：${plan.rationale}` } : {}), ...(volume.length > 0 ? { volume } : {}) }
+          setLocal({ at: new Date().toISOString(), ...taken })
+          // Kept with the book like a plan derived alone: it is there when this form is opened again, and can be adjusted.
+          if (taken.chapters.length > 0) void controller.api.call('outline.keepDerived', { root, ...taken, ...(direction.trim().length > 0 ? { direction: direction.trim() } : {}) }).then(() => { kept.reload() }, () => {})
+        }} /> : null}
+        {working === 'chapters' && (!direct || derived !== undefined) ? <p className="nv-muted nv-small">{t('可以关掉这里：推演好的会留着，再打开“推演”就在。', 'This can be closed: what is derived is kept, and is here when Derive is opened again.')}</p> : null}
         {working === 'chapters' && stream.length > 0 ? <pre className="nv-stream">{stream.slice(-900)}</pre> : null}
         {applied !== undefined ? (
           <p className="nv-note is-ok">
@@ -765,6 +844,11 @@ export function Derive({ onApplied, only, preset }: {
         ) : null}
         {derived !== undefined ? (
           <div className="nv-derived">
+            <p className="nv-muted nv-small">
+              {t(`推演出的 ${derived.chapters.length} 章，还没加入大纲 · ${new Date(derived.at).toLocaleString()}`, `${derived.chapters.length} chapter(s) derived, not in the outline yet · ${new Date(derived.at).toLocaleString()}`)}
+              {derived.direction !== undefined ? t(` · 方向：${derived.direction}`, ` · direction: ${derived.direction}`) : ''}
+            </p>
+            {(derived.feedback ?? []).length > 0 ? <p className="nv-muted nv-small">{t('已照这些意见调整过：', 'Adjusted by: ')}{derived.feedback!.map((said, at) => `${at + 1}. ${said}`).join(t('；', '; '))}</p> : null}
             {derived.rationale !== undefined ? <p className="nv-note">{derived.rationale}</p> : null}
             {derived.chapters.map((chapter, at) => (
               <article key={at} className={cx('nv-derived-item', skipped.has(at) && 'is-skipped')}>
@@ -784,9 +868,13 @@ export function Derive({ onApplied, only, preset }: {
                 </div>
               </article>
             ))}
+            <Field label={t('修改意见', 'What to change')} hint={t('策划照意见调整这一版——接着它上次推演的那场对话改；没说到的章节和节拍不动。', 'The planner adjusts this plan by it, going on in the conversation it derived it in; chapters and beats you do not speak of stay.')}>
+              <TextArea value={feedback} minRows={2} placeholder={t('例：第三章太赶，拆成两章；让程砚秋晚一章出场', 'e.g. Chapter three is rushed — split it in two; bring Cheng in a chapter later')} onChange={(event) => { setFeedback(event.target.value) }} />
+            </Field>
             <div className="nv-form-actions">
-              <Button variant="ghost" onClick={() => { setDerived(undefined) }}>{t('放弃', 'Discard')}</Button>
-              <Button icon="refresh" disabled={working !== undefined} onClick={() => { derive() }}>{t('重新推演', 'Derive again')}</Button>
+              <Button variant="ghost" disabled={working !== undefined} onClick={() => { void settle() }} title={t('这一版不要了', 'This plan is not wanted')}>{t('放弃', 'Discard')}</Button>
+              <Button icon="refresh" disabled={working !== undefined} onClick={() => { derive() }} title={t('不看这一版，照上面的方向从头另推一版', 'Leave this plan and derive another from the direction above')}>{t('重新推演', 'Derive again')}</Button>
+              <Button icon="wand" busy={working === 'chapters' && feedback.trim().length > 0} disabled={working !== undefined || feedback.trim().length === 0} onClick={revise}>{t('照意见调整', 'Adjust by this')}</Button>
               <Button variant="primary" icon="check" busy={busy} disabled={skipped.size === derived.chapters.length} onClick={accept}>{t(`把选中的 ${derived.chapters.length - skipped.size} 章加入大纲`, `Add ${derived.chapters.length - skipped.size} chapters to the outline`)}</Button>
             </div>
           </div>

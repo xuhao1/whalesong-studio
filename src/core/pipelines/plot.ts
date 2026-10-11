@@ -7,14 +7,14 @@
  *   plan of the text    a chapter that is written → its plan (or its beats alone) as its text has it,
  *   what-if     alternative directions with their consequences, nothing is changed.
  */
-import { MAIN_LINE, type Beat, type ChapterPlan, type CharacterCard, type PictureGuide, type PicturesRead, type PlotLine, type ReferencesLooked, type StyleProfile, type WorldCategory, type WorldEntry } from '../../shared/types'
+import { MAIN_LINE, type Beat, type ChapterPlan, type CharacterCard, type DerivedChapter, type DerivedPlan, type PictureGuide, type PicturesRead, type PlotLine, type ReferencesLooked, type StyleProfile, type WorldCategory, type WorldEntry } from '../../shared/types'
 import { clip, newId, sameName } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { asArray, asList, asRecord, asText } from '../llm'
 import { assign } from '../crew'
 import type { Project } from '../project'
 import { ProjectError } from '../project'
-import { architectSystem, planOfTextTask, deriveBeatsTask, deriveChaptersTask, digestSystem, foundationTask, whatIfTask } from '../prompts'
+import { architectSystem, planOfTextTask, deriveBeatsTask, deriveChaptersTask, digestSystem, foundationTask, reviseChaptersFollowUp, whatIfTask } from '../prompts'
 import { deriveArtDirection } from './illustrate'
 import { guidePictures, picturesRead } from './guides'
 import { L, promptLanguage } from '../render'
@@ -78,19 +78,7 @@ function toBeats(raw: unknown, resolve: (name: string) => string): Beat[] {
   return beats
 }
 
-export interface DerivedChapter {
-  title: string
-  synopsis?: string
-  purpose?: string
-  pov?: string
-  location?: string
-  time?: string
-  characters: string[]
-  beats: Beat[]
-  threads: { title: string; action: string }[]
-  /** The pictures the author gave that this chapter goes by, as the planner said: kept on its plan, where whoever writes it finds them. */
-  guides?: PictureGuide[]
-}
+export type { DerivedChapter }
 
 /** How many chapters the planner is asked for in one go; more than that are derived round by round, each from where the last left off. */
 const DERIVE_ROUND = 10
@@ -105,6 +93,11 @@ export interface DeriveChaptersParams {
   volume?: string
   /** Add the derived chapters to the outline. Default true; a preview (false) is one round, and neither a rewrite nor a new line. */
   apply?: boolean
+  /**
+   * A plan derived before and looked at by the author, with what they want changed in it: the planner hands it back
+   * adjusted — what the author did not speak of stays as it was. Only as a preview (`apply: false`), in one round.
+   */
+  revise?: { chapters: readonly DerivedChapter[]; rationale?: string; feedback: string }
   /** The line of the plot to go on with, when it is not the main one. */
   line?: string
   /** The chapter the new ones follow. Default: the end of the line — or, for a rewrite or a new line, the last chapter that is written. */
@@ -136,6 +129,8 @@ export interface DeriveChaptersResult {
   line?: { id: string; title: string; created: boolean }
   /** What became of the chapters that were there before, when the outline was rewritten. */
   replaced?: { chapters: number; kept?: { id: string; title: string } }
+  /** A plan adjusted (`revise`): the planner that derived it went on from where it was, rather than somebody new being handed it. */
+  resumed?: true
 }
 
 /** Models like to number a chapter inside its title ("第3章：…", "Chapter 3 - …"); the outline numbers chapters itself. */
@@ -155,7 +150,10 @@ export async function deriveChapters(core: NovelCore, runtime: ProjectRuntime, p
   const zh = lang === 'zh'
   const mode = params.mode ?? 'append'
   if (mode !== 'append' && params.apply === false) throw new ProjectError('novel/invalid', 'a rewrite or a new line is made, not previewed — leave `apply` out')
-  const wanted = Math.max(1, Math.min(DERIVE_MOST, Math.round(params.count ?? 5)))
+  const revise = params.revise !== undefined && params.revise.chapters.length > 0 && params.revise.feedback.trim().length > 0 ? params.revise : undefined
+  if (revise !== undefined && params.apply !== false) throw new ProjectError('novel/invalid', 'a plan is adjusted while it is looked at, before it is added — `revise` goes with `apply: false`')
+  // (A plan adjusted is one round, of as many chapters as it had: how many it then has is the author's word to say.)
+  const wanted = revise !== undefined ? Math.min(DERIVE_ROUND, revise.chapters.length) : Math.max(1, Math.min(DERIVE_MOST, Math.round(params.count ?? 5)))
   let line = params.line !== undefined && params.line !== MAIN_LINE ? await project.findLine(params.line) : undefined
   if (params.line !== undefined && params.line !== MAIN_LINE && line === undefined) throw new ProjectError('novel/not-found', `no plot line matches "${params.line}"`)
   const named = params.after !== undefined ? await project.findChapter(params.after, line?.id) : undefined
@@ -226,6 +224,7 @@ export async function deriveChapters(core: NovelCore, runtime: ProjectRuntime, p
   const rationales: string[] = []
   // What the planner read in the book's references, over every round.
   let referenced: ReferencesLooked | undefined
+  let resumed = false
   let previous: string | undefined
   const rounds = Math.ceil(wanted / DERIVE_ROUND)
   for (let round = 0; round < rounds; round++) {
@@ -239,8 +238,13 @@ export async function deriveChapters(core: NovelCore, runtime: ProjectRuntime, p
       ...(params.direction !== undefined ? { brief: params.direction } : {}),
       ...(task.signal !== undefined ? { signal: task.signal } : {}),
     })
-    const { value, referenced: looked } = await assign(core, runtime, task, {
+    const nameOf = (ref: string): string => characters.find(card => card.id === ref)?.name ?? ref
+    const { value, referenced: looked, resumed: wentOn } = await assign(core, runtime, task, {
       role: 'architect',
+      // A plan handed in to be looked at may have a word of the author's to follow: the planner that derived it is
+      // kept for that, and a word that follows is said to it — in the conversation it derived the plan in.
+      ...(params.apply === false ? { keep: derivedKey(project.root) } : {}),
+      ...(revise !== undefined ? { resume: { key: derivedKey(project.root), prompt: reviseChaptersFollowUp(lang, { handedIn: handedIn(revise.chapters, revise.rationale, nameOf), feedback: revise.feedback.trim(), tool: 'submit_chapters' }) } } : {}),
       label: rounds > 1 ? L(lang, `推演后续章节（${round + 1}/${rounds}）`, `Deriving the next chapters (${round + 1}/${rounds})`) : L(lang, '推演后续章节', 'Deriving the next chapters'),
       // The planner reads the line it plans for, and no other.
       line: line?.id ?? MAIN_LINE,
@@ -257,6 +261,7 @@ export async function deriveChapters(core: NovelCore, runtime: ProjectRuntime, p
         volume: line !== undefined ? line.title : volume.title,
         ...(params.direction !== undefined ? { direction: params.direction } : {}),
         ...(situation !== undefined ? { situation } : {}),
+        ...(revise !== undefined ? { revise: { plan: planLines(revise.chapters, ref => characters.find(card => card.id === ref)?.name ?? ref, zh), feedback: revise.feedback.trim() } } : {}),
         ...(inside !== undefined ? { after: `${inside.index}. ${inside.plan.title}` } : {}),
         ...(guided !== undefined ? { pictures: guided.text } : {}),
       }),
@@ -268,6 +273,7 @@ export async function deriveChapters(core: NovelCore, runtime: ProjectRuntime, p
       },
     })
     if (looked !== undefined) referenced = mergeLooked(referenced, looked)
+    if (wentOn === true) resumed = true
     const derived: DerivedChapter[] = []
     for (const raw of asArray(value.chapters)) {
       const item = asRecord(raw)
@@ -303,31 +309,12 @@ export async function deriveChapters(core: NovelCore, runtime: ProjectRuntime, p
     if (rationale !== undefined) rationales.push(rationale)
     if (params.apply === false) break
     for (const chapter of derived) {
-      const threadIds: string[] = []
-      for (const touch of chapter.threads) {
-        const current = await project.outline()
-        const existing = current.threads.find(thread => sameName(thread.title, touch.title))
-        if (existing !== undefined) threadIds.push(existing.id)
-        else if (touch.action === 'plant') threadIds.push((await project.saveThread({ title: touch.title, kind: 'foreshadow', status: 'open' })).id)
-      }
       // After the chapter just added; the first one after where the line was left — on that line, which a new line's first chapter has to be told.
       const where = previous !== undefined ? { after: previous }
         : fork !== undefined && fork.line === line?.id && mode !== 'branch' ? { after: fork.plan.id }
           : line !== undefined ? { line: line.id }
             : { volume: volume.id }
-      const plan = await project.addChapter({
-        title: chapter.title,
-        status: 'outlined',
-        ...(chapter.synopsis !== undefined ? { synopsis: chapter.synopsis } : {}),
-        ...(chapter.purpose !== undefined ? { purpose: chapter.purpose } : {}),
-        ...(chapter.pov !== undefined ? { pov: chapter.pov } : {}),
-        ...(chapter.location !== undefined ? { location: chapter.location } : {}),
-        ...(chapter.time !== undefined ? { time: chapter.time } : {}),
-        ...(chapter.guides !== undefined ? { guides: chapter.guides } : {}),
-        ...(chapter.characters.length > 0 ? { characters: chapter.characters } : {}),
-        ...(chapter.beats.length > 0 ? { beats: chapter.beats } : {}),
-        ...(threadIds.length > 0 ? { threads: threadIds } : {}),
-      }, where)
+      const plan = await addDerivedChapter(project, chapter, where)
       previous = plan.id
       const located = await project.findChapter(plan.id)
       added.push({ id: plan.id, title: plan.title, index: located?.index ?? 0 })
@@ -344,7 +331,86 @@ export async function deriveChapters(core: NovelCore, runtime: ProjectRuntime, p
     ...(replaced !== undefined ? { replaced } : {}),
     ...(guided !== undefined ? { pictures: picturesRead(guided)! } : {}),
     ...(referenced !== undefined ? { referenced } : {}),
+    ...(resumed ? { resumed: true as const } : {}),
   }
+}
+
+/** The key the planner of a book's plan-to-be-looked-at is kept under. */
+const derivedKey = (root: string): string => `derive:${root}`
+
+/** A derived plan as its planner handed it in: the JSON it is shown again when the author has a word to say of it. */
+function handedIn(chapters: readonly DerivedChapter[], rationale: string | undefined, nameOf: (ref: string) => string): string {
+  return JSON.stringify({
+    chapters: chapters.map(chapter => ({
+      title: chapter.title,
+      ...(chapter.synopsis !== undefined ? { synopsis: chapter.synopsis } : {}),
+      ...(chapter.purpose !== undefined ? { purpose: chapter.purpose } : {}),
+      ...(chapter.pov !== undefined ? { pov: nameOf(chapter.pov) } : {}),
+      ...(chapter.location !== undefined ? { location: chapter.location } : {}),
+      ...(chapter.time !== undefined ? { time: chapter.time } : {}),
+      characters: chapter.characters.map(nameOf),
+      beats: chapter.beats.map(beat => ({ summary: beat.summary, ...(beat.conflict !== undefined ? { conflict: beat.conflict } : {}), ...(beat.outcome !== undefined ? { outcome: beat.outcome } : {}) })),
+      threads: chapter.threads,
+    })),
+    ...(rationale !== undefined ? { rationale } : {}),
+  }, null, 1)
+}
+
+/** One derived chapter put into the outline: the threads it plants are opened, the ones it touches are tied to it. */
+async function addDerivedChapter(project: Project, chapter: DerivedChapter, where: NonNullable<Parameters<Project['addChapter']>[1]>): Promise<ChapterPlan> {
+  const threadIds: string[] = []
+  for (const touch of chapter.threads) {
+    const current = await project.outline()
+    const existing = current.threads.find(thread => sameName(thread.title, touch.title))
+    if (existing !== undefined) threadIds.push(existing.id)
+    else if (touch.action === 'plant') threadIds.push((await project.saveThread({ title: touch.title, kind: 'foreshadow', status: 'open' })).id)
+  }
+  return await project.addChapter({
+    title: chapter.title,
+    status: 'outlined',
+    ...(chapter.synopsis !== undefined ? { synopsis: chapter.synopsis } : {}),
+    ...(chapter.purpose !== undefined ? { purpose: chapter.purpose } : {}),
+    ...(chapter.pov !== undefined ? { pov: chapter.pov } : {}),
+    ...(chapter.location !== undefined ? { location: chapter.location } : {}),
+    ...(chapter.time !== undefined ? { time: chapter.time } : {}),
+    ...(chapter.guides !== undefined ? { guides: chapter.guides } : {}),
+    ...(chapter.characters.length > 0 ? { characters: chapter.characters } : {}),
+    ...(chapter.beats.length > 0 ? { beats: chapter.beats } : {}),
+    ...(threadIds.length > 0 ? { threads: threadIds } : {}),
+  }, where)
+}
+
+/** The plan derived for a book and not yet taken or discarded, where there is one. */
+export async function derivedPlan(runtime: ProjectRuntime): Promise<DerivedPlan | undefined> {
+  const plan = await runtime.project.readState<DerivedPlan>('derived.json')
+  return plan !== undefined && Array.isArray(plan.chapters) && plan.chapters.length > 0 ? plan : undefined
+}
+
+/** Keep a plan that came back to be looked at: it takes the place of the one kept before. */
+export async function keepDerivedPlan(runtime: ProjectRuntime, plan: DerivedPlan): Promise<void> {
+  await runtime.project.writeState(['derived.json'], plan)
+}
+
+/** The plan kept was added to the outline, or discarded: nothing waits any more, and its planner is let go. */
+export async function settleDerivedPlan(core: NovelCore, runtime: ProjectRuntime): Promise<boolean> {
+  core.roles?.release?.(derivedKey(runtime.project.root))
+  if (await derivedPlan(runtime) === undefined) return false
+  await runtime.project.removeState('derived.json')
+  return true
+}
+
+/** A derived plan as the planner is shown it again: every chapter with all that was said of it. */
+function planLines(chapters: readonly DerivedChapter[], nameOf: (ref: string) => string, zh: boolean): string {
+  const comma = zh ? '、' : ', '
+  return chapters.map((chapter, at) => [
+    `### ${at + 1}. ${chapter.title}`,
+    ...(chapter.synopsis !== undefined ? [chapter.synopsis] : []),
+    ...(chapter.purpose !== undefined ? [`${zh ? '作用：' : 'Purpose: '}${chapter.purpose}`] : []),
+    ...([chapter.pov !== undefined ? `${zh ? '视角 ' : 'POV '}${nameOf(chapter.pov)}` : undefined, chapter.location, chapter.time].some(Boolean) ? [[chapter.pov !== undefined ? `${zh ? '视角 ' : 'POV '}${nameOf(chapter.pov)}` : undefined, chapter.location, chapter.time].filter(Boolean).join(' · ')] : []),
+    ...(chapter.characters.length > 0 ? [`${zh ? '出场：' : 'Cast: '}${chapter.characters.map(nameOf).join(comma)}`] : []),
+    ...(chapter.beats.length > 0 ? [`${zh ? '节拍：' : 'Beats:'}\n${chapter.beats.map((beat, index) => `${index + 1}. ${beat.summary}${beat.conflict !== undefined ? `${zh ? '｜阻碍：' : ' | conflict: '}${beat.conflict}` : ''}${beat.outcome !== undefined ? `${zh ? '｜结果：' : ' | outcome: '}${beat.outcome}` : ''}`).join('\n')}`] : []),
+    ...(chapter.threads.length > 0 ? [`${zh ? '线索：' : 'Threads: '}${chapter.threads.map(touch => `${touch.action} ${touch.title}`).join(zh ? '；' : '; ')}`] : []),
+  ].join('\n')).join('\n\n')
 }
 
 /** What was read in the references over several runs of one piece of work, as one account. */

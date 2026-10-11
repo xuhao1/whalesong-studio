@@ -60,14 +60,27 @@ export class FakeLlm implements LlmBackend {
 export class FakeRoles implements RoleRunner {
   readonly tasks: RoleTask[] = []
   enabled = false
+  /** Agents kept after their run (`RoleTask.keep`), by key; and the keys let go since. */
+  readonly kept = new Set<string>()
+  readonly released: string[] = []
   script: (task: RoleTask, call: (tool: string, args?: Record<string, unknown>) => Promise<string>) => Promise<string | void> = async () => {}
 
   can(): boolean {
     return this.enabled
   }
 
+  has(key: string): boolean {
+    return this.kept.has(key)
+  }
+
+  release(key: string): void {
+    if (this.kept.delete(key)) this.released.push(key)
+  }
+
   async run(task: RoleTask): Promise<RoleOutcome> {
     this.tasks.push(task)
+    // Going on with an agent that was kept: there has to be one.
+    if (task.resume !== undefined && !this.kept.delete(task.resume)) throw new Error('KEPT_GONE')
     let steps = 0
     const call = async (name: string, args: Record<string, unknown> = {}): Promise<string> => {
       steps += 1
@@ -85,7 +98,8 @@ export class FakeRoles implements RoleRunner {
       }
     }
     const text = await this.script(task, call)
-    return { text: text ?? '', stop: 'completed', steps }
+    if (task.keep !== undefined) this.kept.add(task.keep)
+    return { text: text ?? '', stop: 'completed', steps, ...(task.resume !== undefined ? { resumed: true as const } : {}) }
   }
 }
 

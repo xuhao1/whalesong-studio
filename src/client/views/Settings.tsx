@@ -1011,9 +1011,9 @@ function VisionRow({ route, models, providers, working, unset, onChange, t }: {
   return (
     <div className="nv-role-block" data-section="vision">
       <div className="nv-form-grid">
-        <Field label={t('看图的模型', 'Looks at pictures')} hint={t('给推演、写作配了参考图，而干活的模型自己看不了图时，由它先把图看成文字。', 'Where pictures are given to a plan or a chapter and the model doing the work takes none, this one says in words what they show.')}>
+        <Field label={t('看图的模型', 'Looks at pictures')} hint={t('给推演、写作配了参考图，而干活的模型自己看不了图时，由它先把图看成文字。不配的话，那样的模型只拿到每张图的标题。', 'Where pictures are given to a plan or a chapter and the model doing the work takes none, this one says in words what they show. With none set up, such a model is told only what each picture is called.')}>
           <Select value={route?.provider ?? ''} options={[
-            { value: '', label: unset ?? t('不配：图只给自己能看图的模型', 'None: pictures go only to models that take them') },
+            { value: '', label: unset ?? t('不配：看不了图的模型只拿到图的标题', 'None: a model that takes no pictures is told what they are called') },
             ...providers.map(provider => ({ value: provider.id, label: provider.name })),
           ]} onChange={(provider) => {
             if (provider === '') onChange(undefined)

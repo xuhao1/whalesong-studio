@@ -25,7 +25,7 @@ import type {
   UsageSummary,
   TtsProviderKind, TtsSettings, SpeechTrial, PictureGuide, ReferenceAspect, ReferenceShelf,
   AmbiencePreset, AudioCue, AudioLine, AudioScript, BookLock, ChapterMemory, ChapterPlan, ChapterReview, IssueSeverity, CharacterCard, CharacterRole, ComicBoard, ComicPanel, LifeMark, SheetsAsk,
-  ChapterVideo, CrewRole, GateKind, GateState, IllustrationInfo, ImageTrial, JobInfo, SettledSuggestion, ModelRoute, NovelSettings, PictureEdit, PictureWhole, PlaySession, PlayTurn, ProjectManifest, ProjectRef, ProjectState, RecommendedState,
+  ChapterVideo, CrewRole, DerivedChapter, DerivedPlan, GateKind, GateState, IllustrationInfo, ImageTrial, JobInfo, SettledSuggestion, ModelRoute, NovelSettings, PictureEdit, PictureWhole, PlaySession, PlayTurn, ProjectManifest, ProjectRef, ProjectState, RecommendedState,
   Proposal, SearchHit, SearchSource, SoundKind, StageStatus, StageStep, StoryboardDensity, StyleProfile, TextRole, TextStep, VersionInfo, WalkOn, WorkMode, WorldEntry, HistoryKind, HistoryVersion, GlossaryTerm, ChapterTranslation,
 } from './types'
 
@@ -563,7 +563,13 @@ export interface NovelRpc {
    * `append` adds, `replace` puts the new chapters in its place (written chapters are kept as a line put aside),
    * `branch` leaves it and opens a line of its own (`title`, `choice`). More than ten chapters are derived in rounds.
    */
-  'ai.deriveChapters': { params: { root: string; count?: number; direction?: string; volume?: string; apply?: boolean; line?: string; after?: string; mode?: 'append' | 'replace' | 'branch'; title?: string; choice?: string; /** Pictures to steer the chapters by. */ guides?: PictureGuide[] }; result: JobStarted }
+  /**
+   * Derive the chapters to come. With `apply: false` they are looked at first: what comes back is kept with the book
+   * (`outline.derived`) until it is added or discarded — the form that asked can be closed meanwhile. `revise`: what
+   * the author says of the plan that is kept; the planner adjusts that plan by it (going on in the conversation it
+   * derived it in, where that is still there) and the adjusted plan takes its place.
+   */
+  'ai.deriveChapters': { params: { root: string; count?: number; direction?: string; volume?: string; apply?: boolean; line?: string; after?: string; mode?: 'append' | 'replace' | 'branch'; title?: string; choice?: string; /** Pictures to steer the chapters by. */ guides?: PictureGuide[]; revise?: string }; result: JobStarted }
   /**
    * Bring a picture into the book to steer a plot or a chapter by: kept among its files (`assets/guides/`), where the
    * same picture brought twice is one file. `data` is the picture's bytes in base64.
@@ -590,6 +596,12 @@ export interface NovelRpc {
   'references.settings': { params: { root: string; beforeWriting?: boolean; beforeDeriving?: boolean; beforeReviewing?: boolean; guide?: string }; result: ReferenceShelf }
   /** Have the planner look in the references for one chapter and keep its notes on the chapter's plan. */
   'references.consult': { params: { root: string; chapter: string; direction?: string }; result: JobStarted }
+  /** The plan derived to be looked at and neither added nor discarded yet, where the book has one. */
+  'outline.derived': { params: { root: string }; result: { plan?: DerivedPlan } }
+  /** That plan was added to the outline, or is not wanted: nothing waits any more. */
+  'outline.settleDerived': { params: { root: string }; result: { settled: boolean } }
+  /** A plan the author took out of several derived to be compared: it is the one that waits now, like one derived alone. */
+  'outline.keepDerived': { params: { root: string; chapters: DerivedChapter[]; rationale?: string; volume?: string; direction?: string }; result: { plan: DerivedPlan } }
   'ai.deriveBeats': { params: { root: string; chapter: string; direction?: string }; result: JobStarted }
   /**
    * The plan of a chapter that is written, set right by its text: `plan` (the default) its synopsis, place, time,

@@ -392,27 +392,63 @@ export function architectSystem(lang: PromptLanguage): string {
  * @param base.situation - what is particular about where these chapters go: a new line and what it parts from, a rewrite and what it gives up, a line that has to arrive somewhere.
  * @param base.after - the chapter the new ones follow, when that is not the end of the line.
  */
-export function deriveChaptersTask(base: Base & { context: string; count: number; direction?: string; volume: string; situation?: string; after?: string; /** The pictures the author gave to steer these chapters, as the task tells of them. */ pictures?: string }): string {
+export function deriveChaptersTask(base: Base & { context: string; count: number; direction?: string; volume: string; situation?: string; after?: string; /** The pictures the author gave to steer these chapters, as the task tells of them. */ pictures?: string; /** The plan derived before, and what the author wants changed in it: it is adjusted, not derived anew. */ revise?: { plan: string; feedback: string } }): string {
   const pictures = base.pictures !== undefined && base.pictures.trim().length > 0 ? `\n\n${base.pictures.trim()}` : ''
   // Said with what is to be handed in, where the shape of a chapter is: which pictures it goes by.
   const pictured = pictures.length > 0 ? L(base.lang, '\n每章另加一项 "pictures"：这一章照着写的参考图的序号（如 [1]）；没有照哪张图的章写 []。', '\nGive every chapter one more field, "pictures": the numbers of the pictures it goes by (e.g. [1]); [] for a chapter that goes by none.') : ''
   const direction = base.direction !== undefined && base.direction.trim().length > 0 ? L(base.lang, `\n\n## 作者给的方向\n\n${base.direction.trim()}`, `\n\n## Direction from the author\n\n${base.direction.trim()}`) : ''
   const situation = base.situation !== undefined && base.situation.trim().length > 0 ? L(base.lang, `\n\n## 这次推演的处境\n\n${base.situation.trim()}`, `\n\n## Where these chapters go\n\n${base.situation.trim()}`) : ''
   const after = base.after !== undefined ? L(base.lang, `这些章节接在「${base.after}」之后、大纲里它后面那一章之前：要接得上前面，也要引得出后面。\n`, `These chapters go after "${base.after}" and before the chapter the outline has after it: they have to follow from the one and lead into the other.\n`) : ''
-  return `${base.context}${situation}${direction}${pictures}\n\n---\n${after}${L(base.lang, `请为《${bare(base.title)}》的「${base.volume}」推演接下来的 ${base.count} 章章纲。要求：
+  const zhAsk = base.revise !== undefined
+    ? `下面是你上一版为《${bare(base.title)}》的「${base.volume}」推演的章纲。作者看过了，提了修改意见：请照意见把这一版调整好，整版交回。
+
+## 上一版
+
+${base.revise.plan}
+
+## 作者的修改意见
+
+${base.revise.feedback}
+
+要求：
+- 意见说到的地方照意见改；因此要跟着变的前因后果、人物出场和线索一并理顺；
+- 意见没有说到的章节和节拍照上一版原样交回，不重写、不换说法；
+- 章数照意见来——要拆、要并、要加、要删的照办；没提就不变；
+- "rationale" 里说清这一次照意见改了哪几处。
+`
+    : `请为《${bare(base.title)}》的「${base.volume}」推演接下来的 ${base.count} 章章纲。要求：
 - 从已写内容和人物此刻的处境、欲望出发推演，情节由人物的选择推动，每章都有不可逆的变化；
 - 兼顾群像：让久未出场但仍有未了之事的人物合理回归，不要让所有戏都压在主角身上；
 - 主动推进或回收"尚未回收的线索"，新埋的伏笔要有后续打算；
 - 相邻章节之间有因果链，节奏有张有弛。
+`
+  const enAsk = base.revise !== undefined
+    ? `Below is the plan you derived before for "${bare(base.title)}", volume "${base.volume}". The author has read it and says what should change: adjust this plan by it and hand the whole of it back.
 
-只输出 JSON：
-{"chapters": [{"title": "章名", "synopsis": "120-200字梗概", "purpose": "这一章对全书的作用", "pov": "视角人物姓名", "location": "主要地点", "time": "故事时间", "characters": ["出场人物姓名"], "beats": [{"summary": "节拍：谁想要什么、遇到什么阻碍、如何转折", "conflict": "冲突", "outcome": "结果"}], "threads": [{"title": "线索名", "action": "plant|advance|payoff"}]}], "rationale": "这样安排的理由与可选的其他走向（给作者看）"}
-每章 3-6 个节拍。`, `Derive the outlines of the next ${base.count} chapters of "${bare(base.title)}", volume "${base.volume}". Requirements:
+## The plan as it was
+
+${base.revise.plan}
+
+## What the author wants changed
+
+${base.revise.feedback}
+
+Requirements:
+- Change what the author speaks of as they say; set right what has to change with it — causes and consequences, who appears, the threads.
+- A chapter or a beat the author does not speak of goes back as it was: not rewritten, not reworded.
+- As many chapters as the author's word makes it — split, joined, added or dropped as asked; the same number where nothing is said.
+- Say in "rationale" what was changed this time.
+`
+    : `Derive the outlines of the next ${base.count} chapters of "${bare(base.title)}", volume "${base.volume}". Requirements:
 - Start from what is written and from what each character wants right now; choices drive the plot and every chapter changes something for good.
 - Serve the ensemble: bring back characters with unfinished business who have been off the page; do not hang every scene on the lead.
 - Advance or pay off open threads; any new setup needs a plan.
 - Adjacent chapters are causally linked; vary the pace.
-
+`
+  return `${base.context}${situation}${direction}${pictures}\n\n---\n${after}${L(base.lang, `${zhAsk}
+只输出 JSON：
+{"chapters": [{"title": "章名", "synopsis": "120-200字梗概", "purpose": "这一章对全书的作用", "pov": "视角人物姓名", "location": "主要地点", "time": "故事时间", "characters": ["出场人物姓名"], "beats": [{"summary": "节拍：谁想要什么、遇到什么阻碍、如何转折", "conflict": "冲突", "outcome": "结果"}], "threads": [{"title": "线索名", "action": "plant|advance|payoff"}]}], "rationale": "这样安排的理由与可选的其他走向（给作者看）"}
+每章 3-6 个节拍。`, `${enAsk}
 Output JSON only:
 {"chapters": [{"title": "chapter title", "synopsis": "80-130 word synopsis", "purpose": "what the chapter does for the book", "pov": "viewpoint character name", "location": "main location", "time": "story time", "characters": ["names of characters appearing"], "beats": [{"summary": "beat: who wants what, what blocks them, how it turns", "conflict": "conflict", "outcome": "outcome"}], "threads": [{"title": "thread name", "action": "plant|advance|payoff"}]}], "rationale": "why this arrangement, and alternatives worth considering (for the author)"}
 3-6 beats per chapter.`)}${pictured}`
@@ -426,6 +462,46 @@ export function deriveBeatsTask(base: Base & { context: string; direction?: stri
 
 Output JSON only:
 {"synopsis": "refined chapter synopsis (100-160 words)", "beats": [{"summary": "what happens", "characters": ["names"], "location": "place", "conflict": "conflict", "outcome": "outcome", "emotion": "emotion"}], "characters": ["every character appearing"], "pov": "viewpoint character name"}`)}`
+}
+
+/**
+ * What the planner that derived a plan is told when the author has read it and wants it changed: said into the
+ * conversation it derived the plan in — what it handed in, what the author says of it, what to hand in now.
+ */
+export function reviseChaptersFollowUp(lang: PromptLanguage, input: { handedIn: string; feedback: string; tool: string }): string {
+  return L(lang, `作者看了你上次交的这一版章纲，提了修改意见。
+
+## 你上次交的
+
+\`\`\`json
+${input.handedIn}
+\`\`\`
+
+## 作者的修改意见
+
+${input.feedback}
+
+请照意见把这一版调整好，整版再交一次（${input.tool}，和上次一样的格式）：
+- 意见说到的地方照意见改；因此要跟着变的前因后果、人物出场和线索一并理顺；
+- 意见没有说到的章节和节拍照原样交回，不重写、不换说法；
+- 章数照意见来——要拆、要并、要加、要删的照办；没提就不变；
+- "rationale" 里说清这一次照意见改了哪几处。`, `The author has read the plan you handed in and says what should change.
+
+## What you handed in
+
+\`\`\`json
+${input.handedIn}
+\`\`\`
+
+## What the author wants changed
+
+${input.feedback}
+
+Adjust this plan by it and hand the whole of it in again (${input.tool}, in the same shape as before):
+- Change what the author speaks of as they say; set right what has to change with it — causes and consequences, who appears, the threads.
+- A chapter or a beat the author does not speak of goes back as it was: not rewritten, not reworded.
+- As many chapters as the author's word makes it — split, joined, added or dropped as asked; the same number where nothing is said.
+- Say in "rationale" what was changed this time.`)
 }
 
 /**

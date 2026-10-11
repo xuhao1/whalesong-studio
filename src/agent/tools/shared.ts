@@ -258,6 +258,7 @@ export function listOf(value: unknown): string[] | undefined {
  */
 export function picturesSaid(read: PicturesRead | undefined, who: string): string | undefined {
   if (read === undefined) return undefined
+  if (read.by === 'titles') return `Pictures: ${read.count} given — the ${who}'s model takes no pictures and no model is set up to look at them, so it went by what each picture is called only (its record in the book, what the author said of it)${read.untitled !== undefined && read.untitled > 0 ? `; ${read.untitled} of them had neither, and counted for nothing` : ''}: tell the author, and that a model to look at pictures can be set (novel_settings: vision) to have them read.`
   return `Pictures: ${read.count} given — ${read.by === 'vision' ? `put into words for the ${who} by ${read.model ?? 'the picture model'}` : read.unsure === true ? `sent to the ${who}'s model, which does not say whether it takes pictures: tell the author, and that a model to look at pictures can be set (novel_settings: vision)` : `looked at by the ${who}'s own model`}.`
 }
 

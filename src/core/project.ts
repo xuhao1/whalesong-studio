@@ -25,7 +25,7 @@ import { basename, join } from 'node:path'
 import {
   analysisSteps, type AnalyzeStep,
   belongsTo, castOrder, chapterBudgetOf, MAIN_LINE,
-  type ActivityEntry, type BookShows, type ChapterTranslation, type GlossaryTerm, type HistoryKind, type HistoryVersion, type Timestamp, type CharacterLook, type CharacterMoment, type LifeMark, type ShowCount,
+  type ActivityEntry, type BookShows, type DerivedPlan, type ChapterTranslation, type GlossaryTerm, type HistoryKind, type HistoryVersion, type Timestamp, type CharacterLook, type CharacterMoment, type LifeMark, type ShowCount,
   type AudioScript, type CastPresence, type ChapterInfo, type ChapterMemory, type ChapterPlan, type ChapterReview, type ChapterStatus, type CharacterCard,
   type ComicBoard, type ComicPanel, type IllustrationInfo, type Outline, type PlaySession, type PlotLine, type PlotLineInfo, type PlotLineOrigin, type PlotThread, type ProjectManifest, type ProjectState, type ProjectStats, type Proposal, type RemovedChapter,
   type SettledSuggestion, type StyleProfile, type Suggestion, type ThreadTouch, type VersionInfo, type VoiceCast, type Volume, type WorldEntry,
@@ -3488,6 +3488,7 @@ export class Project {
     const references = await this.referenceCount()
     // Pictures drawn to be compared that nobody has taken yet: said with the book, so that wherever the author is they can be found again.
     const waiting = (await this.illustrations()).filter(item => item.trial?.hang !== undefined).length
+    const derived = await this.readState<DerivedPlan>('derived.json')
     return {
       root: this.root,
       revision: this.revision,
@@ -3514,6 +3515,7 @@ export class Project {
       ...(Object.keys(translations).length > 0 ? { translations } : {}),
       ...(references > 0 ? { references } : {}),
       ...(waiting > 0 ? { waiting } : {}),
+      ...(derived !== undefined && Array.isArray(derived.chapters) && derived.chapters.length > 0 ? { derived: { chapters: derived.chapters.length, at: derived.at } } : {}),
     }
   }
 

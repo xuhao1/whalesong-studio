@@ -33,7 +33,7 @@ import { ProjectError } from './project'
 import { READ_KINDS, readBook, searchBook, SEARCH_SOURCES } from './reading'
 import { looksFirst, referenceBrief, referenceTools } from './references'
 import { L, promptLanguage } from './render'
-import { argInt, argList, argText, type RoleInherit, type RoleOutcome, type RoleParameter, type RoleSkill, type RoleStep, type RoleTool } from './roles'
+import { argInt, argList, argText, type RoleInherit, type RoleOutcome, type RoleParameter, type RoleSkill, type RoleStep, type RoleTask, type RoleTool } from './roles'
 import { errorMessage, isAbort } from './util/async'
 
 // ───────────────────────────── who they are ─────────────────────────────
@@ -374,6 +374,17 @@ export interface Assignment<T> {
    */
   plain?: boolean
   /**
+   * Keep the agent that did the work, under this key, for what the author may say of what it handed in (`resume`).
+   * Only an agent is kept: work done in a plain call has nobody to keep.
+   */
+  keep?: string
+  /**
+   * Go on with the agent kept under `key` where it is still there: `prompt` is said to it — what it handed in, what
+   * the author says of it, what to hand in now — in place of the assignment's own prompt, which is the whole task for
+   * somebody who starts from nothing (and is what is used where the agent is gone, or the role works by plain calls).
+   */
+  resume?: { key: string; prompt: string }
+  /**
    * The line of the plot the work is on, by id (`main` for the main one): what the role reads with its own tools is
    * that line's, and nothing of the book's other lines. Left out only for work that is about the whole book.
    */
@@ -391,6 +402,8 @@ export interface Assigned<T> {
   run: CrewRun
   /** Where the work was to look in the book's references first (`Assignment.lookUp`): what it read there. */
   referenced?: ReferencesLooked
+  /** The work was done by the agent kept from an earlier piece of work, going on from all it had read (`Assignment.resume`). */
+  resumed?: true
 }
 
 /** What an agent is told about handing in, after a task that was written for a plain reply. */
@@ -476,7 +489,10 @@ async function assignNow<T>(core: NovelCore, runtime: ProjectRuntime, task: Task
       return L(lang, '收到，已通过检查。', 'Received and checked.')
     },
   }
-  let sentBack = 0
+  // An agent kept from the work this goes on from: it is spoken to again, where it is still there.
+  const going = work.resume !== undefined && roles.has?.(work.resume.key) === true ? work.resume : undefined
+  // (It looked in the references when it began: it is not sent back to them for a word about its own work.)
+  let sentBack = going !== undefined ? 2 : 0
   const skills = await crewSkills(work.role)
   const references = await referencesFor(core, runtime, work.role, lang, task.signal, first ? { first: true, onLook: (what) => { calls += 1; looks.push(what) } } : {})
   // Said in the task as well as among the rules: it is the first thing to do.
@@ -484,13 +500,14 @@ async function assignNow<T>(core: NovelCore, runtime: ProjectRuntime, task: Task
     ? L(lang, '\n\n---\n动手之前：这本书有参考文献（清单和作者的要求在你的规则里）。先用 reference_read / reference_search 查这件活用得上的，再做。', '\n\n---\nBefore you begin: this book has references (the list, and what the author asks of them, is among your rules). Look in them with reference_read / reference_search for what this work can use, then do it.')
     : ''
   let outcome: RoleOutcome
-  try {
-    outcome = await roles.run({
+  const asked = (resume: Assignment<T>['resume']): RoleTask => ({
       role: work.role,
       label: `${name} · ${work.label}`,
       persona: CREW[work.role].persona[lang === 'zh' ? 0 : 1],
       rules: `${crewRules(work.role, lang, manifest)}${references.brief}`,
-      prompt: `${work.prompt}${lookFirst}${handIn(lang, work.tool, declared)}`,
+      prompt: resume !== undefined ? `${resume.prompt}${handIn(lang, work.tool, declared)}` : `${work.prompt}${lookFirst}${handIn(lang, work.tool, declared)}`,
+      ...(resume !== undefined ? { resume: resume.key } : {}),
+      ...(work.keep !== undefined ? { keep: work.keep } : {}),
       ...(work.images !== undefined && work.images.length > 0 ? { images: work.images } : {}),
       tools: [...bookTools(runtime, task.signal, work.line), ...references.tools, ...(work.tools ?? []), deliver],
       ...(skills.length > 0 ? { skills } : {}),
@@ -504,7 +521,17 @@ async function assignNow<T>(core: NovelCore, runtime: ProjectRuntime, task: Task
       onStart: (ids) => { task.job?.crew({ role: work.role, label: work.label, by: 'agent', running: true, session: ids.session, ...(ids.parent !== undefined ? { parent: ids.parent } : {}) }) },
       onStep: (step) => { task.job?.write(stepLine(step)) },
       unfinished: () => delivered === undefined ? L(lang, `这件活还没有交回：请调用 ${work.tool} 提交结果。`, `The work has not been handed in yet: call ${work.tool} with the result.`) : undefined,
-    })
+  })
+  try {
+    try {
+      outcome = await roles.run(asked(going))
+    } catch (error) {
+      // The agent that was to go on is gone, or broke: somebody new takes the whole task.
+      if (going === undefined || isAbort(error) || task.signal?.aborted === true || delivered !== undefined) throw error
+      core.log(`the ${work.role} agent kept for "${work.label}" could not go on`, error)
+      sentBack = 0
+      outcome = await roles.run(asked(undefined))
+    }
   } catch (error) {
     if (isAbort(error) || task.signal?.aborted === true) throw error
     // What was handed in before the run broke is still the result.
@@ -518,7 +545,7 @@ async function assignNow<T>(core: NovelCore, runtime: ProjectRuntime, task: Task
   task.signal?.throwIfAborted()
   const ran = { role: work.role, label: work.label, by: 'agent' as const, steps: outcome.steps, ...(outcome.session !== undefined ? { session: outcome.session } : {}), ...(outcome.parent !== undefined ? { parent: outcome.parent } : {}) }
   const handed = delivered as { value: T } | undefined
-  if (handed !== undefined) return { value: handed.value, run: record(ran), ...looked() }
+  if (handed !== undefined) return { value: handed.value, run: record(ran), ...looked(), ...(outcome.resumed === true ? { resumed: true as const } : {}) }
   // A model that answered in its reply what it was to hand in through the tool has still done the work.
   if (outcome.text.length > 0) {
     try {

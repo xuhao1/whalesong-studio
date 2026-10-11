@@ -88,6 +88,8 @@ export interface StudioSnapshot {
   settingsFocus?: Capability | 'crew' | 'recommended'
   /** A long job nobody was waiting on just finished, for one notice on screen. */
   jobEnded?: { job: JobInfo; nonce: number }
+  /** The form that derives chapters was asked for from elsewhere — a finished derivation in the list of jobs: the Outline opens it. */
+  deriveAsked?: number
   project?: ProjectState
   jobs: JobInfo[]
   /** The kinds of request that have work waiting, or a service pushing back, right now. */
@@ -705,6 +707,12 @@ export class StudioController {
 
   setWorkspace(path: string): void {
     this.set({ workspace: path })
+  }
+
+  /** To the Outline, with the form that derives chapters open: where what was derived and not yet taken is shown. */
+  showDerived(): void {
+    this.navigated = true
+    this.set({ view: 'outline', deriveAsked: Date.now() })
   }
 
   setView(view: StudioView, chapterId?: string): void {

@@ -76,9 +76,25 @@ describe('pictures given to steer by', () => {
       const two = await project.writeAsset('guides/two.jpg', Uint8Array.from([...PIXEL, 1]))
       const guides = [{ path: one, note: '结尾停在这里' }, { path: two }]
 
-      // Nobody to look for it: said before any work is done.
-      await expect(writeChapter(bed.core, bed.runtime, { chapter: chapter.id, digest: false, guides }, { origin: 'user' })).rejects.toThrow(/看不了图/)
-      expect(bed.llm.requests).toHaveLength(0)
+      // Nobody to look for it: the work is not refused — it goes by what each picture is called, and is told that is all it has.
+      bed.llm.responder = () => '正文。'
+      const named = await writeChapter(bed.core, bed.runtime, { chapter: chapter.id, digest: false, guides }, { origin: 'user' })
+      expect(bed.llm.requests).toHaveLength(1)
+      const blind = bed.llm.requests[0]!
+      expect(blind.route.model).toBe('pen')
+      expect(blind.images).toBeUndefined()
+      for (const part of ['## 作者给的参考图', '你看不到图本身，也没有人替你看：下面只有每张图的标题', '图里别的细节不要编', '1. 作者说：结尾停在这里', '2. （作者没有另外说明）']) expect(blind.prompt, part).toContain(part)
+      // One of the two has a word of the author's; the other has nothing to be called by, and that is counted.
+      expect(named.pictures).toEqual({ count: 2, by: 'titles', untitled: 1 })
+      // A picture of the book has its record for a title.
+      const card = await project.saveCharacter({ name: '宝钗', role: 'supporting' })
+      const portrait = await project.writeAsset('images/bao.png', Uint8Array.from([...PIXEL, 5]))
+      await project.addIllustration({ id: 'img-bao', path: portrait, prompt: '扑蝶', kind: 'portrait', target: card.id, createdAt: new Date().toISOString(), moment: { title: '扑蝶', scene: 's1', chapter: chapter.id } })
+      const titled = (await guidePictures(bed.core, bed.runtime, WRITER, [portrait], 'chapter', { origin: 'user' }))!
+      expect(titled).toMatchObject({ by: 'titles', images: [] })
+      expect(titled.untitled).toBeUndefined()
+      expect(titled.text).toContain('1. 〔立绘 · 宝钗 · 扑蝶〕')
+      bed.llm.requests.length = 0
 
       await bed.core.settings.update({ vision: LOOKER })
       bed.llm.responder = request => (request.route.model === 'looker' ? `看到了：${request.images?.[0]?.name}` : '正文。')
@@ -161,8 +177,11 @@ describe('pictures given to steer by', () => {
       expect(seen.text).not.toContain('以设定和前文为准')
       expect(bed.llm.requests).toHaveLength(0)
 
-      // One that does not, and nobody to look for it: said.
-      await expect(guidePictures(bed.core, bed.runtime, { provider: 'fake', model: 'blind' }, [{ path: portrait }], 'look', { origin: 'agent' })).rejects.toThrow(/看不了图/)
+      // One that does not, and nobody to look for it: it has what the book records of the picture, and no more.
+      const titles = (await guidePictures(bed.core, bed.runtime, { provider: 'fake', model: 'blind' }, [{ path: portrait }, { path: brought }], 'look', { origin: 'agent' }))!
+      expect(titles).toMatchObject({ by: 'titles', images: [], untitled: 1 })
+      expect(titles.text).toContain(`1. ${portrait} 〔立绘 · 黛玉〕`)
+      expect(bed.llm.requests).toHaveLength(0)
       // With a model set up to look: it is told in words, and sent no picture.
       await bed.core.settings.update({ vision: LOOKER })
       bed.llm.responder = request => `看到了：${request.images?.[0]?.name}`

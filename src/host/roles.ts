@@ -171,14 +171,17 @@ export function createRoleRunner(ctx: Context, options: {
         isConcurrencySafe: () => false,
         async execute(args, exec) {
           const given = args as Record<string, unknown>
+          // The task of the moment: an agent kept and gone on with (`resume`) works for another task than it began with,
+          // whose tool of the same name is the one that answers now.
+          const now = run.task.tools.find(candidate => candidate.name === tool.name) ?? tool
           try {
-            const text = await tool.run(given)
-            task.onStep?.({ tool: tool.name, args: given, ok: true, result: text })
+            const text = await now.run(given)
+            run.task.onStep?.({ tool: tool.name, args: given, ok: true, result: text })
             if (tool.final === true) exec.concludeTurn()
             return { text } as never
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error)
-            task.onStep?.({ tool: tool.name, args: given, ok: false, result: message })
+            run.task.onStep?.({ tool: tool.name, args: given, ok: false, result: message })
             // Thrown plainly: the loop hands the message to the model as the tool's failure.
             throw new Error(message)
           }
@@ -209,12 +212,14 @@ export function createRoleRunner(ctx: Context, options: {
       const decision = await next()
       let due = -1
       for (let index = 0; index < BUDGET_MARKS.length; index++) if (run.steps >= Math.ceil(run.limit * BUDGET_MARKS[index]!)) due = index
+      // (A run gone on with counts its steps from nothing again: so do the marks.)
+      if (due < noted) noted = due
       if (due <= noted || run.steps > run.limit) return decision
       noted = due
       const left = run.limit - run.steps
       let own: string | undefined
       try {
-        own = task.budgetNote?.({ used: run.steps, limit: run.limit, left })
+        own = run.task.budgetNote?.({ used: run.steps, limit: run.limit, left })
       } catch (error) {
         options.log(`could not ask the ${task.role} task what it still owes`, error)
       }
@@ -229,7 +234,7 @@ export function createRoleRunner(ctx: Context, options: {
       if (own.has(exec.name)) return undefined
       try {
         const text = textOf(result.content)
-        task.onStep?.({ tool: exec.name, args: (exec.arguments ?? {}) as Record<string, unknown>, ok: !result.isError, result: text.length > 0 ? text : result.isError ? 'failed' : 'done' })
+        run.task.onStep?.({ tool: exec.name, args: (exec.arguments ?? {}) as Record<string, unknown>, ok: !result.isError, result: text.length > 0 ? text : result.isError ? 'failed' : 'done' })
       } catch (error) {
         options.log(`could not report a step of the ${task.role} agent`, error)
       }
@@ -243,12 +248,12 @@ export function createRoleRunner(ctx: Context, options: {
         const chunk = frame.chunk
         if (chunk.type === 'text-delta') {
           run.said += chunk.text
-          task.onText?.(chunk.text)
+          run.task.onText?.(chunk.text)
         } else if (chunk.type === 'reasoning-delta') {
           run.job?.think(chunk.text)
         } else if (chunk.type === 'usage') {
           options.onUsage?.({
-            route: task.route,
+            route: run.task.route,
             inputTokens: chunk.usage.inputTokens + (chunk.usage.cacheReadTokens ?? 0) + (chunk.usage.cacheWriteTokens ?? 0),
             outputTokens: chunk.usage.outputTokens,
             ...(chunk.usage.cacheReadTokens !== undefined && chunk.usage.cacheReadTokens > 0 ? { cachedTokens: chunk.usage.cacheReadTokens } : {}),
@@ -300,6 +305,55 @@ export function createRoleRunner(ctx: Context, options: {
       return outcome
     } finally {
       signal?.removeEventListener('abort', stop)
+    }
+  }
+
+  // ── agents kept after their run, for a word that may follow ──
+  /** How long an agent is kept with nothing said to it. */
+  const KEEP_MS = 30 * 60_000
+  interface Kept { run: Staged; child: Agent; parent?: string; dispose: () => Promise<void>; timer?: ReturnType<typeof setTimeout> }
+  const kept = new Map<string, Kept>()
+  const letGo = (entry: Kept): void => {
+    if (entry.timer !== undefined) clearTimeout(entry.timer)
+    void entry.dispose().catch((error: unknown) => { options.log(`could not dispose the ${entry.run.task.role} agent that was kept`, error) })
+  }
+  const keep = (key: string, entry: Kept): void => {
+    const before = kept.get(key)
+    if (before !== undefined && before !== entry) letGo(before)
+    entry.timer = setTimeout(() => { if (kept.get(key) === entry) { kept.delete(key); letGo(entry) } }, KEEP_MS)
+    ;(entry.timer as { unref?: () => void }).unref?.()
+    kept.set(key, entry)
+  }
+  /** Still there to be spoken to: the Harness has it on its list, and nothing stopped it. */
+  const there = (entry: Kept): boolean => ctx.get('agents')?.get(entry.child.id) === entry.child
+  ctx.effect(() => () => {
+    for (const entry of kept.values()) letGo(entry)
+    kept.clear()
+  }, 'novel: roles kept')
+  /** Go on with an agent that was kept: the task's prompt is the next message of its conversation. */
+  const more = async (entry: Kept, task: RoleTask): Promise<RoleOutcome> => {
+    const { run, child } = entry
+    if (entry.timer !== undefined) clearTimeout(entry.timer)
+    run.task = task
+    run.job = currentJob()
+    run.limit = Math.max(4, task.maxSteps ?? DEFAULT_STEPS)
+    run.steps = 0
+    run.said = ''
+    run.last = ''
+    run.cancelled = false
+    run.pictures = await imageBlocks(ctx, task.images)
+    try {
+      task.onStart?.({ session: child.id, ...(entry.parent !== undefined ? { parent: entry.parent } : {}) })
+    } catch {
+      // an observer must not stop the run
+    }
+    let stop: RoleOutcome['stop'] = 'error'
+    try {
+      stop = await drive(child, run, task.signal)
+      return { text: run.last.trim(), stop, steps: run.steps, session: child.id, ...(entry.parent !== undefined ? { parent: entry.parent } : {}), resumed: true }
+    } finally {
+      if (task.keep !== undefined && stop === 'completed' && !run.cancelled && there(entry)) keep(task.keep, entry)
+      else letGo(entry)
     }
   }
 
@@ -415,12 +469,15 @@ export function createRoleRunner(ctx: Context, options: {
         compose(scope, child, run)
       },
     })
+    let stop: RoleOutcome['stop'] = 'error'
     try {
-      const stop = await drive(handle.agent, run, task.signal)
+      stop = await drive(handle.agent, run, task.signal)
       return { text: run.last.trim(), stop, steps: run.steps, session: sessionId }
     } finally {
-      // Stops the loop, takes the agent off the registry and unwinds everything registered above.
-      await handle.dispose().catch((error: unknown) => { options.log(`could not dispose the ${task.role} agent`, error) })
+      // Kept for a word that may follow, where the task asks for it and the run ended well; else gone:
+      // stops the loop, takes the agent off the registry and unwinds everything registered above.
+      if (task.keep !== undefined && stop === 'completed' && !run.cancelled) keep(task.keep, { run, child: handle.agent, dispose: async () => { run.cancelled = true; await handle.dispose() } })
+      else await handle.dispose().catch((error: unknown) => { options.log(`could not dispose the ${task.role} agent`, error) })
     }
   }
 
@@ -429,8 +486,25 @@ export function createRoleRunner(ctx: Context, options: {
     provider,
     isRole: sessionId => live.has(sessionId),
 
+    has: key => { const entry = kept.get(key); return entry !== undefined && there(entry) },
+    release: (key) => {
+      const entry = kept.get(key)
+      if (entry === undefined) return
+      kept.delete(key)
+      letGo(entry)
+    },
+
     async run(task: RoleTask): Promise<RoleOutcome> {
       const { route } = task
+      if (task.resume !== undefined) {
+        const entry = kept.get(task.resume)
+        if (entry !== undefined) kept.delete(task.resume)
+        if (entry === undefined || !there(entry)) {
+          if (entry !== undefined) letGo(entry)
+          throw new LlmCallError(`the "${task.role}" agent that was to go on is not kept any more`, 'KEPT_GONE')
+        }
+        return await more(entry, task)
+      }
       if (!can(route)) throw new LlmCallError(`the "${task.role}" role works as an agent and needs a model from Settings → Models to run on; ${route.model} is an endpoint the Studio calls directly`, 'NO_AGENT_LOOP')
       const run: Staged = { task, job: currentJob(), limit: Math.max(4, task.maxSteps ?? DEFAULT_STEPS), steps: 0, said: '', last: '', cancelled: false, pictures: await imageBlocks(ctx, task.images) }
       const parent = task.parent as Agent | undefined
@@ -462,12 +536,16 @@ export function createRoleRunner(ctx: Context, options: {
         task.signal?.removeEventListener('abort', abort)
         throw error
       }
+      let stop: RoleOutcome['stop'] = 'error'
       try {
         const result = await started.result
-        return { text: run.last.trim(), stop: result.stopReason as RoleOutcome['stop'], steps: run.steps, session: started.id, parent: parent.id }
+        stop = result.stopReason as RoleOutcome['stop']
+        return { text: run.last.trim(), stop, steps: run.steps, session: started.id, parent: parent.id }
       } finally {
         task.signal?.removeEventListener('abort', abort)
-        await started.dispose().catch((error: unknown) => { options.log(`could not dispose the ${task.role} agent`, error) })
+        // Kept for a word that may follow, where the task asks for it and the run ended well; else gone.
+        if (task.keep !== undefined && stop === 'completed' && !run.cancelled && run.child !== undefined) keep(task.keep, { run, child: run.child, parent: parent.id, dispose: async () => { await started.dispose() } })
+        else await started.dispose().catch((error: unknown) => { options.log(`could not dispose the ${task.role} agent`, error) })
       }
     },
   }

@@ -121,6 +121,18 @@ export interface RoleTask {
   parent?: unknown
   /** Working directory the run is recorded under, where it has no parent to take it from. */
   cwd?: string
+  /**
+   * Keep the agent when its run has ended well, under this key: a word may follow (`resume`) — what the author says
+   * of what it handed in — and it then goes on from all it has read, in the same conversation. Kept until it is
+   * gone on with, let go (`RoleRunner.release`), or half an hour has passed.
+   */
+  keep?: string
+  /**
+   * Go on with the agent kept under this key rather than start one: `prompt` is said to it as the next message of
+   * its conversation, and this task's tools stand in the place of the ones it had (by name). Where no agent is kept
+   * under the key any more, the run fails with `KEPT_GONE` — ask `RoleRunner.has` first.
+   */
+  resume?: string
   /** Told as the run begins: the session it is recorded in, and the conversation it is listed under when it has one — enough to open it while it works. */
   onStart?: (run: { session: string; parent?: string }) => void
 }
@@ -135,6 +147,8 @@ export interface RoleOutcome {
   session?: string
   /** The conversation the run is listed under, when it has one. */
   parent?: string
+  /** The run went on with an agent kept from an earlier one (`RoleTask.resume`). */
+  resumed?: true
 }
 
 export interface RoleRunner {
@@ -144,6 +158,10 @@ export interface RoleRunner {
    */
   can(route: ModelRoute): boolean
   run(task: RoleTask): Promise<RoleOutcome>
+  /** Whether an agent is kept under a key (`RoleTask.keep`) and can be gone on with. */
+  has?(key: string): boolean
+  /** Let an agent kept under a key go: nothing will follow. */
+  release?(key: string): void
 }
 
 /** Names the two halves of the plugin agree on: what a role's own prompt takes the place of. */

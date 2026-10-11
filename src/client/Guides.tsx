@@ -163,6 +163,13 @@ export function figuresKeptWord(figures: FiguresKept | undefined, t: (zh: string
 /** How the pictures given to a piece of work were read, in a line for whoever gave them. */
 export function picturesReadWord(read: PicturesRead | undefined, t: (zh: string, en: string) => string): string | undefined {
   if (read === undefined) return undefined
+  if (read.by === 'titles') {
+    const none = read.untitled ?? 0
+    return t(
+      `${read.count} 张参考图：模型看不了图，只把图的标题交给了它${none > 0 ? `（其中 ${none} 张没有标题、也没写说明，等于没带）` : ''}——要它照图里的内容来，到设置里配一个“看图的模型”`,
+      `${read.count} picture(s): the model takes none, and was told only what each is called${none > 0 ? ` (${none} of them have no record and nothing said of them — as good as not given)` : ''} — to have it go by what they show, set up a model to look at pictures in the settings`,
+    )
+  }
   if (read.by === 'vision') return t(`${read.count} 张参考图由 ${read.model ?? '看图的模型'} 看成了文字`, `${read.count} picture(s) put into words by ${read.model ?? 'the picture model'}`)
   return read.unsure === true
     ? t(`${read.count} 张参考图发给了模型；它没有声明能不能看图——看不出效果的话，到设置里配一个“看图的模型”`, `${read.count} picture(s) sent to the model, which does not say whether it sees them — if it shows no sign of it, set up a model to look at pictures in the settings`)

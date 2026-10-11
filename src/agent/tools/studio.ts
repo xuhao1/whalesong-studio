@@ -303,6 +303,7 @@ export function studioTools(service: NovelService) {
         const images = looked.images.length > 0 ? await service.pictureBlocks(looked.images) : []
         const notes = [
           ...(looked.by === 'vision' ? [`You were told of them by ${looked.model ?? 'the model set up to look at pictures'}: your own model takes no pictures.`] : []),
+          ...(looked.by === 'titles' ? ['Nobody looked: your model takes no pictures and no model is set up to look at them (novel_settings: vision). What you have above is only what the book records of each — say so to the author rather than describing a picture you have not seen.'] : []),
           ...(wanted.length > shown.length ? [`${wanted.length - shown.length} more were asked for — six a call: ${wanted.slice(6).join(', ')}`] : []),
           ...(missing.length > 0 ? [`Not pictures of this book: ${missing.join(', ')}`] : []),
         ]

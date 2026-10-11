@@ -245,7 +245,7 @@ const JOB_TITLES: [RegExp, Label][] = [
   [/^look /, ['写它的样子', 'Writing what it looks like']],
   [/^import line$/, ['导入另一条故事线', 'Importing a line of the plot']],
   [/^review$/, ['审校', 'Reviewing']],
-  [/^derive chapters$/, ['推演后续章节', 'Deriving chapters']],
+  [/^derive chapters( preview)?$/, ['推演后续章节', 'Deriving chapters']],
   [/^derive beats$/, ['推演情节点', 'Deriving beats']],
   [/^beats of text$/, ['照正文更新节拍', 'Reading the beats off the text']],
   [/^plan of text$/, ['照正文更新章纲', 'Setting the plan by the text']],

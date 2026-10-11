@@ -644,12 +644,55 @@ export interface PictureGuide {
 /** How the pictures given to a piece of work were read: how many, and by whom. */
 export interface PicturesRead {
   count: number
-  /** `self`: the model that did the work looked at them. `vision`: the model set up to look at pictures said what they show. */
-  by: 'self' | 'vision'
+  /**
+   * `self`: the model that did the work looked at them. `vision`: the model set up to look at pictures said what
+   * they show. `titles`: nobody looked — the working model takes no pictures and none is set up to look for it — and
+   * the work went by what each picture is called: what the book records of it, and what the author said of it.
+   */
+  by: 'self' | 'vision' | 'titles'
   /** The model that looked, where it was not the working one. */
   model?: string
+  /** `titles`: how many of the pictures had neither a record nor a word of the author's — nothing to go by at all. */
+  untitled?: number
   /** The working model does not say whether it takes pictures; it was sent them all the same. */
   unsure?: true
+}
+
+/** A chapter as the planner derived it, before it is one of the outline's. */
+export interface DerivedChapter {
+  title: string
+  synopsis?: string
+  purpose?: string
+  pov?: string
+  location?: string
+  time?: string
+  characters: string[]
+  beats: Beat[]
+  threads: { title: string; action: string }[]
+  /** The pictures the author gave that this chapter goes by, as the planner said: kept on its plan, where whoever writes it finds them. */
+  guides?: PictureGuide[]
+}
+
+/**
+ * Chapters derived to be looked at before they are added — neither added nor discarded yet. Kept with the book
+ * (`.novel/derived.json`), so that the form that asked for them can be closed, and the Studio with it, without the
+ * work being lost: opened again, it shows them. One at a time: another derivation takes its place.
+ */
+export interface DerivedPlan {
+  /** When it came back. */
+  at: string
+  /** The job that derived it. */
+  job?: string
+  chapters: DerivedChapter[]
+  rationale?: string
+  /** The volume the chapters are for. */
+  volume?: string
+  /** What the author asked for. */
+  direction?: string
+  /** What the author then said of it, in turn: each time, the planner adjusted the plan by it. */
+  feedback?: string[]
+  pictures?: PicturesRead
+  referenced?: ReferencesLooked
 }
 
 export interface Volume {
@@ -2537,6 +2580,8 @@ export interface ProjectState {
   references?: number
   /** How many pictures drawn to be compared wait to be taken (or let go); absent where none does, and on a Host from before they were counted. */
   waiting?: number
+  /** Chapters derived to be looked at wait to be added or discarded (`outline.derived`): how many, and since when. */
+  derived?: { chapters: number; at: string }
   suggestions: Suggestion[]
   proposals: Proposal[]
   presence: CastPresence[]

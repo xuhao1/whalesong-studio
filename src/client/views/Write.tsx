@@ -166,7 +166,7 @@ export function WriteView() {
         onLine={(next) => { switchLine(next) }}
         footer={(
           <>
-            <button type="button" className={cx('nv-add-row', allWritten && 'is-suggested')} onClick={() => { setDeriving(true) }} title={t('让策划排出接下来的章纲', 'Have the planner plot the chapters to come')}><Icon name="sparkles" size={12} /> {t('推演后续章节', 'Derive the next chapters')}</button>
+            <button type="button" className={cx('nv-add-row', allWritten && 'is-suggested')} onClick={() => { setDeriving(true) }} title={t('让策划排出接下来的章纲', 'Have the planner plot the chapters to come')}><Icon name="sparkles" size={12} /> {project.derived !== undefined ? t(`推演后续章节 · ${project.derived.chapters} 章待看`, `Derive the next chapters · ${project.derived.chapters} to read`) : t('推演后续章节', 'Derive the next chapters')}</button>
             <button type="button" className={cx('nv-add-row', unwritten > 1 && 'is-suggested')} onClick={() => { setBatching(['beats', 'write', 'digest']) }} title={t('一章接一章地写下去', 'Write on, chapter after chapter')}><Icon name="layers" size={12} /> {unwritten > 0 ? t(`批量写作 · ${unwritten} 章`, `Write in batch · ${unwritten}`) : t('批量：节拍、收录、审校', 'Batch: beats, memory, review')}</button>
             {batch?.status === 'running' ? <div className="nv-write-batch"><BatchMatrix job={batch} compact /></div> : null}
           </>

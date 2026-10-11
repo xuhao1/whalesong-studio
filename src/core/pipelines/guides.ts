@@ -39,23 +39,30 @@ export interface GuidedPictures {
   images: LlmImage[]
   /** The section of the task that tells of them. */
   text: string
-  /** Who looked at them: the model that does the work (`self`), or the one set up to look at pictures (`vision`). */
-  by: 'self' | 'vision'
+  /**
+   * Who looked at them: the model that does the work (`self`), or the one set up to look at pictures (`vision`) —
+   * or nobody (`titles`): the working model takes none, no model is set up to look, and the work goes by what each
+   * picture is called.
+   */
+  by: 'self' | 'vision' | 'titles'
   /** The model that looked, where it was not the working one. */
   model?: string
+  /** `titles`: how many of them have nothing to be called by — no record in the book, no word of the author's. */
+  untitled?: number
   /** What the author should know of how they were read: the working model does not say whether it sees, and was sent them all the same. */
   unsure?: true
 }
 
 /** How the pictures were read, in the few words a result carries. */
 export function picturesRead(guided: GuidedPictures | undefined): PicturesRead | undefined {
-  return guided !== undefined ? { count: guided.guides.length, by: guided.by, ...(guided.model !== undefined ? { model: guided.model } : {}), ...(guided.unsure === true ? { unsure: true as const } : {}) } : undefined
+  return guided !== undefined ? { count: guided.guides.length, by: guided.by, ...(guided.model !== undefined ? { model: guided.model } : {}), ...(guided.unsure === true ? { unsure: true as const } : {}), ...(guided.untitled !== undefined && guided.untitled > 0 ? { untitled: guided.untitled } : {}) } : undefined
 }
 
 /** The same, said beside the name of the step that goes by them — so that whoever watches the work reads who is looking. */
 export function picturesLabel(guided: GuidedPictures | undefined, lang: PromptLanguage): string {
   if (guided === undefined) return ''
   const count = guided.guides.length
+  if (guided.by === 'titles') return L(lang, `（${count} 张参考图：模型看不了图，只照图的标题）`, ` (${count} picture(s): the model takes none, and goes by what they are called)`)
   if (guided.by === 'vision') return L(lang, `（${count} 张参考图，由 ${guided.model ?? '看图的模型'} 看成了文字）`, ` (${count} picture(s), put into words by ${guided.model ?? 'the picture model'})`)
   return guided.unsure === true
     ? L(lang, `（${count} 张参考图发给了模型——它没有声明能不能看图）`, ` (${count} picture(s) sent to the model — it does not say whether it sees them)`)
@@ -113,8 +120,9 @@ Write who is in it, where, doing what, how they hold themselves and look, what t
  *   them; `whatif` — ways the story could go are weighed with them; `revise` — text there is is rewritten by them (a
  *   chapter, or the scope of a revision of the book); `passage` — one passage is.
  * @returns undefined where there are none.
- * @throws ProjectError `novel/invalid` for a picture that is not there; `novel/no-vision` where the working model
- *   takes no pictures and no model is set up to look at them for it.
+ * @throws ProjectError `novel/invalid` for a picture that is not there; `novel/no-vision` where the model set up to
+ *   look at pictures takes none itself, or fails at one. (A working model that takes none, with nobody set up to look,
+ *   is no error: the work goes by what the pictures are called — `by: 'titles'`.)
  */
 export async function guidePictures(core: NovelCore, runtime: ProjectRuntime, route: ModelRoute | undefined, given: readonly unknown[] | undefined, purpose: GuidePurpose, task: TaskContext): Promise<GuidedPictures | undefined> {
   const guides = cleanGuides(given)
@@ -162,9 +170,18 @@ export async function guidePictures(core: NovelCore, runtime: ProjectRuntime, ro
 
   const vision = working === true ? undefined : await core.visionRoute(runtime)
   if (working === true || vision === undefined) {
-    // A model that says it takes no pictures, and nobody set up to look for it: said before any work is done.
+    // A model that says it takes no pictures, and nobody set up to look for it: the work is not refused for that —
+    // it goes by what each picture is called (what the book records of it, what the author said of it), and is told
+    // that this is all it has. (A model set up to look is the author's way to have them read; it is not required.)
     if (working === false) {
-      throw new ProjectError('novel/no-vision', L(lang, `这件活用的模型（${route?.model ?? '?'}）看不了图，也还没有配“看图的模型”。到“设置 → 模型”里选一个能看图的模型来看图，或者给这个角色换一个能看图的模型。`, `the model doing this work (${route?.model ?? '?'}) takes no pictures, and no model is set up to look at pictures for it. Choose one that sees under Settings → Models ("Looks at pictures"), or give this role a model that does.`))
+      const untitled = pictures.filter(item => item.known === undefined && item.guide.note === undefined).length
+      return {
+        guides,
+        images: [],
+        text: `${title}\n\n${head}\n${L(lang, '你看不到图本身，也没有人替你看：下面只有每张图的标题——它在书里是什么、作者对它说了什么。照这些来，图里别的细节不要编。', 'You are not shown the pictures, and nobody looked at them for you: below is only what each is called — what the book records of it, what the author said of it. Go by that, and make up nothing of what they might show.')}\n\n${pictures.map((_item, at) => line(at)).join('\n')}`,
+        by: 'titles',
+        ...(untitled > 0 ? { untitled } : {}),
+      }
     }
     return {
       guides,
