@@ -621,14 +621,21 @@ export function studioTools(service: NovelService) {
             if (image === undefined) throw new ProjectError('novel/not-found', `no picture has the id or the path "${wanted}" — action=list_images lists them`)
             // …and what it is drawn again by, where the author wants a word of the prompt itself changed.
             const whole = await pictureWhole(env.core, runtime, image.id).catch(() => undefined)
-            const again = whole !== undefined ? [
+            const again = whole === undefined ? '' : whole.changed === true ? [
+              '',
+              // Made of a picture and a sentence: drawn again by its prompt, that picture is changed again.
+              `Its prompt is the sentence that changed ${whole.references[0]?.path ?? 'the picture it came from'} — to have that picture changed again by other words, hand the sentence back rewritten (novel_illustrate redraw=<this picture> whole=<the sentence>); the picture it came from goes with it and nothing else, and the result takes this picture's place:`,
+              '<<<',
+              whole.prompt,
+              '>>>',
+            ].join('\n') : [
               '',
               'The whole prompt — to draw it again with a word of it changed, hand this back rewritten (novel_illustrate redraw=<this picture> whole=<the prompt> avoid=[what is kept out, all of it]); it goes as it stands, with the reference pictures above:',
               '<<<',
               whole.prompt,
               '>>>',
               `Kept out: ${whole.avoid.length > 0 ? whole.avoid.join(', ') : 'nothing'}`,
-            ].join('\n') : ''
+            ].join('\n')
             return { text: `${pictureRecord(image)}${again}`, data: toJson(image), record: false }
           }
           case 'history':

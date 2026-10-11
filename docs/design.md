@@ -318,7 +318,7 @@ The order matters and the Studio says so: direction and avoid list, then appeara
 
 **The pictures of a chapter show where it is written.** Beside the editor is a list of the pictures the chapter's text carries, in order, each with the sentence before it: moved up or down, moved to after the paragraph the caret is in, taken out (the picture stays in the gallery), or another put in from the gallery. It edits the line in the text — saved and versioned like any edit. Portraits placed by rule are not in the text and are not listed here.
 
-**Rewriting a prompt means the whole prompt.** What the author rewrites to draw a picture again is everything the model was sent — with its art direction and its line on the reference pictures — and, apart from it, everything that was kept out; what goes again is those two fields, to the letter.
+**Rewriting a prompt means the whole prompt.** What the author rewrites to draw a picture again is everything the model was sent — with its art direction and its line on the reference pictures — and, apart from it, everything that was kept out; what goes again is those two fields, to the letter. A picture that is another one changed was sent something else: that picture, and one sentence. Its prompt is that sentence, and rewriting it changes the same picture again — the picture it came from goes with the sentence as it now reads, and nothing made of words is put in its place. (Drawn from words it can be, where the author says so, and is where the picture it came from is gone.)
 
 ### References: other books to go by, read by the crew
 

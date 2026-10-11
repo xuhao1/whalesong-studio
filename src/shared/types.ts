@@ -2167,6 +2167,12 @@ export interface PictureWhole {
   avoid: string[]
   /** The pictures that go along again, in the order the prompt numbers them. */
   references: { path: string; label: string }[]
+  /**
+   * The picture is another one changed: it was made of that picture (`references[0]`) and one sentence — `prompt` —
+   * that said what to change in it. Drawn again by this, it is that picture changed again, by the sentence as it
+   * reads now; nothing else goes, and nothing is kept out. Absent where the picture it came from is gone.
+   */
+  changed?: boolean
 }
 
 /** What went to an image service for one picture, word for word. */

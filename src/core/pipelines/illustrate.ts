@@ -1613,20 +1613,43 @@ async function wordsOf(core: NovelCore, runtime: ProjectRuntime, record: Illustr
 }
 
 /**
+ * The picture a picture was made of, where it is another picture changed — it went to the image model with one
+ * sentence — and that picture is still in the book: the picture, and the sentence. What such a one is drawn again
+ * from: the same picture, changed by the sentence as it reads now.
+ */
+async function changedFrom(project: ProjectRuntime['project'], record: IllustrationInfo): Promise<{ source: IllustrationInfo; sentence: string } | undefined> {
+  if (record.parts?.base === undefined) return undefined
+  const from = record.parts.references?.[0]
+  if (from === undefined || !(await project.has(from.path))) return undefined
+  const sentence = tidy(record.parts.pieces?.find(part => part.of === 'change')?.text ?? record.parts.subject)
+  if (sentence.length === 0) return undefined
+  // (A picture with no record of its own is known by what was kept of it beside this one.)
+  const source = (await project.pictures()).find(item => item.path === from.path) ?? { ...record, id: from.path, path: from.path }
+  return { source, sentence }
+}
+
+/**
  * Everything a picture was drawn from, for its author to rewrite and draw it again by ({@link redrawPicture} with
  * `prompt`): the prompt whole, as the image model got it — the picture, the art direction, what it says of the
  * pictures that went along — and, apart from it, what was kept out and those pictures.
  *
  * Of a picture drawn from a brief that is the prompt on its record — as the director wrote it out, where it did.
- * Of one that is another picture changed (it was sent that picture and a sentence), and of a panel of which only the
- * director's words were kept: the brief it would be drawn from in words today, laid out as any picture's is.
+ * Of one that is another picture changed (it was sent that picture and a sentence): that sentence, and the picture
+ * it changed — drawn again, it is that picture changed again (`changed`). Where that picture is gone, where
+ * `fromWords` asks for it, and of a panel of which only the director's words were kept: the brief it would be drawn
+ * from in words today, laid out as any picture's is.
  */
-export async function pictureWhole(core: NovelCore, runtime: ProjectRuntime, picture: string): Promise<PictureWhole & { /** As a record keeps them: the pictures, with what each is (a sheet goes as its front view). */ held: Held[] }> {
+export async function pictureWhole(core: NovelCore, runtime: ProjectRuntime, picture: string, options: { /** Of a picture that is another one changed: the words that stand in for it, not the sentence that changed the other. */ fromWords?: boolean } = {}): Promise<PictureWhole & { /** As a record keeps them: the pictures, with what each is (a sheet goes as its front view). */ held: Held[] }> {
   const { project } = runtime
   const record = (await project.pictures()).find(item => item.id === picture || item.path === picture)
   if (record === undefined) throw new ProjectError('novel/not-found', `no picture on record matches "${picture}"`)
   const lang = promptLanguage((await project.manifest()).language)
   const plang = promptLangOf(await core.imageOf(runtime), lang)
+  const again = options.fromWords === true ? undefined : await changedFrom(project, record)
+  if (again !== undefined) {
+    const from: Held = { path: again.source.path, label: L(lang, PICTURE_TO_CHANGE.zh, PICTURE_TO_CHANGE.en) }
+    return { prompt: again.sentence, avoid: [], references: [{ path: from.path, label: from.label }], held: [from], changed: true }
+  }
   const was = await wordsOf(core, runtime, record, lang)
   if (record.parts !== undefined && record.parts.base === undefined) {
     // The pictures the prompt speaks of: those that went.
@@ -1688,7 +1711,7 @@ async function withReferences(runtime: ProjectRuntime, record: IllustrationInfo,
   return { prompt, held, pointers }
 }
 
-export async function redrawPicture(core: NovelCore, runtime: ProjectRuntime, params: { picture: string; subject?: string; change?: string; /** The whole prompt, rewritten: sent as it stands, with the pictures the one before went with. */ prompt?: string; /** With `prompt`: the pictures that go along instead of those the one before went with — some left out, others of the book added — in the order the prompt is to number them. */ references?: { path: string; label?: string }[]; /** With `prompt`: what is kept out — all of it. Left out: what the picture kept out before. */ avoid?: string[]; /** Draw it as it is, once with each of these services, to compare them: nothing is replaced. */ trials?: ImageTrial[] }, task: TaskContext): Promise<RedrawResult> {
+export async function redrawPicture(core: NovelCore, runtime: ProjectRuntime, params: { picture: string; subject?: string; change?: string; /** The whole prompt, rewritten: sent as it stands, with the pictures the one before went with. Of a picture that is another one changed ({@link PictureWhole.changed}): the sentence that changed it, rewritten — the picture it came from is changed again by it, and nothing else goes. */ prompt?: string; /** With `prompt`: the pictures that go along instead of those the one before went with — some left out, others of the book added — in the order the prompt is to number them. */ references?: { path: string; label?: string }[]; /** With `prompt`: what is kept out — all of it. Left out: what the picture kept out before. */ avoid?: string[]; /** Of a picture that is another one changed: draw it from words — the brief that stands in for it — and not from the picture it came from. */ fromWords?: boolean; /** Draw it as it is, once with each of these services, to compare them: nothing is replaced. */ trials?: ImageTrial[] }, task: TaskContext): Promise<RedrawResult> {
   const { project } = runtime
   await requireImages(core, runtime)
   // Any picture of the book: one on record, or a panel drawn before panels were kept on record.
@@ -1697,14 +1720,21 @@ export async function redrawPicture(core: NovelCore, runtime: ProjectRuntime, pa
   const lang = promptLanguage((await project.manifest()).language)
   const comma = lang === 'zh' ? '，' : ', '
   const subject = params.subject?.trim() ?? ''
-  const change = params.change?.trim() ?? ''
+  const asked = params.change?.trim() ?? ''
   const whole = params.prompt?.trim() ?? ''
   const trying = params.trials !== undefined && params.trials.length > 0
-  if (whole.length > 0 && (subject.length > 0 || change.length > 0)) throw new ProjectError('novel/invalid', '`prompt` is the whole prompt rewritten: it goes without `subject` or `change`')
-  if (subject.length === 0 && change.length === 0 && whole.length === 0 && !trying) throw new ProjectError('novel/invalid', 'say what to draw: the whole prompt rewritten (`prompt`), the picture\'s words rewritten (`subject`), or what to change in it (`change`)')
-  const was = await wordsOf(core, runtime, record, lang)
+  if (whole.length > 0 && (subject.length > 0 || asked.length > 0)) throw new ProjectError('novel/invalid', '`prompt` is the whole prompt rewritten: it goes without `subject` or `change`')
+  if (subject.length === 0 && asked.length === 0 && whole.length === 0 && !trying) throw new ProjectError('novel/invalid', 'say what to draw: the whole prompt rewritten (`prompt`), the picture\'s words rewritten (`subject`), or what to change in it (`change`)')
+  // A picture that is another one changed was made of that picture and a sentence: its prompt rewritten is that
+  // sentence rewritten, and it is drawn again by changing the same picture — not from words, which never made it.
+  // (So is it drawn by other services to compare them: the same picture, the sentence it was.)
+  const again = params.fromWords !== true && subject.length === 0 && asked.length === 0 ? await changedFrom(project, record) : undefined
+  const change = again !== undefined ? (whole.length > 0 ? whole : again.sentence) : asked
+  /** The picture the words are of: this one — or, changed again, the one it came from. */
+  const basis = again?.source ?? record
+  const was = await wordsOf(core, runtime, basis, lang)
   // The whole prompt, as the author has it now: what was kept out is what they say — or what it was.
-  const taken = whole.length > 0 ? await pictureWhole(core, runtime, record.id) : undefined
+  const taken = whole.length > 0 && again === undefined ? await pictureWhole(core, runtime, record.id, { fromWords: true }) : undefined
   // …and the pictures that go along: those it went with — or the ones the author has go with it now. With other
   // pictures the prompt's own word of them no longer holds: the lines that pointed to a picture by number point to
   // its new number (one that is gone is written out again, from the words kept beside the pointer), and the line
@@ -1714,9 +1744,9 @@ export async function redrawPicture(core: NovelCore, runtime: ProjectRuntime, pa
   const wholeNow = repictured?.prompt ?? whole
   // Its own parts with whoever a line only pointed to ("见图1") written out again, from the words kept beside the
   // pointer: what it is drawn from where its pictures cannot go — another service, one that takes none.
-  const pointed = record.parts?.base === undefined ? (record.parts?.pieces ?? []).filter(part => part.byPicture === true && part.words !== undefined) : []
+  const pointed = basis.parts?.base === undefined ? (basis.parts?.pieces ?? []).filter(part => part.byPicture === true && part.words !== undefined) : []
   const restored = pointed.length > 0
-    ? record.parts!.pieces!.map((part): IllustrationPiece => {
+    ? basis.parts!.pieces!.map((part): IllustrationPiece => {
         if (part.byPicture !== true || part.words === undefined) return part
         const { byPicture: _pointer, words, ...rest } = part
         return { ...rest, text: words }
@@ -1742,7 +1772,7 @@ export async function redrawPicture(core: NovelCore, runtime: ProjectRuntime, pa
         ? { subject: told, pieces: restored }
         : asWritten([{ of: 'composed', text: was.subject, label: '' }])
   // Changed, it keeps the frame of the picture it comes from — as that picture is, which is not always as it was asked for.
-  const frame = change.length > 0 ? await project.readFile(record.path).then(pixelsOf).catch(() => undefined) : undefined
+  const frame = change.length > 0 ? await project.readFile(basis.path).then(pixelsOf).catch(() => undefined) : undefined
   const size = frame !== undefined ? `${frame.width}x${frame.height}` : record.size
   const render = async (trial?: NonNullable<IllustrationInfo['trial']>): Promise<IllustrationInfo> => await renderImage(core, runtime, {
     ...words,
@@ -1760,7 +1790,7 @@ export async function redrawPicture(core: NovelCore, runtime: ProjectRuntime, pa
       : {
           avoid: was.avoid ?? [],
           ...(change.length > 0
-            ? { change, references: [{ path: record.path, label: L(lang, PICTURE_TO_CHANGE.zh, PICTURE_TO_CHANGE.en) }], heldAgainst: was.references ?? [] }
+            ? { change, references: [{ path: basis.path, label: L(lang, PICTURE_TO_CHANGE.zh, PICTURE_TO_CHANGE.en) }], heldAgainst: was.references ?? [] }
             : { references: was.references ?? [] }),
         }),
   }, task)

@@ -1823,15 +1823,45 @@ describe('the pictures kept of somebody, and taking one away', () => {
     expect(images.calls.at(-1)!.references).toHaveLength(0)
     expect(images.calls.at(-1)!.prompt).not.toContain('参考图')
     expect(images.calls.at(-1)!.prompt).toContain('人物「沈砚」：lean woman, black hair')
-    // Of a picture that is another one changed — it was sent that picture and a sentence — the whole prompt is the
-    // brief it is drawn from in words: the picture, the art direction of the book as it is, the sheet it is held against.
+    // Of a picture that is another one changed — it was sent that picture and a sentence — the whole prompt is that
+    // sentence, and the picture goes with it: nothing else made it.
     const changed = await redrawPicture(bed.core, bed.runtime, { picture: portrait.id, change: '背景换成雪夜' }, task)
-    const told = await pictureWhole(bed.core, bed.runtime, changed.id)
+    const made = await pictureWhole(bed.core, bed.runtime, changed.id)
+    expect(made).toMatchObject({ prompt: '背景换成雪夜', avoid: [], references: [{ path: portrait.path, label: '要改的原图' }], changed: true })
+    expect(made.brief).toBeUndefined()
+    // The sentence rewritten: the picture it came from is changed again — by those words and nothing else, whatever is
+    // said of what to keep out or of other pictures — and what comes of it stands where the changed one stood.
+    const rechanged = await redrawPicture(bed.core, bed.runtime, { picture: changed.id, prompt: '背景换成雨夜，窗上有水痕', avoid: ['伞'], references: [{ path: sheet }] }, task)
+    expect(images.calls.at(-1)!.prompt).toBe('背景换成雨夜，窗上有水痕\n\nSquare 1:1 composition.')
+    expect(images.calls.at(-1)!.change).toBe(true)
+    expect(images.calls.at(-1)!.references).toHaveLength(1)
+    expect(rechanged).toMatchObject({ kind: 'portrait', target: card.id, replaced: ['沈砚'], prompt: '背景换成雨夜，窗上有水痕' })
+    expect(rechanged.parts).toMatchObject({ subject: '背景换成雨夜，窗上有水痕', pieces: [{ of: 'change', text: '背景换成雨夜，窗上有水痕' }], references: [{ path: portrait.path, label: '要改的原图' }] })
+    // (What it shows in words: the picture it came from with this change — the change before is no part of it.)
+    expect(rechanged.parts?.base?.subject).toMatch(/这一张的要求：背景换成雨夜，窗上有水痕$/)
+    expect(rechanged.parts?.base?.subject).not.toContain('雪夜')
+    // (Among her portraits it goes right before the one it was drawn again from, which stays.)
+    const kept = (await project.findCharacter(card.id))!.visual!.portraits!
+    expect(kept.slice(kept.indexOf(rechanged.path), kept.indexOf(rechanged.path) + 2)).toEqual([rechanged.path, changed.path])
+    // Tried as it is with another service: the same picture, changed by the sentence it was.
+    await redrawPicture(bed.core, bed.runtime, { picture: changed.id, trials: [{ label: 'another', image: { ...DEFAULT_SETTINGS.image, provider: 'codex' as const } }] }, task)
+    expect(images.calls.at(-1)!.prompt).toBe('背景换成雪夜\n\nSquare 1:1 composition.')
+    expect(images.calls.at(-1)!.change).toBe(true)
+    expect((await project.illustrations()).at(-1)!.trial?.hang).toEqual({ as: 'instead', of: changed.path })
+    // Asked for in words instead, it is the brief it would be drawn from: the picture, the art direction of the book
+    // as it is, the sheet it is held against — and it is drawn from that, not from the picture.
+    const told = await pictureWhole(bed.core, bed.runtime, changed.id, { fromWords: true })
+    expect(told.changed).toBeUndefined()
     expect(told.prompt).toContain('这一张的要求：背景换成雪夜')
     expect(told.prompt).toContain('画风：水墨淡彩')
     expect(told.prompt).toContain('参考图：图1 是沈砚')
     expect(told.references).toEqual([{ path: sheet, label: '沈砚' }])
     expect(told.avoid).toEqual(['文字', '水印', 'halo'])
+    const worded = await redrawPicture(bed.core, bed.runtime, { picture: changed.id, prompt: told.prompt, fromWords: true }, task)
+    expect(images.calls.at(-1)!.change).toBeUndefined()
+    expect(images.calls.at(-1)!.prompt).toContain('这一张的要求：背景换成雪夜\n画风：水墨淡彩')
+    expect(worded.parts?.base).toBeUndefined()
+    expect(worded.parts?.references).toEqual([{ path: sheet, label: '沈砚', sheet: true }])
     // Her line only pointed to her sheet ("见图1"). Tried as it is where no picture can go along — a service that takes
     // none — she is written out again, from the words kept beside the pointer, and nothing speaks of pictures.
     const none = { label: 'takes none', image: { ...DEFAULT_SETTINGS.image, provider: 'codex' as const, references: 0 } }
@@ -1847,6 +1877,15 @@ describe('the pictures kept of somebody, and taking one away', () => {
     await redrawPicture(bed.core, bed.runtime, { picture: portrait.id, prompt: whole.prompt, trials: [none] }, task)
     expect(images.calls.at(-1)!.prompt).toContain('人物「沈砚」：lean woman, black hair')
     expect(images.calls.at(-1)!.prompt).not.toMatch(/见图1|参考图/)
+    expect(images.calls.at(-1)!.prompt).toContain('画风：水墨淡彩')
+    // The picture a changed one came from deleted: words are all there is to draw it from — its whole prompt is the
+    // brief again, and it is drawn from that.
+    await project.removePicture({ path: portrait.path })
+    const orphan = await pictureWhole(bed.core, bed.runtime, changed.id)
+    expect(orphan.changed).toBeUndefined()
+    expect(orphan.prompt).toContain('这一张的要求：背景换成雪夜')
+    await redrawPicture(bed.core, bed.runtime, { picture: changed.id, prompt: orphan.prompt }, task)
+    expect(images.calls.at(-1)!.change).toBeUndefined()
     expect(images.calls.at(-1)!.prompt).toContain('画风：水墨淡彩')
   })
 

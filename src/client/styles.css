@@ -8429,6 +8429,28 @@ blockquote.nv-passage-quote {
   color: var(--nv-text-2);
 }
 
+/* A picture that is another one changed, drawn again: the picture it came from, and the sentence beside it. */
+.nv-picture-redraw-from {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.nv-picture-redraw-from > img {
+  flex: none;
+  width: 96px;
+  max-height: 128px;
+  object-fit: contain;
+  border-radius: var(--nv-radius-s);
+  border: 1px solid var(--nv-border);
+  background: var(--nv-surface);
+}
+
+.nv-picture-redraw-from > .nv-picture-redraw-field {
+  flex: 1;
+  min-width: 0;
+}
+
 /* Under the picture shown: where it stands among their portraits, and the way to be rid of it. */
 .nv-person-picture-tools {
   display: flex;

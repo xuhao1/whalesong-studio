@@ -1055,17 +1055,17 @@ export function createHandlers(service: NovelService): Handlers {
       })
       return { path: taken.info.path, held: taken.held, ...(taken.spare === true ? { spare: true } : {}) }
     },
-    'image.whole': async ({ root, picture }) => {
-      const { held: _held, ...whole } = await pictureWhole(core, await open(root), picture)
+    'image.whole': async ({ root, picture, fromWords }) => {
+      const { held: _held, ...whole } = await pictureWhole(core, await open(root), picture, { fromWords: fromWords === true })
       return whole
     },
-    'image.redraw': async ({ root, picture, subject, change, prompt, avoid, references, trials }) => {
+    'image.redraw': async ({ root, picture, subject, change, prompt, avoid, references, fromWords, trials }) => {
       const runtime = await open(root)
       const record = (await runtime.project.pictures()).find(item => item.id === picture || item.path === picture)
       // Drawn as it is by several services, to compare them — or drawn anew from words rewritten or one thing changed.
       const tried = Array.isArray(trials) && trials.length > 0 ? trials : undefined
       // Named as the drawing of a picture of its kind is: the page that shows whose it is says that it is being drawn.
-      return job(runtime, 'illustrate', `illustrate ${record?.kind ?? 'picture'}`, record?.target, async task => await redrawPicture(core, runtime, { picture, ...(subject !== undefined ? { subject } : {}), ...(change !== undefined ? { change } : {}), ...(prompt !== undefined ? { prompt } : {}), ...(Array.isArray(avoid) ? { avoid: avoid.filter((item): item is string => typeof item === 'string') } : {}), ...(Array.isArray(references) ? { references: references.filter(item => item !== null && typeof item === 'object' && typeof item.path === 'string').map(item => ({ path: item.path, ...(typeof item.label === 'string' ? { label: item.label } : {}) })) } : {}), ...(tried !== undefined ? { trials: tried } : {}) }, task))
+      return job(runtime, 'illustrate', `illustrate ${record?.kind ?? 'picture'}`, record?.target, async task => await redrawPicture(core, runtime, { picture, ...(subject !== undefined ? { subject } : {}), ...(change !== undefined ? { change } : {}), ...(prompt !== undefined ? { prompt } : {}), ...(fromWords === true ? { fromWords: true } : {}), ...(Array.isArray(avoid) ? { avoid: avoid.filter((item): item is string => typeof item === 'string') } : {}), ...(Array.isArray(references) ? { references: references.filter(item => item !== null && typeof item === 'object' && typeof item.path === 'string').map(item => ({ path: item.path, ...(typeof item.label === 'string' ? { label: item.label } : {}) })) } : {}), ...(tried !== undefined ? { trials: tried } : {}) }, task))
     },
     // ── the same piece of work by several services or models, to be compared ──
     'trial.setups': async ({ root }) => {

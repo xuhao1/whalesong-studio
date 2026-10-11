@@ -666,9 +666,13 @@ export interface NovelRpc {
    * along, to be drawn again with this one thing changed. The new picture takes the old one's place wherever it
    * hangs; the old one stays in the gallery. A job; its result names whose picture the new one is (`replaced`).
    */
-  'image.redraw': { params: { root: string; picture: string; subject?: string; change?: string; /** The whole prompt, as the author rewrote it ({@link PictureWhole}): sent as it stands, with the pictures the one before went with. Not with `subject` or `change`. */ prompt?: string; /** With `prompt`: everything to keep out. Left out: what the picture kept out before. */ avoid?: string[]; /** With `prompt`: the pictures that go along instead of those it went with — some left out, others of the book added — in the order they are numbered. Left out: the ones it went with. */ references?: { path: string; label?: string }[]; /** Draw it as it is with each of these services, to compare them: nothing is replaced. */ trials?: ImageTrial[] }; result: JobStarted }
-  /** Everything a picture was drawn from — the prompt whole, what was kept out, the pictures that went along — for its author to rewrite and draw it again by (`image.redraw` with `prompt`). */
-  'image.whole': { params: { root: string; picture: string }; result: PictureWhole }
+  'image.redraw': { params: { root: string; picture: string; subject?: string; change?: string; /** The whole prompt, as the author rewrote it ({@link PictureWhole}): sent as it stands, with the pictures the one before went with. Not with `subject` or `change`. */ prompt?: string; /** With `prompt`: everything to keep out. Left out: what the picture kept out before. */ avoid?: string[]; /** With `prompt`: the pictures that go along instead of those it went with — some left out, others of the book added — in the order they are numbered. Left out: the ones it went with. */ references?: { path: string; label?: string }[]; /** Of a picture that is another one changed: draw it from the words that stand in for it, not by changing the picture it came from again. */ fromWords?: boolean; /** Draw it as it is with each of these services, to compare them: nothing is replaced. */ trials?: ImageTrial[] }; result: JobStarted }
+  /**
+   * Everything a picture was drawn from — the prompt whole, what was kept out, the pictures that went along — for its
+   * author to rewrite and draw it again by (`image.redraw` with `prompt`). Of a picture that is another one changed:
+   * the sentence that changed it and that picture (`changed`) — or, with `fromWords`, the words that stand in for it.
+   */
+  'image.whole': { params: { root: string; picture: string; fromWords?: boolean }; result: PictureWhole }
   /** The image services there are to try for a book — the one that draws for it now, and the ones set up before — and whether each can draw right now. */
   'trial.setups': { params: { root: string }; result: { image: (ImageTrial & { id: string; current: boolean; ready: boolean })[]; /** The speech setups there are to try, the same way. Absent from a Host that cannot compare speech yet. */ speech?: (SpeechTrial & { id: string; current: boolean; ready: boolean })[] } }
   /** The same words spoken by each of several speech setups — as a character's line, or the narrator's — to be listened to side by side. Nothing is cast or kept by it but the clips. */

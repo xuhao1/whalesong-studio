@@ -67,7 +67,7 @@ describe('the Host takes what a call is given', () => {
     // Enough of both is read for the comparison to mean something.
     expect(table.size).toBeGreaterThan(150)
     expect(handlers.size).toBeGreaterThan(140)
-    expect(table.get('image.redraw')).toEqual(['root', 'picture', 'subject', 'change', 'prompt', 'avoid', 'references', 'trials'])
+    expect(table.get('image.redraw')).toEqual(['root', 'picture', 'subject', 'change', 'prompt', 'avoid', 'references', 'fromWords', 'trials'])
   })
 
   it('names in each handler every parameter the table has for the call', async () => {

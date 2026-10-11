@@ -135,14 +135,21 @@ function RedrawPicture({ image, mode, onDone, onBusy, onCancel, actionsAt }: { i
   // Which of the two is in the field, where the director wrote the prompt out of a brief: what was sent, or the brief.
   const [brief, setBrief] = useState(false)
   const [change, setChange] = useState('')
+  // A picture that is another one changed is, by its prompt, that picture changed again — unless the author would
+  // rather have it drawn from words.
+  const made = image.parts?.base !== undefined
+  const [fromWords, setFromWords] = useState(false)
+  const mediaUrl = useMediaUrl()
   const { busy, run } = useAction()
   useEffect(() => {
     if (mode !== 'words') return
     let live = true
-    controller.api.call('image.whole', { root, picture: image.id }).then((got) => {
+    setWhole(undefined)
+    controller.api.call('image.whole', { root, picture: image.id, ...(fromWords ? { fromWords: true } : {}) }).then((got) => {
       if (!live) return
       setWhole(got)
       setWords(got.prompt)
+      setBrief(false)
       setAvoid(got.avoid.join(t('、', ', ')))
       setRefs(got.references.map(reference => ({ path: reference.path, note: reference.label })))
     }).catch(() => {
@@ -153,13 +160,21 @@ function RedrawPicture({ image, mode, onDone, onBusy, onCancel, actionsAt }: { i
     return () => { live = false }
     // The picture is what it is asked of: not asked again as the page is drawn again.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [image.id, mode, root])
+  }, [image.id, mode, root, fromWords])
   const all = whole !== undefined && whole !== 'older' ? whole : undefined
+  /** Its prompt is the sentence that changed another picture: drawn again, that picture is changed again. */
+  const again = mode === 'words' && all?.changed === true
   const ready = mode === 'words' ? whole !== undefined && words.trim().length > 0 : change.trim().length > 0
   /** What the form says, as the call that draws it again. */
   // Other pictures than it went with — one left out, one added, another order, another word for one: said with the call.
-  const repictured = all !== undefined && JSON.stringify(refs.map(guide => [guide.path, guide.note ?? ''])) !== JSON.stringify(all.references.map(reference => [reference.path, reference.label]))
-  const redrawn = () => (mode !== 'words' ? { change: change.trim() } : all !== undefined ? { prompt: words.trim(), avoid: splitAvoid(avoid), ...(repictured ? { references: refs.map(guide => ({ path: guide.path, ...(guide.note !== undefined && guide.note.length > 0 ? { label: guide.note } : {}) })) } : {}) } : { subject: words.trim() })
+  const repictured = all !== undefined && !again && JSON.stringify(refs.map(guide => [guide.path, guide.note ?? ''])) !== JSON.stringify(all.references.map(reference => [reference.path, reference.label]))
+  const redrawn = () => (mode !== 'words'
+    ? { change: change.trim() }
+    : again
+      ? { prompt: words.trim() }
+      : all !== undefined
+        ? { prompt: words.trim(), avoid: splitAvoid(avoid), ...(made ? { fromWords: true } : {}), ...(repictured ? { references: refs.map(guide => ({ path: guide.path, ...(guide.note !== undefined && guide.note.length > 0 ? { label: guide.note } : {}) })) } : {}) }
+        : { subject: words.trim() })
   const go = (): void => {
     if (!ready || busy || !controller.need('image')) return
     onBusy(true)
@@ -182,14 +197,31 @@ function RedrawPicture({ image, mode, onDone, onBusy, onCancel, actionsAt }: { i
   const actions = (
     <>
         <Button variant="ghost" disabled={busy} onClick={onCancel}>{t('取消', 'Cancel')}</Button>
-        <ManyModels label={t('多模型…', 'Several models…')} disabled={!ready || busy} title={t('多模型：照这里写的，由几个绘图服务各画一张来比；采纳的那张顶替原图', 'Several models: as written here, by each image service, to compare; the one taken goes in this picture\'s place')} ask={() => (controller.need('image') ? { title: mode === 'words' ? t('改提示词重画', 'redrawn from its prompt') : t('照着这张改', 'this picture changed'), method: 'image.redraw', params: { picture: image.id, ...redrawn() }, instead: image.path } : undefined)} onChanged={() => { void controller.refreshProject() }} />
-        <Button variant="primary" icon="image" busy={busy} disabled={!ready} pending={t('正在画…', 'Drawing…')} onClick={go}>{mode === 'words' ? t('照这段重画', 'Draw from these words') : t('照着它改', 'Draw it changed')}</Button>
+        <ManyModels label={t('多模型…', 'Several models…')} disabled={!ready || busy} title={t('多模型：照这里写的，由几个绘图服务各画一张来比；采纳的那张顶替原图', 'Several models: as written here, by each image service, to compare; the one taken goes in this picture\'s place')} ask={() => (controller.need('image') ? { title: again ? t('照原图再改', 'the picture it came from, changed again') : mode === 'words' ? t('改提示词重画', 'redrawn from its prompt') : t('照着这张改', 'this picture changed'), method: 'image.redraw', params: { picture: image.id, ...redrawn() }, instead: image.path } : undefined)} onChanged={() => { void controller.refreshProject() }} />
+        <Button variant="primary" icon="image" busy={busy} disabled={!ready} pending={t('正在画…', 'Drawing…')} onClick={go}>{again ? t('照原图再改', 'Change that picture again') : mode === 'words' ? t('照这段重画', 'Draw from these words') : t('照着它改', 'Draw it changed')}</Button>
     </>
   )
   return (
     <div className="nv-picture-redraw">
-      {mode === 'words' && whole === undefined ? <Spinner /> : mode === 'words' && all !== undefined ? (
+      {mode === 'words' && whole === undefined ? <Spinner /> : again && all !== undefined ? (
+        // Made of another picture and one sentence: that picture, and the sentence to rewrite.
         <>
+          <div className="nv-picture-redraw-from">
+            <img alt={t('原图', 'The picture it came from')} src={mediaUrl(all.references[0]!.path)} />
+            <label className="nv-picture-redraw-field">
+              <span>{t('照着左边这张原图，改哪一处', 'What to change in the picture on the left — the one it came from')}</span>
+              <TextArea autoFocus value={words} minRows={2} maxRows={8} disabled={busy} onChange={(event) => { setWords(event.target.value) }} />
+            </label>
+          </div>
+          <p className="nv-muted nv-small">{t('发出去的是原图和这句话。', 'That picture and these words are what is sent.')} <button type="button" className="nv-link nv-small" disabled={busy} onClick={() => { setFromWords(true) }}>{t('不照原图，照文字整张重画', 'Draw it from words instead')}</button></p>
+        </>
+      ) : mode === 'words' && all !== undefined ? (
+        <>
+          {made ? (
+            <p className="nv-muted nv-small">{fromWords
+              ? <>{t('照文字整张重画，不看原图。', 'Drawn from words, without the picture it came from.')} <button type="button" className="nv-link nv-small" disabled={busy} onClick={() => { setFromWords(false) }}>{t('换回照原图改', 'Back to changing that picture')}</button></>
+              : t('它照着改的那张原图已经不在了：这里是照文字重画用的提示词。', 'The picture it was changed from is gone: this is the prompt it is drawn from in words.')}</p>
+          ) : null}
           <label className="nv-picture-redraw-field">
             <span>{t('提示词', 'Prompt')}{all.brief !== undefined ? (
               // Two texts there are of it: the one the model got, and the brief it was written from.
