@@ -92,9 +92,10 @@ export const legacyLook = (card: { visual?: { prompt?: string | undefined } | un
  * record names the moment by its number. (The number comes last: what the digests note is numbered by where it
  * stands in its chapter, and a chapter digested again may give that number to another moment.)
  */
-export function sceneOfPicture<S extends SignatureScene>(scenes: readonly S[], path: string, record: Pick<IllustrationInfo, 'moment' | 'parts'> | undefined): S | undefined {
+export function sceneOfPicture<S extends SignatureScene>(scenes: readonly S[], path: string, record: Pick<IllustrationInfo, 'moment' | 'parts' | 'ofNoMoment'> | undefined): S | undefined {
   const own = scenes.find(scene => scene.portrait === path)
-  if (own !== undefined || record === undefined) return own
+  // (Said by the author to be of none of them: what it was drawn from does not make it one's.)
+  if (own !== undefined || record === undefined || record.ofNoMoment === true) return own
   const title = record.moment?.title?.trim() ?? ''
   // (A moment made into one frame for the picture is on record as it was told, beside the frame that was sent.)
   const piece = record.parts?.pieces?.find(part => part.of === 'scene')

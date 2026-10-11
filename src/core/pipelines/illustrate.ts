@@ -3071,6 +3071,69 @@ export async function importPicture(runtime: ProjectRuntime, params: { kind: 'po
   return { info, held, ...(spare ? { spare: true } : {}) }
 }
 
+/**
+ * Say what a picture of the book is for — any picture: one drawn here as something else, one brought in, one that
+ * hangs nowhere. It is taken down from whoever held it as theirs (a card's portraits and sheets, an entry's design
+ * pictures), hung where it is said to belong, and filed as that among the book's pictures:
+ * - `portrait`: one of somebody's portraits (`target`) — the picture of one of their moments (`scene`), where said;
+ *   of none, where none is said, though it was drawn of one;
+ * - `sheet`: one of their design sheets — the main one unless the author chose another;
+ * - `art`: one of the design pictures of a place, a house or a thing (`target`) — the main one unless the author chose another;
+ * - `chapter`: a picture of a chapter's (`target`); `gallery`: nobody's.
+ * Where the text shows it, the panel of a storyboard it is the picture of, and its being the cover are let be —
+ * those show a picture, whoever's it is. A picture that waited to be taken, of several drawn to compare, is taken by this.
+ * (The author's, on the page that shows the picture: no tool of the showrunner's does this.)
+ * @param params.picture - the picture, by the id of its record or by its path.
+ * @param params.front - a sheet: whether it shows the front view alone. Left out: told by its shape.
+ * @returns its record as it stands now; who holds it now (`held`) and who held it before (`released`), by name; `spare`
+ *   where it waits, not in use, beside a main picture the author chose.
+ * @throws ProjectError `novel/not-found` for a picture, a character, an entry, a moment or a chapter that is not
+ *   there; `novel/invalid` for an entry that is an idea of the world.
+ */
+export async function usePictureAs(runtime: ProjectRuntime, params: { picture: string; as: 'portrait' | 'sheet' | 'art' | 'chapter' | 'gallery'; target?: string; scene?: string; front?: boolean }): Promise<{ info: IllustrationInfo; held: string[]; released: string[]; spare?: boolean }> {
+  const { project } = runtime
+  const known = (await project.pictures()).find(item => item.id === params.picture || item.path === params.picture)
+  const path = known?.path ?? params.picture.trim()
+  if (!/^assets\/[^\0]+\.(png|jpe?g|webp|gif)$/i.test(path) || path.split('/').includes('..') || !await project.has(path)) throw new ProjectError('novel/not-found', `no picture of the book matches "${params.picture}"`)
+  // Whose it is to be, before anything is changed: what is not there changes nothing.
+  const card = params.as === 'portrait' || params.as === 'sheet' ? await project.findCharacter(params.target ?? '') : undefined
+  if ((params.as === 'portrait' || params.as === 'sheet') && card === undefined) throw new ProjectError('novel/not-found', `no character matches "${params.target ?? ''}"`)
+  const entry = params.as === 'art' ? await project.findWorld(params.target ?? '') : undefined
+  if (params.as === 'art' && entry === undefined) throw new ProjectError('novel/not-found', `no world entry matches "${params.target ?? ''}"`)
+  if (entry !== undefined && groupOf(entry.category) === 'ideas') throw new ProjectError('novel/invalid', `"${entry.name}" is an idea of the world — a rule, a custom, a word: it has no design art`)
+  const chapter = params.as === 'chapter' ? await project.findChapter(params.target ?? '') : undefined
+  if (params.as === 'chapter' && chapter === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${params.target ?? ''}"`)
+  const moment = params.as === 'portrait' && params.scene !== undefined && params.scene.length > 0 ? scenesOf(card!).find(scene => scene.id === params.scene) : undefined
+  if (params.as === 'portrait' && params.scene !== undefined && params.scene.length > 0 && moment === undefined) throw new ProjectError('novel/not-found', `${card!.name} has no signature scene "${params.scene}"`)
+  // The cover the book shows for want of a chosen one — the latest drawn as a cover — stays the cover, whatever this one is filed as.
+  if (known?.kind === 'cover' && (await project.manifest()).cover !== path && await project.cover() === path) await project.updateManifest({ cover: path })
+  const released = await project.takeDown(path)
+  const info = await project.refilePicture(path, {
+    kind: params.as === 'art' ? (groupOf(entry!.category) === 'items' ? 'item' : 'location') : params.as === 'portrait' || params.as === 'sheet' ? params.as : 'scene',
+    ...(card !== undefined ? { target: card.id } : entry !== undefined ? { target: entry.id } : chapter !== undefined ? { target: chapter.plan.id } : {}),
+    ...(moment !== undefined ? { moment: { title: moment.title, ...(moment.id !== 'kept' ? { scene: moment.id } : {}), ...(moment.chapter !== undefined ? { chapter: moment.chapter } : {}) } } : {}),
+    // A portrait drawn of a moment and said to be of none: its record says so, or what it was drawn from would make it that moment's again.
+    ...(params.as === 'portrait' && moment === undefined && (known?.moment !== undefined || known?.parts?.pieces?.some(piece => piece.of === 'scene') === true) ? { ofNoMoment: true } : {}),
+  }, known)
+  // (One that waited to be taken stands in the text from here on where the others of its kind would.)
+  if (known?.trial?.hang !== undefined) await project.tookTrial(path)
+  if (card !== undefined && params.as === 'portrait') return { info, held: await hangAs(runtime, info, { as: 'portrait', character: card.id }), released }
+  if (card !== undefined) {
+    const frame = await project.readFile(path).then(pixelsOf).catch(() => undefined)
+    const front = params.front ?? (frame !== undefined ? frame.width <= frame.height * 1.15 : false)
+    const chosen = (await project.findCharacter(card.id))?.visual?.mainSheet
+    const held = await hangAs(runtime, info, { as: 'sheet', character: card.id, ...(front ? { front: true } : {}) })
+    // Beside a main sheet the author chose it waits, not in use — as one drawn or brought in would.
+    const spare = chosen !== undefined && (await project.findCharacter(card.id))?.visual?.sheet !== path
+    return { info, held, released, ...(spare ? { spare: true } : {}) }
+  }
+  if (entry !== undefined) {
+    const hung = await hangArt(project, path, { as: 'art', entry: entry.id })
+    return { info, held: [hung.entry.name], released, ...(hung.spare ? { spare: true } : {}) }
+  }
+  return { info, held: [], released }
+}
+
 /** References and avoid terms for a picture that shows these characters (comic panels, covers composed elsewhere). */
 export function consistencyFor(cards: readonly CharacterCard[]): { references: Held[]; avoid: string[] } {
   return {

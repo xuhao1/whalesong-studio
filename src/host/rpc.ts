@@ -29,7 +29,7 @@ import { publishSite, siteChaptersUpTo, siteDefaults, siteFolder } from '../core
 import { listChapters, listLines, listSides, readAlbum, readPosition, readSide, savePosition } from '../core/reader'
 import { albumCounts, albumEmpty } from '../shared/album'
 import { sceneOfPicture, scenesOf } from '../shared/art'
-import { deriveArtDirection, deriveLook, deriveScenes, deriveVisual, hangPicture, illustrate, importPicture, pictureWhole, redrawPicture } from '../core/pipelines/illustrate'
+import { deriveArtDirection, deriveLook, deriveScenes, deriveVisual, hangPicture, illustrate, importPicture, pictureWhole, redrawPicture, usePictureAs } from '../core/pipelines/illustrate'
 import { analyzeBook, importManuscript, readBookFile, importLine, rereadBook } from '../core/pipelines/import'
 import { applyOutlineOps, type OutlineOp } from '../core/pipelines/outline'
 import {
@@ -1057,6 +1057,19 @@ export function createHandlers(service: NovelService): Handlers {
         ...(typeof chapter === 'string' && chapter.length > 0 ? { chapter } : {}),
       })
       return { path: taken.info.path, held: taken.held, image: taken.info, ...(taken.spare === true ? { spare: true } : {}) }
+    },
+    'image.use': async ({ root, picture, as, target, scene, front }) => {
+      if (!['portrait', 'sheet', 'art', 'chapter', 'gallery'].includes(String(as))) throw new ProjectError('novel/invalid', 'a picture is used as somebody\'s portrait or design sheet, the design art of an entry (art), a picture of a chapter, or a picture of the gallery')
+      const runtime = await open(root)
+      const used = await usePictureAs(runtime, {
+        picture: requireString(picture, 'picture'),
+        as,
+        // Whose it is: said for all but a picture of the gallery, which is nobody's.
+        ...(as === 'gallery' ? {} : { target: requireString(target, 'target') }),
+        ...(typeof scene === 'string' && scene.length > 0 ? { scene } : {}),
+        ...(typeof front === 'boolean' ? { front } : {}),
+      })
+      return { image: used.info, held: used.held, released: used.released, ...(used.spare === true ? { spare: true } : {}) }
     },
     'image.whole': async ({ root, picture, fromWords }) => {
       const { held: _held, ...whole } = await pictureWhole(core, await open(root), picture, { fromWords: fromWords === true })

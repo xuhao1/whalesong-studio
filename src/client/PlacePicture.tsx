@@ -98,7 +98,11 @@ export function PickPicture({ chapter, onPick, onClose }: { chapter?: string | u
   const { project, root } = useProject()
   const images = useLoad(signal => controller.api.call('image.list', { root }, signal), [root, project.revision])
   const [filter, setFilter] = useState<IllustrationInfo['kind'] | 'here' | 'all'>(chapter !== undefined ? 'here' : 'all')
-  const all = images.data?.images ?? []
+  // Where they came from: drawn here, or brought in — said beside the kind, and with it.
+  const [source, setSource] = useState<'all' | 'drawn' | 'imported'>('all')
+  const every = images.data?.images ?? []
+  const broughtIn = every.filter(image => image.imported === true).length
+  const all = every.filter(image => source === 'all' || (image.imported === true) === (source === 'imported'))
   const here = all.filter(image => image.target === chapter)
   const kinds = [...new Set(all.map(image => image.kind))]
   const list = filter === 'all' ? all : filter === 'here' ? (here.length > 0 ? here : all) : all.filter(image => image.kind === filter)
@@ -112,11 +116,18 @@ export function PickPicture({ chapter, onPick, onClose }: { chapter?: string | u
         {chapter !== undefined && here.length > 0 ? <Chip active={filter === 'here'} tone={filter === 'here' ? 'blue' : 'neutral'} onClick={() => { setFilter('here') }}>{t(`这一章的 ${here.length}`, `Of this chapter · ${here.length}`)}</Chip> : null}
         <Chip active={filter === 'all'} tone={filter === 'all' ? 'blue' : 'neutral'} onClick={() => { setFilter('all') }}>{t(`全部 ${all.length}`, `All · ${all.length}`)}</Chip>
         {kinds.map(kind => <Chip key={kind} active={filter === kind} tone={filter === kind ? 'blue' : 'neutral'} onClick={() => { setFilter(kind) }}>{t(...PICTURE_KIND[kind])}</Chip>)}
+        {broughtIn > 0 ? (
+          <>
+            <span className="nv-chips-rule" aria-hidden="true" />
+            <Chip active={source === 'drawn'} tone={source === 'drawn' ? 'violet' : 'neutral'} onClick={() => { setSource(previous => (previous === 'drawn' ? 'all' : 'drawn')) }}>{t(`这里画的 ${every.length - broughtIn}`, `Drawn here · ${every.length - broughtIn}`)}</Chip>
+            <Chip active={source === 'imported'} tone={source === 'imported' ? 'violet' : 'neutral'} onClick={() => { setSource(previous => (previous === 'imported' ? 'all' : 'imported')) }}>{t(`导入的 ${broughtIn}`, `Brought in · ${broughtIn}`)}</Chip>
+          </>
+        ) : null}
         <span className="nv-spacer" />
         {/* One that is not in the book yet: brought in — it is one of the book's pictures from then on — and chosen. */}
         <ImportPicture kind="picture" of={chapter !== undefined ? { chapter } : {}} variant="outline" label={t('从电脑导入…', 'From this computer…')} quiet onDone={(_path, image) => { void onPick(image) }} />
       </div>
-      {images.data === undefined ? <div className="nv-center"><Spinner /></div> : list.length === 0 ? <p className="nv-muted">{t('这本书还没有图。', 'The book has no pictures yet.')}</p> : (
+      {images.data === undefined ? <div className="nv-center"><Spinner /></div> : list.length === 0 ? <p className="nv-muted">{every.length > 0 ? t('没有这样的图。', 'No such picture.') : t('这本书还没有图。', 'The book has no pictures yet.')}</p> : (
         <div className="nv-gallery-grid nv-pick-grid">
           {list.map(image => (
             <button key={image.id} type="button" className="nv-gallery-item" onClick={() => { void onPick(image) }}>

@@ -67,7 +67,7 @@ function BringDialog({ onClose }: { onClose: () => void }) {
         </Field>
       ) : null}
       <p className="nv-muted nv-small">
-        {as === 'picture' ? t('之后可以插进正文、当参考图、设为封面。', 'They can go into a chapter\'s text, be given to a drawing to go by, or be made the cover.')
+        {as === 'picture' ? t('之后点开哪一张，都可以说它用作什么；也可以插进正文、当参考图。', 'Open any of them later to say what it is for; they can go into a chapter\'s text or be given to a drawing to go by.')
           : as === 'art' ? t('都进它的设定图那一组；用哪张，在它的页面上选。', 'They join its design pictures; which one is in use is chosen on its page.')
             : as === 'sheet' ? t('都进这个人的人设图那一组；用哪张，在人物页上选。', 'They join their design sheets; which one is in use is chosen on their page.')
               : t('都进这个人的立绘那一组；代表立绘在人物页上选。', 'They join their portraits; the one that stands for them is chosen on their page.')}
@@ -93,7 +93,9 @@ export function Gallery() {
   const { project, root } = useProject()
   const jobs = useSnapshot(snapshot => snapshot.jobs)
   const images = useLoad(signal => controller.api.call('image.list', { root }, signal), [root, project.revision])
-  const [filter, setFilter] = useState<IllustrationInfo['kind'] | 'all' | 'imported'>('all')
+  const [filter, setFilter] = useState<IllustrationInfo['kind'] | 'all'>('all')
+  // Where a picture came from, whatever kind it is: drawn here, or brought in from outside.
+  const [source, setSource] = useState<'all' | 'drawn' | 'imported'>('all')
   const [open, setOpen] = useState<IllustrationInfo | undefined>()
   const [creating, setCreating] = useState(false)
   const [batching, setBatching] = useState(false)
@@ -136,18 +138,20 @@ export function Gallery() {
   }, [images.data, project.characters, project.world, project.chapters, project.lines])
   const [group, setGroup] = useState<SubjectGroup | 'all'>('all')
   const [subject, setSubject] = useState<string | undefined>()
-  const ofKind = (images.data?.images ?? []).filter(image => filter === 'all' || (filter === 'imported' ? image.imported === true : image.kind === filter))
+  const ofSource = (images.data?.images ?? []).filter(image => source === 'all' || (image.imported === true) === (source === 'imported'))
+  const ofKind = ofSource.filter(image => filter === 'all' || image.kind === filter)
   const inGroup = (image: IllustrationInfo, wanted: SubjectGroup): boolean => [...(subjects.shown.get(image.id) ?? [])].some(id => subjects.byId.get(id)?.group === wanted)
   const list = ofKind.filter(image => (group === 'all' || inGroup(image, group)) && (subject === undefined || subjects.shown.get(image.id)?.has(subject) === true))
-  const kinds = [...new Set((images.data?.images ?? []).map(image => image.kind))]
+  const kinds = [...new Set(ofSource.map(image => image.kind))]
   const broughtIn = (images.data?.images ?? []).filter(image => image.imported === true).length
+  const drawnHere = (images.data?.images ?? []).length - broughtIn
   // Whoever has pictures, with how many, most first: what there is to list by.
   const counted = useMemo(() => {
     const counts = new Map<string, number>()
     for (const image of ofKind) for (const id of subjects.shown.get(image.id) ?? []) counts.set(id, (counts.get(id) ?? 0) + 1)
     return counts
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [subjects, filter, images.data])
+  }, [subjects, filter, source, images.data])
   const groups = GROUPS.filter(item => subjects.everyone.some(candidate => candidate.group === item.id && counted.has(candidate.id)))
   const members = group === 'all' ? [] : subjects.everyone.filter(item => item.group === group && counted.has(item.id)).sort((a, b) => (group === 'chapters' ? 0 : (counted.get(b.id) ?? 0) - (counted.get(a.id) ?? 0)))
   // Several pictures picked at once, to be deleted together.
@@ -245,7 +249,6 @@ export function Gallery() {
         <div className="nv-chips">
           <Chip active={filter === 'all'} tone={filter === 'all' ? 'blue' : 'neutral'} onClick={() => { setFilter('all') }}>{t('全部', 'All')}</Chip>
           {kinds.map(item => <Chip key={item} active={filter === item} tone={filter === item ? 'blue' : 'neutral'} onClick={() => { setFilter(item) }}>{t(...KIND[item])}</Chip>)}
-          {broughtIn > 0 ? <Chip active={filter === 'imported'} tone={filter === 'imported' ? 'blue' : 'neutral'} onClick={() => { setFilter('imported') }} title={t('从电脑导入的，不是这里画的', 'Brought in from this computer, not drawn here')}>{t(`导入的 ${broughtIn}`, `Brought in · ${broughtIn}`)}</Chip> : null}
         </div>
         <span className="nv-spacer" />
         {drawing > 0 ? <span className="nv-muted nv-small"><Spinner size={12} /> {t(`${drawing} 张绘制中`, `${drawing} in progress`)}</span> : null}
@@ -254,6 +257,16 @@ export function Gallery() {
         <Button size="sm" icon="layers" onClick={() => { setBatching(true) }} title={t('补齐还没有的图和声线', 'Make the pictures and voices still missing')}>{t('批量绘制…', 'Draw in a batch…')}</Button>
         <Button variant="primary" size="sm" icon="plus" onClick={() => { if (controller.need('image')) setCreating(true) }}>{t('画一张', 'New picture')}</Button>
       </div>
+      {(images.data?.images ?? []).length > 0 ? (
+        <div className="nv-gallery-by">
+          <div className="nv-chips">
+            <span className="nv-muted nv-small">{t('来源', 'From')}</span>
+            <Chip active={source === 'all'} tone={source === 'all' ? 'blue' : 'neutral'} onClick={() => { setSource('all') }}>{t('全部', 'Anywhere')}</Chip>
+            <Chip active={source === 'drawn'} tone={source === 'drawn' ? 'blue' : 'neutral'} onClick={() => { setSource('drawn'); if (filter !== 'all' && !(images.data?.images ?? []).some(image => image.imported !== true && image.kind === filter)) setFilter('all') }} title={t('这里画的', 'Drawn here')}>{t(`这里画的 ${drawnHere}`, `Drawn here · ${drawnHere}`)}</Chip>
+            <Chip active={source === 'imported'} tone={source === 'imported' ? 'blue' : 'neutral'} onClick={() => { setSource('imported'); if (filter !== 'all' && !(images.data?.images ?? []).some(image => image.imported === true && image.kind === filter)) setFilter('all') }} title={t('从电脑导入的：照片、自己画的', 'Brought in from this computer: photographs, drawings of your own')}>{t(`导入的 ${broughtIn}`, `Brought in · ${broughtIn}`)}</Chip>
+          </div>
+        </div>
+      ) : null}
       {groups.length > 0 ? (
         <div className="nv-gallery-by">
           <div className="nv-chips">
@@ -318,7 +331,7 @@ export function Gallery() {
             <button key={image.id} type="button" className={`nv-gallery-item${picking && picked.has(image.id) ? ' is-picked' : ''}`} aria-pressed={picking ? picked.has(image.id) : undefined} onClick={() => { if (picking) pick(image.id); else setOpen(image) }}>
               <ProjectImage path={image.path} alt={image.prompt} />
               {picking ? <span className={`nv-pick-mark nv-photo-pick${picked.has(image.id) ? ' is-on' : ''}`}><Icon name="check" size={11} /></span> : null}
-              <span className="nv-gallery-caption"><Chip>{t(...KIND[image.kind])}</Chip>{nameOf(image) !== undefined ? <span>{nameOf(image)}</span> : null}</span>
+              <span className="nv-gallery-caption"><Chip>{t(...KIND[image.kind])}</Chip>{nameOf(image) !== undefined ? <span>{nameOf(image)}</span> : null}{image.imported === true ? <span className="nv-gallery-from" title={t('从电脑导入的', 'Brought in from this computer')}><Icon name="upload" size={11} /></span> : null}</span>
             </button>
           ))}
         </div>
@@ -330,17 +343,6 @@ export function Gallery() {
           title={`${t(...KIND[open.kind])}${nameOf(open) !== undefined ? ` · ${nameOf(open)}` : ''}`}
           onClose={() => { setOpen(undefined) }}
           onChanged={() => { images.reload() }}
-          // Of the picture looked at — which, once it was drawn again in the viewer, is the one that came of it.
-          footer={(shown) => {
-            const cover = shown?.path ?? open.path
-            return (
-              <>
-                {project.cover === cover
-                  ? <Chip tone="green">{t('这是封面', 'This is the cover')}</Chip>
-                  : <Button icon="book" pending={t('正在设为封面…', 'Setting the cover…')} onClick={() => controller.guard(async () => { await controller.api.call('project.update', { root, patch: { cover } }); await controller.refreshProject(); controller.toast('success', t('已设为这本书的封面', 'This is the book\'s cover now')) })}>{t('设为封面', 'Make it the cover')}</Button>}
-              </>
-            )
-          }}
         />
       ) : null}
 

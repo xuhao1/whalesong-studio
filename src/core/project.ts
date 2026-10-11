@@ -3006,8 +3006,55 @@ export class Project {
     })
     if (path === undefined || path.length === 0) return []
     if (!/^assets\/[^\0]+\.(png|jpe?g|webp|gif)$/i.test(path) || path.split('/').includes('..')) throw new ProjectError('novel/invalid', `"${path}" is not one of the book's pictures`)
-    const gone: string = path
-    await this.remove(this.path(gone))
+    await this.remove(this.path(path))
+    return await this.letGo(path, true)
+  }
+
+  /**
+   * Take a picture down from whoever holds it as theirs — a card's portraits, its design sheets, a look's or a
+   * stretch's pictures, the portrait of a moment; an entry's design pictures, the picture of a turn of its course.
+   * The picture itself stays in the book: its file, its record. Where the text shows it, the panel of a storyboard
+   * it is the picture of, and its being the cover are let be: those show a picture, whoever's it is.
+   * @returns who held it, by name.
+   */
+  async takeDown(path: string): Promise<string[]> {
+    return await this.letGo(path, false)
+  }
+
+  /**
+   * Say anew what a picture of the book is — what kind of picture, and whose: its record is kept by that from here
+   * on, and made where the picture had none. What one drawn here was made as is kept beside it (`madeAs`): the
+   * record of its making is of that. Filed again as what it was made as, nothing is said. Nothing is hung by this: see `usePictureAs`.
+   * @param from - the picture as it is known where it has no record of its own (a panel drawn before records were kept).
+   * @returns its record as it stands now.
+   */
+  async refilePicture(path: string, as: { kind: IllustrationInfo['kind']; target?: string; moment?: NonNullable<IllustrationInfo['moment']>; /** A portrait drawn of a moment, said to be of none. */ ofNoMoment?: boolean }, from?: IllustrationInfo): Promise<IllustrationInfo> {
+    let filed: IllustrationInfo | undefined
+    await this.updateState<IllustrationInfo[]>(['illustrations.json'], [], (current) => {
+      const at = current.findIndex(item => item.path === path)
+      const old = at >= 0 ? current[at]! : from
+      const { target: _whose, moment: _moment, ofNoMoment: _apart, madeAs: made, trial, ...rest } = old ?? { id: '', path, prompt: '', kind: as.kind, createdAt: new Date().toISOString() }
+      const was = made ?? (old !== undefined ? { kind: old.kind, ...(old.target !== undefined ? { target: old.target } : {}) } : undefined)
+      const { hang: _waits, ...tried } = trial ?? { id: '', label: '' }
+      filed = {
+        ...rest,
+        // (A record made here has an id of its own: the one a picture without a record goes by names where it is shown.)
+        id: at >= 0 ? rest.id : newId('img'),
+        kind: as.kind,
+        ...(as.target !== undefined ? { target: as.target } : {}),
+        ...(as.moment !== undefined ? { moment: as.moment } : as.ofNoMoment === true ? { ofNoMoment: true } : {}),
+        ...(trial !== undefined ? { trial: tried } : {}),
+        // (One brought in was not made as anything: there is no record of its making to be of something else.)
+        ...(was !== undefined && rest.imported !== true && (was.kind !== as.kind || was.target !== as.target) ? { madeAs: was } : {}),
+      }
+      const record = filed
+      return at >= 0 ? current.map((item, index) => (index === at ? record : item)) : [...current, record]
+    })
+    return filed!
+  }
+
+  /** Every place that holds a picture lets go of it: the cards and the entries — and, where it is gone from the book (`gone`), the panels and the cover too. */
+  private async letGo(gone: string, all: boolean): Promise<string[]> {
     const held: string[] = []
     for (const card of await this.characters()) {
       const visual = card.visual
@@ -3055,6 +3102,7 @@ export class Project {
       })
       held.push(entry.name)
     }
+    if (!all) return held
     // A panel of a storyboard that showed it is a panel without a picture again.
     for (const board of await this.comicBoards()) {
       const shown = board.panels.filter(panel => panel.image === gone)

@@ -735,6 +735,8 @@ export interface NovelRpc {
    * a `chapter` where it is for that chapter's text). `image`: its record (a Host older than that sends none).
    */
   'image.import': { params: { root: string; kind: 'portrait' | 'sheet' | 'art' | 'cover' | 'picture'; target?: string; mediaType: string; data: string; look?: string; stage?: string; scene?: string; front?: boolean; event?: string; chapter?: string }; result: { path: string; held: string[]; spare?: boolean; image?: IllustrationInfo } }
+  /** Say what a picture of the book is for: taken down from whoever held it, hung where it is said to belong, filed as that. */
+  'image.use': { params: { root: string; picture: string; as: 'portrait' | 'sheet' | 'art' | 'chapter' | 'gallery'; target?: string; scene?: string; front?: boolean }; result: { image: IllustrationInfo; held: string[]; released: string[]; spare?: boolean } }
   'image.place': { params: { root: string; picture: string; chapter: string; after?: number; quote?: string; alt?: string }; result: { chapter: string; after: number } }
   /** `released`: whose picture it was — the cards and entries it was taken off, by name. Absent from a Host before the picture was taken off them. */
   /** Take a picture out of the book — by the id of its record, or by its path where it has none: its file, its record, and off every card and entry that shows it (`released`: whose it was). */

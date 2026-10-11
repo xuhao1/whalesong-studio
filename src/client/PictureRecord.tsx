@@ -29,6 +29,7 @@ import type { IllustrationInfo, IllustrationPiece, PictureGuide, PictureWhole } 
 import { Button, Chip, cx, Modal, Spinner, TextArea, TextInput, useAction, useConfirm, useLoad, useMediaUrl, useProject, useSnapshot, useStudio, useT, plainEnter } from './ui'
 import { leftBehind } from './labels'
 import { PlacePicture } from './PlacePicture'
+import { PictureUse } from './PictureUse'
 import { Icon } from './icons'
 
 export const PICTURE_KIND: Record<IllustrationInfo['kind'], [string, string]> = {
@@ -327,12 +328,24 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
   const of: LookOf | undefined = card !== undefined ? { kind: 'character', id: card.id } : entry !== undefined ? { kind: 'world', id: entry.id } : undefined
   const editLook = onEditLook !== undefined && of !== undefined ? () => { onEditLook(of) } : undefined
 
+  // Made as something else, and said since to be for this: the record of its making — its words, what it was held
+  // against — is of what it was made as, and is not measured against whose it is now.
+  const made = image.madeAs
+  const asMade = made === undefined
+  const madeWhose = made?.target === undefined ? undefined
+    : project.characters.find(candidate => candidate.id === made.target)?.name
+      ?? project.world.find(candidate => candidate.id === made.target)?.name
+      ?? [...project.chapters, ...(project.lines ?? []).flatMap(line => line.chapters)].find(candidate => candidate.id === made.target)?.title
+
   // ── how it stands against the book as it is now ──
   const standing: Standing[] = []
   const open = (path: string | undefined, label: string): Standing['action'] | undefined => (path !== undefined && onOpen !== undefined ? { label, run: () => { onOpen(path) } } : undefined)
   const withAction = (item: Omit<Standing, 'action'>, action: Standing['action'] | undefined): Standing => (action !== undefined ? { ...item, action } : item)
   if (changed) standing.push(withAction({ tone: 'info', text: t('照着另一张图改的：发给绘图模型的只有那张图和改哪一处。', 'Another picture, changed: the image model got that picture and what to change, nothing else.') }, open(references[0]?.path, t('看原图', 'See that picture'))))
   if (image.verbatim === true) standing.push({ tone: 'info', text: t('照你改写的整段提示词画的：工坊没有另加画风和说明。', 'Drawn from the whole prompt as you rewrote it: the Studio added no art direction and no lines of its own.') })
+  if (made !== undefined) {
+    standing.push({ tone: 'info', text: t(`原来是作为「${t(...PICTURE_KIND[made.kind])}${madeWhose !== undefined ? ` · ${madeWhose}` : ''}」画的，后来你把它改作了现在的用途：下面的提示词和参考图是当时的。`, `Drawn as "${t(...PICTURE_KIND[made.kind])}${madeWhose !== undefined ? ` · ${madeWhose}` : ''}", and said since to be for this: the prompt and the references below are of then.`) })
+  }
   if (card !== undefined) {
     if (image.kind === 'portrait') {
       // Which of their portraits it is: the one that stands for them, the picture of one of their moments (the
@@ -367,28 +380,28 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
     // Where the prompt only pointed to their picture, the words are the ones that picture was drawn from (kept beside
     // the pointer); a whole prompt of the author's own is theirs, and is not held against the card.
     const then = look?.byPicture === true ? look.standing : look?.text
-    const same = image.verbatim === true || look?.byPicture === true && then === undefined ? undefined : then !== undefined ? tidyPart(then) === now : told !== undefined && !told.subject.endsWith('…') && now.length > 0 ? told.subject.includes(now) : undefined
+    const same = !asMade || image.verbatim === true || look?.byPicture === true && then === undefined ? undefined : then !== undefined ? tidyPart(then) === now : told !== undefined && !told.subject.endsWith('…') && now.length > 0 ? told.subject.includes(now) : undefined
     if (same === true) standing.push({ tone: 'ok', text: t('外貌和现在的一样。', 'The appearance is as it is now.') })
     else if (same === false) standing.push(withAction({ tone: 'warn', text: t('外貌在这张图之后改过。', 'The appearance was changed after this picture.') }, editLook !== undefined ? { label: t('看现在的外貌', 'See the appearance as it is'), run: editLook } : undefined))
     // The moment a portrait shows: the one on the card now, or another.
     const scenePiece = parts?.pieces?.find(piece => piece.of === 'scene')
     const shownScene = scenePiece?.text
-    if (image.kind === 'portrait' && scenePiece?.from === 'asked') {
+    if (asMade && image.kind === 'portrait' && scenePiece?.from === 'asked') {
       standing.push({ tone: 'info', text: t('这一幕是导演按你当时的要求挑的，只用在这一张。', 'The director picked this scene by what you asked then; it serves this picture only.') })
-    } else if (image.kind === 'portrait' && shownScene !== undefined) {
+    } else if (asMade && image.kind === 'portrait' && shownScene !== undefined) {
       const kept = scenesOf(card).map(scene => tidyPart(sceneWords(scene)))
       if (!kept.includes(shownScene)) standing.push(withAction({ tone: 'warn', text: kept.length > 0 ? t('这一幕在这张图之后改过，或已不在名场面里。', 'This moment was changed after the picture, or is no longer among their scenes.') : t('人物卡上现在没有名场面：这张画的是当时的那一幕。', 'The card keeps no scene now: this shows the one of that time.') }, onEditLook !== undefined ? { label: t('看现在的', 'See it as it is'), run: () => { onEditLook({ kind: 'character', id: card.id, what: 'scene' }) } } : undefined))
     }
     // A portrait is held against the sheet: against the one in use, an older one, or none.
-    if (image.kind === 'portrait' && card.visual?.sheet !== undefined && !changed) {
+    if (asMade && image.kind === 'portrait' && card.visual?.sheet !== undefined && !changed) {
       if (references.some(reference => reference.path === card.visual!.sheet)) standing.push({ tone: 'ok', text: t('照着现在这张人设图画的。', 'Drawn against the design sheet in use now.') })
       else if (references.length > 0) standing.push({ tone: 'warn', text: t('照着以前的一张人设图画的。', 'Drawn against an earlier design sheet.') })
       else standing.push({ tone: 'warn', text: left.length > 0 ? t('绘图服务没有收参考图，人设图没有带上。', 'The image service took no reference picture: the design sheet did not go along.') : t('画的时候没有带人设图。', 'Drawn without a design sheet.') })
     }
-    if (image.kind === 'sheet' && !ofLook && references.length === 0 && left.length > 0) standing.push({ tone: 'warn', text: t('绘图服务没有收参考图，立绘没有带上：只照文字画的。', 'The image service took no reference picture: the portrait did not go along, and this came from the words alone.') })
+    if (asMade && image.kind === 'sheet' && !ofLook && references.length === 0 && left.length > 0) standing.push({ tone: 'warn', text: t('绘图服务没有收参考图，立绘没有带上：只照文字画的。', 'The image service took no reference picture: the portrait did not go along, and this came from the words alone.') })
     // (Pictures the author gave it to go by are theirs, said below; this is about what the Studio held it against.)
     const own = references.filter(reference => reference.given !== true)
-    if (image.kind === 'sheet' && !ofLook && own.length > 0 && !changed) {
+    if (asMade && image.kind === 'sheet' && !ofLook && own.length > 0 && !changed) {
       // Against their portrait: the portrait leads (or it was asked for this once). Against anything else: how sheets were redrawn once.
       const portraits = new Set([card.visual?.portrait, ...(card.stages ?? []).map(stage => stage.visual?.portrait), ...scenesOf(card).map(scene => scene.portrait)].filter((path): path is string => path !== undefined))
       if (own.some(reference => reference.path === card.visual?.portrait)) standing.push({ tone: 'ok', text: t('照着现在这张立绘画的。', 'Drawn against the portrait in use now.') })
@@ -402,7 +415,7 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
       : turn !== undefined
         ? { tone: 'ok', text: t('这是它轨迹里一件事之后的样子。', 'This is how it looks from one turn of its course on.') }
         : withAction({ tone: 'warn', text: t('这是以前的一张，现在用的是另一张。', 'This is an earlier picture; another one is in use now.') }, open(entry.visualImage, t('看现在的那张', 'See the one in use'))))
-    if (look?.from === 'anchor' && turn === undefined) {
+    if (asMade && look?.from === 'anchor' && turn === undefined) {
       const now = tidyPart(entry.visualPrompt ?? '')
       if (now === look.text) standing.push({ tone: 'ok', text: t('条目上写的"样子"和现在的一样。', 'The look written on the entry is the same as now.') })
       else standing.push(withAction({ tone: 'warn', text: t('条目上写的"样子"在这张图之后改过。', 'The look written on the entry was changed after this picture.') }, editLook !== undefined ? { label: t('看现在写的', 'See it as it is'), run: editLook } : undefined))
@@ -514,7 +527,7 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
         ) : unsent ? (
           <p className="nv-picture-warn nv-small"><Icon name="alert" size={13} /><span>{t('提示词里说了参考图，可绘图服务没有收图：这张图只照文字画的。', 'The prompt spoke of references, but the image service took none: this picture came from the words alone.')}</span></p>
         ) : (
-          <p className="nv-muted nv-small">{image.kind === 'sheet' && !ofLook ? t('没有带参考图：人设图只照文字画。', 'No references: a design sheet is drawn from the words alone.') : t('没有带参考图：只照文字画的。', 'None: drawn from the words alone.')}</p>
+          <p className="nv-muted nv-small">{asMade && image.kind === 'sheet' && !ofLook ? t('没有带参考图：人设图只照文字画。', 'No references: a design sheet is drawn from the words alone.') : t('没有带参考图：只照文字画的。', 'None: drawn from the words alone.')}</p>
         )}
       </section>
 
@@ -631,6 +644,9 @@ export function PictureViewer({ path, title, note, footer, start, onClose, onEdi
   const [placing, setPlacing] = useState(false)
   // The same picture by several image services, to be compared.
   const [comparing, setComparing] = useState(false)
+  // What it is for, said anew: whose it is, and as what. Said so here, the page's own name for it holds no longer.
+  const [using, setUsing] = useState(false)
+  const [refiled, setRefiled] = useState(false)
   // Another picture looked at: no way is open under it — but the one the page asked for is, on the picture it opened.
   const openedWith = useRef(start !== undefined ? path : undefined)
   useEffect(() => {
@@ -661,7 +677,7 @@ export function PictureViewer({ path, title, note, footer, start, onClose, onEdi
     else controller.openWorld(of.id)
   }
   // The page's own name for it holds for the picture the page opened — not for one drawn from it since.
-  const heading = first && opened === path && title !== undefined ? title : image !== undefined ? `${t(...PICTURE_KIND[image.kind])}${nameOf(image) !== undefined ? ` · ${nameOf(image)}` : ''}` : title ?? t('图片', 'Picture')
+  const heading = first && opened === path && title !== undefined && !refiled ? title : image !== undefined ? `${t(...PICTURE_KIND[image.kind])}${nameOf(image) !== undefined ? ` · ${nameOf(image)}` : ''}` : title ?? t('图片', 'Picture')
   return (
     <Modal wide className="nv-modal-picture" title={heading} onClose={onClose} footer={first && image !== undefined && redraw !== undefined ? (
       // A way to draw it again is open: its own buttons stand here — cancel, several models, draw — where the button
@@ -677,7 +693,9 @@ export function PictureViewer({ path, title, note, footer, start, onClose, onEdi
       <>
         <a className="nv-link" href={controller.api.media(project.manifest.id, at, { download: true })}>{t('下载', 'Download')}</a>
         <span className="nv-spacer" />
+        {project.cover === at ? <Chip tone="green">{t('封面', 'The cover')}</Chip> : null}
         {footer !== undefined ? footer(image) : null}
+        <Button variant="outline" icon="link" disabled={drawing} onClick={() => { setUsing(true) }} title={t('说这张图是谁的什么：某个人的立绘 / 人设图，某处、某物的设定图，某一章的图，或这本书的封面', 'Say whose picture this is, and as what: somebody\'s portrait or design sheet, the design art of a place or a thing, a picture of a chapter, or the book\'s cover')}>{t('用作…', 'Use as…')}</Button>
         <Button variant="outline" icon="book" onClick={() => { setPlacing(true) }} title={t('把这张图插到某一章正文的某一段之后', 'Put this picture into a chapter, after a paragraph of your choosing')}>{t('插入正文…', 'Place in the text…')}</Button>
         {image !== undefined ? (
           <>
@@ -712,6 +730,7 @@ export function PictureViewer({ path, title, note, footer, start, onClose, onEdi
         </div>
       </div>
       {comparing && image !== undefined ? <ImageTrialDialog of={{ picture: { path: image.path, kind: image.kind } }} onClose={() => { setComparing(false) }} onChanged={() => { onChanged?.() }} /> : null}
+      {using ? <PictureUse path={at} image={image} natural={natural?.path === at ? natural : undefined} onClose={() => { setUsing(false) }} onDone={() => { setRefiled(true); onChanged?.() }} /> : null}
       {placing ? <PlacePicture image={image} path={at} chapter={image !== undefined && (image.kind === 'scene' || image.kind === 'panel') ? image.target : undefined} onClose={() => { setPlacing(false) }} /> : null}
     </Modal>
   )

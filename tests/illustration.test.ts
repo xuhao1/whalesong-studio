@@ -1783,6 +1783,141 @@ describe('the pictures kept of somebody, and taking one away', () => {
     await expect(importPicture(bed.runtime, { kind: 'sheet', target: card.id, look: '没有这身', data: file(7) })).rejects.toThrow(/no look/)
   })
 
+  it('says what any picture of the book is for: taken down from who held it, hung where it belongs, filed as that', async () => {
+    const { bed, images } = await studio()
+    const { project } = bed.runtime
+    const { importPicture, usePictureAs } = await import('../src/core/pipelines/illustrate')
+    const { artsOf } = await import('../src/shared/arts')
+    const { sheetsOf } = await import('../src/shared/sheets')
+    const { hungAt } = await import('../src/shared/hung')
+    const file = (tail: number): Uint8Array => Uint8Array.from([...PIXEL, ...new Array<number>(64).fill(tail)])
+    const chapter = await project.addChapter({ title: '葬花' })
+    const garden = await project.saveWorld({ name: '大观园', category: 'location', summary: '省亲别院' })
+    await project.saveWorld({ name: '金玉良缘', category: 'rule', summary: '一句谶语' })
+    const daiyu = await project.saveCharacter({ name: '林黛玉', role: 'protagonist', visual: { scenes: [{ id: 'bury', title: '葬花', chapter: chapter.id, text: '她肩上担着花锄，在花冢前收葬残红。' }] } })
+    const baochai = await project.saveCharacter({ name: '薛宝钗', role: 'deuteragonist' })
+    const hung = async (path: string) => hungAt(await project.characters(), await project.world(), path, (await project.illustrations()).find(item => item.path === path))
+    const record = async (path: string) => (await project.illustrations()).find(item => item.path === path)!
+    // (A card with one portrait names it alone; with several, lists them.)
+    const faces = async (id: string): Promise<(string | undefined)[]> => { const visual = (await project.findCharacter(id))!.visual; return visual?.portraits ?? (visual?.portrait !== undefined ? [visual.portrait] : []) }
+    // Pictures of the gallery, nobody's: brought in, hanging nowhere.
+    const [one, two, three, four, five] = await Promise.all([1, 2, 3, 4, 5].map(async tail => (await importPicture(bed.runtime, { kind: 'picture', data: file(tail) })).info.path)) as [string, string, string, string, string]
+    expect(await hung(one)).toEqual([])
+
+    // The design art of a place: one of its pictures, the main one; on record as a place's — and that it was not made as one.
+    const art = await usePictureAs(bed.runtime, { picture: one, as: 'art', target: '大观园' })
+    expect(art).toMatchObject({ held: ['大观园'], released: [] })
+    expect(art.spare).toBeUndefined()
+    expect(art.info).toMatchObject({ path: one, kind: 'location', target: garden.id, imported: true })
+    // (Brought in, it was made as nothing here: its record has nothing to say of that.)
+    expect(art.info.madeAs).toBeUndefined()
+    expect((await project.findWorld(garden.id))!.visualImage).toBe(one)
+    expect(await hung(one)).toEqual([{ as: 'art', id: garden.id, name: '大观园', main: true }])
+    // Beside a main picture the author chose, another waits, not in use.
+    await project.saveWorld({ id: garden.id, visualMain: one })
+    const beside = await usePictureAs(bed.runtime, { picture: two, as: 'art', target: garden.id })
+    expect(beside.spare).toBe(true)
+    expect((await project.findWorld(garden.id))!.visualImage).toBe(one)
+    expect(artsOf((await project.findWorld(garden.id))!).map(item => item.path).sort()).toEqual([one, two].sort())
+
+    // Somebody's design sheet: whether it is the front alone is told by its shape, unless said.
+    const sheet = await usePictureAs(bed.runtime, { picture: three, as: 'sheet', target: '林黛玉' })
+    expect(sheet.info).toMatchObject({ kind: 'sheet', target: daiyu.id })
+    expect(sheetsOf((await project.findCharacter(daiyu.id))!)).toEqual([{ path: three, as: 'main', front: true }])
+    const views = await usePictureAs(bed.runtime, { picture: four, as: 'sheet', target: daiyu.id, front: false })
+    expect(views.spare).toBeUndefined()
+    expect(sheetsOf((await project.findCharacter(daiyu.id))!).find(item => item.path === four)).toMatchObject({ as: 'main', front: false })
+    expect(await hung(three)).toEqual([{ as: 'sheet', id: daiyu.id, name: '林黛玉', use: 'spare', front: true }])
+
+    // The portrait of one of their moments: it is that moment's picture, and one of their portraits.
+    const moment = await usePictureAs(bed.runtime, { picture: five, as: 'portrait', target: daiyu.id, scene: 'bury' })
+    expect(moment.info).toMatchObject({ kind: 'portrait', target: daiyu.id, moment: { title: '葬花', scene: 'bury', chapter: chapter.id } })
+    const card = (await project.findCharacter(daiyu.id))!
+    expect(card.visual?.scenes?.[0]?.portrait).toBe(five)
+    expect(await faces(daiyu.id)).toContain(five)
+    expect(await hung(five)).toEqual([{ as: 'portrait', id: daiyu.id, name: '林黛玉', scene: { id: 'bury', title: '葬花' } }])
+
+    // One drawn of a moment — its record says so, and the words it was drawn from — said to be of none of their
+    // moments: it is a portrait of theirs, and no moment's; said to be that moment's again, it is.
+    const drawn = await project.writeAsset('images/portrait-drawn-0c0c0c0c.png', file(20))
+    await project.addIllustration({ id: 'img-drawn', path: drawn, prompt: '画面：葬花', kind: 'portrait', target: daiyu.id, createdAt: new Date().toISOString(), moment: { title: '葬花', scene: 'bury', chapter: chapter.id }, parts: { subject: '葬花', pieces: [{ of: 'scene', text: '她肩上担着花锄，在花冢前收葬残红。' }] } })
+    const none = await usePictureAs(bed.runtime, { picture: drawn, as: 'portrait', target: daiyu.id })
+    expect(none.info).toMatchObject({ kind: 'portrait', target: daiyu.id, ofNoMoment: true })
+    expect(none.info.moment).toBeUndefined()
+    expect(none.info.madeAs).toBeUndefined()
+    expect(await hung(drawn)).toEqual([{ as: 'portrait', id: daiyu.id, name: '林黛玉' }])
+    expect((await project.findCharacter(daiyu.id))!.visual?.scenes?.[0]?.portrait).toBe(five)
+    const theirs = await usePictureAs(bed.runtime, { picture: drawn, as: 'portrait', target: daiyu.id, scene: 'bury' })
+    expect(theirs.info.ofNoMoment).toBeUndefined()
+    expect((await project.findCharacter(daiyu.id))!.visual?.scenes?.[0]?.portrait).toBe(drawn)
+    // (The one that was the moment's before is another picture of it still: its record names the moment.)
+    expect(await hung(five)).toEqual([{ as: 'portrait', id: daiyu.id, name: '林黛玉', scene: { id: 'bury', title: '葬花' } }])
+    await usePictureAs(bed.runtime, { picture: drawn, as: 'gallery' })
+    await usePictureAs(bed.runtime, { picture: five, as: 'portrait', target: daiyu.id, scene: 'bury' })
+
+    // Said to be somebody else's: it is taken down from the one, and hangs with the other — no moment's any more.
+    const moved = await usePictureAs(bed.runtime, { picture: five, as: 'portrait', target: '薛宝钗' })
+    expect(moved).toMatchObject({ held: ['薛宝钗'], released: ['林黛玉'] })
+    expect(moved.info.moment).toBeUndefined()
+    const left = (await project.findCharacter(daiyu.id))!
+    expect(await faces(daiyu.id)).not.toContain(five)
+    expect(left.visual?.scenes?.[0]?.portrait).toBeUndefined()
+    expect((await project.findCharacter(baochai.id))!.visual?.portrait).toBe(five)
+    // A sheet said to be a portrait: off the sheets — another is the main one — and among the portraits.
+    const turned = await usePictureAs(bed.runtime, { picture: four, as: 'portrait', target: daiyu.id })
+    expect(turned.released).toEqual(['林黛玉'])
+    expect(sheetsOf((await project.findCharacter(daiyu.id))!)).toEqual([{ path: three, as: 'main', front: true }])
+    expect(await faces(daiyu.id)).toEqual([four])
+
+    // Nobody's again: off the entry, a picture of the gallery; then a chapter's.
+    const back = await usePictureAs(bed.runtime, { picture: two, as: 'gallery' })
+    expect(back).toMatchObject({ held: [], released: ['大观园'] })
+    expect(back.info.kind).toBe('scene')
+    expect(back.info.target).toBeUndefined()
+    expect(back.info.madeAs).toBeUndefined()
+    expect(artsOf((await project.findWorld(garden.id))!).map(item => item.path)).toEqual([one])
+    const paged = await usePictureAs(bed.runtime, { picture: two, as: 'chapter', target: '葬花' })
+    expect(paged.info).toMatchObject({ kind: 'scene', target: chapter.id })
+
+    // The cover the book shows for want of a chosen one stays the cover, whatever it is filed as since.
+    const cover = (await importPicture(bed.runtime, { kind: 'cover', data: file(6) })).info.path
+    await project.updateManifest({ cover: '' })
+    expect(await project.cover()).toBe(cover)
+    await usePictureAs(bed.runtime, { picture: cover, as: 'art', target: garden.id })
+    expect((await project.manifest()).cover).toBe(cover)
+    expect(await project.cover()).toBe(cover)
+    expect(await record(cover)).toMatchObject({ kind: 'location', target: garden.id })
+
+    // One that waited to be taken, of several drawn to compare, is taken by this; one without a record gets one.
+    const waiting = await project.writeAsset('images/portrait-waiting-0a0a0a0a.png', file(7))
+    await project.addIllustration({ id: 'img-waiting', path: waiting, prompt: '画面：她', kind: 'portrait', target: baochai.id, createdAt: new Date().toISOString(), trial: { id: 't1', label: 'A', hang: { as: 'portrait', character: baochai.id } } })
+    const taken = await usePictureAs(bed.runtime, { picture: 'img-waiting', as: 'sheet', target: baochai.id })
+    expect(taken.info).toMatchObject({ id: 'img-waiting', kind: 'sheet', prompt: '画面：她', trial: { id: 't1', label: 'A' }, madeAs: { kind: 'portrait', target: baochai.id } })
+    expect(taken.info.trial?.hang).toBeUndefined()
+    expect((await project.findCharacter(baochai.id))!.visual?.sheet).toBe(waiting)
+    // Drawn here as one thing and said to be for another, its record keeps what it was drawn as — and says nothing of it once it is that again.
+    const again = await usePictureAs(bed.runtime, { picture: waiting, as: 'portrait', target: baochai.id })
+    expect(again.info).toMatchObject({ kind: 'portrait', target: baochai.id })
+    expect(again.info.madeAs).toBeUndefined()
+    expect((await project.findCharacter(baochai.id))!.visual?.sheet).toBeUndefined()
+    const bare = await project.writeAsset('images/loose-0b0b0b0b.png', file(8))
+    const filed = await usePictureAs(bed.runtime, { picture: bare, as: 'chapter', target: chapter.id })
+    expect(filed.info).toMatchObject({ path: bare, kind: 'scene', target: chapter.id, prompt: '' })
+    expect(filed.info.madeAs).toBeUndefined()
+    expect((await project.illustrations()).filter(item => item.path === bare)).toHaveLength(1)
+
+    // What is not there changes nothing; an idea of the world has no design art.
+    const before = JSON.stringify([await project.illustrations(), await project.characters(), await project.world()])
+    await expect(usePictureAs(bed.runtime, { picture: 'assets/images/none-00000000.png', as: 'gallery' })).rejects.toThrow(/no picture of the book/)
+    await expect(usePictureAs(bed.runtime, { picture: one, as: 'portrait', target: '没有这个人' })).rejects.toThrow(/no character/)
+    await expect(usePictureAs(bed.runtime, { picture: one, as: 'portrait', target: daiyu.id, scene: 'none' })).rejects.toThrow(/no signature scene/)
+    await expect(usePictureAs(bed.runtime, { picture: one, as: 'art', target: '金玉良缘' })).rejects.toThrow(/no design art/)
+    await expect(usePictureAs(bed.runtime, { picture: one, as: 'chapter', target: '没有这一章' })).rejects.toThrow(/no chapter/)
+    expect(JSON.stringify([await project.illustrations(), await project.characters(), await project.world()])).toBe(before)
+    // Nothing was drawn for any of it.
+    expect(images.calls).toHaveLength(0)
+  })
+
   it('takes in a photograph as the design art of a place, a house or a thing, as the cover, or as a picture of the gallery', async () => {
     const { bed, images } = await studio()
     const { project } = bed.runtime

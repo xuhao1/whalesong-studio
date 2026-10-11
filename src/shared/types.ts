@@ -2215,6 +2215,12 @@ export interface IllustrationInfo {
   createdAt: Timestamp
   /** Brought in from outside — a file of the author's — not drawn here: there is no prompt, and nothing to draw it again from. */
   imported?: boolean
+  /**
+   * What it was drawn as, where the author has said since that it is for something else (`kind` and `target` are what
+   * it is for now): the record of its making — its prompt, what went along with it — is of this. (A picture brought
+   * in was made as nothing here, and has none.)
+   */
+  madeAs?: { kind: IllustrationInfo['kind']; target?: string }
   model?: string
   /** The image service it was drawn with. */
   provider?: ImageProviderKind
@@ -2232,6 +2238,8 @@ export interface IllustrationInfo {
   verbatim?: boolean
   /** A portrait of one of somebody's moments: which (its name, its id on their card) and the chapter it is from — where the picture stands in the text. */
   moment?: { title?: string; scene?: string; chapter?: string }
+  /** A portrait the author said is of none of somebody's moments, though it was drawn of one: what it was drawn from does not make it that moment's. */
+  ofNoMoment?: boolean
   /**
    * Drawn to compare services: one of several pictures of the same thing, each by another (`label`: which); `id` is
    * the same for the pictures of one comparison. `hang`: where it goes once the author takes it — it hangs nowhere

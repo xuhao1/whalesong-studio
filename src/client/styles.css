@@ -12760,3 +12760,18 @@ button.nv-album-chapter:hover {
   background: var(--nv-surface-2);
   color: var(--nv-text);
 }
+
+/* A picture of the gallery that was brought in, not drawn here: a small mark at the end of its caption. */
+.nv-gallery-from {
+  display: inline-flex;
+  margin-left: auto;
+  opacity: 0.85;
+}
+
+/* Between two kinds of choice in one row of chips. */
+.nv-chips-rule {
+  align-self: stretch;
+  width: 1px;
+  margin: 2px 2px;
+  background: var(--nv-border);
+}
