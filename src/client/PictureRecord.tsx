@@ -347,11 +347,13 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
       else standing.push({ tone: 'warn', text: left.length > 0 ? t('绘图服务没有收参考图，人设图没有带上。', 'The image service took no reference picture: the design sheet did not go along.') : t('画的时候没有带人设图。', 'Drawn without a design sheet.') })
     }
     if (image.kind === 'sheet' && !ofLook && references.length === 0 && left.length > 0) standing.push({ tone: 'warn', text: t('绘图服务没有收参考图，立绘没有带上：只照文字画的。', 'The image service took no reference picture: the portrait did not go along, and this came from the words alone.') })
-    if (image.kind === 'sheet' && !ofLook && references.length > 0 && !changed) {
+    // (Pictures the author gave it to go by are theirs, said below; this is about what the Studio held it against.)
+    const own = references.filter(reference => reference.given !== true)
+    if (image.kind === 'sheet' && !ofLook && own.length > 0 && !changed) {
       // Against their portrait: the portrait leads (or it was asked for this once). Against anything else: how sheets were redrawn once.
       const portraits = new Set([card.visual?.portrait, ...(card.stages ?? []).map(stage => stage.visual?.portrait), ...scenesOf(card).map(scene => scene.portrait)].filter((path): path is string => path !== undefined))
-      if (references.some(reference => reference.path === card.visual?.portrait)) standing.push({ tone: 'ok', text: t('照着现在这张立绘画的。', 'Drawn against the portrait in use now.') })
-      else if (references.some(reference => portraits.has(reference.path) || /^portrait-|\/portrait-/.test(reference.path))) standing.push({ tone: 'warn', text: t('照着以前的一张立绘画的。', 'Drawn against an earlier portrait.') })
+      if (own.some(reference => reference.path === card.visual?.portrait)) standing.push({ tone: 'ok', text: t('照着现在这张立绘画的。', 'Drawn against the portrait in use now.') })
+      else if (own.some(reference => portraits.has(reference.path) || /^portrait-|\/portrait-/.test(reference.path))) standing.push({ tone: 'warn', text: t('照着以前的一张立绘画的。', 'Drawn against an earlier portrait.') })
       else standing.push({ tone: 'info', text: t('这张人设图是照着另一张图画的，所以和那张几乎一样。现在重画只照文字。', 'This sheet was drawn against another picture, so it is nearly the same. A redraw now goes by the words alone.') })
     }
   } else if (entry !== undefined) {
@@ -377,7 +379,9 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
   const said = parts?.referenceNote
   const unsent = said !== undefined && references.length === 0
 
-  const statusOf = (path: string): { label: string; tone: 'green' | 'amber' | 'neutral' } => {
+  const statusOf = (path: string, given = false): { label: string; tone: 'green' | 'amber' | 'neutral' | 'blue' } => {
+    // One the author gave this picture to go by is nobody's sheet and no design art: it is what it was given as.
+    if (given) return { label: t('你给的', 'Given by you'), tone: 'blue' }
     if (held.has(path)) return { label: t('现在还在用', 'In use now'), tone: 'green' }
     if (pictures.byPath.has(path)) return { label: t('旧的一张', 'An earlier one'), tone: 'amber' }
     return { label: t('已不在图库里', 'No longer in the gallery'), tone: 'neutral' }
@@ -407,6 +411,7 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
         {sent?.sampling !== undefined ? <span>{t(`${sent.sampling.steps} 步 · 引导 ${sent.sampling.guidance} · ${sent.sampling.sampler}/${sent.sampling.scheduler}`, `${sent.sampling.steps} steps · guidance ${sent.sampling.guidance} · ${sent.sampling.sampler}/${sent.sampling.scheduler}`)}{sent.sampling.from === 'server' ? t('（照服务器上这个模型上次跑的）', ' (as the server last ran this model)') : sent.sampling.from === 'builtin' ? t('（内置的默认值）', ' (the built-in figures)') : ''}</span> : null}
         {sent?.seed !== undefined ? <span>{t(`种子 ${sent.seed}`, `seed ${sent.seed}`)}</span> : null}
         {sent?.compact?.asked === true ? <span>{sent.compact.failed === true ? t('导演没能把这一张的要求改进提示词：要求作为一行照原话发了', 'the director could not work what was asked into the prompt: it went as a line, in the author\'s words') : t('导演照这一张的要求改写了提示词', 'the director rewrote the prompt by what was asked of this one')}</span> : null}
+        {sent?.compact?.replaced !== undefined && sent.compact.replaced.length > 0 ? <span>{t(`交给参考图来定、从文字里拿掉的：${sent.compact.replaced.map(words => `「${words}」`).join('')}`, `left to the reference picture, and taken out of the words: ${sent.compact.replaced.map(words => `"${words}"`).join(', ')}`)}</span> : null}
         {/* (Written by what was asked and within what the model reads: the line above has said it.) */}
         {sent?.compact !== undefined && !(sent.compact.asked === true && (sent.compact.limit === undefined || sent.compact.from <= sent.compact.limit)) ? <span>{sent.compact.limit === undefined
           // No limit of the model's in play: the director wrote the brief out as the prompt because the author has prompts written.
@@ -449,7 +454,7 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
         {references.length > 0 ? (
           <div className="nv-parts-refs">
             {references.map((reference, index) => {
-              const status = statusOf(reference.path)
+              const status = statusOf(reference.path, reference.given === true)
               const known = pictures.byPath.has(reference.path)
               const body = (
                 <>

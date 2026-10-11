@@ -2132,16 +2132,17 @@ export interface IllustrationParts {
   /**
    * Reference images sent along: project-relative path and who it shows. `sheet`: it is somebody's design sheet — one
    * person seen from several sides. `front`: of that sheet only the front view went, cut out of it — handed all its
-   * figures, an image model draws as many people.
+   * figures, an image model draws as many people. `given`: the author gave it to this picture to go by (a photograph
+   * of the thing, a costume, a face) — not one the Studio holds the picture against by itself.
    */
-  references?: { path: string; label: string; sheet?: boolean; front?: boolean }[]
+  references?: { path: string; label: string; sheet?: boolean; front?: boolean; given?: boolean }[]
   /** What the prompt said of the reference images: who each one shows, and what they are there for. */
   referenceNote?: string
   /**
    * The pictures it would have been held against, left behind by the image service: it takes none (all of them are
    * here, and `references` is empty), or fewer than there were (the rest are here). The prompt does not speak of them.
    */
-  left?: { path: string; label: string; sheet?: boolean }[]
+  left?: { path: string; label: string; sheet?: boolean; given?: boolean }[]
   /** The service was sent them and would not have them: what it answered. The picture was then drawn from the words alone. */
   leftWhy?: string
   /**
@@ -2183,7 +2184,7 @@ export interface IllustrationSent {
    * to about `tokens`; or could not (`failed`), and it went as it was, the model reading as far as it reads.
    * Tokens are the Studio's estimate: it has no model's tokenizer.
    */
-  compact?: { /** What the model reads at most. Absent: it has no limit that is known — the director wrote the prompt out all the same (`promptWrite: 'always'`). */ limit?: number; from: number; tokens?: number; failed?: boolean; /** What the director wrote was still over, and its end — the least of it, by the order it was written in — was left off. */ cut?: boolean; /** The director wrote it to work in what the author asked of this one picture. */ asked?: boolean }
+  compact?: { /** What the model reads at most. Absent: it has no limit that is known — the director wrote the prompt out all the same (`promptWrite: 'always'`). */ limit?: number; from: number; tokens?: number; failed?: boolean; /** What the director wrote was still over, and its end — the least of it, by the order it was written in — was left off. */ cut?: boolean; /** The director wrote it to work in what the author asked of this one picture. */ asked?: boolean; /** The words of the brief the director took out for a reference picture of the author's to settle instead ("the colour as in this one"). */ replaced?: string[] }
   /**
    * How it was sampled, where the Studio built the graph itself (a model on a ComfyUI server, no workflow named), and
    * where the steps and the guidance came from: the `settings`, the `server`'s own last run of that model, or the

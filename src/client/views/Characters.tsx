@@ -9,6 +9,7 @@
  *   ROLE_LABELS…     how parts are called, and where somebody stands at a chapter of a line
  */
 import { ImageTrialDialog, ManyModels, SpeechTrialDialog, type DrawAsk } from '../Trial'
+import { GuidePictures, useGiven } from '../Guides'
 import { ImportPicture } from '../ImportPicture'
 import { PortraitInText } from '../Figures'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
@@ -539,6 +540,9 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
   // here, it is the author's word for the pictures drawn from this page — said with each, whatever the setting.
   const [portraitFrom, setPortraitFrom] = useState<'sheet' | 'words' | undefined>()
   const [sheetFrom, setSheetFrom] = useState<'portrait' | 'words' | undefined>()
+  // Pictures the author gives their design sheet to go by — a face, a costume: sent to the image model with every
+  // sheet of theirs drawn from this page, until taken off again.
+  const [sheetGiven, setSheetGiven] = useGiven(`${root}\nsheet:${card.id}`)
   useEffect(() => {
     setPortraitFrom(undefined)
     setSheetFrom(undefined)
@@ -551,7 +555,9 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
     const jotted = look === undefined && stage === undefined ? notes.trim() : ''
     // The card's own two pictures: a look, and a stretch of their life, go by the setting.
     const from = look !== undefined || stage !== undefined ? undefined : kind === 'portrait' ? portraitFrom : sheetFrom === 'portrait' && card.visual?.portrait === undefined ? undefined : sheetFrom
-    return { kind, target: card.id, ...(look !== undefined ? { look } : {}), ...(jotted.length > 0 ? { notes: jotted } : {}), ...(stage !== undefined ? { stage } : {}), ...(kind !== 'portrait' || stage !== undefined ? {} : scene !== undefined ? { scene } : whichPortrait(chosenPortrait)), ...(from !== undefined ? { from } : {}) }
+    // The pictures given are for the card's own sheet, like the ideas.
+    const given = kind === 'sheet' && look === undefined && stage === undefined ? sheetGiven : []
+    return { kind, target: card.id, ...(look !== undefined ? { look } : {}), ...(jotted.length > 0 ? { notes: jotted } : {}), ...(stage !== undefined ? { stage } : {}), ...(kind !== 'portrait' || stage !== undefined ? {} : scene !== undefined ? { scene } : whichPortrait(chosenPortrait)), ...(from !== undefined ? { from } : {}), ...(given.length > 0 ? { references: given } : {}) }
   }
   /** The same picture by several services instead: one from each, to compare. */
   const compare = (what: string, kind: 'sheet' | 'portrait', look?: string, scene?: string, stage?: string): void => {
@@ -802,7 +808,7 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
           <Button size="sm" variant={draft.visual?.portrait === undefined ? 'primary' : 'outline'} icon="image" disabled={dirty || (drawing !== undefined && !portraitBusy)} busy={portraitBusy} pending={t('正在画立绘…', 'Drawing the portrait…')} onClick={() => draw('portrait', t('立绘已生成', 'Portrait ready'))} title={dirty ? t('先保存当前修改', 'Save your edits first') : portraitAgainst === 'words' ? t('只照文字画', 'Drawn from the words alone') : hasSheet ? t('照着人设图画', 'Drawn against the design sheet') : t('先画人设图，再照着它画立绘', 'The design sheet is drawn first, then the portrait against it')}>{draft.visual?.portrait !== undefined ? t('重画立绘', 'Redraw portrait') : t('画立绘', 'Draw portrait')}</Button>
           <Button size="sm" variant="ghost" icon="layers" disabled={dirty} onClick={() => { compare(t('立绘', 'portrait'), 'portrait') }} title={t('多模型：用几个绘图服务各画一张立绘来比——同一幕、同一段提示词、同样的参考图', 'Several models: a portrait from each image service, to compare — the same moment, the same words, the same reference pictures')} aria-label={t('多模型画立绘', 'Portrait by several models')} />
           <ImportPicture kind="portrait" of={{ character: card.id }} disabled={dirty} />
-          <Button size="sm" variant="outline" icon="users" disabled={dirty || (drawing !== undefined && !sheetBusy)} busy={sheetBusy} pending={t('正在画人设图…', 'Drawing the sheet…')} onClick={() => draw('sheet', draft.visual?.sheet !== undefined ? t('人设图画好了：它是主人设图了，原来那张留着（未启用）', 'Design sheet ready: it is the main sheet now, and the one before is kept, not in use') : t('人设图已生成', 'Design sheet ready'))} title={dirty ? t('先保存当前修改', 'Save your edits first') : sheetAgainst === 'portrait' ? t(`${image?.sheet === 'front' ? '正面全身' : '三视图'}，照着立绘画`, `${image?.sheet === 'front' ? 'The front view' : 'Three views'}, drawn against the portrait`) : t(`${image?.sheet === 'front' ? '正面全身' : '三视图'}，只照文字画：视觉锚点、画风和下面写的想法`, `${image?.sheet === 'front' ? 'The front view' : 'Three views'}, drawn from the words alone: the visual anchor, the art direction and the ideas below`)}>{sheetList.length > 0 ? t('再画一张人设图', 'Another sheet') : t('生成人设图', 'Design sheet')}</Button>
+          <Button size="sm" variant="outline" icon="users" disabled={dirty || (drawing !== undefined && !sheetBusy)} busy={sheetBusy} pending={t('正在画人设图…', 'Drawing the sheet…')} onClick={() => draw('sheet', draft.visual?.sheet !== undefined ? t('人设图画好了：它是主人设图了，原来那张留着（未启用）', 'Design sheet ready: it is the main sheet now, and the one before is kept, not in use') : t('人设图已生成', 'Design sheet ready'))} title={dirty ? t('先保存当前修改', 'Save your edits first') : sheetAgainst === 'portrait' ? t(`${image?.sheet === 'front' ? '正面全身' : '三视图'}，照着立绘画`, `${image?.sheet === 'front' ? 'The front view' : 'Three views'}, drawn against the portrait`) : sheetGiven.length > 0 ? t(`${image?.sheet === 'front' ? '正面全身' : '三视图'}，照文字和下面这 ${sheetGiven.length} 张参考图画`, `${image?.sheet === 'front' ? 'The front view' : 'Three views'}, drawn from the words and the ${sheetGiven.length} picture(s) given below`) : t(`${image?.sheet === 'front' ? '正面全身' : '三视图'}，只照文字画：外貌、画风和下面写的想法`, `${image?.sheet === 'front' ? 'The front view' : 'Three views'}, drawn from the words alone: the appearance, the art direction and the ideas below`)}>{sheetList.length > 0 ? t('再画一张人设图', 'Another sheet') : t('生成人设图', 'Design sheet')}</Button>
 <Button size="sm" variant="ghost" icon="layers" disabled={dirty} onClick={() => { compare(t('人设图', 'design sheet'), 'sheet') }} title={t('多模型：用几个绘图服务各画一张人设图来比', 'Several models: a design sheet from each image service, to compare')} aria-label={t('多模型画人设图', 'Design sheet by several models')} />
           <ImportPicture kind="sheet" of={{ character: card.id }} disabled={dirty} onDone={(path) => { setPicked(`sheet:${path}`) }} />
         </div>
@@ -828,6 +834,7 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
             ]}
           />
         </label>
+        <GuidePictures label={t('人设图参考图', 'Pictures for the sheet')} ask={t('要它的什么：脸、发型、这身衣服（不填：整个样子照它）', 'What of it is wanted: the face, the hair, these clothes (left empty: the whole look)')} value={sheetGiven} onChange={setSheetGiven} disabled={dirty} />
         {portraitAgainst === 'sheet' && sheetAgainst === 'portrait' && hasSheet ? <p className="nv-muted nv-small">{t('两张互相照着：重画哪张都会像另一张。', 'Each is held against the other: either, drawn again, comes back like the other.')}</p> : null}
         {portraitBehind ? <p className="nv-muted nv-small">{t('立绘不是照现在这张人设图画的。', 'The portrait was not drawn against the sheet in use now.')}</p> : null}
         {sheetBehind ? <p className="nv-muted nv-small">{t('人设图不是照现在这张立绘画的。', 'The sheet was not drawn against the portrait in use now.')}</p> : null}

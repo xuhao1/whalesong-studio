@@ -460,7 +460,7 @@ describe('design sheets and looks', () => {
     // The sheet: where the braid comes from is there to be read — the anchor says it — and nothing went along with it.
     const ofSheet = pictureRecord(sheet)
     expect(ofSheet).toContain(`sheet of ${card.id} — ${sheet.path}`)
-    expect(ofSheet).toContain('how it looks (the visual anchor / the look written on the entry): boy of thirteen, hair in one thick queue')
+    expect(ofSheet).toContain('how it looks (the look written for pictures: on an entry, or the phrases an older card kept beside the appearance): boy of thirteen, hair in one thick queue')
     expect(ofSheet).toContain('art direction (the book\'s own): 淡彩水墨，建筑服饰是典型的明制')
     expect(ofSheet).toContain('kept out: beard')
     expect(ofSheet).toContain('No reference picture went with it')
@@ -1802,7 +1802,8 @@ describe('the pictures kept of somebody, and taking one away', () => {
     const lamp = await project.writeAsset('images/lamp.png', PIXEL)
     const more = await redrawPicture(bed.core, bed.runtime, { picture: portrait.id, prompt: whole.prompt, references: [{ path: sheet }, { path: lamp, label: '那盏灯' }, { path: 'assets/images/no-such.png' }, { path: '../outside.png' }] }, task)
     expect(images.calls.at(-1)!.references).toHaveLength(2)
-    expect(more.parts?.references).toEqual([{ path: sheet, label: '沈砚', sheet: true }, { path: lamp, label: '那盏灯' }])
+    // (The one added is one the author gave it: said on the record.)
+    expect(more.parts?.references).toEqual([{ path: sheet, label: '沈砚', sheet: true }, { path: lamp, label: '那盏灯', given: true }])
     expect(images.calls.at(-1)!.prompt).toContain('人物「沈砚」：见图1')
     expect(images.calls.at(-1)!.prompt.match(/参考图：/g)).toHaveLength(1)
     expect(images.calls.at(-1)!.prompt).toContain('参考图：图1 是沈砚；图2 是那盏灯。')

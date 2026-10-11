@@ -40,7 +40,7 @@
  * for word — so that a look nobody asked for can be traced to where it came from.
  */
 import { lookWords, mergeAvoid, PICTURE_TO_CHANGE, pictureSize, pictureWords, resolveArtStyle, sceneFor, sceneOfPicture, scenesOf, sceneWords, shotKey, shotOf, splitAvoid, tidyPart as tidy, type ArtSource } from '../../shared/art'
-import type { CharacterCard, CharacterLook, CharacterStage, ComicPanel, ImageTrial, TrialPicture, IllustrationInfo, IllustrationParts, IllustrationPiece, IllustrationSent, PictureHang, PictureWhole, PromptLanguage, SceneShot, SignatureScene, SortedNotes, WorldEntry, WorldEvent } from '../../shared/types'
+import type { CharacterCard, CharacterLook, CharacterStage, ComicPanel, ImageTrial, TrialPicture, IllustrationInfo, IllustrationParts, IllustrationPiece, IllustrationSent, PictureGuide, PictureHang, PictureWhole, PromptLanguage, SceneShot, SignatureScene, SortedNotes, WorldEntry, WorldEvent } from '../../shared/types'
 import { MAIN_LINE, referencesOf } from '../../shared/types'
 import { clip, clipTail, fuzzyFind, hashText, newId, sameName, slugify } from '../../shared/text'
 import { leadOf, portraitsOf, PROMPT_HEADROOM, promptTokens, promptWriteOf, type PictureLead } from '../../shared/images'
@@ -56,6 +56,7 @@ import { extensionOf, referencesRefused, type ImageProvider, type ImageReference
 import { frontView } from '../media/front'
 import { pixelsOf } from '../media/pixels'
 import { castAt } from './growth'
+import { cleanGuides } from './guides'
 import { keepNotedScenes } from './scenes'
 import { ProviderError } from '../media/http'
 import { portraitIsOf, ProjectError } from '../project'
@@ -127,6 +128,13 @@ export interface IllustrateParams {
    * chapter has several.
    */
   event?: string
+  /**
+   * Sheet, location, item: pictures the author gives this one picture to go by — a photograph of the thing, a costume,
+   * a face; files of the book (one of its own pictures, or one brought in for this), each with what the author says
+   * is wanted of it. They go to the image model with the prompt, after whatever the Studio itself holds the picture
+   * against, and the prompt says of each what the author said ({@link withGiven}).
+   */
+  references?: PictureGuide[]
   /**
    * Draw it once with each of these services, to compare them — the same words, the same reference pictures. Whatever
    * kind of picture it is, none of them hangs anywhere: they are in the gallery, kept out of the text, each saying
@@ -288,7 +296,7 @@ export function wardrobeOf(card: CharacterCard): string | undefined {
 }
 
 /** A picture that goes along with a prompt: where it lies, who or what it shows — and whether it is a design sheet, which shows one person several times over. */
-export interface Held { path: string; label: string; sheet?: boolean }
+export interface Held { path: string; label: string; sheet?: boolean; /** The author gave it to this picture to go by. */ given?: boolean; /** …and said this is wanted of it. */ note?: string }
 
 /** The front views cut out of design sheets, by book, sheet and the sheet's size: a sheet is looked into once, however many pictures are held against it. */
 const fronts = new Map<string, Promise<Uint8Array | undefined>>()
@@ -978,6 +986,64 @@ async function turnLook(core: NovelCore, runtime: ProjectRuntime, entry: WorldEn
   }
 }
 
+// ───────────────────────────── pictures the author gives one to go by ─────────────────────────────
+
+/**
+ * The pictures the author gave one picture to go by, as they go along: files of the book, each once, each called by
+ * what the author said of it.
+ * @throws ProjectError `novel/invalid` for one that is no longer in the book — a picture asked for by name is not
+ *   left out without a word.
+ */
+async function givenPictures(project: ProjectRuntime['project'], given: readonly PictureGuide[] | undefined, lang: PromptLanguage, plang: PromptLanguage): Promise<Held[]> {
+  const held: Held[] = []
+  for (const guide of cleanGuides(given)) {
+    if (!(await project.has(guide.path))) throw new ProjectError('novel/invalid', L(lang, `参考图不在书里了：${guide.path}`, `a reference picture is no longer in the book: ${guide.path}`))
+    // What the author said of it goes with it in brackets: the prompt's line on the pictures says how that is read.
+    held.push({ path: guide.path, label: guide.note !== undefined ? L(plang, `作者给的参考图（${guide.note}）`, `a reference the author gave (${guide.note})`) : L(plang, '作者给的参考图', 'a reference the author gave'), given: true, ...(guide.note !== undefined ? { note: guide.note } : {}) })
+  }
+  return held
+}
+
+/**
+ * How somebody or something looks, where the author gave the picture one to go by and said nothing of what is wanted
+ * of it: it is as that picture shows — the line points to it ("见图1"), the way a person's line points to their
+ * sheet, and the words stay beside the pointer for where no picture can go. Written out beside the picture, a
+ * paragraph on how the thing looks is what the image model draws, and the picture gives it little but a point of
+ * view (tried). Where the author has looks written out every time (`image.looks`), they are.
+ */
+function byGiven(part: IllustrationPiece | undefined, given: readonly Held[]): IllustrationPiece | undefined {
+  const whole = given.find(reference => reference.note === undefined)
+  return part !== undefined && whole !== undefined ? { ...part, path: whole.path } : part
+}
+
+/**
+ * The pictures a picture is held against with those the author gave it after them, and what is said of them all.
+ * A picture handed to an image model with nothing said of what it is for comes back as it is: so the line says what
+ * each is there for — the Studio's own first, where there is one; of the author's, what they said is wanted, and where
+ * they said nothing, how the person or the thing in it looks — and what none of them is to bring along. In that, the
+ * picture holds over the words: the author gave it to this one drawing, and the words were there before. (Where they
+ * said what is wanted, whoever writes the prompt takes the words that say otherwise out as well — {@link writePrompt}:
+ * left in, a paragraph that says "green with rust" wins over a line that says "the colour as in Image 1"; tried.)
+ * @param own - what the Studio holds the picture against by itself, and what it says of that.
+ * @param says.takes - what is taken of a picture the author said nothing of.
+ * @param says.frame - what the picture asked for is, and what of a reference stays behind.
+ */
+function withGiven(own: Pick<RenderInput, 'references' | 'referenceNote'>, given: readonly Held[], lang: PromptLanguage, says: { takes: string; frame: string }): Pick<RenderInput, 'references' | 'referenceNote'> {
+  if (given.length === 0) return own
+  const before = own.references ?? []
+  // What was said of "the reference" while there was one is said of the first, now that there are several.
+  const first = before.length > 0 && own.referenceNote !== undefined
+    ? L(lang, `图1：${own.referenceNote.replaceAll('参考图', '图1')}`, `Image 1: ${own.referenceNote.replace(/\bthe reference\b/g, 'Image 1')} `)
+    : ''
+  const theirs = L(lang,
+    `作者给的参考图，括号里是作者说的话：说了要它什么的，那一样照图画——文字里另有写法的，以图为准——别的照文字；没说的，${says.takes}照图，图上看不出的照文字。`,
+    `Of a reference the author gave, the brackets hold what the author said: where that says what is wanted of it, that follows the picture — over what the words say of it — and the rest follows the words; where it does not, ${says.takes} follows the picture, and the words say what the picture does not show. `)
+  const rest = first.length > 0
+    ? L(lang, '它们的背景、构图和光线同样不要带过来；画风照上面写的。', 'Their backgrounds, composition and light stay behind as well; the style is the one written above.')
+    : says.frame
+  return { references: [...before, ...given], referenceNote: `${first}${theirs}${rest}` }
+}
+
 // ───────────────────────────── one picture ─────────────────────────────
 
 export interface RenderInput {
@@ -1171,7 +1237,7 @@ export function compose(parts: readonly (IllustrationPiece | undefined)[], lang:
 
 /** Generate one image, store it under `assets/images/`, and record what its prompt was made of. */
 /** Prompts the director fitted, by what was asked: the same prompt for the same model comes to the same words again. */
-const fittedPrompts = new Map<string, string>()
+const fittedPrompts = new Map<string, { text: string; replaced?: string[] }>()
 
 /** Forget the prompts that were fitted. For tests. */
 export function forgetFittedPrompts(): void {
@@ -1202,30 +1268,34 @@ const avoidLine = (avoid: readonly string[], lang: PromptLanguage): string => `$
  * @param input.avoid - what is kept out, where that travels apart from the prompt: for the director to steer around.
  * @returns the prompt to send, and what was done for the record.
  */
-async function writePrompt(core: NovelCore, runtime: ProjectRuntime, provider: ImageProvider, input: { prompt: string; avoid: string[]; references: number; lang: PromptLanguage; /** What the author asked of this one picture: worked into the prompt, whether or not the brief fits. */ asked?: string; /** The author's own sentence, said of a picture that goes along: theirs to word, and rewritten only where the model could not read it all. */ own?: boolean }, task: TaskContext): Promise<{ prompt: string; compact?: NonNullable<IllustrationSent['compact']> }> {
+async function writePrompt(core: NovelCore, runtime: ProjectRuntime, provider: ImageProvider, input: { prompt: string; avoid: string[]; references: number; lang: PromptLanguage; /** What the author asked of this one picture: worked into the prompt, whether or not the brief fits. */ asked?: string; /** What the author said is wanted of the reference pictures they gave, a line a picture: worked in likewise — the words that say otherwise go. */ given?: string; /** The author's own sentence, said of a picture that goes along: theirs to word, and rewritten only where the model could not read it all. */ own?: boolean }, task: TaskContext): Promise<{ prompt: string; compact?: NonNullable<IllustrationSent['compact']> }> {
   const asIs = { prompt: input.prompt }
   const mode = promptWriteOf(await core.imageOf(runtime))
   if (mode === 'never') return asIs
   // What the author asked of this one picture is worked into the prompt by whoever writes it — not left as a line
   // beside lines that say otherwise: asked, the director writes the prompt whether or not the brief would fit.
   const asked = input.asked?.trim() ?? ''
+  // So is what they said is wanted of a picture they gave it: "the colour as in Image 1" beside a paragraph that
+  // says what colour it is leaves the image model the paragraph.
+  const given = input.given?.trim() ?? ''
+  const working = asked.length > 0 || given.length > 0
   const room = await provider.prompting?.(task.signal).catch(() => undefined)
   const from = promptTokens(input.prompt)
   // Counted by estimate, so held to a little under what the model reads.
   const limit = room?.tokens !== undefined ? Math.max(1, Math.floor(room.tokens * PROMPT_HEADROOM)) : undefined
   const over = limit !== undefined && from > limit
-  if (!over && asked.length === 0 && (mode === 'fit' || input.own === true)) return asIs
+  if (!over && !working && (mode === 'fit' || input.own === true)) return asIs
   const manifest = await runtime.project.manifest()
   const lang = promptLanguage(manifest.language)
   const withPictures = input.references > 0 && room?.references !== 0
   // The same picture asked for again — drawn again, a panel redone — is not written again.
-  const key = hashText(`${provider.model}\n${limit ?? ''}\n${input.lang}\n${withPictures}\n${input.prompt}\n${input.avoid.join('|')}\n${asked}`)
-  const record = (text: string, more: { cut?: boolean } = {}): NonNullable<IllustrationSent['compact']> => ({ ...(room?.tokens !== undefined ? { limit: room.tokens } : {}), from, tokens: promptTokens(text), ...(asked.length > 0 ? { asked: true } : {}), ...more })
+  const key = hashText(`${provider.model}\n${limit ?? ''}\n${input.lang}\n${withPictures}\n${input.prompt}\n${input.avoid.join('|')}\n${asked}\n${given}`)
+  const record = (text: string, more: { cut?: boolean; replaced?: string[] } = {}): NonNullable<IllustrationSent['compact']> => ({ ...(room?.tokens !== undefined ? { limit: room.tokens } : {}), from, tokens: promptTokens(text), ...(working ? { asked: true } : {}), ...more })
   const before = fittedPrompts.get(key)
-  if (before !== undefined) return { prompt: before, compact: record(before) }
+  if (before !== undefined) return { prompt: before.text, compact: record(before.text, before.replaced !== undefined ? { replaced: before.replaced } : {}) }
   // The nearest the director came, where every try was over: written with what matters first, it loses least at its end.
   let nearest: string | undefined
-  const restore = task.job?.note(asked.length > 0
+  const restore = task.job?.note(working
     ? L(lang, '导演在照你对这一张的要求改提示词…', 'The director is working what you asked of this one into the prompt…')
     : over
       ? L(lang, `导演在把提示词压到 ${limit} 个 token 以内（现在约 ${from} 个）…`, `The director is bringing the prompt within ${limit} tokens (about ${from} now)…`)
@@ -1233,13 +1303,13 @@ async function writePrompt(core: NovelCore, runtime: ProjectRuntime, provider: I
   try {
     const { value } = await assign(core, runtime, task, {
       role: 'director',
-      label: asked.length > 0 ? L(lang, '照要求改提示词', 'A prompt, by what was asked') : over ? L(lang, '压缩提示词', 'Fitting a prompt') : L(lang, '写提示词', 'Writing a prompt'),
+      label: working ? L(lang, '照要求改提示词', 'A prompt, by what was asked') : over ? L(lang, '压缩提示词', 'Fitting a prompt') : L(lang, '写提示词', 'Writing a prompt'),
       tool: 'fit_prompt',
       // All of it is in the task: asked in one request, whatever the role is set to.
       plain: true,
       maxSteps: 6,
       what: limit !== undefined ? L(lang, `同一张图的提示词，不超过 ${limit} 个 token`, `the same picture's prompt, in no more than ${limit} tokens`) : L(lang, '同一张图的提示词', 'the same picture\'s prompt'),
-      prompt: imagePromptTask({ lang, language: manifest.language, title: manifest.title, brief: input.prompt, avoid: input.avoid, to: input.lang, ...(limit !== undefined ? { tokens: limit } : {}), estimate: from, model: provider.model, references: withPictures ? input.references : 0, ...(asked.length > 0 ? { asked } : {}) }),
+      prompt: imagePromptTask({ lang, language: manifest.language, title: manifest.title, brief: input.prompt, avoid: input.avoid, to: input.lang, ...(limit !== undefined ? { tokens: limit } : {}), estimate: from, model: provider.model, references: withPictures ? input.references : 0, ...(asked.length > 0 ? { asked } : {}), ...(given.length > 0 && withPictures ? { given } : {}) }),
       temperature: 0.2,
       validate: (raw) => {
         // What is kept out travels apart from this prompt: a line of it written in all the same is taken out again —
@@ -1255,17 +1325,23 @@ async function writePrompt(core: NovelCore, runtime: ProjectRuntime, provider: I
             if (!new RegExp(`(图|Image|image|#)\\s*${at}(?!\\d)`).test(text)) throw new Error(`the prompt no longer speaks of reference picture ${at} (${input.lang === 'zh' ? `图${at}` : `Image ${at}`}): keep what the brief says of each picture that goes along`)
           }
         }
+        // What a picture of the author's is to settle is said by the picture: the words taken out for it are named,
+        // and none of them is in the prompt still — "green with rust" left beside "the colour as in Image 1" is what
+        // the image model draws.
+        const replaced = given.length > 0 ? (asList(asRecord(raw).replaced) ?? []).map(phrase => phrase.trim()).filter(phrase => phrase.length >= 2) : []
+        const still = replaced.filter(phrase => text.includes(phrase))
+        if (still.length > 0) throw new Error(`the prompt still says ${still.map(phrase => `"${clip(phrase, 40, '…')}"`).join(', ')}: what the author wants of a reference picture is the picture's to settle — take those words out, and write "${input.lang === 'zh' ? '照图N' : 'as in Image N'}" in their place`)
         if (limit !== undefined) {
           const tokens = promptTokens(text)
           if (tokens > limit && (nearest === undefined || tokens < promptTokens(nearest))) nearest = text
           if (tokens > limit) throw new Error(`the prompt comes to about ${tokens} tokens; it has to be at most ${limit} — about ${Math.ceil((tokens - limit) * 100 / tokens)}% shorter still`)
         }
-        return text
+        return { text, ...(replaced.length > 0 ? { replaced } : {}) }
       },
     })
     if (fittedPrompts.size >= 500) fittedPrompts.delete(fittedPrompts.keys().next().value!)
     fittedPrompts.set(key, value)
-    return { prompt: value, compact: record(value) }
+    return { prompt: value.text, compact: record(value.text, value.replaced !== undefined ? { replaced: value.replaced } : {}) }
   } catch (error) {
     if (isAbort(error) || task.signal?.aborted === true) throw error
     if (limit !== undefined && nearest !== undefined && promptTokens(nearest) < from) {
@@ -1274,7 +1350,7 @@ async function writePrompt(core: NovelCore, runtime: ProjectRuntime, provider: I
       return { prompt: cut, compact: record(cut, { cut: true }) }
     }
     core.log(over ? `could not bring a prompt within ${limit} tokens; it goes as it is` : 'the director could not write the prompt out; the brief goes as it is', error)
-    return { ...asIs, compact: { ...(room?.tokens !== undefined ? { limit: room.tokens } : {}), from, failed: true, ...(asked.length > 0 ? { asked: true } : {}) } }
+    return { ...asIs, compact: { ...(room?.tokens !== undefined ? { limit: room.tokens } : {}), from, failed: true, ...(working ? { asked: true } : {}) } }
   } finally {
     restore?.()
   }
@@ -1299,7 +1375,7 @@ export async function renderImage(core: NovelCore, runtime: ProjectRuntime, inpu
   const wanted = (input.references ?? []).filter((reference, at, all) => all.findIndex(other => other.path === reference.path) === at)
   // What the service's own measure keeps back, of those the author's setting would have sent: kept with the picture.
   /** As a record keeps it: where, who — and that it is a sheet, for the picture drawn again from that record. */
-  const stayed = (reference: Held): Held => ({ path: reference.path, label: reference.label, ...(reference.sheet === false ? { sheet: false } : isSheet(reference) ? { sheet: true } : {}) })
+  const stayed = (reference: Held): Held => ({ path: reference.path, label: reference.label, ...(reference.sheet === false ? { sheet: false } : isSheet(reference) ? { sheet: true } : {}), ...(reference.given === true ? { given: true } : {}) })
   /** …and, of one that went, that it went as its front view. */
   const kept = (reference: Held & { front?: boolean }): Held & { front?: boolean } => ({ ...stayed(reference), ...(reference.front === true ? { front: true } : {}) })
   let left: Held[] = taken === undefined ? [] : wanted.slice(taken, own).map(stayed)
@@ -1312,7 +1388,7 @@ export async function renderImage(core: NovelCore, runtime: ProjectRuntime, inpu
       const front = input.kind !== 'sheet' && isSheet(reference) ? await frontOf(project.root, reference.path, data, task.signal) : undefined
       references.push(front !== undefined
         ? { ...stayed(reference), front: true, image: { data: front, mime: 'image/png', label: reference.label } }
-        : { ...stayed(reference), image: { data, mime: /\.jpe?g$/i.test(reference.path) ? 'image/jpeg' : /\.webp$/i.test(reference.path) ? 'image/webp' : 'image/png', label: reference.label } })
+        : { ...stayed(reference), image: { data, mime: /\.jpe?g$/i.test(reference.path) ? 'image/jpeg' : /\.webp$/i.test(reference.path) ? 'image/webp' : /\.gif$/i.test(reference.path) ? 'image/gif' : 'image/png', label: reference.label } })
     } catch {
       // A reference whose file is gone is simply not sent.
     }
@@ -1377,7 +1453,9 @@ export async function renderImage(core: NovelCore, runtime: ProjectRuntime, inpu
     const brief = tail.length > 0 ? `${subject}\n${tail}` : subject
     // Written out by the director where the author has prompts written, or where the model reads less than the brief
     // comes to. The author's own prompt is theirs to word: rewritten only where the model could not read it all.
-    const fitted = await writePrompt(core, runtime, provider, { prompt: brief, avoid: lastLine !== undefined ? [] : avoid, references: held.length, lang: plang, ...(input.verbatim === true ? { own: true } : input.asked !== undefined ? { asked: input.asked } : {}) }, task)
+    // What the author said is wanted of the pictures they gave, of those that go: by the number each has in this prompt.
+    const said = held.flatMap((reference, at) => (wanted.find(item => item.path === reference.path)?.note !== undefined ? [`${L(plang, `图${at + 1}`, `Image ${at + 1}`)}${L(plang, '：', ': ')}${wanted.find(item => item.path === reference.path)!.note!}`] : [])).join('\n')
+    const fitted = await writePrompt(core, runtime, provider, { prompt: brief, avoid: lastLine !== undefined ? [] : avoid, references: held.length, lang: plang, ...(input.verbatim === true ? { own: true } : { ...(input.asked !== undefined ? { asked: input.asked } : {}), ...(said.length > 0 ? { given: said } : {}) }) }, task)
     const result = await provider.generate({
       prompt: fitted.prompt,
       // Said in the prompt already, it is not to be written after it again; else it goes in the field the service has for it.
@@ -1591,7 +1669,8 @@ async function withReferences(runtime: ProjectRuntime, record: IllustrationInfo,
     if (!/^assets\/[^.][^\0]*\.(png|jpe?g|webp|gif)$/i.test(path) || path.includes('..') || held.some(item => item.path === path) || !(await project.has(path))) continue
     const before = was.held.find(item => item.path === path)
     const label = reference.label?.trim() ?? ''
-    held.push(before !== undefined ? { ...before, ...(label.length > 0 ? { label } : {}) } : { path, label: label.length > 0 ? label : L(plang, '参考图', 'a reference picture') })
+    // (One that was not among them before is one the author gives it now.)
+    held.push(before !== undefined ? { ...before, ...(label.length > 0 ? { label } : {}) } : { path, label: label.length > 0 ? label : L(plang, '参考图', 'a reference picture'), given: true })
   }
   const words = new Map(pointersOf(record).map(pointer => [pointer.n, pointer.words]))
   // First to marks no prompt has, then to the new numbers: 图2 → 图1 while 图1 → 图2 must not run into one another.
@@ -2000,6 +2079,10 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
   const plang = promptLangOf(image, lang)
   const use = (zh: string, en: string): IllustrationPiece => ({ of: 'use', text: L(plang, zh, en) })
   const find = (ref: string): CharacterCard | undefined => characters.find(card => card.id === ref || sameName(card.name, ref) || (card.aliases ?? []).some(alias => sameName(alias, ref)))
+  // The pictures the author gave this one to go by (a sheet, design art): they go along after the Studio's own.
+  const given = await givenPictures(project, params.references, lang, plang)
+  // (Asked of a picture that takes none, they are not dropped without a word.)
+  if (given.length > 0 && params.kind !== 'sheet' && params.kind !== 'location' && params.kind !== 'item') throw new ProjectError('novel/invalid', 'reference pictures of the author\'s go with a design sheet or with design art (kind = sheet, location or item)')
   const worn = (card: CharacterCard): CharacterLook | undefined => {
     for (const [who, look] of Object.entries(params.looks ?? {})) if (find(who)?.id === card.id) return lookOf(card, look)
     return undefined
@@ -2370,7 +2453,8 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
           // One figure: what a small image model draws where three in a row, alike to the button, are beyond it.
           ? piece('frame', L(plang, '只画这一个人，一次——正面，全身站姿，站直，两手自然垂在身侧，表情平静；素净的浅色背景，不要任何文字与标注', 'this one person, once — front view, full body, standing straight, hands at the sides, neutral expression; a plain light ground, no text or labels'))
           : piece('frame', L(plang, '同一个人的全身站姿画三次——正面、侧面、背面，从左到右等距并排，比例与衣着完全一致，表情平静；素净的浅色背景，不要任何文字与标注', 'the same person drawn three times, full body, standing — front view, side view, back view — evenly spaced left to right, identical proportions and clothing, neutral expression; a plain light ground, no text or labels')),
-        personPiece(card),
+        // (Held against their portrait or their main look, that is the picture that shows who they are.)
+        portrait === undefined && base === undefined ? byGiven(personPiece(card), given) : personPiece(card),
         piece('outfit', look?.prompt),
         piece('ask', look === undefined ? direction : undefined),
       ], plang),
@@ -2384,7 +2468,9 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
       size: params.size ?? (frontOnly ? upright(pictureSize((await core.imageOf(runtime)), 'sheet')) : pictureSize((await core.imageOf(runtime)), 'sheet')),
       art,
       avoid: [...(params.avoid ?? []), ...negativesOf([card])],
-      ...(portrait !== undefined ? {
+      // What it is held against by itself — their portrait, where that leads; their main look, for a look — and, after
+      // that, the pictures the author gave it: a face, a costume, somebody to go by.
+      ...withGiven(portrait !== undefined ? {
         references: [{ path: portrait, label: L(plang, `${card.name}的立绘`, `the portrait of ${card.name}`) }],
         // What the reference is for: who they are — not where they stand, how, or in what light.
         referenceNote: L(plang,
@@ -2392,14 +2478,23 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
           // a picture along brought the umbrella she held in it into all three views.)
           `是同一个人：脸、发型、体型和衣着照参考图画。这里要的是素净背景上的${frontOnly ? '正面全身像' : '三视图'}：站直，两手空着、自然垂在身侧。参考图里的背景、姿势、手里拿的东西、光线和构图都不要带过来。`,
           `It is the same person: face, hair, build and clothing follow the reference. What is wanted here is ${frontOnly ? 'the front view, full body,' : 'a turnaround'} on a plain ground: standing straight, both hands empty and at the sides. Leave the reference's background, pose, whatever is held, light and composition behind.`),
-      } : {}),
-      ...(base !== undefined ? {
+      } : base !== undefined ? {
         references: [{ path: base, label: L(plang, `${card.name}的主造型`, `${card.name} in their main look`) }],
         // What the reference is for, said in the place of "whatever it shows must match": here the clothes must not.
         referenceNote: L(plang,
           '是同一个人：脸、发色、体型照参考图画；衣着、装备和头发的梳法以上面写的这身装束为准——和参考图不一样的地方，一律照文字画。',
           'It is the same person: face, hair colour and build follow the reference; clothing, gear and how the hair is worn follow the outfit described above — wherever that differs from the reference, draw the description.'),
-      } : {}),
+      // (Of a look, a picture given with nothing said of it is the outfit: said so for whoever writes the prompt,
+      // who takes the words of the outfit that it stands in for out.)
+      } : {}, look !== undefined ? given.map(reference => (reference.note === undefined ? { ...reference, note: L(plang, '这身装束照它', 'the outfit as in this one') } : reference)) : given, plang, {
+        // Of a look, what a picture given shows is the outfit; of the person, the person.
+        takes: look !== undefined
+          ? L(plang, '衣着、装备和头发的梳法', 'the clothing, the gear and how the hair is worn')
+          : L(plang, '这个人的样子（脸、发式、体型和衣着）', 'how the person looks (face, hair, build and clothing)'),
+        frame: L(plang,
+          `这里要的是素净背景上的${frontOnly ? '正面全身像' : '三视图'}：站直，两手空着、自然垂在身侧。参考图里的背景、姿势、手里拿的东西、光线和构图都不要带过来；画风照上面写的。`,
+          `What is wanted here is ${frontOnly ? 'the front view, full body,' : 'a turnaround'} on a plain ground: standing straight, both hands empty and at the sides. A reference's background, pose, whatever is held, light and composition stay behind; the style is the one written above.`),
+      }),
     }
     const sheetHang: Extract<PictureHang, { as: 'sheet' }> = { as: 'sheet', character: card.id, ...(look !== undefined ? { look } : {}), ...(look === undefined && stage !== undefined ? { stage: stage.id } : {}), ...(frontOnly ? { front: true } : {}) }
     const sheetsTried = await tryWith(sheetInput, sheetHang)
@@ -2422,7 +2517,7 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
           ? [use('家族或组织的设定图', 'design art of a house or an organisation'), piece('frame', L(plang, '一幅代表它的画面——它的门庭、徽记旗号，或它的人聚在一处的场面；不要任何文字', 'the one picture that stands for it — its seat, its emblem and banner, or its people gathered; no text at all'))]
           : [use('场景设定图', 'environment design art'), piece('frame', L(plang, '无人物，远景，交代空间结构、材质与光线', 'no people, a wide shot showing layout, materials and light'))]),
         // At a turn of its course: as the director writes it is then — the same place, changed by what happened.
-        turn !== undefined ? piece('composed', await turnLook(core, runtime, entry, turn, task)) : entryLook(entry, comma, groupOf(entry.category) === 'factions' ? L(plang, `「${entry.name}」：`, `"${entry.name}": `) : L(plang, `地点「${entry.name}」：`, `The place "${entry.name}": `)),
+        turn !== undefined ? piece('composed', await turnLook(core, runtime, entry, turn, task)) : byGiven(entryLook(entry, comma, groupOf(entry.category) === 'factions' ? L(plang, `「${entry.name}」：`, `"${entry.name}": `) : L(plang, `地点「${entry.name}」：`, `The place "${entry.name}": `)), given),
         piece('ask', params.prompt),
       ], plang),
       kind: 'location',
@@ -2432,7 +2527,13 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
       art,
       // What happened is told with the people it happened through; the picture is of the place.
       ...(turn !== undefined ? { avoid: [...(params.avoid ?? []), L(plang, '人物', 'people')] } : params.avoid !== undefined ? { avoid: params.avoid } : {}),
-      ...turnAgainst(entry, turn, plang),
+      ...withGiven(turnAgainst(entry, turn, plang), given, plang, groupOf(entry.category) === 'factions' ? {
+        takes: L(plang, '它看得见的样子（门庭、徽记旗号、衣着的式样）', 'what can be seen of it (its seat, its emblem and banner, how its people dress)'),
+        frame: L(plang, '参考图的构图和光线不要带过来；画风照上面写的。', 'A reference\'s composition and light stay behind; the style is the one written above.'),
+      } : {
+        takes: L(plang, '这个地方的样子（格局、建筑的式样和材质）', 'how the place looks (its layout, how it is built and of what)'),
+        frame: L(plang, '这里要的是这个地方的远景，没有人：参考图里的人、构图和光线不要带过来；画风照上面写的。', 'What is wanted here is a wide view of the place, with nobody in it: a reference\'s people, composition and light stay behind; the style is the one written above.'),
+      }),
     }
     // The place's reference art: scenes set here send it along. A picture of one turn of its course is that turn's.
     const placeHang: Extract<PictureHang, { as: 'art' }> = { as: 'art', entry: entry.id, ...(turn !== undefined ? { event: `${turn.chapter}:${turn.kind}` } : {}) }
@@ -2453,7 +2554,7 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
       ...compose([
         use('关键物品设定图', 'design art of one key object'),
         piece('frame', L(plang, '只画这一件物品，完整入画，居中，干净的浅色素底；看得清形状、材质、纹饰与大小的感觉；没有人物，没有手，画面里不出现任何文字说明', 'the object alone, whole and centred on a clean pale ground; its shape, material, ornament and sense of size readable; no people, no hands, no lettering')),
-        turn !== undefined ? piece('composed', await turnLook(core, runtime, entry, turn, task)) : entryLook(entry, comma, L(plang, `物件「${entry.name}」：`, `The object "${entry.name}": `)),
+        turn !== undefined ? piece('composed', await turnLook(core, runtime, entry, turn, task)) : byGiven(entryLook(entry, comma, L(plang, `物件「${entry.name}」：`, `The object "${entry.name}": `)), given),
         piece('ask', params.prompt),
       ], plang),
       kind: 'item',
@@ -2462,7 +2563,10 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
       size: params.size ?? pictureSize((await core.imageOf(runtime)), 'item'),
       art,
       ...(params.avoid !== undefined ? { avoid: params.avoid } : {}),
-      ...turnAgainst(entry, turn, plang),
+      ...withGiven(turnAgainst(entry, turn, plang), given, plang, {
+        takes: L(plang, '这件东西的样子（形状、材质、纹饰和颜色）', 'how the thing looks (shape, material, ornament and colour)'),
+        frame: L(plang, '这里要的是素底上完整的这一件：参考图里的背景、手、别的东西、光线和构图都不要带过来；画风照上面写的。', 'What is wanted here is this one object, whole, on a plain ground: a reference\'s background, hands, other things, light and composition stay behind; the style is the one written above.'),
+      }),
     }
     // The thing's reference art: pictures that show it send this along, so that it is the same thing every time.
     const thingHang: Extract<PictureHang, { as: 'art' }> = { as: 'art', entry: entry.id, ...(turn !== undefined ? { event: `${turn.chapter}:${turn.kind}` } : {}) }

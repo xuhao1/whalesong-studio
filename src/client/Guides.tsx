@@ -3,12 +3,13 @@
  * Pictures to steer by.
  *
  * A few pictures the author gives to a stretch of plot being planned or a
- * chapter being written: chosen among the pictures the book already has, or
- * brought in from the computer; each may have a word said of it. One control
- * wherever pictures are given — beside the planner's direction, beside the
- * writer's brief.
+ * chapter being written — or to one picture being drawn, a design sheet or
+ * the design art of a thing: chosen among the pictures the book already has,
+ * or brought in from the computer; each may have a word said of it. One
+ * control wherever pictures are given — beside the planner's direction,
+ * beside the writer's brief, beside the button that draws.
  */
-import { useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import type { PictureGuide, PicturesRead, ReferencesLooked } from '../shared/types'
 import { PickPicture } from './PlacePicture'
 import { Button, cx, plainEnter, ProjectImage, TextInput, useProject, useStudio, useT } from './ui'
@@ -17,6 +18,29 @@ import { Button, cx, plainEnter, ProjectImage, TextInput, useProject, useStudio,
 const MOST = 12
 /** A picture brought in is sent no larger than this on its long edge: enough for a model to read, small enough to send. */
 const LONG_EDGE = 2048
+
+/**
+ * The pictures given to the drawing of one thing — somebody's design sheet, the art of a place or a thing — by what
+ * they are given to. Kept while the Studio is open: they are for every picture of it drawn from its page until taken
+ * off again, and a look at another card and back does not lose them. (Each picture drawn keeps on its record which
+ * ones went with it.)
+ */
+const givenTo = new Map<string, PictureGuide[]>()
+const NONE: PictureGuide[] = []
+
+/**
+ * The pictures given to the drawing of one thing, and the way to say which.
+ * @param key - what they are given to: the book, and whose picture.
+ */
+export function useGiven(key: string): [PictureGuide[], (next: PictureGuide[]) => void] {
+  const [, changed] = useState(0)
+  const set = useCallback((next: PictureGuide[]): void => {
+    if (next.length > 0) givenTo.set(key, next)
+    else givenTo.delete(key)
+    changed(count => count + 1)
+  }, [key])
+  return [givenTo.get(key) ?? NONE, set]
+}
 
 /**
  * A picture file as it is sent to the Host: scaled down where it is very large, as JPEG (or PNG where it has transparency to keep).
@@ -53,8 +77,10 @@ export async function encoded(file: File, asIs = 1_500_000, longEdge = LONG_EDGE
 /**
  * The pictures given to a piece of work, and the ways to add one.
  * @param chapter - the chapter in hand, whose own pictures the chooser lists first.
+ * @param label - what they are called here, where "pictures to go by" does not say whose they are.
+ * @param ask - what the field beside each picture asks for, where it is not a moment of the plot.
  */
-export function GuidePictures({ value, onChange, disabled, chapter, hint }: { value: readonly PictureGuide[]; onChange: (next: PictureGuide[]) => void; disabled?: boolean; chapter?: string | undefined; hint?: string }) {
+export function GuidePictures({ value, onChange, disabled, chapter, hint, label, ask }: { value: readonly PictureGuide[]; onChange: (next: PictureGuide[]) => void; disabled?: boolean; chapter?: string | undefined; hint?: string; label?: string; ask?: string }) {
   const { controller } = useStudio()
   const t = useT()
   const { root } = useProject()
@@ -82,7 +108,7 @@ export function GuidePictures({ value, onChange, disabled, chapter, hint }: { va
   return (
     <div className={cx('nv-guides', disabled === true && 'is-off')}>
       <div className="nv-guides-head">
-        <span className="nv-guides-label">{t('参考图', 'Pictures to go by')}{value.length > 0 ? ` · ${value.length}` : ''}</span>
+        <span className="nv-guides-label">{label ?? t('参考图', 'Pictures to go by')}{value.length > 0 ? ` · ${value.length}` : ''}</span>
         <Button size="sm" variant="ghost" icon="image" disabled={disabled === true || full} onClick={() => { setPicking(true) }}>{t('从本书的图里选…', 'From the book…')}</Button>
         <Button size="sm" variant="ghost" icon="upload" busy={bringing} disabled={disabled === true || full} pending={t('正在带进来…', 'Bringing it in…')} onClick={() => { input.current?.click() }}>{t('从电脑选…', 'From this computer…')}</Button>
         <input ref={input} type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden onChange={(event) => { bring(event.target.files) }} />
@@ -94,7 +120,7 @@ export function GuidePictures({ value, onChange, disabled, chapter, hint }: { va
             <div key={guide.path} className="nv-guide">
               <span className="nv-guide-no">{at + 1}</span>
               <ProjectImage path={guide.path} alt="" className="nv-guide-thumb" />
-              <GuideNote note={guide.note ?? ''} disabled={disabled === true} onCommit={(note) => { onChange(value.map((item, index) => (index === at ? (note.length > 0 ? { path: item.path, note } : { path: item.path }) : item))) }} />
+              <GuideNote note={guide.note ?? ''} disabled={disabled === true} {...(ask !== undefined ? { ask } : {})} onCommit={(note) => { onChange(value.map((item, index) => (index === at ? (note.length > 0 ? { path: item.path, note } : { path: item.path }) : item))) }} />
               <button type="button" className="nv-guide-drop" disabled={disabled === true} title={t('不用这张', 'Leave this one out')} aria-label={t('不用这张', 'Leave this one out')} onClick={() => { onChange(value.filter((_item, index) => index !== at)) }}>×</button>
             </div>
           ))}
@@ -106,7 +132,7 @@ export function GuidePictures({ value, onChange, disabled, chapter, hint }: { va
 }
 
 /** What the author says of one picture: typed freely, handed on when the field is left — where the pictures are kept with a chapter, that is when they are saved. */
-function GuideNote({ note, disabled, onCommit }: { note: string; disabled: boolean; onCommit: (note: string) => void }) {
+function GuideNote({ note, disabled, ask, onCommit }: { note: string; disabled: boolean; ask?: string; onCommit: (note: string) => void }) {
   const t = useT()
   const [text, setText] = useState(note)
   const [held, setHeld] = useState(note)
@@ -116,7 +142,7 @@ function GuideNote({ note, disabled, onCommit }: { note: string; disabled: boole
     setText(note)
   }
   const commit = (): void => { if (text.trim() !== note) onCommit(text.trim()) }
-  return <TextInput className="nv-guide-note" value={text} disabled={disabled} placeholder={t('说一句（可不填）：这是哪一幕、要它的什么', 'A word on it (optional): what it is, what of it matters')} onChange={(event) => { setText(event.target.value) }} onBlur={commit} onKeyDown={(event) => { if (plainEnter(event)) (event.target as HTMLInputElement).blur() }} />
+  return <TextInput className="nv-guide-note" value={text} disabled={disabled} placeholder={ask ?? t('说一句（可不填）：这是哪一幕、要它的什么', 'A word on it (optional): what it is, what of it matters')} onChange={(event) => { setText(event.target.value) }} onBlur={commit} onKeyDown={(event) => { if (plainEnter(event)) (event.target as HTMLInputElement).blur() }} />
 }
 
 /** How the pictures given to a piece of work were read, in a line for whoever gave them. */

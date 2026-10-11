@@ -20,6 +20,7 @@ import { HistoryButton, RemovedCards } from '../History'
 import { DeletePicture, PictureViewer, usePictures, type LookOf } from '../PictureRecord'
 import { artsOf, isArtOf } from '../../shared/arts'
 import { ManyModels } from '../Trial'
+import { GuidePictures, useGiven } from '../Guides'
 import { clip as clipText } from '../../shared/text'
 import { containment, type Nested } from '../../shared/ties'
 import { DERIVE_TIES_HINT, TiesBlock, TiesReport, useDeriveTies } from '../Ties'
@@ -445,8 +446,11 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
   useEffect(() => { setPicked(undefined) }, [entry.id])
   const art = arts.find(item => item.path === picked) ?? arts.find(item => item.main) ?? arts[0]
   const artName = house ? t('设定图', 'design art') : picture === 'item' ? t('物品设定图', 'object art') : t('场景设定图', 'place art')
+  // Pictures the author gives its design art to go by — a photograph of the thing, a place like it: sent to the image
+  // model with every design picture of it drawn from this page, until taken off again.
+  const [given, setGiven] = useGiven(`${root}\nart:${entry.id}`)
   const draw = (): Promise<unknown> | undefined => (!controller.need('image') ? undefined : controller.guard(async () => {
-    const job = await controller.run('image.create', { root, kind: picture ?? 'location', target: entry.id })
+    const job = await controller.run('image.create', { root, kind: picture ?? 'location', target: entry.id, ...(given.length > 0 ? { references: given } : {}) })
     const out = job.result?.output as { path?: string; spare?: boolean } | undefined
     // One drawn while another is the chosen main picture waits beside it: said, with the way to use it.
     controller.toast('success', out?.spare === true
@@ -634,10 +638,11 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
             <Button size="sm" icon="image" disabled={dirty || drawing} busy={drawing && turning === undefined} pending={house ? t('正在画设定图…', 'Drawing it…') : picture === 'item' ? t('正在画物品设定图…', 'Drawing the object…') : t('正在画场景设定图…', 'Drawing the place…')} onClick={draw} title={dirty ? t('先保存当前修改', 'Save your edits first') : undefined}>
               {draft.visualImage !== undefined ? t('再画一张设定图', 'Draw another') : house ? t('画设定图', 'Draw its design art') : picture === 'item' ? t('画物品设定图', 'Draw the object') : t('画场景设定图', 'Draw the place')}
             </Button>
-            <ManyModels disabled={dirty} title={t('多模型：几个绘图服务各画一张设定图来比', 'Several models: its design art from each image service, to compare')} ask={() => (controller.need('image') ? { title: `${entry.name} · ${t('设定图', 'design art')}`, method: 'image.create', params: { kind: picture ?? 'location', target: entry.id } } : undefined)} />
+            <ManyModels disabled={dirty} title={t('多模型：几个绘图服务各画一张设定图来比', 'Several models: its design art from each image service, to compare')} ask={() => (controller.need('image') ? { title: `${entry.name} · ${t('设定图', 'design art')}`, method: 'image.create', params: { kind: picture ?? 'location', target: entry.id, ...(given.length > 0 ? { references: given } : {}) } } : undefined)} />
             {/* (With several kept, the one to delete is the one picked in the row above, by the button there.) */}
             {draft.visualImage !== undefined && arts.length <= 1 ? <DeletePicture bare path={draft.visualImage} disabled={dirty || drawing} /> : null}
           </div>
+          <GuidePictures label={t('设定图参考图', 'Pictures for its art')} ask={picture === 'item' ? t('要它的什么：形状、纹饰、颜色（不填：整个样子照它）', 'What of it is wanted: the shape, the ornament, the colour (left empty: the whole look)') : t('要它的什么：格局、式样、材质（不填：整个样子照它）', 'What of it is wanted: the layout, the build, the materials (left empty: the whole look)')} value={given} onChange={setGiven} disabled={dirty || drawing} />
         </Field>
       ) : null}
       {picture !== undefined && draft.visualImage === undefined && (draft.weight ?? derived) === 'once'
