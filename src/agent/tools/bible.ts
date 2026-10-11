@@ -14,9 +14,9 @@ import type { NovelService } from '../../host/service'
 import { TIE_ENDS, TIE_KINDS, type Tie, type TieEnd, type TieKind } from '../../shared/ties'
 import { WORLD_EVENT_KINDS, withTurnPictures, type CharacterCard, type StyleProfile, type WorldEntry, type WorldEvent } from '../../shared/types'
 import { groupOf } from '../../shared/world'
-import { brief, listOf, listParameter, novelTool, toJson } from './shared'
+import { brief, listOf, listParameter, novelTool, picturesSaid, toJson } from './shared'
 
-const CHARACTER_FIELDS = 'name, aliases[], role (protagonist|deuteragonist|antagonist|supporting|minor|cameo), tagline, gender, age, appearance, personality, background, motivation, flaw, arc, voice, abilities, secrets, persona {traits[{name,level 1-5}], values[], speech[], taboos[], underPressure}, relationships[{target, kind, note}], tags[], visual {prompt (the visual anchor: concrete, drawable phrases for an image model — build, face, hair, clothing, signature items; English works best), negative (what must not be drawn on them), looks[{name, prompt (what the outfit changes), when (when it is worn)}] — looks are added or updated by name and the others stay; {name, remove: true} takes one away; their design sheets are drawn with novel_illustrate kind=sheet look=…}, voiceProfile {voice, instructions, designPrompt}, life (what they go through in the book, in a paragraph), notes. A card has no status: where somebody comes on, is away, leaves or dies is read off the chapter digests, along each line of the plot'
+const CHARACTER_FIELDS = 'name, aliases[], role (protagonist|deuteragonist|antagonist|supporting|minor|cameo), tagline, gender, age, appearance, personality, background, motivation, flaw, arc, voice, abilities, secrets, persona {traits[{name,level 1-5}], values[], speech[], taboos[], underPressure}, relationships[{target, kind, note}], tags[], visual {prompt (the visual anchor: concrete, drawable phrases for an image model — build, face, hair, clothing, signature items; English works best), negative (what must not be drawn on them), looks[{name, prompt (what the outfit changes), when (when it is worn)}] — looks are added or updated by name and the others stay; {name, remove: true} takes one away; their design sheets are drawn with novel_illustrate kind=sheet look=…; face (the portrait the author chose to stand for them: a path among visual.portraits — "" lets go of the choice) and mainSheet (the design sheet the author chose as the main one: a path among visual.sheets, where every sheet kept of them is listed — "" lets go of it; which sheet belongs to a stretch of their life is said on the stage, stages[].visual.sheet). Choose either only when the author says which}, voiceProfile {voice, instructions, designPrompt}, life (what they go through in the book, in a paragraph), notes. A card has no status: where somebody comes on, is away, leaves or dies is read off the chapter digests, along each line of the plot'
 const WORLD_FIELDS = 'name, aliases[], category (setting|location|faction|system|item|history|culture|rule|term|other — location, faction and item are a place, a house or organization, a thing, each with a page of its own; everything else is an idea of the world), importance (1 core canon always in context | 2 normal | 3 detail — how its text travels with requests, not how much it matters), weight (core|major|minor|once — how much of the story it carries; leave it out and it is counted from the chapters that name it), summary, body (Markdown), related[], tags[], visualPrompt (how it looks, for its design art), events[{chapter (id or number), kind (begin|change|decline|end), what}] — its course over the story: built, changed hands, fallen to ruin, destroyed; the list given replaces the one there (a turn kept keeps the picture drawn of it — novel_illustrate with event draws one)'
 /** How a tie reads between its two ends, for the book's record. */
 const TIE_WORDS: Record<TieKind, [string, string]> = {
@@ -387,7 +387,7 @@ export function bibleTools(service: NovelService): ToolDefinition[] {
         chapter: { type: 'string', description: 'beats: which chapter.' },
         volume: { type: 'string', description: 'chapters: which volume to extend (default: the last).' },
         apply: { type: 'boolean', description: 'chapters/beats: write the result into the outline (default true).' },
-        pictures: listParameter('chapters: pictures the author gave to steer by — project-relative paths of the book\'s own pictures.'),
+        pictures: listParameter('chapters, what_if: pictures the author gave to steer by — project-relative paths of the book\'s own pictures.'),
       },
       async run(args, env) {
         const runtime = await env.project()
@@ -411,7 +411,7 @@ export function bibleTools(service: NovelService): ToolDefinition[] {
             return `${added !== undefined ? `${added.index}. ` : '- '}${chapter.title}${added !== undefined ? ` (${added.id})` : ''}\n   ${brief(chapter.synopsis, 260)}${chapter.beats.length > 0 ? `\n   beats: ${chapter.beats.map(beat => brief(beat.summary, 60)).join(' → ')}` : ''}${chapter.guides !== undefined ? `\n   goes by: ${chapter.guides.map(guide => guide.path).join(', ')}` : ''}`
           })
           return {
-            text: `${result.added.length > 0 ? `Added ${result.added.length} chapters to the outline${where}` : `Derived ${result.chapters.length} chapters (not applied)`}:${replaced}\n${lines.join('\n')}${result.rationale !== undefined ? `\n\nRationale: ${result.rationale}` : ''}${result.pictures !== undefined ? `\n\nPictures: ${result.pictures.count} given — ${result.pictures.by === 'vision' ? `put into words for the planner by ${result.pictures.model ?? 'the picture model'}` : result.pictures.unsure === true ? 'sent to the planner\'s model, which does not say whether it takes pictures: tell the author, and that a model to look at pictures can be set (novel_settings: vision)' : 'looked at by the planner\'s own model'}.` : ''}`,
+            text: `${result.added.length > 0 ? `Added ${result.added.length} chapters to the outline${where}` : `Derived ${result.chapters.length} chapters (not applied)`}:${replaced}\n${lines.join('\n')}${result.rationale !== undefined ? `\n\nRationale: ${result.rationale}` : ''}${result.pictures !== undefined ? `\n\n${picturesSaid(result.pictures, 'planner')!}` : ''}`,
             data: toJson(result),
           }
         }
@@ -431,9 +431,9 @@ export function bibleTools(service: NovelService): ToolDefinition[] {
         if (args.kind === 'what_if') {
           if (args.direction === undefined || args.direction.trim().length === 0) throw new ProjectError('novel/invalid', 'kind=what_if needs the question in `direction`')
           const question = args.direction
-          const result = await env.job('derive', 'what-if', undefined, async task => await whatIf(env.core, runtime, { question, ...(args.count !== undefined ? { branches: args.count } : {}) }, task))
+          const result = await env.job('derive', 'what-if', undefined, async task => await whatIf(env.core, runtime, { question, ...(args.count !== undefined ? { branches: args.count } : {}), ...(listOf(args.pictures) !== undefined ? { guides: cleanGuides(listOf(args.pictures)!) } : {}) }, task))
           return {
-            text: `${result.branches.map((branch, index) => `### ${index + 1}. ${branch.title}\n${branch.development}${branch.consequences.length > 0 ? `\nConsequences: ${branch.consequences.join('; ')}` : ''}${branch.risks !== undefined ? `\nRisks: ${branch.risks}` : ''}${branch.payoff !== undefined ? `\nPayoff: ${branch.payoff}` : ''}`).join('\n\n')}${result.recommendation !== undefined ? `\n\nRecommendation: ${result.recommendation}` : ''}`,
+            text: `${result.branches.map((branch, index) => `### ${index + 1}. ${branch.title}\n${branch.development}${branch.consequences.length > 0 ? `\nConsequences: ${branch.consequences.join('; ')}` : ''}${branch.risks !== undefined ? `\nRisks: ${branch.risks}` : ''}${branch.payoff !== undefined ? `\nPayoff: ${branch.payoff}` : ''}`).join('\n\n')}${result.recommendation !== undefined ? `\n\nRecommendation: ${result.recommendation}` : ''}${result.pictures !== undefined ? `\n\n${picturesSaid(result.pictures, 'planner')!}` : ''}`,
             data: toJson(result),
           }
         }

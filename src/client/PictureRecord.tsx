@@ -20,8 +20,9 @@
  * leave the book through the shared reader or a published site.
  */
 import { ImageTrialDialog } from './Trial'
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { lookWords, pictureWords, resolveArtStyle, tidyPart, type ArtSource, scenesOf, sceneWords } from '../shared/art'
+import { sheetsOf } from '../shared/sheets'
 import type { IllustrationInfo, IllustrationPiece } from '../shared/types'
 import { Button, Chip, cx, Modal, Spinner, TextArea, TextInput, useAction, useConfirm, useLoad, useMediaUrl, useProject, useSnapshot, useStudio, useT, plainEnter } from './ui'
 import { leftBehind } from './labels'
@@ -131,7 +132,9 @@ function RedrawPicture({ image, mode, onDone, onBusy, onCancel }: { image: Illus
         const job = await controller.run('image.redraw', { root, picture: image.id, ...(mode === 'words' ? { subject: words.trim() } : { change: change.trim() }) })
         await controller.refreshProject()
         const replaced = Array.isArray(job.result?.replaced) ? job.result.replaced.filter((name): name is string => typeof name === 'string') : []
-        controller.toast('success', `${replaced.length > 0 ? t(`画好了，换到了 ${replaced.join('、')} 上；原来那张还在图库里`, `Drawn, and put in its place on ${replaced.join(', ')}; the one before is still in the gallery`) : t('画好了：新的一张在图库里', 'Drawn: the new picture is in the gallery')}${leftBehind(job, t)}`)
+        // A person's design sheets are kept side by side: the one drawn from stays among them, not in use.
+        const beside = image.kind === 'sheet' && replaced.length > 0
+        controller.toast('success', `${beside ? t(`画好了，顶替了 ${replaced.join('、')} 原来那张人设图；原来那张留着，未启用`, `Drawn, in the place of the sheet it came from on ${replaced.join(', ')}; that one is kept, not in use`) : replaced.length > 0 ? t(`画好了，换到了 ${replaced.join('、')} 上；原来那张还在图库里`, `Drawn, and put in its place on ${replaced.join(', ')}; the one before is still in the gallery`) : t('画好了：新的一张在图库里', 'Drawn: the new picture is in the gallery')}${leftBehind(job, t)}`)
         const output = job.result?.output
         onDone(output !== null && typeof output === 'object' && typeof (output as { path?: unknown }).path === 'string' ? output as unknown as IllustrationInfo : undefined)
       } finally {
@@ -206,7 +209,7 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
   const held = useMemo(() => {
     const paths = new Set<string>()
     for (const person of project.characters) {
-      for (const path of [person.visual?.portrait, person.visual?.sheet, ...(person.visual?.looks ?? []).map(look => look.sheet)]) if (path !== undefined) paths.add(path)
+      for (const path of [person.visual?.portrait, person.visual?.sheet, ...(person.visual?.looks ?? []).map(look => look.sheet), ...(person.stages ?? []).flatMap(stage => [stage.visual?.sheet, stage.visual?.portrait])]) if (path !== undefined) paths.add(path)
     }
     for (const thing of project.world) {
       for (const path of [thing.visualImage, ...(thing.events ?? []).map(event => event.image)]) if (path !== undefined) paths.add(path)
@@ -241,9 +244,14 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
     } else if (ofLook) {
       standing.push({ tone: 'warn', text: t('这是某套造型以前的一张人设图，现在用的是另一张。', 'This is an earlier sheet of one of their looks; another one is in use now.') })
     } else {
-      standing.push(card.visual?.sheet === image.path
-        ? { tone: 'ok', text: t('这是现在的人设图：之后每一张有这个人的图，都照它画。', 'This is the design sheet in use now: every later picture of them is drawn against it.') }
-        : withAction({ tone: 'warn', text: t('这是以前的一张人设图，现在用的是另一张。', 'This is an earlier design sheet; another one is in use now.') }, open(card.visual?.sheet, t('看现在的那张', 'See the one in use'))))
+      // One of the sheets kept of them: the main one, a stretch's, or kept without being in use.
+      const mine = sheetsOf(card).find(sheet => sheet.path === image.path)
+      const stretch = mine?.as === 'stage' ? (card.stages ?? []).find(stage => stage.id === mine.stage)?.title : undefined
+      standing.push(mine?.as === 'main'
+        ? { tone: 'ok', text: t('这是主人设图：之后每一张有这个人的图，都照它画。', 'This is the main design sheet: every later picture of them is drawn against it.') }
+        : mine?.as === 'stage'
+          ? { tone: 'ok', text: t(`这是「${stretch ?? ''}」时期的人设图：画那个时期的章节时照它画。`, `This is the sheet of "${stretch ?? ''}": chapters of that stretch are drawn against it.`) }
+          : withAction({ tone: 'warn', text: mine !== undefined ? t('这张人设图留着，没有启用：现在照着画的是另一张。', 'This sheet is kept, not in use: another is what pictures are drawn against now.') : t('这是以前的一张人设图，现在用的是另一张。', 'This is an earlier design sheet; another one is in use now.') }, open(card.visual?.sheet, t('看主人设图', 'See the main sheet'))))
     }
     // The words for how they look: the same now as when this was drawn, or changed since.
     const now = tidyPart(lookWords(card))
@@ -463,7 +471,7 @@ function PieceRow({ label, chip, tone = 'neutral', children }: { label: string; 
  * @param onChanged - the picture was drawn again or removed: whatever lists pictures reads them anew. Drawn again,
  *   the viewer stays open on the picture that came of it — `now`, its path — and a page that names what is open goes with it.
  */
-export function PictureViewer({ path, title, note, footer, onClose, onEditLook, onChanged }: { path: string; title?: string | undefined; note?: ReactNode; footer?: ((image: IllustrationInfo | undefined) => ReactNode) | undefined; onClose: () => void; onEditLook?: ((of: LookOf) => void) | undefined; onChanged?: ((now?: string) => void) | undefined }) {
+export function PictureViewer({ path, title, note, footer, start, onClose, onEditLook, onChanged }: { path: string; title?: string | undefined; note?: ReactNode; /** Opened with one of the ways to draw it again already open under it. */ start?: 'words' | 'change' | undefined; footer?: ((image: IllustrationInfo | undefined) => ReactNode) | undefined; onClose: () => void; onEditLook?: ((of: LookOf) => void) | undefined; onChanged?: ((now?: string) => void) | undefined }) {
   const { controller } = useStudio()
   const t = useT()
   const { project } = useProject()
@@ -484,13 +492,18 @@ export function PictureViewer({ path, title, note, footer, onClose, onEditLook, 
   const first = at === opened
   // Drawing it again: which of the two ways is open under the picture — and whether it is being drawn right now,
   // while which the form stays where it is.
-  const [redraw, setRedraw] = useState<'words' | 'change' | undefined>()
+  const [redraw, setRedraw] = useState<'words' | 'change' | undefined>(start)
   const [drawing, setDrawing] = useState(false)
   // Putting it into a chapter's text: asked where.
   const [placing, setPlacing] = useState(false)
   // The same picture by several image services, to be compared.
   const [comparing, setComparing] = useState(false)
-  useEffect(() => { setRedraw(undefined) }, [at])
+  // Another picture looked at: no way is open under it — but the one the page asked for is, on the picture it opened.
+  const openedWith = useRef(start !== undefined ? path : undefined)
+  useEffect(() => {
+    if (openedWith.current === at) { openedWith.current = undefined; return }
+    setRedraw(undefined)
+  }, [at])
   const gone = (): void => {
     onChanged?.()
     onClose()

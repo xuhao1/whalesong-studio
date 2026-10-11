@@ -45,6 +45,7 @@ import { MAIN_LINE, referencesOf } from '../../shared/types'
 import { clip, fuzzyFind, hashText, newId, sameName, slugify } from '../../shared/text'
 import { leadOf, PROMPT_HEADROOM, promptTokens, type PictureLead } from '../../shared/images'
 import { inStage, looksApart, stageAt } from '../../shared/stages'
+import { sheetPool } from '../../shared/sheets'
 import { groupOf } from '../../shared/world'
 import { detectCharacters } from '../context'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
@@ -1228,6 +1229,16 @@ export async function redrawPicture(core: NovelCore, runtime: ProjectRuntime, pa
       replaced.push(card.name)
     }
   }
+  // So is a design sheet of theirs that was on no list (not a look's — those are named after the look): it joins the
+  // sheets kept of them, after the others — drawn from one that was not in use, it is not in use either.
+  if (replaced.length === 0 && record.kind === 'sheet' && record.target !== undefined) {
+    const card = await project.findCharacter(record.target)
+    const named = record.path.split('/').pop()!.replace(/-[0-9a-f]{8}\.[a-z]+$/i, '')
+    if (card !== undefined && !(card.visual?.looks ?? []).some(look => named === `sheet-${card.id}-${look.id}`)) {
+      await project.saveCharacter({ id: card.id, visual: { sheets: [...sheetPool(card), info.path] } })
+      replaced.push(card.name)
+    }
+  }
   task.job?.result({ replaced })
   return { ...info, replaced }
 }
@@ -1406,6 +1417,8 @@ export interface IllustrateResult extends IllustrationInfo {
   scene?: { text: string; title?: string; chapter?: string; id?: string; found?: number; asked?: string; why?: string } | { none: string }
   /** Drawn with several services to compare them: what each made of it. */
   tried?: TrialPicture[]
+  /** A design sheet: kept beside the others, not in use — the main sheet is the one the author chose, and stays. */
+  spare?: boolean
 }
 
 export async function illustrate(core: NovelCore, runtime: ProjectRuntime, params: IllustrateParams, task: TaskContext): Promise<IllustrateResult> {
@@ -1738,8 +1751,11 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
     // Kept with the sheet: whether it is the front view alone — whoever shows it, or holds a picture against it, goes by that.
     const views = frontOnly ? { sheetFront: true } : {}
     if (look === undefined && stage !== undefined) await keepStage(project, card.id, stage.id, { sheet: info.path, ...views }, frontOnly ? [] : ['sheetFront'])
-    else if (look === undefined) await project.saveCharacter({ id: card.id, visual: { sheet: info.path, sheetFront: frontOnly ? true : null } as unknown as CharacterCard['visual'] })
-    else {
+    else if (look === undefined) {
+      // It joins the sheets kept of them, first. The main one it is unless the author chose another: then it waits, not in use.
+      const kept = await project.saveCharacter({ id: card.id, visual: { sheet: info.path, sheetFront: frontOnly ? true : null } as unknown as CharacterCard['visual'] })
+      if (kept.visual?.sheet !== info.path) return { ...done(info), spare: true }
+    } else {
       const { sheetFront: _was, ...rest } = look
       const looks = [...(card.visual?.looks ?? []).filter(other => other.id !== look.id), { ...rest, sheet: info.path, ...views }]
       await project.saveCharacter({ id: card.id, visual: { looks } })

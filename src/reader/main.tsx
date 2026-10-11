@@ -71,7 +71,7 @@ interface ChapterData {
   text: string
   script?: { lines: AudioLine[]; cues: AudioCue[] }
   /** The pictures of people's moments that fall in this chapter; absent from a Host or a site from before there were any. */
-  figures?: { path: string; caption: string; after: number }[]
+  figures?: { path: string; key?: string; caption: string; after: number }[]
   board?: { panels: TheaterPanel[] }
   /** Its finished video; absent from a Host or a site that carries none. */
   video?: { path: string; subtitles?: string; burned?: boolean; version: string }

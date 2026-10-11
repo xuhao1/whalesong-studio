@@ -7,7 +7,8 @@
 import { describe, expect, it } from 'vitest'
 import { cleanGuides, guidePictures } from '../src/core/pipelines/guides'
 import { applyOutlineOps } from '../src/core/pipelines/outline'
-import { deriveBeats, deriveChapters } from '../src/core/pipelines/plot'
+import { deriveBeats, deriveChapters, whatIf } from '../src/core/pipelines/plot'
+import { reviseBook, reviseChapter, reviseSpan } from '../src/core/pipelines/revise'
 import { writeChapter } from '../src/core/pipelines/write'
 import { createTestBed, PIXEL } from './support/harness'
 
@@ -180,6 +181,68 @@ describe('pictures given to steer by', () => {
       // One chapter asked for and no picture named by the planner: they are that chapter's — there is no other they could be for.
       bed.llm.responder = () => JSON.stringify({ chapters: [{ title: '独一章', synopsis: '只有这一章。' }] })
       expect((await deriveChapters(bed.core, bed.runtime, { count: 1, apply: false, guides: [{ path: one }, { path: two }] }, { origin: 'user' })).chapters[0]!.guides).toEqual([{ path: one }, { path: two }])
+    } finally {
+      await bed.cleanup()
+    }
+  })
+
+  it('go with a what-if, with a revision of the book, and with the rewriting of a passage', async () => {
+    const bed = await createTestBed({ settings: { models: { writer: WRITER, architect: PLANNER } } })
+    try {
+      const { project } = bed.runtime
+      bed.llm.sight = { plan: true, pen: true }
+      const one = await project.writeAsset('guides/one.png', PIXEL)
+      const kept = await project.writeAsset('guides/kept.png', Uint8Array.from([...PIXEL, 3]))
+      const chapter = await project.addChapter({ title: '码头', synopsis: '她在码头等船。', guides: [{ path: kept }] })
+      await project.saveChapterText(chapter.id, '清晨的码头，雾还没有散。\n\n她数着船。\n\n船没有来。')
+
+      // What if: the ways on are weighed with the pictures in sight.
+      bed.llm.responder = () => JSON.stringify({ branches: [{ title: '她上了船', development: '……', consequences: [] }], recommendation: '上船。' })
+      const asked = await whatIf(bed.core, bed.runtime, { question: '如果她上了那条船？', guides: [{ path: one, note: '船是这样的' }] }, { origin: 'user' })
+      const what = bed.llm.requests.at(-1)!
+      expect(what.images?.map(image => image.name)).toEqual(['one.png'])
+      expect(what.prompt).toContain('作者给这次假设推演配了 1 张图')
+      expect(what.prompt).toContain('作者说：船是这样的')
+      expect(asked.pictures).toEqual({ count: 1, by: 'self' })
+
+      // A passage: by the pictures given to its rewriting, and by no others — the chapter's own are for writing the chapter.
+      bed.llm.responder = () => '她数着船，一条，两条。'
+      const bare = await reviseSpan(bed.core, bed.runtime, { chapter: chapter.id, quote: '她数着船。', instruction: '写细一点' }, { origin: 'user' })
+      expect(bed.llm.requests.at(-1)!.images).toBeUndefined()
+      expect(bed.llm.requests.at(-1)!.prompt).not.toContain('参考图')
+      expect(bare.pictures).toBeUndefined()
+      const pictured = await reviseSpan(bed.core, bed.runtime, { chapter: chapter.id, quote: '她数着船。', instruction: '写成图里的样子', guides: [{ path: one }] }, { origin: 'user' })
+      expect(bed.llm.requests.at(-1)!.images?.map(image => image.name)).toEqual(['one.png'])
+      expect(bed.llm.requests.at(-1)!.prompt).toContain('作者给这一段的改写配了 1 张图')
+      // Who looked at them is said with the result, and on the proposal the author is shown.
+      expect(pictured.pictures).toEqual({ count: 1, by: 'self' })
+      const waiting = async (id: string | undefined): Promise<unknown> => (await project.proposals()).find(proposal => proposal.id === id)?.pictures
+      expect([await waiting(bare.proposalId), await waiting(pictured.proposalId)]).toEqual([undefined, { count: 1, by: 'self' }])
+
+      // A chapter rewritten whole still goes by the pictures kept on its plan — or by the ones given to this revision.
+      bed.llm.responder = () => '清晨的码头，雾散了。\n\n她数着船。\n\n船来了。'
+      const whole = await reviseChapter(bed.core, bed.runtime, { chapter: chapter.id, instruction: '让船来' }, { origin: 'user' })
+      expect(bed.llm.requests.at(-1)!.images?.map(image => image.name)).toEqual(['kept.png'])
+      expect([whole.pictures, await waiting(whole.proposalId)]).toEqual([{ count: 1, by: 'self' }, { count: 1, by: 'self' }])
+      expect(bed.llm.requests.at(-1)!.prompt).toContain('作者给这次修订配了 1 张图')
+      await reviseChapter(bed.core, bed.runtime, { chapter: chapter.id, instruction: '让船来', guides: [{ path: one }] }, { origin: 'user' })
+      expect(bed.llm.requests.at(-1)!.images?.map(image => image.name)).toEqual(['one.png'])
+
+      // The book: the planner scopes the revision with them, and each chapter it names is rewritten by them.
+      const start = bed.llm.requests.length
+      bed.llm.responder = request => (request.route.model === 'plan' ? JSON.stringify({ chapters: [{ index: 1, reason: '把船改成图里那条' }], note: '只动第一章。' }) : '清晨的码头。\n\n那条船来了。')
+      const revised = await reviseBook(bed.core, bed.runtime, { instruction: '把船改成图里那条', guides: [{ path: one }] }, { origin: 'user' })
+      const [scope, rewrite] = bed.llm.requests.slice(start)
+      expect([scope!.route.model, rewrite!.route.model]).toEqual(['plan', 'pen'])
+      expect(scope!.images?.map(image => image.name)).toEqual(['one.png'])
+      expect(scope!.prompt).toContain('作者给这次修订配了 1 张图')
+      expect(rewrite!.images?.map(image => image.name)).toEqual(['one.png'])
+      expect(revised.results).toHaveLength(1)
+      expect(revised.pictures).toEqual({ count: 1, by: 'self' })
+      // Chapters named outright are not scoped by the planner: the writer's reading of the pictures is what is said.
+      bed.llm.sight = { plan: true }
+      const named = await reviseBook(bed.core, bed.runtime, { instruction: '把船改成图里那条', chapters: [chapter.id], guides: [{ path: one }] }, { origin: 'user' })
+      expect(named.pictures).toEqual({ count: 1, by: 'self', unsure: true })
     } finally {
       await bed.cleanup()
     }

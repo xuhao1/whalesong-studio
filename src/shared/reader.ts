@@ -226,6 +226,8 @@ export function readAlong<C extends { id: string; line?: string }>(every: readon
 export interface ChapterFigure {
   /** The picture, as a path of the book's own files. */
   path: string
+  /** What this place of it is known by ({@link PortraitPlace.key}): what keeping it out of the text is said of. */
+  key?: string
   /** What stands under it: the moment, and whose it is. */
   caption: string
   /** Where it stands: after the paragraph that begins at this offset of the text. */
@@ -234,6 +236,11 @@ export interface ChapterFigure {
 
 /** A portrait of somebody and where it stands in the book — or would, were it in the text: what the author is shown to say which of them the text carries. */
 export interface PortraitPlace {
+  /**
+   * What this place is known by where the author's say on it is kept: the picture's path — or, for the place a
+   * picture of a moment has as the portrait that stands for the person, the path with `#face` after it.
+   */
+  key: string
   path: string
   /** Whose it is: their card and their name. */
   character: string
@@ -245,12 +252,14 @@ export interface PortraitPlace {
   /** That chapter as it is counted along its line, and what it is called. */
   index?: number
   chapterTitle?: string
+  /** What the place is the picture's as: one of their moments, a period of their life, or the person. */
+  as: 'moment' | 'period' | 'person'
   /** It is not in the text: kept out by the author, or `spare` and not asked in. */
   hidden: boolean
   /**
    * Why it does not stand in the text by itself: `moment` — another picture of the same moment does; `person` —
-   * another portrait is the one of them that stands where they first come on; `chapter` — a moment of theirs is shown
-   * in that chapter, and that is the picture of them there. The author can ask it in all the same.
+   * another portrait is the one that stands for them (the author's choice, on their page); `chapter` — a moment of
+   * theirs is shown in that chapter, and that is the picture of them there. The author can ask it in all the same.
    */
   spare?: 'moment' | 'person' | 'chapter'
 }
@@ -268,7 +277,7 @@ function pairsOf(text: string): Set<string> {
  * moment says (by the words they share — the moment is written as a picture, not quoted from the page), a moment
  * nothing of the chapter tells at its end. A picture the text shows already is not shown twice.
  */
-export function placeFigures(text: string, moments: readonly { path: string; caption: string; told: string }[]): ChapterFigure[] {
+export function placeFigures(text: string, moments: readonly { path: string; key?: string; caption: string; told: string }[]): ChapterFigure[] {
   const paragraphs = blocksOf(text).filter((block): block is Extract<Block, { kind: 'paragraph' }> => block.kind === 'paragraph')
   if (paragraphs.length === 0) return []
   const spoken = paragraphs.map(block => pairsOf(block.text))
@@ -286,7 +295,7 @@ export function placeFigures(text: string, moments: readonly { path: string; cap
         best = at
       }
     })
-    figures.push({ path: moment.path, caption: moment.caption, after: paragraphs[best]!.offset })
+    figures.push({ path: moment.path, ...(moment.key !== undefined ? { key: moment.key } : {}), caption: moment.caption, after: paragraphs[best]!.offset })
   }
   return figures
 }

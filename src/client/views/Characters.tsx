@@ -16,6 +16,7 @@ import type { CharacterCard, CharacterLook, CharacterRole, CharacterStage, LifeM
 import { sceneFor, scenesOf } from '../../shared/art'
 import { detailsOf, foldDetails } from '../../shared/card'
 import { leadOf, withBookImage } from '../../shared/images'
+import { sheetsOf } from '../../shared/sheets'
 import { lifeEnd, lifeLine, type Life, type LifeEvent, type LifeStanding } from '../../shared/life'
 import { lines, options, useAssist } from '../forms'
 import { sceneOf, sheetsDrawn, type PortraitScene } from '../labels'
@@ -524,7 +525,11 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
       const shown = kind === 'portrait' ? sceneOf(job) : undefined
       // One of the card's own moments shows in its row; what is said here is what the author could not have known: a moment settled for this picture alone, or none.
       if (kind === 'portrait') setPictured(shown?.asked !== undefined || shown?.none !== undefined ? { ...shown, path: (job.result?.output as { path?: string } | undefined)?.path } : undefined)
-      controller.toast('success', `${done}${shown?.title !== undefined ? t(`：${shown.title}`, `: ${shown.title}`) : ''}${sheetsDrawn(job, t)}`)
+      // A sheet drawn while another is the chosen main one waits beside it: said, with the way to use it.
+      const waits = kind === 'sheet' && (job.result?.output as { spare?: boolean } | undefined)?.spare === true
+      controller.toast('success', waits ? t('人设图画好了，先不启用：主人设图是你选定的那张。要用新的，点它再点“设为主人设图”', 'Design sheet ready, not in use yet: the main sheet is the one you chose. To use the new one, open it and make it the main sheet') : `${done}${shown?.title !== undefined ? t(`：${shown.title}`, `: ${shown.title}`) : ''}${sheetsDrawn(job, t)}`)
+      const drawn = (job.result?.output as { path?: string } | undefined)?.path
+      if (kind === 'sheet' && look === undefined && drawn !== undefined) setPicked(`sheet:${drawn}`)
     })
     // A portrait of somebody without a design sheet draws the sheet first: asked, before anything is drawn.
     return kind === 'portrait' ? sheets.before([{ kind: 'portrait', target: card.id, ...(from === 'sheet' || from === 'words' ? { from } : {}) }], go) : go({})
@@ -542,16 +547,42 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
     .map(image => image.path)
   const portraits = [...listed, ...earlier]
-  // The pictures there are of this person: their portraits, the design sheet, and a sheet per look.
-  const pictures: { key: string; label: string; path: string; wide: boolean }[] = [
-    ...portraits.map((path, index) => ({ key: `portrait:${path}`, label: index === 0 ? t('立绘', 'Portrait') : t(`立绘 ${index + 1}`, `Portrait ${index + 1}`), path, wide: false })),
-    ...(draft.visual?.sheet !== undefined ? [{ key: 'sheet', label: t('人设图', 'Design sheet'), path: draft.visual.sheet, wide: true }] : []),
+  // The one that stands for them: the author's choice, else the first.
+  const face = draft.visual?.portrait
+  const chosen = draft.visual?.face !== undefined && draft.visual.face === face
+  // Every design sheet kept of them, with what each is used as — the main one, a stretch's, or kept without being in
+  // use — and those the gallery still has of them that are on no list (drawn before sheets were kept side by side:
+  // a sheet drawn again used to take the one before off the card). A look's sheets are the look's, named after it.
+  const kept = sheetsOf(draft)
+  const sheetPaths = kept.map(sheet => sheet.path)
+  const lookSheets = new Set((draft.visual?.looks ?? []).map(look => look.sheet).filter((path): path is string => path !== undefined))
+  const theirOwn = new Set([`sheet-${card.id}`, ...(draft.stages ?? []).map(stage => `sheet-${card.id}-${stage.id}`)])
+  const strays = [...records.byPath.values()]
+    .filter(image => image.kind === 'sheet' && image.target === card.id && !sheetPaths.includes(image.path) && !lookSheets.has(image.path) && theirOwn.has(image.path.split('/').pop()!.replace(/-[0-9a-f]{8}\.[a-z]+$/i, '')))
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+    .map(image => ({ path: image.path, as: 'spare' as const, front: false, stray: true }))
+  const sheetList: { path: string; as: 'main' | 'stage' | 'spare'; stage?: string; front: boolean; chosen?: boolean; stray?: boolean }[] = [...kept, ...strays]
+  const stageName = (id: string | undefined): string => (draft.stages ?? []).find(stage => stage.id === id)?.title ?? t('某个时期', 'a stretch')
+  // The pictures there are of this person: their portraits, their design sheets, and a sheet per look.
+  const pictures: { key: string; label: string; path: string; wide: boolean; dim?: boolean }[] = [
+    ...portraits.map((path, index) => ({ key: `portrait:${path}`, label: `${index === 0 ? t('立绘', 'Portrait') : t(`立绘 ${index + 1}`, `Portrait ${index + 1}`)}${path === face && portraits.length > 1 ? t(' · 代表', ' · theirs') : ''}`, path, wide: false })),
+    ...sheetList.map(sheet => ({
+      key: `sheet:${sheet.path}`,
+      label: sheet.as === 'main' ? (sheetList.length > 1 ? t('人设图 · 主', 'Sheet · main') : t('人设图', 'Design sheet')) : sheet.as === 'stage' ? t(`人设图 · ${stageName(sheet.stage)}`, `Sheet · ${stageName(sheet.stage)}`) : t('人设图 · 未启用', 'Sheet · not in use'),
+      path: sheet.path,
+      // One figure stands upright; three lie side by side. (Of one out of the gallery nothing says which: shown wide.)
+      wide: !sheet.front,
+      ...(sheet.as === 'spare' ? { dim: true } : {}),
+    })),
     ...(draft.visual?.looks ?? []).filter(look => look.sheet !== undefined).map(look => ({ key: `look:${look.id}`, label: look.name.length > 0 ? look.name : t('造型', 'Look'), path: look.sheet!, wide: true })),
   ]
   const [picked, setPicked] = useState<string | undefined>()
   // The picture opened large: one of the strip's, or the portrait of one of their moments.
   const [viewing, setViewing] = useState<string | undefined>()
-  const picture = pictures.find(item => item.key === picked) ?? pictures[0]
+  // …and whether it opens ready to be changed in one thing ("change this one…" was pressed under it).
+  const [viewStart, setViewStart] = useState<'change' | undefined>()
+  // Opened on the portrait that stands for them, not on whichever was drawn last.
+  const picture = pictures.find(item => item.key === picked) ?? pictures.find(item => item.path === face && item.key.startsWith('portrait:')) ?? pictures[0]
   const sheetBusy = drawing?.title === 'illustrate sheet'
   const portraitBusy = drawing?.title === 'illustrate portrait'
   const portraitOf = draft.visual?.portrait !== undefined ? records.byPath.get(draft.visual.portrait) : undefined
@@ -578,6 +609,35 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
     // Shown at once: the order is what was just asked for.
     await controller.refreshProject()
   })
+  // Which portrait stands for them — in the lists, as their avatar, on the stage, and in the text where they first come on.
+  const setFace = (path: string | undefined): Promise<unknown> => controller.guard(async () => {
+    // One the gallery has of them that is on no list yet joins the list with it.
+    await controller.api.call('character.save', { root, card: { id: card.id, visual: path === undefined ? { face: '' } : { ...(listed.includes(path) ? {} : { portraits: [...listed, path] }), face: path } } })
+    await controller.refreshProject()
+    controller.toast('success', path === undefined ? t('不再选定：最新的一张代表这个人', 'No longer chosen: the newest portrait stands for them') : t('这张是代表立绘了：列表、头像和正文里第一次出场处都用它', 'This portrait stands for them now: in the lists, as their avatar, and in the text where they first come on'))
+  })
+  // Their design sheets: which is the main one, which is a stretch's. (One out of the gallery joins the list with it.)
+  const sheetAt = picture !== undefined && picture.key.startsWith('sheet:') ? sheetList.find(sheet => sheet.path === picture.path) : undefined
+  const joining = (path: string): { sheets?: string[] } => (sheetPaths.includes(path) ? {} : { sheets: [...sheetPaths, path] })
+  // The stretches as they would read with this sheet given to one of them (`to`), or to none: a sheet is one stretch's at most.
+  const stagesWith = (path: string, to: string | undefined): CharacterStage[] => (card.stages ?? []).map((stage) => {
+    if (stage.id === to) return { ...stage, visual: { ...stage.visual, sheet: path } }
+    if (stage.visual?.sheet !== path) return stage
+    const { sheet: _sheet, sheetFront: _front, ...rest } = stage.visual
+    const { visual: _was, ...bare } = stage
+    return Object.keys(rest).length > 0 ? { ...bare, visual: rest } : bare
+  })
+  const setMainSheet = (path: string | undefined): Promise<unknown> => controller.guard(async () => {
+    const staged = path !== undefined && (card.stages ?? []).some(stage => stage.visual?.sheet === path)
+    await controller.api.call('character.save', { root, card: { id: card.id, visual: path === undefined ? { mainSheet: '' } : { ...joining(path), mainSheet: path }, ...(staged ? { stages: stagesWith(path!, undefined) } : {}) } })
+    await controller.refreshProject()
+    controller.toast('success', path === undefined ? t('不再选定：它还是主人设图，但下次新画的会顶替它', 'No longer chosen: it is the main sheet still, but the next one drawn takes its place') : t('这张是主人设图了：之后画这个人都照着它', 'This is the main sheet now: every later picture of them is drawn against it'))
+  })
+  const useSheetFor = (path: string, stage: string | undefined): Promise<unknown> => controller.guard(async () => {
+    await controller.api.call('character.save', { root, card: { id: card.id, ...(sheetPaths.includes(path) ? {} : { visual: joining(path) }), stages: stagesWith(path, stage) } })
+    await controller.refreshProject()
+    controller.toast('success', stage !== undefined ? t(`这张是「${stageName(stage)}」时期的人设图了`, `This is the sheet of "${stageName(stage)}" now`) : t('不再用于哪个时期：留着，未启用', 'No longer a stretch\'s: kept, not in use'))
+  })
   const anchorField = `nv-anchor-${card.id}`
   const sceneField = `nv-scene-${card.id}`
   const scenic = image?.portraitScene !== false
@@ -603,29 +663,71 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
               <>
                 <Button size="sm" variant="ghost" icon="chevronLeft" disabled={dirty || placed === 0} title={dirty ? t('先保存当前修改', 'Save your edits first') : t('往前排', 'Move it forward')} onClick={() => place(placed - 1)} />
                 <Button size="sm" variant="ghost" icon="chevronRight" disabled={dirty || placed === portraits.length - 1} title={dirty ? t('先保存当前修改', 'Save your edits first') : t('往后排', 'Move it back')} onClick={() => place(placed + 1)} />
-                {placed === 0
-                  ? <span className="nv-muted nv-small">{t('第一张：列表和头像用它', 'The first: their face in the lists')}</span>
-                  : <Button size="sm" variant="ghost" disabled={dirty} title={dirty ? t('先保存当前修改', 'Save your edits first') : undefined} onClick={() => place(0)}>{t('设为第一张', 'Make it the first')}</Button>}
+                {picture.path === face
+                  ? (
+                      <>
+                        <Chip tone="blue" title={t('列表、头像、舞台和正文里第一次出场处用这张', 'Their face in the lists, their avatar, on the stage, and in the text where they first come on')}>{t('代表立绘', 'Stands for them')}</Chip>
+                        {chosen
+                          ? <button type="button" className="nv-link nv-small" disabled={dirty} title={t('不选定：以后用最新画的一张', 'Unchoose: the newest portrait stands for them from then on')} onClick={() => setFace(undefined)}>{t('取消选定', 'Unchoose')}</button>
+                          : <Button size="sm" variant="ghost" disabled={dirty} title={dirty ? t('先保存当前修改', 'Save your edits first') : t('现在只是因为它最新；选定后，再画新的也不换', 'It is only the newest so far; chosen, it stays whatever is drawn after')} onClick={() => setFace(picture.path)}>{t('选定', 'Choose it')}</Button>}
+                      </>
+                    )
+                  : <Button size="sm" variant="ghost" disabled={dirty} title={dirty ? t('先保存当前修改', 'Save your edits first') : t('列表、头像、舞台和正文里第一次出场处改用这张', 'Their face in the lists, their avatar, on the stage, and in the text where they first come on')} onClick={() => setFace(picture.path)}>{t('设为代表立绘', 'Make it stand for them')}</Button>}
                 <span className="nv-spacer" />
               </>
             ) : null}
             {placed >= 0 ? <PortraitInText character={card.id} path={picture.path} /> : null}
+            {sheetAt !== undefined ? (
+              <>
+                {sheetAt.as === 'main'
+                  ? (
+                      <>
+                        <Chip tone="blue" title={t('之后每一张有这个人的图，都照着它画', 'Every later picture of them is drawn against it')}>{t('主人设图', 'Main sheet')}</Chip>
+                        {sheetList.length > 1
+                          ? sheetAt.chosen === true
+                            ? <button type="button" className="nv-link nv-small" disabled={dirty} title={t('不选定：下次新画的人设图会顶替它', 'Unchoose: the next sheet drawn takes its place')} onClick={() => setMainSheet(undefined)}>{t('取消选定', 'Unchoose')}</button>
+                            : <Button size="sm" variant="ghost" disabled={dirty} title={dirty ? t('先保存当前修改', 'Save your edits first') : t('选定后，再画新的人设图也不换', 'Chosen, it stays whatever sheet is drawn after')} onClick={() => setMainSheet(sheetAt.path)}>{t('选定', 'Choose it')}</Button>
+                          : null}
+                      </>
+                    )
+                  : (
+                      <>
+                        {sheetAt.as === 'spare' ? <Chip title={t('留着，没有哪张图照着它画', 'Kept; no picture is drawn against it')}>{t('未启用', 'Not in use')}</Chip> : <Chip tone="violet">{t(`${stageName(sheetAt.stage)}时期`, stageName(sheetAt.stage))}</Chip>}
+                        <Button size="sm" variant="ghost" disabled={dirty} title={dirty ? t('先保存当前修改', 'Save your edits first') : t('之后画这个人都照着这张', 'Every later picture of them is drawn against this one')} onClick={() => setMainSheet(sheetAt.path)}>{t('设为主人设图', 'Make it the main sheet')}</Button>
+                      </>
+                    )}
+                {(card.stages ?? []).length > 0 ? (
+                  <label className="nv-sheet-use" title={t('这张是哪个时期的样子：画那个时期的章节时照着它', 'Which stretch of their life it shows: chapters of that stretch are drawn against it')}>
+                    <span>{t('用于', 'Used for')}</span>
+                    <Select
+                      value={sheetAt.as === 'stage' ? sheetAt.stage ?? '' : ''}
+                      disabled={dirty}
+                      onChange={(to) => { void useSheetFor(sheetAt.path, to.length > 0 ? to : undefined) }}
+                      options={[{ value: '', label: sheetAt.as === 'main' ? t('所有时期（主）', 'Every stretch (main)') : t('不用于时期', 'No stretch') }, ...(card.stages ?? []).map(stage => ({ value: stage.id, label: stage.title.length > 0 ? stage.title : t('未命名的时期', 'An unnamed stretch') }))]}
+                    />
+                  </label>
+                ) : null}
+                <Button size="sm" variant="ghost" icon="wand" disabled={dirty} title={dirty ? t('先保存当前修改', 'Save your edits first') : t('把这张人设图和你写的一句话发给绘图模型，只改那一处；画出来的顶替这张，这张留着', 'Send this sheet with a sentence of yours: that one thing is changed. What comes of it takes this one\'s place; this one is kept')} onClick={() => { setViewStart('change'); setViewing(sheetAt.path) }}>{t('照这张改…', 'Change this one…')}</Button>
+                <span className="nv-spacer" />
+              </>
+            ) : null}
             <DeletePicture bare path={picture.path} disabled={dirty} onDone={() => { setPicked(undefined) }} />
           </div>
         ) : null}
-        {pictures.length > 1 ? (
-          <div className="nv-person-thumbs" role="group" aria-label={t('这个人物的图', 'Pictures of this character')}>
-            {pictures.map(item => (
-              <button key={item.key} type="button" className={cx(item.key === picture?.key && 'is-active', item.wide && 'is-wide')} onClick={() => { setPicked(item.key) }} title={item.label}>
+        {/* Their portraits in one row, their design sheets (and a sheet per look) in the next: neither is pushed out of sight by the other. */}
+        {pictures.length > 1 ? [pictures.filter(item => item.key.startsWith('portrait:')), pictures.filter(item => !item.key.startsWith('portrait:'))].filter(row => row.length > 0).map(row => (
+          <div key={row[0]!.key.startsWith('portrait:') ? 'portraits' : 'sheets'} className="nv-person-thumbs" role="group" aria-label={row[0]!.key.startsWith('portrait:') ? t('这个人物的立绘', 'Portraits of this character') : t('这个人物的人设图', 'Design sheets of this character')}>
+            {row.map(item => (
+              <button key={item.key} type="button" className={cx(item.key === picture?.key && 'is-active', item.wide && 'is-wide', item.dim === true && 'is-spare')} onClick={() => { setPicked(item.key) }} title={item.label}>
                 <ProjectImage path={item.path} alt={item.label} />
                 <span>{item.label}</span>
               </button>
             ))}
           </div>
-        ) : null}
+        )) : null}
         <div className="nv-person-draw">
           <Button size="sm" variant={draft.visual?.portrait === undefined ? 'primary' : 'outline'} icon="image" disabled={dirty || (drawing !== undefined && !portraitBusy)} busy={portraitBusy} pending={t('正在画立绘…', 'Drawing the portrait…')} onClick={() => draw('portrait', t('立绘已生成', 'Portrait ready'))} title={dirty ? t('先保存当前修改', 'Save your edits first') : portraitAgainst === 'words' ? t('只照文字画', 'Drawn from the words alone') : hasSheet ? t('照着人设图画', 'Drawn against the design sheet') : t('先画人设图，再照着它画立绘', 'The design sheet is drawn first, then the portrait against it')}>{draft.visual?.portrait !== undefined ? t('重画立绘', 'Redraw portrait') : t('画立绘', 'Draw portrait')}</Button>
-          <Button size="sm" variant="outline" icon="users" disabled={dirty || (drawing !== undefined && !sheetBusy)} busy={sheetBusy} pending={t('正在画人设图…', 'Drawing the sheet…')} onClick={() => draw('sheet', t('人设图已生成', 'Design sheet ready'))} title={dirty ? t('先保存当前修改', 'Save your edits first') : sheetAgainst === 'portrait' ? t(`${image?.sheet === 'front' ? '正面全身' : '三视图'}，照着立绘画`, `${image?.sheet === 'front' ? 'The front view' : 'Three views'}, drawn against the portrait`) : t(`${image?.sheet === 'front' ? '正面全身' : '三视图'}，只照文字画：视觉锚点、画风和下面写的想法`, `${image?.sheet === 'front' ? 'The front view' : 'Three views'}, drawn from the words alone: the visual anchor, the art direction and the ideas below`)}>{draft.visual?.sheet !== undefined ? t('重画人设图', 'Redraw sheet') : t('生成人设图', 'Design sheet')}</Button>
+          <Button size="sm" variant="outline" icon="users" disabled={dirty || (drawing !== undefined && !sheetBusy)} busy={sheetBusy} pending={t('正在画人设图…', 'Drawing the sheet…')} onClick={() => draw('sheet', draft.visual?.sheet !== undefined ? t('人设图画好了：它是主人设图了，原来那张留着（未启用）', 'Design sheet ready: it is the main sheet now, and the one before is kept, not in use') : t('人设图已生成', 'Design sheet ready'))} title={dirty ? t('先保存当前修改', 'Save your edits first') : sheetAgainst === 'portrait' ? t(`${image?.sheet === 'front' ? '正面全身' : '三视图'}，照着立绘画`, `${image?.sheet === 'front' ? 'The front view' : 'Three views'}, drawn against the portrait`) : t(`${image?.sheet === 'front' ? '正面全身' : '三视图'}，只照文字画：视觉锚点、画风和下面写的想法`, `${image?.sheet === 'front' ? 'The front view' : 'Three views'}, drawn from the words alone: the visual anchor, the art direction and the ideas below`)}>{sheetList.length > 0 ? t('再画一张人设图', 'Another sheet') : t('生成人设图', 'Design sheet')}</Button>
           <Button size="sm" variant="ghost" icon="layers" disabled={dirty || drawing !== undefined} onClick={() => { if (controller.need('image')) setComparing(true) }} title={t('用几个绘图服务各画一张立绘，并排着比，采纳一张——同一幕、同一段提示词、同样的参考图', 'A portrait by each of several image services, side by side, to take one — the same moment, the same words, the same reference pictures')}>{t('对比…', 'Compare…')}</Button>
         </div>
         <label className="nv-person-moment" title={t('这一页画的立绘照着什么画；不选就是 设置 → 图像生成 里定的', 'What a portrait drawn from this page is held against; left alone, as Settings → Images has it')}>
@@ -859,9 +961,15 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
         <PictureViewer
           path={viewing}
           title={`${draft.name} · ${pictures.find(item => item.path === viewing)?.label ?? moments.find(scene => scene.portrait === viewing)?.title ?? (draft.stages ?? []).find(stage => stage.visual?.sheet === viewing || stage.visual?.portrait === viewing)?.title ?? t('立绘', 'Portrait')}`}
-          onClose={() => { setViewing(undefined) }}
-          // Drawn again, it is the new one that is open: named as what it now is among their pictures.
-          onChanged={(now) => { if (now !== undefined) setViewing(now) }}
+          {...(viewStart !== undefined ? { start: viewStart } : {})}
+          onClose={() => { setViewing(undefined); setViewStart(undefined) }}
+          // Drawn again, it is the new one that is open: named as what it now is among their pictures — and shown under the page's picture too.
+          onChanged={(now) => {
+            if (now === undefined) return
+            setViewing(now)
+            setViewStart(undefined)
+            if (picked?.startsWith('sheet:') === true) setPicked(`sheet:${now}`)
+          }}
           onEditLook={(of) => {
             // Their own anchor is on this page, under "Looks": the form scrolls to it.
             if (of.kind === 'character' && of.id === card.id) {

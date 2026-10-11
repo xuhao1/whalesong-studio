@@ -141,8 +141,13 @@ tags: []
 visual:
   prompt: lean woman in her late twenties, black hair coiled flat at the nape, grey cheongsam   # the visual anchor
   negative: loose hair, heavy makeup       # never drawn on them
-  sheet: assets/images/sheet-….png         # design sheet: front, side, back
-  portrait: assets/images/portrait-….png
+  sheet: assets/images/sheet-….png         # the main design sheet (front, side, back): `mainSheet` where one is chosen, else the one it was — a sheet newly drawn where none is chosen (written by the Studio, not by hand)
+  sheets: [assets/images/sheet-….png, …]   # every sheet kept of them that is not of a look, the newest first: the main one, the sheets of their stages, and ones kept without being in use; left out while the main one is the only one
+  mainSheet: assets/images/sheet-….png     # the sheet the author chose as the main one — it stays whatever is drawn after; left out: see `sheet`
+  fronts: [assets/images/sheet-….png]      # which of `sheets` show the front view alone (`sheetFront` says it of the main one)
+  portrait: assets/images/portrait-….png   # the portrait that stands for them: `face` where one is chosen, else the first of `portraits` (written by the Studio, not by hand)
+  portraits: [assets/images/portrait-….png, …]   # every portrait kept of them, in the author's order, the newest first until reordered; left out while there is one
+  face: assets/images/portrait-….png       # the one the author chose to stand for them — it stays whatever is drawn after; left out: the first of `portraits`
   scenes:                 # the moments they are remembered by, the most theirs first; the director finds them, the author rewrites them
     - id: scene_k3x9
       title: 夜校
@@ -163,7 +168,7 @@ stages:                    # the stretches of their life in the book, in the ord
     what: 搬进大观园，自己住一处院子
     appearance: 身量长开，束发戴冠      # only where it differs from the stretch before
     persona: 痴性未改而心事渐深        # only where it differs from the card
-    visual: { prompt: …, negative: …, sheet: assets/images/sheet-….png, portrait: assets/images/portrait-….png }
+    visual: { prompt: …, negative: …, sheet: assets/images/sheet-….png, portrait: assets/images/portrait-….png }   # `sheet`: one of the card's `visual.sheets`, used for this stretch (it is then not the main one)
   looks:                                   # further outfits, each with a sheet derived from the main one
     - id: 雨夜外出
       name: 雨夜外出
@@ -217,8 +222,8 @@ Word counts, audio scripts and exports ignore image lines.
 | `proposals.json` | revision proposals and their status |
 | `suggestions.json` | bible and thread suggestions left by digest |
 | `settled.json` | what became of suggestions the planner settled without the author being asked: entered, folded into something there, left out — each with its reason, the latest first (600 at most) |
-| `figures-hidden.json` | the portraits the author keeps out of the text, by path — ones that would stand there by themselves. By itself a portrait of one of somebody's moments stands where the chapter tells the moment, and one portrait of the person where they first come on (a period's, where the period begins) unless a moment of theirs is shown in that chapter; of several of one moment, or of the person, the first in the card's order is the one. Pictures drawn to compare services are listed here until one is taken. |
-| `figures-shown.json` | the portraits the author asked into the text beside those: ones the rule leaves out (a second picture of a moment, another portrait of the person), by path. |
+| `figures-hidden.json` | the portraits the author keeps out of the text, by path — ones that would stand there by themselves. By itself a portrait of one of somebody's moments stands where the chapter tells the moment, and one portrait of the person where they first come on (a period's, where the period begins) unless a moment of theirs is shown in that chapter; of several of one moment the first in the card's order is the one, and of the person the portrait that stands for them (`visual.portrait`). A picture that is both — a moment's, and the one that stands for the person — has two places: the moment's is listed by the path, the other by the path with `#face` after it. Pictures drawn to compare services are listed here until one is taken. |
+| `figures-shown.json` | the portraits the author asked into the text beside those: ones the rule leaves out (a second picture of a moment, another portrait of the person), by path (or path and `#face`, as above). |
 | `guide-notes.json` | what the model that looks at pictures wrote of the pictures given to steer by, by picture, model and what was said of it — so that none is looked at twice. Safe to delete. |
 | `reviews/<chapter>.json` | the latest editorial review |
 | `audio/<chapter>.json` | the audio script: lines, cues, and which clip belongs to which line. A line that was spoken more than once says so (`takes`), and one whose kept take the listening check still faults says how (`check`: `silent`, `short`, `long`, `drift`). `degraded` is set when part of the chapter could not be directed by the model and was cut by rule (how many passages, and why) A script shaped for speaking has `shape: 2`: narration is in whole takes, and a narration line that only says who spoke carries `tag: true` (left unspoken unless `voiced: true`, or the book reads every word; `voiced: false` silences any line). Cues have a `kind` (`bed`, `effect`, `music`), a `caption` for the reader, a `prompt` for the sound model and, once generated, the clip (`audio`, `duration`, `renderKey`) |

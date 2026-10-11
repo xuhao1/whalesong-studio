@@ -400,17 +400,21 @@ export async function deriveBeats(core: NovelCore, runtime: ProjectRuntime, para
 export interface WhatIfResult {
   branches: { title: string; development: string; consequences: string[]; risks?: string; payoff?: string }[]
   recommendation?: string
+  /** Where pictures were given: how many, and who looked at them. */
+  pictures?: PicturesRead
 }
 
-export async function whatIf(core: NovelCore, runtime: ProjectRuntime, params: { question: string; branches?: number }, task: TaskContext): Promise<WhatIfResult> {
+export async function whatIf(core: NovelCore, runtime: ProjectRuntime, params: { question: string; branches?: number; /** Pictures the ways on are weighed with. */ guides?: PictureGuide[] }, task: TaskContext): Promise<WhatIfResult> {
   const { project } = runtime
   const manifest = await project.manifest()
   const lang = promptLanguage(manifest.language)
   const route = await core.route('architect', runtime, task)
+  const guided = await guidePictures(core, runtime, route, params.guides, 'whatif', task)
   const pack = await core.pack(runtime, route, { purpose: 'derive', brief: params.question, ...(task.signal !== undefined ? { signal: task.signal } : {}) })
   const { value } = await assign(core, runtime, task, {
     role: 'architect',
     label: L(lang, '假设推演', 'What if'),
+    ...(guided !== undefined && guided.images.length > 0 ? { images: guided.images } : {}),
     line: MAIN_LINE,
     tool: 'submit_branches',
     what: L(lang, '几条可能的走向，各自的代价和收获', 'the branches the story could take, with what each costs and gains'),
@@ -419,7 +423,7 @@ export async function whatIf(core: NovelCore, runtime: ProjectRuntime, params: {
       lang,
       language: manifest.language,
       title: manifest.title,
-      context: `${pack.text}\n\n${await outlineOverview(project, lang === 'zh')}`,
+      context: `${pack.text}\n\n${await outlineOverview(project, lang === 'zh')}${guided !== undefined ? `\n\n${guided.text}` : ''}`,
       question: params.question,
       branches: Math.max(2, Math.min(5, params.branches ?? 3)),
     }),
@@ -443,6 +447,7 @@ export async function whatIf(core: NovelCore, runtime: ProjectRuntime, params: {
       }
     }),
     ...(recommendation !== undefined ? { recommendation } : {}),
+    ...(guided !== undefined ? { pictures: picturesRead(guided)! } : {}),
   }
 }
 

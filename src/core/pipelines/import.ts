@@ -658,7 +658,7 @@ export interface RereadResult {
   without: string[]
 }
 
-const PERSON_PICTURES = ['prompt', 'negative', 'sheet', 'sheetFront', 'looks', 'portrait', 'portraits', 'sprites'] as const
+const PERSON_PICTURES = ['prompt', 'negative', 'sheet', 'sheetFront', 'mainSheet', 'sheets', 'fronts', 'looks', 'portrait', 'portraits', 'face', 'sprites'] as const
 const THING_PICTURES = ['visualPrompt', 'visualImage', 'spots'] as const
 
 /**

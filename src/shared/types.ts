@@ -170,22 +170,44 @@ export interface CharacterVisual {
   /** What must not be drawn on or around this character (things the description tends to evoke by mistake). */
   negative?: string
   /**
-   * Project-relative path of the character's design sheet: the same person from
+   * Project-relative path of the character's main design sheet: the same person from
    * the front, the side and the back. It is the reference image sent along
    * whenever the character is drawn again, which is what keeps them the same
-   * person from picture to picture.
+   * person from picture to picture. It is `mainSheet` where the author chose one, else the first of `sheets` that
+   * is not the sheet of a stretch of their life. Kept by the Studio: say which with `mainSheet`.
    */
   sheet?: string
-  /** The sheet shows the front view alone (drawn so: `image.sheet`), not the person three times. */
+  /** The main sheet shows the front view alone (drawn so: `image.sheet`), not the person three times. Kept by the Studio from `fronts`. */
   sheetFront?: boolean
+  /**
+   * The design sheet the author chose as the main one. It stays that whatever is drawn after it; taken away (or
+   * named as nothing), the newest sheet that is no stretch's is the main one again.
+   */
+  mainSheet?: string
+  /**
+   * Every design sheet kept of them that is not of a look, the newest first: the main one, the sheets of stretches
+   * of their life (`stages[].visual.sheet`), and ones kept without being in use. A sheet newly drawn joins them and
+   * the ones before it stay. Absent on a card that has the one sheet, the main one.
+   */
+  sheets?: string[]
+  /** Which of `sheets` show the front view alone. */
+  fronts?: string[]
   /** Further looks (outfits), each with a sheet derived from the main one. */
   looks?: CharacterLook[]
-  /** Project-relative path of the bust portrait (avatars, the interlude stage); the reference when there is no sheet. */
+  /**
+   * Project-relative path of the portrait that stands for them — in the lists, as their avatar, on the interlude
+   * stage, in the text where they first come on; the reference when there is no sheet. It is `face` where the author
+   * chose one, else the first of `portraits`. Kept by the Studio: say which with `face`.
+   */
   portrait?: string
   /**
-   * Every portrait kept of them, in the author's order; the first is `portrait` — their face in the lists and on the
-   * stage. A portrait newly drawn is put first and the ones before it stay: the author orders them, and removes what
-   * they do not want. Absent on a card nobody has more than one of yet.
+   * The portrait the author chose to stand for them. It stays that whatever is drawn after it; taken away (or named
+   * as nothing), the first of `portraits` — the newest — stands for them again.
+   */
+  face?: string
+  /**
+   * Every portrait kept of them, in the author's order. A portrait newly drawn is put first and the ones before it
+   * stay: the author orders them, and removes what they do not want. Absent on a card nobody has more than one of yet.
    */
   portraits?: string[]
   /**
@@ -879,6 +901,8 @@ export interface Proposal {
   batches?: string[]
   /** Taken into a later proposal that goes on from it: settled by that one. */
   supersededBy?: string
+  /** Where it was written by pictures the author gave: how many, and who looked at them. */
+  pictures?: PicturesRead
   createdBy: 'agent' | 'user'
   createdAt: Timestamp
 }

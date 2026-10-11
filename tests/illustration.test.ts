@@ -328,6 +328,18 @@ describe('design sheets and looks', () => {
     expect((await project.findCharacter(card.id))!.visual?.sheet).toBe(second.path)
     // The sheet of before stays in the gallery, with its record: what the portrait was drawn against can still be seen.
     expect((await project.illustrations()).map(item => item.path)).toEqual([first.path, portrait.path, second.path])
+    // …and on the card, beside the new one, not in use: a sheet drawn again takes nothing away.
+    expect((await project.findCharacter(card.id))!.visual?.sheets).toEqual([second.path, first.path])
+    expect(second.spare).toBeUndefined()
+    // The author chooses the earlier one as the main sheet: one drawn after that waits beside it, and the draw says so.
+    await project.saveCharacter({ id: card.id, visual: { mainSheet: first.path } })
+    const third = await illustrate(bed.core, bed.runtime, { kind: 'sheet', target: card.id }, task)
+    expect(third.spare).toBe(true)
+    expect((await project.findCharacter(card.id))!.visual).toMatchObject({ sheet: first.path, mainSheet: first.path, sheets: [third.path, second.path, first.path] })
+    // What is drawn of them goes by the main sheet — the chosen one — not by the newest.
+    const after = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id }, task)
+    expect(after.parts?.references).toEqual([{ path: first.path, label: '宝玉', sheet: true }])
+    await project.saveCharacter({ id: card.id, visual: { mainSheet: second.path } })
     // The portrait is drawn against the sheet in use: drawn again, against the new one.
     const redrawn = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: card.id }, task)
     expect(redrawn.parts?.references).toEqual([{ path: second.path, label: '宝玉', sheet: true }])
@@ -1406,6 +1418,8 @@ describe('the pictures kept of somebody, and taking one away', () => {
     expect(resheet).toMatchObject({ kind: 'sheet', replaced: ['沈砚'] })
     expect((await project.findCharacter(card.id))!.visual!.sheet).toBe(resheet.path)
     expect((await project.illustrations()).map(item => item.path)).toContain(sheet)
+    // …and stays among the sheets kept of them, right behind the new one, not in use.
+    expect((await project.findCharacter(card.id))!.visual!.sheets).toEqual([resheet.path, sheet])
     // …for the art of a place, and for a picture that hangs nowhere: it is in the gallery.
     const yard = await project.saveWorld({ name: '后院', category: 'location', importance: 2, visualPrompt: '青砖小院，一口井' })
     const art = await illustrate(bed.core, bed.runtime, { kind: 'location', target: yard.id }, task)

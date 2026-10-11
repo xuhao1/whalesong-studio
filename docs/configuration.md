@@ -163,7 +163,7 @@ A role is one of two things:
 
 ### Pictures to go by, and the model that looks at them
 
-A plan of chapters to come and the writing of a chapter can be given a few pictures — a moment the author sees, a face, a place, a mood. They are pictures of the book: ones it already has, or ones brought in for this (kept under `assets/guides/`). Those given to a chapter stay on its plan (`guides`), so every pass at it goes by them; those given to a derivation go to the planner, and the chapter that goes by a picture keeps it.
+A plan of chapters to come and the writing of a chapter can be given a few pictures — a moment the author sees, a face, a place, a mood. They are pictures of the book: ones it already has, or ones brought in for this (kept under `assets/guides/`). Those given to a chapter stay on its plan (`guides`), so every pass at it goes by them; those given to a derivation go to the planner, and the chapter that goes by a picture keeps it. A what-if, a revision of the whole book and the rewriting of a selected passage take pictures the same way, for that one piece of work: every branch of the what-if counts them in; the planner that scopes a revision sees them, and so does each chapter it rewrites; a passage goes by the pictures given for that rewrite, not by the chapter's. A whole chapter rewritten to mend what a review found goes by the pictures kept with the chapter. Whoever looked at them is said with the result — on the what-if, on each proposal, in the revision's summary. The showrunner passes them as `pictures` on `novel_derive` (`kind=what_if` too), `novel_write` and `novel_revise`.
 
 Who looks at them is decided by what DSH says of the model doing the work (`inputModalities` of the model, from its provider's adapter):
 

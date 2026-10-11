@@ -9,7 +9,7 @@
  * A revision either applies at once (the old text is snapshotted first) or
  * becomes a proposal that waits for accept/reject in the review panel.
  */
-import { MAIN_LINE, type IssueSeverity, type Proposal, type ReviewIssue } from '../../shared/types'
+import { MAIN_LINE, type IssueSeverity, type PictureGuide, type PicturesRead, type Proposal, type ReviewIssue } from '../../shared/types'
 import { clip, clipTail, countWords, fuzzyFind, newId } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { asArray, asRecord, asText } from '../llm'
@@ -22,6 +22,7 @@ import { mapLimit } from '../util/async'
 import { scheduleDigest } from './digest'
 import { scheduleRecheck } from './review'
 import { cleanProse } from './write'
+import { guidePictures, picturesRead } from './guides'
 
 export interface ReviseSpanParams {
   chapter: string
@@ -37,6 +38,8 @@ export interface ReviseSpanParams {
   issues?: string[]
   /** Go on from the changes that still wait for this chapter; see `ReviseChapterParams.onto`. */
   onto?: boolean
+  /** Pictures to rewrite the passage by: given for this rewrite, and for no other (the chapter's own are for writing the chapter). */
+  guides?: PictureGuide[]
 }
 
 export interface ReviseChapterParams {
@@ -44,6 +47,8 @@ export interface ReviseChapterParams {
   instruction: string
   apply?: boolean
   batchId?: string
+  /** Pictures to rewrite the chapter by. Left out: the ones kept on its plan, as when it is written. */
+  guides?: PictureGuide[]
   /** The review issues this mends: the proposal says so. */
   issues?: string[]
   /**
@@ -66,6 +71,8 @@ export interface ReviseResult {
   wordsAfter: number
   before: string
   after: string
+  /** Where it was written by pictures: how many, and who looked at them. */
+  pictures?: PicturesRead
 }
 
 function shouldApply(core: NovelCore, task: TaskContext, explicit: boolean | undefined, fallback: boolean): boolean {
@@ -172,6 +179,7 @@ export async function reviseSpan(core: NovelCore, runtime: ProjectRuntime, param
   const lang = promptLanguage(manifest.language)
   const passage = text.slice(range.start, range.end)
   const route = await core.route('writer', runtime, task)
+  const guided = await guidePictures(core, runtime, route, params.guides, 'passage', task)
   const pack = await core.pack(runtime, route, {
     purpose: 'revise',
     chapter,
@@ -183,9 +191,10 @@ export async function reviseSpan(core: NovelCore, runtime: ProjectRuntime, param
   const response = await core.llm.complete({
     route,
     system: reviseSpanSystem({ ...base, style: renderStyle(await project.activeStyle(), lang) }),
+    ...(guided !== undefined && guided.images.length > 0 ? { images: guided.images } : {}),
     prompt: reviseSpanTask({
       ...base,
-      context: pack.text,
+      context: `${pack.text}${guided !== undefined ? `\n\n${guided.text}` : ''}`,
       before: clipTail(text.slice(0, range.start), 1800),
       passage,
       after: clip(text.slice(range.end), 900),
@@ -211,20 +220,22 @@ export async function reviseSpan(core: NovelCore, runtime: ProjectRuntime, param
     wordsAfter: countWords(after),
     before: passage,
     after,
+    ...(guided !== undefined ? { pictures: picturesRead(guided)! } : {}),
   }
+  const read = guided !== undefined ? { pictures: picturesRead(guided)! } : {}
   if (apply) {
     await project.saveChapterText(chapter.plan.id, text.slice(0, range.start) + after + text.slice(range.end), { reason: 'before-revise' })
     scheduleDigest(core, runtime, chapter.plan.id, task)
   } else if (based.used.length === 0 || (based.used.every(proposal => proposal.kind === 'span') && found.text.includes(passage))) {
     // A change of its own — also when it was written knowing the ones that wait: the passage is as the book has it,
     // and none of them rewrites the chapter, so each is accepted or turned down by itself.
-    const proposal = await project.addProposal({ chapterId: chapter.plan.id, kind: 'span', instruction: params.instruction, before: passage, after, createdBy: task.origin, ...(params.issues !== undefined && params.issues.length > 0 ? { issues: params.issues } : {}) })
+    const proposal = await project.addProposal({ chapterId: chapter.plan.id, kind: 'span', instruction: params.instruction, before: passage, after, createdBy: task.origin, ...read, ...(params.issues !== undefined && params.issues.length > 0 ? { issues: params.issues } : {}) })
     result.proposalId = proposal.id
   } else {
     // The passage is one a waiting change made, or stands in a chapter rewritten whole: one proposal for the chapter
     // with all of them and this one in.
     const taken = await takenIn(runtime, based.used, params.issues, lang)
-    const proposal = await project.addProposal({ chapterId: chapter.plan.id, kind: 'chapter', instruction: params.instruction, before: found.text, after: text.slice(0, range.start) + after + text.slice(range.end), createdBy: task.origin, ...taken.carried })
+    const proposal = await project.addProposal({ chapterId: chapter.plan.id, kind: 'chapter', instruction: params.instruction, before: found.text, after: text.slice(0, range.start) + after + text.slice(range.end), createdBy: task.origin, ...read, ...taken.carried })
     await settleTakenIn(runtime, taken.settle, proposal.id)
     result.proposalId = proposal.id
   }
@@ -242,6 +253,8 @@ export async function reviseChapter(core: NovelCore, runtime: ProjectRuntime, pa
   const manifest = await project.manifest()
   const lang = promptLanguage(manifest.language)
   const route = await core.route('writer', runtime, task)
+  // Rewritten whole, the chapter still goes by the pictures the author gave it — or by the ones given to this revision.
+  const guided = await guidePictures(core, runtime, route, params.guides ?? chapter.plan.guides, 'revise', task)
   const pack = await core.pack(runtime, route, {
     purpose: 'revise',
     chapter,
@@ -255,7 +268,8 @@ export async function reviseChapter(core: NovelCore, runtime: ProjectRuntime, pa
   const response = await core.llm.complete({
     route,
     system: reviseChapterSystem({ ...base, style: renderStyle(await project.activeStyle(), lang) }),
-    prompt: reviseChapterTask({ ...base, context: pack.text, instruction: params.instruction }),
+    ...(guided !== undefined && guided.images.length > 0 ? { images: guided.images } : {}),
+    prompt: reviseChapterTask({ ...base, context: `${pack.text}${guided !== undefined ? `\n\n${guided.text}` : ''}`, instruction: params.instruction }),
     ...(task.signal !== undefined ? { signal: task.signal } : {}),
     onText: (_delta, total) => { task.job?.rewrite(total) },
   })
@@ -274,6 +288,7 @@ export async function reviseChapter(core: NovelCore, runtime: ProjectRuntime, pa
     wordsAfter: countWords(after),
     before: text,
     after,
+    ...(guided !== undefined ? { pictures: picturesRead(guided)! } : {}),
   }
   if (apply) {
     await project.saveChapterText(chapter.plan.id, after, { reason: 'before-revise', status: chapter.plan.status === 'final' ? 'final' : 'revised' })
@@ -287,6 +302,7 @@ export async function reviseChapter(core: NovelCore, runtime: ProjectRuntime, pa
       before: text,
       after,
       createdBy: task.origin,
+      ...(guided !== undefined ? { pictures: picturesRead(guided)! } : {}),
       ...(params.batchId !== undefined ? { batchId: params.batchId } : {}),
       ...taken.carried,
     })
@@ -314,6 +330,8 @@ export interface ReviseBookParams {
   line?: string
   /** Go on from the changes that still wait: every chapter is rewritten as `ReviseChapterParams.onto` says, and the planner is told which chapters have some. */
   onto?: boolean
+  /** Pictures the revision goes by: the planner scopes it with them, and each chapter is rewritten by them. */
+  guides?: PictureGuide[]
 }
 
 export interface ReviseBookResult {
@@ -325,6 +343,8 @@ export interface ReviseBookResult {
   bible?: { name: string; field: string }[]
   results: (Pick<ReviseResult, 'chapterId' | 'title' | 'index' | 'applied' | 'proposalId' | 'wordsBefore' | 'wordsAfter'> & { reason: string })[]
   failed: { chapterId: string; error: string }[]
+  /** Where pictures were given: how many, and who looked at them — the planner that scoped it, or the writer where the chapters were named. */
+  pictures?: PicturesRead
 }
 
 export async function reviseBook(core: NovelCore, runtime: ProjectRuntime, params: ReviseBookParams, task: TaskContext): Promise<ReviseBookResult> {
@@ -339,6 +359,7 @@ export async function reviseBook(core: NovelCore, runtime: ProjectRuntime, param
   let targets: { id: string; reason: string }[]
   let note: string | undefined
   let bible: { name: string; field: string }[] = []
+  let pictures: PicturesRead | undefined
   if (params.chapters !== undefined && params.chapters.length > 0) {
     targets = []
     for (const ref of params.chapters) {
@@ -356,6 +377,9 @@ export async function reviseBook(core: NovelCore, runtime: ProjectRuntime, param
       const pending = waiting.filter(proposal => proposal.chapterId === info.id)
       lines.push(`${info.index}. ${info.title}\n${text}${pending.length > 0 ? `\n${L(lang, `（这一章已有 ${pending.length} 处还没采纳的修改，这次会接着它们改：${clip(pending.map(proposal => proposal.instruction.replace(/\s+/g, ' ')).join('；'), 240)}）`, `(${pending.length} change(s) to this chapter still wait, and this revision goes on from them: ${clip(pending.map(proposal => proposal.instruction.replace(/\s+/g, ' ')).join('; '), 300)})`)}` : ''}`)
     }
+    // The planner scopes the revision with the pictures it goes by in sight (or in words).
+    const guided = await guidePictures(core, runtime, await core.route('architect', runtime, task), params.guides, 'revise', task)
+    pictures = picturesRead(guided)
     const { value } = await assign(core, runtime, task, {
       role: 'architect',
       label: L(lang, '全书修订 · 划定范围', 'Book-wide revision · scope'),
@@ -363,7 +387,8 @@ export async function reviseBook(core: NovelCore, runtime: ProjectRuntime, param
       tool: 'submit_scope',
       what: L(lang, '哪些章节要改、各自怎么改', 'which chapters change, and how each of them does'),
       system: architectSystem(lang),
-      prompt: triageTask({ lang, language: manifest.language, title: manifest.title, instruction: params.instruction, chapters: lines.join('\n\n'), ...(params.bible === true ? { bible: true } : {}) }),
+      ...(guided !== undefined && guided.images.length > 0 ? { images: guided.images } : {}),
+      prompt: triageTask({ lang, language: manifest.language, title: manifest.title, instruction: params.instruction, chapters: `${lines.join('\n\n')}${guided !== undefined ? `\n\n${guided.text}` : ''}`, ...(params.bible === true ? { bible: true } : {}) }),
       temperature: 0.2,
       validate: raw => asRecord(raw),
     })
@@ -390,7 +415,7 @@ export async function reviseBook(core: NovelCore, runtime: ProjectRuntime, param
         : target.reason === params.instruction ? params.instruction : `${params.instruction}\n\n${L(lang, '具体到本章', 'For this chapter specifically')}${lang === 'zh' ? '：' : ': '}${target.reason}`
       // Per-chapter streams would interleave in one job buffer, so the batch reports progress only.
       const inner: TaskContext = { origin: task.origin, ...(task.signal !== undefined ? { signal: task.signal } : {}), ...(task.agentRoute !== undefined ? { agentRoute: task.agentRoute } : {}) }
-      const result = await reviseChapter(core, runtime, { chapter: target.id, instruction, apply, batchId, ...(params.onto === true ? { onto: true } : {}), ...(params.issuesOf !== undefined ? { issues: params.issuesOf(target.id) } : {}) }, inner)
+      const result = await reviseChapter(core, runtime, { chapter: target.id, instruction, apply, batchId, ...(params.onto === true ? { onto: true } : {}), ...(params.issuesOf !== undefined ? { issues: params.issuesOf(target.id) } : {}), ...(params.guides !== undefined && params.guides.length > 0 ? { guides: params.guides } : {}) }, inner)
       results.push({
         chapterId: result.chapterId,
         title: result.title,
@@ -401,6 +426,7 @@ export async function reviseBook(core: NovelCore, runtime: ProjectRuntime, param
         wordsAfter: result.wordsAfter,
         reason: target.reason,
       })
+      pictures ??= result.pictures
     } catch (error) {
       if (task.signal?.aborted === true) throw error
       failed.push({ chapterId: target.id, error: error instanceof Error ? error.message : String(error) })
@@ -410,7 +436,7 @@ export async function reviseBook(core: NovelCore, runtime: ProjectRuntime, param
   }, task.signal)
   results.sort((left, right) => left.index - right.index)
   task.job?.result({ batchId })
-  return { batchId, ...(note !== undefined ? { note } : {}), untouched: infos.length - targets.length, ...(bible.length > 0 ? { bible } : {}), results, failed }
+  return { batchId, ...(note !== undefined ? { note } : {}), untouched: infos.length - targets.length, ...(bible.length > 0 ? { bible } : {}), results, failed, ...(pictures !== undefined ? { pictures } : {}) }
 }
 
 const CHARACTER_FIELDS = ['tagline', 'appearance', 'personality', 'background', 'motivation', 'flaw', 'arc', 'voice', 'age', 'gender']

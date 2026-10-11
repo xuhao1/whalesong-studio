@@ -10,7 +10,7 @@ import { ProviderError } from '../../core/media/http'
 import { ProjectError } from '../../core/project'
 import { displayPath } from '../../core/util/fs'
 import type { NovelService } from '../../host/service'
-import type { JobKind } from '../../shared/types'
+import type { JobKind, PicturesRead } from '../../shared/types'
 
 /** JSON a tool may return (the Harness requires lossless JSON). */
 export type Json = string | number | boolean | null | Json[] | { [key: string]: Json }
@@ -239,6 +239,16 @@ export function listOf(value: unknown): string[] | undefined {
 }
 
 /** Trim a possibly long field for a tool result. */
+/**
+ * How the pictures given to a piece of work were read, as a line of a tool's answer — with what to tell the author
+ * where the model that did the work does not say whether it takes pictures.
+ * @param who - the one whose work it was: `writer`, `planner`.
+ */
+export function picturesSaid(read: PicturesRead | undefined, who: string): string | undefined {
+  if (read === undefined) return undefined
+  return `Pictures: ${read.count} given — ${read.by === 'vision' ? `put into words for the ${who} by ${read.model ?? 'the picture model'}` : read.unsure === true ? `sent to the ${who}'s model, which does not say whether it takes pictures: tell the author, and that a model to look at pictures can be set (novel_settings: vision)` : `looked at by the ${who}'s own model`}.`
+}
+
 export function brief(text: string | undefined, max = 200): string {
   if (text === undefined) return ''
   const flat = text.replace(/\s+/g, ' ').trim()

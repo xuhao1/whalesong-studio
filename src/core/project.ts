@@ -17,6 +17,8 @@
  */
 import { scenesOf } from '../shared/art'
 import { placeFigures, type ChapterFigure, type PortraitPlace } from '../shared/reader'
+import { mainSheetOf, sheetFronts, sheetPool } from '../shared/sheets'
+import { pixelsOf } from './media/pixels'
 import { watch, type FSWatcher } from 'node:fs'
 import { basename, join } from 'node:path'
 import {
@@ -802,28 +804,120 @@ export class Project {
         if (kept.length > 0) merged.visual.looks = kept
         else delete merged.visual.looks
       }
-      // Their portraits are kept together, the face first. A list handed in is the author's order; a portrait named
-      // alone is a new one — it goes first, and those before it stay — or, named as nothing, the face taken away:
-      // the next one is the face then.
-      const pictures = isPlainRecord(input.visual) ? input.visual as { portrait?: unknown; portraits?: unknown } : undefined
-      if (pictures !== undefined && (Array.isArray(pictures.portraits) || typeof pictures.portrait === 'string' || pictures.portrait === null)) {
+      // Their portraits are kept together. A list handed in is the author's order; a portrait named alone is a new
+      // one — it goes first, and those before it stay — or, named as nothing, the one that stands for them taken
+      // away. Which one stands for them (`portrait`) is the one the author chose (`face`) while it is among them,
+      // else the first: a portrait drawn after a choice was made does not take its place.
+      const pictures = isPlainRecord(input.visual) ? input.visual as { portrait?: unknown; portraits?: unknown; face?: unknown } : undefined
+      if (pictures !== undefined && (Array.isArray(pictures.portraits) || typeof pictures.portrait === 'string' || pictures.portrait === null || 'face' in pictures)) {
         const before = existing?.visual?.portraits ?? (existing?.visual?.portrait !== undefined ? [existing.visual.portrait] : [])
         const named = typeof pictures.portrait === 'string' ? pictures.portrait.trim() : ''
         const list = Array.isArray(pictures.portraits)
           ? [...new Set(pictures.portraits.filter((path): path is string => typeof path === 'string' && path.trim().length > 0).map(path => path.trim()))]
-          : named.length > 0 ? [named, ...before.filter(path => path !== named)] : before.filter(path => path !== existing?.visual?.portrait)
+          : named.length > 0 ? [named, ...before.filter(path => path !== named)]
+            : pictures.portrait === null ? before.filter(path => path !== existing?.visual?.portrait) : before
+        // The choice: what this call says of it, else what the card had.
+        const wanted = 'face' in pictures ? (typeof pictures.face === 'string' ? pictures.face.trim() : '') : existing?.visual?.face ?? ''
+        const face = wanted.length > 0 && list.includes(wanted) ? wanted : undefined
         const visual: NonNullable<CharacterCard['visual']> = merged.visual ?? {}
-        if (list.length > 0) visual.portrait = list[0]!
+        if (face !== undefined) visual.face = face
+        else delete visual.face
+        if (list.length > 0) visual.portrait = face ?? list[0]!
         else delete visual.portrait
         if (list.length > 1) visual.portraits = list
         else delete visual.portraits
         if (Object.keys(visual).length > 0) merged.visual = visual
         else delete merged.visual
       }
+      await this.settleSheets(merged, existing, isPlainRecord(input.visual) ? input.visual : undefined)
       const { notes, ...data } = merged
       await this.saveCard('characters', id, data, notes)
       return merged
     })
+  }
+
+  /**
+   * A person's design sheets are kept together, like their portraits. A sheet named alone (`sheet`) is a new one: it
+   * goes first, and those before it stay; a list handed in (`sheets`) is the author's — which are kept, in what order;
+   * the sheet of a stretch of their life is one of them too, and the one a stretch had before stays among them, not in
+   * use. Which is the main one (`sheet`): the one the author chose (`mainSheet`), while it is among them and no
+   * stretch's — a sheet drawn after a choice was made does not take its place; with no choice made, a sheet newly
+   * named is the main one, and otherwise the main sheet stays what it was. It changes for nothing else: where it is
+   * taken away or becomes a stretch's, the one kept right behind it — usually the one it was drawn from — is next.
+   * Whether a sheet is the front view alone is kept with the sheet (`fronts`), so that it holds whatever the sheet
+   * is used as; of one that joins without that being said, its shape says it — one figure stands upright.
+   * @param said - what this save says of the card's pictures, as it came.
+   */
+  private async settleSheets(merged: CharacterCard, existing: CharacterCard | undefined, said: Record<string, unknown> | undefined): Promise<void> {
+    const before = existing !== undefined ? sheetPool(existing) : []
+    const known = new Set(before)
+    const named = typeof said?.sheet === 'string' ? said.sheet.trim() : ''
+    const cleared = said !== undefined && 'sheet' in said && named.length === 0
+    let pool = Array.isArray(said?.sheets)
+      ? [...new Set(said.sheets.filter((path): path is string => typeof path === 'string' && path.trim().length > 0).map(path => path.trim()))]
+      // (One of theirs already, named again, stays where it is: which is the main one is said with `mainSheet`.)
+      : named.length > 0 ? (known.has(named) ? before : [named, ...before])
+        // The main sheet named as nothing: that one taken away, the others kept.
+        : cleared ? before.filter(path => path !== existing?.visual?.sheet) : before
+    // The sheet of a stretch is one of theirs: a new one first, like any sheet newly drawn.
+    const stages = merged.stages ?? []
+    for (const stage of stages) {
+      const path = stage.visual?.sheet
+      if (path !== undefined && path.length > 0 && !pool.includes(path)) pool = [path, ...pool]
+    }
+    if (pool.length === 0 && existing?.visual?.sheet === undefined && existing?.visual?.sheets === undefined) return
+
+    const fronts = Array.isArray(said?.fronts) ? new Set(said.fronts.filter((path): path is string => typeof path === 'string')) : existing !== undefined ? sheetFronts(existing) : new Set<string>()
+    const flag = (path: string, front: boolean): void => { if (front) fronts.add(path); else fronts.delete(path) }
+    // Said of the sheet named: where this save says it — and of a new one always, unless the whole list of them was handed in.
+    if (named.length > 0 && ('sheetFront' in (said ?? {}) || (!known.has(named) && !Array.isArray(said?.fronts)))) flag(named, said?.sheetFront === true)
+    for (const stage of stages) {
+      const path = stage.visual?.sheet
+      if (path !== undefined && !known.has(path) && path !== named) flag(path, stage.visual?.sheetFront === true)
+    }
+    // One that joins by the list alone (out of the gallery): one figure stands upright, three lie side by side.
+    if (Array.isArray(said?.sheets) && !Array.isArray(said?.fronts)) {
+      for (const path of pool) {
+        if (known.has(path) || path === named || stages.some(stage => stage.visual?.sheet === path)) continue
+        const frame = await this.readFile(path).then(pixelsOf).catch(() => undefined)
+        if (frame !== undefined) flag(path, frame.height > frame.width)
+      }
+    }
+
+    const staged = new Set(stages.map(stage => stage.visual?.sheet).filter((path): path is string => path !== undefined && path.length > 0))
+    const wanted = said !== undefined && 'mainSheet' in said ? (typeof said.mainSheet === 'string' ? said.mainSheet.trim() : '') : existing?.visual?.mainSheet ?? ''
+    const free = (path: string): boolean => pool.includes(path) && !staged.has(path)
+    const was = existing?.visual?.sheet
+    // With no choice in the way, a sheet newly named is the main one; else the one there was — or, that one gone or a
+    // stretch's now, the one that stood right behind it (before it, where nothing stood behind).
+    const current = named.length > 0 && !known.has(named) ? named
+      : was === undefined || free(was) ? was
+        : before.slice(before.indexOf(was) + 1).find(free) ?? before.slice(0, Math.max(0, before.indexOf(was))).reverse().find(free)
+    const main = mainSheetOf(pool, staged, wanted.length > 0 ? wanted : undefined, current)
+    const visual: NonNullable<CharacterCard['visual']> = merged.visual ?? {}
+    if (main.path !== undefined) visual.sheet = main.path
+    else delete visual.sheet
+    if (main.path !== undefined && fronts.has(main.path)) visual.sheetFront = true
+    else delete visual.sheetFront
+    if (main.chosen) visual.mainSheet = main.path!
+    else delete visual.mainSheet
+    // The list is written where it says more than the main sheet does by itself.
+    const listed = pool.length > 1 || (pool.length === 1 && pool[0] !== main.path)
+    if (listed) visual.sheets = pool
+    else delete visual.sheets
+    const upright = pool.filter(path => fronts.has(path))
+    if (listed && upright.length > 0) visual.fronts = upright
+    else delete visual.fronts
+    if (Object.keys(visual).length > 0) merged.visual = visual
+    else delete merged.visual
+    // A stretch's sheet is the front view alone where the sheet is — whatever was said of the sheet it had before.
+    if (stages.some(stage => stage.visual?.sheet !== undefined)) {
+      merged.stages = stages.map((stage) => {
+        if (stage.visual?.sheet === undefined) return stage
+        const { sheetFront: _was, ...rest } = stage.visual
+        return { ...stage, visual: { ...rest, ...(fronts.has(stage.visual.sheet) ? { sheetFront: true } : {}) } }
+      })
+    }
   }
 
   /**
@@ -2394,12 +2488,13 @@ export class Project {
    * The author's say on one portrait: in the text, or out of it. Only what differs from where it would stand by
    * itself is written down — one that stands there anyway is noted when it is kept out, one that does not when it is
    * asked in — so the rule goes on holding for every picture nobody said anything about.
+   * @param key - the place's key: the picture's path, or `<path>#face` for its place as the portrait of the person.
    */
-  async showFigure(path: string, show: boolean): Promise<void> {
-    const place = (await this.portraitPlaces()).find(item => item.path === path)
+  async showFigure(key: string, show: boolean): Promise<void> {
+    const place = (await this.portraitPlaces()).find(item => item.key === key)
     const byItself = place === undefined || place.spare === undefined
-    await this.figureList('figures-hidden.json', path, !show && byItself)
-    await this.figureList('figures-shown.json', path, show && !byItself)
+    await this.figureList('figures-hidden.json', key, !show && byItself)
+    await this.figureList('figures-shown.json', key, show && !byItself)
   }
 
   /**
@@ -2414,11 +2509,15 @@ export class Project {
   /**
    * Every portrait of everybody, and where it stands in the book.
    *
-   * A portrait of one of their moments stands where the chapter tells that moment; one portrait of the person stands
-   * where they first come on (one of a period of their life, where the period begins) — unless a moment of theirs is
-   * shown in that same chapter: then that is the picture of them there, and it stands at the moment. Of several
-   * pictures of one moment, and of several of the person, the first as the author has them in order is the one.
-   * Whatever does not stand by this is `spare`; the author asks any of them in, and keeps any of the others out.
+   * A portrait of one of their moments stands where the chapter tells that moment; the portrait that stands for the
+   * person (`visual.portrait`: the one the author chose, else the first) stands where they first come on (one of a
+   * period of their life, where the period begins) — unless a moment of theirs is shown in that same chapter: then
+   * that is the picture of them there, and it stands at the moment. Of several pictures of one moment the first as
+   * the author has them in order is the one. Whatever does not stand by this is `spare`; the author asks any of them
+   * in, and keeps any of the others out.
+   *
+   * The portrait that stands for the person may be one of a moment's: it then has two places — as the picture of
+   * the moment, and as the picture of the person (`key` ends in `#face` for that one).
    */
   async portraitPlaces(): Promise<(PortraitPlace & { told: string })[]> {
     const [characters, records, hidden, shown, outline] = await Promise.all([this.characters(), this.illustrations(), this.hiddenFigures(), this.shownFigures(), this.outline()])
@@ -2483,7 +2582,9 @@ export class Project {
           of,
           group: of === 'moment' ? `moment:${scene?.id ?? record?.moment?.scene ?? title ?? ''}` : of === 'stage' ? `stage:${stage!.id}` : 'person',
           place: {
+            key: path,
             path,
+            as: of === 'stage' ? 'period' : of,
             character: card.id,
             name: card.name,
             ...(title !== undefined && title.length > 0 ? { title } : {}),
@@ -2494,13 +2595,38 @@ export class Project {
           },
         })
       }
-      // One picture for each moment, one for each period, one for the person: the first of each as they are in order.
+      // The portrait that stands for them. Where it is a picture of a moment (or of a period), it stands for the
+      // person as well, in a place of its own: where they first come on.
+      const face = card.visual?.portrait
+      const faced = face !== undefined ? mine.find(item => item.place.path === face) : undefined
+      if (faced !== undefined && faced.of !== 'person') {
+        const at = first !== undefined ? places.get(first) : undefined
+        mine.push({
+          of: 'person',
+          group: 'person',
+          place: {
+            key: `${faced.place.path}#face`,
+            path: faced.place.path,
+            as: 'person',
+            character: card.id,
+            name: card.name,
+            ...(first !== undefined && at !== undefined ? { chapter: first, index: at.index, chapterTitle: at.title } : {}),
+            hidden: false,
+            told: [card.name, ...(card.aliases ?? [])].join(''),
+          },
+        })
+      }
+      // One picture for each moment and each period — the first of each as they are in order — and one for the person: the one that stands for them.
       const led = new Set<string>()
       for (const item of mine) {
-        if (led.has(item.group)) item.place.spare = item.of === 'moment' ? 'moment' : 'person'
+        if (item.of === 'person') {
+          if (face !== undefined && item.place.path !== face) item.place.spare = 'person'
+          else if (led.has('person')) item.place.spare = 'person'
+          else led.add('person')
+        } else if (led.has(item.group)) item.place.spare = item.of === 'moment' ? 'moment' : 'person'
         else led.add(item.group)
       }
-      const stands = (place: Held): boolean => !kept.has(place.path) && (place.spare === undefined || asked.has(place.path))
+      const stands = (place: Held): boolean => !kept.has(place.key) && (place.spare === undefined || asked.has(place.key))
       // A chapter that shows a moment of theirs has its picture of them: the one of the person does not stand beside it.
       for (const rank of ['stage', 'person'] as const) {
         for (const item of mine) {
@@ -2521,7 +2647,7 @@ export class Project {
   async chapterFigures(chapterId: string, text?: string): Promise<ChapterFigure[]> {
     const moments = (await this.portraitPlaces())
       .filter(place => place.chapter === chapterId && !place.hidden)
-      .map(place => ({ path: place.path, caption: place.title !== undefined ? `${place.title} · ${place.name}` : place.name, told: place.told }))
+      .map(place => ({ path: place.path, key: place.key, caption: place.title !== undefined ? `${place.title} · ${place.name}` : place.name, told: place.told }))
     return moments.length > 0 ? placeFigures(text ?? await this.chapterText(chapterId), moments) : []
   }
 
@@ -2761,12 +2887,15 @@ export class Project {
       const faced = portraits.includes(gone)
       const stages = card.stages ?? []
       const aged = stages.some(stage => stage.visual?.sheet === gone || stage.visual?.portrait === gone)
-      if (!(faced || visual?.sheet === gone || dressed || staged || aged)) continue
+      const sheets = sheetPool(card)
+      const sheeted = sheets.includes(gone)
+      if (!(faced || sheeted || dressed || staged || aged)) continue
       await this.saveCharacter({
         id: card.id,
-        ...(faced || visual?.sheet === gone || dressed || staged ? { visual: {
+        ...(faced || sheeted || dressed || staged ? { visual: {
           ...(faced ? { portraits: portraits.filter(item => item !== gone) } : {}),
-          ...(visual?.sheet === gone ? { sheet: '' } : {}),
+          // Out of the sheets kept of them — whatever it was used as: another becomes the main one, a stretch is without.
+          ...(sheeted ? { sheets: sheets.filter(item => item !== gone), fronts: [...sheetFronts(card)].filter(item => item !== gone) } : {}),
           ...(dressed ? { looks: looks.map(look => (look.sheet === gone ? { ...look, sheet: '' } : look)) } : {}),
           ...(staged ? { scenes: scenes.map(({ portrait, ...scene }) => (portrait === undefined || portrait === gone ? scene : { ...scene, portrait })) } : {}),
         } } : {}),
@@ -2809,8 +2938,9 @@ export class Project {
   /**
    * A picture drawn again takes the place of the one it was drawn from, wherever that one hangs: a card's design
    * sheet, a look's sheet, a stretch's pictures, the portrait of a moment; an entry's design art, the picture of a
-   * turn of its course; the cover. Among somebody's portraits it is put before the old one, which stays — portraits
-   * are kept side by side. The old picture itself, its file and its record, is let be: the gallery has both.
+   * turn of its course; the cover. Among somebody's portraits, and among their design sheets, it is put before the
+   * old one, which stays — they are kept side by side, the old sheet not in use. The old picture itself, its file and
+   * its record, is let be: the gallery has both.
    * @returns whose picture it is now, by name — nobody where the old one hung nowhere.
    */
   async replacePicture(old: string, next: string): Promise<string[]> {
@@ -2825,12 +2955,21 @@ export class Project {
       const faced = portraits.includes(old)
       const stages = card.stages ?? []
       const aged = stages.some(stage => stage.visual?.sheet === old || stage.visual?.portrait === old)
-      if (!(faced || visual?.sheet === old || dressed || staged || aged)) continue
+      const sheets = sheetPool(card)
+      const sheeted = sheets.includes(old)
+      if (!(faced || sheeted || dressed || staged || aged)) continue
       await this.saveCharacter({
         id: card.id,
-        ...(faced || visual?.sheet === old || dressed || staged ? { visual: {
-          ...(faced ? { portraits: portraits.flatMap(item => (item === old ? [next, old] : [item])) } : {}),
-          ...(visual?.sheet === old ? { sheet: next } : {}),
+        ...(faced || sheeted || dressed || staged ? { visual: {
+          ...(faced ? { portraits: portraits.flatMap(item => (item === old ? [next, old] : [item])), ...(visual?.face === old ? { face: next } : {}) } : {}),
+          // Among their sheets it is put before the old one, which stays, not in use: what the old one was — the
+          // main sheet (chosen, or for being first), a stretch's — the new one is.
+          ...(sheeted ? {
+            sheets: sheets.flatMap(item => (item === old ? [next, old] : [item])),
+            fronts: [...sheetFronts(card), ...(sheetFronts(card).has(old) ? [next] : [])],
+            ...(visual?.sheet === old ? { sheet: next } : {}),
+            ...(visual?.mainSheet === old ? { mainSheet: next } : {}),
+          } : {}),
           ...(dressed ? { looks: looks.map(look => (look.sheet === old ? { ...look, sheet: next } : look)) } : {}),
           ...(staged ? { scenes: scenes.map(scene => (scene.portrait === old ? { ...scene, portrait: next } : scene)) } : {}),
         } } : {}),

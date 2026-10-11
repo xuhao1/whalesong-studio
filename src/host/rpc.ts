@@ -670,17 +670,17 @@ export function createHandlers(service: NovelService): Handlers {
       // Named by what it is: the same picture brought in twice is one file.
       return { path: await project.writeAsset(`guides/${createHash('sha1').update(bytes).digest('hex').slice(0, 16)}.${real}`, bytes) }
     },
-    'ai.reviseSpan': async ({ root, chapter, start, end, quote, instruction }) => {
+    'ai.reviseSpan': async ({ root, chapter, start, end, quote, instruction, guides }) => {
       const runtime = await open(root)
       return job(runtime, 'revise', 'revise passage', chapter, async (task) => {
-        const { before: _before, ...rest } = await reviseSpan(core, runtime, { chapter, start, end, ...(quote !== undefined ? { quote } : {}), instruction: requireString(instruction, 'instruction'), apply: false }, task)
+        const { before: _before, ...rest } = await reviseSpan(core, runtime, { chapter, start, end, ...(quote !== undefined ? { quote } : {}), instruction: requireString(instruction, 'instruction'), apply: false, ...(Array.isArray(guides) ? { guides: cleanGuides(guides) } : {}) }, task)
         return rest
       })
     },
-    'ai.reviseChapter': async ({ root, chapter, instruction }) => {
+    'ai.reviseChapter': async ({ root, chapter, instruction, guides }) => {
       const runtime = await open(root)
       return job(runtime, 'revise', 'revise chapter', chapter, async (task) => {
-        const { before: _before, after: _after, ...rest } = await reviseChapter(core, runtime, { chapter, instruction: requireString(instruction, 'instruction'), apply: false }, task)
+        const { before: _before, after: _after, ...rest } = await reviseChapter(core, runtime, { chapter, instruction: requireString(instruction, 'instruction'), apply: false, ...(Array.isArray(guides) && guides.length > 0 ? { guides: cleanGuides(guides) } : {}) }, task)
         return rest
       })
     },
@@ -708,9 +708,9 @@ export function createHandlers(service: NovelService): Handlers {
         ...(typeof note === 'string' && note.trim().length > 0 ? { note: note.trim() } : {}),
       }, task)))
     },
-    'ai.reviseBook': async ({ root, instruction, chapters, line, order }) => {
+    'ai.reviseBook': async ({ root, instruction, chapters, line, order, guides }) => {
       const runtime = await open(root)
-      return job(runtime, 'revise', 'revise book', undefined, async task => await mendInTurn(runtime, order === 'queue' ? 'queue' : 'apart', task, async onto => await reviseBook(core, runtime, { instruction: requireString(instruction, 'instruction'), ...(chapters !== undefined ? { chapters } : {}), ...(line !== undefined ? { line } : {}), ...(onto ? { onto: true } : {}) }, task)))
+      return job(runtime, 'revise', 'revise book', undefined, async task => await mendInTurn(runtime, order === 'queue' ? 'queue' : 'apart', task, async onto => await reviseBook(core, runtime, { instruction: requireString(instruction, 'instruction'), ...(Array.isArray(guides) && guides.length > 0 ? { guides: cleanGuides(guides) } : {}), ...(chapters !== undefined ? { chapters } : {}), ...(line !== undefined ? { line } : {}), ...(onto ? { onto: true } : {}) }, task)))
     },
     'ai.digest': async ({ root, chapters, force }) => {
       const runtime = await open(root)
@@ -742,9 +742,9 @@ export function createHandlers(service: NovelService): Handlers {
       const runtime = await open(root)
       return job(runtime, 'derive', 'derive beats', chapter, async task => await deriveBeats(core, runtime, { chapter, ...(direction !== undefined ? { direction } : {}) }, task))
     },
-    'ai.whatIf': async ({ root, question, branches }) => {
+    'ai.whatIf': async ({ root, question, branches, guides }) => {
       const runtime = await open(root)
-      return job(runtime, 'derive', 'what-if', undefined, async task => await whatIf(core, runtime, { question: requireString(question, 'question'), ...(branches !== undefined ? { branches } : {}) }, task))
+      return job(runtime, 'derive', 'what-if', undefined, async task => await whatIf(core, runtime, { question: requireString(question, 'question'), ...(branches !== undefined ? { branches } : {}), ...(Array.isArray(guides) ? { guides: cleanGuides(guides) } : {}) }, task))
     },
     'ai.analyze': async ({ root, steps }) => {
       const runtime = await open(root)

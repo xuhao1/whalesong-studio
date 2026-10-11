@@ -88,6 +88,9 @@ const KIND: Record<IllustrationInfo['kind'], [string, string]> = {
   sprite: ['人像', 'figure'],
 }
 
+/** What a piece of work the author gives pictures to is; see {@link guidePictures}. */
+export type GuidePurpose = 'plot' | 'chapter' | 'whatif' | 'revise' | 'passage'
+
 /** What a model that looks for another is asked: what is to be seen, for whoever writes from it. */
 function lookTask(lang: PromptLanguage, input: { title: string; known?: string; note?: string; cast: string }): string {
   return L(lang, `这张图是作者给小说《${input.title}》的一段剧情选的参考图。把图里看得见的写下来，交给照着它写这段剧情的人。
@@ -102,12 +105,14 @@ Write who is in it, where, doing what, how they hold themselves and look, what t
 /**
  * Make ready the pictures the author gave to a piece of work.
  * @param route - the model that does the work: it looks itself where it takes pictures.
- * @param purpose - `plot`: chapters to come are planned by them; `chapter`: one chapter is written by them.
+ * @param purpose - what the work is: `plot` — chapters to come are planned by them; `chapter` — one chapter is written by
+ *   them; `whatif` — ways the story could go are weighed with them; `revise` — text there is is rewritten by them (a
+ *   chapter, or the scope of a revision of the book); `passage` — one passage is.
  * @returns undefined where there are none.
  * @throws ProjectError `novel/invalid` for a picture that is not there; `novel/no-vision` where the working model
  *   takes no pictures and no model is set up to look at them for it.
  */
-export async function guidePictures(core: NovelCore, runtime: ProjectRuntime, route: ModelRoute, given: readonly unknown[] | undefined, purpose: 'plot' | 'chapter', task: TaskContext): Promise<GuidedPictures | undefined> {
+export async function guidePictures(core: NovelCore, runtime: ProjectRuntime, route: ModelRoute, given: readonly unknown[] | undefined, purpose: GuidePurpose, task: TaskContext): Promise<GuidedPictures | undefined> {
   const guides = cleanGuides(given)
   if (guides.length === 0) return undefined
   const { project } = runtime
@@ -131,9 +136,16 @@ export async function guidePictures(core: NovelCore, runtime: ProjectRuntime, ro
   }
 
   const working = route.baseURL !== undefined ? false : await core.llm.sees?.(route).catch(() => undefined)
-  const head = purpose === 'plot'
-    ? L(lang, `作者挑了 ${pictures.length} 张图来引导接下来的剧情：每张图是故事里要出现的一幕、一个人、一个地方或一种气氛。把它们安排进这几章。图里和设定、前文对不上的地方，以设定和前文为准。`, `The author chose ${pictures.length} picture(s) to steer what comes next: each is a moment, a person, a place or a mood the story is to have. Work them into these chapters. Where a picture and the bible or the story so far disagree, the bible and the story hold.`)
-    : L(lang, `作者给这一章挑了 ${pictures.length} 张参考图：把图里的画面——人、地方、动作、光线和气氛——写进正文里它该在的地方。图里和设定、前文对不上的地方，以设定和前文为准。`, `The author chose ${pictures.length} picture(s) for this chapter: write what they show — people, place, action, light and mood — into the text where it belongs. Where a picture and the bible or the story so far disagree, the bible and the story hold.`)
+  const count = pictures.length
+  // What the pictures are for, said once at the head of what tells of them; where they and the book disagree, the book holds.
+  const use: Record<GuidePurpose, [string, string]> = {
+    plot: [`作者挑了 ${count} 张图来引导接下来的剧情：每张图是故事里要出现的一幕、一个人、一个地方或一种气氛。把它们安排进这几章。`, `The author chose ${count} picture(s) to steer what comes next: each is a moment, a person, a place or a mood the story is to have. Work them into these chapters.`],
+    chapter: [`作者给这一章挑了 ${count} 张参考图：把图里的画面——人、地方、动作、光线和气氛——写进正文里它该在的地方。`, `The author chose ${count} picture(s) for this chapter: write what they show — people, place, action, light and mood — into the text where it belongs.`],
+    whatif: [`作者给这次假设推演配了 ${count} 张图：每条走向都把图里的人、地方和画面算进去——它们是作者想看到的东西。`, `The author gave ${count} picture(s) to this what-if: every way the story could go takes the people, places and moments they show into account — they are what the author wants to see.`],
+    revise: [`作者给这次修订配了 ${count} 张图：改的地方照着图里的画面来——人、地方、动作、光线和气氛。`, `The author gave ${count} picture(s) to this revision: what is changed goes by what they show — people, place, action, light and mood.`],
+    passage: [`作者给这一段的改写配了 ${count} 张图：把这一段改成图里的样子——人、地方、动作、光线和气氛；这一段之外的不动。`, `The author gave ${count} picture(s) to the rewriting of this passage: make the passage what they show — people, place, action, light and mood; nothing outside the passage changes.`],
+  }
+  const head = `${L(lang, ...use[purpose])}${L(lang, '图里和设定、前文对不上的地方，以设定和前文为准。', ' Where a picture and the bible or the story so far disagree, the bible and the story hold.')}`
   const line = (at: number, extra?: string): string => {
     const { guide, known } = pictures[at]!
     return `${at + 1}. ${known !== undefined ? `〔${known}〕` : ''}${guide.note !== undefined ? L(lang, `作者说：${guide.note}`, `The author says: ${guide.note}`) : known === undefined && extra === undefined ? L(lang, '（作者没有另外说明）', '(nothing said of it)') : ''}${extra !== undefined ? `\n   ${extra}` : ''}`

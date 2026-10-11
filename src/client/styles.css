@@ -8223,6 +8223,39 @@ blockquote.nv-issue-quote {
   flex: 1;
 }
 
+/* A design sheet's tools are more than fit a line under a narrow picture: they go on to the next. */
+.nv-person-picture-tools {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+
+/* Which stretch of their life a sheet is the sheet of: a word and a small list. */
+.nv-sheet-use {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--nv-text-2);
+}
+
+.nv-sheet-use > .nv-select {
+  width: auto;
+  max-width: 132px;
+  height: 26px;
+  padding-top: 0;
+  padding-bottom: 0;
+  font-size: 12px;
+}
+
+/* A sheet kept without being in use: there, a step back from the ones pictures are drawn against. */
+.nv-person-thumbs > button.is-spare:not(.is-active) {
+  opacity: 0.62;
+}
+
+.nv-person-thumbs > button.is-spare span {
+  font-style: italic;
+}
+
 .nv-person-moment {
   display: flex;
   align-items: center;

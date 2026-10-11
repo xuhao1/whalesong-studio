@@ -15,7 +15,7 @@ import { containedPath } from '../../core/util/fs'
 import type { NovelService } from '../../host/service'
 import { clip } from '../../shared/text'
 import { ANALYZE_STEPS, GLOSSARY_KINDS } from '../../shared/types'
-import { brief, listOf, listParameter, novelTool, toJson } from './shared'
+import { brief, listOf, listParameter, novelTool, picturesSaid, toJson } from './shared'
 
 export function manuscriptTools(service: NovelService): ToolDefinition[] {
   return [
@@ -58,7 +58,7 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
         const lines = [
           `${result.mode === 'continue' ? 'Continued' : 'Drafted'} chapter ${result.index} "${result.title}" (${result.chapterId}): ${result.wordsWritten} words written, ${result.wordsTotal} in the chapter now.`,
           `Writer: ${result.model}; length: ${result.budget !== undefined ? `about ${result.budget} recommended` : 'left to the writer'}; story so far: ${story}${result.following !== undefined ? `, plus the ${result.following} chapter(s) after it` : ''} (~${result.contextTokens} tokens${result.cachedTokens !== undefined ? `, ${result.cachedTokens} read from the provider's cache` : ''}); cast in view: ${result.cast.join(', ') || 'none'}.${result.continued ? ' The model hit its output limit and the chapter was completed by continuation.' : ''}`,
-          ...(result.pictures !== undefined ? [`Pictures: ${result.pictures.count} given — ${result.pictures.by === 'vision' ? `put into words for the writer by ${result.pictures.model ?? 'the picture model'}` : result.pictures.unsure === true ? 'sent to the writer\'s model, which does not say whether it takes pictures: tell the author, and that a model to look at pictures can be set (novel_settings: vision)' : 'looked at by the writer\'s own model'}.`] : []),
+          ...(result.pictures !== undefined ? [picturesSaid(result.pictures, 'writer')!] : []),
           result.digested ? 'Memory digested: summary, facts and character states are up to date.' : 'Not digested yet — run novel_digest before writing later chapters.',
           `Opens: ${result.preview.head}${result.preview.tail.length > 0 ? `\n…\nCloses: ${result.preview.tail}` : ''}`,
         ]
@@ -91,6 +91,7 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
         proposal: { type: 'string', description: 'accept/reject: the proposal id.' },
         apply: { type: 'boolean', description: 'Apply immediately (true) or leave a proposal (false).' },
         order: { type: 'string', enum: ['queue', 'apart'], description: 'book/issues: after the mendings under way and on top of their changes (queue, default), or at once by itself (apart).' },
+        pictures: listParameter('passage/chapter/book: pictures of the book the author gave to revise by (project-relative paths) — the writer looks at them, or is told what they show (see novel_write). Only pictures the author pointed at. A chapter rewritten whole goes by the pictures kept on its plan without their being named.'),
       },
       async run(args, env) {
         const runtime = await env.project()
@@ -125,6 +126,7 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
           }
         }
         if (args.instruction === undefined || args.instruction.trim().length === 0) throw new ProjectError('novel/invalid', '`instruction` is required')
+        const pictures = (listOf(args.pictures)?.length ?? 0) > 0 ? cleanGuides(listOf(args.pictures)!) : undefined
         const instruction = args.instruction
         if (args.scope === 'book') {
           const result = await env.job('revise', 'revise book', undefined, async task => await mendInTurn(runtime, order, task, async onto => await reviseBook(env.core, runtime, {
@@ -132,10 +134,11 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
             ...((listOf(args.chapters)?.length ?? 0) > 0 ? { chapters: listOf(args.chapters)! } : {}),
             ...(args.apply !== undefined ? { apply: args.apply } : {}),
             ...(onto ? { onto: true } : {}),
+            ...(pictures !== undefined ? { guides: pictures } : {}),
           }, task)))
           const lines = result.results.map(item => `- chapter ${item.index} "${item.title}": ${item.wordsBefore} → ${item.wordsAfter} words${item.applied ? ', applied' : `, proposal ${item.proposalId ?? ''}`} — ${brief(item.reason, 120)}`)
           return {
-            text: `${result.results.length} chapters rewritten, ${result.untouched} judged untouched${result.failed.length > 0 ? `, ${result.failed.length} failed` : ''}.${result.note !== undefined ? `\n${result.note}` : ''}\n${lines.join('\n')}${result.failed.map(item => `\n✗ ${item.chapterId}: ${item.error}`).join('')}${result.results.some(item => !item.applied) ? '\nThe proposals wait for the author in Novel Studio → Review (or settle them with scope=accept/reject).' : ''}`,
+            text: `${result.results.length} chapters rewritten, ${result.untouched} judged untouched${result.failed.length > 0 ? `, ${result.failed.length} failed` : ''}.${result.note !== undefined ? `\n${result.note}` : ''}\n${lines.join('\n')}${result.failed.map(item => `\n✗ ${item.chapterId}: ${item.error}`).join('')}${result.pictures !== undefined ? `\n${picturesSaid(result.pictures, 'planner')!}` : ''}${result.results.some(item => !item.applied) ? '\nThe proposals wait for the author in Novel Studio → Review (or settle them with scope=accept/reject).' : ''}`,
             data: toJson(result),
           }
         }
@@ -144,15 +147,15 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
         if (args.scope === 'passage') {
           if (args.quote === undefined || args.quote.trim().length === 0) throw new ProjectError('novel/invalid', 'scope=passage needs the exact passage in `quote`')
           const quote = args.quote
-          const result = await env.job('revise', 'revise passage', chapter, async task => await reviseSpan(env.core, runtime, { chapter, quote, instruction, ...(args.apply !== undefined ? { apply: args.apply } : {}) }, task))
+          const result = await env.job('revise', 'revise passage', chapter, async task => await reviseSpan(env.core, runtime, { chapter, quote, instruction, ...(pictures !== undefined ? { guides: pictures } : {}), ...(args.apply !== undefined ? { apply: args.apply } : {}) }, task))
           return {
-            text: `${result.applied ? 'Revised' : `Proposed (${result.proposalId})`} a passage in chapter ${result.index} "${result.title}": ${result.wordsBefore} → ${result.wordsAfter} words.\n\nNow reads:\n${clip(result.after, 1200)}`,
+            text: `${result.applied ? 'Revised' : `Proposed (${result.proposalId})`} a passage in chapter ${result.index} "${result.title}": ${result.wordsBefore} → ${result.wordsAfter} words.${result.pictures !== undefined ? `\n${picturesSaid(result.pictures, 'writer')!}` : ''}\n\nNow reads:\n${clip(result.after, 1200)}`,
             data: toJson({ ...result, before: undefined }),
           }
         }
-        const result = await env.job('revise', 'revise chapter', chapter, async task => await reviseChapter(env.core, runtime, { chapter, instruction, ...(args.apply !== undefined ? { apply: args.apply } : {}) }, task))
+        const result = await env.job('revise', 'revise chapter', chapter, async task => await reviseChapter(env.core, runtime, { chapter, instruction, ...(pictures !== undefined ? { guides: pictures } : {}), ...(args.apply !== undefined ? { apply: args.apply } : {}) }, task))
         return {
-          text: `${result.applied ? 'Rewrote' : `Proposed (${result.proposalId}) a rewrite of`} chapter ${result.index} "${result.title}": ${result.wordsBefore} → ${result.wordsAfter} words.\nOpens: ${result.after.slice(0, 200)}`,
+          text: `${result.applied ? 'Rewrote' : `Proposed (${result.proposalId}) a rewrite of`} chapter ${result.index} "${result.title}": ${result.wordsBefore} → ${result.wordsAfter} words.${result.pictures !== undefined ? `\n${picturesSaid(result.pictures, 'writer')!}` : ''}\nOpens: ${result.after.slice(0, 200)}`,
           data: toJson({ ...result, before: undefined, after: undefined }),
         }
       },

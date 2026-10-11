@@ -309,7 +309,7 @@ export interface ReaderPageProps {
   /** Go to somebody's own page (the album); offered on their card where there is such a page to go to. */
   onPerson?: ((id: string) => void) | undefined
   /** The pictures of people's moments that fall in this chapter: each shown after the paragraph it is told in — beside the text, not part of it. */
-  figures?: readonly { path: string; caption: string; after: number }[] | undefined
+  figures?: readonly { path: string; key?: string; caption: string; after: number }[] | undefined
   /** Where the reader is the author: a portrait met in the text can be kept out of it from there. */
   onHideFigure?: ((path: string) => void) | undefined
   /** The places, houses, things and ideas of the book's world: marked where a chapter first names one, as people are. */
@@ -378,7 +378,7 @@ export function ReaderPage({ t, bookTitle, chapter, text, prefs, media, lines, a
   const blocks = useMemo<Block[]>(() => (text !== undefined ? blocksOf(text) : []), [text])
   // The pictures of moments, by the paragraph each stands after.
   const pictured = useMemo(() => {
-    const placed = new Map<number, { path: string; caption: string }[]>()
+    const placed = new Map<number, { path: string; key?: string; caption: string }[]>()
     if (prefs.moments === false) return placed
     for (const figure of figures ?? []) placed.set(figure.after, [...(placed.get(figure.after) ?? []), figure])
     return placed
@@ -388,7 +388,7 @@ export function ReaderPage({ t, bookTitle, chapter, text, prefs, media, lines, a
       <img alt={figure.caption} loading="lazy" src={media(figure.path)} />
       <figcaption>
         {figure.caption}
-        {onHideFigure !== undefined ? <button type="button" className="nv-figure-hide" onClick={() => { onHideFigure(figure.path) }}>{t('不在正文里显示', 'Keep out of the text')}</button> : null}
+        {onHideFigure !== undefined ? <button type="button" className="nv-figure-hide" onClick={() => { onHideFigure(figure.key ?? figure.path) }}>{t('不在正文里显示', 'Keep out of the text')}</button> : null}
       </figcaption>
     </figure>
   ))

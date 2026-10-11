@@ -22,7 +22,7 @@ export function usePortraitPlaces(where: { chapter?: string | undefined; charact
   const listed = useLoad(async signal => (asked ? await controller.api.call('figures.list', { root, ...(where.chapter !== undefined ? { chapter: where.chapter } : {}), ...(where.character !== undefined ? { character: where.character } : {}) }, signal) : undefined), [root, where.chapter, where.character, project.revision])
   const toggle = async (place: PortraitPlace): Promise<void> => {
     await controller.guard(async () => {
-      await controller.api.call('figures.show', { root, path: place.path, show: place.hidden })
+      await controller.api.call('figures.show', { root, path: place.key ?? place.path, show: place.hidden })
       listed.reload()
       onChanged?.()
       controller.toast('success', place.hidden ? t('这张立绘会出现在正文里', 'This portrait stands in the text again') : t('这张立绘不再出现在正文里', 'This portrait is kept out of the text'))
@@ -35,7 +35,7 @@ export function usePortraitPlaces(where: { chapter?: string | undefined; charact
 export function spareWord(place: PortraitPlace, t: (zh: string, en: string) => string): string {
   return place.spare === 'moment' ? t('这一幕另有一张', 'another picture of this moment stands')
     : place.spare === 'chapter' ? t('这一章已有名场面', 'a moment of theirs stands in this chapter')
-      : t('总的立绘另有一张', 'another portrait of them stands')
+      : t('不是代表立绘', 'not the portrait that stands for them')
 }
 
 /** Where a portrait stands, in a few words. */
@@ -60,9 +60,9 @@ export function ChapterPortraits({ chapter, onChanged, label }: { chapter: strin
       </Button>
       {open ? (
         <Modal title={t('这一章的立绘', 'Portraits of this chapter')} onClose={() => { setOpen(false) }}>
-          <p className="nv-muted nv-small">{t('名场面的立绘在讲到那一幕的段落后；一张总的立绘在这个人第一次出场处（这一章已有他的名场面就不出）。其余默认不出现，可以打开。', 'A portrait of a moment stands after the paragraph that tells it; one portrait of the person where they first come on (not where a moment of theirs is shown in the same chapter). The rest stay out unless you ask them in.')}</p>
+          <p className="nv-muted nv-small">{t('名场面的立绘在讲到那一幕的段落后；代表立绘（人物页上选）在这个人第一次出场处——这一章已有他的名场面就不出。其余默认不出现，可以打开。', 'A portrait of a moment stands after the paragraph that tells it; the portrait that stands for the person (chosen on their page) where they first come on — not where a moment of theirs is shown in the same chapter. The rest stay out unless you ask them in.')}</p>
           <div className="nv-figure-list">
-            {places.map(place => <PortraitRow key={place.path} place={place} toggle={toggle} />)}
+            {places.map(place => <PortraitRow key={place.key ?? place.path} place={place} toggle={toggle} />)}
           </div>
         </Modal>
       ) : null}
@@ -78,7 +78,7 @@ function PortraitRow({ place, toggle }: { place: PortraitPlace; toggle: (place: 
       <ProjectImage path={place.path} alt={place.name} className="nv-figure-thumb" />
       <div className="nv-figure-what">
         <strong>{place.title !== undefined ? `${place.title} · ${place.name}` : place.name}</strong>
-        <span className="nv-muted nv-small">{place.title !== undefined ? t('名场面', 'A moment of theirs') : t('立绘', 'Portrait')}</span>
+        <span className="nv-muted nv-small">{place.as === 'moment' ? t('名场面', 'A moment of theirs') : place.as === 'period' ? t('成长时期的立绘', 'Portrait of a period of theirs') : place.spare === 'person' ? t('立绘', 'Portrait') : t('代表立绘 · 第一次出场处', 'The portrait that stands for them · where they first come on')}</span>
       </div>
       <Chip tone={place.hidden ? 'neutral' : 'green'}>{!place.hidden ? t('在正文里', 'In the text') : place.spare !== undefined ? t(`默认不出现 · ${spareWord(place, t)}`, `Not by itself · ${spareWord(place, t)}`) : t('已隐藏', 'Kept out')}</Chip>
       <Button size="sm" variant="ghost" icon={place.hidden ? 'eye' : 'eyeOff'} busy={busy} onClick={() => { setBusy(true); void toggle(place).finally(() => { setBusy(false) }) }}>{place.hidden ? t('显示', 'Show') : t('隐藏', 'Hide')}</Button>
@@ -86,21 +86,30 @@ function PortraitRow({ place, toggle }: { place: PortraitPlace; toggle: (place: 
   )
 }
 
-/** One portrait's say, on the person's own page: where it stands in the book, and the switch that keeps it out. */
+/** One portrait's say, on the person's own page: where it stands in the book — as the picture of a moment, as the portrait that stands for them, or both — and the switch for each. */
 export function PortraitInText({ character, path }: { character: string; path: string }) {
   const t = useT()
   const { places, toggle } = usePortraitPlaces({ character })
-  const [busy, setBusy] = useState(false)
+  const [busy, setBusy] = useState<string | undefined>()
   if (places === undefined) return <Spinner size={12} />
-  const place = places.find(item => item.path === path)
-  if (place === undefined) return null
+  const mine = places.filter(item => item.path === path)
+  if (mine.length === 0) return null
   return (
-    <span className="nv-figure-say">
-      <span className="nv-muted nv-small">{place.chapter === undefined ? placeWord(place, t)
-        : !place.hidden ? t(`出现在正文${placeWord(place, t)}`, `Stands in the text, ${placeWord(place, t)}`)
-          : place.spare !== undefined ? t(`默认不进正文（${spareWord(place, t)}）`, `Not in the text by itself (${spareWord(place, t)})`)
-            : t(`正文里隐藏了（本来在${placeWord(place, t)}）`, `Kept out of the text (it would stand in ${placeWord(place, t)})`)}</span>
-      {place.chapter !== undefined ? <Button size="sm" variant="ghost" icon={place.hidden ? 'eye' : 'eyeOff'} busy={busy} onClick={() => { setBusy(true); void toggle(place).finally(() => { setBusy(false) }) }}>{place.hidden ? t('在正文里显示', 'Show in the text') : t('在正文里隐藏', 'Hide in the text')}</Button> : null}
-    </span>
+    <>
+      {mine.map((place) => {
+        const key = place.key ?? place.path
+        // Two places are told apart by what each is.
+        const as = mine.length > 1 ? (place.as === 'person' ? t('代表立绘：', 'For the person: ') : t(`「${place.title ?? ''}」：`, `"${place.title ?? ''}": `)) : ''
+        return (
+          <span key={key} className="nv-figure-say">
+            <span className="nv-muted nv-small">{as}{place.chapter === undefined ? placeWord(place, t)
+              : !place.hidden ? t(`出现在正文${placeWord(place, t)}`, `Stands in the text, ${placeWord(place, t)}`)
+                : place.spare !== undefined ? t(`默认不进正文（${spareWord(place, t)}）`, `Not in the text by itself (${spareWord(place, t)})`)
+                  : t(`正文里隐藏了（本来在${placeWord(place, t)}）`, `Kept out of the text (it would stand in ${placeWord(place, t)})`)}</span>
+            {place.chapter !== undefined ? <Button size="sm" variant="ghost" icon={place.hidden ? 'eye' : 'eyeOff'} busy={busy === key} onClick={() => { setBusy(key); void toggle(place).finally(() => { setBusy(undefined) }) }}>{place.hidden ? t('在正文里显示', 'Show in the text') : t('在正文里隐藏', 'Hide in the text')}</Button> : null}
+          </span>
+        )
+      })}
+    </>
   )
 }

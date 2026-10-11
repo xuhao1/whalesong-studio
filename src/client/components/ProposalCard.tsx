@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react'
 import { countWords } from '../../shared/text'
 import type { Proposal } from '../../shared/types'
+import { picturesReadWord } from '../Guides'
 import { compactDiff, diffInline, diffText } from '../diff'
 import { Button, Chip, cx, useAction, useProject, useStudio, useT } from '../ui'
 
@@ -45,6 +46,7 @@ export function ProposalCard({ proposal, showChapter, onSettled, bare }: { propo
       </header>
       {bare === true ? null : <p className="nv-proposal-instruction">{proposal.instruction}</p>}
       {proposal.rationale !== undefined ? <p className="nv-muted nv-small">{proposal.rationale}</p> : null}
+      {proposal.pictures !== undefined ? <p className="nv-muted nv-small">{picturesReadWord(proposal.pictures, t)}</p> : null}
       <DiffView before={proposal.before} after={proposal.after} whole={whole} />
       <footer className="nv-proposal-foot">
         <Button size="sm" variant="ghost" onClick={() => { setWhole(value => !value) }}>{whole ? t('只看改动', 'Changes only') : t('看全文对比', 'Full text')}</Button>

@@ -565,7 +565,9 @@ export function Derive({ onApplied, only, autoStart, preset }: {
   const [guides, setGuides] = useState<PictureGuide[]>([])
   const [read, setRead] = useState<PicturesRead | undefined>()
   const [question, setQuestion] = useState('')
-  const [branches, setBranches] = useState<{ branches: Branch[]; recommendation?: string } | undefined>()
+  // Pictures the ways on are weighed with.
+  const [whatGuides, setWhatGuides] = useState<PictureGuide[]>([])
+  const [branches, setBranches] = useState<{ branches: Branch[]; recommendation?: string; pictures?: PicturesRead } | undefined>()
   const nameOf = (ref: string): string => project.characters.find(card => card.id === ref)?.name ?? ref
 
   const derive = (override?: string): void => {
@@ -616,9 +618,9 @@ export function Derive({ onApplied, only, autoStart, preset }: {
     setStream('')
     setBranches(undefined)
     void controller.guard(async () => {
-      const info = await controller.run('ai.whatIf', { root, question: question.trim() }, setStream)
-      const output = info.result?.output as { branches?: Branch[]; recommendation?: string } | undefined
-      if (output?.branches !== undefined) setBranches({ branches: output.branches, ...(output.recommendation !== undefined ? { recommendation: output.recommendation } : {}) })
+      const info = await controller.run('ai.whatIf', { root, question: question.trim(), ...(whatGuides.length > 0 ? { guides: whatGuides } : {}) }, setStream)
+      const output = info.result?.output as { branches?: Branch[]; recommendation?: string; pictures?: PicturesRead } | undefined
+      if (output?.branches !== undefined) setBranches({ branches: output.branches, ...(output.recommendation !== undefined ? { recommendation: output.recommendation } : {}), ...(output.pictures !== undefined ? { pictures: output.pictures } : {}) })
     }).finally(() => { setWorking(undefined); setStream('') })
   }
   const accept = (): void => {
@@ -745,12 +747,14 @@ export function Derive({ onApplied, only, autoStart, preset }: {
         <SectionTitle>{t('如果……会怎样', 'What if…')}</SectionTitle>
         <p className="nv-muted nv-small">{t('不动大纲，先看几种走向各自的后果，再决定走哪条。', 'Leaves the outline alone: see where a few branches would lead before you commit to one.')}</p>
         <Field label={t('假设', 'The question')}><TextArea value={question} minRows={2} placeholder={t('例：如果女主在第十章就发现了真相？', 'e.g. what if she learns the truth as early as chapter ten?')} onChange={(event) => { setQuestion(event.target.value) }} /></Field>
+        <GuidePictures value={whatGuides} onChange={setWhatGuides} disabled={working !== undefined} hint={t('各条走向都把图里的人和画面算进去', 'Every way on takes what they show into account')} />
         <div className="nv-form-actions">
           <Button icon="sparkles" busy={working === 'whatif'} disabled={working !== undefined || question.trim().length === 0} onClick={ask}>{t('推演分支', 'Explore branches')}</Button>
         </div>
         {working === 'whatif' && stream.length > 0 ? <pre className="nv-stream">{stream.slice(-900)}</pre> : null}
         {branches !== undefined ? (
           <div className="nv-branches">
+            {branches.pictures !== undefined ? <p className="nv-muted nv-small">{picturesReadWord(branches.pictures, t)}</p> : null}
             {branches.branches.map((branch, at) => (
               <article key={at} className="nv-branch">
                 <h5>{branch.title}</h5>

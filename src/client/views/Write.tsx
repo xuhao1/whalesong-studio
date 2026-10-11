@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ChapterDocument } from '../../shared/rpc'
 import { countWords, formatCount, fuzzyFind, normalizeProse, proseOnly } from '../../shared/text'
-import { MAIN_LINE, type ChapterInfo, type JobInfo, type ReviewIssue, type TextStep, type VersionInfo } from '../../shared/types'
+import { MAIN_LINE, type ChapterInfo, type JobInfo, type PictureGuide, type ReviewIssue, type TextStep, type VersionInfo } from '../../shared/types'
 import { BatchMatrix, chapterJob, TextBatchDialog, useBatchJob } from '../Batch'
 import { DiffView, ProposalCard } from '../components/ProposalCard'
 import { ChapterTree } from '../ChapterTree'
@@ -266,6 +266,8 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
   // Several models at this chapter at once, to be compared.
   const [comparing, setComparing] = useState(false)
   const [custom, setCustom] = useState<string | undefined>()
+  // Pictures to rewrite a selected passage by: for that rewrite alone.
+  const [spanGuides, setSpanGuides] = useState<PictureGuide[]>([])
   const [viewing, setViewing] = useState<VersionInfo | undefined>()
   const [appending, setAppending] = useState(false)
   const area = useRef<HTMLTextAreaElement>(null)
@@ -400,7 +402,7 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
       if (!(await settle())) return undefined
       showPanel('proposals')
       setCustom(undefined)
-      await controller.api.call('ai.reviseSpan', { root, chapter: chapter.id, start: selection.start + raw.indexOf(quote), end: selection.start + raw.indexOf(quote) + quote.length, quote, instruction })
+      await controller.api.call('ai.reviseSpan', { root, chapter: chapter.id, start: selection.start + raw.indexOf(quote), end: selection.start + raw.indexOf(quote) + quote.length, quote, instruction, ...(spanGuides.length > 0 ? { guides: spanGuides } : {}) })
       await controller.refreshJobs()
     })
   }
@@ -634,6 +636,10 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
           </div>
         )}
 
+        {selected.length > 0 ? (
+          // For the rewriting of what is selected, and for nothing else: the chapter's own pictures are for writing the chapter.
+          <GuidePictures value={spanGuides} onChange={setSpanGuides} chapter={chapter.id} hint={t('改写选中的这一段时给写手看（只这一次）', 'Shown to the writer for rewriting this selection (this once)')} />
+        ) : null}
         {selected.length === 0 && plan !== undefined ? (
           // Kept on the chapter's plan: every pass at this chapter — a draft, a continuation, a comparison, a batch — goes by them.
           <GuidePictures value={plan.guides ?? []} chapter={chapter.id} disabled={writing !== undefined} hint={t('写这一章时给写手看', 'Shown to whoever writes this chapter')} onChange={(guides) => {

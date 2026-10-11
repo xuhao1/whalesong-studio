@@ -43,12 +43,14 @@ export function looksApart(stage: CharacterStage | undefined): boolean {
 export function inStage<T extends CharacterCard>(card: T, stage: CharacterStage | undefined): T {
   if (stage === undefined) return card
   const apart = looksApart(stage)
-  const { prompt: _prompt, negative: _negative, sheet: _sheet, portrait: _portrait, ...kept } = card.visual ?? {}
+  const { prompt: _prompt, negative: _negative, sheet: _sheet, sheetFront: _front, portrait: _portrait, ...kept } = card.visual ?? {}
   const prompt = stage.visual?.prompt?.trim() || (apart ? undefined : card.visual?.prompt)
   const negative = stage.visual?.negative?.trim() || card.visual?.negative
   const sheet = stage.visual?.sheet ?? (apart ? undefined : card.visual?.sheet)
+  // Whether the sheet is the front view alone goes with the sheet that is used: the stretch's own, or the card's.
+  const front = stage.visual?.sheet !== undefined ? stage.visual.sheetFront === true : sheet !== undefined && card.visual?.sheetFront === true
   const portrait = stage.visual?.portrait ?? (apart ? undefined : card.visual?.portrait)
-  const visual = { ...kept, ...(prompt !== undefined ? { prompt } : {}), ...(negative !== undefined ? { negative } : {}), ...(sheet !== undefined ? { sheet } : {}), ...(portrait !== undefined ? { portrait } : {}) }
+  const visual = { ...kept, ...(prompt !== undefined ? { prompt } : {}), ...(negative !== undefined ? { negative } : {}), ...(sheet !== undefined ? { sheet } : {}), ...(front ? { sheetFront: true } : {}), ...(portrait !== undefined ? { portrait } : {}) }
   return {
     ...card,
     ...(stage.age !== undefined ? { age: stage.age } : {}),

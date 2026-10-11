@@ -538,12 +538,12 @@ export interface NovelRpc {
 
   // ── model work (jobs) ──
   'ai.write': { params: { root: string; chapter?: string; brief?: string; mode?: 'draft' | 'continue'; words?: number; style?: string; /** With no chapter named: the line of the plot to go on with. */ line?: string; /** Pictures to write this pass by, instead of the ones kept on the chapter's plan. */ guides?: PictureGuide[] }; result: JobStarted }
-  'ai.reviseSpan': { params: { root: string; chapter: string; start: number; end: number; quote?: string; instruction: string }; result: JobStarted }
-  'ai.reviseChapter': { params: { root: string; chapter: string; instruction: string }; result: JobStarted }
+  'ai.reviseSpan': { params: { root: string; chapter: string; start: number; end: number; quote?: string; instruction: string; /** Pictures to rewrite the passage by. */ guides?: PictureGuide[] }; result: JobStarted }
+  'ai.reviseChapter': { params: { root: string; chapter: string; instruction: string; /** Pictures to rewrite it by, in place of the ones kept on its plan. */ guides?: PictureGuide[] }; result: JobStarted }
   /** Mend what a review found: at the place it quotes (`passage`), or wherever it reaches (`book` — the planner traces it through the chapters and the bible). `note` is what the author wants done about it. Changes come back as proposals. */
   /** `order` — `queue`: after the mendings already asked for, going on from what they leave waiting; `apart` (as before it could be said): at once, on the text as it stands. */
   'ai.fixIssue': { params: { root: string; chapter: string; issue: string; note?: string; scope: 'passage' | 'book'; order?: 'queue' | 'apart' }; result: JobStarted }
-  'ai.reviseBook': { params: { root: string; instruction: string; chapters?: string[]; /** The line of the plot the revision is of, when it is not the main one. */ line?: string; order?: 'queue' | 'apart' }; result: JobStarted }
+  'ai.reviseBook': { params: { root: string; instruction: string; chapters?: string[]; /** The line of the plot the revision is of, when it is not the main one. */ line?: string; order?: 'queue' | 'apart'; /** Pictures the revision goes by. */ guides?: PictureGuide[] }; result: JobStarted }
   'ai.digest': { params: { root: string; chapters?: string[]; force?: boolean }; result: JobStarted }
   'ai.review': { params: { root: string; chapter: string; focus?: string }; result: JobStarted }
   /**
@@ -558,7 +558,7 @@ export interface NovelRpc {
    */
   'guide.add': { params: { root: string; mediaType: string; data: string }; result: { path: string } }
   'ai.deriveBeats': { params: { root: string; chapter: string; direction?: string }; result: JobStarted }
-  'ai.whatIf': { params: { root: string; question: string; branches?: number }; result: JobStarted }
+  'ai.whatIf': { params: { root: string; question: string; branches?: number; /** Pictures the ways on are weighed with. */ guides?: PictureGuide[] }; result: JobStarted }
   /** Read the book and write down what it says — the passes of an import's analysis, on a book that has its chapters. Without `steps`: what an analysis that was cut short has left to do (all of it where none was started). */
   'ai.analyze': { params: { root: string; steps?: AnalyzeStep[] }; result: JobStarted }
   /** Have the director settle the look of the book's pictures from the book itself; `direction` is what the author wants of it. The look is written into the book (`novel.json`: `artStyle`, `artAvoid`). */

@@ -6,7 +6,8 @@
  */
 import { Fragment, useState, type ReactNode } from 'react'
 import { clip } from '../../shared/text'
-import { MAIN_LINE, type ChapterInfo, type IssueSeverity, type Proposal, type TextStep } from '../../shared/types'
+import { MAIN_LINE, type ChapterInfo, type IssueSeverity, type PictureGuide, type PicturesRead, type Proposal, type TextStep } from '../../shared/types'
+import { GuidePictures, picturesReadWord } from '../Guides'
 import { ProposalCard } from '../components/ProposalCard'
 import { SEVERITY, SEVERITY_TONE, SUGGESTION_KIND } from '../labels'
 import { IssueBatchBar, IssueCard, MendOrderMenu, useMendOrder } from '../Issues'
@@ -423,7 +424,9 @@ function BookRevision({ onStarted }: { onStarted: () => void }) {
   const [instruction, setInstruction] = useState('')
   const [scope, setScope] = useState<'auto' | 'pick'>('auto')
   const [picked, setPicked] = useState<Set<string>>(new Set())
-  const [summary, setSummary] = useState<{ note?: string; changed: number; untouched: number; failed: number } | undefined>()
+  const [summary, setSummary] = useState<{ note?: string; changed: number; untouched: number; failed: number; pictures?: PicturesRead } | undefined>()
+  // Pictures the revision goes by: the planner scopes it with them, and every chapter is rewritten by them.
+  const [guides, setGuides] = useState<PictureGuide[]>([])
   // A revision is of one line of the plot: its chapters as they are read on it.
   const others = project.outline.lines ?? []
   const [line, setLine] = useBookLine()
@@ -436,9 +439,9 @@ function BookRevision({ onStarted }: { onStarted: () => void }) {
   const start = (): void => {
     setSummary(undefined)
     void controller.guard(async () => {
-      const info = await controller.run('ai.reviseBook', { root, instruction: instruction.trim(), order, ...(line !== MAIN_LINE ? { line } : {}), ...(scope === 'pick' && picked.size > 0 ? { chapters: [...picked].filter(id => written.some(chapter => chapter.id === id)) } : {}) })
-      const output = info.result?.output as { note?: string; untouched?: number; results?: unknown[]; failed?: unknown[] } | undefined
-      setSummary({ ...(output?.note !== undefined ? { note: output.note } : {}), changed: output?.results?.length ?? 0, untouched: output?.untouched ?? 0, failed: output?.failed?.length ?? 0 })
+      const info = await controller.run('ai.reviseBook', { root, instruction: instruction.trim(), order, ...(guides.length > 0 ? { guides } : {}), ...(line !== MAIN_LINE ? { line } : {}), ...(scope === 'pick' && picked.size > 0 ? { chapters: [...picked].filter(id => written.some(chapter => chapter.id === id)) } : {}) })
+      const output = info.result?.output as { note?: string; untouched?: number; results?: unknown[]; failed?: unknown[]; pictures?: PicturesRead } | undefined
+      setSummary({ ...(output?.note !== undefined ? { note: output.note } : {}), changed: output?.results?.length ?? 0, untouched: output?.untouched ?? 0, failed: output?.failed?.length ?? 0, ...(output?.pictures !== undefined ? { pictures: output.pictures } : {}) })
       if ((output?.results?.length ?? 0) > 0) onStarted()
     })
   }
@@ -480,6 +483,7 @@ function BookRevision({ onStarted }: { onStarted: () => void }) {
         <Field label={t('修改要求', 'The instruction')}>
           <TextArea value={instruction} minRows={4} maxRows={14} placeholder={t('例：把所有“灵力”改称“炁”并调整相关描写', 'E.g. call every "spirit power" "qi" and adjust the descriptions around it')} onChange={(event) => { setInstruction(event.target.value) }} />
         </Field>
+        <GuidePictures value={guides} onChange={setGuides} hint={t('策划照着图划范围，每一章照着图改', 'The planner scopes it by them; each chapter is rewritten by them')} />
         {others.length > 0 ? (
           <Field label={t('哪条线', 'Which line')}>
             <Select value={line} options={[{ value: MAIN_LINE, label: t('主线', 'Main line') }, ...others.map(item => ({ value: item.id, label: item.title }))]} onChange={(value) => { setLine(value); setPicked(new Set()) }} />
@@ -498,6 +502,7 @@ function BookRevision({ onStarted }: { onStarted: () => void }) {
           <p className={cx('nv-note', summary.failed > 0 && 'is-warn')}>
             {t(`改了 ${summary.changed} 章，${summary.untouched} 章判断为不受影响${summary.failed > 0 ? `，${summary.failed} 章失败` : ''}。`, `${summary.changed} chapters changed, ${summary.untouched} judged unaffected${summary.failed > 0 ? `, ${summary.failed} failed` : ''}.`)}
             {summary.note !== undefined ? ` ${summary.note}` : ''}
+            {summary.pictures !== undefined ? ` ${picturesReadWord(summary.pictures, t)}。` : ''}
           </p>
         ) : null}
         <div className="nv-form-actions">

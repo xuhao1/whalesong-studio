@@ -16,7 +16,7 @@ export const HISTORY_KINDS: readonly HistoryKind[] = ['character', 'world', 'sty
  */
 export const PICTURE_FIELDS: Partial<Record<HistoryKind, readonly string[]>> = {
   // …and the sample a voice was auditioned with: a file made for the card, like its pictures.
-  character: ['visual.portrait', 'visual.portraits', 'visual.sheet', 'visual.looks[].sheet', 'visual.scenes[].portrait', 'stages[].visual.sheet', 'stages[].visual.portrait', 'voiceProfile.sample'],
+  character: ['visual.portrait', 'visual.face', 'visual.portraits', 'visual.sheet', 'visual.sheetFront', 'visual.mainSheet', 'visual.sheets', 'visual.fronts', 'visual.looks[].sheet', 'visual.looks[].sheetFront', 'visual.scenes[].portrait', 'stages[].visual.sheet', 'stages[].visual.sheetFront', 'stages[].visual.portrait', 'voiceProfile.sample'],
   // Where the marks stand on a place's picture goes with the picture.
   world: ['visualImage', 'events[].image', 'spots'],
   book: ['cover'],
