@@ -24,6 +24,7 @@ import { Icon } from '../icons'
 import { jobKindLabel, jobPulse } from '../Studio'
 import { CHAPTER_STATUS, CHAPTER_STATUS_TONE, ISSUE_TYPE, languageLabel, SEVERITY, SEVERITY_TONE, sheetsDrawn } from '../labels'
 import { MoveChapters } from '../MoveChapters'
+import { framedOf, framedWord, PassagePictureDialog } from '../PassagePicture'
 import { useSheetsAsk } from '../SheetsAsk'
 import { PickPicture } from '../PlacePicture'
 import { Derive } from './Outline'
@@ -406,20 +407,24 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
       await controller.refreshJobs()
     })
   }
-  const illustrateSelection = (): Promise<unknown> | undefined => {
+  // The passage a picture is being asked of: what the author wants of it is asked first.
+  const [picturing, setPicturing] = useState<string | undefined>()
+  const illustrateSelection = (): void => {
     const quote = selected.trim()
-    if (quote.length === 0) return undefined
-    return controller.guard(async () => {
-      if (!(await settle())) return undefined
-      // Whoever of the people in the passage comes back in the book and has no design sheet gets one first: asked, before anything is drawn.
-      await sheets.before([{ kind: 'scene', target: chapter.id, quote }], async (choice) => {
-        controller.toast('info', t('正在为这段文字配图，完成后会插入到这段之后。', 'Illustrating this passage; the picture is inserted after it when ready.'))
-        const job = await controller.run('image.create', { root, kind: 'scene', target: chapter.id, quote, insert: true, ...choice })
-        if (sheetsDrawn(job, t).length > 0) controller.toast('info', `${t('插图已放进正文', 'The illustration is in the chapter')}${sheetsDrawn(job, t)}`)
-      })
-      return undefined
-    })
+    if (quote.length > 0 && controller.need('image')) setPicturing(quote)
   }
+  const drawPassage = (quote: string, asked: { ask?: string; insert: boolean }): Promise<unknown> => controller.guard(async () => {
+    setPicturing(undefined)
+    if (!(await settle())) return undefined
+    // Whoever of the people in the passage comes back in the book and has no design sheet gets one first: asked, before anything is drawn.
+    await sheets.before([{ kind: 'scene', target: chapter.id, quote }], async (choice) => {
+      controller.toast('info', t('导演在整理这一段：画里有谁、在哪；定下来就画。', 'The director is settling this passage — who is in it, where — and then it is drawn.'))
+      const job = await controller.run('image.create', { root, kind: 'scene', target: chapter.id, quote, ...(asked.ask !== undefined ? { prompt: asked.ask } : {}), ...(asked.insert ? { insert: true } : {}), ...choice })
+      const framed = framedOf(job)
+      controller.toast('success', `${asked.insert ? t('画好了，已放在这一段后面', 'Drawn, and placed after the passage') : t('画好了，在“演出 → 插图”里', 'Drawn: it is under Stage → Pictures')}${framed !== undefined ? t(`：${framedWord(framed, t)}`, `: ${framedWord(framed, t)}`) : ''}${sheetsDrawn(job, t)}`)
+    })
+    return undefined
+  })
   const sheets = useSheetsAsk()
   // A picture the book already has, to go after the passage selected: the passage, while one is being chosen.
   const [picking, setPicking] = useState<string | undefined>()
@@ -650,6 +655,19 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
           }} />
         ) : null}
 
+        {selected.length === 0 && plan !== undefined && ((project.references ?? 0) > 0 || (plan.referenceNotes ?? '').length > 0) ? (
+          // The books this one goes by: what the writer is handed of them for this chapter is on its plan.
+          <p className="nv-muted nv-small nv-write-references">
+            <Icon name="book" size={13} />
+            <span>{plan.referenceNotes !== undefined
+              ? t(`参考摘记 ${plan.referenceNotes.length} 字，写的时候交给写手`, `Reference notes of ${plan.referenceNotes.length} characters go to the writer`)
+              : plan.referencesRead === true
+                ? t('参考摘记是空的：这一章不带参考', 'The reference notes are empty: this chapter goes by none')
+                : t(`参考文献 ${project.references ?? 0} 本：写这一章之前，策划会先去查`, `${project.references ?? 0} reference(s): the planner reads them for this chapter before it is written`)}</span>
+            <button type="button" className="nv-link" onClick={() => { controller.setView('outline', chapter.id) }}>{t('看摘记', 'See them')}</button>
+          </p>
+        ) : null}
+
         {!empty && writing === undefined ? <NextChapter chapter={chapter} path={path} lineId={lineId} onBranch={onBranch} onLine={onLine} onDerive={onDerive} /> : null}
 
         {running.filter(job => job.kind !== 'write').map(job => <JobBar key={job.id} job={job} />)}
@@ -702,6 +720,7 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
       {translating ? <TranslateDialog chapters={[chapter.id]} line={lineId} onClose={() => { setTranslating(false) }} /> : null}
       {confirm.element}
       {sheets.element}
+      {picturing !== undefined ? <PassagePictureDialog chapter={chapter} quote={picturing} onDraw={(asked) => { void drawPassage(picturing, asked).catch(() => {}) }} onClose={() => { setPicturing(undefined) }} /> : null}
       {picking !== undefined ? <PickPicture chapter={chapter.id} onPick={placePicked} onClose={() => { setPicking(undefined) }} /> : null}
     </>
   )

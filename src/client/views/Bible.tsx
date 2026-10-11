@@ -10,6 +10,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { MAIN_LINE, type NarrativePov, type StyleProfile, type WorldCategory, type WorldEntry, type WorldEvent } from '../../shared/types'
 import { pathOfLine } from '../../shared/lines'
 import { ArtPage } from '../ArtPage'
+import { References } from './References'
 import { lines, options, useAssist } from '../forms'
 import { GROUP_CATEGORY, groupOf, WORLD_GROUPS, WORLD_WEIGHTS, worldOrder, worldWeight, type WorldGroup, type WorldWeight } from '../../shared/world'
 import { Icon, type IconName } from '../icons'
@@ -52,7 +53,7 @@ const WEIGHT_LABELS: Record<WorldWeight, [string, string]> = {
   once: ['只出现一次', 'Passed once'],
 }
 
-type BibleTab = WorldGroup | 'style' | 'art'
+type BibleTab = WorldGroup | 'style' | 'art' | 'references'
 
 export function BibleView() {
   const t = useT()
@@ -78,9 +79,10 @@ export function BibleView() {
           ...WORLD_GROUPS.map(group => ({ value: group as BibleTab, label: t(...GROUP_LABELS[group].tab), icon: GROUP_LABELS[group].icon, badge: count(group) })),
           { value: 'style' as BibleTab, label: t('文风', 'Style'), icon: 'feather' as IconName, badge: project.styles.length },
           { value: 'art' as BibleTab, label: t('画风', 'Art'), icon: 'image' as IconName },
+          { value: 'references' as BibleTab, label: t('参考文献', 'References'), icon: 'book' as IconName },
         ]}
       />
-      {tab === 'style' ? <Styles /> : tab === 'art' ? <ArtPage /> : <World key={tab} group={tab} />}
+      {tab === 'style' ? <Styles /> : tab === 'art' ? <ArtPage /> : tab === 'references' ? <References /> : <World key={tab} group={tab} />}
     </div>
   )
 }

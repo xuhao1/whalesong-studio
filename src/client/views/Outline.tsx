@@ -259,6 +259,10 @@ function ChapterPlanEditor({ plan, index, plans }: { plan: ChapterPlan; index: n
   const confirm = useConfirm()
   const [draft, setDraft] = useState<ChapterPlan>(plan)
   const [dirty, setDirty] = useState(false)
+  // The planner is reading the references for this chapter.
+  const [consulting, setConsulting] = useState(false)
+  // The author typed in the notes out of the references: saved, they are theirs, and nobody looks again by itself.
+  const [notesTouched, setNotesTouched] = useState(false)
   const [direction, setDirection] = useState('')
   const [deriving, setDeriving] = useState(false)
   useEffect(() => { if (!dirty) setDraft(plan) }, [plan, dirty])
@@ -300,8 +304,11 @@ function ChapterPlanEditor({ plan, index, plans }: { plan: ChapterPlan; index: n
       status: draft.status,
       // Nothing in the field takes the recommendation away: whoever writes the chapter then judges.
       targetWords: draft.targetWords ?? 0,
+      // Notes out of the references: sent where the chapter has any (an emptied field says "nothing of them is of use here").
+      ...(notesTouched ? { referenceNotes: draft.referenceNotes ?? '' } : {}),
     }])
     setDirty(false)
+    setNotesTouched(false)
   })
   const move = (side: 'before' | 'after'): void => {
     const anchor = plans[side === 'before' ? position - 1 : position + 1]
@@ -404,6 +411,20 @@ function ChapterPlanEditor({ plan, index, plans }: { plan: ChapterPlan; index: n
 
       <SectionTitle>{t('给写手的备注', 'Notes for the writer')}</SectionTitle>
       <TextArea value={draft.notes ?? ''} minRows={2} onChange={(event) => { set('notes', event.target.value) }} />
+      {(project.references ?? 0) > 0 || draft.referenceNotes !== undefined || draft.referencesRead === true ? (
+        <>
+          <SectionTitle actions={(
+            <Button size="sm" variant="ghost" icon="book" disabled={dirty || (project.references ?? 0) === 0} busy={consulting} pending={t('策划在查…', 'The planner is reading…')} title={dirty ? t('先保存当前修改', 'Save your edits first') : t('策划到参考文献里为这一章查一遍，摘记写在这里', 'The planner reads the references for this chapter and leaves its notes here')} onClick={() => {
+              setConsulting(true)
+              void controller.guard(async () => {
+                await controller.run('references.consult', { root, chapter: plan.id })
+                await controller.refreshProject()
+              }).finally(() => { setConsulting(false) })
+            }}>{draft.referenceNotes === undefined && draft.referencesRead !== true ? t('让策划查参考文献', 'Have the planner read the references') : t('让策划重查', 'Have the planner read them again')}</Button>
+          )}>{t('参考摘记', 'Notes from the references')}</SectionTitle>
+          <TextArea value={draft.referenceNotes ?? ''} minRows={2} maxRows={16} placeholder={draft.referencesRead !== true ? t('还没查过：写这一章之前策划会自己查；也可以自己写', 'Nobody looked yet: the planner does before the chapter is written — or write them yourself') : t('空着：这一章不用参考', 'Empty: this chapter goes by no reference')} onChange={(event) => { setNotesTouched(true); set('referenceNotes', event.target.value) }} />
+        </>
+      ) : null}
       {moving !== undefined ? <MoveChapters chapters={moving.chapters} preset={{ ...(moving.fresh === true ? { fresh: true } : {}) }} onClose={() => { setMoving(undefined) }} /> : null}
       {confirm.element}
     </div>

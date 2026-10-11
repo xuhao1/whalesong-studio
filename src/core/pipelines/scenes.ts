@@ -78,10 +78,26 @@ export async function keepNotedScenes(runtime: ProjectRuntime, ids: readonly str
       if (kept.some(scene => scene.from !== 'digest')) continue
       const noted = await notedScenes(project, card)
       if (noted.length === 0) continue
-      const next = noted.map((scene) => {
-        const portrait = kept.find(before => before.id === scene.id)?.portrait
+      // A moment that stays keeps the picture drawn of it — found again by what it is, where the digest of its chapter
+      // was done over and it has another number now.
+      // By its name in its chapter first: what the digests note is numbered by where it stands in the chapter, and
+      // the number a drawn moment had may be another moment's now.
+      const drawn = kept.filter(scene => scene.portrait !== undefined)
+      const named = noted.map(scene => (scene.title.trim().length > 0 ? drawn.find(before => before.chapter === scene.chapter && before.title.trim() === scene.title.trim()) : undefined))
+      const taken = new Set(named.flatMap(before => (before !== undefined ? [before.portrait!] : [])))
+      const next = noted.map((scene, at) => {
+        const portrait = (named[at] ?? drawn.find(before => before.id === scene.id && !taken.has(before.portrait!)))?.portrait
         return portrait !== undefined ? { ...scene, portrait } : scene
       })
+      // …and one that was drawn is not dropped because the digests now weigh others more, or tell its chapter in
+      // other words: its picture is there, and it is one of their moments still. It stays, after those noted now —
+      // under a number of its own, where the one it had went to another.
+      for (const before of drawn) {
+        if (next.some(scene => scene.portrait === before.portrait)) continue
+        let id = before.id
+        for (let n = 1; next.some(scene => scene.id === id); n++) id = `${before.id}-drawn${n > 1 ? n : ''}`
+        next.push({ ...before, id })
+      }
       if (JSON.stringify(next) === JSON.stringify(kept)) continue
       await project.saveCharacter({ id: card.id, visual: { scenes: next, scene: '' } })
       changed.push(card.id)

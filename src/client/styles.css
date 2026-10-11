@@ -7172,6 +7172,147 @@ blockquote.nv-issue-quote {
   cursor: default;
 }
 
+/* The books this one goes by: a list, each with what the author says of how to use it. */
+.nv-references {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  max-width: 880px;
+}
+
+.nv-references-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.nv-references-head h2 {
+  margin: 0 0 4px;
+  font-size: 16px;
+}
+
+.nv-references-head p {
+  margin: 0;
+  max-width: 560px;
+}
+
+.nv-references-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.nv-references-hint {
+  display: flex;
+  gap: 6px;
+  margin: 0;
+  color: var(--nv-text-2);
+}
+
+.nv-references-hint > svg {
+  flex: none;
+  margin-top: 3px;
+}
+
+.nv-reference-list {
+  display: grid;
+  gap: 10px;
+}
+
+.nv-reference {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--nv-border);
+  border-radius: 8px;
+}
+
+.nv-reference.is-off {
+  opacity: 0.6;
+}
+
+.nv-reference > header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.nv-reference > p {
+  margin: 0;
+}
+
+.nv-reference-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.nv-reference-scope {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.nv-reference-pick {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  max-height: 50vh;
+  overflow: auto;
+}
+
+.nv-reference-pick button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--nv-border);
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nv-reference-pick button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.nv-reference-pick button > small {
+  margin-left: auto;
+}
+
+.nv-write-references {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 0;
+}
+
+/* A passage of the text a picture is drawn of: quoted as it stands, a few lines of it. */
+blockquote.nv-passage-quote {
+  margin: 0 0 10px;
+  padding: 6px 10px;
+  border-left: 3px solid var(--nv-border);
+  color: var(--nv-text-2);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  max-height: 9.6em;
+  overflow: auto;
+}
+
 
 /* The recommendations: which issue is in force, and what an issue changed or would change. */
 .nv-recommended {
@@ -8211,6 +8352,21 @@ blockquote.nv-issue-quote {
   align-self: flex-end;
 }
 
+.nv-picture-redraw-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.nv-picture-redraw-field > span {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--nv-text-2);
+}
+
 /* Under the picture shown: where it stands among their portraits, and the way to be rid of it. */
 .nv-person-picture-tools {
   display: flex;
@@ -8370,6 +8526,52 @@ span.nv-scene-thumb {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+}
+
+.nv-scene-pictures {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.nv-scene-pictures > .nv-muted {
+  align-self: center;
+}
+
+.nv-scene-pick {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  font-size: 12px;
+}
+
+.nv-scene-pick > em {
+  font-style: normal;
+  color: var(--nv-brand);
+}
+
+.nv-scene-mini {
+  width: 48px;
+  height: 64px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--nv-border);
+  border-radius: var(--nv-radius-s);
+  background: var(--nv-surface-2);
+  cursor: pointer;
+}
+
+.nv-scene-pick.is-own > .nv-scene-mini {
+  border-color: var(--nv-brand);
+  box-shadow: 0 0 0 1px var(--nv-brand);
+}
+
+.nv-scene-mini > img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .nv-scene-head > .nv-input {

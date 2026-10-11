@@ -14,7 +14,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import type { EndpointCheck, EndpointModel, KeyState, ModelKind, ModelOption, ProviderOption, SettingsView as SettingsData } from '../../shared/rpc'
 import type { ComfyCatalog, BookImageSettings } from '../../shared/types'
 import { ASPECTS, DEFAULT_ART_STYLE, KIND_ASPECT, PICTURE_KINDS, PICTURE_TIERS, pictureSize, pixelSize, type PictureKind, type PictureTier } from '../../shared/art'
-import { fittedSize, imageService, imageSetupName, imageSizes, imageSourceOf, imageWays, leadOf, LOCAL_SIZES, localImages, sizeList, switchImage, switchTts, withBook, type ImageLimits, type ImageSource, type PictureLead } from '../../shared/images'
+import { fittedSize, imageService, imageSetupName, imageSizes, imageSourceOf, imageWays, leadOf, LOCAL_SIZES, localImages, portraitsOf, promptWriteOf, sizeList, switchImage, switchTts, withBook, type ImageLimits, type ImageSource, type PictureLead, type PortraitPlan, type PromptWrite } from '../../shared/images'
 import { FFMPEG_INSTALL } from '../../shared/text'
 import { OutsideHelp } from '../OutsideHelp'
 import { RecommendedCard } from '../Recommended'
@@ -46,6 +46,19 @@ const ROLES: { role: TextRole; label: [string, string]; hint: [string, string] }
 
 const SEPARATOR = ' :: '
 const keyOf = (route: Pick<ModelRoute, 'provider' | 'model'>): string => `${route.provider}${SEPARATOR}${route.model}`
+
+
+/** What a portrait asked for with nothing said of it can come to, in the order they are offered. */
+const PORTRAIT_PLANS: readonly PortraitPlan[] = ['both', 'scene', 'plain']
+
+/** Whether somebody's standing look is written out beside a picture that shows it, as a choice reads. */
+function looksWord(looks: 'pictured' | 'always', t: (zh: string, en: string) => string): string {
+  return looks === 'always' ? t('样子也写一遍', 'written out as well') : t('只引用图，不再写样子', 'pointed to, not written out')
+}
+
+function portraitPlanWord(plan: PortraitPlan, t: (zh: string, en: string) => string): string {
+  return plan === 'both' ? t('素底定妆 + 名场面，各一张', 'a plain likeness and the signature scene, one of each') : plan === 'scene' ? t('只画名场面', 'the signature scene alone') : t('只画素底定妆', 'a plain likeness alone')
+}
 
 function number(text: string): number | undefined {
   const value = Number(text)
@@ -282,6 +295,9 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
   // What this book has its own way with, one by one: said at the top of the page, each with the way back.
   const roleWord = (role: string): string => t(...(ROLE_NAME[role] ?? [role, role]))
   const leadWord = (lead: PictureLead): string => (lead === 'portrait' ? t('立绘为准', 'the portrait leads') : lead === 'none' ? t('各画各的', 'neither leads') : t('人设图为准', 'the sheet leads'))
+  const portraitWord = (plan: PortraitPlan): string => portraitPlanWord(plan, t)
+  // What this book says of its own about what a portrait comes to: as it says it now, or as an older switch said it.
+  const ownPortraits: PortraitPlan | undefined = own.image.portraits ?? (own.image.portraitScene === false ? 'plain' : undefined)
   const differing: { key: string; label: string; reset: () => void }[] = [
     ...Object.entries(own.models).filter(([, route]) => route !== undefined).map(([role, route]) => ({ key: `model:${role}`, label: t(`${roleWord(role)}的模型：${route!.model}`, `${roleWord(role)}'s model: ${route!.model}`), reset: () => { const { [role as TextRole]: _old, ...rest } = own.models; updateOwn({ models: rest }) } })),
     ...Object.entries(own.crew).filter(([, value]) => value !== undefined && Object.keys(value).length > 0).map(([role]) => ({ key: `crew:${role}`, label: t(`${roleWord(role)}怎么干活`, `how ${roleWord(role)} works`), reset: () => { const { [role as CrewRole]: _old, ...rest } = own.crew; updateOwn({ crew: rest }) } })),
@@ -294,7 +310,8 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
     ...(Object.keys(own.context).length > 0 ? [{ key: 'context', label: t(`上下文预算：${Object.keys(own.context).length} 项`, `context: ${Object.keys(own.context).length} of its own`), reset: () => { updateOwn({ context: {} }) } }] : []),
     ...(own.image.lead !== undefined ? [{ key: 'image:lead', label: t(`人物的图：${leadWord(own.image.lead)}`, `pictures of people: ${leadWord(own.image.lead)}`), reset: () => { const { lead: _old, ...rest } = own.image; updateOwn({ image: rest }) } }] : []),
     ...(own.image.sheet !== undefined ? [{ key: 'image:sheet', label: own.image.sheet === 'front' ? t('人设图只画正面', 'sheets show the front alone') : t('人设图画三视图', 'sheets show three views'), reset: () => { const { sheet: _old, ...rest } = own.image; updateOwn({ image: rest }) } }] : []),
-    ...(own.image.portraitScene !== undefined ? [{ key: 'image:scene', label: own.image.portraitScene ? t('立绘照名场面画', 'portraits show the signature scene') : t('立绘画素底定妆照', 'portraits are plain'), reset: () => { const { portraitScene: _old, ...rest } = own.image; updateOwn({ image: rest }) } }] : []),
+    ...(ownPortraits !== undefined ? [{ key: 'image:scene', label: t(`立绘：${portraitWord(ownPortraits)}`, `portraits: ${portraitWord(ownPortraits)}`), reset: () => { const { portraitScene: _old, portraits: _was, ...rest } = own.image; updateOwn({ image: rest }) } }] : []),
+    ...(own.image.looks !== undefined ? [{ key: 'image:looks', label: t(`有参考图的人物：${looksWord(own.image.looks, t)}`, `people with a picture: ${looksWord(own.image.looks, t)}`), reset: () => { const { looks: _old, ...rest } = own.image; updateOwn({ image: rest }) } }] : []),
     ...(own.image.panelThings !== undefined ? [{ key: 'image:things', label: own.image.panelThings ? t('有声漫带上物品设定图', 'panels take things\' art along') : t('有声漫不带物品设定图', 'panels leave things\' art behind'), reset: () => { const { panelThings: _old, ...rest } = own.image; updateOwn({ image: rest }) } }] : []),
   ]
 
@@ -614,13 +631,12 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
                 ]} onChange={(sheet) => { const { sheet: _old, ...rest } = own.image; updateOwn({ image: sheet === '' ? rest : { ...rest, sheet } }) }} />
               </Field>
             </OwnMark>
-            <OwnMark own={own.image.portraitScene !== undefined} scope={scope} t={t}>
-              <Field label={t('立绘画什么', 'What a portrait shows')}>
-                <Select<'yes' | 'no' | ''> value={own.image.portraitScene === undefined ? '' : own.image.portraitScene ? 'yes' : 'no'} options={[
-                  { value: '', label: t(`沿用全局：${draft.image.portraitScene === false ? '素底定妆照' : '名场面'}`, `As for every book: ${draft.image.portraitScene === false ? 'a plain likeness' : 'the signature scene'}`) },
-                  { value: 'yes', label: t('名场面', 'The signature scene') },
-                  { value: 'no', label: t('素底定妆照', 'A plain likeness') },
-                ]} onChange={(value) => { const { portraitScene: _old, ...rest } = own.image; updateOwn({ image: value === '' ? rest : { ...rest, portraitScene: value === 'yes' } }) }} />
+            <OwnMark own={ownPortraits !== undefined} scope={scope} t={t}>
+              <Field label={t('立绘画什么', 'What a portrait comes to')}>
+                <Select<PortraitPlan | ''> value={ownPortraits ?? ''} options={[
+                  { value: '', label: t(`沿用全局：${portraitWord(portraitsOf(draft.image))}`, `As for every book: ${portraitWord(portraitsOf(draft.image))}`) },
+                  ...PORTRAIT_PLANS.map(plan => ({ value: plan, label: portraitWord(plan) })),
+                ]} onChange={(value) => { const { portraitScene: _old, portraits: _was, ...rest } = own.image; updateOwn({ image: value === '' ? rest : { ...rest, portraits: value } }) }} />
               </Field>
             </OwnMark>
             <OwnMark own={own.image.panelThings !== undefined} scope={scope} t={t}>
@@ -630,6 +646,15 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
                   { value: 'yes', label: t('带上', 'Taken along') },
                   { value: 'no', label: t('不带', 'Left behind') },
                 ]} onChange={(value) => { const { panelThings: _old, ...rest } = own.image; updateOwn({ image: value === '' ? rest : { ...rest, panelThings: value === 'yes' } }) }} />
+              </Field>
+            </OwnMark>
+            <OwnMark own={own.image.looks !== undefined} scope={scope} t={t}>
+              <Field label={t('有参考图的人物', 'People whose picture goes along')}>
+                <Select<'pictured' | 'always' | ''> value={own.image.looks ?? ''} options={[
+                  { value: '', label: t(`沿用全局：${looksWord(draft.image.looks ?? 'pictured', t)}`, `As for every book: ${looksWord(draft.image.looks ?? 'pictured', t)}`) },
+                  { value: 'pictured', label: looksWord('pictured', t) },
+                  { value: 'always', label: looksWord('always', t) },
+                ]} onChange={(value) => { const { looks: _old, ...rest } = own.image; updateOwn({ image: value === '' ? rest : { ...rest, looks: value } }) }} />
               </Field>
             </OwnMark>
           </div>
@@ -1521,11 +1546,22 @@ function ImageSection({ value, keys, onChange, t, advanced, only }: { value: Ima
             <TextInput inputMode="numeric" value={value.promptTokens !== undefined ? String(value.promptTokens) : ''} placeholder={limits?.promptTokens !== undefined ? t(`留空：照服务器说的 ${limits.promptTokens}`, `Empty: the server's own ${limits.promptTokens}`) : t('留空：不限', 'Empty: none')} onChange={(event) => { const count = number(event.target.value); const { promptTokens: _old, ...rest } = value; onChange(count !== undefined && count > 0 ? { ...rest, promptTokens: Math.round(count) } : rest) }} />
           </Field>
         ) : null}
-        {value.provider !== 'none' && (value.promptTokens !== undefined || limits?.promptTokens !== undefined) ? (
-          <label className="nv-check">
-            <input type="checkbox" checked={value.promptCompact !== false} onChange={(event) => { const { promptCompact: _old, ...rest } = value; onChange(event.target.checked ? rest : { ...rest, promptCompact: false }) }} />
-            <span>{t('提示词超过上限时让导演压缩（不勾：照原样发，超出的部分模型读不到）', 'Have the director fit a prompt that is over the limit (unticked: sent as it is; the model does not read what is beyond)')}</span>
-          </label>
+        {value.provider !== 'none' ? (
+          <Field label={t('提示词谁来写', 'Who writes the prompt')} hint={t('工坊先把每张图排成同一种分段；导演可以再把它写成一段给模型的话', 'The Studio lays every picture out under the same headings; the director can then write that out for the model')}>
+            <Select<PromptWrite> value={promptWriteOf(value)} options={[
+              { value: 'fit', label: t('放不下时由导演压缩', 'The director, where it does not fit the model') },
+              { value: 'always', label: t('每张都由导演写成一段', 'The director, every time') },
+              { value: 'never', label: t('照工坊排好的原样发', 'As the Studio laid it out') },
+            ]} onChange={(mode) => { const { promptCompact: _old, promptWrite: _was, ...rest } = value; onChange(mode === 'fit' ? rest : { ...rest, promptWrite: mode }) }} />
+          </Field>
+        ) : null}
+        {value.provider !== 'none' && (own || advanced || value.promptLang !== undefined) ? (
+          <Field label={t('提示词语言', 'Prompt language')} hint={t('只懂英文的模型选 English：导演写提示词时全文用英文', 'English for a model that reads nothing else: the director then writes the whole prompt in English')}>
+            <Select<'book' | 'en'> value={value.promptLang === 'en' ? 'en' : 'book'} options={[
+              { value: 'book', label: t('跟这本书', 'The book\'s') },
+              { value: 'en', label: 'English' },
+            ]} onChange={(to) => { const { promptLang: _old, ...rest } = value; onChange(to === 'en' ? { ...rest, promptLang: 'en' } : rest) }} />
+          </Field>
         ) : null}
         {value.provider !== 'none' && advanced ? (
           <Field label={t('一张图带几张参考图', 'Reference pictures per image')} hint={t(`每张图最多带几张参考图。留空：${REFERENCES_DEFAULT}，最多 ${REFERENCES_MAX}。`, `How many reference pictures one picture may carry. Empty: ${REFERENCES_DEFAULT}; ${REFERENCES_MAX} at most.`)}>
@@ -1555,10 +1591,14 @@ function ImageSection({ value, keys, onChange, t, advanced, only }: { value: Ima
           </Field>
         ) : null}
         {all && value.provider !== 'none' ? (
-          <label className="nv-check">
-            <input type="checkbox" checked={value.portraitScene !== false} onChange={(event) => { const { portraitScene: _old, ...rest } = value; onChange(event.target.checked ? rest : { ...rest, portraitScene: false }) }} />
-            <span>{t('立绘照名场面画（不勾：素底定妆照）', 'Portraits show the signature scene (unticked: a plain likeness)')}</span>
-          </label>
+          <Field label={t('立绘画什么', 'What a portrait comes to')} hint={t('没另说画哪一张时', 'Where nothing else is said of it')}>
+            <Select<PortraitPlan> value={portraitsOf(value)} options={PORTRAIT_PLANS.map(plan => ({ value: plan, label: portraitPlanWord(plan, t) }))} onChange={(plan) => { const { portraitScene: _old, portraits: _was, ...rest } = value; onChange(plan === 'both' ? rest : { ...rest, portraits: plan }) }} />
+          </Field>
+        ) : null}
+        {all && value.provider !== 'none' ? (
+          <Field label={t('有参考图的人物', 'People whose picture goes along')} hint={t('提示词里还写不写他平常的样子', 'Whether their standing look is written out in the prompt as well')}>
+            <Select<'pictured' | 'always'> value={value.looks ?? 'pictured'} options={[{ value: 'pictured', label: looksWord('pictured', t) }, { value: 'always', label: looksWord('always', t) }]} onChange={(looks) => { const { looks: _old, ...rest } = value; onChange(looks === 'always' ? { ...rest, looks } : rest) }} />
+          </Field>
         ) : null}
         {all && value.provider !== 'none' ? (
           <label className="nv-check">

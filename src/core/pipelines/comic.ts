@@ -26,7 +26,7 @@ import { storyboardTask } from '../prompts'
 import { L, promptLanguage } from '../render'
 import { mapLimit, serializer } from '../util/async'
 import { buildAudioScript } from './audio'
-import { artDirectionOf, lackingSheets, looksOf, panelMakings, renderImage, requireImages, sheetsBefore, sheetsFirst, wardrobeOf } from './illustrate'
+import { artDirectionOf, lackingSheets, looksOf, panelMakings, promptLangOf, renderImage, requireImages, sheetsBefore, sheetsFirst, wardrobeOf } from './illustrate'
 import { pictureSize } from '../../shared/art'
 import { groupOf } from '../../shared/world'
 
@@ -450,6 +450,8 @@ export async function renderPanels(core: NovelCore, runtime: ProjectRuntime, par
   // Drawn as this chapter has them: the look — and the sheet — of the stretch of their life that holds here.
   const characters = await castAt(runtime, board.chapterId, first.drawn.length > 0 ? await project.characters() : cards)
   const mostReferences = referencesOf((await core.imageOf(runtime)).references)
+  // The language the panels' prompts are written in: the book's, unless the author has prompts in English.
+  const panelLang = promptLangOf(await core.imageOf(runtime), lang)
   // Whether the art of the things a panel shows goes along: this drawing's own word for it, else the book's, else the Studio's (yes).
   const thingArt = params.things ?? (await core.imageOf(runtime)).panelThings !== false
   let rendered = 0
@@ -473,7 +475,7 @@ export async function renderPanels(core: NovelCore, runtime: ProjectRuntime, par
     try {
       // What the director wrote for the panel, and after it how everyone in it looks in what they wear there, how its
       // place and the things it shows look — as the bible has them now; with their design sheets and art along.
-      const makings = panelMakings(panel, { characters, world, most: mostReferences, lang, thingArt })
+      const makings = panelMakings(panel, { characters, world, most: mostReferences, lang: panelLang, thingArt })
       const info = await renderImage(core, runtime, {
         subject: makings.subject,
         ...(makings.pieces !== undefined ? { pieces: makings.pieces } : {}),

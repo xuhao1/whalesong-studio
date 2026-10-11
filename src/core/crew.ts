@@ -31,6 +31,7 @@ import type { NovelCore, ProjectRuntime, TaskContext } from './core'
 import { completeJson, extractJson, LlmCallError, type LlmImage } from './llm'
 import { ProjectError } from './project'
 import { READ_KINDS, readBook, searchBook, SEARCH_SOURCES } from './reading'
+import { referenceBrief, referenceTools } from './references'
 import { L, promptLanguage } from './render'
 import { argInt, argList, argText, type RoleInherit, type RoleOutcome, type RoleParameter, type RoleSkill, type RoleStep, type RoleTool } from './roles'
 import { errorMessage, isAbort } from './util/async'
@@ -282,6 +283,24 @@ export function bookTools(runtime: ProjectRuntime, signal?: AbortSignal, line?: 
   ]
 }
 
+/**
+ * The book's references, for a role at work on it as an agent: the tools it reads in them with, and what it is told
+ * of them — which there are, what the author wants of each. Nothing for a book that has none, and nothing for
+ * post-production, whose work is cutting what is already made.
+ */
+async function referencesFor(core: NovelCore, runtime: ProjectRuntime, role: CrewRole, lang: PromptLanguage, signal: AbortSignal | undefined): Promise<{ tools: RoleTool[]; brief: string }> {
+  if (role === 'producer') return { tools: [], brief: '' }
+  try {
+    const tools = await referenceTools(core, runtime, signal)
+    const brief = tools.length > 0 ? await referenceBrief(core, runtime, lang) : undefined
+    return { tools, brief: brief !== undefined ? `\n\n${brief}` : '' }
+  } catch (error) {
+    // A list of references that cannot be read keeps nobody from working: the work goes on without them.
+    core.log('could not read the book\'s references', error)
+    return { tools: [], brief: '' }
+  }
+}
+
 const oneLine = (text: string): string => text.replace(/\s+/g, ' ').trim()
 
 /** A compact account of one tool call for whoever watches the job. */
@@ -423,16 +442,17 @@ async function assignNow<T>(core: NovelCore, runtime: ProjectRuntime, task: Task
     },
   }
   const skills = await crewSkills(work.role)
+  const references = await referencesFor(core, runtime, work.role, lang, task.signal)
   let outcome: RoleOutcome
   try {
     outcome = await roles.run({
       role: work.role,
       label: `${name} · ${work.label}`,
       persona: CREW[work.role].persona[lang === 'zh' ? 0 : 1],
-      rules: crewRules(work.role, lang, manifest),
+      rules: `${crewRules(work.role, lang, manifest)}${references.brief}`,
       prompt: `${work.prompt}${handIn(lang, work.tool, declared)}`,
       ...(work.images !== undefined && work.images.length > 0 ? { images: work.images } : {}),
-      tools: [...bookTools(runtime, task.signal, work.line), ...(work.tools ?? []), deliver],
+      tools: [...bookTools(runtime, task.signal, work.line), ...references.tools, ...(work.tools ?? []), deliver],
       ...(skills.length > 0 ? { skills } : {}),
       inherit: plan.inherit,
       route,
@@ -515,15 +535,16 @@ export async function delegate(core: NovelCore, runtime: ProjectRuntime, task: T
   }
   const label = work.label ?? clip(oneLine(work.task), 40)
   const skills = await crewSkills(work.role)
+  const references = await referencesFor(core, runtime, work.role, lang, task.signal)
   const outcome = await core.through('text', async () => await roles.run({
     role: work.role,
     label: `${name} · ${label}`,
     persona: CREW[work.role].persona[lang === 'zh' ? 0 : 1],
-    rules: work.handIn !== undefined
+    rules: `${work.handIn !== undefined
       ? crewRules(work.role, lang, manifest)
-      : `${crewRules(work.role, lang, manifest)}\n${L(lang, '- 这件活没有专门的交回工具：做完之后，把结果写成你的最后一段回答——结论在前，依据在后，用到的出处列在最后。', '- This task has no tool to hand in with: when you are done, write the result as your last reply — conclusions first, what they rest on after, sources at the end.')}`,
+      : `${crewRules(work.role, lang, manifest)}\n${L(lang, '- 这件活没有专门的交回工具：做完之后，把结果写成你的最后一段回答——结论在前，依据在后，用到的出处列在最后。', '- This task has no tool to hand in with: when you are done, write the result as your last reply — conclusions first, what they rest on after, sources at the end.')}`}${references.brief}`,
     prompt: work.task,
-    tools: [...bookTools(runtime, task.signal, work.line), ...(work.tools ?? [])],
+    tools: [...bookTools(runtime, task.signal, work.line), ...references.tools, ...(work.tools ?? [])],
     ...(skills.length > 0 ? { skills } : {}),
     inherit: plan.inherit,
     route,

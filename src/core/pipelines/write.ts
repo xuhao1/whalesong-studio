@@ -12,6 +12,9 @@ import type { LocatedChapter } from '../project'
 import { ProjectError } from '../project'
 import { writerSystem, writerTask } from '../prompts'
 import { promptLanguage, renderStyle } from '../render'
+import { consultsBeforeWriting } from '../references'
+import { isAbort } from '../util/async'
+import { consultReferences } from './consult'
 import { digestChapter, updateArcs } from './digest'
 import { guidePictures, picturesLabel, picturesRead } from './guides'
 
@@ -75,6 +78,12 @@ export interface WriteResult {
   brief?: string
   /** Where the author gave pictures for the chapter: how many, and who looked at them. */
   pictures?: PicturesRead
+  /**
+   * The book has references: what the writer was handed of them — the notes kept on the chapter's plan. `fresh`: the
+   * planner took them just now, for this pass. `none`: no notes went along, and why (the planner looked and found
+   * nothing of use, or could not look).
+   */
+  referenced?: { chars: number; fresh?: boolean; none?: string }
 }
 
 /** Remove what models add around prose against instructions: fences, titles, lead-ins. */
@@ -140,6 +149,31 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
   // The pictures the author gave this chapter — for this pass, or kept on its plan: the writer looks at them, or is told what they show.
   const guided = await guidePictures(core, runtime, route, params.guides ?? chapter.plan.guides, 'chapter', task)
 
+  // The books this one goes by: the writer has no tools to read in them, so the planner looks for it — once for a
+  // chapter, its notes kept on the chapter's plan — unless the author turned that off or wrote the notes themselves.
+  let referenceNotes = chapter.plan.referenceNotes
+  let referenced: WriteResult['referenced']
+  if (await consultsBeforeWriting(runtime)) {
+    if (referenceNotes === undefined && chapter.plan.referencesRead !== true) {
+      const restore = dry ? undefined : task.job?.note(lang === 'zh' ? '策划在为这一章查参考文献…' : 'The planner is reading the references for this chapter…')
+      try {
+        referenceNotes = (await consultReferences(core, runtime, { chapter: chapter.plan.id }, task)).notes
+        referenced = { chars: referenceNotes.length, fresh: true, ...(referenceNotes.length === 0 ? { none: lang === 'zh' ? '策划查过，这一章用不上参考文献' : 'the planner looked: the references have nothing for this chapter' } : {}) }
+      } catch (error) {
+        if (isAbort(error) || task.signal?.aborted === true) throw error
+        core.log(`could not take notes in the references for ${chapter.plan.id}; writing without them`, error)
+        referenced = { chars: 0, none: error instanceof Error ? error.message : String(error) }
+      } finally {
+        restore?.()
+      }
+    } else referenced = { chars: referenceNotes?.length ?? 0, ...(referenceNotes === undefined ? { none: lang === 'zh' ? '这一章的参考摘记是空的' : 'this chapter\'s reference notes are empty' } : {}) }
+    if (!dry && referenced !== undefined) task.job?.result({ referenced })
+  } else if (referenceNotes !== undefined && referenceNotes.trim().length > 0) {
+    // Nobody looks before writing here, but the chapter has notes — the author's own, or the planner's of an earlier day: they go along.
+    referenced = { chars: referenceNotes.length }
+  }
+  const notesForWriter = referenceNotes !== undefined && referenceNotes.trim().length > 0 ? { references: referenceNotes } : {}
+
   if (!dry) task.job?.progress(0, 3, lang === 'zh' ? '整理上下文' : 'packing context')
   const pack = await core.pack(runtime, route, {
     purpose: mode === 'continue' ? 'continue' : 'draft',
@@ -163,13 +197,14 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
   for (let round = 0; round < 4; round++) {
     const soFar = written
     const prompt = round === 0
-      ? writerTask({ ...base, context: pack.rest, ...(params.brief !== undefined ? { brief: params.brief } : {}), ...(guided !== undefined ? { pictures: guided.text } : {}), continuing: mode === 'continue', ...(target !== undefined ? { words: target } : usual !== undefined ? { usual } : {}) })
+      ? writerTask({ ...base, context: pack.rest, ...(params.brief !== undefined ? { brief: params.brief } : {}), ...(guided !== undefined ? { pictures: guided.text } : {}), ...notesForWriter, continuing: mode === 'continue', ...(target !== undefined ? { words: target } : usual !== undefined ? { usual } : {}) })
       // The model ran out of output room mid-chapter: show it what it wrote and let it finish.
       : writerTask({
           ...base,
           context: `${pack.rest}\n\n## ${lang === 'zh' ? '本章已有正文' : 'This chapter so far'}\n\n${mode === 'continue' ? clipTail(existing, (await core.settingsOf(runtime)).context.tailChars) + '\n\n' : ''}${soFar}`,
           ...(params.brief !== undefined ? { brief: params.brief } : {}),
           ...(guided !== undefined ? { pictures: guided.text } : {}),
+          ...notesForWriter,
           continuing: true,
           ...length(countWords(soFar)),
         })
@@ -254,6 +289,7 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
     preview: { head: written.slice(0, 220), tail: written.length > 440 ? written.slice(-220) : '' },
     ...(params.brief !== undefined ? { brief: params.brief } : {}),
     ...(guided !== undefined ? { pictures: picturesRead(guided)! } : {}),
+    ...(referenced !== undefined ? { referenced } : {}),
     ...(dry ? { text: finalText } : {}),
   }
 }

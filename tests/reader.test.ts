@@ -241,7 +241,7 @@ describe('the code a phone scans', () => {
     expect(placeFigures(`${text}\n\n![](assets/images/a.png)`, [{ path: 'assets/images/a.png', caption: 'x', told: '桃花树下' }])).toEqual([])
   })
 
-  it('carries a portrait of each moment where the chapter tells it and the one that stands for the person where they first come on — not both in one chapter', async () => {
+  it('carries a portrait of each moment where the chapter tells it and the one that stands for the person — their plain likeness, unless the author chose another — where they first come on; not both where the two places are one, or right beside each other', async () => {
     const { createTestBed, PIXEL } = await import('./support/harness')
     const bed = await createTestBed()
     try {
@@ -264,9 +264,28 @@ describe('the code a phone scans', () => {
       await project.addIllustration({ id: 'img-old', path: before, prompt: '葬花', kind: 'portrait', target: card.id, createdAt: new Date().toISOString(), moment: { title: '葬花', scene: 's1', chapter: later.id } })
       const places = async (): Promise<unknown[]> => (await project.portraitPlaces()).map(place => [place.key, place.as, place.chapter, place.hidden, place.spare])
 
-      // Nobody chose: the first portrait stands for her. It is the picture of her moment — it stands there, and
-      // where she first comes on as the picture of her; the others wait to be asked in.
+      // Nobody chose: the first of her plain likenesses stands for her — not the picture of her moment, though that
+      // one is the newest: it shows what she did, the likeness who she is. The likeness stands where she first comes
+      // on, the moment where it is told; the others wait to be asked in.
+      expect((await project.findCharacter(card.id))!.visual).toMatchObject({ portrait: plain })
+      expect((await project.findCharacter(card.id))!.visual!.face).toBeUndefined()
+      expect(await places()).toEqual([
+        [now, 'moment', later.id, false, undefined],
+        [plain, 'person', first.id, false, undefined],
+        [other, 'person', first.id, true, 'person'],
+        [before, 'moment', later.id, true, 'moment'],
+      ])
+      const text = await project.chapterText(first.id)
+      expect(await project.chapterFigures(first.id)).toEqual([{ path: plain, key: plain, caption: '黛玉', after: text.indexOf('黛玉下了轿') }])
+      expect((await project.chapterFigures(later.id)).map(figure => [figure.key, figure.caption])).toEqual([[now, '葬花 · 黛玉']])
+      // With no likeness among her portraits, the newest of them stands for her.
+      await project.saveCharacter({ id: card.id, visual: { portraits: [now] } })
       expect((await project.findCharacter(card.id))!.visual).toMatchObject({ portrait: now })
+      await project.saveCharacter({ id: card.id, visual: { portraits: [now, plain, other] } })
+
+      // The author chooses the picture of her moment to stand for her: one picture, two places — where the moment is
+      // told, and where she first comes on. Each is known by its own key, so keeping one out of the text leaves the other in.
+      await project.saveCharacter({ id: card.id, visual: { face: now } })
       expect(await places()).toEqual([
         [now, 'moment', later.id, false, undefined],
         [plain, 'person', first.id, true, 'person'],
@@ -274,10 +293,7 @@ describe('the code a phone scans', () => {
         [before, 'moment', later.id, true, 'moment'],
         [`${now}#face`, 'person', first.id, false, undefined],
       ])
-      const text = await project.chapterText(first.id)
-      // One picture, two places: each is known by its own key, so keeping one out of the text leaves the other in.
       expect(await project.chapterFigures(first.id)).toEqual([{ path: now, key: `${now}#face`, caption: '黛玉', after: text.indexOf('黛玉下了轿') }])
-      expect((await project.chapterFigures(later.id)).map(figure => [figure.key, figure.caption])).toEqual([[now, '葬花 · 黛玉']])
       await project.showFigure(`${now}#face`, false)
       expect([await project.chapterFigures(first.id), (await project.chapterFigures(later.id)).map(figure => figure.path)]).toEqual([[], [now]])
       await project.showFigure(`${now}#face`, true)
@@ -298,7 +314,7 @@ describe('the code a phone scans', () => {
       await project.saveCharacter({ id: card.id, visual: { portrait: newer } })
       expect((await project.findCharacter(card.id))!.visual).toMatchObject({ portrait: plain, face: plain, portraits: [newer, now, plain, other] })
       expect((await project.chapterFigures(first.id)).map(figure => figure.path)).toEqual([plain])
-      // A picture that takes the chosen one's place is the chosen one; the choice let go, the newest stands for her again.
+      // A picture that takes the chosen one's place is the chosen one; the choice let go, the newest of her likenesses stands for her again.
       const redrawn = await project.writeAsset('images/plain-redrawn.png', PIXEL)
       await project.replacePicture(plain, redrawn)
       expect((await project.findCharacter(card.id))!.visual).toMatchObject({ portrait: redrawn, face: redrawn })
@@ -322,11 +338,21 @@ describe('the code a phone scans', () => {
       await project.showFigure(now, true)
       expect([await project.hiddenFigures(), await project.shownFigures()]).toEqual([[], []])
 
-      // She first comes on in the chapter of her moment: the moment is the picture of her there, where it is told — the one of the person is not shown beside it.
+      // She first comes on where her moment is told — the same paragraph names her first and tells it: the moment is
+      // the picture of her there, and the one of the person is not shown beside it.
       await project.saveCharacter({ id: card.id, firstAppearance: later.id })
       expect((await places()).slice(0, 2)).toEqual([[now, 'moment', later.id, false, undefined], [plain, 'person', later.id, true, 'chapter']])
       const told = await project.chapterText(later.id)
       expect(await project.chapterFigures(later.id)).toEqual([{ path: now, key: now, caption: '葬花 · 黛玉', after: told.indexOf('黛玉肩上担着花锄') }])
+      // Right beside it — she is named a paragraph before the moment — is the same: a reader would have both before them.
+      await project.saveChapterText(later.id, '黛玉从潇湘馆出来。\n\n园中花谢。\n\n她肩上担着花锄，锄上挂着花囊，独自往花冢去。\n\n宝玉在山坡上听见。')
+      expect((await places()).slice(0, 2)).toEqual([[now, 'moment', later.id, false, undefined], [plain, 'person', later.id, true, 'chapter']])
+      // Far apart in the same chapter, each stands in its place: who she is where she first comes on, what she did where it is told.
+      const long = `黛玉从潇湘馆出来。\n\n${Array.from({ length: 12 }, (_value, at) => `这一日园中无事，${'风过竹梢，日影移墙，'.repeat(4)}第${at + 1}处走过。`).join('\n\n')}\n\n她肩上担着花锄，锄上挂着花囊，独自往花冢去。\n\n宝玉在山坡上听见。`
+      await project.saveChapterText(later.id, long)
+      expect((await places()).slice(0, 2)).toEqual([[now, 'moment', later.id, false, undefined], [plain, 'person', later.id, false, undefined]])
+      expect((await project.chapterFigures(later.id)).map(figure => [figure.path, figure.after])).toEqual([[now, long.indexOf('她肩上担着花锄')], [plain, 0]])
+      await project.saveChapterText(later.id, told)
       // The moment kept out of the text, the portrait of her is what that chapter has of her again.
       await project.showFigure(now, false)
       expect((await project.chapterFigures(later.id)).map(figure => figure.path)).toEqual([plain])

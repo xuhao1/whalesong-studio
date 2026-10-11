@@ -98,7 +98,7 @@ export interface TestBed {
   cleanup(): Promise<void>
 }
 
-export async function createTestBed(options: { settings?: Partial<NovelSettings>; language?: string; title?: string; bridges?: ImageBridges } = {}): Promise<TestBed> {
+export async function createTestBed(options: { settings?: Partial<NovelSettings>; language?: string; title?: string; bridges?: ImageBridges; /** A key every hosted service is given, for tests that stand a server in for one: made up, and sent nowhere but to that server. */ key?: string } = {}): Promise<TestBed> {
   const dir = await mkdtemp(join(tmpdir(), 'novel-test-'))
   const llm = new FakeLlm()
   const roles = new FakeRoles()
@@ -107,7 +107,7 @@ export async function createTestBed(options: { settings?: Partial<NovelSettings>
   const usage = new UsageStore(join(dir, 'usage'))
   // Whatever a test takes off the shelf goes to a trash of its own, never to the real one.
   await mkdir(join(dir, 'trash'))
-  const core = new NovelCore({ llm, roles, credentials: namedKeySource(() => undefined), settings, usage, trash: { files: join(dir, 'trash') }, holding: join(dir, 'holding'), ...(options.bridges !== undefined ? { bridges: options.bridges } : {}) })
+  const core = new NovelCore({ llm, roles, credentials: namedKeySource(() => options.key), settings, usage, trash: { files: join(dir, 'trash') }, holding: join(dir, 'holding'), ...(options.bridges !== undefined ? { bridges: options.bridges } : {}) })
   await core.ready()
   const runtime = await core.create(join(dir, 'book'), { title: options.title ?? '测试之书', language: options.language ?? 'zh' })
   return {

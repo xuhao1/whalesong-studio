@@ -20,7 +20,7 @@ import {
   type ArtStep, type BatchKind, type BatchRowView, type CharacterCard, type BatchStepState, type BatchStepView, type BatchView, type PromptLanguage, type StageStatus, type StageStep,
   type IssueSeverity, type StoryboardDensity, type TextStep,
 } from '../../shared/types'
-import { leadOf } from '../../shared/images'
+import { leadOf, portraitsOf } from '../../shared/images'
 import { hashText, proseOnly } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import type { JobContext } from '../jobs'
@@ -31,7 +31,7 @@ import { errorMessage, isAbort } from '../util/async'
 import { buildAudioScript, designCharacterVoice, isSkipped, soundPlan, synthesizeChapter } from './audio'
 import { buildStoryboard, renderPanels } from './comic'
 import { digestChapter, updateArcs } from './digest'
-import { illustrate } from './illustrate'
+import { illustrate, lackingPortraits } from './illustrate'
 import { deriveBeats } from './plot'
 import { iterateChapters } from './iterate'
 import { reviewChapter } from './review'
@@ -662,6 +662,7 @@ export async function artPlan(core: NovelCore, runtime: ProjectRuntime, params: 
   // Which of a person's two pictures waits for the other: the portrait for the sheet, unless the author has the
   // portrait lead — then the sheet is drawn after it, and against it.
   const lead = leadOf(await core.imageOf(runtime))
+  const pair = portraitsOf(await core.imageOf(runtime))
   const portrayed = new Set<string>()
   if (lead === 'portrait') for (const ref of params.portraits ?? []) portrayed.add((await card(ref)).id)
   const sheetOf = new Map<string, string>()
@@ -695,9 +696,19 @@ export async function artPlan(core: NovelCore, runtime: ProjectRuntime, params: 
       op: 'portrait',
       // Drawn against the sheet when this batch makes one: the same person in both. (The other way round where the portrait leads.)
       after: lead !== 'portrait' && sheetOf.has(who.id) ? [sheetOf.get(who.id)!] : [],
-      skip: async () => noImages ?? (!force && (await project.findCharacter(who.id))?.visual?.portrait !== undefined ? L(lang, '已有立绘', 'has a portrait') : undefined),
+      skip: async () => {
+        if (noImages !== undefined) return noImages
+        const now = force ? undefined : await project.findCharacter(who.id)
+        if (now === undefined) return undefined
+        // One picture is what a portrait comes to by the author's setting: whoever has one has it.
+        if (pair !== 'both') return now.visual?.portrait !== undefined ? L(lang, '已有立绘', 'has a portrait') : undefined
+        // Two: the likeness and the scene. The batch fills in what is lacking — the scene only where the book has text to find one in.
+        const lacking = await lackingPortraits(runtime, now)
+        const written = (await project.chapterInfos()).some(chapter => chapter.hasText)
+        return !lacking.plain && !(lacking.scene && written) ? L(lang, '素底定妆和名场面都有了', 'has a likeness and their scene') : undefined
+      },
       async run(sub) {
-        await illustrate(core, runtime, { kind: 'portrait', target: who.id, ...asIs }, sub)
+        await illustrate(core, runtime, { kind: 'portrait', target: who.id, ...asIs, ...(force ? {} : { fill: true }) }, sub)
         return undefined
       },
     })

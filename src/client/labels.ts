@@ -247,6 +247,7 @@ const JOB_TITLES: [RegExp, Label][] = [
   [/^review$/, ['审校', 'Reviewing']],
   [/^derive chapters$/, ['推演后续章节', 'Deriving chapters']],
   [/^derive beats$/, ['推演情节点', 'Deriving beats']],
+  [/^read the references for a chapter$/, ['查参考文献', 'Reading the references']],
   [/^what-if$/, ['推演"如果"', 'Exploring a what-if']],
   [/^foundation$/, ['起草设定与开篇大纲', 'Drafting the bible and outline']],
   [/^import$/, ['导入并分析', 'Importing']],

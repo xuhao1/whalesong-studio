@@ -59,6 +59,10 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
           `${result.mode === 'continue' ? 'Continued' : 'Drafted'} chapter ${result.index} "${result.title}" (${result.chapterId}): ${result.wordsWritten} words written, ${result.wordsTotal} in the chapter now.`,
           `Writer: ${result.model}; length: ${result.budget !== undefined ? `about ${result.budget} recommended` : 'left to the writer'}; story so far: ${story}${result.following !== undefined ? `, plus the ${result.following} chapter(s) after it` : ''} (~${result.contextTokens} tokens${result.cachedTokens !== undefined ? `, ${result.cachedTokens} read from the provider's cache` : ''}); cast in view: ${result.cast.join(', ') || 'none'}.${result.continued ? ' The model hit its output limit and the chapter was completed by continuation.' : ''}`,
           ...(result.pictures !== undefined ? [picturesSaid(result.pictures, 'writer')!] : []),
+          // The book's references: what the writer was handed of them, and where that came from.
+          ...(result.referenced !== undefined ? [result.referenced.none !== undefined
+            ? `References: no notes went to the writer — ${result.referenced.none}.`
+            : `References: the writer was handed the chapter's reference notes (${result.referenced.chars} characters${result.referenced.fresh === true ? ', taken just now by the planner, who read the references for this chapter — one more agent run' : ', as kept on its plan'}). They are on the chapter's plan (referenceNotes) for the author to read and change.`] : []),
           result.digested ? 'Memory digested: summary, facts and character states are up to date.' : 'Not digested yet — run novel_digest before writing later chapters.',
           `Opens: ${result.preview.head}${result.preview.tail.length > 0 ? `\n…\nCloses: ${result.preview.tail}` : ''}`,
         ]

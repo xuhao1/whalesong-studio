@@ -272,6 +272,8 @@ export function withBookImage(settings: ImageSettings, book: BookImageSettings |
   const next = { ...base, ...Object.fromEntries(Object.entries(mine).filter(([, value]) => value !== undefined)) } as ImageSettings
   // A book that says which picture leads says so whatever an older switch of the Studio's had it at.
   if (book.lead !== undefined) delete next.sheetFirst
+  // …and one that says what a portrait comes to, whatever an older switch had.
+  if (book.portraits !== undefined) delete next.portraitScene
   return next
 }
 
@@ -304,6 +306,24 @@ export function imageSetupName(value: Pick<ImageSettings, 'provider' | 'baseURL'
   const where = source === 'codex' ? 'ChatGPT' : source === 'bailian' ? 'Bailian' : source === 'openrouter' ? 'OpenRouter' : source === 'openai' ? 'OpenAI' : source === 'comfyui' ? 'ComfyUI' : source === 'diffusers' ? 'Diffusers' : hostOf(value.baseURL) ?? 'custom'
   const model = (value.model ?? '').trim()
   return model.length > 0 ? `${where} · ${model.split('/').at(-1)}` : where
+}
+
+/** What a portrait asked for with nothing said of it comes to; see `ImageSettings.portraits`. */
+export type PortraitPlan = 'both' | 'scene' | 'plain'
+
+/** What a portrait asked for with nothing said of it comes to: what the settings say — both pictures where they say nothing. */
+export function portraitsOf(settings: Pick<ImageSettings, 'portraits' | 'portraitScene'>): PortraitPlan {
+  if (settings.portraits === 'both' || settings.portraits === 'scene' || settings.portraits === 'plain') return settings.portraits
+  return settings.portraitScene === false ? 'plain' : 'both'
+}
+
+/** Who writes the prompt that is sent; see `ImageSettings.promptWrite`. */
+export type PromptWrite = 'always' | 'fit' | 'never'
+
+/** Who writes the prompt that is sent: what the settings say — the director where the brief does not fit the model, where they say nothing. */
+export function promptWriteOf(settings: Pick<ImageSettings, 'promptWrite' | 'promptCompact'>): PromptWrite {
+  if (settings.promptWrite === 'always' || settings.promptWrite === 'fit' || settings.promptWrite === 'never') return settings.promptWrite
+  return settings.promptCompact === false ? 'never' : 'fit'
 }
 
 /** Which picture of a person leads; see `ImageSettings.lead`. */

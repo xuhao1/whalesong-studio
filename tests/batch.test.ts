@@ -335,7 +335,7 @@ describe('batches of real work', () => {
       const subjects = images.calls.map(call => call.prompt)
       expect(subjects.filter(prompt => prompt.includes('人物设定图'))).toHaveLength(1)
       const sheetAt = subjects.findIndex(prompt => prompt.includes('人物设定图'))
-      const hers = subjects.findIndex(prompt => prompt.includes('人物立绘') && prompt.includes('黑发青衣'))
+      const hers = subjects.findIndex(prompt => prompt.includes('人物立绘') && prompt.includes('沈璃'))
       expect(hers).toBeGreaterThan(sheetAt)
       expect(images.calls[hers]!.references).toHaveLength(1)
       expect((await project.findCharacter(bare.id))!.visual?.sheet).toBeDefined()

@@ -5,6 +5,7 @@
  * line being spoken can be shown in the prose itself. Shared by the Studio's
  * reader and the one served to other devices; no Node, no DOM.
  */
+import { countWords } from './text'
 
 export type Block =
   | { kind: 'paragraph'; text: string; offset: number }
@@ -259,7 +260,8 @@ export interface PortraitPlace {
   /**
    * Why it does not stand in the text by itself: `moment` — another picture of the same moment does; `person` —
    * another portrait is the one that stands for them (the author's choice, on their page); `chapter` — a moment of
-   * theirs is shown in that chapter, and that is the picture of them there. The author can ask it in all the same.
+   * theirs is shown right there — at the same place of the chapter, or so near that both would be seen together — and
+   * that is the picture of them there. The author can ask it in all the same.
    */
   spare?: 'moment' | 'person' | 'chapter'
 }
@@ -272,19 +274,38 @@ function pairsOf(text: string): Set<string> {
   return pairs
 }
 
+/** What a picture is placed by in a chapter. */
+export interface FigureToPlace {
+  /** What the text is searched for: the moment as it is written — or, where `names` are given, nothing that matters. */
+  told: string
+  /**
+   * A picture of the person, not of a moment: it stands where the chapter first names them — by any of these names —
+   * and not where most is said of them.
+   */
+  names?: readonly string[]
+}
+
+/** A place in a chapter: the paragraph a picture stands after, by its number among the paragraphs and where it begins in the text. */
+export interface FigureSpot { paragraph: number; offset: number }
+
 /**
- * Where the pictures of people's moments stand in a chapter: each after the paragraph that tells most of what the
- * moment says (by the words they share — the moment is written as a picture, not quoted from the page), a moment
- * nothing of the chapter tells at its end. A picture the text shows already is not shown twice.
+ * Where pictures stand in a chapter, one answer for each asked: a picture of somebody's moment after the paragraph
+ * that tells most of what the moment says (by the words they share — the moment is written as a picture, not quoted
+ * from the page), a moment nothing of the chapter tells at its end; a picture of the person after the first paragraph
+ * that names them. Nothing for a chapter with no paragraph.
  */
-export function placeFigures(text: string, moments: readonly { path: string; key?: string; caption: string; told: string }[]): ChapterFigure[] {
+export function figureSpots(text: string, asked: readonly FigureToPlace[]): (FigureSpot | undefined)[] {
   const paragraphs = blocksOf(text).filter((block): block is Extract<Block, { kind: 'paragraph' }> => block.kind === 'paragraph')
-  if (paragraphs.length === 0) return []
-  const spoken = paragraphs.map(block => pairsOf(block.text))
-  const figures: ChapterFigure[] = []
-  for (const moment of moments) {
-    if (text.includes(moment.path) || figures.some(figure => figure.path === moment.path)) continue
-    const wanted = pairsOf(moment.told)
+  if (paragraphs.length === 0) return asked.map(() => undefined)
+  let spoken: Set<string>[] | undefined
+  return asked.map((figure) => {
+    const names = (figure.names ?? []).map(name => name.trim()).filter(name => [...name].length >= 2)
+    if (names.length > 0) {
+      const first = paragraphs.findIndex(block => names.some(name => block.text.includes(name)))
+      if (first >= 0) return { paragraph: first, offset: paragraphs[first]!.offset }
+    }
+    spoken ??= paragraphs.map(block => pairsOf(block.text))
+    const wanted = pairsOf(figure.told)
     let best = paragraphs.length - 1
     let most = 0
     spoken.forEach((pairs, at) => {
@@ -295,7 +316,36 @@ export function placeFigures(text: string, moments: readonly { path: string; key
         best = at
       }
     })
-    figures.push({ path: moment.path, ...(moment.key !== undefined ? { key: moment.key } : {}), caption: moment.caption, after: paragraphs[best]!.offset })
-  }
+    return { paragraph: best, offset: paragraphs[best]!.offset }
+  })
+}
+
+/**
+ * How much text may lie between two pictures of the same person for them to count as standing in one place: about
+ * what a small screen shows at once. Nearer than this, a reader would have both before them.
+ */
+export const FIGURES_NEAR = 400
+
+/** Whether two places of a chapter are so near each other that pictures at both would be seen together. */
+export function spotsNear(text: string, one: FigureSpot | undefined, other: FigureSpot | undefined): boolean {
+  // A chapter that has nowhere to put them has them in one place.
+  if (one === undefined || other === undefined) return true
+  if (one.paragraph === other.paragraph) return true
+  const between = text.slice(Math.min(one.offset, other.offset), Math.max(one.offset, other.offset))
+  return countWords(between) <= FIGURES_NEAR
+}
+
+/**
+ * Where the pictures shown beside a chapter stand in it ({@link figureSpots}). A picture the text shows already is
+ * not shown twice.
+ */
+export function placeFigures(text: string, moments: readonly (FigureToPlace & { path: string; key?: string; caption: string })[]): ChapterFigure[] {
+  const spots = figureSpots(text, moments)
+  const figures: ChapterFigure[] = []
+  moments.forEach((moment, at) => {
+    const spot = spots[at]
+    if (spot === undefined || text.includes(moment.path) || figures.some(figure => figure.path === moment.path)) return
+    figures.push({ path: moment.path, ...(moment.key !== undefined ? { key: moment.key } : {}), caption: moment.caption, after: spot.offset })
+  })
   return figures
 }

@@ -357,15 +357,17 @@ describe('drawing the panels', () => {
     const done = await renderPanels(bed.core, bed.runtime, { chapter: chapter.id, concurrency: 1 }, { origin: 'user' })
     expect(done).toMatchObject({ rendered: 2, failed: 0 })
     const first = images.calls[0]!.prompt
-    expect(first.indexOf('中景，沈璃蹲在船头')).toBe(0)
-    expect(first).toContain('沈璃（丧服）：slender woman, low bun, grey qipao，素白麻衣，腰系草绳')
+    // The brief every picture is laid out as: what it is for, then the director's words as the picture…
+    expect(first.startsWith('用途：有声漫的一格画面（分镜）\n画面：中景，沈璃蹲在船头')).toBe(true)
+    // …then her, pointed to in the sheet of what she wears there — it goes along, and her look is not written out beside it —
+    expect(first).toContain('人物「沈璃（丧服）」：见图1\n')
     expect(first).toContain('地点「渡口」：青石阶伸进水里，一根系船的木桩，对岸是芦苇')
-    expect(first).toContain('「情债簿」：蓝布封皮的线装薄册，边角磨白，封面没有字')
-    expect(first).toContain('Avoid: 辫子')
+    expect(first).toContain('物件「情债簿」：蓝布封皮的线装薄册，边角磨白，封面没有字')
+    expect(first).toContain('不要出现：辫子')
     // Held against the sheet of the look worn, and the place's art.
     expect(images.calls[0]!.references.map(reference => reference.label)).toEqual(['沈璃（丧服）', '场所「渡口」'])
     // In her usual look where the storyboard names none.
-    expect(images.calls[1]!.prompt).toContain('沈璃：slender woman, low bun, grey qipao')
+    expect(images.calls[1]!.prompt).toContain('人物「沈璃」：见图1\n')
     expect(images.calls[1]!.prompt).not.toContain('素白麻衣')
     expect(images.calls[1]!.references.map(reference => reference.label)).toEqual(['沈璃', '场所「渡口」'])
     // A panel is a picture of the book: on record, part by part, like any other.
@@ -373,7 +375,7 @@ describe('drawing the panels', () => {
     const records = (await project.illustrations()).filter(item => item.kind === 'panel')
     expect(records.map(item => item.path)).toEqual(drawn.map(panel => panel.image))
     expect(records[0]).toMatchObject({ kind: 'panel', target: chapter.id })
-    expect(records[0]!.parts!.pieces!.map(piece => piece.of)).toEqual(['composed', 'look', 'place', 'thing'])
+    expect(records[0]!.parts!.pieces!.map(piece => piece.of)).toEqual(['use', 'composed', 'look', 'place', 'thing'])
     expect(records[0]!.parts!.references).toEqual([{ path: mourning, label: '沈璃（丧服）', sheet: true }, { path: placeArt, label: '场所「渡口」' }])
   })
 

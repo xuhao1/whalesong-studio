@@ -34,7 +34,7 @@ export function usePortraitPlaces(where: { chapter?: string | undefined; charact
 /** Why a portrait is not in the text by itself, in a few words. */
 export function spareWord(place: PortraitPlace, t: (zh: string, en: string) => string): string {
   return place.spare === 'moment' ? t('这一幕另有一张', 'another picture of this moment stands')
-    : place.spare === 'chapter' ? t('这一章已有名场面', 'a moment of theirs stands in this chapter')
+    : place.spare === 'chapter' ? t('紧挨着名场面', 'a moment of theirs stands right there')
       : t('不是代表立绘', 'not the portrait that stands for them')
 }
 

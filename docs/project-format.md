@@ -16,6 +16,7 @@ my-novel/
 │   ├── images/          portraits, scene illustrations, panels, backgrounds
 │   ├── audio/           one WAV per script line and per generated sound cue (per chapter), joined chapter tracks
 │   └── video/           <chapter>.mp4 cut by post-production; work/<chapter>/ is its working directory (material lists, its scripts, intermediate files)
+├── references/          the books this one goes by: index.json, and <id>.txt for a manuscript taken in as plain text
 ├── export/              <title>.md, .txt, .html, .epub
 └── .novel/              machine memory (see below)
 ```
@@ -39,7 +40,7 @@ Novel Studio finds books by looking for `novel.json` in a workspace directory an
 | `cover` | project-relative path of the picture shown as the book's cover. Unset, the latest cover drawn stands in |
 | `storyboard` | how finely this book's motion comics are cut: `{ "density": "auto" \| "sparse" \| "balanced" \| "dense", "maxPanels": 24 }`, both optional |
 | `models` | this book's own model routes: a role named here uses that model of DSH's for this book, whatever the Studio-wide settings say (see [configuration](./configuration.md)) |
-| `image` | this book's own way with pictures, over the Studio-wide settings: `{ "lead": "sheet" \| "portrait" \| "none", "sheet": "turn" \| "front", "portraitScene": bool, "panelThings": bool }` — which of a person's pictures the others are drawn against, whether a design sheet turns the person round or shows the front alone, whether a portrait shows a signature scene, whether a motion comic's panels take the art of the things in them. A key left out follows the Studio |
+| `image` | this book's own way with pictures, over the Studio-wide settings: `{ "lead": "sheet" \| "portrait" \| "none", "sheet": "turn" \| "front", "portraits": "both" \| "scene" \| "plain", "looks": "pictured" \| "always", "portraitScene": bool (older: `false` reads as `portraits: "plain"`), "panelThings": bool }` — which of a person's pictures the others are drawn against, whether a design sheet turns the person round or shows the front alone, whether a portrait shows a signature scene, whether a motion comic's panels take the art of the things in them. A key left out follows the Studio |
 | | With a `provider`, `image` is the book's whole image service — `provider`, `baseURL`, `model`, `sizes`, `local`, `workflow`… as in the Studio's settings — and nothing of the Studio's service is mixed in; `kept` remembers the services the book was moved away from. Keys are never here: the one saved for the address is used. |
 | `tts` | this book's own speech setup, whole (`provider`, `baseURL`, `model`, `narratorVoice`, `defaultVoices`, `speechTags`…), where it has one; absent, the Studio's speaks for it. |
 | `sound` | this book's own way with effects, music and beds (`provider`, `model`, `effects`, `music`, `beds`), where it has one. |
@@ -71,6 +72,8 @@ Novel Studio finds books by looking for `novel.json` in a workspace directory an
           "beats": [{ "id": "b_…", "summary": "…", "conflict": "…", "outcome": "…", "emotion": "…" }],
           "targetWords": 3000,           // recommended length; absent: the book's, else the writer judges
           "guides": [{ "path": "assets/guides/1a2b….png", "note": "the last image of the chapter" }], // pictures to write it by
+          "referenceNotes": "…",         // what the planner took from the book's references for this chapter (or the author wrote): handed to the writer
+          "referencesRead": true,        // somebody looked in the references for it — nobody looks again by itself, whatever came of it
           "notes": "for the writer"
         }
       ]
@@ -200,6 +203,30 @@ Free-form notes in Markdown.
 
 **Style profile** (`bible/styles/<id>.md`): front matter `id`, `name`, `pov` (`first`, `third-limited`, `third-omniscient`, `second`, `multi`), `tense`, `register` (the kind of language it is written in — classical, the vernacular of the old chaptered novels, modern prose… — with what marks it), `tone`, `diction`, `rhythm`, `imagery`, `dialogue`, `pacing`, `rules`, `avoid`, `exemplars` (`[{ label, text }]`); the body holds further notes.
 
+## References
+
+`references/index.json` lists the books this one goes by — what its crew may read in while it works — and `references/<id>.txt` holds a manuscript that was taken in for this book alone.
+
+```jsonc
+{
+  "schema": 1,
+  "beforeWriting": false,          // absent: the planner reads the references for a chapter before it is written
+  "items": [
+    { "id": "ref_ab12cd", "kind": "book",            // a book of the shelf, consulted as it is organised there
+      "title": "红楼梦", "root": "/path/to/that/book", "book": "novel_…",   // its folder, and its id (found again by id where the folder moved)
+      "scope": ["style", "text"],                    // what of it is open: world, characters, style, plot, text — absent: all
+      "note": "只学它章回体的口吻；不要用它的人物", // how the author wants it used, in their words
+      "off": true,                                   // set aside: kept on the list, not consulted
+      "addedAt": "2026-10-11T05:25:27.119Z" },
+    { "id": "ref_ef34gh", "kind": "text",            // a manuscript, as plain text: read and searched, no cards
+      "title": "代笔行旧例", "file": "references/ref_ef34gh.txt", "chars": 197, "parts": 1,
+      "note": "写到行规时照它来，可以引原话" }
+  ]
+}
+```
+
+Nothing of a reference is copied into this book's bible, and nothing of one is put into a task whole: the crew reads in them with tools of its own, as far as each is open, and what it took for a chapter is on that chapter's plan (`referenceNotes`). A reference that is a sealed book says only its id here, and is read while that book is unlocked.
+
 ## Manuscript
 
 `manuscript/<chapter id>.md` is plain prose: paragraphs separated by blank lines, no heading (the title lives in the outline). Three kinds of lines have meaning:
@@ -234,7 +261,9 @@ Word counts, audio scripts and exports ignore image lines.
 | `play/<id>.json` | interludes with every turn |
 | `video/<chapter>.json` | the record of the chapter's video: its path under `assets/video/`, length, size, what post-production said about its cut, and what it was cut from |
 | `illustrations.json` | the gallery index. Each picture keeps the `prompt` as the Studio put it together and the `parts` it was assembled from: `subject` — and, for the kinds that are put together from parts, its `pieces` in the order sent (`of`: `frame`, `look`, `outfit`, `expression`, `ask`, `composed`; a `look` says where its words are `from`: `anchor` or `card`), `clipped` where the subject was cut to fit —, `style` with `styleSource` (`book`, `studio` or `default`), the `avoid` list, the `references` (path and label of each reference image that went) and the `referenceNote` (what the prompt said they are for). A reference that is a design sheet says so (`sheet`), and that only its front view went (`front`). Panels of motion comics are on record like any picture (kind `panel`, `target` the chapter; pieces `composed`, `look`, `place`, `thing`). A picture that is another one changed in one thing has the change as its `subject` (one piece, `of: change`), the picture it came from as its one reference, no `style` and no `avoid` — nothing else was sent — and a `base`: what it shows in words (`subject`, `style`, `styleSource`, `avoid`, `references`), unsent, which it is drawn from when its words are rewritten. Beside them: the `model` and the `provider` it was drawn with, the `size` asked for, and `sent` — what reached the image service word for word (`prompt`; `negative` where the service takes it as a field of its own; `size` in the service's terms). Pictures drawn before a field was kept simply lack it |
-| | A portrait of one of somebody's moments also keeps `moment` — `{ title, scene, chapter }`: which moment, and the chapter it stands in. A picture drawn to compare services keeps `trial` — `{ id, label }`: the comparison it is of, and which service drew it. |
+| | A portrait of one of somebody's moments also keeps `moment` — `{ title, scene, chapter }`: which moment, and the chapter it stands in. A picture drawn to compare services keeps `trial` — `{ id, label }`: the comparison it is of, and which service drew it. The picture of a passage keeps `passage` — `{ quote, why }`: the passage, and the director's account of whom and what it means. |
+| | The pieces of a prompt are laid out a line each (`label` is what the line began with), and say more of themselves: `of` is also `use` (what the picture is for), `picture` (the picture in the author's words), `scene`, `place`, `thing`, `change`; a `look`, `place` or `thing` has the `name` it is said by, a person beside the subject is `secondary`, and a `look` keeps the `path` of the picture that shows the person. Where that picture went along the line only points to it — `byPicture: true`, `text` the pointer as sent ("见图1") — and `words` keeps, unsent, what it would have said (what the picture is drawn from again where no picture can go). |
+| | `written` is the prompt as it was handed to the image service where that is not `prompt` (the director wrote it out, or fitted it); `verbatim: true` marks a picture drawn from its author's own whole prompt, to which the Studio added nothing. |
 | `reading.json` | where the book was last read, on whichever device: `{chapter, at, by}` — what the next device picks up. Written without touching the book's revision |
 | `graph.json` | where the author moved people to on the picture of who is what to whom: a person's id to `{x, y}` in the units of its layout; whoever is not in it stands where the layout puts them |
 | `index/` | the search index and embedding cache — rebuildable, safe to delete |

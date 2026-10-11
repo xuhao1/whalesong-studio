@@ -424,7 +424,7 @@ describe('an image server of the author\'s own', () => {
       // A short prompt is sent as it is, with what to keep out after it, and nobody is asked.
       await illustrate(bed.core, bed.runtime, { kind: 'custom', prompt: '一只纸船', size: '1024x1024' }, { origin: 'user' })
       expect(asked).toHaveLength(1)
-      expect(String(seen.at(-1)!.body.prompt)).toContain('Avoid: 文字、水印、现代服饰与物件')
+      expect(String(seen.at(-1)!.body.prompt)).toContain('不要出现：文字、水印、现代服饰与物件')
     } finally {
       await bed.cleanup()
     }
@@ -510,15 +510,17 @@ describe('an image server of the author\'s own', () => {
       await project.saveCharacter({ name: '阿棠', role: 'supporting', appearance: '圆脸，两条短辫', visual: { sheet: 'assets/images/sheet-tang.png' } })
       const portrait = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: heng.id, plain: true }, { origin: 'user' })
       expect(seen.at(-1)).toMatchObject({ path: '/v1/images/edits' })
-      expect(String(seen.at(-1)!.body.prompt)).toContain('参考图：第1张是沈蘅')
+      expect(String(seen.at(-1)!.body.prompt)).toContain('参考图：图1 是沈蘅')
+      // Her sheet went along: her line points to it.
+      expect(String(seen.at(-1)!.body.prompt)).toContain('人物「沈蘅」：见图1')
       expect(portrait.parts?.references).toEqual([{ path: 'assets/images/sheet-heng.png', label: '沈蘅', sheet: true }])
       expect(portrait.parts?.left).toBeUndefined()
       const said: Record<string, unknown>[] = []
       const both = await illustrate(bed.core, bed.runtime, { kind: 'custom', prompt: '两人在柜台前对账', characters: ['沈蘅', '阿棠'] }, { origin: 'user', job: { ...quietJob(), result: (value) => { said.push(value) } } })
       expect(seen.at(-1)).toMatchObject({ path: '/v1/images/edits' })
       expect((seen.at(-1)!.body.files as Record<string, number>).image).toBe(1)
-      expect(String(seen.at(-1)!.body.prompt)).toContain('第1张是沈蘅')
-      expect(String(seen.at(-1)!.body.prompt)).not.toContain('第2张')
+      expect(String(seen.at(-1)!.body.prompt)).toContain('图1 是沈蘅')
+      expect(String(seen.at(-1)!.body.prompt)).not.toContain('图2')
       expect(both.parts?.references).toEqual([{ path: 'assets/images/sheet-heng.png', label: '沈蘅', sheet: true }])
       expect(both.parts?.left).toEqual([{ path: 'assets/images/sheet-tang.png', label: '阿棠', sheet: true }])
       expect(both.parts?.leftWhy).toBeUndefined()
@@ -550,7 +552,7 @@ describe('an image server of the author\'s own', () => {
       expect(seen.at(-1)!.body).toEqual({ model: 'qwen-image-2.1-turbo-nf4', prompt: '风灯换成红色的', size: '768x768', n: '1', files: { image: 1 } })
       expect(asked).toHaveLength(1)
       expect(changed.sent).toEqual({ prompt: '风灯换成红色的', size: '768x768' })
-      expect(changed.parts).toMatchObject({ subject: '风灯换成红色的', references: [{ path: first.path, label: '要改的原图' }], base: { subject: '雨夜的码头，一盏风灯\n风灯换成红色的', avoid: ['文字', '水印', '现代服饰与物件'] } })
+      expect(changed.parts).toMatchObject({ subject: '风灯换成红色的', references: [{ path: first.path, label: '要改的原图' }], base: { subject: '用途：小说插图\n画面：雨夜的码头，一盏风灯\n这一张的要求：风灯换成红色的', avoid: ['文字', '水印', '现代服饰与物件'] } })
       expect(changed.parts?.left).toBeUndefined()
 
       // The same server before it took pictures: the picture is sent, it has nowhere to take it, and the new one is
@@ -560,11 +562,11 @@ describe('an image server of the author\'s own', () => {
       const said: Record<string, unknown>[] = []
       const worded = await redrawPicture(bed.core, bed.runtime, { picture: first.id, change: '风灯换成红色的' }, { origin: 'user', job: { ...quietJob(), result: (value) => { said.push(value) } } })
       expect(seen.at(-1)).toMatchObject({ path: '/v1/images/generations' })
-      expect(worded.prompt).toContain('雨夜的码头，一盏风灯\n风灯换成红色的')
+      expect(worded.prompt).toContain('用途：小说插图\n画面：雨夜的码头，一盏风灯\n这一张的要求：风灯换成红色的')
       expect(worded.prompt).toContain('画风：')
       expect(worded.prompt).not.toContain('参考图')
       expect(worded.parts?.base).toBeUndefined()
-      expect(worded.parts?.pieces).toEqual([{ of: 'composed', text: '雨夜的码头，一盏风灯' }, { of: 'ask', text: '风灯换成红色的' }])
+      expect(worded.parts?.pieces).toEqual([{ of: 'composed', text: '用途：小说插图\n画面：雨夜的码头，一盏风灯', label: '' }, { of: 'ask', text: '风灯换成红色的', label: '这一张的要求：' }])
       expect(worded.parts?.left).toEqual([{ path: first.path, label: '要改的原图' }])
       expect(worded.parts?.leftWhy).toContain('404')
       expect(said).toContainEqual({ left: { names: ['要改的原图'], taken: 0, why: worded.parts!.leftWhy } })

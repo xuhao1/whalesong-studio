@@ -496,7 +496,68 @@ export interface ChapterPlan {
   targetWords?: number
   /** Pictures the author gave to steer this chapter: whoever writes it is shown them (or told what they show). */
   guides?: PictureGuide[]
+  /**
+   * What the book's references have for this chapter: notes the planner took in them for whoever writes it — facts and
+   * settings to keep to, ways of writing to borrow, a short passage quoted — or the author's own. Absent: there are
+   * none — nobody looked yet, or somebody did (`referencesRead`) and nothing of them is of use here.
+   */
+  referenceNotes?: string
+  /** The references were looked at for this chapter — by the planner, or the author took the notes in hand: nobody looks again by itself. */
+  referencesRead?: boolean
   notes?: string
+}
+
+/** What of a reference that is a book on the shelf may be consulted. */
+export type ReferenceAspect = 'world' | 'characters' | 'style' | 'plot' | 'text'
+
+export const REFERENCE_ASPECTS: readonly ReferenceAspect[] = ['world', 'characters', 'style', 'plot', 'text']
+
+/**
+ * A book this book goes by: its world, its way of writing, its settings — whatever the author says of it.
+ *
+ * `book`: a book that stands on the shelf, consulted as it is organised there — its bible, its outline and digests,
+ * its style, its text. `text`: a manuscript taken in for this book alone and kept with it, consulted as plain text
+ * (no cards, no outline: for those it is imported as a book of the shelf first). Either way nothing of it is put
+ * into a task as it stands: whoever works on the book is told that it is there and what the author wants of it, and
+ * reads in it with tools of its own.
+ */
+export interface BookReference {
+  id: string
+  kind: 'book' | 'text'
+  /** What it is called. A sealed book of the shelf is not named here — its name is read off the book while it is open. */
+  title?: string
+  author?: string
+  /** `book`: the folder it stands in, and which book that is (its manifest's id): found by either. */
+  root?: string
+  book?: string
+  /** `text`: its file among the book's own, how long it is, and into how many parts it reads. */
+  file?: string
+  chars?: number
+  parts?: number
+  /** How to go by it, in the author's own words: what to take from it, what to leave. */
+  note?: string
+  /** `book`: what of it may be consulted. Left out: all of it. */
+  scope?: ReferenceAspect[]
+  /** Kept on the list, and not consulted for now. */
+  off?: boolean
+  addedAt: string
+}
+
+/** A reference as it is found now. */
+export interface ReferenceInfo extends BookReference {
+  /** What to call it: its title, the book's own where it is a book of the shelf that is open. */
+  name: string
+  /** `ready`: it can be read. `locked`: a sealed book that is not open. `missing`: the book, or the file, is not where it was. */
+  state: 'ready' | 'locked' | 'missing'
+  /** `book`: what there is of it to consult. */
+  has?: { chapters: number; words: number; characters: number; world: number; styles: number }
+}
+
+/** The references of a book, and how they are used. */
+export interface ReferenceShelf {
+  references: ReferenceInfo[]
+  /** Before a chapter is written, the planner looks in the references for it and leaves notes for the writer. `false`: the author turned that off. */
+  beforeWriting: boolean
 }
 
 /**
@@ -1100,10 +1161,22 @@ export interface ImageSettings {
    */
   promptTokens?: number
   /**
-   * A prompt that comes to more than the model reads is rewritten by the director to fit before it is sent — the same
-   * picture in fewer words, not the prompt cut off. Unset: yes. `false`: prompts go as they are.
+   * Who writes the prompt that is sent. Every picture's makings are laid out by the Studio in one order — what it is
+   * for, the picture, its framing, the people, the place, the things, what was asked, the art direction, the
+   * reference pictures, what to keep out. `always`: the director then writes that brief out as the prompt, in one
+   * call — one language, each thing said once, within what the model reads. `fit` (default): only where the brief
+   * comes to more than the model reads; otherwise the brief is the prompt. `never`: the brief goes as it is, whatever
+   * its length.
    */
+  promptWrite?: 'always' | 'fit' | 'never'
+  /** As settings before `promptWrite` said it: `false` reads as `promptWrite: 'never'`. */
   promptCompact?: boolean
+  /**
+   * The language prompts are written in. Unset: the book's. `en`: English — for an image model that reads nothing
+   * else (the Stable Diffusion family): the brief is laid out under English headings, and the director, where it
+   * writes the prompt (`promptWrite`), writes all of it in English.
+   */
+  promptLang?: 'en'
   /**
    * `openai`: the sizes the endpoint draws, as `WIDTHxHEIGHT`; a picture is asked for at whichever is nearest in shape.
    * Unset: for a server of the author's own, 768x768, 768x512 and 512x768; for GPT Image, its own three; for anything
@@ -1172,11 +1245,22 @@ export interface ImageSettings {
    */
   lead?: 'sheet' | 'portrait' | 'none'
   /**
-   * A portrait asked for with nothing said of it shows the person in their signature scene, which the director picks
-   * from the book and keeps on the card (`visual.scenes`). Unset: yes. `false`: such a portrait is plain — facing the
-   * viewer, on a plain ground.
+   * What a portrait asked for with nothing said of it comes to. `both` (default): two pictures — a plain likeness
+   * (facing the viewer, on a plain ground: what stands for the person, and stands where they first come on) and their
+   * signature scene, which the director picks from the book and keeps on the card (`visual.scenes`). `scene`: the
+   * scene alone. `plain`: the likeness alone.
    */
+  portraits?: 'both' | 'scene' | 'plain'
+  /** As settings before `portraits` said it: `false` reads as `portraits: 'plain'`; `true` says nothing now. */
   portraitScene?: boolean
+  /**
+   * Whether somebody's standing look is written out in a prompt their picture goes along with. `pictured` (default):
+   * no — their line points to the picture ("see Image 1"), and what they wear and do in this picture is the picture's
+   * own words to say: written out beside it, the standing look pulls a model back to it wherever the two differ (a
+   * moment in other clothes). `always`: written out every time, picture or no picture. Whoever has no picture going
+   * along is written out either way.
+   */
+  looks?: 'pictured' | 'always'
   /**
    * What a design sheet shows. `turn` (default): the person three times — front, side, back. `front`: the front view
    * alone — one figure, which a small image model draws where three in a row are beyond it.
@@ -1202,13 +1286,13 @@ export interface ImageSettings {
 export type BookImageSettings = Partial<Omit<ImageSettings, 'stylePrompt' | 'negativePrompt'>>
 
 /** The ways of drawing a book may have of its own while its pictures still come from the Studio's service. */
-export const BOOK_IMAGE_KEYS: readonly (keyof BookImageSettings)[] = ['lead', 'portraitScene', 'sheet', 'panelThings']
+export const BOOK_IMAGE_KEYS: readonly (keyof BookImageSettings)[] = ['lead', 'portraits', 'portraitScene', 'sheet', 'panelThings', 'looks']
 
 /**
  * What of the image settings belongs to the service the pictures come from: changed together when the author moves to
  * another service, remembered together (`kept`), and a book's own together where the book names a service.
  */
-export const IMAGE_SERVICE_KEYS: readonly (keyof ImageSettings)[] = ['provider', 'baseURL', 'apiKeyRef', 'model', 'quality', 'local', 'promptTokens', 'promptCompact', 'sizes', 'bridge', 'workflow', 'editWorkflow', 'textEncoder', 'vae', 'encoderType', 'python', 'device', 'dtype', 'steps', 'guidance', 'size', 'resolution', 'concurrency', 'references']
+export const IMAGE_SERVICE_KEYS: readonly (keyof ImageSettings)[] = ['provider', 'baseURL', 'apiKeyRef', 'model', 'quality', 'local', 'promptTokens', 'promptCompact', 'promptWrite', 'promptLang', 'sizes', 'bridge', 'workflow', 'editWorkflow', 'textEncoder', 'vae', 'encoderType', 'python', 'device', 'dtype', 'steps', 'guidance', 'size', 'resolution', 'concurrency', 'references']
 
 /** The same of the speech settings: what belongs to the service that speaks. How the narrator is told to read is the author's, whoever reads. */
 export const TTS_SERVICE_KEYS: readonly (keyof TtsSettings)[] = ['provider', 'baseURL', 'apiKeyRef', 'model', 'sampleRate', 'designedVoiceModel', 'narratorVoice', 'defaultVoices']
@@ -1924,11 +2008,30 @@ export interface IllustrationPiece {
    * wrote for it, from the book. `scene`: the moment of the book a portrait shows, as kept on the person's card.
    * `change`: what was to change in a picture that went along to be changed — with that picture, all that was said.
    * `place`: how the place the picture is set in looks, as the bible has it. `thing`: how a thing it shows looks.
+   * `use`: what kind of picture it is and what it is for — said first. `picture`: the picture in the author's own
+   * words (a picture of their own prompt).
    */
-  of: 'frame' | 'look' | 'outfit' | 'expression' | 'ask' | 'composed' | 'scene' | 'change' | 'place' | 'thing'
+  of: 'use' | 'picture' | 'frame' | 'look' | 'outfit' | 'expression' | 'ask' | 'composed' | 'scene' | 'change' | 'place' | 'thing'
   text: string
-  /** What the words were introduced by in the prompt, on the line of their own they stood on (`「沈蘅」的样子：`). Not part of the words. */
+  /** What the words were introduced by in the prompt, on the line of their own they stood on (`人物「沈蘅」：`). Not part of the words. */
   label?: string
+  /** Whose look it is, which place, which thing: what the line is named by. */
+  name?: string
+  /** A `look` of somebody who is in the picture beside the one it is of. */
+  secondary?: boolean
+  /** A `look`: the picture that shows this person (their design sheet, the sheet of the outfit worn, else their portrait), where they have one. */
+  path?: string
+  /** A `look` in an outfit that is not their usual: their standing look alone, without the outfit — what the picture that shows them is compared by. */
+  standing?: string
+  /** A `look` in an outfit the picture that shows them does not show (the outfit has no sheet of its own): the outfit, in words — said beside the pointer to that picture. */
+  wearing?: string
+  /**
+   * A `look` that was not written out: the picture that shows them went along, and the line only points to it
+   * (`text` is that pointer, as sent). How they look was left to the picture — `image.looks`.
+   */
+  byPicture?: boolean
+  /** With `byPicture`: what the line would have said had no picture gone along — kept for when the picture is drawn again where none can go. Nothing of it was sent. */
+  words?: string
   /**
    * Where the words were taken from. A `look`: what is written for an image model (`anchor` — a visual anchor, a
    * place's look), or, lacking that, the prose of the card (`card`). A `scene`: the one kept on the person's card
@@ -1976,6 +2079,21 @@ export interface IllustrationParts {
   base?: Pick<IllustrationParts, 'subject' | 'style' | 'styleSource' | 'avoid' | 'references'>
 }
 
+/**
+ * Everything a picture was drawn from, for its author to rewrite and draw it again by: the prompt whole — the picture,
+ * the art direction, what is said of the reference pictures — and, apart from it, what was kept out.
+ */
+export interface PictureWhole {
+  /** The prompt as the image model got it (without what the way to that model adds of its own, and without what was kept out). */
+  prompt: string
+  /** The brief the Studio laid out, where `prompt` is the director's writing of it. */
+  brief?: string
+  /** What the picture was told to keep out: the book's list as it then was, the people's, the picture's own. */
+  avoid: string[]
+  /** The pictures that go along again, in the order the prompt numbers them. */
+  references: { path: string; label: string }[]
+}
+
 /** What went to an image service for one picture, word for word. */
 export interface IllustrationSent {
   /** The prompt as the model got it: what the Studio put together, and what the way to that model adds — things to keep out, where the service has no field for them; how the frame is shaped, where it takes no size. */
@@ -1991,7 +2109,7 @@ export interface IllustrationSent {
    * to about `tokens`; or could not (`failed`), and it went as it was, the model reading as far as it reads.
    * Tokens are the Studio's estimate: it has no model's tokenizer.
    */
-  compact?: { limit: number; from: number; tokens?: number; failed?: boolean; /** What the director wrote was still over, and its end — the least of it, by the order it was written in — was left off. */ cut?: boolean }
+  compact?: { /** What the model reads at most. Absent: it has no limit that is known — the director wrote the prompt out all the same (`promptWrite: 'always'`). */ limit?: number; from: number; tokens?: number; failed?: boolean; /** What the director wrote was still over, and its end — the least of it, by the order it was written in — was left off. */ cut?: boolean }
   /**
    * How it was sampled, where the Studio built the graph itself (a model on a ComfyUI server, no workflow named), and
    * where the steps and the guidance came from: the `settings`, the `server`'s own last run of that model, or the
@@ -2018,10 +2136,20 @@ export interface IllustrationInfo {
   size?: string
   /** What went to the image service, word for word. Pictures drawn before this was kept have none. */
   sent?: IllustrationSent
+  /**
+   * The prompt as it was handed to the image service, where that is not `prompt`: the director wrote it out from the
+   * brief, or brought it within what the model reads. (`sent.prompt` is this with whatever the way to that model adds
+   * of its own.) What the author rewrites when they draw the picture again from its whole prompt.
+   */
+  written?: string
+  /** The prompt is its author's own, whole — a picture drawn again from its prompt as they rewrote it: nothing was laid out or added by the Studio. */
+  verbatim?: boolean
   /** A portrait of one of somebody's moments: which (its name, its id on their card) and the chapter it is from — where the picture stands in the text. */
   moment?: { title?: string; scene?: string; chapter?: string }
   /** Drawn to compare services: one of several pictures of the same thing, each by another (`label`: which); `id` is the same for the pictures of one comparison. */
   trial?: { id: string; label: string }
+  /** The picture of a passage of a chapter: the passage it was drawn of (`quote`; absent where the chapter as a whole was), and what told the director who is in it and where (`why`). */
+  passage?: { quote?: string; why?: string }
 }
 
 /** One service a picture is tried with: what the author reads it as, and the service itself (its part of the image settings). */
@@ -2242,6 +2370,8 @@ export interface ProjectState {
   world: WorldEntry[]
   styles: StyleProfile[]
   stats: ProjectStats
+  /** How many books this one goes by that are consulted now (its references); absent where it has none. */
+  references?: number
   suggestions: Suggestion[]
   proposals: Proposal[]
   presence: CastPresence[]

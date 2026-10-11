@@ -57,6 +57,7 @@ export function renderDigest(state: ProjectState, mode: WorkMode, relativeRoot: 
         `进度：${stats.chaptersWithText}/${stats.chapters} 章已写，约 ${stats.words} 字；人物 ${stats.characters}，设定 ${stats.worldEntries}，未回收线索 ${stats.openThreads}`,
         leads.length > 0 ? `主要人物：${leads.join('、')}` : '',
         stats.pendingProposals + stats.pendingSuggestions > 0 ? `待处理：修订提案 ${stats.pendingProposals}，设定建议 ${stats.pendingSuggestions}` : '',
+        (state.references ?? 0) > 0 ? `参考文献：${state.references} 本在用（novel_reference 看是哪几本、作者要怎么参考）` : '',
         ...outside.map(entry => `【工坊之外的改动 ${entry.at.slice(0, 16).replace('T', ' ')} UTC】${entry.summary}`),
         nextStep(state, true),
       ]
@@ -65,6 +66,7 @@ export function renderDigest(state: ProjectState, mode: WorkMode, relativeRoot: 
         `Progress: ${stats.chaptersWithText}/${stats.chapters} chapters written, about ${stats.words} words; ${stats.characters} characters, ${stats.worldEntries} world entries, ${stats.openThreads} open threads`,
         leads.length > 0 ? `Main cast: ${leads.join(', ')}` : '',
         stats.pendingProposals + stats.pendingSuggestions > 0 ? `Waiting: ${stats.pendingProposals} revision proposals, ${stats.pendingSuggestions} bible suggestions` : '',
+        (state.references ?? 0) > 0 ? `References: this book goes by ${state.references} other book(s) (novel_reference lists them and how the author wants each used)` : '',
         ...outside.map(entry => `[Changed outside the Studio, ${entry.at.slice(0, 16).replace('T', ' ')} UTC] ${entry.summary}`),
         nextStep(state, false),
       ]

@@ -28,8 +28,8 @@ import { findPicturePress, findSoundPress } from '../core/media/press'
 import { publishSite, siteChaptersUpTo, siteDefaults, siteFolder } from '../core/pipelines/site'
 import { listChapters, listLines, listSides, readAlbum, readPosition, readSide, savePosition } from '../core/reader'
 import { albumCounts, albumEmpty } from '../shared/album'
-import { scenesOf } from '../shared/art'
-import { deriveArtDirection, deriveLook, deriveScenes, deriveVisual, illustrate, redrawPicture } from '../core/pipelines/illustrate'
+import { sceneOfPicture, scenesOf } from '../shared/art'
+import { deriveArtDirection, deriveLook, deriveScenes, deriveVisual, illustrate, pictureWhole, redrawPicture } from '../core/pipelines/illustrate'
 import { analyzeBook, importManuscript, readBookFile, importLine, rereadBook } from '../core/pipelines/import'
 import { applyOutlineOps, type OutlineOp } from '../core/pipelines/outline'
 import {
@@ -41,6 +41,8 @@ import { fixIssue, fixIssues, acceptProposal, rejectProposal, reviseBook, revise
 import { writeChapter } from '../core/pipelines/write'
 import { imageSetups, speechSetups, trialDerive, trialSpeak, trialWrite } from '../core/pipelines/trial'
 import { cleanGuides } from '../core/pipelines/guides'
+import { consultReferences } from '../core/pipelines/consult'
+import { addBookReference, addTextReference, referenceShelf, removeReference, setConsultBeforeWriting, updateReference } from '../core/references'
 import { ProjectError } from '../core/project'
 import { siftCast } from '../core/pipelines/cast'
 import { overrule, settleSuggestions, settlesItself } from '../core/pipelines/settle'
@@ -444,6 +446,7 @@ export function createHandlers(service: NovelService): Handlers {
 
     // ── bible ──
     'character.save': async ({ root, card }) => await (await open(root)).project.saveCharacter(card),
+    'character.scenePicture': async ({ root, id, scene, path }) => await (await open(root)).project.setScenePicture(requireString(id, 'id'), requireString(scene, 'scene'), requireString(path, 'path')),
     'character.delete': async ({ root, id }) => ({ deleted: await (await open(root)).project.deleteCharacter(id) }),
     'character.mark': async ({ root, id, chapter, kind, what }) => await (await open(root)).project.markLife(requireString(id, 'id'), {
       ...(typeof chapter === 'string' && chapter.length > 0 ? { chapter } : {}),
@@ -669,6 +672,51 @@ export function createHandlers(service: NovelService): Handlers {
       if (bytes.length > 24 * 1024 * 1024) throw new ProjectError('novel/invalid', 'that picture is larger than 24 MB: bring in a smaller copy')
       // Named by what it is: the same picture brought in twice is one file.
       return { path: await project.writeAsset(`guides/${createHash('sha1').update(bytes).digest('hex').slice(0, 16)}.${real}`, bytes) }
+    },
+    'references.list': async ({ root }) => await referenceShelf(core, await open(root)),
+    'references.add': async ({ root, book, text, file, title, note, scope }) => {
+      const runtime = await open(root)
+      const said = typeof note === 'string' && note.trim().length > 0 ? { note } : {}
+      if (typeof book === 'string' && book.trim().length > 0) {
+        await addBookReference(core, runtime, { root: book, ...said, ...(Array.isArray(scope) ? { scope } : {}) })
+        return await referenceShelf(core, runtime)
+      }
+      let manuscript = typeof text === 'string' ? text : ''
+      let named = typeof title === 'string' ? title.trim() : ''
+      let author: string | undefined
+      if (file !== undefined) {
+        try {
+          const read = readBookFile(requireString(file.name, 'file.name'), Buffer.from(requireString(file.data, 'file.data'), 'base64'))
+          manuscript = read.text
+          author = read.author
+          // A manuscript nobody named is called what its file calls itself.
+          if (named.length === 0) named = read.title ?? file.name.replace(/\.[^.]+$/, '')
+        } catch (error) {
+          throw new ProjectError('novel/invalid', error instanceof Error ? error.message : String(error))
+        }
+      }
+      if (manuscript.trim().length === 0) throw new ProjectError('novel/bad-request', 'name a book of the shelf, or give a manuscript')
+      await addTextReference(runtime, { text: manuscript, ...(named.length > 0 ? { title: named } : {}), ...(author !== undefined ? { author } : {}), ...said })
+      return await referenceShelf(core, runtime)
+    },
+    'references.update': async ({ root, id, note, scope, off, title }) => {
+      const runtime = await open(root)
+      await updateReference(runtime, requireString(id, 'id'), { ...(typeof note === 'string' ? { note } : {}), ...(scope === null || Array.isArray(scope) ? { scope } : {}), ...(typeof off === 'boolean' ? { off } : {}), ...(typeof title === 'string' ? { title } : {}) })
+      return await referenceShelf(core, runtime)
+    },
+    'references.remove': async ({ root, id }) => {
+      const runtime = await open(root)
+      await removeReference(runtime, requireString(id, 'id'))
+      return await referenceShelf(core, runtime)
+    },
+    'references.settings': async ({ root, beforeWriting }) => {
+      const runtime = await open(root)
+      await setConsultBeforeWriting(runtime, beforeWriting !== false)
+      return await referenceShelf(core, runtime)
+    },
+    'references.consult': async ({ root, chapter, direction }) => {
+      const runtime = await open(root)
+      return job(runtime, 'derive', 'read the references for a chapter', requireString(chapter, 'chapter'), async task => await consultReferences(core, runtime, { chapter: requireString(chapter, 'chapter'), ...(typeof direction === 'string' && direction.trim().length > 0 ? { direction } : {}) }, task))
     },
     'ai.reviseSpan': async ({ root, chapter, start, end, quote, instruction, guides }) => {
       const runtime = await open(root)
@@ -976,13 +1024,17 @@ export function createHandlers(service: NovelService): Handlers {
       // A picture of one turn of a place's course says so: the page that asked marks that turn as being drawn.
       return job(runtime, 'illustrate', `illustrate ${params.kind}${params.event !== undefined ? ` at ${params.event}` : ''}`, params.target, async task => await illustrate(core, runtime, params, task))
     },
-    'image.redraw': async ({ root, picture, subject, change, trials }) => {
+    'image.whole': async ({ root, picture }) => {
+      const { held: _held, ...whole } = await pictureWhole(core, await open(root), picture)
+      return whole
+    },
+    'image.redraw': async ({ root, picture, subject, change, prompt, avoid, trials }) => {
       const runtime = await open(root)
       const record = (await runtime.project.pictures()).find(item => item.id === picture || item.path === picture)
       // Drawn as it is by several services, to compare them — or drawn anew from words rewritten or one thing changed.
       const tried = Array.isArray(trials) && trials.length > 0 ? trials : undefined
       // Named as the drawing of a picture of its kind is: the page that shows whose it is says that it is being drawn.
-      return job(runtime, 'illustrate', `illustrate ${record?.kind ?? 'picture'}`, record?.target, async task => await redrawPicture(core, runtime, { picture, ...(subject !== undefined ? { subject } : {}), ...(change !== undefined ? { change } : {}), ...(tried !== undefined ? { trials: tried } : {}) }, task))
+      return job(runtime, 'illustrate', `illustrate ${record?.kind ?? 'picture'}`, record?.target, async task => await redrawPicture(core, runtime, { picture, ...(subject !== undefined ? { subject } : {}), ...(change !== undefined ? { change } : {}), ...(prompt !== undefined ? { prompt } : {}), ...(Array.isArray(avoid) ? { avoid: avoid.filter((item): item is string => typeof item === 'string') } : {}), ...(tried !== undefined ? { trials: tried } : {}) }, task))
     },
     // ── the same piece of work by several services or models, to be compared ──
     'trial.setups': async ({ root }) => {
@@ -1049,8 +1101,10 @@ export function createHandlers(service: NovelService): Handlers {
       if (replaced.length === 0 && record.kind === 'portrait' && record.target !== undefined) {
         const card = await project.findCharacter(record.target)
         if (card !== undefined) {
-          // Of a moment of theirs, it is that moment's picture from here on.
-          const scenes = record.moment?.scene !== undefined && scenesOf(card).some(scene => scene.id === record.moment!.scene) ? scenesOf(card).map(scene => (scene.id === record.moment!.scene ? { ...scene, portrait: taken } : scene)) : undefined
+          // Of a moment of theirs, it is that moment's picture from here on — the moment its record says it is of,
+          // by name before number (a chapter digested again numbers its moments anew).
+          const of = sceneOfPicture(scenesOf(card), taken, record)
+          const scenes = of !== undefined && of.id !== 'kept' ? scenesOf(card).map(scene => (scene.id === of.id ? { ...scene, portrait: taken } : scene)) : undefined
           await project.saveCharacter({ id: card.id, visual: { portrait: taken, ...(scenes !== undefined ? { scenes } : {}) } })
           replaced = [card.name]
         }

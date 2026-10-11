@@ -34,6 +34,7 @@ import { batchTools } from './tools/batch'
 import { crewTools } from './tools/crew'
 import { manuscriptTools } from './tools/manuscript'
 import { projectTools } from './tools/project'
+import { referenceTools_ } from './tools/reference'
 import { MUTATING } from './tools/shared'
 import { stageTools } from './tools/stage'
 import { studioTools } from './tools/studio'
@@ -46,7 +47,7 @@ const CONTEXT_ORDER = 200
 export function mountAgent(ctx: Context): void {
   const novel = ctx.novel
 
-  for (const tool of [...projectTools(novel), ...bibleTools(novel), ...manuscriptTools(novel), ...stageTools(novel), ...crewTools(novel), ...batchTools(novel), ...studioTools(novel)]) {
+  for (const tool of [...projectTools(novel), ...referenceTools_(novel), ...bibleTools(novel), ...manuscriptTools(novel), ...stageTools(novel), ...crewTools(novel), ...batchTools(novel), ...studioTools(novel)]) {
     ctx.tools.register(tool)
   }
 

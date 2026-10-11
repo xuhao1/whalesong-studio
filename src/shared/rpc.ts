@@ -23,9 +23,9 @@ import type {
   AnalyzeStep, ComfyCatalog,
   PriceEntry,
   UsageSummary,
-  TtsProviderKind, TtsSettings, SpeechTrial, PictureGuide,
+  TtsProviderKind, TtsSettings, SpeechTrial, PictureGuide, ReferenceAspect, ReferenceShelf,
   AmbiencePreset, AudioCue, AudioLine, AudioScript, BookLock, ChapterMemory, ChapterPlan, ChapterReview, IssueSeverity, CharacterCard, CharacterRole, ComicBoard, ComicPanel, LifeMark, SheetsAsk,
-  ChapterVideo, CrewRole, GateKind, GateState, IllustrationInfo, ImageTrial, JobInfo, SettledSuggestion, ModelRoute, NovelSettings, PlaySession, PlayTurn, ProjectManifest, ProjectRef, ProjectState, RecommendedState,
+  ChapterVideo, CrewRole, GateKind, GateState, IllustrationInfo, ImageTrial, JobInfo, SettledSuggestion, ModelRoute, NovelSettings, PictureWhole, PlaySession, PlayTurn, ProjectManifest, ProjectRef, ProjectState, RecommendedState,
   Proposal, SearchHit, SearchSource, SoundKind, StageStatus, StageStep, StoryboardDensity, StyleProfile, TextRole, TextStep, VersionInfo, WalkOn, WorkMode, WorldEntry, HistoryKind, HistoryVersion, GlossaryTerm, ChapterTranslation,
 } from './types'
 
@@ -456,6 +456,8 @@ export interface NovelRpc {
 
   // ── bible ──
   'character.save': { params: { root: string; card: Partial<CharacterCard> }; result: CharacterCard }
+  /** Have one of the pictures drawn of a moment of somebody's (`scene`: its id on their card) stand for it — in their panel, and in the text where the moment is told. */
+  'character.scenePicture': { params: { root: string; id: string; scene: string; path: string }; result: CharacterCard }
   'character.delete': { params: { root: string; id: string }; result: { deleted: boolean } }
   /** Write down something of a character's life at a chapter (absent: before the story begins), over what its digest says; without `kind` the mark of that chapter is taken back. */
   'character.mark': { params: { root: string; id: string; chapter?: string; kind?: LifeMark['kind']; what?: string }; result: CharacterCard }
@@ -557,6 +559,23 @@ export interface NovelRpc {
    * same picture brought twice is one file. `data` is the picture's bytes in base64.
    */
   'guide.add': { params: { root: string; mediaType: string; data: string }; result: { path: string } }
+  // ── references: the books this one goes by ──
+  /** The references of a book, each as it is found now, and how they are used. */
+  'references.list': { params: { root: string }; result: ReferenceShelf }
+  /**
+   * Take a reference: a book of the shelf (`book`: its folder) — consulted as it is organised there — or a manuscript
+   * (`text`, or `file` to be read on the Host; `data` is base64) — kept with this book and consulted as plain text.
+   * `note`: how to go by it, in the author's words. `scope`: what of a shelf book is open; left out: all of it.
+   */
+  'references.add': { params: { root: string; book?: string; text?: string; file?: { name: string; data: string }; title?: string; note?: string; scope?: ReferenceAspect[] }; result: ReferenceShelf }
+  /** What the author says of a reference: how to go by it, what of it is open (`null`: all of it), whether it is consulted, what a manuscript is called. */
+  'references.update': { params: { root: string; id: string; note?: string; scope?: ReferenceAspect[] | null; off?: boolean; title?: string }; result: ReferenceShelf }
+  /** Take a reference off the list; a manuscript taken in for this book goes with it. */
+  'references.remove': { params: { root: string; id: string }; result: ReferenceShelf }
+  /** Whether the planner looks in the references before a chapter is written. */
+  'references.settings': { params: { root: string; beforeWriting: boolean }; result: ReferenceShelf }
+  /** Have the planner look in the references for one chapter and keep its notes on the chapter's plan. */
+  'references.consult': { params: { root: string; chapter: string; direction?: string }; result: JobStarted }
   'ai.deriveBeats': { params: { root: string; chapter: string; direction?: string }; result: JobStarted }
   'ai.whatIf': { params: { root: string; question: string; branches?: number; /** Pictures the ways on are weighed with. */ guides?: PictureGuide[] }; result: JobStarted }
   /** Read the book and write down what it says — the passes of an import's analysis, on a book that has its chapters. Without `steps`: what an analysis that was cut short has left to do (all of it where none was started). */
@@ -626,7 +645,7 @@ export interface NovelRpc {
   'jobs.cancel': { params: { id: string }; result: { cancelled: boolean } }
 
   // ── stage: illustration ──
-  'image.create': { params: { root: string; kind: 'portrait' | 'sheet' | 'scene' | 'location' | 'item' | 'cover' | 'custom'; target?: string; quote?: string; prompt?: string; size?: string; insert?: boolean; /** Portrait, sheet: the author's loose ideas — what is of the person goes into their look, what is of this picture directs it only. */ notes?: string; /** Sheet: which look (outfit) to draw. */ look?: string; looks?: Record<string, string>; characters?: string[]; avoid?: string[]; raw?: boolean; /** false: this once, no design sheet is drawn first. */ sheetFirst?: boolean; /** What this picture of a person is drawn against, this once: a sheet against their `portrait` or from the `words` alone; a portrait against their `sheet` or from the `words` alone. Left out: by `image.lead`. */ from?: 'portrait' | 'sheet' | 'words'; /** Portrait: plain — facing the viewer on a plain ground, not their signature scene. */ plain?: boolean; /** Portrait: which of their signature scenes it shows (by id). */ scene?: string; /** Portrait, sheet: which stretch of their life it shows (a stage's id). */ stage?: string; /** Location, item: the turn of its course to draw it at (`<chapter>` or `<chapter>:<kind>`); the picture is kept with that turn. */ event?: string; /** Portrait: draw it once with each of these services, to compare them; none becomes their portrait until the author takes it. */ trials?: ImageTrial[] }; result: JobStarted }
+  'image.create': { params: { root: string; kind: 'portrait' | 'sheet' | 'scene' | 'location' | 'item' | 'cover' | 'custom'; target?: string; quote?: string; prompt?: string; size?: string; insert?: boolean; /** Portrait, sheet: the author's loose ideas — what is of the person goes into their look, what is of this picture directs it only. */ notes?: string; /** Sheet: which look (outfit) to draw. */ look?: string; looks?: Record<string, string>; characters?: string[]; avoid?: string[]; raw?: boolean; /** false: this once, no design sheet is drawn first. */ sheetFirst?: boolean; /** What this picture of a person is drawn against, this once: a sheet against their `portrait` or from the `words` alone; a portrait against their `sheet` or from the `words` alone. Left out: by `image.lead`. */ from?: 'portrait' | 'sheet' | 'words'; /** Portrait: true — the plain likeness alone; false — their signature scene alone. Left out: what `image.portraits` says (by default both, one of each). */ plain?: boolean; /** Portrait: which of their signature scenes it shows (by id). */ scene?: string; /** Portrait, sheet: which stretch of their life it shows (a stage's id). */ stage?: string; /** Location, item: the turn of its course to draw it at (`<chapter>` or `<chapter>:<kind>`); the picture is kept with that turn. */ event?: string; /** Portrait: draw it once with each of these services, to compare them; none becomes their portrait until the author takes it. */ trials?: ImageTrial[] }; result: JobStarted }
   /**
    * Whose design sheets what is about to be drawn would draw first — asked before any of it is started, so that the author
    * can be told and say yes, or not this time. `unknown`: asks that cannot be told yet (panels with no storyboard).
@@ -637,7 +656,9 @@ export interface NovelRpc {
    * along, to be drawn again with this one thing changed. The new picture takes the old one's place wherever it
    * hangs; the old one stays in the gallery. A job; its result names whose picture the new one is (`replaced`).
    */
-  'image.redraw': { params: { root: string; picture: string; subject?: string; change?: string; /** Draw it as it is with each of these services, to compare them: nothing is replaced. */ trials?: ImageTrial[] }; result: JobStarted }
+  'image.redraw': { params: { root: string; picture: string; subject?: string; change?: string; /** The whole prompt, as the author rewrote it ({@link PictureWhole}): sent as it stands, with the pictures the one before went with. Not with `subject` or `change`. */ prompt?: string; /** With `prompt`: everything to keep out. Left out: what the picture kept out before. */ avoid?: string[]; /** Draw it as it is with each of these services, to compare them: nothing is replaced. */ trials?: ImageTrial[] }; result: JobStarted }
+  /** Everything a picture was drawn from — the prompt whole, what was kept out, the pictures that went along — for its author to rewrite and draw it again by (`image.redraw` with `prompt`). */
+  'image.whole': { params: { root: string; picture: string }; result: PictureWhole }
   /** The image services there are to try for a book — the one that draws for it now, and the ones set up before — and whether each can draw right now. */
   'trial.setups': { params: { root: string }; result: { image: (ImageTrial & { id: string; current: boolean; ready: boolean })[]; /** The speech setups there are to try, the same way. Absent from a Host that cannot compare speech yet. */ speech?: (SpeechTrial & { id: string; current: boolean; ready: boolean })[] } }
   /** The same words spoken by each of several speech setups — as a character's line, or the narrator's — to be listened to side by side. Nothing is cast or kept by it but the clips. */

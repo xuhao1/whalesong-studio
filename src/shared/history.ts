@@ -32,7 +32,8 @@ export const PICTURE_FIELDS: Partial<Record<HistoryKind, readonly string[]>> = {
  */
 export const KEPT_FIELDS: Partial<Record<HistoryKind, readonly string[]>> = {
   character: ['firstAppearance', 'lastAppearance'],
-  plan: ['status'],
+  // …and that somebody looked in the references for it: said of the looking, not of the plan (the notes themselves are the plan's).
+  plan: ['status', 'referencesRead'],
   // Which text a script or a storyboard was made of says whether it is stale, not what it is.
   script: ['textHash'],
   board: ['textHash'],

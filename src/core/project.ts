@@ -15,8 +15,8 @@
  * Every write is atomic and bumps the project revision that the UI long-polls on.
  * Files edited by hand or by other tools are picked up through a directory watch.
  */
-import { scenesOf } from '../shared/art'
-import { placeFigures, type ChapterFigure, type PortraitPlace } from '../shared/reader'
+import { sceneOfPicture, scenesOf } from '../shared/art'
+import { figureSpots, placeFigures, spotsNear, type ChapterFigure, type PortraitPlace } from '../shared/reader'
 import { mainSheetOf, sheetFronts, sheetPool } from '../shared/sheets'
 import { pixelsOf } from './media/pixels'
 import { watch, type FSWatcher } from 'node:fs'
@@ -162,6 +162,16 @@ function carry(now: Record<string, unknown>, next: Record<string, unknown>, path
 }
 
 const SETTLED_PROPOSALS_KEPT = 500
+
+/**
+ * What a portrait of somebody is of: one of their moments (the scene that keeps it, or what its record says it was
+ * drawn of), a stretch of their life, or the person — a likeness, of no moment in particular.
+ */
+export function portraitIsOf(card: Pick<CharacterCard, 'visual' | 'stages'>, path: string, record: IllustrationInfo | undefined): 'moment' | 'stage' | 'person' {
+  if (record?.moment !== undefined || scenesOf(card).some(scene => scene.portrait === path)) return 'moment'
+  if (sceneOfPicture(scenesOf(card), path, record) !== undefined) return 'moment'
+  return (card.stages ?? []).some(stage => stage.visual?.portrait === path) ? 'stage' : 'person'
+}
 
 export class ProjectError extends Error {
   constructor(readonly code: string, message: string) {
@@ -768,6 +778,29 @@ export class Project {
    * Create or update a character. Fields absent from `input` keep their value;
    * a field set to `null` or an empty string is cleared.
    */
+  /**
+   * Have one of the pictures drawn of a moment of somebody's stand for that moment: in the panel of their moments,
+   * and in the text where the moment is told. The others drawn of it stay among their portraits. Taken this way a
+   * picture is one like any other — one that was drawn only to be compared is no longer kept out of the text — and
+   * one the gallery had of them joins their portraits.
+   * @throws ProjectError `novel/not-found` for somebody or a moment that is not there.
+   */
+  async setScenePicture(character: string, scene: string, path: string): Promise<CharacterCard> {
+    const card = await this.findCharacter(character)
+    if (card === undefined) throw new ProjectError('novel/not-found', `no character matches "${character}"`)
+    const kept = scenesOf(card)
+    if (!kept.some(item => item.id === scene)) throw new ProjectError('novel/not-found', `"${card.name}" has no signature scene "${scene}"`)
+    const listed = card.visual?.portraits ?? (card.visual?.portrait !== undefined ? [card.visual.portrait] : [])
+    const saved = await this.saveCharacter({ id: card.id, visual: {
+      ...(listed.includes(path) ? {} : { portraits: [...listed, path] }),
+      // (The single paragraph of an earlier card becomes a list of one with it.)
+      scenes: kept.map(item => (item.id === scene ? { ...item, ...(item.id === 'kept' ? { id: newId('scene') } : {}), portrait: path } : item)),
+      ...(kept.some(item => item.id === 'kept') ? { scene: '' } : {}),
+    } })
+    await this.holdFigure(path, false)
+    return saved
+  }
+
   async saveCharacter(given: Partial<CharacterCard> & { name?: string }): Promise<CharacterCard> {
     // Whoever still sends the one-word label of older versions (a page not reloaded yet, a suggestion made before) is not refused: it is left out.
     const { status: _label, ...input } = given as Partial<CharacterCard> & { name?: string; status?: unknown }
@@ -806,8 +839,10 @@ export class Project {
       }
       // Their portraits are kept together. A list handed in is the author's order; a portrait named alone is a new
       // one — it goes first, and those before it stay — or, named as nothing, the one that stands for them taken
-      // away. Which one stands for them (`portrait`) is the one the author chose (`face`) while it is among them,
-      // else the first: a portrait drawn after a choice was made does not take its place.
+      // away. Which one stands for them (`portrait`) is the one the author chose (`face`) while it is among them:
+      // a portrait drawn after a choice was made does not take its place. With no choice made it is the first of
+      // their plain likenesses — a picture of one of their moments shows what they did, not who they are — and the
+      // first of all where they have no likeness.
       const pictures = isPlainRecord(input.visual) ? input.visual as { portrait?: unknown; portraits?: unknown; face?: unknown } : undefined
       if (pictures !== undefined && (Array.isArray(pictures.portraits) || typeof pictures.portrait === 'string' || pictures.portrait === null || 'face' in pictures)) {
         const before = existing?.visual?.portraits ?? (existing?.visual?.portrait !== undefined ? [existing.visual.portrait] : [])
@@ -822,7 +857,10 @@ export class Project {
         const visual: NonNullable<CharacterCard['visual']> = merged.visual ?? {}
         if (face !== undefined) visual.face = face
         else delete visual.face
-        if (list.length > 0) visual.portrait = face ?? list[0]!
+        // …else their newest plain likeness — what they look like, which is what stands for a person — else the newest of any.
+        const records = face === undefined && list.length > 1 ? new Map((await this.illustrations()).map(record => [record.path, record])) : undefined
+        const likeness = records !== undefined ? list.find(path => portraitIsOf(merged, path, records.get(path)) === 'person') : undefined
+        if (list.length > 0) visual.portrait = face ?? likeness ?? list[0]!
         else delete visual.portrait
         if (list.length > 1) visual.portraits = list
         else delete visual.portraits
@@ -2510,16 +2548,18 @@ export class Project {
    * Every portrait of everybody, and where it stands in the book.
    *
    * A portrait of one of their moments stands where the chapter tells that moment; the portrait that stands for the
-   * person (`visual.portrait`: the one the author chose, else the first) stands where they first come on (one of a
-   * period of their life, where the period begins) — unless a moment of theirs is shown in that same chapter: then
-   * that is the picture of them there, and it stands at the moment. Of several pictures of one moment the first as
-   * the author has them in order is the one. Whatever does not stand by this is `spare`; the author asks any of them
-   * in, and keeps any of the others out.
+   * person (`visual.portrait`: the one the author chose, else their newest plain likeness, else the newest) stands
+   * where they first come on (one of a period of their life, where the period begins) — unless a moment of theirs is
+   * shown right there: at the same place of the chapter, or so near it that a reader would have both pictures before
+   * them ({@link spotsNear}). Then the moment is the picture of them there. (The same picture is never shown twice in
+   * a chapter, however far apart its two places.) Of several pictures of one moment the first as the author has them
+   * in order is the one. Whatever does not stand by this is `spare`; the author asks any of them in, and keeps any of
+   * the others out.
    *
    * The portrait that stands for the person may be one of a moment's: it then has two places — as the picture of
    * the moment, and as the picture of the person (`key` ends in `#face` for that one).
    */
-  async portraitPlaces(): Promise<(PortraitPlace & { told: string })[]> {
+  async portraitPlaces(): Promise<(PortraitPlace & { told: string; names?: string[] })[]> {
     const [characters, records, hidden, shown, outline] = await Promise.all([this.characters(), this.illustrations(), this.hiddenFigures(), this.shownFigures(), this.outline()])
     // Who is in which chapter is read only for somebody whose card does not say where they first come on.
     let seen: CastPresence[] | undefined
@@ -2549,8 +2589,15 @@ export class Project {
       }
       return elsewhere.get(id)
     }
-    type Held = PortraitPlace & { told: string }
+    type Held = PortraitPlace & { told: string; names?: string[] }
     const out: Held[] = []
+    // The text of a chapter, read where two pictures of one person fall in it: how near they stand is the text's to say.
+    const texts = new Map<string, Promise<string>>()
+    const textOf = (chapter: string): Promise<string> => {
+      let text = texts.get(chapter)
+      if (text === undefined) texts.set(chapter, text = this.chapterText(chapter).catch(() => ''))
+      return text
+    }
     for (const card of characters) {
       const scenes = scenesOf(card)
       const stages = card.stages ?? []
@@ -2569,13 +2616,11 @@ export class Project {
       for (const path of paths) {
         const record = byPath.get(path)
         // The moment it is of: the one that keeps it, the one its record names, or the one its record was written from.
-        const said = record?.parts?.pieces?.find(piece => piece.of === 'scene')?.text
-        const scene = scenes.find(item => item.portrait === path)
-          ?? (record?.moment?.scene !== undefined ? scenes.find(item => item.id === record.moment!.scene) : undefined)
-          ?? (said !== undefined ? scenes.find(item => item.text.length > 0 && said.includes(item.text)) : undefined)
+        const scene = sceneOfPicture(scenes, path, record)
         const stage = stages.find(item => item.visual?.portrait === path)
         const title = scene?.title ?? record?.moment?.title
-        const of = scene !== undefined || record?.moment !== undefined ? 'moment' : stage !== undefined ? 'stage' : 'person'
+        const of = portraitIsOf(card, path, record)
+        const names = [card.name, ...(card.aliases ?? [])]
         const chapter = [scene?.chapter, record?.moment?.chapter, stage?.from, first].find(id => id !== undefined && places.has(id))
         const at = chapter !== undefined ? places.get(chapter) : undefined
         mine.push({
@@ -2590,8 +2635,9 @@ export class Project {
             ...(title !== undefined && title.length > 0 ? { title } : {}),
             ...(chapter !== undefined && at !== undefined ? { chapter, index: at.index, chapterTitle: at.title } : {}),
             hidden: false,
-            // What the text is searched for to place it: the moment as it is written, else their name.
-            told: scene !== undefined ? `${scene.title}${scene.text}` : `${title ?? ''}${[card.name, ...(card.aliases ?? [])].join('')}`,
+            // What the text is searched for to place it: the moment as it is written — else where it first names them.
+            told: scene !== undefined ? `${scene.title}${scene.text}` : `${title ?? ''}${names.join('')}`,
+            ...(of !== 'moment' ? { names } : {}),
           },
         })
       }
@@ -2613,11 +2659,16 @@ export class Project {
             ...(first !== undefined && at !== undefined ? { chapter: first, index: at.index, chapterTitle: at.title } : {}),
             hidden: false,
             told: [card.name, ...(card.aliases ?? [])].join(''),
+            names: [card.name, ...(card.aliases ?? [])],
           },
         })
       }
-      // One picture for each moment and each period — the first of each as they are in order — and one for the person: the one that stands for them.
+      // One picture for each moment and each period — the one the moment keeps as its own (the author's choice among
+      // those drawn of it), else the first of each as they are in order — and one for the person: the one that stands for them.
       const led = new Set<string>()
+      const own = new Map(scenes.filter(scene => scene.portrait !== undefined).map(scene => [`moment:${scene.id}`, scene.portrait!]))
+      // A moment's own picture leads its group wherever it stands in the order.
+      mine.sort((left, right) => Number(own.get(right.group) === right.place.path) - Number(own.get(left.group) === left.place.path))
       for (const item of mine) {
         if (item.of === 'person') {
           if (face !== undefined && item.place.path !== face) item.place.spare = 'person'
@@ -2627,11 +2678,22 @@ export class Project {
         else led.add(item.group)
       }
       const stands = (place: Held): boolean => !kept.has(place.key) && (place.spare === undefined || asked.has(place.key))
-      // A chapter that shows a moment of theirs has its picture of them: the one of the person does not stand beside it.
+      // Where a moment of theirs is shown right there — the same place of the chapter, or so near that both would be
+      // seen together — that is the picture of them: the one of the person does not stand beside it. Further apart in
+      // the same chapter, each stands in its place (they are two pictures: how they look, and what they did). The
+      // same picture is not shown twice in a chapter, wherever its places are.
       for (const rank of ['stage', 'person'] as const) {
         for (const item of mine) {
-          if (item.of !== rank || item.place.spare !== undefined || item.place.chapter === undefined) continue
-          const over = mine.some(other => other !== item && (other.of === 'moment' || (rank === 'person' && other.of === 'stage')) && other.place.chapter === item.place.chapter && stands(other.place))
+          const chapter = item.place.chapter
+          if (item.of !== rank || item.place.spare !== undefined || chapter === undefined) continue
+          const rivals = mine.filter(other => other !== item && (other.of === 'moment' || (rank === 'person' && other.of === 'stage')) && other.place.chapter === chapter && stands(other.place))
+          if (rivals.length === 0) continue
+          let over = rivals.some(other => other.place.path === item.place.path)
+          if (!over) {
+            const text = await textOf(chapter)
+            const spots = figureSpots(text, [item.place, ...rivals.map(other => other.place)])
+            over = rivals.some((_other, at) => spotsNear(text, spots[0], spots[at + 1]))
+          }
           if (over) item.place.spare = 'chapter'
         }
       }
@@ -2647,7 +2709,7 @@ export class Project {
   async chapterFigures(chapterId: string, text?: string): Promise<ChapterFigure[]> {
     const moments = (await this.portraitPlaces())
       .filter(place => place.chapter === chapterId && !place.hidden)
-      .map(place => ({ path: place.path, key: place.key, caption: place.title !== undefined ? `${place.title} · ${place.name}` : place.name, told: place.told }))
+      .map(place => ({ path: place.path, key: place.key, caption: place.title !== undefined ? `${place.title} · ${place.name}` : place.name, told: place.told, ...(place.names !== undefined ? { names: place.names } : {}) }))
     return moments.length > 0 ? placeFigures(text ?? await this.chapterText(chapterId), moments) : []
   }
 
@@ -3250,6 +3312,7 @@ export class Project {
       pendingSuggestions: suggestions.length,
       undigested: chapters.filter(chapter => chapter.hasText && !chapter.digested).length,
     }
+    const references = await this.referenceCount()
     return {
       root: this.root,
       revision: this.revision,
@@ -3274,6 +3337,17 @@ export class Project {
       ties: await this.ties(),
       ...(Object.keys(graph).length > 0 ? { graph } : {}),
       ...(Object.keys(translations).length > 0 ? { translations } : {}),
+      ...(references > 0 ? { references } : {}),
+    }
+  }
+
+  /** How many references of the book are consulted now: counted off its list, which the engine keeps (`references/index.json`). */
+  private async referenceCount(): Promise<number> {
+    try {
+      const index = JSON.parse((await this.readFile('references/index.json')).toString('utf8')) as { items?: { off?: boolean }[] }
+      return Array.isArray(index.items) ? index.items.filter(item => item?.off !== true).length : 0
+    } catch {
+      return 0
     }
   }
 
@@ -3341,6 +3415,16 @@ export class Project {
     const path = this.path(relativePath)
     await this.write(path, data)
     return this.relative(path)
+  }
+
+  /**
+   * Take away a manuscript kept among the book's references. Only a file of that folder: every other file of a book
+   * has its own way of going — a chapter into the removed ones, a picture off whatever shows it.
+   * @throws ProjectError `novel/invalid` for any other path.
+   */
+  async removeReferenceFile(relativePath: string): Promise<void> {
+    if (!/^references\/[^/]+\.txt$/.test(relativePath.replace(/\\/g, '/'))) throw new ProjectError('novel/invalid', `not a reference's file: ${relativePath}`)
+    await this.remove(this.path(relativePath))
   }
 
   /** Size and modification time of a file of the book, or undefined when there is none. */

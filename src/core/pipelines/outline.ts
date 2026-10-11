@@ -59,6 +59,8 @@ export interface ChapterFields {
   targetWords?: number
   /** Pictures to write the chapter by: paths of the book's own pictures, or `{path, note}`. An empty list takes them off. */
   guides?: (string | PictureGuide)[]
+  /** What the book's references have for the chapter, for whoever writes it: the planner's notes, or the author's own. `null` takes them away — the planner then looks again before the chapter is next written. */
+  referenceNotes?: string | null
   notes?: string
 }
 
@@ -103,6 +105,11 @@ export async function applyOutlineOps(runtime: ProjectRuntime, ops: OutlineOp[])
     if (fields.guides !== undefined) {
       const guides = cleanGuides(Array.isArray(fields.guides) ? fields.guides : [])
       ;(patch as Record<string, unknown>).guides = guides.length > 0 ? guides : null
+    }
+    if (fields.referenceNotes !== undefined) {
+      // Written — or emptied — by hand, the notes are settled: nobody looks again by itself. Taken away (`null`), the planner looks before the chapter is next written.
+      const settled = typeof fields.referenceNotes === 'string'
+      Object.assign(patch as Record<string, unknown>, { referenceNotes: settled ? (fields.referenceNotes as string).trim() : null, referencesRead: settled ? true : null })
     }
     return patch
   }

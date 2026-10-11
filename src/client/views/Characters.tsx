@@ -13,9 +13,9 @@ import { PortraitInText } from '../Figures'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { VoiceOption } from '../../shared/rpc'
 import type { CharacterCard, CharacterLook, CharacterRole, CharacterStage, LifeMark, SignatureScene, SortedNotes } from '../../shared/types'
-import { sceneFor, scenesOf } from '../../shared/art'
+import { sceneFor, scenePictures, scenesOf } from '../../shared/art'
 import { detailsOf, foldDetails } from '../../shared/card'
-import { leadOf, withBookImage } from '../../shared/images'
+import { leadOf, portraitsOf, withBookImage } from '../../shared/images'
 import { sheetsOf } from '../../shared/sheets'
 import { lifeEnd, lifeLine, type Life, type LifeEvent, type LifeStanding } from '../../shared/life'
 import { lines, options, useAssist } from '../forms'
@@ -156,8 +156,9 @@ export function CharacterCards({ shown, grouped, searching, lives, picks }: { sh
     const lead = settings !== undefined ? leadOf(withBookImage(settings.settings.image, project.manifest.image)) : 'sheet'
     const sheetless = lead === 'none' ? 0 : faceless.filter(item => item.visual?.sheet === undefined).length
     // So does their scene: whoever has none on their card has the director pick one from the book first.
-    const sceneless = (settings !== undefined && withBookImage(settings.settings.image, project.manifest.image).portraitScene === false) || !project.chapters.some(chapter => chapter.hasText) ? 0 : faceless.filter(item => scenesOf(item).length === 0).length
-    confirm.ask(t(`给 ${todo.length} 个还没有定妆照的人物各画一张？${sheetless > 0 ? (lead === 'portrait' ? `其中 ${sheetless} 人画完会照着立绘补人设图。` : `其中 ${sheetless} 人会先画人设图。`) : ''}${sceneless > 0 ? `${sceneless} 人会先由导演找名场面。` : ''}`, `Draw a portrait for each of the ${todo.length} without one?${sheetless > 0 ? (lead === 'portrait' ? ` ${sheetless} get a design sheet after it, drawn against it.` : ` ${sheetless} get a design sheet first.`) : ''}${sceneless > 0 ? ` For ${sceneless} the director finds their signature scenes first.` : ''}`), () => {
+    const plan = settings !== undefined ? portraitsOf(withBookImage(settings.settings.image, project.manifest.image)) : 'both'
+    const sceneless = plan === 'plain' || !project.chapters.some(chapter => chapter.hasText) ? 0 : faceless.filter(item => scenesOf(item).length === 0).length
+    confirm.ask(t(`给 ${todo.length} 个还没有定妆照的人物${plan === 'both' ? '各画两张（素底定妆、名场面）' : '各画一张'}？${sheetless > 0 ? (lead === 'portrait' ? `其中 ${sheetless} 人画完会照着立绘补人设图。` : `其中 ${sheetless} 人会先画人设图。`) : ''}${sceneless > 0 ? `${sceneless} 人会先由导演找名场面。` : ''}`, `Draw ${plan === 'both' ? 'two portraits (a plain likeness, their signature scene)' : 'a portrait'} for each of the ${todo.length} without one?${sheetless > 0 ? (lead === 'portrait' ? ` ${sheetless} get a design sheet after it, drawn against it.` : ` ${sheetless} get a design sheet first.`) : ''}${sceneless > 0 ? ` For ${sceneless} the director finds their signature scenes first.` : ''}`), () => {
       void controller.guard(async () => {
         setBatch({ done: 0, total: todo.length })
         try {
@@ -496,7 +497,9 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
   const [sorted, setSorted] = useState<{ kind: 'sheet' | 'portrait'; how: SortedNotes } | undefined>()
   // Which moment of the book the portrait just drawn shows: the director's pick, or the one the card had.
   const [pictured, setPictured] = useState<(PortraitScene & { path?: string | undefined }) | undefined>()
-  // Which of their moments the next portrait shows: an id, 'plain' for none of them, '' for the one the card marks.
+  // What the next portrait is: 'pair' — a plain likeness and their signature scene, one of each; an id — that one of
+  // their moments; 'find' — a scene the director is yet to find; 'plain' — the likeness alone. '' while nothing was
+  // chosen here: then it is as the setting has it (`image.portraits`).
   const [moment, setMoment] = useState('')
   const sheets = useSheetsAsk()
   // What each of the two is drawn against. Left alone, it is as the setting has it (which of the two leads); chosen
@@ -516,7 +519,7 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
     // The card's own two pictures: a look, and a stretch of their life, go by the setting.
     const from = look !== undefined || stage !== undefined ? undefined : kind === 'portrait' ? portraitFrom : sheetFrom === 'portrait' && card.visual?.portrait === undefined ? undefined : sheetFrom
     const go = (choice: SheetsChoice): Promise<unknown> => controller.guard(async () => {
-      const job = await controller.run('image.create', { root, kind, target: card.id, ...(look !== undefined ? { look } : {}), ...(jotted.length > 0 ? { notes: jotted } : {}), ...(stage !== undefined ? { stage } : {}), ...(kind !== 'portrait' || stage !== undefined ? {} : (scene ?? moment) === 'plain' ? { plain: true } : (scene ?? moment).length > 0 ? { scene: scene ?? moment } : {}), ...(from !== undefined ? { from } : {}), ...choice })
+      const job = await controller.run('image.create', { root, kind, target: card.id, ...(look !== undefined ? { look } : {}), ...(jotted.length > 0 ? { notes: jotted } : {}), ...(stage !== undefined ? { stage } : {}), ...(kind !== 'portrait' || stage !== undefined ? {} : scene !== undefined ? { scene } : whichPortrait(chosenPortrait)), ...(from !== undefined ? { from } : {}), ...choice })
       const how = job.result?.sorted as SortedNotes | undefined
       if (how !== undefined) {
         setSorted({ kind, how })
@@ -527,7 +530,11 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
       if (kind === 'portrait') setPictured(shown?.asked !== undefined || shown?.none !== undefined ? { ...shown, path: (job.result?.output as { path?: string } | undefined)?.path } : undefined)
       // A sheet drawn while another is the chosen main one waits beside it: said, with the way to use it.
       const waits = kind === 'sheet' && (job.result?.output as { spare?: boolean } | undefined)?.spare === true
-      controller.toast('success', waits ? t('人设图画好了，先不启用：主人设图是你选定的那张。要用新的，点它再点“设为主人设图”', 'Design sheet ready, not in use yet: the main sheet is the one you chose. To use the new one, open it and make it the main sheet') : `${done}${shown?.title !== undefined ? t(`：${shown.title}`, `: ${shown.title}`) : ''}${sheetsDrawn(job, t)}`)
+      // A portrait asked for with nothing said of it came to two pictures: the likeness, and the scene.
+      const two = kind === 'portrait' && (job.result?.output as { likeness?: unknown } | undefined)?.likeness !== undefined
+      controller.toast('success', waits ? t('人设图画好了，先不启用：主人设图是你选定的那张。要用新的，点它再点“设为主人设图”', 'Design sheet ready, not in use yet: the main sheet is the one you chose. To use the new one, open it and make it the main sheet')
+        : two ? `${t(`画好了两张：素底定妆、名场面${shown?.title !== undefined ? `「${shown.title}」` : ''}`, `Two portraits ready: a plain likeness, and their signature scene${shown?.title !== undefined ? ` "${shown.title}"` : ''}`)}${sheetsDrawn(job, t)}`
+          : `${done}${shown?.title !== undefined ? t(`：${shown.title}`, `: ${shown.title}`) : ''}${sheetsDrawn(job, t)}`)
       const drawn = (job.result?.output as { path?: string } | undefined)?.path
       if (kind === 'sheet' && look === undefined && drawn !== undefined) setPicked(`sheet:${drawn}`)
     })
@@ -614,7 +621,7 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
     // One the gallery has of them that is on no list yet joins the list with it.
     await controller.api.call('character.save', { root, card: { id: card.id, visual: path === undefined ? { face: '' } : { ...(listed.includes(path) ? {} : { portraits: [...listed, path] }), face: path } } })
     await controller.refreshProject()
-    controller.toast('success', path === undefined ? t('不再选定：最新的一张代表这个人', 'No longer chosen: the newest portrait stands for them') : t('这张是代表立绘了：列表、头像和正文里第一次出场处都用它', 'This portrait stands for them now: in the lists, as their avatar, and in the text where they first come on'))
+    controller.toast('success', path === undefined ? t('不再选定：最新的素底定妆代表这个人（没有素底的，就是最新的一张）', 'No longer chosen: their newest plain likeness stands for them (the newest portrait, where they have none)') : t('这张是代表立绘了：列表、头像和正文里第一次出场处都用它', 'This portrait stands for them now: in the lists, as their avatar, and in the text where they first come on'))
   })
   // Their design sheets: which is the main one, which is a stretch's. (One out of the gallery joins the list with it.)
   const sheetAt = picture !== undefined && picture.key.startsWith('sheet:') ? sheetList.find(sheet => sheet.path === picture.path) : undefined
@@ -640,9 +647,27 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
   })
   const anchorField = `nv-anchor-${card.id}`
   const sceneField = `nv-scene-${card.id}`
-  const scenic = image?.portraitScene !== false
+  const plan = image !== undefined ? portraitsOf(image) : 'both'
+  const scenic = plan !== 'plain'
   const moments = scenesOf(draft)
   const marked = sceneFor(draft)
+  // The pictures drawn of each of their moments — the moment's own first: what its record says it is of, not only
+  // what the card has written down beside the moment.
+  const picturesOf = (scene: SignatureScene): string[] => scenePictures(scene, moments, portraits, path => records.byPath.get(path))
+  // The moment the portrait shown is of, and whether it is the one that stands for it — in the panel, and in the text
+  // where the moment is told.
+  const momentAt = placed >= 0 && picture !== undefined ? moments.find(scene => picturesOf(scene).includes(picture.path)) : undefined
+  const useForScene = (scene: SignatureScene, path: string): Promise<unknown> => controller.guard(async () => {
+    await controller.api.call('character.scenePicture', { root, id: card.id, scene: scene.id, path })
+    await controller.refreshProject()
+    controller.toast('success', t(`「${scene.title}」用这张了：正文里讲到这一幕的地方出它`, `This is the picture of "${scene.title}" now: it stands in the text where the moment is told`))
+  })
+  // What the next portrait is, as the selector shows it: what was chosen here — else what the setting has.
+  const chosenPortrait = moment !== '' && (moment === 'plain' || moment === 'find' || (moment === 'pair' && plan === 'both') || moments.some(scene => scene.id === moment))
+    ? moment
+    : plan === 'both' ? 'pair' : marked?.id ?? 'find'
+  /** What the Host is told of it: nothing for the pair (the setting has it), the scene named, the scene alone, the likeness alone. */
+  const whichPortrait = (which: string): { plain?: boolean; scene?: string } => which === 'plain' ? { plain: true } : which === 'pair' ? {} : which === 'find' ? (plan === 'both' ? { plain: false } : {}) : { scene: which }
 
   return (
     <div className={cx('nv-person-page', pictures.length === 0 && 'is-bare')}>
@@ -668,13 +693,18 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
                       <>
                         <Chip tone="blue" title={t('列表、头像、舞台和正文里第一次出场处用这张', 'Their face in the lists, their avatar, on the stage, and in the text where they first come on')}>{t('代表立绘', 'Stands for them')}</Chip>
                         {chosen
-                          ? <button type="button" className="nv-link nv-small" disabled={dirty} title={t('不选定：以后用最新画的一张', 'Unchoose: the newest portrait stands for them from then on')} onClick={() => setFace(undefined)}>{t('取消选定', 'Unchoose')}</button>
-                          : <Button size="sm" variant="ghost" disabled={dirty} title={dirty ? t('先保存当前修改', 'Save your edits first') : t('现在只是因为它最新；选定后，再画新的也不换', 'It is only the newest so far; chosen, it stays whatever is drawn after')} onClick={() => setFace(picture.path)}>{t('选定', 'Choose it')}</Button>}
+                          ? <button type="button" className="nv-link nv-small" disabled={dirty} title={t('不选定：以后用最新的素底定妆（没有素底的，用最新的一张）', 'Unchoose: their newest plain likeness stands for them from then on (the newest portrait, where they have none)')} onClick={() => setFace(undefined)}>{t('取消选定', 'Unchoose')}</button>
+                          : <Button size="sm" variant="ghost" disabled={dirty} title={dirty ? t('先保存当前修改', 'Save your edits first') : t('现在是照规矩来的：最新的素底定妆（没有素底的，就是最新的一张）；选定后，再画新的也不换', 'It stands by the rule so far: their newest plain likeness (the newest portrait, where they have none); chosen, it stays whatever is drawn after')} onClick={() => setFace(picture.path)}>{t('选定', 'Choose it')}</Button>}
                       </>
                     )
                   : <Button size="sm" variant="ghost" disabled={dirty} title={dirty ? t('先保存当前修改', 'Save your edits first') : t('列表、头像、舞台和正文里第一次出场处改用这张', 'Their face in the lists, their avatar, on the stage, and in the text where they first come on')} onClick={() => setFace(picture.path)}>{t('设为代表立绘', 'Make it stand for them')}</Button>}
                 <span className="nv-spacer" />
               </>
+            ) : null}
+            {momentAt !== undefined ? (
+              picturesOf(momentAt)[0] === picture.path
+                ? <Chip tone="neutral" title={t('名场面面板里、正文里讲到这一幕的地方，用的是这张', 'The picture of this moment: in the panel, and in the text where it is told')}>{t(`「${momentAt.title}」的图`, `Of "${momentAt.title}"`)}</Chip>
+                : <Button size="sm" variant="ghost" disabled={dirty} title={dirty ? t('先保存当前修改', 'Save your edits first') : t('这一幕改用这张：名场面面板里、正文里讲到它的地方都换成它', 'Have this one stand for the moment: in the panel, and in the text where it is told')} onClick={() => useForScene(momentAt, picture.path)}>{t(`定为「${momentAt.title}」的图`, `Make it the picture of "${momentAt.title}"`)}</Button>
             ) : null}
             {placed >= 0 ? <PortraitInText character={card.id} path={picture.path} /> : null}
             {sheetAt !== undefined ? (
@@ -759,10 +789,11 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
           <label className="nv-person-moment">
             <span>{t('立绘画', 'Portrait shows')}</span>
             <Select
-              value={moment !== '' && (moment === 'plain' || moments.some(scene => scene.id === moment)) ? moment : marked?.id ?? ''}
+              value={chosenPortrait}
               onChange={setMoment}
               options={[
-                ...(moments.length === 0 ? [{ value: '', label: t('名场面（导演从书里找）', 'A signature scene (the director finds them)') }] : []),
+                ...(plan === 'both' ? [{ value: 'pair', label: t('素底定妆 + 名场面（各一张）', 'A plain likeness + their scene (one of each)') }] : []),
+                ...(moments.length === 0 ? [{ value: 'find', label: t('名场面（导演从书里找）', 'A signature scene (the director finds them)') }] : []),
                 ...moments.map(scene => ({ value: scene.id, label: scene.title.length > 0 ? scene.title : t('未命名的一幕', 'An unnamed moment') })),
                 { value: 'plain', label: t('素底定妆照', 'A plain likeness') },
               ]}
@@ -927,6 +958,8 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
         onChange={(scenes, first) => { set('visual', { ...draft.visual, scenes, scene: '', sceneAt: first ?? '' }) }}
         onDraw={scene => draw('portrait', t('立绘已生成', 'Portrait ready'), undefined, scene.id)}
         onOpen={setViewing}
+        picturesOf={picturesOf}
+        onUse={useForScene}
       />
       <LooksEditor
         value={draft.visual?.looks ?? []}
@@ -983,7 +1016,7 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
       ) : null}
       {confirm.element}
       {voicing ? <SpeechTrialDialog of={{ character: { id: card.id, name: card.name } }} onClose={() => { setVoicing(false) }} /> : null}
-      {comparing ? <ImageTrialDialog of={{ character: { id: card.id, name: card.name } }} params={{ ...(moment === 'plain' ? { plain: true } : moment.length > 0 ? { scene: moment } : {}), ...(portraitFrom !== undefined ? { from: portraitFrom } : {}), ...(notes.trim().length > 0 ? { notes: notes.trim() } : {}) }} onClose={() => { setComparing(false) }} /> : null}
+      {comparing ? <ImageTrialDialog of={{ character: { id: card.id, name: card.name } }} params={{ ...(chosenPortrait === 'plain' ? { plain: true } : chosenPortrait === 'pair' || chosenPortrait === 'find' ? {} : { scene: chosenPortrait }), ...(portraitFrom !== undefined ? { from: portraitFrom } : {}), ...(notes.trim().length > 0 ? { notes: notes.trim() } : {}) }} onClose={() => { setComparing(false) }} /> : null}
       {sheets.element}
     </div>
   )
@@ -1086,7 +1119,7 @@ function StagesPanel({ card, value, dirty, busy, onChange, onDraw, onOpen }: {
 }
 
 /** The moments a person is remembered by: the director finds them in the book, the author rewrites them, and a portrait is drawn of one. */
-function ScenesPanel({ id, card, value, marked, dirty, off, busy, onChange, onDraw, onOpen }: {
+function ScenesPanel({ id, card, value, marked, dirty, off, busy, onChange, onDraw, onOpen, picturesOf, onUse }: {
   id: string
   card: CharacterCard
   value: SignatureScene[]
@@ -1097,6 +1130,10 @@ function ScenesPanel({ id, card, value, marked, dirty, off, busy, onChange, onDr
   onChange: (scenes: SignatureScene[], marked?: string) => void
   onDraw: (scene: SignatureScene) => unknown
   onOpen: (path: string) => void
+  /** The pictures drawn of a moment, the one that stands for it first. */
+  picturesOf: (scene: SignatureScene) => string[]
+  /** Have another of them stand for it. */
+  onUse: (scene: SignatureScene, path: string) => unknown
 }) {
   const { controller } = useStudio()
   const t = useT()
@@ -1127,21 +1164,38 @@ function ScenesPanel({ id, card, value, marked, dirty, off, busy, onChange, onDr
       {value.map((scene) => {
         const chapter = scene.chapter !== undefined ? chapters.get(scene.chapter) : undefined
         const first = scene.id === marked
+        // Every picture drawn of it — by what each picture's record says it is of — and the one that stands for it.
+        const drawn = picturesOf(scene)
+        const lead = drawn[0]
         return (
           <div key={scene.id} className={cx('nv-scene-row', first && 'is-first')}>
-            {scene.portrait !== undefined
-              ? <button type="button" className="nv-scene-thumb" onClick={() => { onOpen(scene.portrait!) }} title={t('点开看大图', 'Open it large')}><ProjectImage path={scene.portrait} alt={scene.title} /></button>
+            {lead !== undefined
+              ? <button type="button" className="nv-scene-thumb" onClick={() => { onOpen(lead) }} title={t('点开看大图', 'Open it large')}><ProjectImage path={lead} alt={scene.title} /></button>
               : <span className="nv-scene-thumb nv-look-empty">{t('未画', 'none')}</span>}
             <div className="nv-scene-fields">
               <div className="nv-scene-head">
                 <TextInput value={scene.title} placeholder={t('哪一幕', 'Which moment')} onChange={(event) => { patch(scene.id, { title: event.target.value }) }} />
                 {chapter !== undefined ? <button type="button" className="nv-link nv-small" onClick={() => { controller.openReader('read', chapter.id) }}>{t(`第 ${chapter.index} 章`, `Ch. ${chapter.index}`)}</button> : null}
                 {first ? <Chip>{t('立绘默认', 'Default')}</Chip> : <button type="button" className="nv-link nv-small" onClick={() => { onChange(own(value), scene.id) }}>{t('设为默认', 'Make default')}</button>}
-                <Button size="sm" variant="outline" icon="image" disabled={dirty || busy || scene.text.trim().length === 0} title={dirty ? t('先保存当前修改', 'Save your edits first') : undefined} onClick={() => onDraw(scene)}>{scene.portrait !== undefined ? t('重画', 'Redraw') : t('画这一幕', 'Draw it')}</Button>
+                <Button size="sm" variant="outline" icon="image" disabled={dirty || busy || scene.text.trim().length === 0} title={dirty ? t('先保存当前修改', 'Save your edits first') : undefined} onClick={() => onDraw(scene)}>{lead !== undefined ? t('再画一张', 'Draw another') : t('画这一幕', 'Draw it')}</Button>
                 <Button size="sm" variant="ghost" icon="trash" title={t('删除', 'Delete')} onClick={() => { onChange(own(value.filter(item => item.id !== scene.id)), marked === scene.id ? undefined : marked) }} />
               </div>
               <TextArea value={scene.text} minRows={2} maxRows={8} placeholder={t('写成画面：在哪里、在做什么、手里拿着什么、光线', 'As a picture: where, doing what, holding what, the light')} onChange={(event) => { patch(scene.id, { text: event.target.value }) }} />
               {scene.why !== undefined ? <p className="nv-muted nv-small">{scene.why}</p> : scene.from === 'digest' ? <p className="nv-muted nv-small">{t('收录这一章时场记记下的', 'Noted by the digest of this chapter')}</p> : null}
+              {drawn.length > 1 ? (
+                // Drawn more than once — redrawn, its prompt rewritten, tried with another service: which one is the moment's is the author's to say.
+                <div className="nv-scene-pictures">
+                  <span className="nv-muted nv-small">{t(`画过 ${drawn.length} 张`, `${drawn.length} pictures of it`)}</span>
+                  {drawn.map((path, at) => (
+                    <span key={path} className={cx('nv-scene-pick', at === 0 && 'is-own')}>
+                      <button type="button" className="nv-scene-mini" onClick={() => { onOpen(path) }} title={t('点开看大图', 'Open it large')}><ProjectImage path={path} alt={scene.title} /></button>
+                      {at === 0
+                        ? <em>{t('用这张', 'In use')}</em>
+                        : <button type="button" className="nv-link nv-small" disabled={dirty} title={dirty ? t('先保存当前修改', 'Save your edits first') : t('这一幕改用这张：这里和正文里讲到它的地方都换成它', 'Have this one stand for the moment, here and in the text where it is told')} onClick={() => { void onUse(scene, path) }}>{t('改用这张', 'Use this one')}</button>}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
             </div>
           </div>
         )

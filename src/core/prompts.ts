@@ -62,8 +62,11 @@ ${base.style}`)
  * @param base.words - the length recommended for what this call writes; absent, the writer judges.
  * @param base.usual - how long the book's written chapters run, for a writer left to judge.
  */
-export function writerTask(base: Base & { context: string; brief?: string; continuing: boolean; words?: number; usual?: number; /** The pictures the author gave for this chapter, as the task tells of them. */ pictures?: string }): string {
+export function writerTask(base: Base & { context: string; brief?: string; continuing: boolean; words?: number; usual?: number; /** The pictures the author gave for this chapter, as the task tells of them. */ pictures?: string; /** What the book's references have for this chapter: the notes kept on its plan. */ references?: string }): string {
   const pictures = base.pictures !== undefined && base.pictures.trim().length > 0 ? `\n\n${base.pictures.trim()}` : ''
+  const references = base.references !== undefined && base.references.trim().length > 0
+    ? L(base.lang, `\n\n## 参考摘记（策划从这本书的参考文献里为这一章查来的）\n\n${base.references.trim()}\n\n摘记是用来对照和借鉴的：事实与设定照它，写法可以学；引来的原文不要整段搬进正文。它和章纲、前文冲突时，以章纲和前文为准。`, `\n\n## Notes from the references (what the planner found for this chapter in the books this one goes by)\n\n${base.references.trim()}\n\nThe notes are to hold the chapter against and to learn from: facts and settings as they have them, ways of writing to borrow; wording quoted there is not carried into the chapter at length. Where they are at odds with the outline or the story so far, those hold.`)
+    : ''
   const brief = base.brief !== undefined && base.brief.trim().length > 0
     ? L(base.lang, `\n\n## 编辑对本次写作的要求\n\n${base.brief.trim()}`, `\n\n## The editor's brief for this pass\n\n${base.brief.trim()}`)
     : ''
@@ -79,7 +82,45 @@ export function writerTask(base: Base & { context: string; brief?: string; conti
     base.continuing ? '你是在续写：从"本章已有正文"的最后一个字之后接着写，不要重复已有内容，衔接处不能看出缝。直接输出续写的正文。' : '从本章第一句开始写，直接输出正文。',
     base.continuing ? 'You are continuing: pick up right after the last word of "This chapter so far", repeat nothing, and leave no seam. Output the continuation only.' : 'Start from the first sentence of the chapter. Output the prose only.',
   )
-  return `${base.context}${brief}${pictures}\n\n---\n${length}\n${how}`
+  return `${base.context}${brief}${references}${pictures}\n\n---\n${length}\n${how}`
+}
+
+/**
+ * Notes for one chapter out of the book's references: the planner reads in them — with its tools, as far as the
+ * author opened each — and hands in what whoever writes the chapter can use.
+ */
+export function referenceNotesTask(base: Base & { chapter: string; before?: string; references: string; direction?: string }): string {
+  return L(base.lang, `《${bare(base.title)}》有参考文献。下面这一章就要动笔了：请到参考文献里查这一章用得上的东西，给写手留一份摘记。写手没有工具，它能看到的只有你交回的这份摘记。
+
+## 要写的这一章
+${base.chapter}
+${base.before !== undefined && base.before.length > 0 ? `\n## 这一章之前\n${base.before}\n` : ''}
+## 参考文献（作者对每一本怎么参考的说法在里面）
+${base.references}
+${base.direction !== undefined ? `\n## 作者这次的要求\n${base.direction}\n` : ''}
+摘记写什么：
+1. 只写这一章用得上的，照作者对每一本“怎么参考”的说法取舍——让学文风的就看它怎么写，让对设定的就核对设定，没让用的部分不碰。
+2. 分三样写，没有的那一样不写：要守的——这一章会碰到的事实、设定、称谓、规矩，参考里是怎么说的；可以借的——写法上的东西：句式、节奏、称呼、起承转合的办法，可以引一两段短的原文作样子，每段注明出自哪一本的哪里；要避开的——照参考来看这一章容易写错、写串的地方。
+3. 写得具体，写手照着就能用；每条注明出自哪一本。篇幅 200-800 字。
+4. 查过之后这一章确实用不上参考：notes 交空字符串，在 why 里说一句为什么。
+
+只输出 JSON：
+{"notes": "给写手的摘记", "used": ["《书名》：读了它的什么"], "why": "一句话：查了什么、怎么取舍的"}`, `"${bare(base.title)}" has references. The chapter below is about to be written: look in the references for what it can use, and leave notes for the writer. The writer has no tools; all it sees of the references is the notes you hand in.
+
+## The chapter to be written
+${base.chapter}
+${base.before !== undefined && base.before.length > 0 ? `\n## Before this chapter\n${base.before}\n` : ''}
+## The references (with what the author says of how each is to be used)
+${base.references}
+${base.direction !== undefined ? `\n## What the author asks this time\n${base.direction}\n` : ''}
+What the notes hold:
+1. Only what this chapter can use, chosen by what the author says of how each reference is to be used — one given for its style is read for how it writes, one given for its settings is checked for them, and what was not asked for is left alone.
+2. Three kinds of thing, each left out where there is none: to keep to — the facts, settings, forms of address and rules this chapter will touch, as the references have them; to borrow — ways of writing: sentence shapes, rhythm, how people are addressed, how a scene turns, with a short passage or two quoted as a sample, each marked with the book and the place it is from; to steer clear of — where this chapter could easily go wrong against the references.
+3. Concrete enough to write from; each note says which book it is from. 150-500 words.
+4. Where, having looked, nothing of the references is of use to this chapter: hand in notes as an empty string, and say why in a sentence.
+
+Output JSON only:
+{"notes": "the notes for the writer", "used": ["<title>: what of it you read"], "why": "one sentence: what you looked at and how you chose"}`)
 }
 
 export function reviseSpanSystem(base: Base & { style: string }): string {
@@ -1093,7 +1134,7 @@ ${avoid.length > 0 ? avoid : '（无特别限制）'}
 
 要求：
 1. 封面要让没读过的人一眼看出这是一本什么样的书：选一个最能代表这个故事的画面——人物的关系与处境、标志性的地方、一件有分量的东西，而不是把情节画成连环画。
-2. 竖幅构图；画面上方留出一块干净的空间放标题；主体在中下部。写清谁在画面里（用他们的样子，不用姓名）、姿态与神情、所处的环境、光线、色调与气氛。
+2. 竖幅构图；画面上方留出一块干净的空间放标题；主体在中下部。写清谁在画面里（用姓名称呼；每个人平常的样子会原样接在这条描述后面，这里不必复述）、姿态与神情、所处的环境、光线、色调与气氛。
 3. 只写眼睛看得见的东西。机构名、头衔、专有名词换成它在这个故事里实际的样子：材质、形状、新旧、颜色。美术风格里对年代、形制有规定的（发式、服饰、建筑、器物属于哪个朝代、哪种式样），画面里这些东西照它写；正文的写法与它不一样时以美术风格为准。
 4. "画面里不能出现"的东西不要画，也不要把这些词写进描述。不要出现任何文字、水印、边框。
 5. 120-220 字，只输出这条描述，不要任何其他内容。`, `Design the cover of the novel "${bare(base.title)}": write one picture description for an image model.
@@ -1121,60 +1162,81 @@ ${avoid.length > 0 ? avoid : '(nothing in particular)'}
 
 Requirements:
 1. A cover tells somebody who has not read the book what kind of book it is: choose the one picture that stands for this story — who these people are to each other and where they stand, a place that is the book's own, one thing that carries weight — not the plot drawn as a strip.
-2. Portrait format; a clean area at the top for the title; the subject in the middle and lower part. Say who is in the picture (by how they look, not by name), their pose and expression, where they are, the light, the palette and the mood.
+2. Portrait format; a clean area at the top for the title; the subject in the middle and lower part. Say who is in the picture (by name; how each of them usually looks is added after this description as it stands, so do not restate it), their pose and expression, where they are, the light, the palette and the mood.
 3. Only what the eye can see. Names of institutions, ranks and proper nouns become what they actually look like in this story: material, shape, age, colour. Where the art direction fixes a period or a form (which dynasty or fashion hair, dress, buildings and objects belong to), these are written in that form; where the text says otherwise, the art direction holds.
 4. Nothing from "must not appear" is drawn, and none of those words go into the description. No lettering, no watermark, no frame.
 5. 80-150 words. Output the description only.`)
 }
 
-export function illustrationPromptTask(base: Base & { subject: string; cast: string; places?: string; artStyle: string; avoid?: string[]; wardrobe?: string }): string {
+/**
+ * The picture of one passage of a chapter, settled by the director: what the frame shows, who is in it — whoever the
+ * passage means, named or not —, what they wear there, where it is set and which things of the bible it shows. The
+ * Studio then says how each of them looks, as the bible has it, and sends their pictures along; so the director
+ * writes the moment, and names what is in it.
+ */
+export function passagePictureTask(base: Base & { chapter: string; passage: string; before?: string; after?: string; ask?: string; cast: string; places?: string; artStyle: string; avoid?: string[]; whole?: boolean }): string {
   const avoid = (base.avoid ?? []).join(base.lang === 'zh' ? '、' : ', ')
-  const dressed = base.wardrobe !== undefined && base.wardrobe.length > 0
-  return L(base.lang, `请为下面的小说内容写一条给绘图模型的画面描述，用作插图。
+  return L(base.lang, `要给《${bare(base.title)}》的一段正文画一张插图。请定下这张图：画面是什么，画里有谁、在哪、有什么。
 
-## 要画的内容
-${base.subject}
+## 这一章
+${base.chapter}
+${base.before !== undefined && base.before.length > 0 ? `\n## 这一段之前的正文（用来认人、认地方——这一段里的“他”“她”是谁，此刻在哪）\n${base.before}\n` : ''}
+## ${base.whole === true ? '要画的内容（这一章的梗概：从里面取最有画面感的一刻）' : '要画的这一段'}
+${base.passage}
+${base.after !== undefined && base.after.length > 0 ? `\n## 紧接着的正文\n${base.after}\n` : ''}${base.ask !== undefined ? `\n## 作者对这一张的要求\n${base.ask}\n` : ''}
+## 人物（这一章里的人：名字｜身份｜平常的样子｜可选的造型）
+${base.cast || '（这一章还没有记下人物：用 book_read what=character 看人物表）'}
 
-## 人物的样子
-${base.cast || '（无）'}
+## 地点与物件（设定里有、这一段前后写到的）
+${base.places !== undefined && base.places.length > 0 ? base.places : '（没有对上的条目）'}
 
-## 场所与器物的样子
-${base.places !== undefined && base.places.length > 0 ? base.places : '（没有专门的设定，按"要画的内容"里写到的样子来）'}
-${dressed ? `\n## 人物可选的造型（按这一段的场合，为有造型可选的人物各选一套；不合适就不选）\n${base.wardrobe}\n` : ''}
 ## 美术风格（会另行附加，不必复述）
 ${base.artStyle}
 
 ## 画面里不能出现
 ${avoid.length > 0 ? avoid : '（无特别限制）'}
 
-要求：
-1. 选取最有画面感的一个瞬间；写清构图与景别、人物的动作表情、环境、光线与氛围。
-2. 人物的样子沿用上面的写法并写全，不用姓名指代。
-3. 只写眼睛看得见的东西。机构名、头衔、教派、专有名词这类词，绘图模型会按现实世界里最常见的样子去画（看到"教会"就画出欧式教堂）——一律换成它在这个故事里实际的样子：材质、形状、新旧、脏净、颜色。美术风格里对年代、形制有规定的（发式、服饰、建筑、器物属于哪个朝代、哪种式样），画面里这些东西照它写；正文的写法与它不一样时以美术风格为准。
-4. "画面里不能出现"的东西不要画，也不要把这些词写进描述。
-5. 不要出现文字、水印、分格。80-150 字。${dressed ? '只输出 JSON：{"description": "画面描述", "wearing": {"人物名": "造型名"}}；选了造型的人物，描述里按那套造型来写。' : '只输出这条描述，不要任何其他内容。'}`, `Write one picture description for an image model, to illustrate the fiction below.
+交回的内容：
+1. picture：画面，80-160 字。${base.whole === true ? '取最有画面感的一个瞬间；' : '画的是这一段写的那一刻；'}写清景别与机位、谁在哪里做什么、神情、手里和身边的东西、光线与气氛。人物用姓名称呼；每个人平常的样子会原样接在后面、人设图也会带上，这里不必复述，只写这一刻特有的——动作、神情，以及此刻和平常不一样的穿戴。只写眼睛看得见的；机构名、头衔、专有名词写成它在这个故事里实际的样子。美术风格里对年代、形制有规定的照它写。“画面里不能出现”的东西不画，也不把这些词写进来。不要文字、水印、分格。
+2. people：画面里出现的人，写姓名（照上面的人物表），主体在前，至多 4 个。这一段用代词、称呼指的人，从前文认出是谁；没有人物卡的人不列，只在 picture 里写出他的样子。
+3. wearing：{"姓名": "造型名"}——只给此刻穿的不是平常那一身、而且有这个造型可选的人。
+4. place：这一幕所在的地方，写设定里的条目名；设定里没有就不写。
+5. things：画面里看得见、设定里有条目的物件，写条目名。
+6. why：一句话，说给作者听：这一幕里有谁、在哪，你是凭什么认定的。
+上面的材料认不出这一段里是谁、此刻穿什么、那件东西长什么样时，书里有：book_read 读前后文、人物卡和设定，book_search 找。
 
-## What to illustrate
-${base.subject}
+只输出 JSON：
+{"picture": "画面", "people": ["姓名"], "wearing": {"姓名": "造型名"}, "place": "条目名", "things": ["条目名"], "why": "一句话"}`, `A passage of "${bare(base.title)}" is to be illustrated. Settle the picture: what it shows, who is in it, where, with what.
 
-## How the people look
-${base.cast || '(none)'}
+## The chapter
+${base.chapter}
+${base.before !== undefined && base.before.length > 0 ? `\n## The text before the passage (to tell who and where: whom its "he" and "she" mean, where they are)\n${base.before}\n` : ''}
+## ${base.whole === true ? 'What to illustrate (the chapter in summary: take its most visual moment)' : 'The passage to illustrate'}
+${base.passage}
+${base.after !== undefined && base.after.length > 0 ? `\n## The text right after\n${base.after}\n` : ''}${base.ask !== undefined ? `\n## What the author asks of this picture\n${base.ask}\n` : ''}
+## People (those of this chapter: name | who they are | how they usually look | looks to choose from)
+${base.cast || '(nobody is on record for this chapter yet: book_read what=character lists the cast)'}
 
-## How the places and things look
-${base.places !== undefined && base.places.length > 0 ? base.places : '(nothing specified; go by what "What to illustrate" shows)'}
-${dressed ? `\n## Looks to choose from (pick one per character who has any, by the occasion of this passage; pick none when none fits)\n${base.wardrobe}\n` : ''}
+## Places and things (of the bible, named around the passage)
+${base.places !== undefined && base.places.length > 0 ? base.places : '(no entry matches)'}
+
 ## Art direction (added separately; do not repeat it)
 ${base.artStyle}
 
 ## Must not appear in the picture
 ${avoid.length > 0 ? avoid : '(nothing in particular)'}
 
-Rules:
-1. Pick the single most visual moment. State composition and shot size, each person's action and expression, setting, light and mood.
-2. Reuse "How the people look" in full; never refer to anyone by name.
-3. Write only what the eye can see. Names of institutions, titles, orders and other proper nouns make an image model draw the most common real-world version (it reads "church" and paints a cathedral) — replace each with what it actually looks like in this story: material, shape, age, wear, colour. Where the art direction fixes a period or a form (which dynasty or fashion hair, dress, buildings and objects belong to), these are written in that form; where the text says otherwise, the art direction holds.
-4. Nothing from "Must not appear" may be drawn, and none of those words may appear in the description.
-5. No text, watermark or panel borders. 50-100 words. ${dressed ? 'Output JSON only: {"description": "the picture", "wearing": {"character name": "look name"}}; describe a character in the look you picked for them.' : 'Output the description only.'}`)
+What to hand in:
+1. picture: the picture, 50-110 words. ${base.whole === true ? 'The single most visual moment; ' : 'The moment the passage tells; '}state shot and viewpoint, who is where doing what, expressions, what is in hand and at hand, light and mood. Call people by name; how each usually looks is added after it as it stands and their design sheets go along, so do not restate it — write only what is of this moment: action, expression, and whatever they wear that is not their usual. Only what the eye can see; names of institutions, titles and proper nouns as what they actually look like in this story. Where the art direction fixes a period or a form, write in that form. Nothing from "Must not appear" is drawn, and none of those words is written. No text, watermark or panel borders.
+2. people: who is in the frame, by name (as the list above has them), its subject first, four at most. Whoever the passage means by a pronoun or a form of address is told from the text before it; somebody with no card is not listed, only described in the picture.
+3. wearing: {"name": "look name"} — only for somebody who wears something other than their usual here, and has that look to choose.
+4. place: where the moment is set, by the name of its entry in the bible; nothing where the bible has none.
+5. things: the things in the frame that have an entry in the bible, by entry name.
+6. why: one sentence for the author: who is in it and where, and what told you so.
+Where the material above does not tell who the passage means, what they wear at this point or what a thing looks like, the book does: book_read reads the text around it, the cards and the entries; book_search finds.
+
+Output JSON only:
+{"picture": "the picture", "people": ["name"], "wearing": {"name": "look name"}, "place": "entry name", "things": ["entry name"], "why": "one sentence"}`)
 }
 
 /** Distill a character's prose appearance into an anchor an image model can draw the same way every time. */
@@ -1635,43 +1697,51 @@ Output JSON only: {"title": "", "chapter": 0, "scene": "", "why": ""}`)
  * A picture's prompt, put together by the Studio, for a model that reads fewer tokens than it comes to: the director
  * writes the same picture in fewer words. What is handed in is counted against `tokens`.
  */
-export function compactPromptTask(base: Base & { prompt: string; avoid: string[]; tokens: number; estimate: number; model: string; references: boolean; avoidInPrompt: boolean }): string {
+/**
+ * The prompt of a picture, written out from the brief the Studio laid out for it: the same picture under the same
+ * headings, in one language, each thing said once — and, where the image model reads only so much, within that.
+ * @param base.to - the language the prompt is to be in.
+ * @param base.tokens - the most the prompt may come to, where the model has a limit; `estimate` is what the brief comes to.
+ * @param base.references - how many reference pictures go along (none: nothing may be said of any).
+ * @param base.avoid - what must not appear, where that goes to the model apart from the prompt.
+ */
+export function imagePromptTask(base: Base & { brief: string; avoid: string[]; to: PromptLanguage; tokens?: number; estimate: number; model: string; references: number }): string {
   const avoid = base.avoid.join(base.lang === 'zh' ? '、' : ', ')
-  return L(base.lang, `《${bare(base.title)}》要画一张图。绘图模型（${base.model}）一次只读得进大约 ${base.tokens} 个 token 的提示词，超出的部分它看不到。下面这段提示词连同“不要出现”的清单大约有 ${base.estimate} 个 token。请把它重写成放得下的一段——画出来的应当还是同一张图。
+  const zhTo = base.to === 'zh' ? '中文' : '英文（English）'
+  const enTo = base.to === 'zh' ? 'Chinese' : 'English'
+  const fit = base.tokens !== undefined
+  const share = fit ? Math.max(10, Math.floor(base.tokens! * 100 / base.estimate / 5) * 5) : 100
+  return L(base.lang, `《${bare(base.title)}》要画一张图。下面是工坊排好的画图说明：一行一段，每段行首是它的名字（用途、画面、构图、人物、地点、物件、这一张的要求、画风、参考图、不要出现——有哪段算哪段）。请把它写成发给绘图模型（${base.model}）的提示词：画出来的应当是同一张图。${fit ? `这个模型一次只读得进大约 ${base.tokens} 个 token，超出的部分它看不到；这份说明现在大约 ${base.estimate} 个。` : ''}
 
-## 现在的提示词（工坊拼好的）
-${base.prompt}
-
-## 画面里不要出现
-${avoid.length > 0 ? avoid : '（无特别限制）'}
-
-重写后的提示词：
-1. 先后次序：这张图画的是什么（谁、在哪、在做什么、构图）；画里每个人的样子（脸、发式、衣着、随身的东西——原文写了的特征一样不丢）；这本书的画风；光线与气氛。模型从头读起，要紧的在前。
-2. 同一件事只说一次；解释、客套和不影响画面的话去掉。原文里用英文写的外貌短语是这个人每一张图都带的写法，可以原样留着，也可以并得更紧，意思不变。
-3. ${base.avoidInPrompt ? '“不要出现”的东西没有单独的地方放，要写就得写在这一段里：能靠把画面里实际有的东西说清楚来避开的，就那样写（写明是明制的发髻，而不是写“没有辫子”）；非点名不可的，放在最后，一句短话，只列最要紧的几样。' : '“不要出现”的清单会另外交给模型，不必写进这一段；它在这里只是让你知道该绕开什么。'}
-4. ${base.references ? '这张图会带参考图：原文里交代参考图的那句话留下——第几张是谁，哪些照参考图画、哪些不照——可以写得更紧，意思一样不少。' : '这张图不带参考图：原文里说到参考图的话全部去掉。'}
-5. 不添原文没有的内容，不改画的是什么。原文用什么语言就用什么语言，中英混排的照旧。
-6. 篇幅：现在量出来是 ${base.estimate}，要到 ${base.tokens} 以内——大约是现在的 ${Math.max(10, Math.floor(base.tokens * 100 / base.estimate / 5) * 5)}%。不用自己数：交上来时会量，超了会告诉你超出多少。
+## 画图说明
+${base.brief}
+${avoid.length > 0 ? `\n## 画面里不要出现（另外交给模型，不写进提示词；这里只是让你知道该绕开什么）\n${avoid}\n` : ''}
+写成的提示词：
+1. 分段和次序照原样：一段一行，行首保留那一段的名字；说明里没有的段不添。模型从头读起，所以这个次序不要动。
+2. 全文用${zhTo}写，段名也是。说明里用别的语言写的内容译过来——人物的外貌常是一串英文短语——特征一样不丢：年纪、脸、发式、体型、衣着的款式颜色纹样、随身的东西。人名、地名、物名不译。
+3. 同一件事只说一次。「画面」写这一刻：谁在做什么、在哪、什么光线和气氛；「人物」写每个人长什么样。两处重复的留在该在的那一段；说法不一样时，动作、神情和此刻的穿戴以「画面」为准，长相以「人物」为准。
+4. 只写眼睛看得见的。不添说明里没有的内容，不改画的是什么；解释、客套和不影响画面的话去掉。
+5. ${base.references > 0 ? `这张图带 ${base.references} 张参考图：「参考图」那一段留着——${base.to === 'zh' ? '「图1」「图2」' : '"Image 1", "Image 2"'}这样的编号和它各是谁一个不少，哪些照图画、哪些照文字，意思不变，可以写得更紧。` : '这张图不带参考图：提示词里不要出现“参考图”这一段，也不要有任何说到参考图的话。'}
+6. ${avoid.length > 0 ? '提示词里不要有「不要出现」这一段，也不要把下面那份清单抄进来：它另有一栏交给模型，写进提示词反而会把那些东西招来。能靠把画面里实际有的东西说清楚来避开的，就在前面那样写（写明是明制的发髻，而不是写“没有辫子”）。' : '「不要出现」那一段，说明里有就留着，放在最后：能靠把画面里实际有的东西说清楚来避开的，就在前面那样写（写明是明制的发髻，而不是写“没有辫子”）；非点名不可的才列，短短一行。'}
+7. ${fit ? `篇幅：现在量出来是 ${base.estimate}，要到 ${base.tokens} 以内——大约是现在的 ${share}%。放不下时先并重复的、去掉修饰，再压各段的长短；「画面」、每个人最认得出的特征和「画风」留到最后。不用自己数：交上来时会量，超了会告诉你超出多少。` : '篇幅：和说明差不多，或者更紧；不要为了显得丰富而添话。'}
 
 只输出 JSON：
-{"prompt": "重写后的整段提示词"}`, `A picture is to be drawn for "${bare(base.title)}". The image model (${base.model}) reads about ${base.tokens} tokens of a prompt and never sees what lies beyond. The prompt below, with its list of what to keep out, comes to about ${base.estimate}. Write it again so that it fits — the picture it asks for is to be the same picture.
+{"prompt": "写成的整段提示词"}`, `A picture is to be drawn for "${bare(base.title)}". Below is the brief the Studio laid out for it: a line a part, each under its name (purpose, the picture, framing, the people, the place, the objects, what was asked of this one, the art direction, the reference pictures, what must not appear — whichever of them it has). Write it out as the prompt for the image model (${base.model}): the picture it asks for is to be the same picture.${fit ? ` This model reads about ${base.tokens} tokens of a prompt and never sees what lies beyond; the brief comes to about ${base.estimate}.` : ''}
 
-## The prompt as it stands (put together by the Studio)
-${base.prompt}
-
-## Must not appear in the picture
-${avoid.length > 0 ? avoid : '(nothing in particular)'}
-
+## The brief
+${base.brief}
+${avoid.length > 0 ? `\n## Must not appear in the picture (given to the model apart from the prompt, and not written into it; here for you to steer around)\n${avoid}\n` : ''}
 The prompt you write:
-1. In this order: what the picture shows (who, where, doing what, how it is framed); how each person in it looks (face, hair, clothing, what they carry — no feature the original names is lost); the book's art direction; light and mood. The model reads from the top: what matters most comes first.
-2. Says each thing once; explanations, courtesies and words that change nothing in the picture go. The English phrases describing a person are how they are written in every picture of them: keep them as they are, or tighten them without changing what they say.
-3. ${base.avoidInPrompt ? 'What must not appear has no field of its own here: it is in this prompt or nowhere. Where saying plainly what is there keeps a thing out, say that (the Ming topknot, not "no queue"); what has to be named is named last, in one short sentence, the few that matter most.' : 'The list of what must not appear goes to the model separately and is not written into this prompt; it is here for you to steer around.'}
-4. ${base.references ? 'Reference pictures go along with this one: what the original says of them stays — which shows whom, what is to follow the reference and what is not — tightened if you like, with nothing of its meaning lost.' : 'No reference picture goes along with this one: everything the original says of reference pictures goes.'}
-5. Adds nothing the original does not have, and does not change what the picture shows. In the language the original is in; where it mixes Chinese and English, so does yours.
-6. Its length: it measures ${base.estimate} now and has to come to ${base.tokens} or less — about ${Math.max(10, Math.floor(base.tokens * 100 / base.estimate / 5) * 5)}% of what it is. No need to count: what you hand in is measured, and you are told by how much it is over if it is.
+1. Keeps the parts and their order: a line a part, each under its name; no part is added that the brief does not have. The model reads from the top, so the order stays.
+2. Is in ${enTo} throughout, the names of the parts too. What the brief has in another language is translated — how a person looks is often a run of English phrases — with no feature lost: age, face, hair, build, the cut, colour and pattern of what they wear, what they carry. Names of people, places and things are not translated.
+3. Says each thing once. "The picture" has the moment: who does what, where, in what light and mood; the people's lines have how each of them looks. What is said in both stays in the part it belongs to; where the two differ, action, expression and what is worn at this moment go by the picture, looks by the person's line.
+4. Says only what the eye can see. Adds nothing the brief does not have and does not change what the picture shows; explanations, courtesies and words that change nothing in the picture go.
+5. ${base.references > 0 ? `${base.references} reference picture(s) go along with this one: the part on them stays — every number (${base.to === 'zh' ? '图1, 图2' : 'Image 1, Image 2'}) with who or what it shows, what is to follow a picture and what the words — tightened if you like, with nothing of its meaning lost.` : 'No reference picture goes along with this one: the prompt has no part on reference pictures, and says nothing of any.'}
+6. ${avoid.length > 0 ? 'Has no part on what must not appear, and none of the list below copied into it: that goes to the model in a field of its own, and written into the prompt it would call those things up. Where saying plainly what is there keeps a thing out, say that earlier on (the Ming topknot, not "no queue").' : 'Keeps the part on what must not appear where the brief has one, last: where saying plainly what is there keeps a thing out, say that earlier on (the Ming topknot, not "no queue"); only what has to be named is listed, in one short line.'}
+7. ${fit ? `Its length: the brief measures ${base.estimate} and the prompt has to come to ${base.tokens} or less — about ${share}% of that. Where it does not fit, merge what is said twice and drop ornament first, then shorten the parts; the picture, what each person is most known by and the art direction are the last to give way. No need to count: what you hand in is measured, and you are told by how much it is over if it is.` : 'Its length: about that of the brief, or tighter; nothing is added to make it seem richer.'}
 
 Output JSON only:
-{"prompt": "the whole prompt, rewritten"}`)
+{"prompt": "the whole prompt, written out"}`)
 }
 
 export function lookNotesTask(base: Base & { card: string; anchor?: string; negative?: string; notes: string; picture: 'portrait' | 'sheet'; avoid?: string[]; artStyle?: string }): string {

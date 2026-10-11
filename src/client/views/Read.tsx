@@ -34,6 +34,7 @@ import { Film, place, Theater, WatchChoice, type ChapterFilm } from '../reader/t
 import { chapterJob } from '../Batch'
 import { Icon } from '../icons'
 import { sheetsDrawn } from '../labels'
+import { framedOf, framedWord, PassagePictureDialog } from '../PassagePicture'
 import { useSheetsAsk } from '../SheetsAsk'
 import { IssueCard, IssueList, issueMarks } from '../Issues'
 import { AudioDesk, ScriptTable, type ScriptView } from '../stage/Audio'
@@ -191,6 +192,8 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
   const [options, updateOptions] = usePlayerOptions()
   const [picked, setPicked] = useState<{ text: string; offset: number; top: number; left: number } | undefined>()
   const sheets = useSheetsAsk()
+  // The passage a picture is being asked of: what the author wants of it is asked first.
+  const [picturing, setPicturing] = useState<string | undefined>()
   const [flash, setFlash] = useState<number | undefined>()
   // What a review found, shown on the page where it was found — when the author asks to see it. Reading stays clean otherwise.
   // In full screen the viewer is a reader's: no notes of a review, no production desk, nothing to edit — whatever the
@@ -619,16 +622,10 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
                   setPicked(undefined)
                 }}>{t('和总编讨论', 'Discuss')}</Button>
               ) : null}
-              <Button size="sm" icon="image" pending={t('正在为这段配图…', 'Illustrating…')} onClick={() => {
-                if (!controller.need('image')) return undefined
-                const chosen = picked.text
-                // Whoever of the people in the passage comes back in the book and has no design sheet gets one first: asked, before anything is drawn.
-                return sheets.before([{ kind: 'scene', target: chapter.id, quote: chosen }], choice => controller.guard(async () => {
-                  const job = await controller.run('image.create', { root, kind: 'scene', target: chapter.id, quote: chosen, insert: true, ...choice })
-                  setPicked(undefined)
-                  doc.reload()
-                  controller.toast('success', `${t('插图已放进正文', 'The illustration is in the chapter')}${sheetsDrawn(job, t)}`)
-                }))
+              <Button size="sm" icon="image" onClick={() => {
+                if (!controller.need('image')) return
+                // What the author wants of the picture is asked first; the passage stays marked meanwhile.
+                setPicturing(picked.text)
               }}>{t('配图', 'Illustrate')}</Button>
             </div>
           ) : null}
@@ -664,6 +661,26 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
       ) : null}
       {sharing ? <ShareDialog onClose={() => { setSharing(false) }} /> : null}
       {sheets.element}
+      {picturing !== undefined && chapter !== undefined ? (
+        <PassagePictureDialog
+          chapter={chapter}
+          quote={picturing}
+          onClose={() => { setPicturing(undefined) }}
+          onDraw={(asked) => {
+            const chosen = picturing
+            setPicturing(undefined)
+            setPicked(undefined)
+            // Whoever of the people in the passage comes back in the book and has no design sheet gets one first: asked, before anything is drawn.
+            void sheets.before([{ kind: 'scene', target: chapter.id, quote: chosen }], choice => controller.guard(async () => {
+              controller.toast('info', t('导演在整理这一段：画里有谁、在哪；定下来就画。', 'The director is settling this passage — who is in it, where — and then it is drawn.'))
+              const job = await controller.run('image.create', { root, kind: 'scene', target: chapter.id, quote: chosen, ...(asked.ask !== undefined ? { prompt: asked.ask } : {}), ...(asked.insert ? { insert: true } : {}), ...choice })
+              if (asked.insert) doc.reload()
+              const framed = framedOf(job)
+              controller.toast('success', `${asked.insert ? t('画好了，已放在这一段后面', 'Drawn, and placed after the passage') : t('画好了，在“演出 → 插图”里', 'Drawn: it is under Stage → Pictures')}${framed !== undefined ? t(`：${framedWord(framed, t)}`, `: ${framedWord(framed, t)}`) : ''}${sheetsDrawn(job, t)}`)
+            }))?.catch(() => {})
+          }}
+        />
+      ) : null}
     </div>
   )
 }

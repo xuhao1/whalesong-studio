@@ -70,6 +70,33 @@ export function lookWords(card: { visual?: { prompt?: string | undefined } | und
 }
 
 /**
+ * Which of somebody's moments a portrait is a picture of — one at most. By what says so most surely: the moment keeps
+ * it as its own; its record names a moment of that title in that chapter; it was drawn from the moment's words; its
+ * record names the moment by its number. (The number comes last: what the digests note is numbered by where it
+ * stands in its chapter, and a chapter digested again may give that number to another moment.)
+ */
+export function sceneOfPicture<S extends SignatureScene>(scenes: readonly S[], path: string, record: Pick<IllustrationInfo, 'moment' | 'parts'> | undefined): S | undefined {
+  const own = scenes.find(scene => scene.portrait === path)
+  if (own !== undefined || record === undefined) return own
+  const title = record.moment?.title?.trim() ?? ''
+  const said = record.parts?.pieces?.find(piece => piece.of === 'scene')?.text
+  return (title.length > 0 ? scenes.find(scene => scene.title.trim() === title && (record.moment?.chapter === undefined || scene.chapter === undefined || record.moment.chapter === scene.chapter)) : undefined)
+    ?? (said !== undefined ? scenes.find(scene => scene.text.trim().length > 0 && said.includes(tidyPart(scene.text))) : undefined)
+    ?? (record.moment?.scene !== undefined ? scenes.find(scene => scene.id === record.moment!.scene) : undefined)
+}
+
+/**
+ * The pictures drawn of one of somebody's moments, among their portraits: the one that is the moment's own first —
+ * the author's choice, or the one last drawn of it — then the others, in the order the portraits are kept in.
+ * @param scenes - all their moments: a picture is of one of them.
+ * @param paths - their portraits, in order.
+ */
+export function scenePictures(scene: SignatureScene, scenes: readonly SignatureScene[], paths: readonly string[], recordOf: (path: string) => Pick<IllustrationInfo, 'moment' | 'parts'> | undefined): string[] {
+  const of = paths.filter(path => sceneOfPicture(scenes, path, recordOf(path))?.id === scene.id)
+  return scene.portrait !== undefined && of.includes(scene.portrait) ? [scene.portrait, ...of.filter(path => path !== scene.portrait)] : of
+}
+
+/**
  * The moments a person is remembered by, as their card has them — the single paragraph of an earlier version read as
  * a list of one ("葬花（第27章）：……" gives the moment its name).
  */

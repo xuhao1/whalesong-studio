@@ -21,9 +21,9 @@
  */
 import { ImageTrialDialog } from './Trial'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { lookWords, pictureWords, resolveArtStyle, tidyPart, type ArtSource, scenesOf, sceneWords } from '../shared/art'
+import { lookWords, pictureWords, resolveArtStyle, sceneOfPicture, scenePictures, splitAvoid, tidyPart, type ArtSource, scenesOf, sceneWords } from '../shared/art'
 import { sheetsOf } from '../shared/sheets'
-import type { IllustrationInfo, IllustrationPiece } from '../shared/types'
+import type { IllustrationInfo, IllustrationPiece, PictureWhole } from '../shared/types'
 import { Button, Chip, cx, Modal, Spinner, TextArea, TextInput, useAction, useConfirm, useLoad, useMediaUrl, useProject, useSnapshot, useStudio, useT, plainEnter } from './ui'
 import { leftBehind } from './labels'
 import { PlacePicture } from './PlacePicture'
@@ -55,7 +55,9 @@ const SERVICE: Record<string, [string, string]> = {
 }
 
 const PIECE: Record<Exclude<IllustrationPiece['of'], 'look'>, [string, string]> = {
-  frame: ['画面要求', 'Kind of picture'],
+  use: ['用途', 'What it is for'],
+  picture: ['画面（你写的）', 'The picture, in your words'],
+  frame: ['构图', 'Framing'],
   outfit: ['这套造型', 'This outfit'],
   expression: ['神态', 'Expression'],
   ask: ['这一张的要求', 'Asked of this one'],
@@ -120,16 +122,40 @@ function RedrawPicture({ image, mode, onDone, onBusy, onCancel }: { image: Illus
   const { controller } = useStudio()
   const t = useT()
   const { root } = useProject()
-  const [words, setWords] = useState(pictureWords(image).subject)
+  // Rewritten, it is the whole prompt the author has before them — everything the model got, and apart from it what
+  // was kept out: the Host says what that was. (A Host from before it could say has the picture's own words only.)
+  const [whole, setWhole] = useState<PictureWhole | 'older' | undefined>(mode === 'words' ? undefined : 'older')
+  const [words, setWords] = useState(mode === 'words' ? '' : pictureWords(image).subject)
+  const [avoid, setAvoid] = useState('')
+  // Which of the two is in the field, where the director wrote the prompt out of a brief: what was sent, or the brief.
+  const [brief, setBrief] = useState(false)
   const [change, setChange] = useState('')
   const { busy, run } = useAction()
-  const ready = mode === 'words' ? words.trim().length > 0 : change.trim().length > 0
+  useEffect(() => {
+    if (mode !== 'words') return
+    let live = true
+    controller.api.call('image.whole', { root, picture: image.id }).then((got) => {
+      if (!live) return
+      setWhole(got)
+      setWords(got.prompt)
+      setAvoid(got.avoid.join(t('、', ', ')))
+    }).catch(() => {
+      if (!live) return
+      setWhole('older')
+      setWords(pictureWords(image).subject)
+    })
+    return () => { live = false }
+    // The picture is what it is asked of: not asked again as the page is drawn again.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [image.id, mode, root])
+  const all = whole !== undefined && whole !== 'older' ? whole : undefined
+  const ready = mode === 'words' ? whole !== undefined && words.trim().length > 0 : change.trim().length > 0
   const go = (): void => {
     if (!ready || busy || !controller.need('image')) return
     onBusy(true)
     void run(async () => {
       try {
-        const job = await controller.run('image.redraw', { root, picture: image.id, ...(mode === 'words' ? { subject: words.trim() } : { change: change.trim() }) })
+        const job = await controller.run('image.redraw', { root, picture: image.id, ...(mode !== 'words' ? { change: change.trim() } : all !== undefined ? { prompt: words.trim(), avoid: splitAvoid(avoid) } : { subject: words.trim() }) })
         await controller.refreshProject()
         const replaced = Array.isArray(job.result?.replaced) ? job.result.replaced.filter((name): name is string => typeof name === 'string') : []
         // A person's design sheets are kept side by side: the one drawn from stays among them, not in use.
@@ -144,7 +170,22 @@ function RedrawPicture({ image, mode, onDone, onBusy, onCancel }: { image: Illus
   }
   return (
     <div className="nv-picture-redraw">
-      {mode === 'words' ? (
+      {mode === 'words' && whole === undefined ? <Spinner /> : mode === 'words' && all !== undefined ? (
+        <>
+          <label className="nv-picture-redraw-field">
+            <span>{t('提示词', 'Prompt')}{all.brief !== undefined ? (
+              // Two texts there are of it: the one the model got, and the brief it was written from.
+              <button type="button" className="nv-link nv-small" disabled={busy} onClick={() => { setWords(brief ? all.prompt : all.brief!); setBrief(!brief) }}>{brief ? t('换回发出去的那一段', 'Back to what was sent') : t('换成压缩前的原文', 'The brief it was written from')}</button>
+            ) : null}</span>
+            <TextArea autoFocus value={words} minRows={6} maxRows={18} disabled={busy} onChange={(event) => { setWords(event.target.value) }} />
+          </label>
+          <label className="nv-picture-redraw-field">
+            <span>{t('不要出现', 'Keep out')}</span>
+            <TextArea value={avoid} minRows={1} maxRows={5} disabled={busy} placeholder={t('没有', 'Nothing')} onChange={(event) => { setAvoid(event.target.value) }} />
+          </label>
+          <p className="nv-muted nv-small">{t('发出去的就是这两栏。', 'These two fields are what is sent.')}{all.references.length > 0 ? t(`照旧带 ${all.references.length} 张参考图：${all.references.map(reference => reference.label).join('、')}。`, ` ${all.references.length} reference picture(s) go along as before: ${all.references.map(reference => reference.label).join(', ')}.`) : ''}</p>
+        </>
+      ) : mode === 'words' ? (
         <>
           <TextArea autoFocus value={words} minRows={4} maxRows={14} disabled={busy} onChange={(event) => { setWords(event.target.value) }} />
           <p className="nv-muted nv-small">{t('这张图的画面部分。画风、不要出现和它原来带的参考图照旧附上。', 'What the picture shows. The art direction, what to keep out and the references it had go along as before.')}</p>
@@ -234,11 +275,22 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
   const open = (path: string | undefined, label: string): Standing['action'] | undefined => (path !== undefined && onOpen !== undefined ? { label, run: () => { onOpen(path) } } : undefined)
   const withAction = (item: Omit<Standing, 'action'>, action: Standing['action'] | undefined): Standing => (action !== undefined ? { ...item, action } : item)
   if (changed) standing.push(withAction({ tone: 'info', text: t('照着另一张图改的：发给绘图模型的只有那张图和改哪一处。', 'Another picture, changed: the image model got that picture and what to change, nothing else.') }, open(references[0]?.path, t('看原图', 'See that picture'))))
+  if (image.verbatim === true) standing.push({ tone: 'info', text: t('照你改写的整段提示词画的：工坊没有另加画风和说明。', 'Drawn from the whole prompt as you rewrote it: the Studio added no art direction and no lines of its own.') })
   if (card !== undefined) {
     if (image.kind === 'portrait') {
-      standing.push(card.visual?.portrait === image.path
-        ? { tone: 'ok', text: t('这是现在的立绘。', 'This is the portrait in use now.') }
-        : withAction({ tone: 'warn', text: t('这是以前的一张立绘，现在用的是另一张。', 'This is an earlier portrait; another one is in use now.') }, open(card.visual?.portrait, t('看现在的那张', 'See the one in use'))))
+      // Which of their portraits it is: the one that stands for them, the picture of one of their moments (the
+      // moment's own, or another drawn of it), or one kept beside those.
+      const moments = scenesOf(card)
+      const moment = sceneOfPicture(moments, image.path, image)
+      const own = moment !== undefined ? scenePictures(moment, moments, [...new Set([...(card.visual?.portraits ?? []), image.path])], path => (path === image.path ? image : pictures.byPath.get(path)))[0] : undefined
+      if (card.visual?.portrait === image.path) standing.push({ tone: 'ok', text: t('这是代表这个人的立绘。', 'This is the portrait that stands for them.') })
+      if (moment !== undefined) {
+        standing.push(own === image.path
+          ? { tone: 'ok', text: t(`这是名场面「${moment.title}」用的图。`, `This is the picture of their moment "${moment.title}".`) }
+          : withAction({ tone: 'info', text: t(`名场面「${moment.title}」的另一张：这一幕现在用的是别的一张。`, `Another picture of their moment "${moment.title}": another one stands for it now.`) }, open(own, t('看那一张', 'See that one'))))
+      } else if (card.visual?.portrait !== image.path) {
+        standing.push(withAction({ tone: 'info', text: t('留着的一张立绘：代表这个人的是另一张。', 'A portrait kept of them: another one stands for them.') }, open(card.visual?.portrait, t('看那一张', 'See that one'))))
+      }
     } else if (worn !== undefined) {
       standing.push({ tone: 'ok', text: t(`这是造型「${worn.name}」现在的人设图。`, `This is the sheet in use for the look "${worn.name}".`) })
     } else if (ofLook) {
@@ -255,8 +307,10 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
     }
     // The words for how they look: the same now as when this was drawn, or changed since.
     const now = tidyPart(lookWords(card))
-    const then = look?.text
-    const same = then !== undefined ? then === now : told !== undefined && !told.subject.endsWith('…') && now.length > 0 ? told.subject.includes(now) : undefined
+    // Where the prompt only pointed to their picture, the words are the ones that picture was drawn from (kept beside
+    // the pointer); a whole prompt of the author's own is theirs, and is not held against the card.
+    const then = look?.byPicture === true ? look.standing : look?.text
+    const same = image.verbatim === true || look?.byPicture === true && then === undefined ? undefined : then !== undefined ? tidyPart(then) === now : told !== undefined && !told.subject.endsWith('…') && now.length > 0 ? told.subject.includes(now) : undefined
     const anchored = (card.visual?.prompt ?? '').length > 0
     if (same === true) standing.push({ tone: 'ok', text: anchored ? t('视觉锚点和现在的一样。', 'The visual anchor is the same as now.') : t('外貌和现在的一样。', 'The appearance is as it is now.') })
     else if (same === false) standing.push(withAction({ tone: 'warn', text: t('视觉锚点在这张图之后改过。', 'The visual anchor was changed after this picture.') }, editLook !== undefined ? { label: t('看现在的视觉锚点', 'See the anchor as it is'), run: editLook } : undefined))
@@ -335,12 +389,27 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
         <span>{image.model ?? t('（没记下模型）', '(model not recorded)')}{service !== undefined ? ` · ${t(...service)}` : ''}</span>
         {sent?.sampling !== undefined ? <span>{t(`${sent.sampling.steps} 步 · 引导 ${sent.sampling.guidance} · ${sent.sampling.sampler}/${sent.sampling.scheduler}`, `${sent.sampling.steps} steps · guidance ${sent.sampling.guidance} · ${sent.sampling.sampler}/${sent.sampling.scheduler}`)}{sent.sampling.from === 'server' ? t('（照服务器上这个模型上次跑的）', ' (as the server last ran this model)') : sent.sampling.from === 'builtin' ? t('（内置的默认值）', ' (the built-in figures)') : ''}</span> : null}
         {sent?.seed !== undefined ? <span>{t(`种子 ${sent.seed}`, `seed ${sent.seed}`)}</span> : null}
-        {sent?.compact !== undefined ? <span>{sent.compact.failed === true
-          ? t(`提示词约 ${sent.compact.from} 个 token，这个模型只读 ${sent.compact.limit} 个；没压成，照原样发了`, `the prompt came to about ${sent.compact.from} tokens and this model reads ${sent.compact.limit}; it could not be fitted and went as it was`)
-          : t(`导演把提示词从约 ${sent.compact.from} 个 token 压到了约 ${sent.compact.tokens ?? sent.compact.limit} 个（这个模型只读 ${sent.compact.limit} 个）${sent.compact.cut === true ? '；他写的仍超出一点，末尾放不下的截掉了' : ''}`, `the director brought the prompt from about ${sent.compact.from} tokens to about ${sent.compact.tokens ?? sent.compact.limit} (this model reads ${sent.compact.limit})${sent.compact.cut === true ? '; what he wrote was still a little over, and its end was left off' : ''}`)}</span> : null}
+        {sent?.compact !== undefined ? <span>{sent.compact.limit === undefined
+          // No limit of the model's in play: the director wrote the brief out as the prompt because the author has prompts written.
+          ? (sent.compact.failed === true
+              ? t('导演没能把画图说明写成提示词：照工坊排好的原样发了', 'the director could not write the prompt out: the brief went as the Studio laid it out')
+              : t(`导演把画图说明写成了提示词（约 ${sent.compact.from} → ${sent.compact.tokens ?? sent.compact.from} 个 token）`, `the director wrote the prompt out from the brief (about ${sent.compact.from} → ${sent.compact.tokens ?? sent.compact.from} tokens)`))
+          : sent.compact.failed === true
+            ? t(`提示词约 ${sent.compact.from} 个 token，这个模型只读 ${sent.compact.limit} 个；没压成，照原样发了`, `the prompt came to about ${sent.compact.from} tokens and this model reads ${sent.compact.limit}; it could not be fitted and went as it was`)
+            : sent.compact.from <= sent.compact.limit
+              ? t(`导演把画图说明写成了提示词（约 ${sent.compact.from} → ${sent.compact.tokens ?? sent.compact.from} 个 token；这个模型读 ${sent.compact.limit} 个）`, `the director wrote the prompt out from the brief (about ${sent.compact.from} → ${sent.compact.tokens ?? sent.compact.from} tokens; this model reads ${sent.compact.limit})`)
+              : t(`导演把提示词从约 ${sent.compact.from} 个 token 压到了约 ${sent.compact.tokens ?? sent.compact.limit} 个（这个模型只读 ${sent.compact.limit} 个）${sent.compact.cut === true ? '；他写的仍超出一点，末尾放不下的截掉了' : ''}`, `the director brought the prompt from about ${sent.compact.from} tokens to about ${sent.compact.tokens ?? sent.compact.limit} (this model reads ${sent.compact.limit})${sent.compact.cut === true ? '; what he wrote was still a little over, and its end was left off' : ''}`)}</span> : null}
         {image.size !== undefined ? <span>{t(`要的尺寸 ${image.size}`, `asked for ${image.size}`)}{sent?.size !== undefined && sent.size.replace('*', 'x') !== image.size ? t(`（发给接口的是 ${sent.size}）`, ` (the service was sent ${sent.size})`) : ''}</span> : sent?.size !== undefined ? <span>{t(`发给接口的尺寸 ${sent.size}`, `the service was sent ${sent.size}`)}</span> : null}
         {natural !== undefined ? <span>{t(`画出来 ${natural.width}×${natural.height}`, `drawn at ${natural.width}×${natural.height}`)}</span> : null}
       </p>
+
+      {image.passage !== undefined ? (
+        <section>
+          <h4>{t('照哪一段画的', 'The passage it was drawn of')}</h4>
+          {image.passage.quote !== undefined ? <blockquote className="nv-passage-quote">{image.passage.quote}</blockquote> : <p className="nv-muted nv-small">{t('这一章最有画面的一刻，导演挑的。', 'The most visual moment of the chapter, picked by the director.')}</p>}
+          {image.passage.why !== undefined ? <p className="nv-small">{t(`导演：${image.passage.why}`, `The director: ${image.passage.why}`)}</p> : null}
+        </section>
+      ) : null}
 
       {standing.length > 0 ? (
         <section>
@@ -391,7 +460,7 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
         {parts !== undefined ? (
           <dl className="nv-parts">
             {parts.pieces !== undefined && parts.pieces.length > 0 ? parts.pieces.map((piece, index) => (
-              <PieceRow key={index} label={piece.of === 'look' ? (person ? t('这个人的样子', 'How they look') : t('它的样子', 'How it looks')) : t(...PIECE[piece.of])} chip={piece.of === 'scene' ? (piece.from === 'asked' ? t('导演按这一张的要求挑的', 'picked by the director for this picture') : t('人物卡上的名场面', 'one of the card\'s signature scenes')) : piece.of !== 'look' ? undefined : person
+              <PieceRow key={index} label={piece.of === 'look' ? (piece.name !== undefined && piece.name.length > 0 ? t(`「${piece.name}」的样子${piece.secondary === true ? '（陪衬）' : ''}`, `How ${piece.name} looks${piece.secondary === true ? ' (secondary)' : ''}`) : person ? t('这个人的样子', 'How they look') : t('它的样子', 'How it looks')) : piece.name !== undefined && (piece.of === 'place' || piece.of === 'thing') ? t(`「${piece.name}」的样子`, `How "${piece.name}" looks`) : image.verbatim === true && piece.of === 'composed' ? t('整段提示词（你改写的）', 'The whole prompt, as you rewrote it') : t(...PIECE[piece.of])} chip={piece.of === 'scene' ? (piece.from === 'asked' ? t('导演按这一张的要求挑的', 'picked by the director for this picture') : t('人物卡上的名场面', 'one of the card\'s signature scenes')) : piece.of !== 'look' ? undefined : piece.byPicture === true ? t('照参考图，没有另写', 'left to their picture, not written out') : person
                 ? (piece.from === 'anchor' ? t('视觉锚点', 'visual anchor') : t('人物卡的外貌（还没有视觉锚点）', 'the card\'s appearance (no anchor yet)'))
                 : (piece.from === 'anchor' ? t('条目上的"样子"', 'the entry\'s look') : t('条目的名字和概括', 'the entry\'s name and summary'))}
               >
