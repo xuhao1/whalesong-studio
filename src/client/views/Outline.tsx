@@ -332,12 +332,22 @@ function ChapterPlanEditor({ plan, index, plans }: { plan: ChapterPlan; index: n
       setDirection('')
     }).finally(() => { setDeriving(false) })
   }
+  // The chapter is written: its plan — or its beats alone — can be set right by the text.
+  const [reading, setReading] = useState<'beats' | 'plan' | undefined>()
+  const byText = (what: 'beats' | 'plan'): void => {
+    setReading(what)
+    void controller.guard(async () => {
+      const info = await controller.run('ai.planOfText', { root, chapter: plan.id, what })
+      controller.toast('success', planOfTextWord(info.result?.output as PlanRead | undefined, t))
+    }).finally(() => { setReading(undefined) })
+  }
 
   return (
     <div className="nv-editor-form">
       <header className="nv-detail-head">
         <h2><span className="nv-muted">{onLine !== undefined ? `${onLine.title} · ` : ''}{t(`第 ${index} 章`, `Chapter ${index}`)}</span> {draft.title}</h2>
         <div className="nv-row">
+          {chapter?.hasText === true ? <Button size="sm" icon="refresh" busy={reading === 'plan'} pending={t('场记在读正文…', 'Reading the text…')} disabled={dirty || deriving || reading !== undefined} title={dirty ? t('先保存当前修改', 'Save your edits first') : t('梗概、地点、时间、视角、出场人物和节拍，照这一章现在的正文更新；原来的在历史版本里', 'Synopsis, place, time, point of view, cast and beats set by the chapter as it now reads; what was there stays in the history')} onClick={() => { byText('plan') }}>{t('照正文更新章纲', 'Update from the text')}</Button> : null}
           <HistoryButton kind="plan" id={plan.id} name={t(`第 ${index} 章 ${plan.title} · 章纲`, `Chapter ${index}, ${plan.title} — the plan`)} onRestored={() => { setDirty(false) }} />
           <Menu
             icon="more"
@@ -387,7 +397,8 @@ function ChapterPlanEditor({ plan, index, plans }: { plan: ChapterPlan; index: n
       <SectionTitle actions={<Button size="sm" icon="plus" variant="ghost" onClick={() => { set('beats', [...beats, { id: `new-${Date.now()}`, summary: '' }]) }}>{t('添加节拍', 'Add beat')}</Button>}>{t('节拍', 'Beats')}</SectionTitle>
       <div className="nv-assist">
         <TextInput value={direction} placeholder={t('想要的方向', 'A direction, if any')} onChange={(event) => { setDirection(event.target.value) }} />
-        <Button icon="sparkles" busy={deriving} disabled={dirty} title={dirty ? t('先保存当前修改', 'Save your edits first') : undefined} onClick={deriveBeats}>{t('推演节拍', 'Derive beats')}</Button>
+        <Button icon="sparkles" busy={deriving} disabled={dirty || reading !== undefined} title={dirty ? t('先保存当前修改', 'Save your edits first') : chapter?.hasText === true ? t('照章纲重新排（不看正文）', 'Laid out anew from the plan, not from the text') : undefined} onClick={deriveBeats}>{t('推演节拍', 'Derive beats')}</Button>
+        {chapter?.hasText === true ? <Button icon="refresh" busy={reading === 'beats'} pending={t('场记在读正文…', 'Reading the text…')} disabled={dirty || deriving || reading !== undefined} title={dirty ? t('先保存当前修改', 'Save your edits first') : t('只把节拍照这一章现在的正文更新；原来的在历史版本里', 'Set the beats alone by the chapter as it now reads; the ones before stay in the history')} onClick={() => { byText('beats') }}>{t('照正文更新节拍', 'Beats from the text')}</Button> : null}
       </div>
       <ol className="nv-beats">
         {beats.map((beat, at) => (
@@ -541,17 +552,36 @@ interface Branch {
   payoff?: string
 }
 
+/** What setting a chapter's plan by its text came to (`ai.planOfText`). */
+export interface PlanRead { what?: 'beats' | 'plan'; beats?: unknown[]; was?: number; kept?: number; changed?: string[] }
+
+/** …said in a line. */
+export function planOfTextWord(read: PlanRead | undefined, t: (zh: string, en: string) => string): string {
+  const now = read?.beats?.length ?? 0
+  const kept = read?.kept ?? 0
+  const was = read?.was ?? 0
+  const beats = was === 0
+    ? t(`照正文列出了 ${now} 个节拍`, `${now} beat(s) read off the text`)
+    : t(`节拍现在 ${now} 个，其中 ${kept} 个没变`, `${now} beat(s) now, ${kept} of them as before`)
+  if (read?.what !== 'plan') return t(`${beats}。原来的在章纲的历史版本里。`, `${beats}. What was there is in the plan's history.`)
+  const names: Record<string, [string, string]> = { synopsis: ['梗概', 'synopsis'], location: ['地点', 'place'], time: ['故事时间', 'story time'], pov: ['视角', 'point of view'], characters: ['出场人物', 'cast'] }
+  const changed = (read.changed ?? []).map(item => names[item] ?? [item, item])
+  return changed.length > 0
+    ? t(`章纲照正文更新了：${changed.map(name => name[0]).join('、')}改了；${beats}。原来的在章纲的历史版本里。`, `The plan goes by the text now: ${changed.map(name => name[1]).join(', ')} changed; ${beats}. What was there is in the plan's history.`)
+    : t(`章纲和正文对得上，别的没改；${beats}。原来的在章纲的历史版本里。`, `The plan fits the text, nothing else changed; ${beats}. What was there is in the plan's history.`)
+}
+
 /**
  * The planner's two questions: what comes next, and what if. The Outline has
- * both; the Write page opens the first in a dialog, already asking — where the
- * author is when the last outlined chapter is written.
+ * both; the Write page opens the first in a dialog — where the author is when
+ * the last outlined chapter is written. Nothing is asked of the planner until
+ * the author says so: the direction, how many chapters and where they go are
+ * theirs to fill in first.
  */
-export function Derive({ onApplied, only, autoStart, preset }: {
+export function Derive({ onApplied, only, preset }: {
   onApplied: () => void
   /** Show only the derivation of chapters. */
   only?: 'chapters'
-  /** Start deriving at once, with what the fields start with. */
-  autoStart?: boolean
   /** Where the chapters go and what becomes of what is there, when whoever opened this already knows. */
   preset?: { line?: string; after?: string; mode: 'append' | 'replace' | 'branch' } | undefined
 }) {
@@ -633,14 +663,6 @@ export function Derive({ onApplied, only, autoStart, preset }: {
       if (output?.chapters !== undefined) setDerived({ chapters: output.chapters, ...(output.rationale !== undefined ? { rationale: output.rationale } : {}), volume })
     }).finally(() => { setWorking(undefined); setStream('') })
   }
-  const started = useRef(false)
-  useEffect(() => {
-    if (autoStart !== true || started.current) return
-    started.current = true
-    derive()
-  // Once, when the dialog opens.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoStart])
   const ask = (): void => {
     setWorking('whatif')
     setStream('')

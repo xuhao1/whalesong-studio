@@ -49,6 +49,8 @@ import { codexStatus, createCodexBridge } from './codex'
 import { KeyStore } from './keys'
 import { followRecommended, loadRecommended, noteAdopted } from './recommended'
 import { createHarnessLlm } from './llm-backend'
+import { imageBlocks, type ImageBlock } from './pictures'
+import type { LlmImage } from '../core/llm'
 import { createRoleRunner, CREW_PRESET, type CrewRunner } from './roles'
 import { SessionSeal } from './session-seal'
 import { ShareServer } from './share'
@@ -887,6 +889,15 @@ export class NovelService extends Service {
     const result = await manager.removeBundle(entry.package)
     if (result.application === 'failed') throw new ProjectError('novel/provider', `${entry.package} could not be removed${result.error !== undefined ? `: ${(result.error as { message?: string }).message ?? JSON.stringify(result.error)}` : ''}`)
     return result.application === 'restart-required' ? `${entry.package} is removed; DSH has to be restarted for it to be gone.` : undefined
+  }
+
+  /**
+   * Pictures on their way into a tool's result, the way DSH carries them: kept by its attachment service, and
+   * handed back as the blocks a message holds them in.
+   * @throws LlmCallError where this DSH keeps no attachments, or refuses a picture.
+   */
+  async pictureBlocks(images: readonly LlmImage[]): Promise<ImageBlock[]> {
+    return await imageBlocks(this.ctx, images)
   }
 
   /** Task context for work started by an agent's tool call. */

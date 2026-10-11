@@ -78,7 +78,7 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
         'Have the writer model revise existing prose.',
         '- scope=passage: rewrite one passage in place. Quote it exactly in `quote` (copy it from novel_read) and say what to change in `instruction`.',
         '- scope=chapter: rewrite one whole chapter to `instruction`.',
-        '- scope=book: apply one instruction across the book ("rename the city to …", "make her colder until chapter 8"). Triage decides which chapters it touches (or pass `chapters`); each becomes a proposal for the author to review unless apply=true.',
+        '- scope=book: carry one instruction through the book ("rename the city to …", "her watch is a wristwatch now"). A planner reads the book and names the places the instruction reaches — each quoted from its chapter, with what changes there — and the writer rewrites those places and nothing else: every place is a small proposal of its own for the author to review (unless apply=true). A chapter is written over whole only where the planner says places will not do (a change of voice or pace throughout). `chapters` keeps it to those chapters.',
         '- scope=issues: mend what reviews found, together — also across chapters. Name them in `issues` as `<chapter>:<issue id>` (ids are in a chapter\'s review: novel_review, novel_read what=review), or pass `severity` (high | medium | low) to take every open issue that grave or graver, in `chapters` if given. `instruction` is what the author says of the whole batch (optional); what they said of single issues is kept with those and goes along. One planner reads them side by side and settles which places change and how — as few as mend them, also in chapters nobody named where they tell of the same facts — and the writer rewrites those places and nothing else, so one fact is mended one way throughout and nothing is written over that did not have to be (a chapter is rewritten whole only where the planner says places will not do). Every place comes back as a proposal of its own; changes to the bible wait as suggestions.',
         '- scope=accept / scope=reject: settle a pending proposal by `proposal` id. Rejecting one that was made on top of earlier waiting changes brings those back to wait by themselves.',
         'book / issues, `order`: mendings do not lock each other out. `queue` (the default) waits for the mendings already under way and goes on from the changes they leave waiting — a chapter with a change waiting is rewritten as it would read with that accepted, and the new proposal stands for the earlier ones (one to accept); use it when what is mended hangs together. `apart` starts at once on the text as it stands — for mendings that have nothing to do with each other (another line of the plot, a far part of the story), which are quicker side by side.',
@@ -92,7 +92,7 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
         chapter: { type: 'string', description: 'passage/chapter: which chapter.' },
         quote: { type: 'string', description: 'passage: the exact text to rewrite.' },
         instruction: { type: 'string', description: 'What to change and why.' },
-        chapters: listParameter('book: restrict to these chapters.'),
+        chapters: listParameter('book: only these chapters may change.'),
         proposal: { type: 'string', description: 'accept/reject: the proposal id.' },
         apply: { type: 'boolean', description: 'Apply immediately (true) or leave a proposal (false).' },
         order: { type: 'string', enum: ['queue', 'apart'], description: 'book/issues: after the mendings under way and on top of their changes (queue, default), or at once by itself (apart).' },
@@ -136,14 +136,16 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
         if (args.scope === 'book') {
           const result = await env.job('revise', 'revise book', undefined, async task => await mendInTurn(runtime, order, task, async onto => await reviseBook(env.core, runtime, {
             instruction,
+            asked: true,
             ...((listOf(args.chapters)?.length ?? 0) > 0 ? { chapters: listOf(args.chapters)! } : {}),
             ...(args.apply !== undefined ? { apply: args.apply } : {}),
             ...(onto ? { onto: true } : {}),
             ...(pictures !== undefined ? { guides: pictures } : {}),
           }, task)))
-          const lines = result.results.map(item => `- chapter ${item.index} "${item.title}": ${item.wordsBefore} → ${item.wordsAfter} words${item.applied ? ', applied' : `, proposal ${item.proposalId ?? ''}`} — ${brief(item.reason, 120)}`)
+          const lines = result.results.map(item => `- ${item.kind === 'span' ? 'a place in ' : ''}chapter ${item.index} "${item.title}"${item.kind === 'chapter' ? ' (written over whole)' : ''}: ${item.wordsBefore} → ${item.wordsAfter} words${item.applied ? ', applied' : `, proposal ${item.proposalId ?? ''}`} — ${brief(item.reason, 120)}`)
+          const spans = result.results.filter(item => item.kind === 'span').length
           return {
-            text: `${result.results.length} chapters rewritten, ${result.untouched} judged untouched${result.failed.length > 0 ? `, ${result.failed.length} failed` : ''}.${result.note !== undefined ? `\n${result.note}` : ''}\n${lines.join('\n')}${result.failed.map(item => `\n✗ ${item.chapterId}: ${item.error}`).join('')}${result.pictures !== undefined ? `\n${picturesSaid(result.pictures, 'planner')!}` : ''}${result.results.some(item => !item.applied) ? '\nThe proposals wait for the author in Novel Studio → Review (or settle them with scope=accept/reject).' : ''}`,
+            text: `${spans} place(s) changed, ${result.results.length - spans} chapter(s) written over whole, ${result.untouched} chapter(s) left as they are${result.failed.length > 0 ? `, ${result.failed.length} failed` : ''}.${result.note !== undefined ? `\n${result.note}` : ''}\n${lines.join('\n')}${result.failed.map(item => `\n✗ ${item.chapterId}: ${item.error}`).join('')}${result.pictures !== undefined ? `\n${picturesSaid(result.pictures, 'planner')!}` : ''}${result.results.some(item => !item.applied) ? '\nThe proposals wait for the author in Novel Studio → Review (or settle them with scope=accept/reject).' : ''}`,
             data: toJson(result),
           }
         }

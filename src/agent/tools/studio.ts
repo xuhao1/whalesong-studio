@@ -12,6 +12,7 @@ import { listWalkOns, settleWalkOn } from '../../core/walkons'
 import { siftCast } from '../../core/pipelines/cast'
 import { overrule, settleSuggestions, settlesItself } from '../../core/pipelines/settle'
 import { artDirectionOf, pictureWhole } from '../../core/pipelines/illustrate'
+import { cleanGuides, guidePictures } from '../../core/pipelines/guides'
 import { clearComicBoard, removeComicPanel, updateComicPanel } from '../../core/pipelines/comic'
 import { rewindPlay, setPlayOutcome } from '../../core/pipelines/play'
 import { clearReview, resolveIssue } from '../../core/pipelines/review'
@@ -248,6 +249,69 @@ export function studioTools(service: NovelService) {
           // No book in this session: the settings are still worth showing.
         }
         return { text: `${await summary(service, true)}${art}`, data: toJson({ ready: await readiness(service) }) }
+      },
+    }),
+
+    novelTool(service, {
+      name: 'novel_look',
+      description: [
+        'Look at pictures of the book: the pictures themselves come back with the result, for you to see — portraits, design sheets, design art of places and things, illustrations, storyboard panels, the cover, pictures the author brought in.',
+        'Where your model takes no pictures, the model set up to look at pictures (novel_settings: vision) tells you in words what each shows instead.',
+        'Use it when the author points at a picture — a reference pasted from the Studio such as 〔图：立绘 · 沈蘅｜assets/images/….png〕, "this portrait", "the cover", "the picture in chapter 3" — and before judging, comparing or changing a picture: do not guess at what a picture shows from its prompt.',
+        'It reads through the Studio, so it works for a sealed book that is unlocked, where the file on disk is ciphertext and read_image cannot open it. A picture looked at is kept by DSH with this conversation, like any picture attached to it.',
+        '`pictures`: ids or project-relative paths (novel_manage action=list_images lists them; a card or an entry names its own), up to 6 a call. `of`: instead of naming pictures, whose to look at — a character (their portrait and design sheet in use), a place, a faction or a thing (its design art in use), or "cover".',
+        'Looking changes nothing. How a picture was made — its prompt, its references — is novel_manage action=show_image; to draw it again or change it, novel_illustrate redraw=<path>.',
+      ].join('\n'),
+      parameters: {
+        pictures: listParameter('The pictures: ids or project-relative paths, up to 6.'),
+        of: { type: 'string', description: 'Whose pictures: a character, a place, a faction or a thing by name or id — or "cover".' },
+      },
+      async run(args, env) {
+        const runtime = await env.project()
+        const { project } = runtime
+        const records = await project.pictures().catch(() => [] as IllustrationInfo[])
+        const asked = (listOf(args.pictures) ?? []).map(item => item.trim()).filter(item => item.length > 0)
+        const paths: string[] = []
+        const missing: string[] = []
+        for (const item of asked) {
+          // By id, by path as recorded, or by a path of the book that has no record (a picture brought in by hand).
+          const path = cleanGuides([records.find(record => record.id === item || record.path === item)?.path ?? item.replace(/^\.?\//, '')])[0]?.path
+          if (path !== undefined && await project.has(path)) paths.push(path)
+          else missing.push(item)
+        }
+        const whose = args.of?.trim() ?? ''
+        if (whose.length > 0) {
+          if (/^(cover|封面)$/i.test(whose)) {
+            const cover = await project.cover()
+            const path = cover !== undefined ? cleanGuides([cover])[0]?.path : undefined
+            if (path === undefined) throw new ProjectError('novel/not-found', 'the book has no cover yet')
+            paths.push(path)
+          } else {
+            const card = await project.findCharacter(whose)
+            const entry = card === undefined ? await project.findWorld(whose) : undefined
+            if (card === undefined && entry === undefined) throw new ProjectError('novel/not-found', `nobody and nothing in the bible is called "${whose}"`)
+            const theirs = card !== undefined ? [card.visual?.portrait, card.visual?.sheet] : [entry!.visualImage]
+            const there = cleanGuides(theirs.filter((path): path is string => path !== undefined && path.length > 0)).map(guide => guide.path)
+            if (there.length === 0) throw new ProjectError('novel/not-found', `"${card?.name ?? entry!.name}" has no picture yet`)
+            paths.push(...there)
+          }
+        }
+        const wanted = [...new Set(paths)]
+        if (wanted.length === 0) throw new ProjectError('novel/not-found', missing.length > 0 ? `no picture of the book has the id or the path ${missing.map(item => `"${item}"`).join(', ')} — novel_manage action=list_images lists them` : 'name the pictures to look at (`pictures`), or whose (`of`)')
+        const shown = wanted.slice(0, 6)
+        const looked = (await guidePictures(env.core, runtime, env.task.agentRoute, shown.map(path => ({ path })), 'look', env.task))!
+        const images = looked.images.length > 0 ? await service.pictureBlocks(looked.images) : []
+        const notes = [
+          ...(looked.by === 'vision' ? [`You were told of them by ${looked.model ?? 'the model set up to look at pictures'}: your own model takes no pictures.`] : []),
+          ...(wanted.length > shown.length ? [`${wanted.length - shown.length} more were asked for — six a call: ${wanted.slice(6).join(', ')}`] : []),
+          ...(missing.length > 0 ? [`Not pictures of this book: ${missing.join(', ')}`] : []),
+        ]
+        return {
+          text: `${looked.text}${notes.length > 0 ? `\n\n${notes.join('\n')}` : ''}`,
+          data: toJson({ pictures: shown, by: looked.by }),
+          ...(images.length > 0 ? { images } : {}),
+          record: false,
+        }
       },
     }),
 

@@ -1019,6 +1019,11 @@ export interface Proposal {
   /** Exact text being replaced (whole chapter text for `chapter`). */
   before: string
   after: string
+  /**
+   * Where the passage stood in its chapter when the proposal was made, in characters. Where the same words stand in
+   * more than one place, the one nearest to it is the one the proposal replaces.
+   */
+  at?: number
   /** Groups proposals created by one global revision. */
   batchId?: string
   /** The review issues it was made to mend, by id: it is shown beneath them, to be accepted or rejected there. */

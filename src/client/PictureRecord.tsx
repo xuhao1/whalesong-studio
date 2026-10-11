@@ -33,6 +33,14 @@ import { AdjustPicture } from './AdjustPicture'
 import { PictureUse } from './PictureUse'
 import { Icon } from './icons'
 
+/**
+ * A picture of the book pointed at in the conversation: what it is to the author, and where it is in the book — the
+ * path is what the showrunner's tools take (`novel_look`, `novel_illustrate redraw`).
+ */
+export function pictureQuote(name: string, path: string): string {
+  return `〔图：${name.replace(/[〔〕｜]/g, ' ').trim()}｜${path}〕 `
+}
+
 export const PICTURE_KIND: Record<IllustrationInfo['kind'], [string, string]> = {
   portrait: ['立绘', 'Portrait'],
   sheet: ['人设图', 'Design sheet'],
@@ -637,7 +645,7 @@ function PieceRow({ label, chip, tone = 'neutral', children }: { label: string; 
  *   the viewer stays open on the picture that came of it — `now`, its path — and a page that names what is open goes with it.
  */
 export function PictureViewer({ path, title, note, footer, start, onClose, onEditLook, onChanged }: { path: string; title?: string | undefined; note?: ReactNode; /** Opened with one of the ways to draw it again already open under it. */ start?: 'words' | 'change' | undefined; footer?: ((image: IllustrationInfo | undefined) => ReactNode) | undefined; onClose: () => void; onEditLook?: ((of: LookOf) => void) | undefined; onChanged?: ((now?: string) => void) | undefined }) {
-  const { controller } = useStudio()
+  const { controller, host } = useStudio()
   const t = useT()
   const { project } = useProject()
   const mediaUrl = useMediaUrl()
@@ -697,6 +705,19 @@ export function PictureViewer({ path, title, note, footer, start, onClose, onEdi
     else if (of.kind === 'character') controller.openCharacter(of.id)
     else controller.openWorld(of.id)
   }
+  // Pointing at this picture in the conversation with the showrunner: into its composer where it is beside the
+  // Studio, else onto the clipboard, to be pasted there.
+  const quote = (text: string): void => {
+    if (host.quoteToChat !== undefined) {
+      const landed = host.quoteToChat(text)
+      controller.toast(landed ? 'success' : 'error', landed ? t('引用放进了对话输入框：接着说要它怎样', 'The quote is in the chat composer: say what you want of it') : t('没能写入对话输入框（它可能正在发送）', 'Could not write to the chat composer (it may be sending)'))
+      return
+    }
+    void navigator.clipboard.writeText(text).then(
+      () => { controller.toast('success', t('引用复制好了：贴到和总编的对话里', 'The quote is copied: paste it into the conversation with the showrunner')) },
+      () => { controller.toast('error', t(`没能复制。手动抄这一行：${text}`, `Could not copy. The line is: ${text}`)) },
+    )
+  }
   // The page's own name for it holds for the picture the page opened — not for one drawn from it since.
   const heading = first && opened === path && title !== undefined && !refiled ? title : image !== undefined ? `${t(...PICTURE_KIND[image.kind])}${nameOf(image) !== undefined ? ` · ${nameOf(image)}` : ''}` : title ?? t('图片', 'Picture')
   return (
@@ -716,6 +737,7 @@ export function PictureViewer({ path, title, note, footer, start, onClose, onEdi
         <span className="nv-spacer" />
         {project.cover === at ? <Chip tone="green">{t('封面', 'The cover')}</Chip> : null}
         {footer !== undefined ? footer(image) : null}
+        <Button variant="outline" icon="chat" onClick={() => { quote(pictureQuote(heading, at)) }} title={host.quoteToChat !== undefined ? t('把这张图引用到左边的对话里：总编照这个引用去看它、改它', 'Quote this picture into the conversation beside the Studio: the showrunner looks at it, or changes it, by the quote') : t('复制这张图的引用，贴到和总编的对话里：总编照它去看这张图', 'Copy a quote of this picture to paste into the conversation with the showrunner, who looks at it by the quote')}>{t('引用到对话', 'Quote to chat')}</Button>
         <Button variant="outline" icon="link" disabled={drawing} onClick={() => { setUsing(true) }} title={t('说这张图是谁的什么：某个人的立绘 / 人设图，某处、某物的设定图，某一章的图，或这本书的封面', 'Say whose picture this is, and as what: somebody\'s portrait or design sheet, the design art of a place or a thing, a picture of a chapter, or the book\'s cover')}>{t('用作…', 'Use as…')}</Button>
         <Button variant="outline" icon="book" onClick={() => { setPlacing(true) }} title={t('把这张图插到某一章正文的某一段之后', 'Put this picture into a chapter, after a paragraph of your choosing')}>{t('插入正文…', 'Place in the text…')}</Button>
         <Button variant="outline" icon="crop" disabled={drawing} onClick={() => { setAdjusting(true) }} title={t('裁切、旋转、镜像：存成一张新图，原图留着', 'Crop, turn, mirror: kept as a picture of its own, the original staying')}>{t('裁切 · 旋转…', 'Crop · rotate…')}</Button>

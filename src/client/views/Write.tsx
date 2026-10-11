@@ -31,7 +31,7 @@ import { TextFigure, TextPictures } from '../TextPictures'
 import { ChapterText, type ChapterTextHandle } from '../ChapterText'
 import { FindBar } from '../FindBar'
 import { embeddedPictures, proseLines } from '../../shared/embedded'
-import { Derive } from './Outline'
+import { Derive, planOfTextWord, type PlanRead } from './Outline'
 import {
   Button, Chip, cx, Empty, Menu, Modal, Progress, Select, Spinner, Tabs, TextInput, ThoughtButton, ThoughtPanel, useAction, useConfirm, useJobStream, useJobTail, useLoad, useProject,
   useLineView, useQuote, useSnapshot, useStudio, useT, useWidth, waysOn, type Translate, plainEnter, ViewButton,
@@ -99,8 +99,8 @@ export function WriteView() {
   const batch = useBatchJob('text')
   const deriveDialog = deriving !== false ? (
     <Modal wide title={typeof deriving === 'object' && deriving.mode === 'branch' ? t('另开一条线', 'Open another line') : t('推演后续章节', 'Derive the next chapters')} onClose={() => { setDeriving(false) }}>
-      {/* On the main line the planner starts at once and shows its plan first; on another line, and for a new one, the author looks the form over. */}
-      <Derive only="chapters" autoStart={deriving === true && lineId === MAIN_LINE} preset={typeof deriving === 'object' ? deriving : lineId !== MAIN_LINE ? { line: lineId, mode: 'append' } : undefined} onApplied={() => { setDeriving(false) }} />
+      {/* The form first, on every line: the planner starts when the author has said what they want of it. */}
+      <Derive only="chapters" preset={typeof deriving === 'object' ? deriving : lineId !== MAIN_LINE ? { line: lineId, mode: 'append' } : undefined} onApplied={() => { setDeriving(false) }} />
     </Modal>
   ) : null
   const batchDialog = batching !== undefined ? <TextBatchDialog chapters={path} preset={batching} line={lineId !== MAIN_LINE ? lineId : undefined} onClose={() => { setBatching(undefined) }} /> : null
@@ -528,7 +528,10 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
             </div>
             {plan.notes !== undefined ? <p className="nv-note">{plan.notes}</p> : null}
             <div className="nv-row-wrap">
-              <Button size="sm" variant={(plan.beats ?? []).length === 0 ? 'primary' : 'outline'} icon="sparkles" busy={running.some(job => job.kind === 'derive')} pending={t('策划在推演…', 'The planner is deriving…')} onClick={() => controller.guard(async () => { await controller.api.call('ai.deriveBeats', { root, chapter: chapter.id, ...(brief.trim().length > 0 ? { direction: brief.trim() } : {}) }); await controller.refreshJobs() })} title={t('让策划排出这一章的节拍', 'Have the planner lay out this chapter\'s beats')}>{(plan.beats ?? []).length === 0 ? t('推演本章节拍', 'Derive this chapter\'s beats') : t('重新推演节拍', 'Derive the beats again')}</Button>
+              <Button size="sm" variant={(plan.beats ?? []).length === 0 && !chapter.hasText ? 'primary' : 'outline'} icon="sparkles" busy={running.some(job => job.kind === 'derive' && job.title === 'derive beats')} pending={t('策划在推演…', 'The planner is deriving…')} onClick={() => controller.guard(async () => { await controller.api.call('ai.deriveBeats', { root, chapter: chapter.id, ...(brief.trim().length > 0 ? { direction: brief.trim() } : {}) }); await controller.refreshJobs() })} title={t('让策划排出这一章的节拍', 'Have the planner lay out this chapter\'s beats')}>{(plan.beats ?? []).length === 0 ? t('推演本章节拍', 'Derive this chapter\'s beats') : t('重新推演节拍', 'Derive the beats again')}</Button>
+              {chapter.hasText ? (['plan', 'beats'] as const).map(what => (
+                <Button key={what} size="sm" variant={what === 'plan' && (plan.beats ?? []).length === 0 ? 'primary' : 'outline'} icon="refresh" busy={running.some(job => job.kind === 'derive' && job.title === (what === 'plan' ? 'plan of text' : 'beats of text'))} disabled={running.some(job => job.kind === 'derive' && (job.title === 'plan of text' || job.title === 'beats of text'))} pending={t('场记在读正文…', 'Reading the text…')} title={what === 'plan' ? t('梗概、地点、时间、视角、出场人物和节拍，照这一章现在的正文更新；原来的在章纲的历史版本里', 'Synopsis, place, time, point of view, cast and beats set by the chapter as it now reads; what was there stays in the plan\'s history') : t('只把节拍照现在的正文更新', 'The beats alone set by the text')} onClick={() => controller.guard(async () => { await save(); const info = await controller.run('ai.planOfText', { root, chapter: chapter.id, what }); controller.toast('success', planOfTextWord(info.result?.output as PlanRead | undefined, t)); await controller.refreshProject() })}>{what === 'plan' ? t('照正文更新章纲', 'Update the plan from the text') : t('只更新节拍', 'Beats only')}</Button>
+              )) : null}
               <Button size="sm" icon="tree" onClick={() => { controller.setView('outline', chapter.id) }}>{t('编辑章纲', 'Edit the plan')}</Button>
             </div>
           </div>

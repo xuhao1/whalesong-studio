@@ -591,6 +591,11 @@ export interface NovelRpc {
   /** Have the planner look in the references for one chapter and keep its notes on the chapter's plan. */
   'references.consult': { params: { root: string; chapter: string; direction?: string }; result: JobStarted }
   'ai.deriveBeats': { params: { root: string; chapter: string; direction?: string }; result: JobStarted }
+  /**
+   * The plan of a chapter that is written, set right by its text: `plan` (the default) its synopsis, place, time,
+   * point of view, cast and beats; `beats` the beats alone. The plan as it was stays in its history.
+   */
+  'ai.planOfText': { params: { root: string; chapter: string; what?: 'beats' | 'plan' }; result: JobStarted }
   'ai.whatIf': { params: { root: string; question: string; branches?: number; /** Pictures the ways on are weighed with. */ guides?: PictureGuide[] }; result: JobStarted }
   /** Read the book and write down what it says — the passes of an import's analysis, on a book that has its chapters. Without `steps`: what an analysis that was cut short has left to do (all of it where none was started). */
   'ai.analyze': { params: { root: string; steps?: AnalyzeStep[] }; result: JobStarted }

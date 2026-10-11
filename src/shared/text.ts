@@ -151,6 +151,93 @@ export function fuzzyFind(haystack: string, needle: string): { start: number; en
   return { start, end }
 }
 
+/** In how many places `needle` stands in `haystack`, as written — places that overlap are places all the same. */
+export function occurrences(haystack: string, needle: string): number {
+  if (needle.length === 0) return 0
+  let count = 0
+  for (let at = haystack.indexOf(needle); at >= 0; at = haystack.indexOf(needle, at + 1)) count += 1
+  return count
+}
+
+const SENTENCE_ENDS = '。！？!?…'
+const SENTENCE_CLOSERS = '”’」』"\'）)]】》'
+
+/**
+ * A text cut into sentences, each keeping the marks that close it and the white space that follows it — joined, they
+ * are the text again, to the character. A line break ends a sentence too.
+ */
+export function sentences(text: string): string[] {
+  const out: string[] = []
+  let from = 0
+  let at = 0
+  while (at < text.length) {
+    const char = text[at]!
+    const ends = char === '\n' || SENTENCE_ENDS.includes(char)
+      // (A full stop ends a sentence where white space, a closing mark or the end follows — not inside 3.14 or a.m.)
+      || (char === '.' && (at + 1 >= text.length || /[\s"'”’)\]]/.test(text[at + 1]!)))
+    at += 1
+    if (!ends) continue
+    while (at < text.length && (SENTENCE_ENDS.includes(text[at]!) || text[at] === '.')) at += 1
+    while (at < text.length && SENTENCE_CLOSERS.includes(text[at]!)) at += 1
+    while (at < text.length && /\s/.test(text[at]!)) at += 1
+    out.push(text.slice(from, at))
+    from = at
+  }
+  if (from < text.length) out.push(text.slice(from))
+  return out
+}
+
+/**
+ * What a rewriting of a passage really changed: the passage and its rewriting with the sentences they share at
+ * either end left off — the smallest stretch of whole sentences that is not the same in both. Where only something
+ * was added or taken out, the sentence before it (else the one after) stays in, so that there is a place to find; and
+ * the stretch is widened again, a sentence at a time, until `unique` says it is found once only.
+ * @param unique - whether a stretch of the passage stands once only in the text it is part of.
+ * @returns the narrowed pair and where the narrowed `before` starts in the passage; the pair as given where nothing
+ *   differs or nothing is shared.
+ */
+export function changedCore(before: string, after: string, unique?: (stretch: string) => boolean): { before: string; after: string; start: number } {
+  const whole = { before, after, start: 0 }
+  if (before === after) return whole
+  const was = sentences(before)
+  const now = sentences(after)
+  let head = 0
+  while (head < was.length && head < now.length && was[head] === now[head]) head += 1
+  let tail = 0
+  while (tail < was.length - head && tail < now.length - head && was[was.length - 1 - tail] === now[now.length - 1 - tail]) tail += 1
+  if (head === 0 && tail === 0) return whole
+  const blank = (list: string[]): boolean => list.slice(head, list.length - tail).join('').trim().length === 0
+  const widen = (): boolean => {
+    if (head > 0) head -= 1
+    else if (tail > 0) tail -= 1
+    else return false
+    return true
+  }
+  // Something only added, or only taken out: a sentence beside it is the place it is found by.
+  while ((blank(was) || blank(now)) && widen()) { /* widened */ }
+  const cut = (): { before: string; after: string; start: number } => {
+    let left = was.slice(head, was.length - tail).join('')
+    let right = now.slice(head, now.length - tail).join('')
+    let start = was.slice(0, head).join('').length
+    // The white space both end with (the break before what follows) belongs to neither side of the change.
+    const closing = /\s*$/.exec(left)![0]
+    if (closing.length > 0 && right.endsWith(closing) && right.length > closing.length) {
+      left = left.slice(0, left.length - closing.length)
+      right = right.slice(0, right.length - closing.length)
+    }
+    const opening = /^\s*/.exec(left)![0]
+    if (opening.length > 0 && right.startsWith(opening)) {
+      left = left.slice(opening.length)
+      right = right.slice(opening.length)
+      start += opening.length
+    }
+    return { before: left, after: right, start }
+  }
+  let core = cut()
+  while (unique !== undefined && !unique(core.before) && widen()) core = cut()
+  return core.before.length > 0 ? core : whole
+}
+
 /** Format a word count compactly: 1234 → "1.2k", 123456 → "12.3万" for CJK locales. */
 export function formatCount(count: number, locale: string): string {
   if (locale.startsWith('zh')) {

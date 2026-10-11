@@ -89,7 +89,11 @@ const KIND: Record<IllustrationInfo['kind'], [string, string]> = {
 }
 
 /** What a piece of work the author gives pictures to is; see {@link guidePictures}. */
-export type GuidePurpose = 'plot' | 'chapter' | 'whatif' | 'revise' | 'passage'
+/**
+ * What pictures are handed over for. `look` is the showrunner looking at pictures of the book the author pointed at:
+ * nothing is written from them, they are only to be seen.
+ */
+export type GuidePurpose = 'plot' | 'chapter' | 'whatif' | 'revise' | 'passage' | 'look'
 
 /** What a model that looks for another is asked: what is to be seen, for whoever writes from it. */
 function lookTask(lang: PromptLanguage, input: { title: string; known?: string; note?: string; cast: string }): string {
@@ -112,7 +116,7 @@ Write who is in it, where, doing what, how they hold themselves and look, what t
  * @throws ProjectError `novel/invalid` for a picture that is not there; `novel/no-vision` where the working model
  *   takes no pictures and no model is set up to look at them for it.
  */
-export async function guidePictures(core: NovelCore, runtime: ProjectRuntime, route: ModelRoute, given: readonly unknown[] | undefined, purpose: GuidePurpose, task: TaskContext): Promise<GuidedPictures | undefined> {
+export async function guidePictures(core: NovelCore, runtime: ProjectRuntime, route: ModelRoute | undefined, given: readonly unknown[] | undefined, purpose: GuidePurpose, task: TaskContext): Promise<GuidedPictures | undefined> {
   const guides = cleanGuides(given)
   if (guides.length === 0) return undefined
   const { project } = runtime
@@ -135,7 +139,8 @@ export async function guidePictures(core: NovelCore, runtime: ProjectRuntime, ro
     pictures.push({ guide, image: { data: new Uint8Array(data), mediaType: MEDIA[extname(guide.path).toLowerCase()]!, name: guide.path.split('/').at(-1)! }, ...(known !== undefined && known.length > 0 ? { known } : {}) })
   }
 
-  const working = route.baseURL !== undefined ? false : await core.llm.sees?.(route).catch(() => undefined)
+  // (A model nobody could name — a conversation's own, not told to the tool — is one that does not say whether it sees.)
+  const working = route === undefined ? undefined : route.baseURL !== undefined ? false : await core.llm.sees?.(route).catch(() => undefined)
   const count = pictures.length
   // What the pictures are for, said once at the head of what tells of them; where they and the book disagree, the book holds.
   const use: Record<GuidePurpose, [string, string]> = {
@@ -144,19 +149,22 @@ export async function guidePictures(core: NovelCore, runtime: ProjectRuntime, ro
     whatif: [`作者给这次假设推演配了 ${count} 张图：每条走向都把图里的人、地方和画面算进去——它们是作者想看到的东西。`, `The author gave ${count} picture(s) to this what-if: every way the story could go takes the people, places and moments they show into account — they are what the author wants to see.`],
     revise: [`作者给这次修订配了 ${count} 张图：改的地方照着图里的画面来——人、地方、动作、光线和气氛。`, `The author gave ${count} picture(s) to this revision: what is changed goes by what they show — people, place, action, light and mood.`],
     passage: [`作者给这一段的改写配了 ${count} 张图：把这一段改成图里的样子——人、地方、动作、光线和气氛；这一段之外的不动。`, `The author gave ${count} picture(s) to the rewriting of this passage: make the passage what they show — people, place, action, light and mood; nothing outside the passage changes.`],
+    look: [`这本书里的 ${count} 张图，作者要你看。`, `${count} picture(s) of this book, which the author wants you to look at.`],
   }
-  const head = `${L(lang, ...use[purpose])}${L(lang, '图里和设定、前文对不上的地方，以设定和前文为准。', ' Where a picture and the bible or the story so far disagree, the bible and the story hold.')}`
+  const head = purpose === 'look' ? L(lang, ...use[purpose]) : `${L(lang, ...use[purpose])}${L(lang, '图里和设定、前文对不上的地方，以设定和前文为准。', ' Where a picture and the bible or the story so far disagree, the bible and the story hold.')}`
   const line = (at: number, extra?: string): string => {
     const { guide, known } = pictures[at]!
+    // Only looked at: each is named by where it is in the book, which is how it is asked for again.
+    if (purpose === 'look') return `${at + 1}. ${guide.path}${known !== undefined ? ` 〔${known}〕` : ''}${extra !== undefined ? `\n   ${extra}` : ''}`
     return `${at + 1}. ${known !== undefined ? `〔${known}〕` : ''}${guide.note !== undefined ? L(lang, `作者说：${guide.note}`, `The author says: ${guide.note}`) : known === undefined && extra === undefined ? L(lang, '（作者没有另外说明）', '(nothing said of it)') : ''}${extra !== undefined ? `\n   ${extra}` : ''}`
   }
-  const title = L(lang, '## 作者给的参考图', '## Pictures from the author')
+  const title = purpose === 'look' ? L(lang, '## 这本书里的图', '## Pictures of the book') : L(lang, '## 作者给的参考图', '## Pictures from the author')
 
   const vision = working === true ? undefined : await core.visionRoute(runtime)
   if (working === true || vision === undefined) {
     // A model that says it takes no pictures, and nobody set up to look for it: said before any work is done.
     if (working === false) {
-      throw new ProjectError('novel/no-vision', L(lang, `这件活用的模型（${route.model}）看不了图，也还没有配“看图的模型”。到“设置 → 模型”里选一个能看图的模型来看图，或者给这个角色换一个能看图的模型。`, `the model doing this work (${route.model}) takes no pictures, and no model is set up to look at pictures for it. Choose one that sees under Settings → Models ("Looks at pictures"), or give this role a model that does.`))
+      throw new ProjectError('novel/no-vision', L(lang, `这件活用的模型（${route?.model ?? '?'}）看不了图，也还没有配“看图的模型”。到“设置 → 模型”里选一个能看图的模型来看图，或者给这个角色换一个能看图的模型。`, `the model doing this work (${route?.model ?? '?'}) takes no pictures, and no model is set up to look at pictures for it. Choose one that sees under Settings → Models ("Looks at pictures"), or give this role a model that does.`))
     }
     return {
       guides,

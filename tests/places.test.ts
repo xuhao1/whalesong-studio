@@ -5,7 +5,7 @@
  * a problem unless that is asked for, or the planner says places will not do.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { fixIssue, fixIssues } from '../src/core/pipelines/revise'
+import { acceptProposal, fixIssue, fixIssues, reviseBook } from '../src/core/pipelines/revise'
 import type { LlmRequest } from '../src/core/llm'
 import { createTestBed, type TestBed } from './support/harness'
 
@@ -120,16 +120,105 @@ describe('mending by places', () => {
     expect(result).toMatchObject({ issues: 3, chapters: 2 })
     const planners = bed.llm.requests.filter(planner)
     expect(planners).toHaveLength(2)
-    for (const part of ['edits 第 2 条：和前面的一条在第 2 章里重叠', 'edits 第 3 条：没有第 9 章', '把整个结果重新交一次']) expect(planners[1]!.prompt, part).toContain(part)
+    for (const part of ['edits 第 2 条：和前面的一条在第 2 章里重叠', 'edits 第 3 条：第 9 章不在这次能改的章节里', '把整个结果重新交一次']) expect(planners[1]!.prompt, part).toContain(part)
     for (const part of ['发现了下面 3 个问题', '一处改动能同时解决几个问题的，就只改那一处', '作者对这一批的总要求（以此为准）：动得越少越好', '### 第 3 章《渡口》\n\n渡口没有人。']) expect(planners[0]!.prompt, part).toContain(part)
     // Two places of chapter 2, top to bottom, and chapter 3 written over.
     expect(result.book!.results.map(item => [item.index, item.kind])).toEqual([[2, 'span'], [2, 'span'], [3, 'chapter']])
     const spans = bed.llm.requests.filter(request => !planner(request) && passage(request) !== '')
     expect(spans.map(passage)).toEqual(['她右手握着剑下了山。', '山下是盛夏，蝉叫得人心烦。'])
     // The writer of a place knows what is being mended in its chapter, and is handed the one place.
-    for (const part of ['这一章正在修下面的问题（你只改交给你的那一处；别的地方另有安排）', '第一章写她是左撇子', '上一章还是雪天', '动得越少越好', '这一次只改下面这一处。策划定的改法：改左手']) expect(spans[0]!.prompt, part).toContain(part)
+    for (const part of ['这一章正在修下面的问题（你只改交给你的那一处；别的地方另有安排）', '第一章写她是左撇子', '上一章还是雪天', '动得越少越好', '这一次只改下面这一处：能动的只有这一处里的字，它前后的正文不会变。策划定的改法：改左手', '改法没有提到的字句照原样交回']) expect(spans[0]!.prompt, part).toContain(part)
     expect(spans[0]!.prompt).not.toContain('这一次一起改掉')
     const waiting = (await project.proposals()).filter(item => item.status === 'pending')
     expect(waiting.map(item => [item.chapterId === ids.two ? 2 : 3, item.kind, [...(item.issues ?? [])].sort()]).sort()).toEqual([[2, 'span', ['b1', 'b2']], [2, 'span', ['b1', 'b2']], [3, 'chapter', ['c1']]])
+  })
+
+  it('a place is all that may change and is found once only; what comes back is the sentences that changed, where they stood', async () => {
+    const { project } = bed.runtime
+    const ids = await book()
+    const FOUR = '她推门进来。柳先生头也不抬。灯芯跳了一下。\n\n她点头。\n\n过了很久，她点头。'
+    const four = await project.addChapter({ title: '夜访' })
+    await project.saveChapterText(four.id, FOUR)
+    await project.saveReview({ chapterId: four.id, textHash: 'x', createdAt: '', verdict: '', issues: [{ id: 'n1', severity: 'medium', type: 'character', explanation: '柳先生对夜里上门的人太不设防。' }] })
+    let asked = 0
+    bed.llm.responder = (request) => {
+      if (planner(request)) {
+        asked += 1
+        // A sentence that stands twice in the chapter names no place.
+        if (asked === 1) return JSON.stringify({ edits: [{ chapter: 4, find: '她点头。', how: '改成摇头' }] })
+        return JSON.stringify({ edits: [{ chapter: 4, find: '她推门进来。柳先生头也不抬。灯芯跳了一下。', how: '让他先搁下镊子再抬头' }], note: '只动他抬头那一句。' })
+      }
+      // The writer hands the place back whole, one sentence of the three changed.
+      return '她推门进来。柳先生把镊子搁下，才抬头。灯芯跳了一下。'
+    }
+    const result = await fixIssue(bed.core, bed.runtime, { chapter: four.id, issue: 'n1', scope: 'place' }, task)
+    const planners = bed.llm.requests.filter(planner)
+    expect(planners).toHaveLength(2)
+    for (const part of ['写手只能改它里面的字，出不了这个圈', '它在这一章里要只对得上一处']) expect(planners[0]!.prompt, part).toContain(part)
+    for (const part of ['edits 第 1 条：这段原文在第 4 章里出现了 2 次，定不了是哪一处', '把整个结果重新交一次']) expect(planners[1]!.prompt, part).toContain(part)
+    const writer = bed.llm.requests.find(request => !planner(request))!
+    expect(passage(writer)).toBe('她推门进来。柳先生头也不抬。灯芯跳了一下。')
+    for (const part of ['能动的只有这一处里的字，它前后的正文不会变', '改法没有提到的字句照原样交回']) expect(writer.prompt, part).toContain(part)
+    // Of the three sentences handed over, the proposal is the one that changed — and it knows where it stood.
+    expect(result.book!.results).toHaveLength(1)
+    const proposal = (await project.proposals()).find(item => item.id === result.book!.results[0]!.proposalId)!
+    expect(proposal).toMatchObject({ kind: 'span', before: '柳先生头也不抬。', after: '柳先生把镊子搁下，才抬头。', at: FOUR.indexOf('柳先生头也不抬。'), issues: ['n1'] })
+    await acceptProposal(bed.core, bed.runtime, proposal.id, task)
+    expect(await project.chapterText(four.id)).toBe(FOUR.replace('柳先生头也不抬。', '柳先生把镊子搁下，才抬头。'))
+    expect(await project.chapterText(ids.one)).toBe(ONE)
+  })
+
+  it('a change of words that stand in two places is made where it was meant', async () => {
+    const { project } = bed.runtime
+    const text = '她点头。\n\n灯芯跳了一下。\n\n过了很久，她点头。'
+    const chapter = await project.addChapter({ title: '夜访' })
+    await project.saveChapterText(chapter.id, text)
+    const second = await project.addProposal({ chapterId: chapter.id, kind: 'span', instruction: '后一处改成摇头', before: '她点头。', after: '她摇头。', at: text.lastIndexOf('她点头。'), createdBy: 'user' })
+    await acceptProposal(bed.core, bed.runtime, second.id, task)
+    expect(await project.chapterText(chapter.id)).toBe('她点头。\n\n灯芯跳了一下。\n\n过了很久，她摇头。')
+    // Without a place, the first is taken — as before.
+    const first = await project.addProposal({ chapterId: chapter.id, kind: 'span', instruction: '改成不动', before: '她', after: '柳先生', createdBy: 'user' })
+    await acceptProposal(bed.core, bed.runtime, first.id, task)
+    expect(await project.chapterText(chapter.id)).toBe('柳先生点头。\n\n灯芯跳了一下。\n\n过了很久，她摇头。')
+  })
+
+  it('what the author asks of the whole book is done by places too, and only in the chapters they named', async () => {
+    const { project } = bed.runtime
+    const ids = await book()
+    bed.llm.responder = (request) => {
+      if (planner(request)) return JSON.stringify({ edits: [{ chapter: 1, find: '师父教她用左手握剑。', how: '剑改成刀' }, { chapter: 2, find: '她右手握着剑下了山。', how: '剑改成刀' }], chapters: [], note: '写到兵器的两句。' })
+      return passage(request).replace('剑', '刀')
+    }
+    const result = await reviseBook(bed.core, bed.runtime, { instruction: '她用的兵器从剑改成刀', asked: true }, task)
+    const plan = bed.llm.requests.find(planner)!.prompt
+    // Asked as a request, not as a problem found; every chapter's text goes along (the book is small), and nothing is traced as a fault.
+    for (const part of ['作者提出了一条针对全书的修改要求', '## 修改要求\n\n她用的兵器从剑改成刀', '这条要求碰到哪几句就改哪几句', '### 第 3 章《渡口》\n\n渡口没有人。', '要求本身就是通篇的（文风、语气、视角、节奏）']) expect(plan, part).toContain(part)
+    for (const part of ['下面的问题要修', '作者只让动这几章']) expect(plan, part).not.toContain(part)
+    expect(result.results.map(item => [item.index, item.kind])).toEqual([[1, 'span'], [2, 'span']])
+    expect(result.untouched).toBe(1)
+    expect(result.note).toBe('写到兵器的两句。')
+    const waiting = (await project.proposals()).filter(item => item.status === 'pending')
+    expect(waiting.map(item => [item.kind, item.before, item.after]).sort()).toEqual([['span', '她右手握着剑下了山。', '她右手握着刀下了山。'], ['span', '师父教她用左手握剑。', '师父教她用左手握刀。']])
+    expect(await project.chapterText(ids.two)).toBe(TWO)
+
+    // Named chapters: the planner sees those and may change no other — a place elsewhere is sent back.
+    const before = bed.llm.requests.length
+    let asked = 0
+    bed.llm.responder = (request) => {
+      if (planner(request)) {
+        asked += 1
+        if (asked === 1) return JSON.stringify({ edits: [{ chapter: 2, find: '她用右手解开缆绳。', how: '左手' }] })
+        return JSON.stringify({ edits: [{ chapter: 3, find: '她用右手解开缆绳。', how: '左手' }] })
+      }
+      return passage(request).replace('右手', '左手')
+    }
+    const named = await reviseBook(bed.core, bed.runtime, { instruction: '她是左撇子', asked: true, chapters: [ids.three] }, task)
+    const plans = bed.llm.requests.slice(before).filter(planner)
+    expect(plans).toHaveLength(2)
+    for (const part of ['各章摘要（作者只让动这几章，别的章节不在范围里）', '### 第 3 章《渡口》']) expect(plans[0]!.prompt, part).toContain(part)
+    for (const part of ['### 第 2 章《下山》', '### 第 1 章《雨夜》']) expect(plans[0]!.prompt, part).not.toContain(part)
+    expect(plans[1]!.prompt).toContain('edits 第 1 条：第 2 章不在这次能改的章节里')
+    expect(named.results.map(item => [item.index, item.kind])).toEqual([[3, 'span']])
+    expect(named.untouched).toBe(0)
   })
 })

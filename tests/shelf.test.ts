@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 import { randomBytes } from 'node:crypto'
-import { rm } from 'node:fs/promises'
+import { readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { guidePictures } from '../src/core/pipelines/guides'
 import { readStub } from '../src/core/util/vault'
 import { createTestBed, PIXEL, type TestBed } from './support/harness'
 
@@ -130,5 +131,26 @@ describe('the private shelf', () => {
     // Adding a way in needs the shelf open: it wraps the shelf's key.
     await core.closeShelf()
     await expect(core.shelfWay({ add: core.slotFor('device', 'host:here', secret) })).rejects.toThrow(/open the private shelf/)
+  })
+
+  it('lets the showrunner look at a picture of a book on it while it is open — though the file on disk is ciphertext', async () => {
+    const { core } = bed
+    const root = bed.runtime.project.root
+    const picture = await bed.runtime.project.writeAsset('images/portrait.png', PIXEL)
+    await core.setupShelf('shelf pass')
+    await core.shelveBook(root)
+    // What a file tool would find where the picture was: not a picture.
+    const onDisk = await readFile(join(root, picture)).catch(() => undefined)
+    expect(onDisk === undefined || !Buffer.from(PIXEL).equals(onDisk)).toBe(true)
+    // Through the Studio, with the shelf open: the picture as it is.
+    bed.llm.sight = { boss: true }
+    const open = await core.runtime(root)
+    const seen = (await guidePictures(core, open, { provider: 'fake', model: 'boss' }, [{ path: picture }], 'look', { origin: 'agent' }))!
+    expect(seen.images).toHaveLength(1)
+    expect(Buffer.from(seen.images[0]!.data).equals(Buffer.from(PIXEL))).toBe(true)
+    expect(seen.text).toContain(`1. ${picture}`)
+    // Closed, the book is not to be had at all: nothing of it is read for anybody.
+    await core.closeShelf()
+    await expect(core.runtime(root)).rejects.toThrow()
   })
 })

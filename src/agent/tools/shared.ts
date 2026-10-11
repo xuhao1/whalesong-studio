@@ -42,6 +42,11 @@ export interface ToolOutcome {
   /** Structured result for programmatic callers (PTC mode). */
   data?: Json
   /**
+   * Pictures the model is to see with the result, as the blocks DSH carries them in (`NovelService.pictureBlocks`):
+   * they follow the text, in this order.
+   */
+  images?: readonly { type: 'image'; attachment: unknown }[]
+  /**
    * How the change reads on the book's record, when the tool can say it better
    * than the first line of its result — and, for a manuscript edit, the
    * version that undoes it. `false` keeps the call off the record.
@@ -126,10 +131,16 @@ export function novelTool<const S extends ParameterSchemaSpec>(service: NovelSer
         properties: {
           text: { type: 'string', required: true, description: 'Human-readable result.' },
           data: { type: 'json', description: 'Structured result.' },
+          images: { type: 'json', description: 'Pictures handed back with the result.' },
         },
         additionalProperties: false,
       },
-      render: (_args, value) => [{ type: 'text', text: (value as { text: string }).text }],
+      // Text first; pictures a tool hands back ride beside it as image blocks — the way DSH's own read_image does.
+      render: (_args, value) => {
+        const outcome = value as { text: string; images?: unknown }
+        const pictures = Array.isArray(outcome.images) ? outcome.images.filter((item): item is { attachment: unknown } => typeof item === 'object' && item !== null && 'attachment' in item) : []
+        return [{ type: 'text', text: outcome.text }, ...pictures.map(item => ({ type: 'image', attachment: item.attachment }))] as never
+      },
     },
     // Model work can take minutes; overlapping calls on one manuscript would interleave writes.
     isConcurrencySafe: () => false,
@@ -196,7 +207,7 @@ export function novelTool<const S extends ParameterSchemaSpec>(service: NovelSer
         // In a conversation that has been on more than one book, every result says which book it is about.
         const several = (service.sessions.peek(agent.id)?.books?.length ?? 0) > 1
         const label = used !== undefined && (book !== undefined || several) ? `[Book: "${(await used.project.manifest()).title}" — ${displayPath(workspace, used.project.root)}]\n` : ''
-        return { text: `${label}${outcome.text}`, ...(outcome.data !== undefined ? { data: outcome.data } : {}) } as never
+        return { text: `${label}${outcome.text}`, ...(outcome.data !== undefined ? { data: outcome.data } : {}), ...(outcome.images !== undefined && outcome.images.length > 0 ? { images: outcome.images } : {}) } as never
       } catch (error) {
         // The message of an expected failure already tells the model what to do next.
         if (isExpected(error)) throw new Error(error instanceof Error ? error.message : String(error))

@@ -10,7 +10,7 @@ import { exportBook, zipStore } from '../src/core/pipelines/export'
 import { decodeText, importManuscript, splitChapters } from '../src/core/pipelines/import'
 import { siftCast, siftDue } from '../src/core/pipelines/cast'
 import { listWalkOns } from '../src/core/walkons'
-import { deriveChapters } from '../src/core/pipelines/plot'
+import { deriveChapters, planOfText } from '../src/core/pipelines/plot'
 import { fixIssue, fixIssues, acceptProposal, rejectProposal, mendInTurn, reviseSpan } from '../src/core/pipelines/revise'
 import { listReviews, noteIssue, recheckIssues } from '../src/core/pipelines/review'
 import { importLine } from '../src/core/pipelines/import'
@@ -284,13 +284,13 @@ describe('pipelines', () => {
     expect(placed.scope).toBe('places')
     const planner = bed.llm.requests.filter(request => request.prompt.includes('责任编辑'))
     // Told: as little as will do, one place where one will do, quoted word for word; the chapter goes along whole to quote from.
-    for (const part of ['这一章收得太快', '一处能解决的，不改两处', '逐字照抄', '只修这个问题本身', '相关章节的正文', '“有人吗？”她问。']) expect(planner[0]!.prompt, part).toContain(part)
+    for (const part of ['这一章收得太快', '一处能解决的，不改两处', '逐字照抄', '只修这个问题本身', '章节正文（find 从这里逐字照抄）', '写手只能改它里面的字', '只对得上一处', '“有人吗？”她问。']) expect(planner[0]!.prompt, part).toContain(part)
     expect(planner).toHaveLength(2)
     expect(planner[1]!.prompt).toContain('第 1 章里找不到这段原文')
     expect(placed.book!.results).toMatchObject([{ index: 1, kind: 'span', reason: '让她站一会儿再开口，慢下来' }])
     expect(placed.book!.note).toBe('只要这一处慢下来。')
     const writer = bed.llm.requests.at(-1)!.prompt
-    for (const part of ['这一章收得太快', '这一次只改下面这一处。策划定的改法：让她站一会儿再开口，慢下来', '<<<\n“有人吗？”她问。\n>>>']) expect(writer, part).toContain(part)
+    for (const part of ['这一章收得太快', '这一次只改下面这一处：能动的只有这一处里的字，它前后的正文不会变。策划定的改法：让她站一会儿再开口，慢下来', '改法没有提到的字句照原样交回', '<<<\n“有人吗？”她问。\n>>>']) expect(writer, part).toContain(part)
     const small = (await project.proposals()).find(item => item.id === placed.book!.results[0]!.proposalId)!
     expect(small).toMatchObject({ kind: 'span', status: 'pending', before: '“有人吗？”她问。', after: '她站了很久，才问：“有人吗？”', issues: ['i2'], batchId: placed.book!.batchId })
     expect((await project.review(plan.id))!.issues[1]!.mending).toBe(placed.book!.batchId)
@@ -640,6 +640,69 @@ describe('pipelines', () => {
     expect(first).toMatchObject({ pov: '沈璃', status: 'outlined', characters: ['沈璃', '陌生人'] })
     expect(first.beats).toHaveLength(2)
     expect(first.threads).toEqual([outline.threads[0]!.id])
+  })
+
+  it('sets the plan of a written chapter right by its text: its beats alone, or the synopsis, place, time, eyes and cast with them', async () => {
+    const { project } = bed.runtime
+    const who = await project.saveCharacter({ name: '沈璃', aliases: ['阿璃'], role: 'protagonist' })
+    const other = await project.saveCharacter({ name: '师兄', role: 'supporting' })
+    const chapter = await project.addChapter({ title: '下山', synopsis: '沈璃带着断剑下山，被师兄拦在山门。', purpose: '把她送出山', location: '山门', time: '清晨', characters: [who.id, other.id], notes: '写慢一点', beats: [{ id: 'b_keep', summary: '告别旧居', emotion: '不舍' }, { id: 'b_gone', summary: '在山门被师兄拦下' }] })
+    // Nothing to read yet: said, and nobody is asked.
+    await expect(planOfText(bed.core, bed.runtime, { chapter: chapter.id }, { origin: 'user' })).rejects.toMatchObject({ code: 'novel/empty' })
+    expect(bed.llm.requests).toHaveLength(0)
+    await project.saveChapterText(chapter.id, '她在旧居门口站了一会儿。\n\n山门没有人拦她。雨里只有一个卖伞的。')
+
+    // The beats alone.
+    bed.llm.responder = () => JSON.stringify({ synopsis: '不该被用上的梗概', location: '别处', beats: [
+      { summary: '告别旧居', characters: ['阿璃'], location: '旧居', emotion: '不舍' },
+      { summary: '山门无人，她向卖伞的买了一把伞', characters: ['沈璃', '卖伞的'], location: '山门', outcome: '撑伞下山' },
+    ] })
+    const result = await planOfText(bed.core, bed.runtime, { chapter: chapter.id, what: 'beats' }, { origin: 'user' })
+    expect(result).toMatchObject({ what: 'beats', index: 1, was: 2, kept: 1, applied: true })
+    expect(result.changed).toBeUndefined()
+    // One plain request, to the continuity editor, with the text, the plan there is and who is on file.
+    expect(bed.llm.requests).toHaveLength(1)
+    const asked = bed.llm.requests[0]!
+    for (const part of ['第 1 章《下山》 正文', '山门没有人拦她。', '1. 告别旧居（情绪：不舍）', '2. 在山门被师兄拦下', '梗概：沈璃带着断剑下山，被师兄拦在山门。', '沈璃 | 阿璃', '原样留着，一个字不改', '以正文为准', '把它的节拍列出来']) expect(asked.prompt, part).toContain(part)
+    for (const part of ['"synopsis"', '故事时间：']) expect(asked.prompt, part).not.toContain(part)
+    expect(asked.system).toContain('场记')
+    let plan = (await project.findChapter(chapter.id))!.plan
+    // The beat that still holds is the same beat (its id); names on file are the cards'; the planned one that was not written is gone.
+    expect(plan.beats!.map(beat => [beat.id === 'b_keep', beat.summary, beat.characters])).toEqual([[true, '告别旧居', [who.id]], [false, '山门无人，她向卖伞的买了一把伞', [who.id, '卖伞的']]])
+    expect(plan.beats![1]).toMatchObject({ location: '山门', outcome: '撑伞下山' })
+    // Nothing else of the plan moved — whatever the model handed in beside the beats — and the plan as it was can be had again.
+    expect(plan).toMatchObject({ title: '下山', synopsis: '沈璃带着断剑下山，被师兄拦在山门。', location: '山门', time: '清晨', characters: [who.id, other.id] })
+    const versions = await project.history('plan', chapter.id)
+    expect(versions.length).toBeGreaterThan(0)
+    expect(((await project.historyOf('plan', chapter.id, versions[0]!.id)) as { beats: { summary: string }[] }).beats.map(beat => beat.summary)).toEqual(['告别旧居', '在山门被师兄拦下'])
+
+    // The whole plan: what the text says differently is changed, what it does not say stays as planned.
+    bed.llm.requests.length = 0
+    bed.llm.responder = () => JSON.stringify({
+      synopsis: '沈璃告别旧居，冒雨下山；山门没有人拦她，她向卖伞的买了一把伞。',
+      location: '旧居、山门',
+      pov: '阿璃',
+      characters: ['阿璃', '卖伞的'],
+      beats: [{ summary: '告别旧居' }, { summary: '山门无人，她向卖伞的买了一把伞' }],
+    })
+    const whole = await planOfText(bed.core, bed.runtime, { chapter: chapter.id }, { origin: 'user' })
+    expect(whole).toMatchObject({ what: 'plan', was: 2, kept: 2, applied: true, synopsis: '沈璃告别旧居，冒雨下山；山门没有人拦她，她向卖伞的买了一把伞。' })
+    expect(whole.changed).toEqual(['synopsis', 'location', 'pov', 'characters'])
+    const again = bed.llm.requests[0]!.prompt
+    for (const part of ['把它的章纲重新写出来', '重写这一章的写手、给它排分镜的导演、往下推演的策划', '地点：山门', '故事时间：清晨', '视角：（没写）', '出场人物：沈璃、师兄', '只被提到的不算', '"synopsis"']) expect(again, part).toContain(part)
+    plan = (await project.findChapter(chapter.id))!.plan
+    expect(plan).toMatchObject({ synopsis: '沈璃告别旧居，冒雨下山；山门没有人拦她，她向卖伞的买了一把伞。', location: '旧居、山门', time: '清晨', pov: who.id, characters: [who.id, '卖伞的'] })
+    // What the chapter is for, and what the author told its writer, are not the text's to say.
+    expect(plan).toMatchObject({ purpose: '把她送出山', notes: '写慢一点' })
+    expect(plan.beats!.map(beat => beat.id)).toEqual(result.beats.map(beat => beat.id))
+
+    // A plan without a synopsis is not one: sent back. Only looked at, where that is asked: the plan stays.
+    let tries = 0
+    bed.llm.responder = () => { tries += 1; return tries === 1 ? JSON.stringify({ beats: ['她在旧居门口站了一会儿'] }) : JSON.stringify({ synopsis: '只看不改。', beats: ['她在旧居门口站了一会儿'] }) }
+    const looked = await planOfText(bed.core, bed.runtime, { chapter: chapter.id, apply: false }, { origin: 'agent' })
+    expect(tries).toBe(2)
+    expect(looked).toMatchObject({ applied: false, kept: 0, changed: ['synopsis'] })
+    expect((await project.findChapter(chapter.id))!.plan).toMatchObject({ synopsis: '沈璃告别旧居，冒雨下山；山门没有人拦她，她向卖伞的买了一把伞。' })
   })
 
   it('packs layered memory in retrieval mode and whole chapters in full mode', async () => {

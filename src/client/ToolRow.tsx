@@ -46,7 +46,7 @@ interface Described {
 export const NOVEL_TOOLS = [
   'novel_status', 'novel_init', 'novel_read', 'novel_search', 'novel_mode', 'novel_export', 'novel_bible', 'novel_outline', 'novel_derive',
   'novel_write', 'novel_revise', 'novel_digest', 'novel_review', 'novel_import', 'novel_illustrate', 'novel_audio', 'novel_comic', 'novel_play',
-  'novel_settings', 'novel_show', 'novel_manage', 'novel_share', 'novel_edit', 'novel_memory', 'novel_crew', 'novel_video',
+  'novel_settings', 'novel_show', 'novel_look', 'novel_manage', 'novel_share', 'novel_edit', 'novel_memory', 'novel_crew', 'novel_video',
 ] as const
 
 const VIEWS: readonly string[] = ['home', 'bible', 'outline', 'write', 'read', 'cast', 'review', 'stage', 'settings', 'setup', 'usage']
@@ -111,6 +111,11 @@ function describe(tool: string, args: Record<string, unknown>): Described {
     case 'novel_settings': {
       const action = text(args.action)
       return { icon: action === 'usage' ? 'clock' : 'settings', title: action === 'book' ? ['作品信息', 'Book info'] : action === 'usage' ? ['用量与成本', 'Usage and cost'] : ['工坊设置', 'Studio settings'], summary: join(action === 'usage' ? text(args.range) : action, text(args.service), Array.isArray(args.parts) ? args.parts.join(', ') : undefined), target: { view: action === 'book' ? 'home' : action === 'usage' ? 'usage' : 'settings' } }
+    }
+    case 'novel_look': {
+      // The pictures the showrunner looked at are the gallery's: that is where the author finds them.
+      const named = Array.isArray(args.pictures) ? args.pictures.filter((item): item is string => typeof item === 'string').map(item => item.split('/').at(-1) ?? item).join(', ') : text(args.pictures)
+      return { icon: 'image', title: ['看了这本书的图', 'Looked at pictures of the book'], summary: join(text(args.of), short(named)), target: { view: 'stage', tab: 'gallery' } }
     }
     case 'novel_show': {
       const view = text(args.view)

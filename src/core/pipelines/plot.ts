@@ -4,6 +4,7 @@
  *   foundation  an idea → title, premise, cast, world, volumes and opening chapters,
  *   chapters    the next N chapter outlines, driven by character wants and open threads,
  *   beats       one chapter outline → scene beats a writer can follow,
+ *   plan of the text    a chapter that is written → its plan (or its beats alone) as its text has it,
  *   what-if     alternative directions with their consequences, nothing is changed.
  */
 import { MAIN_LINE, type Beat, type ChapterPlan, type CharacterCard, type PictureGuide, type PicturesRead, type PlotLine, type ReferencesLooked, type StyleProfile, type WorldCategory, type WorldEntry } from '../../shared/types'
@@ -13,7 +14,7 @@ import { asArray, asList, asRecord, asText } from '../llm'
 import { assign } from '../crew'
 import type { Project } from '../project'
 import { ProjectError } from '../project'
-import { architectSystem, deriveBeatsTask, deriveChaptersTask, foundationTask, whatIfTask } from '../prompts'
+import { architectSystem, planOfTextTask, deriveBeatsTask, deriveChaptersTask, digestSystem, foundationTask, whatIfTask } from '../prompts'
 import { deriveArtDirection } from './illustrate'
 import { guidePictures, picturesRead } from './guides'
 import { L, promptLanguage } from '../render'
@@ -412,6 +413,139 @@ export async function deriveBeats(core: NovelCore, runtime: ProjectRuntime, para
     })
   }
   return { chapterId: chapter.plan.id, title: chapter.plan.title, index: chapter.index, ...(synopsis !== undefined ? { synopsis } : {}), beats, applied, ...(referenced !== undefined ? { referenced } : {}) }
+}
+
+/** The items of a chapter's plan that its text can set right, beside its beats. */
+export type PlanItem = 'synopsis' | 'location' | 'time' | 'pov' | 'characters'
+
+export interface PlanOfTextResult {
+  chapterId: string
+  title: string
+  index: number
+  /** What was read off the text: the beats alone, or the plan — synopsis, where, when, whose eyes, who is in it — with them. */
+  what: 'beats' | 'plan'
+  beats: Beat[]
+  /** How many beats the plan had before. */
+  was: number
+  /** Of the beats now, how many stand as they stood. */
+  kept: number
+  /** `plan`: the other items the text changed. */
+  changed?: PlanItem[]
+  synopsis?: string
+  applied: boolean
+}
+
+/** A beat as one line of a list, for whoever is to compare it with a text. */
+function beatLine(beat: Beat, at: number, zh: boolean): string {
+  const more = [
+    beat.conflict !== undefined ? `${zh ? '阻碍：' : 'conflict: '}${beat.conflict}` : undefined,
+    beat.outcome !== undefined ? `${zh ? '结果：' : 'outcome: '}${beat.outcome}` : undefined,
+    beat.emotion !== undefined ? `${zh ? '情绪：' : 'emotion: '}${beat.emotion}` : undefined,
+  ].filter((part): part is string => part !== undefined)
+  return `${at + 1}. ${beat.summary}${more.length > 0 ? `${zh ? '（' : ' ('}${more.join(zh ? '；' : '; ')}${zh ? '）' : ')'}` : ''}`
+}
+
+/**
+ * A chapter's plan set right by its text. What was planned before the chapter was written — or before the author,
+ * or a revision, changed it — is read against what the chapter now says, by the continuity editor, in one request
+ * (the text and the plan are all there is to it): whoever goes by the plan afterwards — a writer rewriting the
+ * chapter, the director cutting it into panels, the planner deriving what follows — then goes by what was written.
+ * `beats` changes the beats alone; `plan` the synopsis, the place, the time, the point of view and the cast with
+ * them. A beat that still holds keeps its words and its id; what the text does not say of the place or the time
+ * stays as planned; the chapter's purpose, its notes and its threads are nobody's to change here. The plan as it was
+ * stays in its history.
+ */
+export async function planOfText(core: NovelCore, runtime: ProjectRuntime, params: { chapter: string; what?: 'beats' | 'plan'; apply?: boolean }, task: TaskContext): Promise<PlanOfTextResult> {
+  const { project } = runtime
+  const what = params.what ?? 'plan'
+  const chapter = await project.findChapter(params.chapter)
+  if (chapter === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${params.chapter}"`)
+  const text = await project.chapterText(chapter.plan.id)
+  if (text.trim().length === 0) throw new ProjectError('novel/empty', `chapter ${chapter.index} has no text to read its plan from — until it is written, its beats are derived from its plan (novel_derive kind=beats)`)
+  const manifest = await project.manifest()
+  const lang = promptLanguage(manifest.language)
+  const zh = lang === 'zh'
+  const characters = await project.characters()
+  const { resolve: who } = await project.castResolver()
+  const mine = characters.filter(card => [card.name, ...(card.aliases ?? [])].some(name => who(name, chapter.plan.id).id === card.id))
+  const resolve = (name: string): string => who(name, chapter.plan.id).id ?? name
+  const nameOf = (ref: string): string => characters.find(card => card.id === ref)?.name ?? ref
+  const plan = chapter.plan
+  const before = plan.beats ?? []
+  const label = zh ? `第 ${chapter.index} 章《${plan.title}》` : `Chapter ${chapter.index}, "${plan.title}"`
+  const { value } = await assign(core, runtime, task, {
+    role: 'analyst',
+    label: what === 'plan' ? L(lang, `第${chapter.index}章 · 照正文更新章纲`, `Ch. ${chapter.index} · the plan by the text`) : L(lang, `第${chapter.index}章 · 照正文更新节拍`, `Ch. ${chapter.index} · beats of the text`),
+    line: chapter.line ?? MAIN_LINE,
+    tool: what === 'plan' ? 'submit_plan' : 'submit_beats',
+    // The text and the plan are all there is to it: one request, whatever the role is set to.
+    plain: true,
+    what: what === 'plan' ? L(lang, '这一章照正文写的章纲', 'this chapter\'s plan as its text has it') : L(lang, '这一章正文里的节拍', 'the beats this chapter\'s text has'),
+    system: digestSystem(lang),
+    prompt: planOfTextTask({
+      lang,
+      language: manifest.language,
+      title: manifest.title,
+      what,
+      chapterLabel: label,
+      text,
+      beats: before.map((beat, at) => beatLine(beat, at, zh)).join('\n'),
+      ...(plan.synopsis !== undefined ? { synopsis: plan.synopsis } : {}),
+      ...(plan.location !== undefined ? { location: plan.location } : {}),
+      ...(plan.time !== undefined ? { time: plan.time } : {}),
+      ...(plan.pov !== undefined ? { pov: nameOf(plan.pov) } : {}),
+      ...((plan.characters ?? []).length > 0 ? { cast: plan.characters!.map(nameOf).join(zh ? '、' : ', ') } : {}),
+      knownCharacters: mine.map(card => `${card.name}${card.aliases !== undefined && card.aliases.length > 0 ? ` | ${card.aliases.join('/')}` : ''}`).join('\n'),
+    }),
+    temperature: 0.1,
+    validate: (raw) => {
+      const record = asRecord(raw)
+      if (asArray(record.beats).length === 0) throw new Error('"beats" is empty')
+      if (what === 'plan' && asText(record.synopsis) === undefined) throw new Error('"synopsis" is missing')
+      return record
+    },
+  })
+  // A beat handed back as it stood is the same beat: it keeps its id.
+  const left = [...before]
+  let kept = 0
+  const beats = toBeats(value.beats, resolve).map((beat) => {
+    const at = left.findIndex(old => old.summary.trim() === beat.summary.trim())
+    if (at < 0) return beat
+    const [old] = left.splice(at, 1)
+    kept += 1
+    return { ...beat, id: old!.id }
+  })
+  const patch: Partial<ChapterPlan> = { beats }
+  const changed: PlanItem[] = []
+  if (what === 'plan') {
+    const synopsis = asText(value.synopsis)
+    if (synopsis !== undefined && synopsis !== plan.synopsis) { patch.synopsis = synopsis; changed.push('synopsis') }
+    // What the text does not say stays as planned.
+    const location = asText(value.location)
+    if (location !== undefined && location !== plan.location) { patch.location = location; changed.push('location') }
+    const time = asText(value.time)
+    if (time !== undefined && time !== plan.time) { patch.time = time; changed.push('time') }
+    // The point of view is somebody on file, or it is left alone.
+    const pov = asText(value.pov)
+    const seen = pov !== undefined ? who(pov, plan.id).id : undefined
+    if (seen !== undefined && seen !== plan.pov) { patch.pov = seen; changed.push('pov') }
+    const cast = [...new Set(asList(value.characters).map(resolve))]
+    const had = plan.characters ?? []
+    if (cast.length > 0 && (cast.length !== had.length || cast.some(ref => !had.includes(ref)))) { patch.characters = cast; changed.push('characters') }
+  }
+  const applied = params.apply !== false
+  if (applied) await project.updateChapter(plan.id, patch)
+  return {
+    chapterId: plan.id,
+    title: plan.title,
+    index: chapter.index,
+    what,
+    beats,
+    was: before.length,
+    kept,
+    ...(what === 'plan' ? { changed, synopsis: patch.synopsis ?? plan.synopsis ?? '' } : {}),
+    applied,
+  }
 }
 
 export interface WhatIfResult {

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { focusLines, movedContext, noProjectContext } from '../src/agent/prompt'
-import { listOf, listParameter } from '../src/agent/tools/shared'
+import { listOf, listParameter, novelTool } from '../src/agent/tools/shared'
 import { ASSUMED_CONTEXT_WINDOW, contextBudgets } from '../src/core/context'
 import { knownContextWindow } from '../src/core/media/discovery'
 import { SessionStateStore } from '../src/core/session-state'
@@ -109,6 +109,20 @@ describe('list parameters', () => {
       description: 'Chapters. A list of strings; one comma-separated string works too.',
       oneOf: [{ type: 'array', items: { type: 'string', enum: ['a', 'b'] } }, { type: 'string' }],
     })
+  })
+
+  it('hands a tool\'s pictures to the model beside its words, as the blocks DSH carries them in', () => {
+    const tool = novelTool({} as never, { name: 'novel_test_look', description: 'x', parameters: {}, book: false, run: async () => ({ text: '' }) }) as unknown as { output: { render(args: unknown, value: unknown): unknown[]; schema: { properties: Record<string, unknown> } } }
+    expect(Object.keys(tool.output.schema.properties)).toEqual(['text', 'data', 'images'])
+    // Words alone, as ever.
+    expect(tool.output.render({}, { text: '结果' })).toEqual([{ type: 'text', text: '结果' }])
+    // Pictures follow the words, in their order; what is no picture block is left out.
+    const ref = { attachmentId: 'att-1', mediaType: 'image/png', bytes: 3, width: 1, height: 1 }
+    expect(tool.output.render({}, { text: '两张图', images: [{ type: 'image', attachment: ref }, 'nonsense', { type: 'image', attachment: { ...ref, attachmentId: 'att-2' } }] })).toEqual([
+      { type: 'text', text: '两张图' },
+      { type: 'image', attachment: ref },
+      { type: 'image', attachment: { ...ref, attachmentId: 'att-2' } },
+    ])
   })
 })
 

@@ -142,6 +142,47 @@ describe('pictures given to steer by', () => {
     }
   })
 
+  it('are only looked at, where the showrunner is pointed at pictures of the book: the pictures themselves, or what they show in words', async () => {
+    const bed = await createTestBed({})
+    try {
+      const { project } = bed.runtime
+      bed.llm.sight = { boss: true, blind: false, looker: true }
+      const card = await project.saveCharacter({ name: '黛玉', role: 'protagonist' })
+      const portrait = await project.writeAsset('images/zang.png', PIXEL)
+      const brought = await project.writeAsset('images/hill.jpg', Uint8Array.from([...PIXEL, 2]))
+      await project.addIllustration({ id: 'img-1', path: portrait, prompt: '葬花', kind: 'portrait', target: card.id, createdAt: new Date().toISOString() })
+
+      // A model that sees: the pictures go to it as they are, each named by where it is in the book.
+      const seen = (await guidePictures(bed.core, bed.runtime, { provider: 'fake', model: 'boss' }, [{ path: portrait }, { path: brought }], 'look', { origin: 'agent' }))!
+      expect(seen.by).toBe('self')
+      expect(seen.images.map(image => [image.name, image.mediaType])).toEqual([['zang.png', 'image/png'], ['hill.jpg', 'image/jpeg']])
+      for (const part of ['## 这本书里的图', '这本书里的 2 张图，作者要你看。', `1. ${portrait} 〔立绘 · 黛玉〕`, `2. ${brought}`, '图按下面的次序附在这条消息里']) expect(seen.text, part).toContain(part)
+      // Nothing is written from them: no word of canon holding over a picture.
+      expect(seen.text).not.toContain('以设定和前文为准')
+      expect(bed.llm.requests).toHaveLength(0)
+
+      // One that does not, and nobody to look for it: said.
+      await expect(guidePictures(bed.core, bed.runtime, { provider: 'fake', model: 'blind' }, [{ path: portrait }], 'look', { origin: 'agent' })).rejects.toThrow(/看不了图/)
+      // With a model set up to look: it is told in words, and sent no picture.
+      await bed.core.settings.update({ vision: LOOKER })
+      bed.llm.responder = request => `看到了：${request.images?.[0]?.name}`
+      const told = (await guidePictures(bed.core, bed.runtime, { provider: 'fake', model: 'blind' }, [{ path: portrait }], 'look', { origin: 'agent' }))!
+      expect(told).toMatchObject({ by: 'vision', model: 'looker', images: [] })
+      expect(told.text).toContain(`1. ${portrait} 〔立绘 · 黛玉〕\n   图里：看到了：zang.png`)
+
+      // A conversation whose model nobody could name is one that does not say whether it sees: the model set up to look does.
+      const unnamed = (await guidePictures(bed.core, bed.runtime, undefined, [{ path: brought }], 'look', { origin: 'agent' }))!
+      expect(unnamed.by).toBe('vision')
+      await bed.core.settings.update({ vision: null } as never)
+      // …and with nobody set up, the pictures are sent all the same.
+      const sent = (await guidePictures(bed.core, bed.runtime, undefined, [{ path: brought }], 'look', { origin: 'agent' }))!
+      expect(sent).toMatchObject({ by: 'self', unsure: true })
+      expect(sent.images).toHaveLength(1)
+    } finally {
+      await bed.cleanup()
+    }
+  })
+
   it('steer chapters being planned, and stay with the chapter that goes by each', async () => {
     const bed = await createTestBed({ settings: { models: { writer: WRITER, architect: PLANNER } } })
     try {
@@ -239,10 +280,18 @@ describe('pictures given to steer by', () => {
       expect(rewrite!.images?.map(image => image.name)).toEqual(['one.png'])
       expect(revised.results).toHaveLength(1)
       expect(revised.pictures).toEqual({ count: 1, by: 'self' })
-      // Chapters named outright are not scoped by the planner: the writer's reading of the pictures is what is said.
-      bed.llm.sight = { plan: true }
-      const named = await reviseBook(bed.core, bed.runtime, { instruction: '把船改成图里那条', chapters: [chapter.id], guides: [{ path: one }] }, { origin: 'user' })
-      expect(named.pictures).toEqual({ count: 1, by: 'self', unsure: true })
+      // Chapters the author named are all the planner looks at: it settles the places in them with the pictures in
+      // sight, and each place is rewritten by them.
+      const from = bed.llm.requests.length
+      bed.llm.responder = request => (request.route.model === 'plan' ? JSON.stringify({ edits: [{ chapter: 1, find: '她数着船。', how: '船改成图里那条' }], note: '只动这一句。' }) : '她数着那条船。')
+      const named = await reviseBook(bed.core, bed.runtime, { instruction: '把船改成图里那条', asked: true, chapters: [chapter.id], guides: [{ path: one }] }, { origin: 'user' })
+      const [settle, place] = bed.llm.requests.slice(from)
+      expect([settle!.route.model, place!.route.model]).toEqual(['plan', 'pen'])
+      for (const part of ['作者提出了一条针对全书的修改要求', '作者只让动这几章', '章节正文（find 从这里逐字照抄）']) expect(settle!.prompt, part).toContain(part)
+      expect(settle!.images?.map(image => image.name)).toEqual(['one.png'])
+      expect(place!.images?.map(image => image.name)).toEqual(['one.png'])
+      expect(named.results.map(item => item.kind)).toEqual(['span'])
+      expect(named.pictures).toEqual({ count: 1, by: 'self' })
     } finally {
       await bed.cleanup()
     }

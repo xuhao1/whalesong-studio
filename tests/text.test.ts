@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 import { describe, expect, it } from 'vitest'
 import { plainChapterTitle } from '../src/core/pipelines/plot'
-import { clip, clipTail, countWords, embeddedImages, estimateTokens, fuzzyFind, proseOnly, slugify } from '../src/shared/text'
+import { changedCore, clip, clipTail, countWords, embeddedImages, estimateTokens, fuzzyFind, occurrences, proseOnly, sentences, slugify } from '../src/shared/text'
 
 describe('text helpers', () => {
   it('counts CJK characters and Latin words', () => {
@@ -44,6 +44,50 @@ describe('text helpers', () => {
   })
 })
 
+
+describe('what a rewriting of a passage changed', () => {
+  it('cuts a text into sentences that join back into it, to the character', () => {
+    const text = '她推门进来。“老朽夜里不接客。”他头也不抬……\n\n灯芯跳了一下！She stopped. "Not tonight," he said. 末尾没有句号'
+    const cut = sentences(text)
+    expect(cut.join('')).toBe(text)
+    expect(cut.slice(0, 3)).toEqual(['她推门进来。', '“老朽夜里不接客。”', '他头也不抬……\n\n'])
+    // A full stop inside a number or a name is not an end; a closing quote stays with its sentence.
+    expect(sentences('第3.5章写到 Mr.Liu 的账。下一句。')).toEqual(['第3.5章写到 Mr.Liu 的账。', '下一句。'])
+    expect(sentences('')).toEqual([])
+  })
+
+  it('counts how often a stretch stands in a text', () => {
+    expect(occurrences('她点头。他也点头。她点头。', '她点头。')).toBe(2)
+    expect(occurrences('aaa', 'aa')).toBe(2)
+    expect(occurrences('她点头。', '')).toBe(0)
+  })
+
+  it('keeps of a passage and its rewriting only the sentences that differ, and says where they start', () => {
+    // One sentence of three was changed: the proposal is of that sentence.
+    expect(changedCore('她推门进来。他头也不抬。灯芯跳了一下。', '她推门进来。他把镊子搁下，才抬头。灯芯跳了一下。')).toEqual({ before: '他头也不抬。', after: '他把镊子搁下，才抬头。', start: 6 })
+    // Paragraph breaks around it are nobody's change.
+    expect(changedCore('甲。\n\n乙。\n\n丙。', '甲。\n\n乙改了。\n\n丙。')).toEqual({ before: '乙。', after: '乙改了。', start: 4 })
+    // Something only added: the sentence it follows stays in, so there is a place to find.
+    expect(changedCore('甲。乙。丙。', '甲。乙。新加的一句。丙。')).toEqual({ before: '乙。', after: '乙。新加的一句。', start: 2 })
+    // …or, at the very top, the one it comes before.
+    expect(changedCore('甲。乙。', '开头加一句。甲。乙。')).toEqual({ before: '甲。', after: '开头加一句。甲。', start: 0 })
+    // Something only taken out.
+    expect(changedCore('甲。乙。丙。', '甲。丙。')).toEqual({ before: '甲。乙。', after: '甲。', start: 0 })
+    // Nothing changed, or nothing shared: the pair as given.
+    expect(changedCore('甲。乙。', '甲。乙。')).toEqual({ before: '甲。乙。', after: '甲。乙。', start: 0 })
+    expect(changedCore('甲。', '全换了。')).toEqual({ before: '甲。', after: '全换了。', start: 0 })
+  })
+
+  it('widens what it keeps until it is found once only', () => {
+    // "好。" stands twice in the chapter: alone it could not say which one is meant.
+    const chapter = '他说：好。她想了想。乙。好。丙。'
+    const narrowed = changedCore('乙。好。丙。', '乙。好的。丙。', stretch => occurrences(chapter, stretch) === 1)
+    expect(narrowed).toEqual({ before: '乙。好。', after: '乙。好的。', start: 0 })
+    expect(occurrences(chapter, narrowed.before)).toBe(1)
+    // Where no widening helps, the whole pair stands.
+    expect(changedCore('好。好。', '好。好的。', () => false)).toEqual({ before: '好。好。', after: '好。好的。', start: 0 })
+  })
+})
 
 describe('plainChapterTitle', () => {
   it('drops the numbering models put into chapter titles', () => {

@@ -424,8 +424,8 @@ function BookRevision({ onStarted }: { onStarted: () => void }) {
   const [instruction, setInstruction] = useState('')
   const [scope, setScope] = useState<'auto' | 'pick'>('auto')
   const [picked, setPicked] = useState<Set<string>>(new Set())
-  const [summary, setSummary] = useState<{ note?: string; changed: number; untouched: number; failed: number; pictures?: PicturesRead } | undefined>()
-  // Pictures the revision goes by: the planner scopes it with them, and every chapter is rewritten by them.
+  const [summary, setSummary] = useState<{ note?: string; places: number; whole: number; chapters: number; untouched: number; failed: number; pictures?: PicturesRead } | undefined>()
+  // Pictures the revision goes by: the planner settles the places with them, and every place is rewritten by them.
   const [guides, setGuides] = useState<PictureGuide[]>([])
   // A revision is of one line of the plot: its chapters as they are read on it.
   const others = project.outline.lines ?? []
@@ -440,8 +440,10 @@ function BookRevision({ onStarted }: { onStarted: () => void }) {
     setSummary(undefined)
     void controller.guard(async () => {
       const info = await controller.run('ai.reviseBook', { root, instruction: instruction.trim(), order, ...(guides.length > 0 ? { guides } : {}), ...(line !== MAIN_LINE ? { line } : {}), ...(scope === 'pick' && picked.size > 0 ? { chapters: [...picked].filter(id => written.some(chapter => chapter.id === id)) } : {}) })
-      const output = info.result?.output as { note?: string; untouched?: number; results?: unknown[]; failed?: unknown[]; pictures?: PicturesRead } | undefined
-      setSummary({ ...(output?.note !== undefined ? { note: output.note } : {}), changed: output?.results?.length ?? 0, untouched: output?.untouched ?? 0, failed: output?.failed?.length ?? 0, ...(output?.pictures !== undefined ? { pictures: output.pictures } : {}) })
+      const output = info.result?.output as { note?: string; untouched?: number; results?: { kind?: string; chapterId?: string }[]; failed?: unknown[]; pictures?: PicturesRead } | undefined
+      const made = output?.results ?? []
+      const places = made.filter(item => item.kind === 'span').length
+      setSummary({ ...(output?.note !== undefined ? { note: output.note } : {}), places, whole: made.length - places, chapters: new Set(made.map(item => item.chapterId)).size, untouched: output?.untouched ?? 0, failed: output?.failed?.length ?? 0, ...(output?.pictures !== undefined ? { pictures: output.pictures } : {}) })
       if ((output?.results?.length ?? 0) > 0) onStarted()
     })
   }
@@ -467,7 +469,7 @@ function BookRevision({ onStarted }: { onStarted: () => void }) {
     <div className="nv-book-revision">
       <section className="nv-card">
         <SectionTitle>{t('对全书提一个修改要求', 'Ask for a change across the whole book')}</SectionTitle>
-        <p className="nv-muted nv-small">{t('策划先判断哪些章节受影响，写手只改这些章；改动作为提案等你确认。', 'The planner decides which chapters are affected and the writer changes only those; each change waits as a proposal.')}</p>
+        <p className="nv-muted nv-small">{t('策划定下改哪几处，写手只改这几处；每一处是一条提案，等你确认。', 'The planner settles which places change and the writer rewrites those only; each place waits as a proposal of its own.')}</p>
         <div className="nv-form-grid">
           {project.world.length > 0 ? (
             <Field label={t('同步一条世界观变更', 'Carry a world change through')}>
@@ -483,14 +485,14 @@ function BookRevision({ onStarted }: { onStarted: () => void }) {
         <Field label={t('修改要求', 'The instruction')}>
           <TextArea value={instruction} minRows={4} maxRows={14} placeholder={t('例：把所有“灵力”改称“炁”并调整相关描写', 'E.g. call every "spirit power" "qi" and adjust the descriptions around it')} onChange={(event) => { setInstruction(event.target.value) }} />
         </Field>
-        <GuidePictures value={guides} onChange={setGuides} hint={t('策划照着图划范围，每一章照着图改', 'The planner scopes it by them; each chapter is rewritten by them')} />
+        <GuidePictures value={guides} onChange={setGuides} hint={t('策划照着图定改哪几处，每一处照着图改', 'The planner settles the places by them; each place is rewritten by them')} />
         {others.length > 0 ? (
           <Field label={t('哪条线', 'Which line')}>
             <Select value={line} options={[{ value: MAIN_LINE, label: t('主线', 'Main line') }, ...others.map(item => ({ value: item.id, label: item.title }))]} onChange={(value) => { setLine(value); setPicked(new Set()) }} />
           </Field>
         ) : null}
         <Field label={t('范围', 'Scope')}>
-          <Select value={scope} options={[{ value: 'auto', label: t('由策划判断哪些章节需要改', 'Let the planner decide which chapters change') }, { value: 'pick', label: t('只在我选的章节里改', 'Only the chapters I pick') }]} onChange={setScope} />
+          <Select value={scope} options={[{ value: 'auto', label: t('由策划判断改哪些地方', 'Let the planner decide what changes') }, { value: 'pick', label: t('只在我选的章节里改', 'Only the chapters I pick') }]} onChange={setScope} />
         </Field>
         {scope === 'pick' ? (
           <div className="nv-chips">
@@ -500,7 +502,9 @@ function BookRevision({ onStarted }: { onStarted: () => void }) {
         {underWay.map(job => <JobBar key={job.id} job={job} />)}
         {summary !== undefined ? (
           <p className={cx('nv-note', summary.failed > 0 && 'is-warn')}>
-            {t(`改了 ${summary.changed} 章，${summary.untouched} 章判断为不受影响${summary.failed > 0 ? `，${summary.failed} 章失败` : ''}。`, `${summary.changed} chapters changed, ${summary.untouched} judged unaffected${summary.failed > 0 ? `, ${summary.failed} failed` : ''}.`)}
+            {summary.places + summary.whole === 0
+              ? t(`没有要改的地方${summary.failed > 0 ? `；${summary.failed} 处没改成` : ''}。`, `Nothing has to change${summary.failed > 0 ? `; ${summary.failed} failed` : ''}.`)
+              : t(`${summary.places > 0 ? `改了 ${summary.places} 处` : ''}${summary.places > 0 && summary.whole > 0 ? '，' : ''}${summary.whole > 0 ? `${summary.whole} 章整章重写` : ''}（共 ${summary.chapters} 章），${summary.untouched} 章没动${summary.failed > 0 ? `，${summary.failed} 处没改成` : ''}。`, `${summary.places > 0 ? `${summary.places} place(s) changed` : ''}${summary.places > 0 && summary.whole > 0 ? ', ' : ''}${summary.whole > 0 ? `${summary.whole} chapter(s) written over whole` : ''} (in ${summary.chapters} chapter(s)), ${summary.untouched} left as they are${summary.failed > 0 ? `, ${summary.failed} failed` : ''}.`)}
             {summary.note !== undefined ? ` ${summary.note}` : ''}
             {summary.pictures !== undefined ? ` ${picturesReadWord(summary.pictures, t)}。` : ''}
           </p>

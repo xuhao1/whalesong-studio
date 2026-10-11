@@ -35,7 +35,7 @@ import { applyOutlineOps, type OutlineOp } from '../core/pipelines/outline'
 import {
   ensurePortrait, novelizePlay, paintPlayScene, playTurn, rewindPlay, setPlayOutcome, startPlay, voicePlayLine,
 } from '../core/pipelines/play'
-import { buildFoundation, deriveBeats, deriveChapters, whatIf } from '../core/pipelines/plot'
+import { buildFoundation, planOfText, deriveBeats, deriveChapters, whatIf } from '../core/pipelines/plot'
 import { clearReview, listReviews, noteIssue, recheckIssues, resolveIssue, reviewChapter } from '../core/pipelines/review'
 import { fixIssue, fixIssues, acceptProposal, rejectProposal, reviseBook, reviseChapter, reviseSpan, mendInTurn } from '../core/pipelines/revise'
 import { writeChapter } from '../core/pipelines/write'
@@ -774,7 +774,7 @@ export function createHandlers(service: NovelService): Handlers {
     },
     'ai.reviseBook': async ({ root, instruction, chapters, line, order, guides }) => {
       const runtime = await open(root)
-      return job(runtime, 'revise', 'revise book', undefined, async task => await mendInTurn(runtime, order === 'queue' ? 'queue' : 'apart', task, async onto => await reviseBook(core, runtime, { instruction: requireString(instruction, 'instruction'), ...(Array.isArray(guides) && guides.length > 0 ? { guides: cleanGuides(guides) } : {}), ...(chapters !== undefined ? { chapters } : {}), ...(line !== undefined ? { line } : {}), ...(onto ? { onto: true } : {}) }, task)))
+      return job(runtime, 'revise', 'revise book', undefined, async task => await mendInTurn(runtime, order === 'queue' ? 'queue' : 'apart', task, async onto => await reviseBook(core, runtime, { instruction: requireString(instruction, 'instruction'), asked: true, ...(Array.isArray(guides) && guides.length > 0 ? { guides: cleanGuides(guides) } : {}), ...(chapters !== undefined ? { chapters } : {}), ...(line !== undefined ? { line } : {}), ...(onto ? { onto: true } : {}) }, task)))
     },
     'ai.digest': async ({ root, chapters, force }) => {
       const runtime = await open(root)
@@ -805,6 +805,11 @@ export function createHandlers(service: NovelService): Handlers {
     'ai.deriveBeats': async ({ root, chapter, direction }) => {
       const runtime = await open(root)
       return job(runtime, 'derive', 'derive beats', chapter, async task => await deriveBeats(core, runtime, { chapter, ...(direction !== undefined ? { direction } : {}) }, task))
+    },
+    'ai.planOfText': async ({ root, chapter, what }) => {
+      const runtime = await open(root)
+      const asked = what === 'beats' ? 'beats' : 'plan'
+      return job(runtime, 'derive', asked === 'beats' ? 'beats of text' : 'plan of text', chapter, async task => await planOfText(core, runtime, { chapter, what: asked }, task))
     },
     'ai.whatIf': async ({ root, question, branches, guides }) => {
       const runtime = await open(root)

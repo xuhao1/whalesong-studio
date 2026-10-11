@@ -4,7 +4,7 @@ import { deriveGrowth } from '../../core/pipelines/growth'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { acceptSuggestion, deriveTies, dismissSuggestion, expandCharacter, expandWorld, extractStyle, tidyWorld } from '../../core/pipelines/bible'
 import { applyOutlineOps, type OutlineOp } from '../../core/pipelines/outline'
-import { buildFoundation, deriveBeats, deriveChapters, whatIf } from '../../core/pipelines/plot'
+import { buildFoundation, deriveBeats, deriveChapters, planOfText, whatIf } from '../../core/pipelines/plot'
 import { cleanGuides } from '../../core/pipelines/guides'
 import { ProjectError, upsertLooks } from '../../core/project'
 import { deriveLook, deriveScenes, deriveVisual } from '../../core/pipelines/illustrate'
@@ -371,12 +371,14 @@ export function bibleTools(service: NovelService): ToolDefinition[] {
         '- kind=chapters: outline the next `count` chapters (default 5; any number the author asks for — they are derived ten at a time, each round from where the last left off) following `direction` if given. They are added to the outline unless apply=false. Where they go: at the end of the main line by default; `line` names another line of the plot; `after` the chapter they follow. `mode` says what becomes of what is there after that chapter already — append (default) adds; replace puts the new chapters in its place (chapters that are written are never thrown away: they are kept as a line put aside); branch leaves it as it is and opens a new line for the new chapters (`title` names it, `choice` says what is decided to go that way). When the author wants the story to go differently from some chapter on, ask which they mean — replace, or a line of its own — unless they said.',
         '  `pictures`: pictures of the book the author gave to steer these chapters by (project-relative paths). The planner looks at them — or is told what they show by the model set up to look at pictures (novel_settings: vision) — and works them in; the chapter that goes by a picture keeps it on its plan (`guides`), where whoever writes it finds it. Only pictures the author pointed at.',
         '- kind=beats: break one chapter\'s outline into scene beats (`chapter` required). Do this before novel_write when a chapter only has a synopsis.',
+        '  With from_text=true, for a chapter that is written: its beats are read off its text as it now stands, in place of the ones planned. Only the beats change (a beat that still holds keeps its words); the plan as it was stays in its history. `direction` is not used.',
+        '- kind=plan: for a chapter that is written (`chapter` required), set its plan right by its text — synopsis, place, time, point of view, cast and beats — after the text was written differently from its plan, edited by the author, or changed by a revision. Whoever works from the plan afterwards (a writer rewriting the chapter, the director, the planner deriving what follows) then reads what was written. What the text does not say of place or time stays as planned; the chapter\'s purpose, notes and threads are not touched; the plan as it was stays in its history. Do this for the chapters a revision changed, once its proposals are accepted.',
         '- kind=what_if: explore alternative directions for a question in `direction` ("what if she refuses the deal?"). Nothing is changed; bring the branches to the author.',
         '- kind=foundation: develop a raw idea in `direction` into premise, cast, world, volumes and opening chapters (for a project that is still empty).',
       ].join('\n'),
       mutating: args => args.kind !== 'what_if' && args.apply !== false,
       parameters: {
-        kind: { type: 'string', required: true, enum: ['chapters', 'beats', 'what_if', 'foundation'] },
+        kind: { type: 'string', required: true, enum: ['chapters', 'beats', 'plan', 'what_if', 'foundation'] },
         direction: { type: 'string', description: 'Steering from the author, the what-if question, or the idea.' },
         count: { type: 'integer', description: 'chapters: how many (default 5); what_if: how many branches (2-5, default 3).' },
         line: { type: 'string', description: 'chapters: the line of the plot to go on with (id or name). Default: the main line.' },
@@ -384,9 +386,10 @@ export function bibleTools(service: NovelService): ToolDefinition[] {
         mode: { type: 'string', enum: ['append', 'replace', 'branch'], description: 'chapters: what becomes of what follows `after` already.' },
         title: { type: 'string', description: 'chapters, mode=branch: the new line\'s name.' },
         choice: { type: 'string', description: 'chapters, mode=branch: what is decided, where the lines part, to go this way.' },
-        chapter: { type: 'string', description: 'beats: which chapter.' },
+        chapter: { type: 'string', description: 'beats, plan: which chapter.' },
+        from_text: { type: 'boolean', description: 'beats: read them off the chapter\'s text as written (the chapter has to have text) instead of deriving them from its plan.' },
         volume: { type: 'string', description: 'chapters: which volume to extend (default: the last).' },
-        apply: { type: 'boolean', description: 'chapters/beats: write the result into the outline (default true).' },
+        apply: { type: 'boolean', description: 'chapters/beats/plan: write the result into the outline (default true).' },
         pictures: listParameter('chapters, what_if: pictures the author gave to steer by — project-relative paths of the book\'s own pictures.'),
       },
       async run(args, env) {
@@ -418,6 +421,13 @@ export function bibleTools(service: NovelService): ToolDefinition[] {
         if (args.kind === 'beats') {
           if (args.chapter === undefined) throw new ProjectError('novel/invalid', 'kind=beats needs `chapter`')
           const chapter = args.chapter
+          if (args.from_text === true) {
+            const read = await env.job('derive', 'beats of text', chapter, async task => await planOfText(env.core, runtime, { chapter, what: 'beats', ...(args.apply !== undefined ? { apply: args.apply } : {}) }, task))
+            return {
+              text: `Beats of chapter ${read.index} "${read.title}" as its text has them${read.applied ? ` (saved to the outline; ${read.kept} of ${read.beats.length} stand as before, the ${read.was} there were are in the plan's history)` : ' (not applied)'}:\n${read.beats.map((beat, index) => `${index + 1}. ${beat.summary}`).join('\n')}`,
+              data: toJson(read),
+            }
+          }
           const result = await env.job('derive', 'derive beats', chapter, async task => await deriveBeats(env.core, runtime, {
             chapter,
             ...(args.direction !== undefined ? { direction: args.direction } : {}),
@@ -426,6 +436,16 @@ export function bibleTools(service: NovelService): ToolDefinition[] {
           return {
             text: `Beats for chapter ${result.index} "${result.title}"${result.applied ? ' (saved to the outline)' : ' (not applied)'}:\n${result.beats.map((beat, index) => `${index + 1}. ${beat.summary}`).join('\n')}${result.referenced !== undefined ? `\n\n${referencesSaid(result.referenced, 'planner')!}` : ''}`,
             data: toJson(result),
+          }
+        }
+        if (args.kind === 'plan') {
+          if (args.chapter === undefined) throw new ProjectError('novel/invalid', 'kind=plan needs `chapter`')
+          const chapter = args.chapter
+          const read = await env.job('derive', 'plan of text', chapter, async task => await planOfText(env.core, runtime, { chapter, what: 'plan', ...(args.apply !== undefined ? { apply: args.apply } : {}) }, task))
+          const moved = (read.changed ?? []).length > 0 ? `changed by the text: ${read.changed!.join(', ')}, and the beats (${read.kept} of ${read.beats.length} as before)` : `nothing but the beats changed (${read.kept} of ${read.beats.length} as before)`
+          return {
+            text: `The plan of chapter ${read.index} "${read.title}" as its text has it${read.applied ? ` (saved to the outline — ${moved}; the plan as it was is in its history)` : ' (not applied)'}:\n${read.synopsis ?? ''}\n${read.beats.map((beat, index) => `${index + 1}. ${beat.summary}`).join('\n')}`,
+            data: toJson(read),
           }
         }
         if (args.kind === 'what_if') {
