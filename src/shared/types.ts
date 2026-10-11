@@ -2136,14 +2136,14 @@ export interface IllustrationParts {
    * of the thing, a costume, a face) — not one the Studio holds the picture against by itself. `face`: of a sheet
    * that is somebody else's only the head and shoulders of its front view went — a likeness was all that was wanted.
    */
-  references?: { path: string; label: string; sheet?: boolean; front?: boolean; given?: boolean; face?: boolean }[]
+  references?: { path: string; label: string; sheet?: boolean; front?: boolean; given?: boolean; face?: boolean; /** Of one the author gave: what they said is wanted of it. */ note?: string }[]
   /** What the prompt said of the reference images: who each one shows, and what they are there for. */
   referenceNote?: string
   /**
    * The pictures it would have been held against, left behind by the image service: it takes none (all of them are
    * here, and `references` is empty), or fewer than there were (the rest are here). The prompt does not speak of them.
    */
-  left?: { path: string; label: string; sheet?: boolean; given?: boolean }[]
+  left?: { path: string; label: string; sheet?: boolean; given?: boolean; note?: string }[]
   /** The service was sent them and would not have them: what it answered. The picture was then drawn from the words alone. */
   leftWhy?: string
   /**
@@ -2167,11 +2167,13 @@ export interface PictureWhole {
   /** What the picture was told to keep out: the book's list as it then was, the people's, the picture's own. */
   avoid: string[]
   /** The pictures that go along again, in the order the prompt numbers them. */
-  references: { path: string; label: string }[]
+  references: { path: string; label: string; /** Of one the author gave: what they said is wanted of it. */ note?: string }[]
   /**
    * The picture is another one changed: it was made of that picture (`references[0]`) and one sentence — `prompt` —
    * that said what to change in it. Drawn again by this, it is that picture changed again, by the sentence as it
-   * reads now; nothing else goes, and nothing is kept out. Absent where the picture it came from is gone.
+   * reads now; nothing is kept out. The references after the first are other pictures the author had go with it —
+   * which the sentence speaks of by number — and go again unless others are named. Absent where the picture it came
+   * from is gone.
    */
   changed?: boolean
 }

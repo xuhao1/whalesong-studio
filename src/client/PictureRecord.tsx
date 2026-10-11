@@ -135,6 +135,9 @@ function RedrawPicture({ image, mode, onDone, onBusy, onCancel, actionsAt }: { i
   // Which of the two is in the field, where the director wrote the prompt out of a brief: what was sent, or the brief.
   const [brief, setBrief] = useState(false)
   const [change, setChange] = useState('')
+  // Changed, other pictures may go with it — a dress, a face, a lamp — which the sentence speaks of by number: this
+  // picture is 1, they follow from 2. Of a picture changed again: those it went with, until the author says otherwise.
+  const [beside, setBeside] = useState<PictureGuide[]>([])
   // A picture that is another one changed is, by its prompt, that picture changed again — unless the author would
   // rather have it drawn from words.
   const made = image.parts?.base !== undefined
@@ -152,6 +155,7 @@ function RedrawPicture({ image, mode, onDone, onBusy, onCancel, actionsAt }: { i
       setBrief(false)
       setAvoid(got.avoid.join(t('、', ', ')))
       setRefs(got.references.map(reference => ({ path: reference.path, note: reference.label })))
+      setBeside(got.changed === true ? got.references.slice(1).map(reference => ({ path: reference.path, ...(reference.note !== undefined && reference.note.length > 0 ? { note: reference.note } : {}) })) : [])
     }).catch(() => {
       if (!live) return
       setWhole('older')
@@ -169,9 +173,10 @@ function RedrawPicture({ image, mode, onDone, onBusy, onCancel, actionsAt }: { i
   // Other pictures than it went with — one left out, one added, another order, another word for one: said with the call.
   const repictured = all !== undefined && !again && JSON.stringify(refs.map(guide => [guide.path, guide.note ?? ''])) !== JSON.stringify(all.references.map(reference => [reference.path, reference.label]))
   const redrawn = () => (mode !== 'words'
-    ? { change: change.trim() }
+    ? { change: change.trim(), ...(beside.length > 0 ? { references: beside } : {}) }
     : again
-      ? { prompt: words.trim() }
+      // (Said also where there is none: one it went with before, left out now, is not to go again.)
+      ? { prompt: words.trim(), references: beside }
       : all !== undefined
         ? { prompt: words.trim(), avoid: splitAvoid(avoid), ...(made ? { fromWords: true } : {}), ...(repictured ? { references: refs.map(guide => ({ path: guide.path, ...(guide.note !== undefined && guide.note.length > 0 ? { label: guide.note } : {}) })) } : {}) }
         : { subject: words.trim() })
@@ -213,7 +218,8 @@ function RedrawPicture({ image, mode, onDone, onBusy, onCancel, actionsAt }: { i
               <TextArea autoFocus value={words} minRows={2} maxRows={8} disabled={busy} onChange={(event) => { setWords(event.target.value) }} />
             </label>
           </div>
-          <p className="nv-muted nv-small">{t('发出去的是原图和这句话。', 'That picture and these words are what is sent.')} <button type="button" className="nv-link nv-small" disabled={busy} onClick={() => { setFromWords(true) }}>{t('不照原图，照文字整张重画', 'Draw it from words instead')}</button></p>
+          <GuidePictures value={beside} onChange={setBeside} disabled={busy} first={2} label={t('一起带上的参考图', 'Pictures to go with it')} ask={t('要它的什么（可不填）', 'What of it is wanted (optional)')} chapter={image.kind === 'scene' || image.kind === 'panel' ? image.target : undefined} />
+          <p className="nv-muted nv-small">{beside.length > 0 ? t('发出去的是原图（图 1）、这几张和这句话；话里用“图 2”“图 3”指它们。', 'That picture (Image 1), these and the words are what is sent; the words speak of them as Image 2, Image 3.') : t('发出去的是原图和这句话。', 'That picture and these words are what is sent.')} <button type="button" className="nv-link nv-small" disabled={busy} onClick={() => { setFromWords(true) }}>{t('不照原图，照文字整张重画', 'Draw it from words instead')}</button></p>
         </>
       ) : mode === 'words' && all !== undefined ? (
         <>
@@ -245,8 +251,9 @@ function RedrawPicture({ image, mode, onDone, onBusy, onCancel, actionsAt }: { i
         </>
       ) : (
         <>
-          <TextInput autoFocus value={change} placeholder={t('改成什么样：背景换成雪夜；头发放下来', 'What to change: a snowy night behind her; her hair down')} disabled={busy} onChange={(event) => { setChange(event.target.value) }} onKeyDown={(event) => { if (plainEnter(event)) go() }} />
-          <p className="nv-muted nv-small">{t('发给绘图模型的只有这张图和这句话。', 'The image model gets this picture and these words, nothing else.')}</p>
+          <TextInput autoFocus value={change} placeholder={beside.length > 0 ? t('改成什么样：旗袍换成图 2 那一身', 'What to change: the dress of Image 2 on her') : t('改成什么样：背景换成雪夜；头发放下来', 'What to change: a snowy night behind her; her hair down')} disabled={busy} onChange={(event) => { setChange(event.target.value) }} onKeyDown={(event) => { if (plainEnter(event)) go() }} />
+          <GuidePictures value={beside} onChange={setBeside} disabled={busy} first={2} label={t('一起带上的参考图', 'Pictures to go with it')} ask={t('要它的什么（可不填）', 'What of it is wanted (optional)')} chapter={image.kind === 'scene' || image.kind === 'panel' ? image.target : undefined} />
+          <p className="nv-muted nv-small">{beside.length > 0 ? t('发给绘图模型的是这张图（图 1）、这几张和这句话；话里用“图 2”“图 3”指它们。', 'The image model gets this picture (Image 1), these and the words; the words speak of them as Image 2, Image 3.') : t('发给绘图模型的只有这张图和这句话。', 'The image model gets this picture and these words, nothing else.')}</p>
         </>
       )}
       {actionsAt !== undefined && actionsAt !== null ? createPortal(actions, actionsAt) : <span className="nv-row">{actions}</span>}

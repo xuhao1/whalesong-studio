@@ -79,7 +79,7 @@ describe('pictures the author gives one picture to go by', () => {
     expect(drawn.sent?.compact).toMatchObject({ asked: true, replaced: ['黑发在颈后盘成扁平的髻'] })
     // On its record they are the author's: what the page says of them, and what a redraw goes with.
     expect(drawn.parts?.references).toEqual([
-      { path: face, label: '作者给的参考图（只要她的脸和发型）', given: true },
+      { path: face, label: '作者给的参考图（只要她的脸和发型）', given: true, note: '只要她的脸和发型' },
       { path: coat, label: '作者给的参考图', given: true },
     ])
     expect((await project.findCharacter(card.id))!.visual?.sheet).toBe(drawn.path)
@@ -133,7 +133,7 @@ describe('pictures the author gives one picture to go by', () => {
     expect(sent.prompt).toContain('图1里的背景、姿势、手里拿的东西、光线和构图都不要带过来。')
     expect(sent.prompt).toContain('作者给的参考图，括号里是作者说的话')
     expect(sent.prompt).toContain('它们的背景、构图和光线同样不要带过来；画风照上面写的。')
-    expect(sheet.parts?.references).toEqual([{ path: portrait.path, label: '沈砚的立绘' }, { path: hair, label: '作者给的参考图（发髻照这张）', given: true }])
+    expect(sheet.parts?.references).toEqual([{ path: portrait.path, label: '沈砚的立绘' }, { path: hair, label: '作者给的参考图（发髻照这张）', given: true, note: '发髻照这张' }])
 
     // A look: the main sheet first — the same person — and of a picture given, the outfit is what is taken.
     const robe = await project.writeAsset('guides/robe.png', PIXEL)
@@ -162,7 +162,7 @@ describe('pictures the author gives one picture to go by', () => {
     expect(sent.prompt).toContain('参考图：图1 是作者给的参考图（镜柄的形状）。')
     expect(sent.prompt).toContain(`${THEIRS}这件东西的样子（形状、材质、纹饰和颜色）照图，图上看不出的照文字。`)
     expect(sent.prompt).toContain('这里要的是素底上完整的这一件：参考图里的背景、手、别的东西、光线和构图都不要带过来；画风照上面写的。')
-    expect(art.parts?.references).toEqual([{ path: photo, label: '作者给的参考图（镜柄的形状）', given: true }])
+    expect(art.parts?.references).toEqual([{ path: photo, label: '作者给的参考图（镜柄的形状）', given: true, note: '镜柄的形状' }])
     expect((await project.findWorld(mirror.id))!.visualImage).toBe(art.path)
 
     const garden = await project.saveWorld({ name: '大观园', category: 'location', visualPrompt: '一座带水池和游廊的大园子' })

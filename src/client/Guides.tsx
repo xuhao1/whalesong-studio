@@ -92,8 +92,10 @@ export async function encoded(file: File, asIs = 1_500_000, longEdge = LONG_EDGE
  * @param ask - what the field beside each picture asks for, where it is not a moment of the plot.
  * @param people - where the pictures are for somebody's design sheet: the others who have one, any of which can be
  *   given — a parent's, a sister's — for the likeness of family.
+ * @param first - the number the first of them has in the prompt, where another picture goes before them (the picture
+ *   to change is 1, and these follow from 2).
  */
-export function GuidePictures({ value, onChange, disabled, chapter, hint, label, ask, people }: { value: readonly PictureGuide[]; onChange: (next: PictureGuide[]) => void; disabled?: boolean; chapter?: string | undefined; hint?: string; label?: string; ask?: string; people?: readonly SheetLender[] }) {
+export function GuidePictures({ value, onChange, disabled, chapter, hint, label, ask, people, first = 1 }: { value: readonly PictureGuide[]; onChange: (next: PictureGuide[]) => void; disabled?: boolean; chapter?: string | undefined; hint?: string; label?: string; ask?: string; people?: readonly SheetLender[]; first?: number }) {
   const { controller } = useStudio()
   const t = useT()
   const { root } = useProject()
@@ -135,7 +137,7 @@ export function GuidePictures({ value, onChange, disabled, chapter, hint, label,
         <div className="nv-guides-list">
           {value.map((guide, at) => (
             <div key={guide.path} className="nv-guide">
-              <span className="nv-guide-no">{at + 1}</span>
+              <span className="nv-guide-no">{at + first}</span>
               <ProjectImage path={guide.path} alt="" className="nv-guide-thumb" />
               {whose(guide.path) !== undefined ? <Chip tone="violet" title={t('这是另一个人的图：画的不是他', 'Another person\'s picture: not who is drawn')}>{whose(guide.path)!.name}</Chip> : null}
               <GuideNote note={guide.note ?? ''} disabled={disabled === true} {...(whose(guide.path) !== undefined ? { ask: t(`要它的什么（不填：相貌像${whose(guide.path)!.name}，像一家人；别的照文字）`, `What of it is wanted (left empty: the family likeness of ${whose(guide.path)!.name}; the rest as the words say)`) } : ask !== undefined ? { ask } : {})} onCommit={(note) => { onChange(value.map((item, index) => (index === at ? (note.length > 0 ? { path: item.path, note } : { path: item.path }) : item))) }} />

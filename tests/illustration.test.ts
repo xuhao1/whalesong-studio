@@ -1857,8 +1857,8 @@ describe('the pictures kept of somebody, and taking one away', () => {
     expect(made).toMatchObject({ prompt: '背景换成雪夜', avoid: [], references: [{ path: portrait.path, label: '要改的原图' }], changed: true })
     expect(made.brief).toBeUndefined()
     // The sentence rewritten: the picture it came from is changed again — by those words and nothing else, whatever is
-    // said of what to keep out or of other pictures — and what comes of it stands where the changed one stood.
-    const rechanged = await redrawPicture(bed.core, bed.runtime, { picture: changed.id, prompt: '背景换成雨夜，窗上有水痕', avoid: ['伞'], references: [{ path: sheet }] }, task)
+    // said of what to keep out — and what comes of it stands where the changed one stood.
+    const rechanged = await redrawPicture(bed.core, bed.runtime, { picture: changed.id, prompt: '背景换成雨夜，窗上有水痕', avoid: ['伞'] }, task)
     expect(images.calls.at(-1)!.prompt).toBe('背景换成雨夜，窗上有水痕\n\nSquare 1:1 composition.')
     expect(images.calls.at(-1)!.change).toBe(true)
     expect(images.calls.at(-1)!.references).toHaveLength(1)
@@ -1870,6 +1870,29 @@ describe('the pictures kept of somebody, and taking one away', () => {
     // (Among her portraits it goes right before the one it was drawn again from, which stays.)
     const kept = (await project.findCharacter(card.id))!.visual!.portraits!
     expect(kept.slice(kept.indexOf(rechanged.path), kept.indexOf(rechanged.path) + 2)).toEqual([rechanged.path, changed.path])
+    // Other pictures go with the picture to change: after it, numbered from 2, each with what the author said of it
+    // — and one line after the sentence says which is the one to change. (The picture itself is not one of them.)
+    const lit = await redrawPicture(bed.core, bed.runtime, { picture: portrait.id, change: '手里提上图2那盏灯', references: [{ path: lamp, note: '灯的样子' }, { path: portrait.path }] }, task)
+    expect(images.calls.at(-1)!.prompt).toBe('手里提上图2那盏灯\n参考图：图1 是要改的原图；图2 是作者给的参考图（灯的样子）。只改图1，照上面说的改，别的照它原样；其余的图只取说到的那一样。\n\nSquare 1:1 composition.')
+    expect(images.calls.at(-1)!.change).toBe(true)
+    expect(images.calls.at(-1)!.references).toHaveLength(2)
+    expect(lit.parts).toMatchObject({ subject: '手里提上图2那盏灯', pieces: [{ of: 'change', text: '手里提上图2那盏灯' }], references: [{ path: portrait.path, label: '要改的原图' }, { path: lamp, label: '作者给的参考图（灯的样子）', given: true, note: '灯的样子' }] })
+    expect(lit.parts?.referenceNote).toContain('只改图1')
+    // Its whole prompt is the sentence — with the picture it came from, and that one beside it, by the author's word.
+    expect(await pictureWhole(bed.core, bed.runtime, lit.id)).toMatchObject({ prompt: '手里提上图2那盏灯', changed: true, references: [{ path: portrait.path, label: '要改的原图' }, { path: lamp, note: '灯的样子' }] })
+    // Changed again with nothing said of pictures, the lamp goes again…
+    await redrawPicture(bed.core, bed.runtime, { picture: lit.id, prompt: '手里提上图2那盏灯，灯是亮的' }, task)
+    expect(images.calls.at(-1)!.references).toHaveLength(2)
+    expect(images.calls.at(-1)!.prompt).toContain('手里提上图2那盏灯，灯是亮的\n参考图：图1 是要改的原图；图2 是作者给的参考图（灯的样子）。')
+    // …with another named, that one goes instead; with none named, the picture goes alone, and the sentence is all.
+    await redrawPicture(bed.core, bed.runtime, { picture: lit.id, prompt: '换成图2的样子', references: [{ path: sheet }] }, task)
+    expect(images.calls.at(-1)!.references).toHaveLength(2)
+    expect(images.calls.at(-1)!.prompt).toContain('图2 是作者给的参考图。')
+    await redrawPicture(bed.core, bed.runtime, { picture: lit.id, prompt: '手里提一盏灯', references: [] }, task)
+    expect(images.calls.at(-1)!.references).toHaveLength(1)
+    expect(images.calls.at(-1)!.prompt).toBe('手里提一盏灯\n\nSquare 1:1 composition.')
+    // One that is no longer in the book is not left out without a word.
+    await expect(redrawPicture(bed.core, bed.runtime, { picture: portrait.id, change: '换成图2那盏灯', references: [{ path: 'assets/images/no-such.png' }] }, task)).rejects.toThrow(/参考图不在书里了/)
     // Tried as it is with another service: the same picture, changed by the sentence it was.
     await redrawPicture(bed.core, bed.runtime, { picture: changed.id, trials: [{ label: 'another', image: { ...DEFAULT_SETTINGS.image, provider: 'codex' as const } }] }, task)
     expect(images.calls.at(-1)!.prompt).toBe('背景换成雪夜\n\nSquare 1:1 composition.')

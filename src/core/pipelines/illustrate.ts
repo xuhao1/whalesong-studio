@@ -1106,6 +1106,10 @@ export interface RenderInput {
    * that picture along it is the whole prompt: the picture says the rest, and a line of description, of art
    * direction or of what the picture is for would only be said twice. Where the picture cannot go (an image service
    * that takes none), the subject stands in for it, and everything else is as for any picture.
+   *
+   * The author may have other pictures go with it (`references` after the first) — a dress to put on her, a face, a
+   * lamp — which the sentence speaks of by number. Then one line follows the sentence: which picture is the one to
+   * change, and what the others are.
    */
   change?: string
   /** With `change`: what the picture to change was held against when it was drawn from words — kept with the new one, for when that is drawn from words again. */
@@ -1414,7 +1418,7 @@ export async function renderImage(core: NovelCore, runtime: ProjectRuntime, inpu
   const wanted = (input.references ?? []).filter((reference, at, all) => all.findIndex(other => other.path === reference.path) === at)
   // What the service's own measure keeps back, of those the author's setting would have sent: kept with the picture.
   /** As a record keeps it: where, who — and that it is a sheet, for the picture drawn again from that record. */
-  const stayed = (reference: Held): Held => ({ path: reference.path, label: reference.label, ...(reference.sheet === false ? { sheet: false } : isSheet(reference) ? { sheet: true } : {}), ...(reference.given === true ? { given: true } : {}) })
+  const stayed = (reference: Held): Held => ({ path: reference.path, label: reference.label, ...(reference.sheet === false ? { sheet: false } : isSheet(reference) ? { sheet: true } : {}), ...(reference.given === true ? { given: true } : {}), ...(reference.note !== undefined ? { note: reference.note } : {}) })
   /** …and, of one that went, that it went as its front view. */
   const kept = (reference: Held & { front?: boolean; face?: boolean }): Held & { front?: boolean; face?: boolean } => ({ ...stayed(reference), ...(reference.front === true ? { front: true } : {}), ...(reference.face === true ? { face: true } : {}) })
   let left: Held[] = taken === undefined ? [] : wanted.slice(taken, own).map(stayed)
@@ -1464,20 +1468,26 @@ export async function renderImage(core: NovelCore, runtime: ProjectRuntime, inpu
   }
   /** The picture, held against these. */
   const draw = async (held: typeof references) => {
-    // One picture changed, and it is there: what to change in it is all there is to say.
-    if (change.length > 0 && held.length > 0) {
-      const prompt = clip(change, 1900, '…')
-      const fitted = await writePrompt(core, runtime, provider, { prompt, avoid: [], references: 1, lang: plang, own: true }, task)
+    // One picture changed, and it is there: what to change in it is all there is to say. (There: the first of those
+    // that go — with its file gone, another the author gave is not changed in its stead.)
+    if (change.length > 0 && held.length > 0 && held[0]!.path === wanted[0]?.path) {
+      // …unless the author has other pictures go with it: then which is the one to change, and what the others are.
+      const line = held.length > 1
+        ? referenceLineOf(held, plang, L(plang, '只改图1，照上面说的改，别的照它原样；其余的图只取说到的那一样。', 'Only Image 1 is changed — as the words above say, and left as it is in everything else; of the other pictures only what is spoken of is taken.'))
+        : undefined
+      const sentence = clip(change, line !== undefined ? Math.max(200, 1900 - line.length) : 1900, '…')
+      const prompt = line !== undefined ? `${sentence}\n${line}` : sentence
+      const fitted = await writePrompt(core, runtime, provider, { prompt, avoid: [], references: held.length, lang: plang, own: true }, task)
       const result = await provider.generate({
         prompt: fitted.prompt,
         // Nothing is to be written after it: not the list of this picture, not the one a setting holds.
         negativePrompt: '',
         ...(input.size !== undefined ? { size: input.size } : {}),
-        references: [held[0]!.image],
+        references: held.map(reference => reference.image),
         change: true,
         ...(task.signal !== undefined ? { signal: task.signal } : {}),
       })
-      return { held: held.slice(0, 1), referenceLine: undefined, subject: prompt, full: prompt, pieces: undefined, prompt, fitted, result, changed: true }
+      return { held, referenceLine: line, subject: sentence, full: sentence, pieces: undefined, prompt, fitted, result, changed: true }
     }
     // The brief as it is with these pictures along: a person one of them shows has a line that points to it.
     const paths = held.map(reference => (behind.has(reference.path) ? '' : reference.path))
@@ -1553,6 +1563,8 @@ export async function renderImage(core: NovelCore, runtime: ProjectRuntime, inpu
       restore?.()
     }
   }
+  // Changed, and of the pictures the author had go with it the service took fewer than were sent: said with the picture.
+  if (drawn.changed && took !== undefined && took >= 1 && took < drawn.held.length) left = [...drawn.held.slice(took).map(stayed), ...left]
   const { result, referenceLine, subject, prompt, fitted } = drawn
   // Said with the picture, now that it is there: what the service did not take along. (Never before: what a service
   // takes is the service's to show.)
@@ -1569,6 +1581,10 @@ export async function renderImage(core: NovelCore, runtime: ProjectRuntime, inpu
     pieces: [{ of: 'change', text: subject }],
     ...(subject !== change ? { clipped: true } : {}),
     ...(used.length > 0 ? { references: used.map(kept) } : {}),
+    // (With other pictures along: what the prompt said of which is which.)
+    ...(referenceLine !== undefined ? { referenceNote: referenceLine } : {}),
+    ...(left.length > 0 ? { left } : {}),
+    ...(leftWhy !== undefined ? { leftWhy } : {}),
     base: {
       subject: whole,
       ...(art !== undefined ? { style: art.style, styleSource: art.source } : {}),
@@ -1661,7 +1677,7 @@ async function wordsOf(core: NovelCore, runtime: ProjectRuntime, record: Illustr
  * sentence — and that picture is still in the book: the picture, and the sentence. What such a one is drawn again
  * from: the same picture, changed by the sentence as it reads now.
  */
-async function changedFrom(project: ProjectRuntime['project'], record: IllustrationInfo): Promise<{ source: IllustrationInfo; sentence: string } | undefined> {
+async function changedFrom(project: ProjectRuntime['project'], record: IllustrationInfo): Promise<{ source: IllustrationInfo; sentence: string; /** The other pictures the author had go with it, those still in the book. */ others: Held[] } | undefined> {
   if (record.parts?.base === undefined) return undefined
   const from = record.parts.references?.[0]
   if (from === undefined || !(await project.has(from.path))) return undefined
@@ -1669,7 +1685,12 @@ async function changedFrom(project: ProjectRuntime['project'], record: Illustrat
   if (sentence.length === 0) return undefined
   // (A picture with no record of its own is known by what was kept of it beside this one.)
   const source = (await project.pictures()).find(item => item.path === from.path) ?? { ...record, id: from.path, path: from.path }
-  return { source, sentence }
+  const others: Held[] = []
+  // Those that went, and those the service left behind: all of them were asked for.
+  for (const other of [...(record.parts.references ?? []).slice(1), ...(record.parts.left ?? []).filter(item => item.given === true)]) {
+    if (other.path !== from.path && !others.some(item => item.path === other.path) && (await project.has(other.path))) others.push({ path: other.path, label: other.label, given: true, ...(other.sheet !== undefined ? { sheet: other.sheet } : {}), ...(other.note !== undefined ? { note: other.note } : {}) })
+  }
+  return { source, sentence, others }
 }
 
 /**
@@ -1692,7 +1713,8 @@ export async function pictureWhole(core: NovelCore, runtime: ProjectRuntime, pic
   const again = options.fromWords === true ? undefined : await changedFrom(project, record)
   if (again !== undefined) {
     const from: Held = { path: again.source.path, label: L(lang, PICTURE_TO_CHANGE.zh, PICTURE_TO_CHANGE.en) }
-    return { prompt: again.sentence, avoid: [], references: [{ path: from.path, label: from.label }], held: [from], changed: true }
+    const held = [from, ...again.others]
+    return { prompt: again.sentence, avoid: [], references: held.map(reference => ({ path: reference.path, label: reference.label, ...(reference.note !== undefined ? { note: reference.note } : {}) })), held, changed: true }
   }
   const was = await wordsOf(core, runtime, record, lang)
   if (record.parts !== undefined && record.parts.base === undefined) {
@@ -1736,8 +1758,10 @@ async function withReferences(runtime: ProjectRuntime, record: IllustrationInfo,
     if (!/^assets\/[^.][^\0]*\.(png|jpe?g|webp|gif)$/i.test(path) || path.includes('..') || held.some(item => item.path === path) || !(await project.has(path))) continue
     const before = was.held.find(item => item.path === path)
     const label = reference.label?.trim() ?? ''
-    // (One that was not among them before is one the author gives it now.)
-    held.push(before !== undefined ? { ...before, ...(label.length > 0 ? { label } : {}) } : { path, label: label.length > 0 ? label : L(plang, '参考图', 'a reference picture'), given: true })
+    // (One that was not among them before is one the author gives it now. Called by another word than before, what
+    // the author once said was wanted of it is no longer what the prompt says.)
+    const { note: _said, ...unsaid } = before ?? { path, label }
+    held.push(before !== undefined ? (label.length > 0 && label !== before.label ? { ...unsaid, label } : before) : { path, label: label.length > 0 ? label : L(plang, '参考图', 'a reference picture'), given: true })
   }
   const words = new Map(pointersOf(record).map(pointer => [pointer.n, pointer.words]))
   // First to marks no prompt has, then to the new numbers: 图2 → 图1 while 图1 → 图2 must not run into one another.
@@ -1755,7 +1779,7 @@ async function withReferences(runtime: ProjectRuntime, record: IllustrationInfo,
   return { prompt, held, pointers }
 }
 
-export async function redrawPicture(core: NovelCore, runtime: ProjectRuntime, params: { picture: string; subject?: string; change?: string; /** The whole prompt, rewritten: sent as it stands, with the pictures the one before went with. Of a picture that is another one changed ({@link PictureWhole.changed}): the sentence that changed it, rewritten — the picture it came from is changed again by it, and nothing else goes. */ prompt?: string; /** With `prompt`: the pictures that go along instead of those the one before went with — some left out, others of the book added — in the order the prompt is to number them. */ references?: { path: string; label?: string }[]; /** With `prompt`: what is kept out — all of it. Left out: what the picture kept out before. */ avoid?: string[]; /** Of a picture that is another one changed: draw it from words — the brief that stands in for it — and not from the picture it came from. */ fromWords?: boolean; /** Draw it as it is, once with each of these services, to compare them: nothing is replaced. */ trials?: ImageTrial[] }, task: TaskContext): Promise<RedrawResult> {
+export async function redrawPicture(core: NovelCore, runtime: ProjectRuntime, params: { picture: string; subject?: string; change?: string; /** The whole prompt, rewritten: sent as it stands, with the pictures the one before went with. Of a picture that is another one changed ({@link PictureWhole.changed}): the sentence that changed it, rewritten — the picture it came from is changed again by it, and nothing else goes. */ prompt?: string; /** With `prompt`: the pictures that go along instead of those the one before went with — some left out, others of the book added — in the order the prompt is to number them. */ references?: { path: string; label?: string; /** With `change`, or with the `prompt` of a picture that is another one changed: other pictures that go with the picture to change — after it, numbered from 2 — each with what the author says is wanted of it. Left out, of one changed again: those it went with. */ note?: string }[]; /** With `prompt`: what is kept out — all of it. Left out: what the picture kept out before. */ avoid?: string[]; /** Of a picture that is another one changed: draw it from words — the brief that stands in for it — and not from the picture it came from. */ fromWords?: boolean; /** Draw it as it is, once with each of these services, to compare them: nothing is replaced. */ trials?: ImageTrial[] }, task: TaskContext): Promise<RedrawResult> {
   const { project } = runtime
   await requireImages(core, runtime)
   // Any picture of the book: one on record, or a panel drawn before panels were kept on record.
@@ -1815,6 +1839,14 @@ export async function redrawPicture(core: NovelCore, runtime: ProjectRuntime, pa
       : restored !== undefined
         ? { subject: told, pieces: restored }
         : asWritten([{ of: 'composed', text: was.subject, label: '' }])
+  // Changed, other pictures may go with the one to change: those the author names now — or, of a picture changed
+  // again, those it went with. (The picture to change is not one of them.)
+  const beside = change.length === 0
+    ? []
+    : (params.references !== undefined
+        ? await givenPictures(project, params.references.map(reference => ({ path: reference.path, ...((reference.note ?? reference.label ?? '').trim().length > 0 ? { note: (reference.note ?? reference.label)!.trim() } : {}) })), lang, plang)
+        : again?.others ?? []
+      ).filter(reference => reference.path !== basis.path)
   // Changed, it keeps the frame of the picture it comes from — as that picture is, which is not always as it was asked for.
   const frame = change.length > 0 ? await project.readFile(basis.path).then(pixelsOf).catch(() => undefined) : undefined
   const size = frame !== undefined ? `${frame.width}x${frame.height}` : record.size
@@ -1834,7 +1866,7 @@ export async function redrawPicture(core: NovelCore, runtime: ProjectRuntime, pa
       : {
           avoid: was.avoid ?? [],
           ...(change.length > 0
-            ? { change, references: [{ path: basis.path, label: L(lang, PICTURE_TO_CHANGE.zh, PICTURE_TO_CHANGE.en) }], heldAgainst: was.references ?? [] }
+            ? { change, references: [{ path: basis.path, label: L(lang, PICTURE_TO_CHANGE.zh, PICTURE_TO_CHANGE.en) }, ...beside], heldAgainst: was.references ?? [] }
             : { references: was.references ?? [] }),
         }),
   }, task)

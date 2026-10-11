@@ -123,7 +123,9 @@ function cliInstruction(prompt: string, references: number, change = false): str
   return [
     // One picture, to be changed: the words between the markers say what to change and nothing of what it shows.
     change && references > 0
-      ? 'Use your built-in image generation tool to make exactly one image: the attached image, changed as the words between the markers say and left as it is in everything else.'
+      ? references > 1
+        ? `Use your built-in image generation tool to make exactly one image: the first attached image, changed as the words between the markers say and left as it is in everything else. The other ${references - 1} attached image(s) are references those words speak of by position.`
+        : 'Use your built-in image generation tool to make exactly one image: the attached image, changed as the words between the markers say and left as it is in everything else.'
       : references > 0
       // What a reference is there for differs — the same person in other clothes, the same place at another time: the
       // description says it, and nothing here may say otherwise.
