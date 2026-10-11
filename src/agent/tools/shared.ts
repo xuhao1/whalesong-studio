@@ -10,7 +10,7 @@ import { ProviderError } from '../../core/media/http'
 import { ProjectError } from '../../core/project'
 import { displayPath } from '../../core/util/fs'
 import type { NovelService } from '../../host/service'
-import type { JobKind, PicturesRead } from '../../shared/types'
+import type { JobKind, PicturesRead, ReferencesLooked } from '../../shared/types'
 
 /** JSON a tool may return (the Harness requires lossless JSON). */
 export type Json = string | number | boolean | null | Json[] | { [key: string]: Json }
@@ -248,6 +248,18 @@ export function listOf(value: unknown): string[] | undefined {
 export function picturesSaid(read: PicturesRead | undefined, who: string): string | undefined {
   if (read === undefined) return undefined
   return `Pictures: ${read.count} given — ${read.by === 'vision' ? `put into words for the ${who} by ${read.model ?? 'the picture model'}` : read.unsure === true ? `sent to the ${who}'s model, which does not say whether it takes pictures: tell the author, and that a model to look at pictures can be set (novel_settings: vision)` : `looked at by the ${who}'s own model`}.`
+}
+
+/**
+ * What a role read in the book's references for a piece of work that was to look in them first, for the showrunner to
+ * pass on. Nothing, where the work was not of that kind.
+ * @param who - the one whose work it was: `planner`, `reviewer`.
+ */
+export function referencesSaid(looked: ReferencesLooked | undefined, who: string): string | undefined {
+  if (looked === undefined) return undefined
+  if (looked.cannot !== undefined) return `References: NOT looked at — ${looked.cannot} Tell the author (the ${who} reads in them only when it works as an agent: Settings → Models).`
+  if (looked.calls === 0) return `References: the ${who} was to look in them first and did not read anything in them. Tell the author.`
+  return `References: the ${who} looked in them first (${looked.calls} read${looked.calls === 1 ? '' : 's'}): ${looked.read.join('; ')}.`
 }
 
 export function brief(text: string | undefined, max = 200): string {

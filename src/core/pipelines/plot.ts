@@ -6,7 +6,7 @@
  *   beats       one chapter outline → scene beats a writer can follow,
  *   what-if     alternative directions with their consequences, nothing is changed.
  */
-import { MAIN_LINE, type Beat, type ChapterPlan, type CharacterCard, type PictureGuide, type PicturesRead, type PlotLine, type StyleProfile, type WorldCategory, type WorldEntry } from '../../shared/types'
+import { MAIN_LINE, type Beat, type ChapterPlan, type CharacterCard, type PictureGuide, type PicturesRead, type PlotLine, type ReferencesLooked, type StyleProfile, type WorldCategory, type WorldEntry } from '../../shared/types'
 import { clip, newId, sameName } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { asArray, asList, asRecord, asText } from '../llm'
@@ -129,6 +129,8 @@ export interface DeriveChaptersResult {
   added: { id: string; title: string; index: number }[]
   /** Where pictures were given: how many, and who looked at them — the planner's own model, or the one set up to look at pictures. */
   pictures?: PicturesRead
+  /** Where the book has references and derivations look in them first: what the planner read there. */
+  referenced?: ReferencesLooked
   /** The line the chapters went to, when it is not the main one. */
   line?: { id: string; title: string; created: boolean }
   /** What became of the chapters that were there before, when the outline was rewritten. */
@@ -221,6 +223,8 @@ export async function deriveChapters(core: NovelCore, runtime: ProjectRuntime, p
   const chapters: DerivedChapter[] = []
   const added: DeriveChaptersResult['added'] = []
   const rationales: string[] = []
+  // What the planner read in the book's references, over every round.
+  let referenced: ReferencesLooked | undefined
   let previous: string | undefined
   const rounds = Math.ceil(wanted / DERIVE_ROUND)
   for (let round = 0; round < rounds; round++) {
@@ -234,11 +238,12 @@ export async function deriveChapters(core: NovelCore, runtime: ProjectRuntime, p
       ...(params.direction !== undefined ? { brief: params.direction } : {}),
       ...(task.signal !== undefined ? { signal: task.signal } : {}),
     })
-    const { value } = await assign(core, runtime, task, {
+    const { value, referenced: looked } = await assign(core, runtime, task, {
       role: 'architect',
       label: rounds > 1 ? L(lang, `推演后续章节（${round + 1}/${rounds}）`, `Deriving the next chapters (${round + 1}/${rounds})`) : L(lang, '推演后续章节', 'Deriving the next chapters'),
       // The planner reads the line it plans for, and no other.
       line: line?.id ?? MAIN_LINE,
+      lookUp: 'derive',
       tool: 'submit_chapters',
       what: L(lang, '推演出的章节：标题、梗概、出场人物、节拍', 'the chapters derived: titles, synopses, who appears, beats'),
       system: architectSystem(lang),
@@ -261,6 +266,7 @@ export async function deriveChapters(core: NovelCore, runtime: ProjectRuntime, p
         return record
       },
     })
+    if (looked !== undefined) referenced = mergeLooked(referenced, looked)
     const derived: DerivedChapter[] = []
     for (const raw of asArray(value.chapters)) {
       const item = asRecord(raw)
@@ -336,7 +342,15 @@ export async function deriveChapters(core: NovelCore, runtime: ProjectRuntime, p
     ...(line !== undefined ? { line: { id: line.id, title: line.title, created } } : {}),
     ...(replaced !== undefined ? { replaced } : {}),
     ...(guided !== undefined ? { pictures: picturesRead(guided)! } : {}),
+    ...(referenced !== undefined ? { referenced } : {}),
   }
+}
+
+/** What was read in the references over several runs of one piece of work, as one account. */
+function mergeLooked(before: ReferencesLooked | undefined, next: ReferencesLooked): ReferencesLooked {
+  if (before === undefined) return next
+  const cannot = next.cannot ?? before.cannot
+  return { calls: before.calls + next.calls, read: [...new Set([...before.read, ...next.read])].slice(0, 16), ...(cannot !== undefined && before.calls + next.calls === 0 ? { cannot } : {}) }
 }
 
 export interface DeriveBeatsResult {
@@ -346,6 +360,8 @@ export interface DeriveBeatsResult {
   synopsis?: string
   beats: Beat[]
   applied: boolean
+  /** Where the book has references and derivations look in them first: what the planner read there. */
+  referenced?: ReferencesLooked
 }
 
 export async function deriveBeats(core: NovelCore, runtime: ProjectRuntime, params: { chapter: string; direction?: string; apply?: boolean }, task: TaskContext): Promise<DeriveBeatsResult> {
@@ -365,10 +381,11 @@ export async function deriveBeats(core: NovelCore, runtime: ProjectRuntime, para
   })
   const characters = await project.characters()
   const resolve = (name: string): string => characters.find(card => sameName(card.name, name) || card.aliases?.some(alias => sameName(alias, name)) === true)?.id ?? name
-  const { value } = await assign(core, runtime, task, {
+  const { value, referenced } = await assign(core, runtime, task, {
     role: 'architect',
     label: L(lang, `第${chapter.index}章 · 节拍`, `Ch. ${chapter.index} · beats`),
     line: chapter.line ?? MAIN_LINE,
+    lookUp: 'derive',
     tool: 'submit_beats',
     what: L(lang, '这一章的节拍', 'the beats of this chapter'),
     system: architectSystem(lang),
@@ -394,7 +411,7 @@ export async function deriveBeats(core: NovelCore, runtime: ProjectRuntime, para
       ...(chapter.plan.status === 'idea' ? { status: 'outlined' as const } : {}),
     })
   }
-  return { chapterId: chapter.plan.id, title: chapter.plan.title, index: chapter.index, ...(synopsis !== undefined ? { synopsis } : {}), beats, applied }
+  return { chapterId: chapter.plan.id, title: chapter.plan.title, index: chapter.index, ...(synopsis !== undefined ? { synopsis } : {}), beats, applied, ...(referenced !== undefined ? { referenced } : {}) }
 }
 
 export interface WhatIfResult {
@@ -402,6 +419,8 @@ export interface WhatIfResult {
   recommendation?: string
   /** Where pictures were given: how many, and who looked at them. */
   pictures?: PicturesRead
+  /** Where the book has references and derivations look in them first: what the planner read there. */
+  referenced?: ReferencesLooked
 }
 
 export async function whatIf(core: NovelCore, runtime: ProjectRuntime, params: { question: string; branches?: number; /** Pictures the ways on are weighed with. */ guides?: PictureGuide[] }, task: TaskContext): Promise<WhatIfResult> {
@@ -411,11 +430,12 @@ export async function whatIf(core: NovelCore, runtime: ProjectRuntime, params: {
   const route = await core.route('architect', runtime, task)
   const guided = await guidePictures(core, runtime, route, params.guides, 'whatif', task)
   const pack = await core.pack(runtime, route, { purpose: 'derive', brief: params.question, ...(task.signal !== undefined ? { signal: task.signal } : {}) })
-  const { value } = await assign(core, runtime, task, {
+  const { value, referenced } = await assign(core, runtime, task, {
     role: 'architect',
     label: L(lang, '假设推演', 'What if'),
     ...(guided !== undefined && guided.images.length > 0 ? { images: guided.images } : {}),
     line: MAIN_LINE,
+    lookUp: 'derive',
     tool: 'submit_branches',
     what: L(lang, '几条可能的走向，各自的代价和收获', 'the branches the story could take, with what each costs and gains'),
     system: architectSystem(lang),
@@ -448,6 +468,7 @@ export async function whatIf(core: NovelCore, runtime: ProjectRuntime, params: {
     }),
     ...(recommendation !== undefined ? { recommendation } : {}),
     ...(guided !== undefined ? { pictures: picturesRead(guided)! } : {}),
+    ...(referenced !== undefined ? { referenced } : {}),
   }
 }
 

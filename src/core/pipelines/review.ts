@@ -8,9 +8,10 @@ import { MAIN_LINE, type ChapterReview, type IssueSeverity, type IssueType, type
 import { fuzzyFind, hashText, newId } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { asArray, asRecord, asText } from '../llm'
-import { assign } from '../crew'
+import { assign, crewPlan } from '../crew'
 import { ProjectError } from '../project'
 import { recheckTask, reviewTask } from '../prompts'
+import { looksFirst } from '../references'
 import { L, promptLanguage } from '../render'
 
 const SEVERITIES: IssueSeverity[] = ['high', 'medium', 'low']
@@ -36,13 +37,25 @@ export async function reviewChapter(core: NovelCore, runtime: ProjectRuntime, pa
   const styleNote = style !== undefined
     ? `\n\n## ${L(lang, '设定的文风', 'Style profile')}\n\n${[style.register, style.tone, style.diction, style.rhythm, ...(style.rules ?? []), ...(style.avoid ?? []).map(item => `${L(lang, '避免', 'avoid')}: ${item}`)].filter(Boolean).join('\n')}`
     : ''
-  const { value } = await assign(core, runtime, task, {
+  // The book goes by other books, and a review holds the chapter against them: the reviewer looks in them first where
+  // it has the tools to, and is handed what the planner took out of them for whoever wrote the chapter.
+  const against = await looksFirst(runtime, 'review').catch(() => false)
+  const withTools = crewPlan(core, 'analyst', manifest).mode !== 'call' && core.roles !== undefined && core.roles.can(route)
+  const { value, referenced } = await assign(core, runtime, task, {
     role: 'analyst',
     label: L(lang, `第${chapter.index}章 · 审校`, `Ch. ${chapter.index} · review`),
     line: chapter.line ?? MAIN_LINE,
+    lookUp: 'review',
     tool: 'file_review',
     what: L(lang, '这一章的审校意见：总评和逐条问题', 'the review of this chapter: a verdict and the issues, one by one'),
-    prompt: reviewTask({ lang, language: manifest.language, title: manifest.title, context: `${pack.text}${styleNote}`, ...(params.focus !== undefined ? { focus: params.focus } : {}) }),
+    prompt: reviewTask({
+      lang,
+      language: manifest.language,
+      title: manifest.title,
+      context: `${pack.text}${styleNote}`,
+      ...(params.focus !== undefined ? { focus: params.focus } : {}),
+      ...(against ? { references: { look: withTools, ...(chapter.plan.referenceNotes !== undefined && chapter.plan.referenceNotes.trim().length > 0 ? { notes: chapter.plan.referenceNotes } : {}) } } : {}),
+    }),
     temperature: 0.2,
     validate: raw => asRecord(raw),
   })
@@ -74,9 +87,10 @@ export async function reviewChapter(core: NovelCore, runtime: ProjectRuntime, pa
     createdAt: new Date().toISOString(),
     verdict: asText(value.verdict) ?? '',
     issues,
+    ...(referenced !== undefined ? { referenced } : {}),
   }
   await project.saveReview(review)
-  task.job?.result({ chapterId: chapter.plan.id, issues: issues.length })
+  task.job?.result({ chapterId: chapter.plan.id, issues: issues.length, ...(referenced !== undefined ? { referenced } : {}) })
   return { ...review, title: chapter.plan.title, index: chapter.index }
 }
 

@@ -80,10 +80,16 @@ export function References() {
         </span>
       </p>
       {shelf.data !== undefined && references.length > 0 ? (
-        <label className="nv-check">
-          <input type="checkbox" checked={shelf.data.beforeWriting} disabled={busy} onChange={(event) => { void run(async () => await controller.api.call('references.settings', { root, beforeWriting: event.target.checked })) }} />
-          <span>{t('写每一章之前，让策划先为这一章查参考文献（摘记留在章纲里，可以改）', 'Before a chapter is written, the planner reads the references for it (its notes are kept on the chapter\'s plan, to be changed)')}</span>
-        </label>
+        <section className="nv-reference-use">
+          <OverallGuide guide={shelf.data.guide ?? ''} onSave={guide => run(async () => await controller.api.call('references.settings', { root, guide }))} />
+          <div className="nv-reference-first">
+            <span className="nv-muted nv-small">{t('先查再动手', 'Looked at first')}</span>
+            <Chip tone={shelf.data.beforeWriting ? 'blue' : 'neutral'} active={shelf.data.beforeWriting} title={t('写每一章之前，策划先为这一章查，摘记留在章纲里交给写手', 'Before a chapter is written the planner reads for it; its notes are kept on the chapter\'s plan for the writer')} onClick={() => { if (!busy) void run(async () => await controller.api.call('references.settings', { root, beforeWriting: !shelf.data!.beforeWriting })) }}>{t('写作', 'Writing')}</Chip>
+            <Chip tone={shelf.data.beforeDeriving ? 'blue' : 'neutral'} active={shelf.data.beforeDeriving} title={t('推演章节、节拍、假设推演时，策划先查再推', 'The planner reads in them before it derives chapters, beats or a what-if')} onClick={() => { if (!busy) void run(async () => await controller.api.call('references.settings', { root, beforeDeriving: !shelf.data!.beforeDeriving })) }}>{t('推演', 'Deriving')}</Chip>
+            <Chip tone={shelf.data.beforeReviewing ? 'blue' : 'neutral'} active={shelf.data.beforeReviewing} title={t('审校一章时，场记先查，对不上参考的记成问题', 'The reviewer reads in them before it reviews a chapter, and files what is at odds with them')} onClick={() => { if (!busy) void run(async () => await controller.api.call('references.settings', { root, beforeReviewing: !shelf.data!.beforeReviewing })) }}>{t('审校', 'Reviewing')}</Chip>
+            <span className="nv-muted nv-small">{t('没点亮的：角色觉得用得上才查', 'Not lit: looked at where the role sees a use')}</span>
+          </div>
+        </section>
       ) : null}
       {shelf.loading && shelf.data === undefined ? <p className="nv-muted">{t('读取中…', 'Loading…')}</p> : null}
       {shelf.error !== undefined ? <p className="nv-muted">{shelf.error}</p> : null}
@@ -106,6 +112,30 @@ export function References() {
       {picking ? <ShelfPicker taken={references} onPick={book => { setPicking(false); void run(async () => await controller.api.call('references.add', { root, book })) }} onClose={() => { setPicking(false) }} /> : null}
       {confirm.element}
     </div>
+  )
+}
+
+/** What the author asks of the references at large: said to everybody who works with them at hand. */
+function OverallGuide({ guide, onSave }: { guide: string; onSave: (guide: string) => Promise<unknown> }) {
+  const t = useT()
+  const [text, setText] = useState(guide)
+  const [held, setHeld] = useState(guide)
+  // Changed from outside (the showrunner): shown as it is now.
+  if (held !== guide) {
+    setHeld(guide)
+    setText(guide)
+  }
+  return (
+    <Field label={t('总的要求（对每个角色、每一本都算数）', 'Asked of them all (it holds for every role, and every reference)')}>
+      <TextArea
+        value={text}
+        minRows={2}
+        maxRows={8}
+        placeholder={t('用自己的话说这本书怎么用参考文献。比如：世界观、地名、官制照《……》；文风只学《……》的章回体口吻；人物和情节不从任何一本里搬。', 'In your own words, how this book goes by its references. For instance: the world, place names and offices as in "…"; the style only from "…"; no people or events carried over from any of them.')}
+        onChange={(event) => { setText(event.target.value) }}
+        onBlur={() => { if (text.trim() !== guide) void onSave(text.trim()) }}
+      />
+    </Field>
   )
 }
 

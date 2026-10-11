@@ -62,10 +62,11 @@ ${base.style}`)
  * @param base.words - the length recommended for what this call writes; absent, the writer judges.
  * @param base.usual - how long the book's written chapters run, for a writer left to judge.
  */
-export function writerTask(base: Base & { context: string; brief?: string; continuing: boolean; words?: number; usual?: number; /** The pictures the author gave for this chapter, as the task tells of them. */ pictures?: string; /** What the book's references have for this chapter: the notes kept on its plan. */ references?: string }): string {
+export function writerTask(base: Base & { context: string; brief?: string; continuing: boolean; words?: number; usual?: number; /** The pictures the author gave for this chapter, as the task tells of them. */ pictures?: string; /** What the book's references have for this chapter: the notes kept on its plan. */ references?: string; /** What the author asks of the references at large, said with the notes. */ referenceGuide?: string }): string {
   const pictures = base.pictures !== undefined && base.pictures.trim().length > 0 ? `\n\n${base.pictures.trim()}` : ''
+  const overall = base.referenceGuide !== undefined && base.referenceGuide.trim().length > 0 ? [`作者对参考文献的总要求：${base.referenceGuide.trim()}\n\n`, `What the author asks of the references at large: ${base.referenceGuide.trim()}\n\n`] : ['', '']
   const references = base.references !== undefined && base.references.trim().length > 0
-    ? L(base.lang, `\n\n## 参考摘记（策划从这本书的参考文献里为这一章查来的）\n\n${base.references.trim()}\n\n摘记是用来对照和借鉴的：事实与设定照它，写法可以学；引来的原文不要整段搬进正文。它和章纲、前文冲突时，以章纲和前文为准。`, `\n\n## Notes from the references (what the planner found for this chapter in the books this one goes by)\n\n${base.references.trim()}\n\nThe notes are to hold the chapter against and to learn from: facts and settings as they have them, ways of writing to borrow; wording quoted there is not carried into the chapter at length. Where they are at odds with the outline or the story so far, those hold.`)
+    ? L(base.lang, `\n\n## 参考摘记（策划从这本书的参考文献里为这一章查来的）\n\n${overall[0]}${base.references.trim()}\n\n摘记是用来对照和借鉴的：事实与设定照它，写法可以学；引来的原文不要整段搬进正文。它和章纲、前文冲突时，以章纲和前文为准。`, `\n\n## Notes from the references (what the planner found for this chapter in the books this one goes by)\n\n${overall[1]}${base.references.trim()}\n\nThe notes are to hold the chapter against and to learn from: facts and settings as they have them, ways of writing to borrow; wording quoted there is not carried into the chapter at length. Where they are at odds with the outline or the story so far, those hold.`)
     : ''
   const brief = base.brief !== undefined && base.brief.trim().length > 0
     ? L(base.lang, `\n\n## 编辑对本次写作的要求\n\n${base.brief.trim()}`, `\n\n## The editor's brief for this pass\n\n${base.brief.trim()}`)
@@ -99,7 +100,7 @@ ${base.before !== undefined && base.before.length > 0 ? `\n## 这一章之前\n$
 ${base.references}
 ${base.direction !== undefined ? `\n## 作者这次的要求\n${base.direction}\n` : ''}
 摘记写什么：
-1. 只写这一章用得上的，照作者对每一本“怎么参考”的说法取舍——让学文风的就看它怎么写，让对设定的就核对设定，没让用的部分不碰。
+1. 只写这一章用得上的，照作者的总要求和对每一本“怎么参考”的说法取舍——让学文风的就看它怎么写，让对设定的就核对设定，没让用的部分不碰。
 2. 分三样写，没有的那一样不写：要守的——这一章会碰到的事实、设定、称谓、规矩，参考里是怎么说的；可以借的——写法上的东西：句式、节奏、称呼、起承转合的办法，可以引一两段短的原文作样子，每段注明出自哪一本的哪里；要避开的——照参考来看这一章容易写错、写串的地方。
 3. 写得具体，写手照着就能用；每条注明出自哪一本。篇幅 200-800 字。
 4. 查过之后这一章确实用不上参考：notes 交空字符串，在 why 里说一句为什么。
@@ -114,7 +115,7 @@ ${base.before !== undefined && base.before.length > 0 ? `\n## Before this chapte
 ${base.references}
 ${base.direction !== undefined ? `\n## What the author asks this time\n${base.direction}\n` : ''}
 What the notes hold:
-1. Only what this chapter can use, chosen by what the author says of how each reference is to be used — one given for its style is read for how it writes, one given for its settings is checked for them, and what was not asked for is left alone.
+1. Only what this chapter can use, chosen by what the author asks of the references at large and says of how each is to be used — one given for its style is read for how it writes, one given for its settings is checked for them, and what was not asked for is left alone.
 2. Three kinds of thing, each left out where there is none: to keep to — the facts, settings, forms of address and rules this chapter will touch, as the references have them; to borrow — ways of writing: sentence shapes, rhythm, how people are addressed, how a scene turns, with a short passage or two quoted as a sample, each marked with the book and the place it is from; to steer clear of — where this chapter could easily go wrong against the references.
 3. Concrete enough to write from; each note says which book it is from. 150-500 words.
 4. Where, having looked, nothing of the references is of use to this chapter: hand in notes as an empty string, and say why in a sentence.
@@ -899,14 +900,28 @@ Volumes must cover every chapter contiguously without overlap; use a single volu
 
 // ───────────────────────────── review ─────────────────────────────
 
-export function reviewTask(base: Base & { context: string; focus?: string }): string {
-  return `${base.context}\n\n---\n${L(base.lang, `请以资深责任编辑的眼光审读"本章已有正文"。逐项核对：
+/**
+ * @param base.references - the book has references and reviews hold a chapter against them: `look` — the reviewer has
+ *   the tools to read in them (it is told to, among its rules); `notes` — what the planner took out of them for
+ *   whoever wrote this chapter.
+ */
+export function reviewTask(base: Base & { context: string; focus?: string; references?: { look: boolean; notes?: string } }): string {
+  const notes = base.references?.notes !== undefined && base.references.notes.trim().length > 0
+    ? L(base.lang, `\n\n## 写这一章时交给写手的参考摘记（策划从这本书的参考文献里查来的）\n\n${base.references.notes.trim()}`, `\n\n## The notes from the references the writer of this chapter was handed (what the planner found for it in the books this one goes by)\n\n${base.references.notes.trim()}`)
+    : ''
+  const against = base.references === undefined ? ['', '']
+    : base.references.look
+      ? ['\n- 参考文献：这本书有参考文献，作者说了每一本怎么参考（见你的规则）。先到里面查这一章碰到的东西，再对照：作者要它守的设定、称谓、规矩，要它学的文风，这一章对不上的地方记成问题（type 用 world 或 style），说明里写清出自哪一本的哪里；作者没让照的不算问题；', '\n- references: this book has references, and the author says how each is to be used (among your rules). Look in them for what this chapter touches, then hold it against them: where it is at odds with settings, forms of address and rules the author has it keep to, or with a style the author has it learn, file an issue (type world or style) that says which book and where; what the author did not ask to be followed is no issue;']
+      : notes.length > 0
+        ? ['\n- 参考文献：对照上面的参考摘记——这一章和摘记里“要守的”对不上的地方记成问题（type 用 world 或 style），说明里写清出自哪一本；', '\n- references: hold the chapter against the notes above — where it is at odds with what they say to keep to, file an issue (type world or style) that says which book;']
+        : ['', '']
+  return `${base.context}${notes}\n\n---\n${L(base.lang, `请以资深责任编辑的眼光审读"本章已有正文"。逐项核对：
 - 连续性：与前文事实、时间线、人物位置和已知信息是否矛盾；
 - 人物：言行是否符合人物卡的性格、动机、说话方式，有无"作者替人物说话"；
 - 设定：是否违反世界观规则；
 - 逻辑：动机、因果、信息来源是否成立；
 - 文风：是否符合设定的文风，有无陈词滥调、空泛抒情、重复用词等"AI 味"；
-- 节奏：详略是否得当，章纲节拍是否都落地，结尾是否有力。${base.focus !== undefined && base.focus.trim().length > 0 ? `\n重点关注：${base.focus.trim()}` : ''}
+- 节奏：详略是否得当，章纲节拍是否都落地，结尾是否有力。${against[0]}${base.focus !== undefined && base.focus.trim().length > 0 ? `\n重点关注：${base.focus.trim()}` : ''}
 
 只输出 JSON：
 {"verdict": "两三句总体评价", "issues": [{"severity": "high|medium|low", "type": "continuity|character|world|timeline|style|pacing|logic|language", "quote": "从正文中原样摘出的问题句子（必须是原文的连续片段，30字以内为宜；全局性问题可留空）", "explanation": "问题是什么、为什么是问题", "suggestion": "具体怎么改"}]}
@@ -916,7 +931,7 @@ export function reviewTask(base: Base & { context: string; focus?: string }): st
 - world: any rule of the setting broken;
 - logic: do motives, causes and sources of information hold;
 - style: does it follow the style profile; clichés, vague lyricism, repeated words, anything that reads machine-made;
-- pacing: is detail spent well, did every outlined beat land, does the ending hit.${base.focus !== undefined && base.focus.trim().length > 0 ? `\nPay special attention to: ${base.focus.trim()}` : ''}
+- pacing: is detail spent well, did every outlined beat land, does the ending hit.${against[1]}${base.focus !== undefined && base.focus.trim().length > 0 ? `\nPay special attention to: ${base.focus.trim()}` : ''}
 
 Output JSON only:
 {"verdict": "two or three sentences overall", "issues": [{"severity": "high|medium|low", "type": "continuity|character|world|timeline|style|pacing|logic|language", "quote": "the offending sentence copied verbatim from the text (a contiguous excerpt, ideally under 20 words; empty for chapter-wide issues)", "explanation": "what is wrong and why it matters", "suggestion": "how to fix it, concretely"}]}

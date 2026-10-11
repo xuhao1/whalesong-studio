@@ -42,7 +42,7 @@ import { writeChapter } from '../core/pipelines/write'
 import { imageSetups, speechSetups, trialDerive, trialSpeak, trialWrite } from '../core/pipelines/trial'
 import { cleanGuides } from '../core/pipelines/guides'
 import { consultReferences } from '../core/pipelines/consult'
-import { addBookReference, addTextReference, referenceShelf, removeReference, setConsultBeforeWriting, updateReference } from '../core/references'
+import { addBookReference, addTextReference, referenceShelf, removeReference, setReferenceUse, updateReference } from '../core/references'
 import { ProjectError } from '../core/project'
 import { siftCast } from '../core/pipelines/cast'
 import { overrule, settleSuggestions, settlesItself } from '../core/pipelines/settle'
@@ -709,9 +709,12 @@ export function createHandlers(service: NovelService): Handlers {
       await removeReference(runtime, requireString(id, 'id'))
       return await referenceShelf(core, runtime)
     },
-    'references.settings': async ({ root, beforeWriting }) => {
+    'references.settings': async ({ root, beforeWriting, beforeDeriving, beforeReviewing, guide }) => {
       const runtime = await open(root)
-      await setConsultBeforeWriting(runtime, beforeWriting !== false)
+      await setReferenceUse(runtime, {
+        first: { ...(typeof beforeWriting === 'boolean' ? { write: beforeWriting } : {}), ...(typeof beforeDeriving === 'boolean' ? { derive: beforeDeriving } : {}), ...(typeof beforeReviewing === 'boolean' ? { review: beforeReviewing } : {}) },
+        ...(typeof guide === 'string' ? { guide } : {}),
+      })
       return await referenceShelf(core, runtime)
     },
     'references.consult': async ({ root, chapter, direction }) => {

@@ -14,7 +14,7 @@ import { asList, asRecord, asText } from '../llm'
 import { assign, crewName, crewPlan } from '../crew'
 import { ProjectError } from '../project'
 import { referenceNotesTask } from '../prompts'
-import { activeReferences, referenceBrief } from '../references'
+import { activeReferences, guideWords, referenceListing } from '../references'
 import { L, promptLanguage, renderPlan } from '../render'
 import { clip } from '../../shared/text'
 import { MAIN_LINE } from '../../shared/types'
@@ -58,7 +58,7 @@ export async function consultReferences(core: NovelCore, runtime: ProjectRuntime
     if (crewPlan(core, 'architect', manifest).mode === 'call' || core.roles === undefined || !core.roles.can(route)) {
       throw new ProjectError(NO_AGENT, L(lang, `${name}要作为 agent 才能到参考文献里去查（它现在是一问一答，没有工具）。到“设置 → 模型”把 agent 能力范围改成 agent 模式，或者自己在章纲的“参考摘记”里写。`, `${name} has to work as an agent to read in the references (it is set to plain calls now, and has no tools). Set it to agent mode under Settings → Models, or write the chapter's reference notes yourself.`))
     }
-    const brief = await referenceBrief(core, runtime, lang) ?? ''
+    const listing = await referenceListing(core, runtime, lang)
     const path = await project.pathOf(chapter.plan.id)
     const at = path.findIndex(item => item.plan.id === chapter.plan.id)
     const previous = at > 0 ? path[at - 1] : undefined
@@ -76,7 +76,7 @@ export async function consultReferences(core: NovelCore, runtime: ProjectRuntime
         title: manifest.title,
         chapter: renderPlan(chapter.plan, chapter.index, lang, id => everyone.find(card => card.id === id)?.name ?? id),
         ...(before.length > 0 ? { before } : {}),
-        references: brief.split('\n').filter(line => line.startsWith('- ') || line.startsWith('  ')).join('\n'),
+        references: `${listing?.guide !== undefined ? `${guideWords(listing.guide, lang)}\n\n` : ''}${listing?.lines ?? ''}`,
         ...(params.direction !== undefined && params.direction.trim().length > 0 ? { direction: params.direction.trim() } : {}),
       }),
       temperature: 0.4,

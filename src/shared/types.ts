@@ -553,11 +553,37 @@ export interface ReferenceInfo extends BookReference {
   has?: { chapters: number; words: number; characters: number; world: number; styles: number }
 }
 
+/** The kinds of work that look in a book's references before anything else, where the author has it so. */
+export type ReferenceFirst = 'write' | 'derive' | 'review'
+
 /** The references of a book, and how they are used. */
 export interface ReferenceShelf {
   references: ReferenceInfo[]
+  /**
+   * How the book goes by its references at large, in the author's own words — which for its world, which for the way
+   * it is written, whether people may be borrowed: said to everybody who works on the book with the references at
+   * hand, above what is said of each.
+   */
+  guide?: string
   /** Before a chapter is written, the planner looks in the references for it and leaves notes for the writer. `false`: the author turned that off. */
   beforeWriting: boolean
+  /** The planner looks in the references before it derives chapters, beats or a what-if. `false`: it looks where it sees a use. */
+  beforeDeriving: boolean
+  /** The reviewer looks in the references before it reviews a chapter, and holds the chapter against them. `false`: it looks where it sees a use. */
+  beforeReviewing: boolean
+}
+
+/**
+ * What a role read in the book's references for one piece of work it was to look in them for: counted off the calls it
+ * made, not off what it says of itself.
+ */
+export interface ReferencesLooked {
+  /** How many times it read or searched in them. */
+  calls: number
+  /** What it read, in a few words each, in the order it did. */
+  read: string[]
+  /** Why nothing could be looked up, where that is so: the role worked without tools this time. */
+  cannot?: string
 }
 
 /**
@@ -994,6 +1020,8 @@ export interface ChapterReview {
   createdAt: Timestamp
   verdict: string
   issues: ReviewIssue[]
+  /** Where the reviewer was to look in the book's references first: what it read there. */
+  referenced?: ReferencesLooked
 }
 
 // ───────────────────────────── retrieval ─────────────────────────────

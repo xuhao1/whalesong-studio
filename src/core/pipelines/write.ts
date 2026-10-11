@@ -12,7 +12,7 @@ import type { LocatedChapter } from '../project'
 import { ProjectError } from '../project'
 import { writerSystem, writerTask } from '../prompts'
 import { promptLanguage, renderStyle } from '../render'
-import { consultsBeforeWriting } from '../references'
+import { activeReferences, consultsBeforeWriting, referenceGuide } from '../references'
 import { isAbort } from '../util/async'
 import { consultReferences } from './consult'
 import { digestChapter, updateArcs } from './digest'
@@ -172,7 +172,9 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
     // Nobody looks before writing here, but the chapter has notes — the author's own, or the planner's of an earlier day: they go along.
     referenced = { chars: referenceNotes.length }
   }
-  const notesForWriter = referenceNotes !== undefined && referenceNotes.trim().length > 0 ? { references: referenceNotes } : {}
+  // With the notes goes what the author asks of the references at large, where the book still has any: what the notes are for.
+  const overall = referenceNotes !== undefined && referenceNotes.trim().length > 0 && (await activeReferences(runtime)).length > 0 ? await referenceGuide(runtime) : undefined
+  const notesForWriter = referenceNotes !== undefined && referenceNotes.trim().length > 0 ? { references: referenceNotes, ...(overall !== undefined ? { referenceGuide: overall } : {}) } : {}
 
   if (!dry) task.job?.progress(0, 3, lang === 'zh' ? '整理上下文' : 'packing context')
   const pack = await core.pack(runtime, route, {

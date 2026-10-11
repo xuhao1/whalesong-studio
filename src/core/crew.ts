@@ -25,13 +25,13 @@
 import { readFile, readdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { CrewRole, CrewRun, ProjectManifest, PromptLanguage } from '../shared/types'
+import type { CrewRole, CrewRun, ProjectManifest, PromptLanguage, ReferencesLooked } from '../shared/types'
 import { clip } from '../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from './core'
 import { completeJson, extractJson, LlmCallError, type LlmImage } from './llm'
 import { ProjectError } from './project'
 import { READ_KINDS, readBook, searchBook, SEARCH_SOURCES } from './reading'
-import { referenceBrief, referenceTools } from './references'
+import { looksFirst, referenceBrief, referenceTools } from './references'
 import { L, promptLanguage } from './render'
 import { argInt, argList, argText, type RoleInherit, type RoleOutcome, type RoleParameter, type RoleSkill, type RoleStep, type RoleTool } from './roles'
 import { errorMessage, isAbort } from './util/async'
@@ -288,16 +288,30 @@ export function bookTools(runtime: ProjectRuntime, signal?: AbortSignal, line?: 
  * of them — which there are, what the author wants of each. Nothing for a book that has none, and nothing for
  * post-production, whose work is cutting what is already made.
  */
-async function referencesFor(core: NovelCore, runtime: ProjectRuntime, role: CrewRole, lang: PromptLanguage, signal: AbortSignal | undefined): Promise<{ tools: RoleTool[]; brief: string }> {
+async function referencesFor(core: NovelCore, runtime: ProjectRuntime, role: CrewRole, lang: PromptLanguage, signal: AbortSignal | undefined, how: { first?: boolean; onLook?: (what: string) => void } = {}): Promise<{ tools: RoleTool[]; brief: string }> {
   if (role === 'producer') return { tools: [], brief: '' }
   try {
-    const tools = await referenceTools(core, runtime, signal)
-    const brief = tools.length > 0 ? await referenceBrief(core, runtime, lang) : undefined
+    const tools = await referenceTools(core, runtime, signal, undefined, how.onLook)
+    const brief = tools.length > 0 ? await referenceBrief(core, runtime, lang, { ...(how.first === true ? { first: true } : {}) }) : undefined
     return { tools, brief: brief !== undefined ? `\n\n${brief}` : '' }
   } catch (error) {
     // A list of references that cannot be read keeps nobody from working: the work goes on without them.
     core.log('could not read the book\'s references', error)
     return { tools: [], brief: '' }
+  }
+}
+
+/**
+ * Whether a piece of work is to look in the book's references before anything else: it is of a kind that does, the
+ * book has references that are consulted, and the author did not turn that off for the kind.
+ */
+async function looksUp(core: NovelCore, runtime: ProjectRuntime, work: Pick<Assignment<unknown>, 'lookUp' | 'role' | 'plain'>): Promise<boolean> {
+  if (work.lookUp === undefined || work.role === 'producer' || work.plain === true) return false
+  try {
+    return await looksFirst(runtime, work.lookUp)
+  } catch (error) {
+    core.log('could not read how the book\'s references are used', error)
+    return false
   }
 }
 
@@ -364,11 +378,19 @@ export interface Assignment<T> {
    * that line's, and nothing of the book's other lines. Left out only for work that is about the whole book.
    */
   line?: string
+  /**
+   * A derivation or a review: work that looks in the book's references before anything else, where the book has any
+   * and the author has it so. The role is told to, what it hands in is not taken until it has read or searched in
+   * them, and what it read comes back with the result (`Assigned.referenced`).
+   */
+  lookUp?: 'derive' | 'review'
 }
 
 export interface Assigned<T> {
   value: T
   run: CrewRun
+  /** Where the work was to look in the book's references first (`Assignment.lookUp`): what it read there. */
+  referenced?: ReferencesLooked
 }
 
 /** What an agent is told about handing in, after a task that was written for a plain reply. */
@@ -398,6 +420,12 @@ async function assignNow<T>(core: NovelCore, runtime: ProjectRuntime, task: Task
   const route = await core.route(work.role, runtime, task)
   const plan = crewPlan(core, work.role, manifest)
   const name = crewName(work.role, lang)
+  // Work that looks in the book's references first: what it reads there is counted off its calls.
+  const first = await looksUp(core, runtime, work)
+  const looks: string[] = []
+  let calls = 0
+  // (A result that came of a plain call saw nothing of them, whatever an agent read before it fell through.)
+  const looked = (cannot?: string): { referenced?: ReferencesLooked } => (first ? { referenced: cannot !== undefined ? { calls: 0, read: [], cannot } : { calls, read: [...new Set(looks)].slice(0, 16) } } : {})
   const validate = (raw: unknown): T => {
     const value = typeof raw === 'string' ? extractJson(raw) : raw
     return work.validate !== undefined ? work.validate(value) : value as T
@@ -418,7 +446,8 @@ async function assignNow<T>(core: NovelCore, runtime: ProjectRuntime, task: Task
       onText: (_delta, total) => { task.job?.rewrite(total) },
       validate,
     })
-    return { value, run: record({ role: work.role, label: work.label, by: 'call', ...(note !== undefined ? { note } : {}) }) }
+    // Asked in one request, with no tools: nothing of the references could be read, and that is said.
+    return { value, run: record({ role: work.role, label: work.label, by: 'call', ...(note !== undefined ? { note } : {}) }), ...looked(L(lang, `${name}这次是一问一答、没有工具，查不了参考文献。`, `${name} worked in one plain call this time, with no tools: the references could not be read.`)) }
   }
 
   const roles = core.roles
@@ -436,13 +465,24 @@ async function assignNow<T>(core: NovelCore, runtime: ProjectRuntime, task: Task
     closing: true,
     final: true,
     run(args) {
+      // The author has this kind of work look in the references first: it is sent back to them — twice at most, so
+      // that a role that will not look still hands its work in, and is told on.
+      if (first && references.tools.length > 0 && calls === 0 && sentBack < 2) {
+        sentBack += 1
+        throw new Error(L(lang, `还没有查参考文献：作者要这件活先查再做。先用 reference_read（读某一本的大纲、设定、人物、文风、正文）或 reference_search（搜）查这件活用得上的，照查到的把结果改好，再交回。`, `The references have not been looked at: the author has this piece of work look in them first. Read with reference_read (a reference's outline, world, people, style, text) or find with reference_search what the work can use, mend the result by what you find, then hand it in.`))
+      }
       const value = validate(declared ? args : args.result)
       delivered = { value }
       return L(lang, '收到，已通过检查。', 'Received and checked.')
     },
   }
+  let sentBack = 0
   const skills = await crewSkills(work.role)
-  const references = await referencesFor(core, runtime, work.role, lang, task.signal)
+  const references = await referencesFor(core, runtime, work.role, lang, task.signal, first ? { first: true, onLook: (what) => { calls += 1; looks.push(what) } } : {})
+  // Said in the task as well as among the rules: it is the first thing to do.
+  const lookFirst = first && references.tools.length > 0
+    ? L(lang, '\n\n---\n动手之前：这本书有参考文献（清单和作者的要求在你的规则里）。先用 reference_read / reference_search 查这件活用得上的，再做。', '\n\n---\nBefore you begin: this book has references (the list, and what the author asks of them, is among your rules). Look in them with reference_read / reference_search for what this work can use, then do it.')
+    : ''
   let outcome: RoleOutcome
   try {
     outcome = await roles.run({
@@ -450,7 +490,7 @@ async function assignNow<T>(core: NovelCore, runtime: ProjectRuntime, task: Task
       label: `${name} · ${work.label}`,
       persona: CREW[work.role].persona[lang === 'zh' ? 0 : 1],
       rules: `${crewRules(work.role, lang, manifest)}${references.brief}`,
-      prompt: `${work.prompt}${handIn(lang, work.tool, declared)}`,
+      prompt: `${work.prompt}${lookFirst}${handIn(lang, work.tool, declared)}`,
       ...(work.images !== undefined && work.images.length > 0 ? { images: work.images } : {}),
       tools: [...bookTools(runtime, task.signal, work.line), ...references.tools, ...(work.tools ?? []), deliver],
       ...(skills.length > 0 ? { skills } : {}),
@@ -469,7 +509,7 @@ async function assignNow<T>(core: NovelCore, runtime: ProjectRuntime, task: Task
     if (isAbort(error) || task.signal?.aborted === true) throw error
     // What was handed in before the run broke is still the result.
     const kept = delivered as { value: T } | undefined
-    if (kept !== undefined) return { value: kept.value, run: record({ role: work.role, label: work.label, by: 'agent' }) }
+    if (kept !== undefined) return { value: kept.value, run: record({ role: work.role, label: work.label, by: 'agent' }), ...looked() }
     core.log(`the ${work.role} agent failed on "${work.label}"`, error)
     const why = clip(errorMessage(error), 200)
     task.job?.write(L(lang, `\n${name}的 agent 没能运行（${why}）；改用一次普通调用。\n`, `\nThe ${name} agent could not run (${why}); asking in one plain call instead.\n`))
@@ -478,11 +518,11 @@ async function assignNow<T>(core: NovelCore, runtime: ProjectRuntime, task: Task
   task.signal?.throwIfAborted()
   const ran = { role: work.role, label: work.label, by: 'agent' as const, steps: outcome.steps, ...(outcome.session !== undefined ? { session: outcome.session } : {}), ...(outcome.parent !== undefined ? { parent: outcome.parent } : {}) }
   const handed = delivered as { value: T } | undefined
-  if (handed !== undefined) return { value: handed.value, run: record(ran) }
+  if (handed !== undefined) return { value: handed.value, run: record(ran), ...looked() }
   // A model that answered in its reply what it was to hand in through the tool has still done the work.
   if (outcome.text.length > 0) {
     try {
-      return { value: validate(outcome.text), run: record({ ...ran, note: L(lang, '结果是写在回答里的，没有通过交回工具。', 'The result came in the reply, not through the hand-in tool.') }) }
+      return { value: validate(outcome.text), run: record({ ...ran, note: L(lang, '结果是写在回答里的，没有通过交回工具。', 'The result came in the reply, not through the hand-in tool.') }), ...looked() }
     } catch {
       // not a result: the plain call below
     }

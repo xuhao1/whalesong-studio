@@ -3,7 +3,7 @@
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { consultReferences } from '../../core/pipelines/consult'
 import { ProjectError } from '../../core/project'
-import { addBookReference, aspectsOf, referenceShelf, referenceTools, referenceWord, removeReference, setConsultBeforeWriting, updateReference } from '../../core/references'
+import { addBookReference, aspectsOf, referenceShelf, referenceTools, referenceWord, removeReference, setReferenceUse, updateReference } from '../../core/references'
 import type { NovelService } from '../../host/service'
 import type { ReferenceInfo } from '../../shared/types'
 import { brief, novelTool, toJson } from './shared'
@@ -23,14 +23,15 @@ export function referenceTools_(service: NovelService): ToolDefinition[] {
       name: 'novel_reference',
       description: [
         'The books this book goes by — its references: other books whose world, settings, style, plot or wording the author has it draw on. Two kinds: a book that stands on the shelf (consulted as it is organised there: its bible, outline and digests, style, text) and a manuscript the author took in for this book alone (plain text: read and searched, no cards). Nothing of a reference is put into any task whole: the crew reads in them with tools of its own, as far as the author opened each, and the writer is handed the notes the planner took for the chapter it writes (kept on that chapter\'s plan as referenceNotes).',
-        '- action=list (default): the references, what of each is open, how the author wants each used, and whether notes are taken before a chapter is written.',
+        '- action=list (default): the references, what the author asks of them at large, what of each is open, how the author wants each used, and which kinds of work look in them first.',
         '- action=read: read in one. `book` = its id or title; `what` = outline | chapter | memory | threads | character | world | style for a shelf book (with `ref`, as novel_read takes it), contents | part for a manuscript (`ref` = a part\'s number); `offset` / `limit` page through text. What the author did not open is refused.',
         '- action=search: find by keywords (in a shelf book by meaning as well): `query`, and `book` to keep to one.',
         '- action=add: take a book of the shelf as a reference — `book` = its title or path, `note` = how to go by it in the author\'s words, `scope` = what of it is open (world, characters, style, plot, text; left out: all). Only on the author\'s word: which books a book goes by is theirs to say. A manuscript is taken in by the author on the Bible → References page (a file is theirs to choose).',
         '- action=update: `book` and any of `note` (how to go by it — write down what the author said, in their words), `scope` (or all=true to open all of it), `off` (true: set aside, kept on the list; false: consulted again).',
         '- action=remove: take one off the list (a manuscript taken in for this book is deleted with it; a book of the shelf is not touched).',
         '- action=consult: have the planner read the references for one chapter (`chapter`) and keep its notes on that chapter\'s plan — what the writer is handed when it writes it. `direction` says what to look for. One planner run, as an agent. Chapters are consulted by themselves before they are written unless the author turned that off (action=settings before_writing=false).',
-        'When the author says how a book should be used ("only its style", "the same world, other people"), put it on that reference with action=update — it holds for every later piece of work — rather than repeating it in each task.',
+        '- action=settings: how the references are used at large. `guide` = what the author asks of them all, in their words — which book for the world, which for the way of writing, whether people or events may be borrowed: it is said to everybody who works with the references at hand (the planner, the reviewer, the director, and the planner\'s notes for the writer), above what is said of each (empty string: none). `before_writing`, `before_deriving`, `before_reviewing` (true|false): the kinds of work that look in the references first — the planner takes notes before a chapter is written; a derivation (chapters, beats, what-if) and a review are held to read in them before they hand anything in, and their results say what was read. All three are on unless the author turned one off.',
+        'When the author says how a book should be used ("only its style", "the same world, other people"), put it on that reference with action=update; when they say how the references are to be used altogether ("the world from A, the style from B, nobody\'s characters"), put it in the guide with action=settings — either holds for every later piece of work — rather than repeating it in each task.',
       ].join('\n'),
       mutating: args => ['add', 'update', 'remove', 'consult', 'settings'].includes(String(args.action)),
       parameters: {
@@ -48,6 +49,9 @@ export function referenceTools_(service: NovelService): ToolDefinition[] {
         chapter: { type: 'string', description: 'consult: the chapter (number, title or id).' },
         direction: { type: 'string', description: 'consult: what to look for, where the author said.' },
         before_writing: { type: 'boolean', description: 'settings: whether the planner reads the references before a chapter is written.' },
+        before_deriving: { type: 'boolean', description: 'settings: whether the planner is held to read in the references before it derives chapters, beats or a what-if.' },
+        before_reviewing: { type: 'boolean', description: 'settings: whether the reviewer is held to read in the references before it reviews a chapter.' },
+        guide: { type: 'string', description: 'settings: what the author asks of the references at large, in their words. An empty string takes it off.' },
       },
       async run(args, env) {
         const runtime = await env.project()
@@ -55,7 +59,7 @@ export function referenceTools_(service: NovelService): ToolDefinition[] {
         const listed = async (lead: string): Promise<{ text: string; data: ReturnType<typeof toJson> }> => {
           const shelf = await referenceShelf(env.core, runtime)
           return {
-            text: `${lead}${shelf.references.length > 0 ? `\n${shelf.references.map(line).join('\n')}\nBefore a chapter is written the planner ${shelf.beforeWriting ? 'reads the references for it and leaves notes on its plan' : 'does NOT read the references (the author turned that off): notes are taken with action=consult, or written by the author'}.` : '\nThis book has no references. The author adds them on the Bible → References page, or names a book of the shelf for you to add (action=add).'}`,
+            text: `${lead}${shelf.references.length > 0 ? `\n${shelf.guide !== undefined ? `What the author asks of them at large: ${shelf.guide}\n` : 'The author has said nothing of them at large (action=settings guide=…).\n'}${shelf.references.map(line).join('\n')}\nBefore a chapter is written the planner ${shelf.beforeWriting ? 'reads the references for it and leaves notes on its plan' : 'does NOT read the references (the author turned that off): notes are taken with action=consult, or written by the author'}. A derivation ${shelf.beforeDeriving ? 'looks in them first' : 'is not held to look in them (turned off)'}; a review ${shelf.beforeReviewing ? 'looks in them first and holds the chapter against them' : 'is not held to look in them (turned off)'}.` : '\nThis book has no references. The author adds them on the Bible → References page, or names a book of the shelf for you to add (action=add).'}`,
             data: toJson(shelf),
           }
         }
@@ -96,9 +100,10 @@ export function referenceTools_(service: NovelService): ToolDefinition[] {
           return { ...(await listed(`"${reference.name}" is off the references${reference.kind === 'text' ? ', and the manuscript taken in for it is deleted' : ' (the book on the shelf is as it was)'}.`)), record: { summary: [`把《${reference.name}》从参考文献里去掉了`, `Took "${reference.name}" off the references`] } }
         }
         if (action === 'settings') {
-          if (typeof args.before_writing !== 'boolean') throw new ProjectError('novel/invalid', 'action=settings takes before_writing=true|false')
-          await setConsultBeforeWriting(runtime, args.before_writing)
-          return { ...(await listed(`From now on the planner ${args.before_writing ? 'reads' : 'does not read'} the references before a chapter is written.`)), record: { summary: [args.before_writing ? '写每章之前让策划查参考文献' : '写每章之前不再自动查参考文献', args.before_writing ? 'The planner reads the references before a chapter is written' : 'The references are no longer read before a chapter is written'] } }
+          const first = { ...(typeof args.before_writing === 'boolean' ? { write: args.before_writing } : {}), ...(typeof args.before_deriving === 'boolean' ? { derive: args.before_deriving } : {}), ...(typeof args.before_reviewing === 'boolean' ? { review: args.before_reviewing } : {}) }
+          if (Object.keys(first).length === 0 && args.guide === undefined) throw new ProjectError('novel/invalid', 'action=settings takes `guide` (what the author asks of the references at large) and/or before_writing, before_deriving, before_reviewing = true|false')
+          await setReferenceUse(runtime, { first, ...(args.guide !== undefined ? { guide: args.guide } : {}) })
+          return { ...(await listed('How the references are used now:')), record: { summary: [args.guide !== undefined ? '改了对参考文献的总要求' : '改了哪些活先查参考文献', args.guide !== undefined ? 'Changed what is asked of the references at large' : 'Changed which work looks in the references first'] } }
         }
         if (action === 'consult') {
           if (args.chapter === undefined || args.chapter.trim().length === 0) throw new ProjectError('novel/invalid', 'action=consult takes `chapter`')

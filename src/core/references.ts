@@ -26,7 +26,7 @@ import { readBook, searchBook, type ReadKind } from './reading'
 import { L } from './render'
 import { argInt, argList, argText, type RoleTool } from './roles'
 import { clip, countWords, newId, sameName } from '../shared/text'
-import { REFERENCE_ASPECTS, type BookReference, type PromptLanguage, type ReferenceAspect, type ReferenceInfo, type ReferenceShelf, type SearchSource } from '../shared/types'
+import { REFERENCE_ASPECTS, type BookReference, type PromptLanguage, type ReferenceAspect, type ReferenceFirst, type ReferenceInfo, type ReferenceShelf, type SearchSource } from '../shared/types'
 
 /** Where a book keeps the list of its references, and the manuscripts taken in for it. */
 const INDEX = 'references/index.json'
@@ -34,9 +34,18 @@ const INDEX = 'references/index.json'
 interface IndexFile {
   schema: 1
   items: BookReference[]
+  /** How the book goes by its references at large, in the author's words: said to everybody who works with them. */
+  guide?: string
   /** `false`: no notes are taken in the references before a chapter is written. */
   beforeWriting?: boolean
+  /** `false`: the planner is not held to look in them before it derives. */
+  beforeDeriving?: boolean
+  /** `false`: the reviewer is not held to look in them before it reviews. */
+  beforeReviewing?: boolean
 }
+
+/** Where each kind of work that looks first is kept in the list's file. */
+const FIRST_KEY = { write: 'beforeWriting', derive: 'beforeDeriving', review: 'beforeReviewing' } as const satisfies Record<ReferenceFirst, keyof IndexFile>
 
 /** One part of a manuscript kept as a reference: a chapter of it, or a stretch of its text. */
 interface TextPart { title: string; start: number; end: number }
@@ -44,7 +53,14 @@ interface TextPart { title: string; start: number; end: number }
 async function readIndex(runtime: ProjectRuntime): Promise<IndexFile> {
   try {
     const stored = JSON.parse((await runtime.project.readFile(INDEX)).toString('utf8')) as Partial<IndexFile>
-    return { schema: 1, items: Array.isArray(stored.items) ? stored.items.filter(item => typeof item?.id === 'string' && (item.kind === 'book' || item.kind === 'text')) : [], ...(stored.beforeWriting === false ? { beforeWriting: false } : {}) }
+    return {
+      schema: 1,
+      items: Array.isArray(stored.items) ? stored.items.filter(item => typeof item?.id === 'string' && (item.kind === 'book' || item.kind === 'text')) : [],
+      ...(typeof stored.guide === 'string' && stored.guide.trim().length > 0 ? { guide: stored.guide.trim() } : {}),
+      ...(stored.beforeWriting === false ? { beforeWriting: false } : {}),
+      ...(stored.beforeDeriving === false ? { beforeDeriving: false } : {}),
+      ...(stored.beforeReviewing === false ? { beforeReviewing: false } : {}),
+    }
   } catch {
     return { schema: 1, items: [] }
   }
@@ -64,10 +80,22 @@ export async function activeReferences(runtime: ProjectRuntime): Promise<BookRef
   return (await readIndex(runtime)).items.filter(item => item.off !== true)
 }
 
-/** Whether notes are taken in the references before a chapter is written: yes, where the book has any that are consulted — unless the author turned it off. */
-export async function consultsBeforeWriting(runtime: ProjectRuntime): Promise<boolean> {
+/**
+ * Whether a kind of work looks in the references before anything else: yes, where the book has any that are
+ * consulted — unless the author turned it off for that kind. Before a chapter is written that is the planner taking
+ * notes for the writer; a derivation and a review are held to it themselves.
+ */
+export async function looksFirst(runtime: ProjectRuntime, kind: ReferenceFirst): Promise<boolean> {
   const index = await readIndex(runtime)
-  return index.beforeWriting !== false && index.items.some(item => item.off !== true)
+  return index[FIRST_KEY[kind]] !== false && index.items.some(item => item.off !== true)
+}
+
+/** Whether notes are taken in the references before a chapter is written. */
+export const consultsBeforeWriting = async (runtime: ProjectRuntime): Promise<boolean> => await looksFirst(runtime, 'write')
+
+/** What the author says of how the book goes by its references at large. */
+export async function referenceGuide(runtime: ProjectRuntime): Promise<string | undefined> {
+  return (await readIndex(runtime)).guide
 }
 
 /** The book of the shelf a reference names, open; why not, where it cannot be read. */
@@ -103,7 +131,13 @@ async function inform(core: NovelCore, runtime: ProjectRuntime, reference: BookR
 export async function referenceShelf(core: NovelCore, runtime: ProjectRuntime): Promise<ReferenceShelf> {
   const index = await readIndex(runtime)
   const lang: PromptLanguage = /^zh/i.test((await runtime.project.manifest()).language) ? 'zh' : 'en'
-  return { references: await Promise.all(index.items.map(item => inform(core, runtime, item, lang))), beforeWriting: index.beforeWriting !== false }
+  return {
+    references: await Promise.all(index.items.map(item => inform(core, runtime, item, lang))),
+    ...(index.guide !== undefined ? { guide: index.guide } : {}),
+    beforeWriting: index.beforeWriting !== false,
+    beforeDeriving: index.beforeDeriving !== false,
+    beforeReviewing: index.beforeReviewing !== false,
+  }
 }
 
 const scopeOf = (value: unknown): ReferenceAspect[] | undefined => {
@@ -228,18 +262,36 @@ export async function removeReference(runtime: ProjectRuntime, id: string): Prom
   return found
 }
 
-/** Whether notes are taken in the references before a chapter is written. */
-export async function setConsultBeforeWriting(runtime: ProjectRuntime, on: boolean): Promise<void> {
-  const index = await readIndex(runtime)
-  const { beforeWriting: _was, ...rest } = index
-  await writeIndex(runtime, on ? rest : { ...rest, beforeWriting: false })
+/**
+ * How the references are used at large: which kinds of work look in them first, and what the author says of them all.
+ * What is left out stays as it is; an empty `guide` takes it off.
+ */
+export async function setReferenceUse(runtime: ProjectRuntime, change: { first?: Partial<Record<ReferenceFirst, boolean>>; guide?: string }): Promise<void> {
+  const next: IndexFile = { ...await readIndex(runtime) }
+  for (const kind of Object.keys(FIRST_KEY) as ReferenceFirst[]) {
+    const on = change.first?.[kind]
+    if (on === undefined) continue
+    // Looking first is how things are when nothing is said: only "not" is kept.
+    if (on) delete next[FIRST_KEY[kind]]
+    else next[FIRST_KEY[kind]] = false
+  }
+  if (change.guide !== undefined) {
+    if (change.guide.trim().length > 0) next.guide = change.guide.trim()
+    else delete next.guide
+  }
+  await writeIndex(runtime, next)
 }
+
+/** Whether notes are taken in the references before a chapter is written. */
+export const setConsultBeforeWriting = async (runtime: ProjectRuntime, on: boolean): Promise<void> => { await setReferenceUse(runtime, { first: { write: on } }) }
 
 // ───────────────────────────── reading in them ─────────────────────────────
 
 /** What of a book each kind of reading belongs to. */
 const ASPECT_OF: Partial<Record<ReadKind, ReferenceAspect>> = { chapter: 'text', outline: 'plot', memory: 'plot', threads: 'plot', character: 'characters', world: 'world', style: 'style' }
 const SOURCE_ASPECT: Record<SearchSource, ReferenceAspect> = { manuscript: 'text', character: 'characters', world: 'world', memory: 'plot', outline: 'plot' }
+/** What each kind of reading is called, for a line of what somebody read. */
+const READ_WORD: Record<string, [string, string]> = { outline: ['大纲', 'outline'], chapter: ['正文', 'text'], memory: ['章节记载', 'chapter digest'], threads: ['线索', 'threads'], character: ['人物', 'people'], world: ['设定', 'world'], style: ['文风', 'style'], review: ['审校', 'review'], versions: ['版本', 'versions'] }
 const ASPECT_WORD: Record<ReferenceAspect, [string, string]> = { world: ['世界观与设定', 'its world and settings'], characters: ['人物', 'its people'], style: ['文风', 'its style'], plot: ['剧情（大纲、各章摘要、线索）', 'its plot (outline, chapter digests, threads)'], text: ['正文', 'its text'] }
 
 const openTo = (reference: BookReference, aspect: ReferenceAspect): boolean => reference.scope === undefined || reference.scope.includes(aspect)
@@ -326,26 +378,53 @@ function line(reference: ReferenceInfo, lang: PromptLanguage): string {
 }
 
 /**
- * What whoever works on the book as an agent is told of its references: which there are, what the author wants of
- * each, and that they are read with tools — nothing of them is in the task. Nothing, where the book has none.
+ * The references that are consulted now, as a task lists them — one after another, with what of each is open and
+ * what the author wants of it — and what the author says of them all. Nothing, where the book has none.
  */
-export async function referenceBrief(core: NovelCore, runtime: ProjectRuntime, lang: PromptLanguage): Promise<string | undefined> {
+export async function referenceListing(core: NovelCore, runtime: ProjectRuntime, lang: PromptLanguage): Promise<{ lines: string; guide?: string } | undefined> {
   const references = await consulted(core, runtime, lang)
   if (references.length === 0) return undefined
+  const guide = await referenceGuide(runtime)
+  return { lines: references.map(reference => line(reference, lang)).join('\n'), ...(guide !== undefined ? { guide } : {}) }
+}
+
+/** What the author says of the references at large, as a task has it: it holds for every one of them. */
+export function guideWords(guide: string, lang: PromptLanguage): string {
+  return L(lang, `作者对参考文献的总要求（对每一本都算数；某一本下面另写了“怎么参考”的，两句都照，对不上时那一本照它自己那一句）：\n${guide}`, `What the author asks of the references at large (it holds for every one of them; where one has its own "how to go by it" below, both hold, and its own wins where they are at odds):\n${guide}`)
+}
+
+/**
+ * What whoever works on the book as an agent is told of its references: which there are, what the author wants of
+ * them all and of each, and that they are read with tools — nothing of them is in the task. Nothing, where the book
+ * has none.
+ * @param how.first - this piece of work looks in them before anything else: the author has it so, and what is handed
+ *   in is not taken until it has.
+ */
+export async function referenceBrief(core: NovelCore, runtime: ProjectRuntime, lang: PromptLanguage, how: { first?: boolean } = {}): Promise<string | undefined> {
+  const listing = await referenceListing(core, runtime, lang)
+  if (listing === undefined) return undefined
+  const when = how.first === true
+    ? L(lang, '这件活动手之前先到参考文献里查——作者是这样定的：先读、先找这件活用得上的（要守的设定和规矩、要学的写法、要对的出处），再做；交回的时候会看你查过没有。', 'Before this piece of work is begun, look in the references — the author has it so: read and find what the work can use (settings and rules to keep to, ways of writing to learn, sources to check), then do it; what you hand in is not taken until you have looked.')
+    : L(lang, '这件活和它们沾边时（定设定、推演、写法、核对出处）先去查，再动手；', 'Where this piece of work touches them (a setting to fix, a plot to derive, a way of writing, a source to check), look first, then work;')
+  const guide = listing.guide !== undefined ? `\n${guideWords(listing.guide, lang)}\n` : ''
   return L(lang, `## 这本书的参考文献
-作者给这本书指定了参考：别的书的世界观、设定、文风、剧情或文字。它们的内容不在任务里——用 reference_read / reference_search 去读、去找；每一本只在作者开放的范围里查，照作者写的“怎么参考”来用。这件活和它们沾边时（定设定、推演、写法、核对出处）先去查，再动手；用了哪一本的什么，在交回的结果里说一句。参考是用来学和对照的：除非作者那样说，不整段照搬它的文字，也不把它的人物和情节原样搬进这本书。
-${references.map(reference => line(reference, lang)).join('\n')}`, `## The references of this book
-The author gave this book references: other books whose world, settings, style, plot or wording it goes by. What they hold is not in the task — read it with reference_read and find in it with reference_search; each is open only as far as the author opened it, and is used the way the author wrote. Where this piece of work touches them (a setting to fix, a plot to derive, a way of writing, a source to check), look first, then work; say in what you hand in what you took from which. A reference is to learn from and to hold against: unless the author says so, its wording is not copied out at length, and its people and events are not carried into this book as they stand.
-${references.map(reference => line(reference, lang)).join('\n')}`)
+作者给这本书指定了参考：别的书的世界观、设定、文风、剧情或文字。它们的内容不在任务里——用 reference_read / reference_search 去读、去找；每一本只在作者开放的范围里查，照作者的要求来用。${when}用了哪一本的什么，在交回的结果里说一句。参考是用来学和对照的：除非作者那样说，不整段照搬它的文字，也不把它的人物和情节原样搬进这本书。
+${guide}${listing.lines}`, `## The references of this book
+The author gave this book references: other books whose world, settings, style, plot or wording it goes by. What they hold is not in the task — read it with reference_read and find in it with reference_search; each is open only as far as the author opened it, and is used the way the author asks. ${when} Say in what you hand in what you took from which. A reference is to learn from and to hold against: unless the author says so, its wording is not copied out at length, and its people and events are not carried into this book as they stand.
+${guide}${listing.lines}`)
 }
 
 /**
  * The tools an agent reads the book's references with. None, where the book has none that are consulted.
  * @param names - what the tools are called for whoever gets them: the crew and the showrunner name theirs apart.
  */
-export async function referenceTools(core: NovelCore, runtime: ProjectRuntime, signal?: AbortSignal, names: { read: string; search: string } = { read: 'reference_read', search: 'reference_search' }): Promise<RoleTool[]> {
+export async function referenceTools(core: NovelCore, runtime: ProjectRuntime, signal?: AbortSignal, names: { read: string; search: string } = { read: 'reference_read', search: 'reference_search' }, /** Told of everything read or searched in a reference, in a few words: the list of them alone is no look. */ onLook?: (what: string) => void): Promise<RoleTool[]> {
   if ((await activeReferences(runtime)).length === 0) return []
   const lang: PromptLanguage = /^zh/i.test((await runtime.project.manifest()).language) ? 'zh' : 'en'
+  const looked = <T>(what: string, result: T): T => {
+    onLook?.(what)
+    return result
+  }
   const ready = async (named: string | undefined): Promise<{ reference: ReferenceInfo; other?: ProjectRuntime }> => {
     const reference = pick(await consulted(core, runtime, lang), named)
     if (reference.state === 'locked') throw new Error(`"${reference.name}" is locked: it cannot be read until its author unlocks it in Novel Studio — say so in your result, and work without it`)
@@ -377,7 +456,7 @@ export async function referenceTools(core: NovelCore, runtime: ProjectRuntime, s
         if (other === undefined) {
           const { text, parts } = await textOf(runtime, reference)
           if (what === undefined || what === 'contents' || what === 'outline') {
-            return `"${reference.name}" — ${text.length} characters in ${parts.length} part(s). Read one with what=part ref=<number>.\n${parts.map((part, at) => `${at + 1}. ${part.title} (${part.end - part.start})`).join('\n')}`
+            return looked(L(lang, `《${reference.name}》的目录`, `"${reference.name}": its contents`), `"${reference.name}" — ${text.length} characters in ${parts.length} part(s). Read one with what=part ref=<number>.\n${parts.map((part, at) => `${at + 1}. ${part.title} (${part.end - part.start})`).join('\n')}`)
           }
           if (what !== 'part' && what !== 'chapter') throw new Error(`"${reference.name}" is a manuscript kept as plain text: it has what=contents and what=part (and reference_search), no cards and no outline`)
           const wanted = argText(args.ref)
@@ -388,14 +467,16 @@ export async function referenceTools(core: NovelCore, runtime: ProjectRuntime, s
           const offset = Math.max(0, argInt(args.offset) ?? 0)
           const limit = Math.max(200, Math.min(40_000, argInt(args.limit) ?? 6000))
           const slice = body.slice(offset, offset + limit)
-          return `"${reference.name}", part ${parts.indexOf(part) + 1} "${part.title}", characters ${offset}–${offset + slice.length} of ${body.length}${offset + limit < body.length ? ` (continue with offset=${offset + slice.length})` : ''}:\n\n${slice}`
+          return looked(L(lang, `《${reference.name}》第 ${parts.indexOf(part) + 1} 段`, `"${reference.name}": part ${parts.indexOf(part) + 1}`), `"${reference.name}", part ${parts.indexOf(part) + 1} "${part.title}", characters ${offset}–${offset + slice.length} of ${body.length}${offset + limit < body.length ? ` (continue with offset=${offset + slice.length})` : ''}:\n\n${slice}`)
         }
         const kind = (what ?? 'outline') as ReadKind
         const aspect = ASPECT_OF[kind]
         if (aspect === undefined) throw new Error('`what` is one of outline, chapter, memory, threads, character, world, style')
         if (!openTo(reference, aspect)) throw closed(reference, aspect)
         try {
-          return `[${reference.name}]\n${(await readBook(other, { what: kind, ref: argText(args.ref), offset: argInt(args.offset), limit: argInt(args.limit) }, { read: names.read })).text}`
+          const read = `[${reference.name}]\n${(await readBook(other, { what: kind, ref: argText(args.ref), offset: argInt(args.offset), limit: argInt(args.limit) }, { read: names.read })).text}`
+          const which = argText(args.ref)
+          return looked(`${L(lang, `《${reference.name}》的`, `"${reference.name}": its `)}${L(lang, ...(READ_WORD[kind] ?? [kind, kind]))}${which !== undefined ? L(lang, `（${which}）`, ` (${which})`) : ''}`, read)
         } catch (error) {
           if (error instanceof ProjectError) throw new Error(error.message)
           throw error
@@ -417,6 +498,7 @@ export async function referenceTools(core: NovelCore, runtime: ProjectRuntime, s
         const all = await consulted(core, runtime, lang)
         const among = argText(args.book) !== undefined ? [pick(all, argText(args.book))] : all
         const found: string[] = []
+        let searched = 0
         for (const reference of among) {
           if (reference.state !== 'ready') {
             found.push(`[${reference.name}] cannot be read right now (${reference.state}).`)
@@ -428,6 +510,7 @@ export async function referenceTools(core: NovelCore, runtime: ProjectRuntime, s
             found.push(hits.length > 0
               ? hits.map(hit => `〔${reference.name} · part ${hit.part} "${hit.title}" @${hit.offset}〕\n${hit.snippet}`).join('\n\n')
               : `[${reference.name}] nothing matches "${query}" word for word — a plain text is searched by its words: try the words it would use.`)
+            searched += 1
             continue
           }
           const book = await shelfBook(core, reference)
@@ -436,7 +519,10 @@ export async function referenceTools(core: NovelCore, runtime: ProjectRuntime, s
           if (sources.length === 0) continue
           const hits = await searchBook(book.runtime, { query, sources, limit }, signal)
           found.push(`[${reference.name}]\n${hits.text}`)
+          searched += 1
         }
+        // Looked, where at least one of them could be searched.
+        if (searched > 0) onLook?.(L(lang, `在${among.length === 1 ? `《${among[0]!.name}》` : '各本参考'}里搜“${clip(query, 24, '…')}”`, `searched ${among.length === 1 ? `"${among[0]!.name}"` : 'the references'} for "${clip(query, 40, '…')}"`))
         return found.join('\n\n')
       },
     },

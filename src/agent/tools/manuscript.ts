@@ -15,7 +15,7 @@ import { containedPath } from '../../core/util/fs'
 import type { NovelService } from '../../host/service'
 import { clip } from '../../shared/text'
 import { ANALYZE_STEPS, GLOSSARY_KINDS } from '../../shared/types'
-import { brief, listOf, listParameter, novelTool, picturesSaid, toJson } from './shared'
+import { brief, listOf, listParameter, novelTool, picturesSaid, referencesSaid, toJson } from './shared'
 
 export function manuscriptTools(service: NovelService): ToolDefinition[] {
   return [
@@ -288,9 +288,10 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
         const runtime = await env.project()
         const chapter = args.chapter
         const review = await env.job('review', 'review', chapter, async task => await reviewChapter(env.core, runtime, { chapter, ...(args.focus !== undefined ? { focus: args.focus } : {}) }, task))
-        if (review.issues.length === 0) return { text: `Chapter ${review.index} "${review.title}": ${review.verdict}\nNo issues found.`, data: toJson(review) }
+        const looked = referencesSaid(review.referenced, 'reviewer')
+        if (review.issues.length === 0) return { text: `Chapter ${review.index} "${review.title}": ${review.verdict}\nNo issues found.${looked !== undefined ? `\n${looked}` : ''}`, data: toJson(review) }
         return {
-          text: `Chapter ${review.index} "${review.title}": ${review.verdict}\n\n${review.issues.map((issue, index) => `${index + 1}. [${issue.severity}/${issue.type}] ${issue.quote !== undefined ? `"${clip(issue.quote, 80)}" — ` : ''}${issue.explanation}${issue.suggestion !== undefined ? `\n   Fix: ${issue.suggestion}` : ''}`).join('\n')}`,
+          text: `Chapter ${review.index} "${review.title}": ${review.verdict}\n\n${review.issues.map((issue, index) => `${index + 1}. [${issue.severity}/${issue.type}] ${issue.quote !== undefined ? `"${clip(issue.quote, 80)}" — ` : ''}${issue.explanation}${issue.suggestion !== undefined ? `\n   Fix: ${issue.suggestion}` : ''}`).join('\n')}${looked !== undefined ? `\n\n${looked}` : ''}`,
           data: toJson(review),
         }
       },

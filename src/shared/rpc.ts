@@ -572,8 +572,12 @@ export interface NovelRpc {
   'references.update': { params: { root: string; id: string; note?: string; scope?: ReferenceAspect[] | null; off?: boolean; title?: string }; result: ReferenceShelf }
   /** Take a reference off the list; a manuscript taken in for this book goes with it. */
   'references.remove': { params: { root: string; id: string }; result: ReferenceShelf }
-  /** Whether the planner looks in the references before a chapter is written. */
-  'references.settings': { params: { root: string; beforeWriting: boolean }; result: ReferenceShelf }
+  /**
+   * How the references are used at large: which kinds of work look in them first (`beforeWriting`: the planner takes
+   * notes for the writer; `beforeDeriving`, `beforeReviewing`: the planner and the reviewer are held to look), and
+   * `guide` — what the author asks of them all, in their own words (empty: none). What is left out stays as it is.
+   */
+  'references.settings': { params: { root: string; beforeWriting?: boolean; beforeDeriving?: boolean; beforeReviewing?: boolean; guide?: string }; result: ReferenceShelf }
   /** Have the planner look in the references for one chapter and keep its notes on the chapter's plan. */
   'references.consult': { params: { root: string; chapter: string; direction?: string }; result: JobStarted }
   'ai.deriveBeats': { params: { root: string; chapter: string; direction?: string }; result: JobStarted }

@@ -9,7 +9,7 @@
  * writer's brief.
  */
 import { useRef, useState } from 'react'
-import type { PictureGuide, PicturesRead } from '../shared/types'
+import type { PictureGuide, PicturesRead, ReferencesLooked } from '../shared/types'
 import { PickPicture } from './PlacePicture'
 import { Button, cx, plainEnter, ProjectImage, TextInput, useProject, useStudio, useT } from './ui'
 
@@ -122,4 +122,12 @@ export function picturesReadWord(read: PicturesRead | undefined, t: (zh: string,
   return read.unsure === true
     ? t(`${read.count} 张参考图发给了模型；它没有声明能不能看图——看不出效果的话，到设置里配一个“看图的模型”`, `${read.count} picture(s) sent to the model, which does not say whether it sees them — if it shows no sign of it, set up a model to look at pictures in the settings`)
     : t(`${read.count} 张参考图，模型自己看的`, `${read.count} picture(s), looked at by the model itself`)
+}
+
+/** What a role read in the book's references for work that looks in them first, in a line for the author. */
+export function referencesLookedWord(looked: ReferencesLooked | undefined, t: (zh: string, en: string) => string): string | undefined {
+  if (looked === undefined) return undefined
+  if (looked.cannot !== undefined) return t(`没查参考文献：${looked.cannot}`, `The references were not looked at: ${looked.cannot}`)
+  if (looked.calls === 0) return t('该先查参考文献，这次没有去读', 'The references were to be looked at first, and nothing was read in them this time')
+  return t(`先查了参考文献：${looked.read.join('；')}`, `Looked in the references first: ${looked.read.join('; ')}`)
 }

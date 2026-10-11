@@ -210,7 +210,10 @@ Free-form notes in Markdown.
 ```jsonc
 {
   "schema": 1,
+  "guide": "世界观照《……》；文风只学《……》；人物不从任何一本里搬",   // what the author asks of them all, in their words: said to everybody who works with them
   "beforeWriting": false,          // absent: the planner reads the references for a chapter before it is written
+  "beforeDeriving": false,         // absent: a derivation (chapters, beats, what-if) is held to read in them first
+  "beforeReviewing": false,        // absent: a review is held to read in them first, and holds the chapter against them
   "items": [
     { "id": "ref_ab12cd", "kind": "book",            // a book of the shelf, consulted as it is organised there
       "title": "红楼梦", "root": "/path/to/that/book", "book": "novel_…",   // its folder, and its id (found again by id where the folder moved)
@@ -225,7 +228,7 @@ Free-form notes in Markdown.
 }
 ```
 
-Nothing of a reference is copied into this book's bible, and nothing of one is put into a task whole: the crew reads in them with tools of its own, as far as each is open, and what it took for a chapter is on that chapter's plan (`referenceNotes`). A reference that is a sealed book says only its id here, and is read while that book is unlocked.
+Nothing of a reference is copied into this book's bible, and nothing of one is put into a task whole: the crew reads in them with tools of its own, as far as each is open, and what it took for a chapter is on that chapter's plan (`referenceNotes`). A review made with the references looked at first says what was read (`referenced: { calls, read, cannot? }` in `reviews/<chapter>.json`). A reference that is a sealed book says only its id here, and is read while that book is unlocked.
 
 ## Manuscript
 

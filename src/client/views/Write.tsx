@@ -19,7 +19,7 @@ import { ChapterTree } from '../ChapterTree'
 import { TranslateDialog } from '../Translate'
 import { ChapterPortraits } from '../Figures'
 import { WriteTrialDialog } from '../Trial'
-import { GuidePictures } from '../Guides'
+import { GuidePictures, referencesLookedWord } from '../Guides'
 import { Icon } from '../icons'
 import { jobKindLabel, jobPulse } from '../Studio'
 import { CHAPTER_STATUS, CHAPTER_STATUS_TONE, ISSUE_TYPE, languageLabel, SEVERITY, SEVERITY_TONE, sheetsDrawn } from '../labels'
@@ -527,6 +527,7 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
               {doc.data.review !== undefined ? <Button size="sm" variant="ghost" icon="trash" onClick={() => { confirm.ask(t('清除这一章的审校意见？', 'Clear this chapter\'s review?'), () => { void controller.guard(async () => { await controller.api.call('review.clear', { root, chapter: chapter.id }); doc.reload() }) }) }} title={t('清除这一章的审校意见', 'Clear this chapter\'s review')} /> : null}
             </div>
             {doc.data.review !== undefined ? <p className="nv-note">{doc.data.review.verdict}</p> : <p className="nv-muted">{t('审校对照设定、记忆与文风检查这一章。', 'A review checks the chapter against the bible, memory and style.')}</p>}
+            {doc.data.review?.referenced !== undefined ? <p className="nv-muted nv-small">{referencesLookedWord(doc.data.review.referenced, t)}</p> : null}
             <IssueList chapterId={chapter.id} issues={doc.data.review?.issues ?? []} onLocate={locate} onChanged={() => { doc.reload() }} before={settle} after={() => { showPanel('proposals') }} />
           </div>
         ) : null}

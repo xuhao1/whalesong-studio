@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 /** Outline: volumes, chapters and beats; the lines of the plot and their graph; long-running threads; AI derivation and what-if branches. */
 import { DeriveTrialDialog } from '../Trial'
-import { GuidePictures, picturesReadWord } from '../Guides'
+import { GuidePictures, picturesReadWord, referencesLookedWord } from '../Guides'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { OutlineOpInput } from '../../shared/rpc'
 import { formatCount, sameName } from '../../shared/text'
-import { chapterBudgetOf, MAIN_LINE, type Beat, type ChapterInfo, type ChapterMemory, type ChapterPlan, type ChapterStatus, type CharacterCard, type PictureGuide, type PicturesRead, type PlotLine, type PlotThread, type ThreadKind, type ThreadStatus, type Volume } from '../../shared/types'
+import { chapterBudgetOf, MAIN_LINE, type Beat, type ChapterInfo, type ChapterMemory, type ChapterPlan, type ChapterStatus, type CharacterCard, type PictureGuide, type PicturesRead, type PlotLine, type PlotThread, type ReferencesLooked, type ThreadKind, type ThreadStatus, type Volume } from '../../shared/types'
 import { byWeight, CharacterPicker, useCastFilter } from '../CharacterPicker'
 import { Icon } from '../icons'
 import { ChapterTree, useOutlineOps } from '../ChapterTree'
@@ -326,7 +326,9 @@ function ChapterPlanEditor({ plan, index, plans }: { plan: ChapterPlan; index: n
   const deriveBeats = (): void => {
     setDeriving(true)
     void controller.guard(async () => {
-      await controller.run('ai.deriveBeats', { root, chapter: plan.id, ...(direction.trim().length > 0 ? { direction: direction.trim() } : {}) })
+      const info = await controller.run('ai.deriveBeats', { root, chapter: plan.id, ...(direction.trim().length > 0 ? { direction: direction.trim() } : {}) })
+      const said = referencesLookedWord((info.result?.output as { referenced?: ReferencesLooked } | undefined)?.referenced, t)
+      if (said !== undefined) controller.toast('info', t(`节拍排好了。${said}`, `The beats are laid out. ${said}`))
       setDirection('')
     }).finally(() => { setDeriving(false) })
   }
@@ -585,10 +587,12 @@ export function Derive({ onApplied, only, autoStart, preset }: {
   // Pictures the planner is to go by, and — after a run — how they were read.
   const [guides, setGuides] = useState<PictureGuide[]>([])
   const [read, setRead] = useState<PicturesRead | undefined>()
+  // What the planner read in the book's references before it derived.
+  const [looked, setLooked] = useState<ReferencesLooked | undefined>()
   const [question, setQuestion] = useState('')
   // Pictures the ways on are weighed with.
   const [whatGuides, setWhatGuides] = useState<PictureGuide[]>([])
-  const [branches, setBranches] = useState<{ branches: Branch[]; recommendation?: string; pictures?: PicturesRead } | undefined>()
+  const [branches, setBranches] = useState<{ branches: Branch[]; recommendation?: string; pictures?: PicturesRead; referenced?: ReferencesLooked } | undefined>()
   const nameOf = (ref: string): string => project.characters.find(card => card.id === ref)?.name ?? ref
 
   const derive = (override?: string): void => {
@@ -599,6 +603,7 @@ export function Derive({ onApplied, only, autoStart, preset }: {
     setSkipped(new Set())
     setApplied(undefined)
     setRead(undefined)
+    setLooked(undefined)
     void controller.guard(async () => {
       if (direct) {
         const info = await controller.run('ai.deriveChapters', {
@@ -612,8 +617,9 @@ export function Derive({ onApplied, only, autoStart, preset }: {
           ...(mode === 'branch' && choice.trim().length > 0 ? { choice: choice.trim() } : {}),
           ...(guides.length > 0 ? { guides } : {}),
         }, setStream)
-        const output = info.result?.output as { added?: { id: string }[]; line?: { title: string; created: boolean }; replaced?: { chapters: number; kept?: { title: string } }; rationale?: string; pictures?: PicturesRead } | undefined
+        const output = info.result?.output as { added?: { id: string }[]; line?: { title: string; created: boolean }; replaced?: { chapters: number; kept?: { title: string } }; rationale?: string; pictures?: PicturesRead; referenced?: ReferencesLooked } | undefined
         setRead(output?.pictures)
+        setLooked(output?.referenced)
         await controller.refreshProject()
         const first = output?.added?.[0]?.id
         if (first !== undefined) controller.focusChapter(first)
@@ -621,8 +627,9 @@ export function Derive({ onApplied, only, autoStart, preset }: {
         return
       }
       const info = await controller.run('ai.deriveChapters', { root, apply: false, count: Math.max(1, Math.min(12, wanted)), ...(brief.length > 0 ? { direction: brief } : {}), ...(volume.length > 0 ? { volume } : {}), ...(guides.length > 0 ? { guides } : {}) }, setStream)
-      const output = info.result?.output as { chapters?: DerivedChapter[]; rationale?: string; pictures?: PicturesRead } | undefined
+      const output = info.result?.output as { chapters?: DerivedChapter[]; rationale?: string; pictures?: PicturesRead; referenced?: ReferencesLooked } | undefined
       setRead(output?.pictures)
+      setLooked(output?.referenced)
       if (output?.chapters !== undefined) setDerived({ chapters: output.chapters, ...(output.rationale !== undefined ? { rationale: output.rationale } : {}), volume })
     }).finally(() => { setWorking(undefined); setStream('') })
   }
@@ -640,8 +647,8 @@ export function Derive({ onApplied, only, autoStart, preset }: {
     setBranches(undefined)
     void controller.guard(async () => {
       const info = await controller.run('ai.whatIf', { root, question: question.trim(), ...(whatGuides.length > 0 ? { guides: whatGuides } : {}) }, setStream)
-      const output = info.result?.output as { branches?: Branch[]; recommendation?: string; pictures?: PicturesRead } | undefined
-      if (output?.branches !== undefined) setBranches({ branches: output.branches, ...(output.recommendation !== undefined ? { recommendation: output.recommendation } : {}), ...(output.pictures !== undefined ? { pictures: output.pictures } : {}) })
+      const output = info.result?.output as { branches?: Branch[]; recommendation?: string; pictures?: PicturesRead; referenced?: ReferencesLooked } | undefined
+      if (output?.branches !== undefined) setBranches({ branches: output.branches, ...(output.recommendation !== undefined ? { recommendation: output.recommendation } : {}), ...(output.pictures !== undefined ? { pictures: output.pictures } : {}), ...(output.referenced !== undefined ? { referenced: output.referenced } : {}) })
     }).finally(() => { setWorking(undefined); setStream('') })
   }
   const accept = (): void => {
@@ -720,6 +727,7 @@ export function Derive({ onApplied, only, autoStart, preset }: {
         <Field label={t('方向（可留空）', 'Direction (optional)')}><TextArea value={direction} minRows={2} placeholder={t('例：让反派先赢一局；这几章把感情线推到误会最深处', 'e.g. let the antagonist win a round; push the romance to its deepest misunderstanding')} onChange={(event) => { setDirection(event.target.value) }} /></Field>
         <GuidePictures value={guides} onChange={setGuides} disabled={working !== undefined} hint={t('策划照着图来排；哪一章用了哪张图，记在那一章上', 'The planner goes by them; which chapter goes by which is kept on that chapter')} />
         {read !== undefined ? <p className="nv-muted nv-small">{picturesReadWord(read, t)}</p> : null}
+        {looked !== undefined ? <p className="nv-muted nv-small">{referencesLookedWord(looked, t)}</p> : null}
         <div className="nv-form-actions">
           {!direct ? <Button variant="outline" icon="layers" disabled={working !== undefined} onClick={() => { setComparing(true) }} title={t('让几个模型各推演一版，并排着看，采纳一版——采纳之前什么都不进大纲', 'Have several models each plan these chapters, read the plans side by side and take one — nothing enters the outline before that')}>{t('对比…', 'Compare…')}</Button> : null}
           <Button variant="primary" icon="sparkles" busy={working === 'chapters'} disabled={working !== undefined} onClick={() => { derive() }}>{t('推演', 'Derive')}</Button>
@@ -776,6 +784,7 @@ export function Derive({ onApplied, only, autoStart, preset }: {
         {branches !== undefined ? (
           <div className="nv-branches">
             {branches.pictures !== undefined ? <p className="nv-muted nv-small">{picturesReadWord(branches.pictures, t)}</p> : null}
+            {branches.referenced !== undefined ? <p className="nv-muted nv-small">{referencesLookedWord(branches.referenced, t)}</p> : null}
             {branches.branches.map((branch, at) => (
               <article key={at} className="nv-branch">
                 <h5>{branch.title}</h5>

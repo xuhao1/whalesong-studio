@@ -7216,6 +7216,18 @@ blockquote.nv-issue-quote {
   margin-top: 3px;
 }
 
+.nv-reference-use {
+  display: grid;
+  gap: 8px;
+}
+
+.nv-reference-first {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
 .nv-reference-list {
   display: grid;
   gap: 10px;
