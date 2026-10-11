@@ -4,7 +4,7 @@ import { deriveGrowth } from '../../core/pipelines/growth'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { acceptSuggestion, deriveTies, dismissSuggestion, expandCharacter, expandWorld, extractStyle, tidyWorld } from '../../core/pipelines/bible'
 import { applyOutlineOps, type OutlineOp } from '../../core/pipelines/outline'
-import { buildFoundation, deriveBeats, deriveChapters, planOfText, whatIf } from '../../core/pipelines/plot'
+import { buildFoundation, deriveBeats, deriveChapters, derivedPlan, deriveToLook, enterDerivedPlan, planOfText, settleDerivedPlan, whatIf } from '../../core/pipelines/plot'
 import { cleanGuides } from '../../core/pipelines/guides'
 import { ProjectError, upsertLooks } from '../../core/project'
 import { deriveLook, deriveScenes, deriveVisual } from '../../core/pipelines/illustrate'
@@ -12,7 +12,7 @@ import { L, promptLanguage, renderCharacter, renderWorld } from '../../core/rend
 import { lifeLine } from '../../shared/life'
 import type { NovelService } from '../../host/service'
 import { TIE_ENDS, TIE_KINDS, type Tie, type TieEnd, type TieKind } from '../../shared/ties'
-import { WORLD_EVENT_KINDS, withTurnPictures, type CharacterCard, type StyleProfile, type WorldEntry, type WorldEvent } from '../../shared/types'
+import { WORLD_EVENT_KINDS, withTurnPictures, type CharacterCard, type DerivedChapter, type StyleProfile, type WorldEntry, type WorldEvent } from '../../shared/types'
 import { groupOf } from '../../shared/world'
 import { brief, listOf, listParameter, novelTool, picturesSaid, referencesSaid, toJson } from './shared'
 
@@ -369,14 +369,15 @@ export function bibleTools(service: NovelService): ToolDefinition[] {
       description: [
         'Ask the architect model to develop plot from where the story stands. It reads the bible, the story so far and the open threads.',
         '- kind=chapters: outline the next `count` chapters (default 5; any number the author asks for — they are derived ten at a time, each round from where the last left off) following `direction` if given. They are added to the outline unless apply=false. Where they go: at the end of the main line by default; `line` names another line of the plot; `after` the chapter they follow. `mode` says what becomes of what is there after that chapter already — append (default) adds; replace puts the new chapters in its place (chapters that are written are never thrown away: they are kept as a line put aside); branch leaves it as it is and opens a new line for the new chapters (`title` names it, `choice` says what is decided to go that way). When the author wants the story to go differently from some chapter on, ask which they mean — replace, or a line of its own — unless they said.',
+        '  With apply=false the chapters are not added: the plan waits with the book to be looked at — one plan at a time, and the Outline page of the Studio shows the same one. Then, as the author decides: `waiting=add` puts it into the outline as it stands, `waiting=discard` drops it, `waiting=show` reads it again. When the author has something to say of the plan that waits — whoever derived it, you or they on the page — pass their words as `feedback`: the planner that derived it adjusts that plan, in the conversation it derived it in with all it read there while it is still at hand (about half an hour; after that a planner is handed the plan and the words), changing what they spoke of and handing the rest back as it was; the adjusted plan waits in its place and the result says which planner it was. Do not derive anew to change a plan that waits. With `feedback` the plan stays what it was derived for (its line, volume and direction); `count` and the rest are not used.',
         '  `pictures`: pictures of the book the author gave to steer these chapters by (project-relative paths). The planner looks at them — or is told what they show by the model set up to look at pictures (novel_settings: vision); with neither, it goes by what each picture is called, and the result says so — and works them in; the chapter that goes by a picture keeps it on its plan (`guides`), where whoever writes it finds it. Only pictures the author pointed at.',
         '- kind=beats: break one chapter\'s outline into scene beats (`chapter` required). Do this before novel_write when a chapter only has a synopsis.',
         '  With from_text=true, for a chapter that is written: its beats are read off its text as it now stands, in place of the ones planned. Only the beats change (a beat that still holds keeps its words); the plan as it was stays in its history. `direction` is not used.',
-        '- kind=plan: for a chapter that is written (`chapter` required), set its plan right by its text — synopsis, place, time, point of view, cast and beats — after the text was written differently from its plan, edited by the author, or changed by a revision. Whoever works from the plan afterwards (a writer rewriting the chapter, the director, the planner deriving what follows) then reads what was written. What the text does not say of place or time stays as planned; the chapter\'s purpose, notes and threads are not touched; the plan as it was stays in its history. Do this for the chapters a revision changed, once its proposals are accepted.',
+        '- kind=plan: for a chapter that is written (`chapter` required), set its plan right by its text — synopsis, place, time, point of view, cast and beats — after the text was written differently from its plan or edited by the author. Whoever works from the plan afterwards (a writer rewriting the chapter, the director, the planner deriving what follows) then reads what was written. What the text does not say of place or time stays as planned; the chapter\'s purpose, notes and threads are not touched; the plan as it was stays in its history. The Studio does this by itself once a chapter that was digested before is changed — a revision accepted, the chapter rewritten or edited — unless the author switched that off (novel_settings: planFollowsText); ask for it here when a plan is behind all the same.',
         '- kind=what_if: explore alternative directions for a question in `direction` ("what if she refuses the deal?"). Nothing is changed; bring the branches to the author.',
         '- kind=foundation: develop a raw idea in `direction` into premise, cast, world, volumes and opening chapters (for a project that is still empty).',
       ].join('\n'),
-      mutating: args => args.kind !== 'what_if' && args.apply !== false,
+      mutating: args => args.kind !== 'what_if' && args.apply !== false && args.feedback === undefined && args.waiting !== 'show' && args.waiting !== 'discard',
       parameters: {
         kind: { type: 'string', required: true, enum: ['chapters', 'beats', 'plan', 'what_if', 'foundation'] },
         direction: { type: 'string', description: 'Steering from the author, the what-if question, or the idea.' },
@@ -389,12 +390,58 @@ export function bibleTools(service: NovelService): ToolDefinition[] {
         chapter: { type: 'string', description: 'beats, plan: which chapter.' },
         from_text: { type: 'boolean', description: 'beats: read them off the chapter\'s text as written (the chapter has to have text) instead of deriving them from its plan.' },
         volume: { type: 'string', description: 'chapters: which volume to extend (default: the last).' },
-        apply: { type: 'boolean', description: 'chapters/beats/plan: write the result into the outline (default true).' },
+        apply: { type: 'boolean', description: 'chapters/beats/plan: write the result into the outline (default true). chapters with apply=false: the plan waits with the book to be looked at.' },
+        feedback: { type: 'string', description: 'chapters: what the author says of the plan that waits — it is adjusted by the planner that derived it, and waits again.' },
+        waiting: { type: 'string', enum: ['show', 'add', 'discard'], description: 'chapters: the plan that waits to be looked at — read it, add it to the outline as it stands, or drop it.' },
         pictures: listParameter('chapters, what_if: pictures the author gave to steer by — project-relative paths of the book\'s own pictures.'),
       },
       async run(args, env) {
         const runtime = await env.project()
         if (args.kind === 'chapters') {
+          const said = args.feedback?.trim() ?? ''
+          /** A plan that waits, a chapter to a few lines. */
+          const laid = (chapters: readonly DerivedChapter[]): string => chapters.map((chapter, index) => `${index + 1}. ${chapter.title}\n   ${brief(chapter.synopsis, 260)}${chapter.beats.length > 0 ? `\n   beats: ${chapter.beats.map(beat => brief(beat.summary, 60)).join(' → ')}` : ''}${chapter.guides !== undefined ? `\n   goes by: ${chapter.guides.map(guide => guide.path).join(', ')}` : ''}`).join('\n')
+          const then = 'It is not in the outline. `waiting=add` adds it as it stands, `waiting=discard` drops it, `feedback` has its planner adjust it by what the author says.'
+          if (args.waiting !== undefined && said.length === 0) {
+            const plan = await derivedPlan(runtime)
+            if (plan === undefined) return { text: 'No derived plan is waiting to be looked at. kind=chapters with apply=false derives one.', data: toJson({ waiting: null }) }
+            if (args.waiting === 'show') {
+              return {
+                text: `The plan that waits (${plan.chapters.length} chapter(s), derived ${plan.at}${plan.direction !== undefined ? `, direction: ${brief(plan.direction, 200)}` : ''}${plan.feedback !== undefined ? `; adjusted ${plan.feedback.length} time(s) by: ${plan.feedback.map(word => brief(word, 120)).join(' / ')}` : ''}):\n${laid(plan.chapters)}${plan.rationale !== undefined ? `\n\nRationale: ${plan.rationale}` : ''}\n\n${then}`,
+                data: toJson(plan),
+              }
+            }
+            if (args.waiting === 'discard') {
+              await settleDerivedPlan(env.core, runtime)
+              return { text: `Dropped the plan that waited (${plan.chapters.length} chapter(s)). Nothing waits now; the outline is as it was.`, data: toJson({ discarded: plan.chapters.length }) }
+            }
+            const entered = (await enterDerivedPlan(env.core, runtime))!
+            return {
+              text: `Added the plan that waited to the outline${entered.line !== undefined ? ` on the line "${entered.line.title}" (${entered.line.id})` : ''}:\n${entered.added.map(chapter => `${chapter.index}. ${chapter.title} (${chapter.id})`).join('\n')}`,
+              data: toJson(entered),
+            }
+          }
+          if (said.length > 0 || args.apply === false) {
+            // Looked at before it is added: it waits with the book, and its planner is kept to go on from it.
+            const result = await env.job('derive', 'derive chapters preview', undefined, async (task, job) => await deriveToLook(env.core, runtime, {
+              ...(args.count !== undefined ? { count: args.count } : {}),
+              ...(args.direction !== undefined ? { direction: args.direction } : {}),
+              ...(args.volume !== undefined ? { volume: args.volume } : {}),
+              ...(args.line !== undefined && args.line.trim().length > 0 ? { line: args.line.trim() } : {}),
+              ...(args.after !== undefined && args.after.trim().length > 0 ? { after: args.after.trim() } : {}),
+              ...(args.mode !== undefined ? { mode: args.mode } : {}),
+              ...(listOf(args.pictures) !== undefined ? { guides: cleanGuides(listOf(args.pictures)!) } : {}),
+              ...(said.length > 0 ? { feedback: said } : {}),
+              job: job.id,
+            }, task))
+            const by = said.length === 0 ? '' : result.resumed === true
+              ? ' — by the planner that derived it, going on in its own conversation'
+              : ' — the planner that derived it was no longer at hand, so another was handed the plan and the author\'s words'
+            return {
+              text: `${said.length > 0 ? `The plan that waits, adjusted by what the author said${by}` : `Derived ${result.chapters.length} chapters to be looked at`}:\n${laid(result.chapters)}${result.rationale !== undefined ? `\n\nRationale: ${result.rationale}` : ''}${result.pictures !== undefined ? `\n\n${picturesSaid(result.pictures, 'planner')!}` : ''}${result.referenced !== undefined ? `\n\n${referencesSaid(result.referenced, 'planner')!}` : ''}\n\n${then}`,
+              data: toJson(result),
+            }
+          }
           const result = await env.job('derive', 'derive chapters', undefined, async task => await deriveChapters(env.core, runtime, {
             ...(args.count !== undefined ? { count: args.count } : {}),
             ...(args.direction !== undefined ? { direction: args.direction } : {}),

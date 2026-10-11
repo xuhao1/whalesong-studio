@@ -250,6 +250,7 @@ A reply that is cut off at a limit all the same is not patched up and passed alo
 | `context.budgetTokens` | unset | how much of the story's own text one call carries. Unset: **half of what the model can read** (500,000 tokens for a model that reads a million). Whole chapters only — the figure is rounded down to a chapter boundary. |
 | `context.tailChars` | `3000` | characters of the text just before the writing position that are always carried verbatim, even when the chapter they belong to is outside the window |
 | `autoDigest` | `true` | digest a chapter right after it is written or a revision is applied |
+| `planFollowsText` | `true` | once a chapter that was digested before is changed — a proposal accepted, the chapter written anew, an edit — have its plan (synopsis, place, time, point of view, cast and beats) read against the text and set by it, a moment later; the plan as it was stays in its history, and a plan already read from the text its chapter has is left alone. Off: a plan is set by its text only where the author asks (*Update the plan from the text*) |
 | `siftCast` | `true` | after digests, have the planner look through the names that have no card yet and say who is worth one (a suggestion), who is somebody under another name, and who is a walk-on |
 | `reviewAgentRevisions` | `false` | when on, revisions requested by the showrunner wait as proposals instead of applying |
 

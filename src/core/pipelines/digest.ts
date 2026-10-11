@@ -23,6 +23,7 @@ import { mapLimit } from '../util/async'
 import { scheduleSift } from './cast'
 import { keepNotedScenes } from './scenes'
 import { scheduleSettle } from './settle'
+import { schedulePlanFollow } from './follow'
 
 const FACT_KINDS: FactKind[] = ['state', 'relationship', 'knowledge', 'item', 'world', 'event']
 const ENTITY_KINDS: EntityCandidate['kind'][] = ['character', 'location', 'item', 'faction', 'term']
@@ -227,6 +228,9 @@ export async function digestChapter(core: NovelCore, runtime: ProjectRuntime, re
   await keepNotedScenes(runtime, scenes.filter(note => note.by !== undefined).map(note => note.character)).catch((error: unknown) => { core.log('could not bring the signature scenes up to date', error) })
   // What the plan leaves empty is filled from what the chapter turned out to be.
   await fillPlans(runtime, [chapter.plan.id]).catch(() => {})
+  // A chapter digested before was changed since (or is read again): its plan may say what was meant rather than
+  // what is there now, so it is read against the text. A first digest leaves the plan be — it was what was written by.
+  if (existing !== undefined) schedulePlanFollow(core, runtime, chapter.plan.id, task)
   // Whoever this chapter names that has no card is on the list of walk-ons by now: once the digests have settled,
   // the planner looks through that list and says who is worth a card.
   scheduleSift(core, runtime, task)

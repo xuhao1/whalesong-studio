@@ -10,6 +10,30 @@ describe('project store', () => {
   beforeEach(async () => { bed = await createTestBed() })
   afterEach(async () => { await bed.cleanup() })
 
+  it('a core that was taken down opens no book again — whatever of it is still on its way leaves no watcher behind', async () => {
+    const { project } = bed.runtime
+    const root = project.root
+    const chapter = await project.addChapter({ title: '雨夜' })
+    await project.saveChapterText(chapter.id, '夜雨敲窗。')
+    // The Host half is replaced: its core goes down, and a request it was still answering asks for the book.
+    bed.core.dispose()
+    await expect(bed.core.tryRuntime(root)).rejects.toMatchObject({ code: 'novel/replaced' })
+    await expect(bed.core.runtime(root)).rejects.toMatchObject({ code: 'novel/replaced' })
+    await expect(bed.core.create(join(bed.dir, 'another'), { title: '另一本', language: 'zh' })).rejects.toMatchObject({ code: 'novel/replaced' })
+    // The half that took its place writes the book: nothing of the old one is there to take that for a change from outside.
+    const next = await createTestBed()
+    try {
+      const again = (await next.core.runtime(root)).project
+      const before = (await again.activity()).length
+      await again.saveChapterText(chapter.id, '夜雨敲窗。沈璃推开旧居的门。')
+      await new Promise(resolve => setTimeout(resolve, 500))
+      expect((await again.activity()).filter(entry => entry.by === 'outside')).toHaveLength(0)
+      expect((await again.activity()).length).toBe(before)
+    } finally {
+      await next.cleanup()
+    }
+  })
+
   it('creates the directory layout with a manifest, an outline and a default style', async () => {
     const { project } = bed.runtime
     const manifest = await project.manifest()

@@ -55,6 +55,12 @@ export interface LockView extends BookLock {
    * Absent on a Host from before conversations were sealed with their book.
    */
   conversations?: { sealed: number; open: number; waiting: number }
+  /**
+   * The copies DSH's attachment store keeps of this book's pictures — every picture a model was shown is kept there,
+   * plain: how many are under the seal, and how many lie in DSH's store (all of them while the book is open).
+   * Absent on a Host from before they were sealed with their book.
+   */
+  pictures?: { sealed: number; open: number }
 }
 
 export const RPC_ENDPOINT = 'novel/rpc'
@@ -608,6 +614,8 @@ export interface NovelRpc {
    * point of view, cast and beats; `beats` the beats alone. The plan as it was stays in its history.
    */
   'ai.planOfText': { params: { root: string; chapter: string; what?: 'beats' | 'plan' }; result: JobStarted }
+  /** Several chapters' plans set by their texts in one job. A plan already read from the text its chapter has is left alone unless `force`. */
+  'ai.plansOfText': { params: { root: string; chapters: string[]; force?: boolean }; result: JobStarted }
   'ai.whatIf': { params: { root: string; question: string; branches?: number; /** Pictures the ways on are weighed with. */ guides?: PictureGuide[] }; result: JobStarted }
   /** Read the book and write down what it says — the passes of an import's analysis, on a book that has its chapters. Without `steps`: what an analysis that was cut short has left to do (all of it where none was started). */
   'ai.analyze': { params: { root: string; steps?: AnalyzeStep[] }; result: JobStarted }

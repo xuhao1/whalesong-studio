@@ -21,6 +21,7 @@ import { architectSystem, mendTask, reviseChapterSystem, reviseChapterTask, revi
 import { L, promptLanguage, renderStyle } from '../render'
 import { mapLimit } from '../util/async'
 import { scheduleDigest } from './digest'
+import { schedulePlanFollow } from './follow'
 import { scheduleRecheck } from './review'
 import { cleanProse } from './write'
 import { guidePictures, picturesRead } from './guides'
@@ -959,6 +960,8 @@ export async function acceptProposal(core: NovelCore, runtime: ProjectRuntime, i
   await project.saveChapterText(proposal.chapterId, next, { reason: 'before-revise' })
   const updated = (await project.setProposalStatus(id, 'accepted'))!
   scheduleDigest(core, runtime, proposal.chapterId, task)
+  // The chapter's plan follows what was accepted — also where chapters are not digested by themselves.
+  schedulePlanFollow(core, runtime, proposal.chapterId, task)
   // What else the change settled, or moved: the issues still open there are looked at again.
   const where = await project.findChapter(proposal.chapterId)
   const lang = promptLanguage((await project.manifest()).language)

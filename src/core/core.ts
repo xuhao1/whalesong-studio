@@ -186,6 +186,16 @@ export class NovelCore {
     this.runtimes.clear()
   }
 
+  /**
+   * A core that was taken down opens no book. Whatever of the Host half it belonged to is still on its way when
+   * that half is replaced — a request being answered, a timer — would otherwise open the book anew, and with it a
+   * watcher nobody closes: one that takes every write of the half that came after for a change from outside.
+   * @throws ProjectError `novel/replaced`.
+   */
+  private alive(): void {
+    if (this.disposed) throw new ProjectError('novel/replaced', 'this half of Novel Studio was replaced by a newer one while it worked — ask again')
+  }
+
   // ───────────── projects ─────────────
 
   /**
@@ -194,6 +204,7 @@ export class NovelCore {
    * @throws ProjectError `novel/locked` for a sealed book that is locked — or open to devices only, for anyone else.
    */
   async tryRuntime(root: string, scope?: 'device'): Promise<ProjectRuntime | undefined> {
+    this.alive()
     const key = resolve(root)
     if (scope !== 'device' && this.deviceOnly.has(key)) throw new ProjectError('novel/locked', `"${(await readStub(key))?.title ?? 'this book'}" is locked — its author unlocks it in Novel Studio`)
     let pending = this.runtimes.get(key)
@@ -202,6 +213,11 @@ export class NovelCore {
         // A sealed book opens only with its key; without one this throws `novel/locked`.
         const project = await Project.open(key, this.bookKeys.get(key))
         if (project === undefined) return undefined
+        // Taken down while the book was being opened: it is closed again, not kept.
+        if (this.disposed) {
+          project.dispose()
+          return undefined
+        }
         this.rootsById.set((await project.manifest()).id, key)
         const runtime: ProjectRuntime = { project, index: new RetrievalIndex(project, () => this.embedder(project)) }
         this.announce(runtime)
@@ -221,6 +237,7 @@ export class NovelCore {
   }
 
   async create(root: string, input: CreateProjectInput): Promise<ProjectRuntime> {
+    this.alive()
     const key = resolve(root)
     const project = await Project.create(key, input)
     const runtime: ProjectRuntime = { project, index: new RetrievalIndex(project, () => this.embedder(project)) }

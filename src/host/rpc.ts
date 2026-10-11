@@ -35,8 +35,9 @@ import { applyOutlineOps, type OutlineOp } from '../core/pipelines/outline'
 import {
   ensurePortrait, novelizePlay, paintPlayScene, playTurn, rewindPlay, setPlayOutcome, startPlay, voicePlayLine,
 } from '../core/pipelines/play'
-import { buildFoundation, derivedPlan, deriveBeats, deriveChapters, keepDerivedPlan, planOfText, settleDerivedPlan, whatIf } from '../core/pipelines/plot'
+import { buildFoundation, derivedPlan, deriveBeats, deriveChapters, deriveToLook, keepDerivedPlan, planOfText, settleDerivedPlan, whatIf } from '../core/pipelines/plot'
 import { clearReview, listReviews, noteIssue, recheckIssues, resolveIssue, reviewChapter } from '../core/pipelines/review'
+import { plansOfText } from '../core/pipelines/follow'
 import { fixIssue, fixIssues, acceptProposal, rejectProposal, reviseBook, reviseChapter, reviseSpan, mendInTurn } from '../core/pipelines/revise'
 import { writeChapter } from '../core/pipelines/write'
 import { imageSetups, speechSetups, trialDerive, trialSpeak, trialWrite } from '../core/pipelines/trial'
@@ -791,41 +792,23 @@ export function createHandlers(service: NovelService): Handlers {
       const runtime = await open(root)
       // What the author says of the plan that waits to be looked at: that plan is what is adjusted.
       const said = typeof revise === 'string' ? revise.trim() : ''
-      const waiting = said.length > 0 ? await derivedPlan(runtime) : undefined
-      if (said.length > 0 && waiting === undefined) throw new ProjectError('novel/not-found', 'no derived plan is waiting to be adjusted — derive one first')
-      const preview = apply === false || waiting !== undefined
-      const where = waiting !== undefined ? waiting.volume : volume
-      const wanted = waiting !== undefined ? waiting.direction : direction
-      return job(runtime, 'derive', preview ? 'derive chapters preview' : 'derive chapters', undefined, async (task, context) => {
-        const result = await deriveChapters(core, runtime, {
-          ...(count !== undefined ? { count } : {}),
-          ...(wanted !== undefined ? { direction: wanted } : {}),
-          ...(where !== undefined ? { volume: where } : {}),
-          ...(preview ? { apply: false } : apply !== undefined ? { apply } : {}),
-          ...(waiting !== undefined ? { revise: { chapters: waiting.chapters, ...(waiting.rationale !== undefined ? { rationale: waiting.rationale } : {}), feedback: said } } : {}),
-          ...(typeof line === 'string' && line.length > 0 ? { line } : {}),
-          ...(typeof after === 'string' && after.length > 0 ? { after } : {}),
-          ...(mode === 'append' || mode === 'replace' || mode === 'branch' ? { mode } : {}),
-          ...(typeof title === 'string' && title.trim().length > 0 ? { title } : {}),
-          ...(typeof choice === 'string' && choice.trim().length > 0 ? { choice } : {}),
-          ...(Array.isArray(guides) ? { guides: cleanGuides(guides) } : {}),
-        }, task)
+      if (said.length > 0 && await derivedPlan(runtime) === undefined) throw new ProjectError('novel/not-found', 'no derived plan is waiting to be adjusted — derive one first')
+      const preview = apply === false || said.length > 0
+      const asked = {
+        ...(count !== undefined ? { count } : {}),
+        ...(direction !== undefined ? { direction } : {}),
+        ...(volume !== undefined ? { volume } : {}),
+        ...(typeof line === 'string' && line.length > 0 ? { line } : {}),
+        ...(typeof after === 'string' && after.length > 0 ? { after } : {}),
+        ...(mode === 'append' || mode === 'replace' || mode === 'branch' ? { mode } : {}),
+        ...(typeof title === 'string' && title.trim().length > 0 ? { title } : {}),
+        ...(typeof choice === 'string' && choice.trim().length > 0 ? { choice } : {}),
+        ...(Array.isArray(guides) ? { guides: cleanGuides(guides) } : {}),
+      }
+      return job(runtime, 'derive', preview ? 'derive chapters preview' : 'derive chapters', undefined, async (task, context) => preview
         // Looked at before it is added: kept with the book, so that it is there whenever its author comes back to it.
-        if (preview && result.chapters.length > 0) {
-          await keepDerivedPlan(runtime, {
-            at: new Date().toISOString(),
-            job: context.id,
-            chapters: result.chapters,
-            ...(result.rationale !== undefined ? { rationale: result.rationale } : {}),
-            ...(where !== undefined && where.length > 0 ? { volume: where } : {}),
-            ...(wanted !== undefined && wanted.trim().length > 0 ? { direction: wanted.trim() } : {}),
-            ...(waiting !== undefined ? { feedback: [...(waiting.feedback ?? []), said] } : {}),
-            ...(result.pictures !== undefined ? { pictures: result.pictures } : waiting?.pictures !== undefined ? { pictures: waiting.pictures } : {}),
-            ...(result.referenced !== undefined ? { referenced: result.referenced } : waiting?.referenced !== undefined ? { referenced: waiting.referenced } : {}),
-          })
-        }
-        return result
-      })
+        ? await deriveToLook(core, runtime, { ...asked, ...(said.length > 0 ? { feedback: said } : {}), job: context.id }, task)
+        : await deriveChapters(core, runtime, { ...asked, ...(apply !== undefined ? { apply } : {}) }, task))
     },
     'outline.derived': async ({ root }) => {
       const plan = await derivedPlan(await open(root))
@@ -855,6 +838,10 @@ export function createHandlers(service: NovelService): Handlers {
       const runtime = await open(root)
       const asked = what === 'beats' ? 'beats' : 'plan'
       return job(runtime, 'derive', asked === 'beats' ? 'beats of text' : 'plan of text', chapter, async task => await planOfText(core, runtime, { chapter, what: asked }, task))
+    },
+    'ai.plansOfText': async ({ root, chapters, force }) => {
+      const runtime = await open(root)
+      return job(runtime, 'derive', 'plans of text', undefined, async task => await plansOfText(core, runtime, { chapters, ...(force === true ? { force: true } : {}) }, task))
     },
     'ai.whatIf': async ({ root, question, branches, guides }) => {
       const runtime = await open(root)

@@ -35,11 +35,20 @@ export function createApi(connection: ConnectionLike, options: ApiOptions = {}):
   return {
     async call(method, params, signal, session) {
       let result: Awaited<ReturnType<ConnectionLike['rpc']['call']>>
-      try {
-        result = await connection.rpc.call('/api', RPC_ENDPOINT, { method, params, ...(session !== undefined ? { session } : {}) }, signal)
-      } catch (error) {
-        if (signal?.aborted === true) throw new RpcError('novel/cancelled', 'cancelled')
-        throw new RpcError('novel/transport', error instanceof Error ? error.message : String(error))
+      const ask = async (): Promise<typeof result> => {
+        try {
+          return await connection.rpc.call('/api', RPC_ENDPOINT, { method, params, ...(session !== undefined ? { session } : {}) }, signal)
+        } catch (error) {
+          if (signal?.aborted === true) throw new RpcError('novel/cancelled', 'cancelled')
+          throw new RpcError('novel/transport', error instanceof Error ? error.message : String(error))
+        }
+      }
+      result = await ask()
+      // Answered by a Host half that was being replaced as it worked: the one that took its place is asked, a moment later.
+      for (const wait of [700, 1800]) {
+        if (result.ok || result.error.code !== 'novel/replaced' || signal?.aborted === true) break
+        await new Promise(resolve => setTimeout(resolve, wait))
+        result = await ask()
       }
       if (!result.ok) {
         if (result.error.code === 'novel/unknown-method') {

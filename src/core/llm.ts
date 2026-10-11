@@ -14,6 +14,8 @@ export interface LlmImage {
   mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
   /** What it is called, for whoever reads the record of the call. */
   name?: string
+  /** The book it is a picture of (its root), where it is one: whoever keeps a copy for the model's sake is told whose it is. */
+  of?: string
 }
 
 export interface LlmRequest {

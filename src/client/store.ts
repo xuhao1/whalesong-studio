@@ -982,7 +982,7 @@ export class StudioController {
       const watched = before === 'running' || (before === undefined && Date.parse(job.startedAt) >= this.since - 2000)
       if (!watched || job.origin !== 'user' || this.followed.has(job.id)) continue
       if (job.status === 'failed') this.report(new Error(job.error ?? 'failed'))
-      else if (job.status === 'done' && (job.kind === 'audio' || job.kind === 'comic' || job.kind === 'batch' || (job.kind === 'review' && job.title === 'recheck issues') || (job.kind === 'bible' && (job.title === 'sift cast' || job.title === 'settle suggestions')))) this.set({ jobEnded: { job, nonce: Date.now() } })
+      else if (job.status === 'done' && (job.kind === 'audio' || job.kind === 'comic' || job.kind === 'batch' || (job.kind === 'review' && job.title === 'recheck issues') || (job.kind === 'derive' && job.title === 'plans follow text') || (job.kind === 'bible' && (job.title === 'sift cast' || job.title === 'settle suggestions')))) this.set({ jobEnded: { job, nonce: Date.now() } })
       // A text written anew whose pictures had to be seen to: said, since the Studio did that by itself.
       else if (job.status === 'done' && (job.kind === 'write' || job.kind === 'revise') && (job.result?.output as { figures?: unknown } | undefined)?.figures !== undefined) this.set({ jobEnded: { job, nonce: Date.now() } })
     }

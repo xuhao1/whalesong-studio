@@ -764,7 +764,8 @@ export function Derive({ onApplied, only, preset }: {
           op: 'add-chapter',
           title: chapter.title,
           status: 'outlined',
-          ...(derived.volume !== undefined && derived.volume.length > 0 ? { volume: derived.volume } : {}),
+          // Where it was derived for: a line of the plot other than the main one, else its volume.
+          ...(derived.line !== undefined ? { line: derived.line } : derived.volume !== undefined && derived.volume.length > 0 ? { volume: derived.volume } : {}),
           ...(chapter.synopsis !== undefined ? { synopsis: chapter.synopsis } : {}),
           ...(chapter.purpose !== undefined ? { purpose: chapter.purpose } : {}),
           ...(chapter.pov !== undefined ? { pov: chapter.pov } : {}),
@@ -777,8 +778,21 @@ export function Derive({ onApplied, only, preset }: {
           ...(chapter.guides !== undefined && chapter.guides.length > 0 ? { guides: chapter.guides } : {}),
         })
       })
-      const results = await apply(ops)
-      const first = results.find(result => result.op === 'add-chapter')?.id
+      let first: string | undefined
+      if (derived.after === undefined) {
+        first = (await apply(ops)).find(result => result.op === 'add-chapter')?.id
+      } else {
+        // Derived to follow a chapter that is not its line's last: each goes in after the one before it.
+        let previous: string | undefined = derived.after
+        for (const op of ops) {
+          const placed: OutlineOpInput = op.op === 'add-chapter' && previous !== undefined ? (({ line: _line, volume: _volume, ...rest }) => ({ ...rest, after: previous }))(op as OutlineOpInput & { line?: string; volume?: string }) as OutlineOpInput : op
+          const made = (await apply([placed]))[0]
+          if (op.op === 'add-chapter') {
+            previous = made?.id ?? previous
+            first ??= made?.id
+          }
+        }
+      }
       if (first !== undefined) controller.focusChapter(first)
       await settle()
       controller.toast('success', t('已加入大纲', 'Added to the outline'))

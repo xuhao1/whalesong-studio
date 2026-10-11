@@ -75,6 +75,7 @@ export function LockScreen() {
         <p className="nv-muted">{t('这本书加了密，解锁后才能读写。', 'This book is sealed: unlock it to read or write.')}</p>
         <UnlockForm device={view?.device} deviceOn={view?.deviceOn === true} placeholder={t('这本书的密码', 'The book\'s password')} focusKey={lock.root} unlock={how => controller.unlock(how)} />
         {view?.conversations !== undefined && view.conversations.sealed + view.conversations.waiting > 0 ? <p className="nv-muted nv-small">{t(`${view.conversations.sealed} 段对话也加密收着，解锁后放回。`, `${view.conversations.sealed} conversation(s) are sealed with it and come back when it is unlocked.`)}{view.conversations.waiting > 0 ? t(` 还有 ${view.conversations.waiting} 段正开着，关闭后才会加密。`, ` ${view.conversations.waiting} more are in use and are sealed once they are let go.`) : ''}</p> : null}
+        {view?.pictures !== undefined && view.pictures.sealed + view.pictures.open > 0 ? <p className="nv-muted nv-small">{view.pictures.sealed > 0 ? t(`给模型看过的 ${view.pictures.sealed} 张图也加密收着，解锁后放回。`, `${view.pictures.sealed} picture(s) a model was shown are sealed with it and come back when it is unlocked.`) : ''}{view.pictures.open > 0 ? t(` ${view.pictures.open} 张还在 DSH 的附件库里，等开着的对话关闭后收走。`, ` ${view.pictures.open} still lie in DSH's attachment store and are taken once the open conversations are let go.`) : ''}</p> : null}
         {view === undefined ? <Spinner size={12} /> : null}
         <div className="nv-row-wrap">
           <Button variant="ghost" size="sm" icon="book" onClick={() => { controller.closeProject() }}>{t('回书架', 'Back to the shelf')}</Button>
@@ -165,6 +166,9 @@ export function SealDialog({ onClose }: { onClose: () => void }) {
               {t(`这本书的对话也跟着上锁，解锁后放回。现在有 ${view.conversations.open} 段。`, `This book's conversations are sealed with it and come back on unlock. There are ${view.conversations.open} now.`)}
               {view.conversations.waiting > 0 ? <span className="nv-muted"> {t(`其中 ${view.conversations.waiting} 段正开着，关闭后才加密。`, `${view.conversations.waiting} of them are open and are sealed once closed.`)}</span> : null}
             </p>
+          ) : null}
+          {view.pictures !== undefined && view.pictures.open > 0 ? (
+            <p className="nv-note">{t(`给模型看过的图，DSH 的附件库里留着 ${view.pictures.open} 张副本：也跟着上锁，解锁后放回。`, `DSH's attachment store keeps ${view.pictures.open} cop${view.pictures.open === 1 ? 'y' : 'ies'} of pictures a model was shown: sealed with the book too, and back on unlock.`)}</p>
           ) : null}
           <p className="nv-muted nv-small">{t('退出 DSH 会自动锁上。已放行的设备仍然能读，要收回在下面。', 'Quitting DSH locks it. Devices already let in can still read; take that back below.')}</p>
           <h4>{t('这本书可以这样打开', 'This book opens with')}</h4>

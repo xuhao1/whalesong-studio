@@ -25,7 +25,7 @@ import { BibleView } from './views/Bible'
 import { CastView } from './views/Cast'
 import { HomeView, Onboarding, useRemoveBook } from './views/Home'
 import { LockScreen, SealDialog } from './views/Lock'
-import { OutlineView } from './views/Outline'
+import { OutlineView, planOfTextWord } from './views/Outline'
 import { ReadView } from './views/Read'
 import { ReviewView } from './views/Review'
 import { SearchPanel } from './views/Search'
@@ -204,6 +204,16 @@ function JobNotice() {
       controller.toast(batch.failed > 0 ? 'info' : 'success', batch.failed > 0
         ? t(`批量任务结束：${done} 步完成，${batch.failed} 步失败，原因见“任务”`, `Batch finished: ${done} done, ${batch.failed} failed — see Tasks`)
         : t(`批量任务完成：${done} 步`, `The batch is done: ${done} steps`))
+    } else if (ended.job.kind === 'derive') {
+      // Plans were set by their changed texts: said, since the Studio did that by itself and the outline now reads otherwise.
+      const found = (ended.job.result ?? {}) as { failed?: number; chapters?: { index: number; changed: string[]; beats: number; was: number; kept: number }[] }
+      const chapters = found.chapters ?? []
+      const only = chapters.length === 1 ? chapters[0]! : undefined
+      if (only !== undefined) {
+        const said = planOfTextWord({ what: 'plan', changed: only.changed, beats: Array.from({ length: only.beats }), was: only.was, kept: only.kept }, t)
+        controller.toast('info', t(`正文改了，第 ${only.index} 章的${said}`, `Chapter ${only.index}'s text changed. ${said}`), 9000)
+      } else if (chapters.length > 1) controller.toast('info', t(`${chapters.length} 章的章纲照正文更新了（第 ${chapters.map(chapter => chapter.index).join('、')} 章）。原来的在各章章纲的历史版本里。`, `The plans of ${chapters.length} chapters go by their texts now (chapters ${chapters.map(chapter => chapter.index).join(', ')}). What was there is in each plan's history.`), 9000)
+      if ((found.failed ?? 0) > 0) controller.toast('error', t(`${found.failed} 章的章纲没能照正文更新，原因见“任务”`, `${found.failed} plan(s) could not be set by their text — see Tasks`))
     } else if (ended.job.kind === 'review') {
       // The open issues were looked at again after a revision: said, since it changes what the author still has to do.
       const found = (ended.job.result ?? {}) as { looked?: number; fixed?: number; changed?: number }

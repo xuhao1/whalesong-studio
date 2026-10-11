@@ -48,7 +48,7 @@ export function useOutlineOps(): (ops: OutlineOpInput[]) => Promise<{ op: string
 export function ChapterTree({ active, onOpen, onLine, tools, note, footer, compact = false, onGraph }: { active: string | undefined; onOpen: (id: string) => void; onLine?: (line: string) => void; tools?: ReactNode; note?: ReactNode; footer?: ReactNode; compact?: boolean; onGraph?: (() => void) | undefined }) {
   const { controller, locale } = useStudio()
   const t = useT()
-  const { project } = useProject()
+  const { project, root } = useProject()
   const jobs = useSnapshot(snapshot => snapshot.jobs)
   const apply = useOutlineOps()
   const { run } = useAction()
@@ -91,6 +91,24 @@ export function ChapterTree({ active, onOpen, onLine, tools, note, footer, compa
   const [moving, setMoving] = useState<string[] | undefined>()
   const removed = project.removed ?? []
   const [showRemoved, setShowRemoved] = useState(false)
+  // The plans of the chapters ticked, set by their texts in one job (a plan read from the very text its chapter has is left alone).
+  const tickedWritten = [...ticked].filter(id => info.get(id)?.hasText === true)
+  const reading = jobs.some(job => job.status === 'running' && job.kind === 'derive' && (job.title === 'plans of text' || job.title === 'plans follow text'))
+  const readPlans = (): void => {
+    void controller.guard(async () => {
+      const done = await controller.run('ai.plansOfText', { root, chapters: tickedWritten })
+      const found = (done.result?.output ?? {}) as { read?: unknown[]; same?: number; failed?: unknown[] }
+      const read = found.read?.length ?? 0
+      const same = found.same ?? 0
+      const failed = found.failed?.length ?? 0
+      controller.toast(failed > 0 ? 'info' : 'success', [
+        t(`${read} 章的章纲照正文更新了`, `${read} plan(s) set by their text`),
+        same > 0 ? t(`${same} 章已经是照现在的正文读的，没有重读`, `${same} already stood by the text as it is`) : undefined,
+        failed > 0 ? t(`${failed} 章没读成，原因见“任务”`, `${failed} failed — see Tasks`) : undefined,
+      ].filter((part): part is string => part !== undefined).join(t('；', '; ')) + t('。原来的在各章章纲的历史版本里。', '. What was there is in each plan\'s history.'), 9000)
+      await controller.refreshProject()
+    })
+  }
   const whereToFind = t('可以在这一页最下面恢复。', 'It can be restored at the bottom of this page.')
   const remove = (ids: string[]): void => {
     const gone = ids.map(id => ({ id, plan: everything.find(plan => plan.id === id), chapter: info.get(id) })).filter(item => item.plan !== undefined)
@@ -222,6 +240,7 @@ export function ChapterTree({ active, onOpen, onLine, tools, note, footer, compa
               <Button size="sm" variant="ghost" onClick={() => { setTicked(new Set(plans.map(plan => plan.id))) }}>{t('全选这条线', 'All of this line')}</Button>
               <Button size="sm" variant="outline" icon="branch" disabled={ticked.size === 0} onClick={() => { setMoving(plans.filter(plan => ticked.has(plan.id)).map(plan => plan.id)) }} title={t('移到另一条线，或另开成一条线', 'Onto another line, or a line of their own')}>{t('移到…', 'Move to…')}</Button>
               <Button size="sm" variant="outline" icon="globe" disabled={ticked.size === 0} onClick={() => { setTranslating(plans.filter(plan => ticked.has(plan.id)).map(plan => plan.id)) }} title={t('把选中的章节译成另一种语言', 'Translate the chosen chapters into another language')}>{t('翻译…', 'Translate…')}</Button>
+              <Button size="sm" variant="outline" icon="refresh" disabled={tickedWritten.length === 0 || reading} busy={reading} pending={t('场记在读正文…', 'Reading the texts…')} onClick={readPlans} title={t('选中的章节里写了的：梗概、地点、时间、视角、出场人物和节拍照现在的正文更新；原来的在各章章纲的历史版本里', 'Of the chosen chapters, the written ones: synopsis, place, time, point of view, cast and beats set by the text as it now reads; what was there stays in each plan\'s history')}>{t('照正文更新章纲', 'Plans from the text')}</Button>
               <Button size="sm" variant="danger" icon="trash" disabled={ticked.size === 0} onClick={() => { remove([...ticked]) }}>{t(`删除选中的 ${ticked.size} 章`, `Delete the ${ticked.size} chosen`)}</Button>
               <Button size="sm" variant="ghost" onClick={() => { setChoosing(false); setTicked(new Set()) }}>{t('取消', 'Cancel')}</Button>
             </>

@@ -144,7 +144,7 @@ export async function guidePictures(core: NovelCore, runtime: ProjectRuntime, ro
     const record = records.find(item => item.path === guide.path)
     // What the book itself knows of one of its own pictures: its kind, whose it is, the moment it shows.
     const known = record !== undefined ? [L(lang, ...KIND[record.kind]), nameOf(record.target), record.moment?.title].filter((part): part is string => part !== undefined && part.length > 0).join(' · ') : undefined
-    pictures.push({ guide, image: { data: new Uint8Array(data), mediaType: MEDIA[extname(guide.path).toLowerCase()]!, name: guide.path.split('/').at(-1)! }, ...(known !== undefined && known.length > 0 ? { known } : {}) })
+    pictures.push({ guide, image: { data: new Uint8Array(data), mediaType: MEDIA[extname(guide.path).toLowerCase()]!, name: guide.path.split('/').at(-1)!, of: project.root }, ...(known !== undefined && known.length > 0 ? { known } : {}) })
   }
 
   // (A model nobody could name — a conversation's own, not told to the tool — is one that does not say whether it sees.)

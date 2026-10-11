@@ -17,6 +17,11 @@
  * somewhere waits until it is let go — at the latest the next time DSH starts.
  * A plain log is removed only after its sealed copy is on disk, and — while
  * the book's key is still at hand — has been opened again and compared.
+ *
+ * The pictures a conversation shows are kept by DSH apart from its log, as
+ * plain as the log was: they are noted as the log goes under the seal, and
+ * follow it there once no conversation of the book is left outside
+ * ({@link PictureSeal}); they are back before the logs are.
  */
 import { createHash } from 'node:crypto'
 import { chmod, mkdir, readdir, readFile, rm, rmdir, stat } from 'node:fs/promises'
@@ -28,6 +33,7 @@ import { resolveDshHome } from '../core/settings'
 import { errorMessage, KeyedMutex } from '../core/util/async'
 import { exists, readJson, writeAtomic, writeJson } from '../core/util/fs'
 import { dropSeal, readStub } from '../core/util/vault'
+import { pictureRefsIn } from './picture-seal'
 import { CREW_PRESET } from './roles'
 import type { NovelService } from './service'
 
@@ -236,7 +242,12 @@ export class SessionSeal {
       const publicKey = stub?.sealed.drop?.publicKey
       const persistence = this.ctx.get('sessionPersistence')
       // A book sealed before there was a drop gets one the next time it is unlocked; until then its conversations stay as they are.
-      if (stub === undefined || publicKey === undefined || persistence === undefined) return await this.status(root)
+      if (stub === undefined || publicKey === undefined) return await this.status(root)
+      if (persistence === undefined) {
+        // No conversations are kept, so none shows a picture: the copies DSH keeps of the book's pictures go as they are.
+        await this.service.pictureSeal.seal(root, verify, true).catch((error: unknown) => { this.service.log(`could not seal the picture copies of ${root}`, error) })
+        return await this.status(root)
+      }
       const vault = this.vaultOf(stub.id)
       const stored = await this.stored()
       let waiting = 0
@@ -257,6 +268,9 @@ export class SessionSeal {
         let done = false
         try {
           await handle.flush()
+          // The pictures it shows lie in DSH's attachment store, as plain as this log: noted, to follow it under the seal.
+          const shown = await (async () => pictureRefsIn(JSON.stringify((await handle.read()).events)))().catch(() => [])
+          if (shown.length > 0) await this.service.pictureSeal.noteFor(stub.id, shown, true).catch((error: unknown) => { this.service.log(`could not note the pictures conversation ${id} shows`, error) })
           const files: { name: string; data: Buffer }[] = []
           for (const name of (await readdir(dir)).sort()) {
             const path = join(dir, name)
@@ -293,6 +307,8 @@ export class SessionSeal {
       }
       if (waiting > 0) this.unfinished.add(root)
       else this.unfinished.delete(root)
+      // A picture a conversation shows stays for as long as one of the book's conversations is still outside.
+      await this.service.pictureSeal.seal(root, verify, waiting === 0).catch((error: unknown) => { this.service.log(`could not seal the picture copies of ${root}`, error) })
       if (sealed > 0) this.changed(root)
       return { ...(await this.status(root)), waiting }
     })
@@ -304,6 +320,8 @@ export class SessionSeal {
       this.unfinished.delete(root)
       const stub = await readStub(root)
       if (stub === undefined) return await this.status(root)
+      // The pictures first: a conversation that is back must find what it shows.
+      await this.service.pictureSeal.restore(root).catch((error: unknown) => { this.service.log(`could not put the picture copies of ${root} back`, error) })
       const vault = this.vaultOf(stub.id)
       let restored = 0
       for (const name of await readdir(vault).catch(() => [] as string[])) {

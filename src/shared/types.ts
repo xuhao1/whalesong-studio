@@ -687,6 +687,9 @@ export interface DerivedPlan {
   rationale?: string
   /** The volume the chapters are for. */
   volume?: string
+  /** The line of the plot they go on with, where it is not the main one; and the chapter they follow, where one was named. */
+  line?: string
+  after?: string
   /** What the author asked for. */
   direction?: string
   /** What the author then said of it, in turn: each time, the planner adjusted the plan by it. */
@@ -1566,6 +1569,12 @@ export interface NovelSettings {
   autoDigest: boolean
   /** After a proposal is accepted, have the reviewer look again at the issues still open in what changed. Unset: yes. */
   recheckIssues?: boolean
+  /**
+   * Once a chapter's text is changed after it was digested — a revision accepted, the chapter written anew, a hand in
+   * the file — have its plan (synopsis, place, time, point of view, cast and beats) read against the text and set by
+   * it; the plan as it was stays in its history. Off: the plan is set by the text only when the author asks. Unset: on.
+   */
+  planFollowsText?: boolean
   /** After chapters are digested, have the planner look through the names that have no card yet and say who is worth one. Unset: yes. */
   siftCast?: boolean
   /**

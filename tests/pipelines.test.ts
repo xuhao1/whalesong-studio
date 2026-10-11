@@ -10,7 +10,7 @@ import { exportBook, zipStore } from '../src/core/pipelines/export'
 import { decodeText, importManuscript, splitChapters } from '../src/core/pipelines/import'
 import { siftCast, siftDue } from '../src/core/pipelines/cast'
 import { listWalkOns } from '../src/core/walkons'
-import { derivedPlan, deriveChapters, keepDerivedPlan, planOfText, settleDerivedPlan } from '../src/core/pipelines/plot'
+import { derivedPlan, deriveChapters, deriveToLook, enterDerivedPlan, keepDerivedPlan, planOfText, settleDerivedPlan } from '../src/core/pipelines/plot'
 import { fixIssue, fixIssues, acceptProposal, rejectProposal, mendInTurn, reviseSpan } from '../src/core/pipelines/revise'
 import { listReviews, noteIssue, recheckIssues } from '../src/core/pipelines/review'
 import { importLine } from '../src/core/pipelines/import'
@@ -702,6 +702,65 @@ describe('pipelines', () => {
     expect((await project.state()).derived).toBeUndefined()
     expect(bed.roles.released).toContain(key)
     expect(await settleDerivedPlan(bed.core, bed.runtime)).toBe(false)
+  })
+
+  it('chapters derived to be looked at wait with the book whoever asked for them, are adjusted through the planner kept for them, and are added where they were derived for', async () => {
+    const { project } = bed.runtime
+    await project.saveCharacter({ name: '沈璃', role: 'protagonist' })
+    const first = { chapters: [
+      { title: '下山', synopsis: '沈璃带着断剑下山。', characters: ['沈璃'], beats: ['告别旧居'], threads: [{ title: '断剑的来历', action: 'plant' }] },
+      { title: '渡口', synopsis: '渡口遇见顾七。', characters: ['沈璃'] },
+    ], rationale: '先离开，再相遇。' }
+    const second = { chapters: [...first.chapters, { title: '夜渡', synopsis: '夜里过河。', characters: ['沈璃'] }], rationale: '照意见加了一章夜渡。' }
+    const main = async (): Promise<string[]> => (await project.outline()).volumes.flatMap(volume => volume.chapters).map(plan => plan.title)
+    const before = await main()
+    const key = `derive:${project.root}`
+    bed.roles.enabled = true
+    bed.roles.script = async (_task, call) => { await call('submit_chapters', { result: bed.roles.tasks.length === 1 ? first : second }) }
+
+    // Nothing waits: there is nothing to say a word of, and nothing to add.
+    await expect(deriveToLook(bed.core, bed.runtime, { feedback: '改' }, { origin: 'agent' })).rejects.toMatchObject({ code: 'novel/not-found' })
+    expect(await enterDerivedPlan(bed.core, bed.runtime)).toBeUndefined()
+
+    // Derived to be looked at — by the showrunner as by the page: it waits with the book, and its planner is kept.
+    const shown = await deriveToLook(bed.core, bed.runtime, { count: 2, direction: ' 先下山 ', job: 'job_1' }, { origin: 'agent' })
+    expect(shown.added).toEqual([])
+    expect(shown.waiting).toMatchObject({ job: 'job_1', direction: '先下山', rationale: '先离开，再相遇。' })
+    expect((await derivedPlan(bed.runtime))!.chapters.map(chapter => chapter.title)).toEqual(['下山', '渡口'])
+    expect(await main()).toEqual(before)
+    expect(bed.roles.has(key)).toBe(true)
+
+    // The author's word of it goes to that planner; the plan stays what it was derived for, whatever else is passed along.
+    const adjusted = await deriveToLook(bed.core, bed.runtime, { feedback: ' 渡口之后加一章夜里过河 ', count: 9, direction: '别的方向' }, { origin: 'agent' })
+    expect(adjusted.resumed).toBe(true)
+    expect(bed.roles.tasks[1]!.resume).toBe(key)
+    expect(bed.roles.tasks[1]!.prompt).toContain('## 作者的修改意见\n\n渡口之后加一章夜里过河')
+    const waiting = (await derivedPlan(bed.runtime))!
+    expect(waiting.chapters.map(chapter => chapter.title)).toEqual(['下山', '渡口', '夜渡'])
+    expect(waiting).toMatchObject({ direction: '先下山', feedback: ['渡口之后加一章夜里过河'], rationale: '照意见加了一章夜渡。' })
+    expect(await main()).toEqual(before)
+
+    // Added as it stands: at the end of the main line, its thread planted, nothing waiting any more, the planner let go.
+    const entered = (await enterDerivedPlan(bed.core, bed.runtime))!
+    expect(entered.added.map(chapter => chapter.title)).toEqual(['下山', '渡口', '夜渡'])
+    expect(entered.line).toBeUndefined()
+    expect(await main()).toEqual([...before, '下山', '渡口', '夜渡'])
+    expect((await project.outline()).threads.map(thread => thread.title)).toContain('断剑的来历')
+    expect(await derivedPlan(bed.runtime)).toBeUndefined()
+    expect(bed.roles.released).toContain(key)
+
+    // Derived for another line of the plot, after one of its chapters: that is where it is added.
+    const south = await project.addLine({ title: '城南的铺子', premise: '另一间铺子的账。' })
+    const s1 = await project.addChapter({ title: '铺子' }, { line: south.id })
+    const s2 = await project.addChapter({ title: '旧账' }, { line: south.id })
+    bed.roles.script = async (_task, call) => { await call('submit_chapters', { result: { chapters: [{ title: '掌柜', synopsis: '掌柜查账。' }, { title: '伙计', synopsis: '伙计认错。' }] } }) }
+    const aside = await deriveToLook(bed.core, bed.runtime, { count: 2, line: '城南的铺子', after: '铺子' }, { origin: 'agent' })
+    expect(aside.waiting).toMatchObject({ line: south.id, after: s1.id })
+    const there = (await enterDerivedPlan(bed.core, bed.runtime))!
+    expect(there.line).toEqual({ id: south.id, title: '城南的铺子' })
+    expect((await project.findLine(south.id))!.chapters.map(plan => plan.title)).toEqual(['铺子', '掌柜', '伙计', '旧账'])
+    expect((await project.findLine(south.id))!.chapters.at(-1)!.id).toBe(s2.id)
+    expect(await main()).toEqual([...before, '下山', '渡口', '夜渡'])
   })
 
   it('sets the plan of a written chapter right by its text: its beats alone, or the synopsis, place, time, eyes and cast with them', async () => {

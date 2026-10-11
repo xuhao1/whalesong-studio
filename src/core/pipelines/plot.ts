@@ -8,7 +8,7 @@
  *   what-if     alternative directions with their consequences, nothing is changed.
  */
 import { MAIN_LINE, type Beat, type ChapterPlan, type CharacterCard, type DerivedChapter, type DerivedPlan, type PictureGuide, type PicturesRead, type PlotLine, type ReferencesLooked, type StyleProfile, type WorldCategory, type WorldEntry } from '../../shared/types'
-import { clip, newId, sameName } from '../../shared/text'
+import { clip, hashText, newId, sameName } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { asArray, asList, asRecord, asText } from '../llm'
 import { assign } from '../crew'
@@ -399,6 +399,82 @@ export async function settleDerivedPlan(core: NovelCore, runtime: ProjectRuntime
   return true
 }
 
+/** What comes of chapters derived to be looked at: the derivation, and the plan as it now waits with the book. */
+export interface DeriveLookResult extends DeriveChaptersResult {
+  waiting?: DerivedPlan
+}
+
+/**
+ * Derive chapters to be looked at before they are added, and keep the plan with the book — or, where the author has
+ * a word to say of the plan that waits (`feedback`), have that plan adjusted: by the planner that derived it, in its
+ * own conversation while it is still there, else by one handed the plan and the word. What comes back waits in its
+ * place; nothing enters the outline here. One way for the Studio's page and for the showrunner.
+ * @param params.job - the job this is done in, for whoever comes back to the plan.
+ */
+export async function deriveToLook(core: NovelCore, runtime: ProjectRuntime, params: Omit<DeriveChaptersParams, 'apply' | 'revise'> & { feedback?: string; job?: string }, task: TaskContext): Promise<DeriveLookResult> {
+  const { feedback, job, ...rest } = params
+  const said = feedback?.trim() ?? ''
+  const waiting = said.length > 0 ? await derivedPlan(runtime) : undefined
+  if (said.length > 0 && waiting === undefined) throw new ProjectError('novel/not-found', 'no derived plan is waiting to be adjusted — derive one first')
+  // A plan adjusted stays the plan it was: for the same volume and line, after the same chapter, by the same direction.
+  const volume = waiting !== undefined ? waiting.volume : rest.volume
+  const direction = waiting !== undefined ? waiting.direction : rest.direction
+  const line = waiting !== undefined ? waiting.line : rest.line
+  const after = waiting !== undefined ? waiting.after : rest.after
+  const result = await deriveChapters(core, runtime, {
+    ...rest,
+    apply: false,
+    volume,
+    direction,
+    line,
+    after,
+    ...(waiting !== undefined ? { revise: { chapters: waiting.chapters, ...(waiting.rationale !== undefined ? { rationale: waiting.rationale } : {}), feedback: said } } : {}),
+  }, task)
+  if (result.chapters.length === 0) return result
+  // (The chapter they follow is kept by its id: whoever adds the plan later names no chapter anew.)
+  const follows = after !== undefined && after.trim().length > 0 ? await runtime.project.findChapter(after.trim(), result.line?.id) : undefined
+  const plan: DerivedPlan = {
+    at: new Date().toISOString(),
+    ...(job !== undefined ? { job } : {}),
+    chapters: result.chapters,
+    ...(result.rationale !== undefined ? { rationale: result.rationale } : {}),
+    ...(volume !== undefined && volume.length > 0 ? { volume } : {}),
+    ...(result.line !== undefined ? { line: result.line.id } : {}),
+    ...(follows !== undefined ? { after: follows.plan.id } : {}),
+    ...(direction !== undefined && direction.trim().length > 0 ? { direction: direction.trim() } : {}),
+    ...(waiting !== undefined ? { feedback: [...(waiting.feedback ?? []), said] } : {}),
+    ...(result.pictures !== undefined ? { pictures: result.pictures } : waiting?.pictures !== undefined ? { pictures: waiting.pictures } : {}),
+    ...(result.referenced !== undefined ? { referenced: result.referenced } : waiting?.referenced !== undefined ? { referenced: waiting.referenced } : {}),
+  }
+  await keepDerivedPlan(runtime, plan)
+  return { ...result, waiting: plan }
+}
+
+/**
+ * Add the plan that waits to the outline as it stands — on the line and after the chapter it was derived for, else
+ * at the end of its volume — and let its planner go.
+ * @returns the chapters added; nothing where no plan waits.
+ */
+export async function enterDerivedPlan(core: NovelCore, runtime: ProjectRuntime): Promise<{ added: { id: string; title: string; index: number }[]; line?: { id: string; title: string } } | undefined> {
+  const { project } = runtime
+  const plan = await derivedPlan(runtime)
+  if (plan === undefined) return undefined
+  const outline = await project.outline()
+  const line = plan.line !== undefined ? await project.findLine(plan.line) : undefined
+  const follows = plan.after !== undefined ? await project.findChapter(plan.after, line?.id) : undefined
+  const volume = (plan.volume !== undefined ? outline.volumes.find(candidate => candidate.id === plan.volume || sameName(candidate.title, plan.volume!)) : undefined) ?? outline.volumes.at(-1)
+  const added: { id: string; title: string; index: number }[] = []
+  let previous = follows?.plan.id
+  for (const chapter of plan.chapters) {
+    const where = previous !== undefined ? { after: previous } : line !== undefined ? { line: line.id } : volume !== undefined ? { volume: volume.id } : {}
+    const made = await addDerivedChapter(project, chapter, where)
+    previous = made.id
+    added.push({ id: made.id, title: made.title, index: (await project.findChapter(made.id))?.index ?? 0 })
+  }
+  await settleDerivedPlan(core, runtime)
+  return { added, ...(line !== undefined ? { line: { id: line.id, title: line.title } } : {}) }
+}
+
 /** A derived plan as the planner is shown it again: every chapter with all that was said of it. */
 function planLines(chapters: readonly DerivedChapter[], nameOf: (ref: string) => string, zh: boolean): string {
   const comma = zh ? '、' : ', '
@@ -501,6 +577,18 @@ export interface PlanOfTextResult {
   applied: boolean
 }
 
+/** Where the Studio keeps which text each chapter's plan was last read from (`.novel/plans-read.json`). */
+const PLANS_READ = ['plans-read.json']
+
+/**
+ * The text a chapter's plan was last read from, as a hash of it — so that a plan is not read from the same text
+ * twice, and a plan the author went on to change by hand is not read over because its chapter was digested again.
+ * @returns nothing where the plan was never read from its text.
+ */
+export async function planReadFrom(project: Project, chapterId: string): Promise<string | undefined> {
+  return ((await project.readState<Record<string, string>>(...PLANS_READ)) ?? {})[chapterId]
+}
+
 /** A beat as one line of a list, for whoever is to compare it with a text. */
 function beatLine(beat: Beat, at: number, zh: boolean): string {
   const more = [
@@ -600,7 +688,11 @@ export async function planOfText(core: NovelCore, runtime: ProjectRuntime, param
     if (cast.length > 0 && (cast.length !== had.length || cast.some(ref => !had.includes(ref)))) { patch.characters = cast; changed.push('characters') }
   }
   const applied = params.apply !== false
-  if (applied) await project.updateChapter(plan.id, patch)
+  if (applied) {
+    await project.updateChapter(plan.id, patch)
+    // The whole plan now stands by this text: noted, for whoever would have it read again.
+    if (what === 'plan') await project.updateState<Record<string, string>>(PLANS_READ, {}, read => ({ ...read, [plan.id]: hashText(text) })).catch(() => {})
+  }
   return {
     chapterId: plan.id,
     title: plan.title,

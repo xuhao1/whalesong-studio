@@ -341,7 +341,7 @@ export function createRoleRunner(ctx: Context, options: {
     run.said = ''
     run.last = ''
     run.cancelled = false
-    run.pictures = await imageBlocks(ctx, task.images)
+    run.pictures = await imageBlocks(ctx, task.images, true)
     try {
       task.onStart?.({ session: child.id, ...(entry.parent !== undefined ? { parent: entry.parent } : {}) })
     } catch {
@@ -506,7 +506,7 @@ export function createRoleRunner(ctx: Context, options: {
         return await more(entry, task)
       }
       if (!can(route)) throw new LlmCallError(`the "${task.role}" role works as an agent and needs a model from Settings → Models to run on; ${route.model} is an endpoint the Studio calls directly`, 'NO_AGENT_LOOP')
-      const run: Staged = { task, job: currentJob(), limit: Math.max(4, task.maxSteps ?? DEFAULT_STEPS), steps: 0, said: '', last: '', cancelled: false, pictures: await imageBlocks(ctx, task.images) }
+      const run: Staged = { task, job: currentJob(), limit: Math.max(4, task.maxSteps ?? DEFAULT_STEPS), steps: 0, said: '', last: '', cancelled: false, pictures: await imageBlocks(ctx, task.images, true) }
       const parent = task.parent as Agent | undefined
       const subagents = ctx.get('subagents')
       // A parent that is gone cannot take a child; the work is still done.

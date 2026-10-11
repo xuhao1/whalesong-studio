@@ -49,7 +49,8 @@ import { codexStatus, createCodexBridge } from './codex'
 import { KeyStore } from './keys'
 import { followRecommended, loadRecommended, noteAdopted } from './recommended'
 import { createHarnessLlm } from './llm-backend'
-import { imageBlocks, type ImageBlock } from './pictures'
+import { PictureSeal } from './picture-seal'
+import { imageBlocks, onPicturesKept, type ImageBlock } from './pictures'
 import type { LlmImage } from '../core/llm'
 import { createRoleRunner, CREW_PRESET, type CrewRunner } from './roles'
 import { SessionSeal } from './session-seal'
@@ -90,6 +91,8 @@ export class NovelService extends Service {
   readonly crew: CrewRunner
   /** Keeps the conversations about a sealed book under its seal while it is locked. */
   readonly sessionSeal: SessionSeal
+  /** The copies DSH keeps of a sealed book's pictures: noted as they are made, under the seal while the book is locked. */
+  readonly pictureSeal: PictureSeal
 
   /** Which build this Host half is, against the one installed now. */
   private readonly build = new BuildWatch()
@@ -151,6 +154,8 @@ export class NovelService extends Service {
     // (Open while the Host half before this one was replaced: opened again as it was — a phone at work keeps its link.)
     void this.remote.resume().catch(() => {})
     ctx.effect(() => () => { void this.remote.park().catch(() => {}) }, 'novel: the door for a phone')
+    this.pictureSeal = new PictureSeal(ctx, this)
+    ctx.effect(() => onPicturesKept((root, refs, shown) => { void this.pictureSeal.note(root, refs, shown).catch((error: unknown) => { this.log(`could not note the picture copies DSH keeps of ${root}`, error) }) }), 'novel: note the copies DSH keeps of a book\'s pictures')
     this.sessionSeal = new SessionSeal(ctx, this)
     // The recommendations that came with this build are put in force, and the settings brought up against them: an update of the plugin is when they change.
     this.recommendations = loadRecommended((message, error) => { this.log(message, error) })
@@ -199,7 +204,9 @@ export class NovelService extends Service {
     const device = await this.device?.info().catch(() => undefined) ?? { available: false, biometrics: false, method: 'none' as const, host: hostname() }
     // Only a sealed book has conversations to put under a seal.
     const conversations = lock.sealed ? await this.sessionSeal.status(root).catch(() => undefined) : undefined
-    return { ...lock, device, deviceOn: lock.ways.some(way => way.kind === 'device' && way.id === this.deviceSlot()), ...(conversations !== undefined ? { conversations } : {}) }
+    // ... and only of a sealed book do the copies DSH keeps of its pictures go under one.
+    const pictures = lock.sealed ? await this.pictureSeal.status(root).catch(() => undefined) : undefined
+    return { ...lock, device, deviceOn: lock.ways.some(way => way.kind === 'device' && way.id === this.deviceSlot()), ...(conversations !== undefined ? { conversations } : {}), ...(pictures !== undefined ? { pictures } : {}) }
   }
 
   /** Let this computer's own unlock open a book that is unlocked now, or stop letting it. */
@@ -897,7 +904,7 @@ export class NovelService extends Service {
    * @throws LlmCallError where this DSH keeps no attachments, or refuses a picture.
    */
   async pictureBlocks(images: readonly LlmImage[]): Promise<ImageBlock[]> {
-    return await imageBlocks(this.ctx, images)
+    return await imageBlocks(this.ctx, images, true)
   }
 
   /** Task context for work started by an agent's tool call. */

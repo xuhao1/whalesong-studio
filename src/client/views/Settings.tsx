@@ -285,6 +285,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
       textConcurrency: draft.textConcurrency ?? null,
       autoDigest: draft.autoDigest,
       siftCast: draft.siftCast !== false,
+      planFollowsText: draft.planFollowsText !== false,
       settleSuggestions: draft.settleSuggestions !== false,
       reviewAgentRevisions: draft.reviewAgentRevisions,
       agentFiles: draft.agentFiles ?? 'guide',
@@ -836,6 +837,10 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
         <label className="nv-check">
           <input type="checkbox" checked={draft.autoDigest} onChange={(event) => { update({ autoDigest: event.target.checked }) }} />
           <span>{t('写完或改完一章后自动收录', 'Digest a chapter once it is written or changed')}</span>
+        </label>
+        <label className="nv-check">
+          <input type="checkbox" checked={draft.planFollowsText !== false} onChange={(event) => { update({ planFollowsText: event.target.checked }) }} />
+          <span>{t('正文改了之后，章纲和节拍自动照正文更新', 'Once a chapter\'s text is changed, its plan and beats are set by the text')}</span>
         </label>
         <label className="nv-check">
           <input type="checkbox" checked={draft.siftCast !== false} onChange={(event) => { update({ siftCast: event.target.checked }) }} />
