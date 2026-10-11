@@ -47,6 +47,19 @@ export function sheetPool(card: Sheeted): string[] {
   return pool
 }
 
+/** Every picture a card keeps of its person: their sheets — the main one, a stretch's, a look's — and their portraits. */
+export function picturesKept(card: Sheeted): string[] {
+  const visual = card.visual
+  return [...new Set([
+    ...sheetPool(card),
+    ...(visual?.sheet !== undefined ? [visual.sheet] : []),
+    ...(visual?.portrait !== undefined ? [visual.portrait] : []),
+    ...(visual?.portraits ?? []),
+    ...(visual?.looks ?? []).flatMap(look => (look.sheet !== undefined ? [look.sheet] : [])),
+    ...(card.stages ?? []).flatMap(stage => [stage.visual?.sheet, stage.visual?.portrait].filter((path): path is string => path !== undefined)),
+  ].filter(path => path.length > 0))]
+}
+
 /** Which of their sheets show the front view alone: the list the card keeps, or what its sheets say of themselves one by one. */
 export function sheetFronts(card: Sheeted): Set<string> {
   if (card.visual?.fronts !== undefined) return new Set(card.visual.fronts)

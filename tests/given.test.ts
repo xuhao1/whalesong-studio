@@ -9,6 +9,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { DEFAULT_SETTINGS } from '../src/core/settings'
 import { illustrate, pictureWhole, redrawPicture } from '../src/core/pipelines/illustrate'
 import { createTestBed, FakeImages, PIXEL, type TestBed } from './support/harness'
+import { pixelsOf } from '../src/core/media/pixels'
+import { cutPng } from '../src/core/media/png'
 
 let bed: TestBed | undefined
 afterEach(async () => {
@@ -187,6 +189,82 @@ describe('pictures the author gives one picture to go by', () => {
     const tried = await illustrate(bed.core, bed.runtime, { kind: 'item', target: mirror.id, references: [{ path: photo }], trials: [{ label: 'Codex again', image: { ...DEFAULT_SETTINGS.image, provider: 'codex' } }] }, task)
     expect(images.calls.at(-1)!.references).toHaveLength(1)
     expect((await project.illustrations()).find(item => item.path === tried.tried![0]!.path)!.parts?.references?.[0]).toMatchObject({ path: photo, given: true })
+  })
+
+  it('take another person\'s sheet for what it is — somebody else — and of it the likeness of family, not the person', async () => {
+    const { bed, images } = await studio()
+    const { project } = bed.runtime
+    bed.llm.responder = request => JSON.stringify({ prompt: /## 说明\n([\s\S]*?)\n\n## /.exec(request.prompt)?.[1] ?? request.prompt, replaced: [] })
+    // Her elder sister has a sheet; the cards say what the two are to each other — on the sister's card alone.
+    const elder = await project.saveCharacter({ name: '沈砚', role: 'protagonist', appearance: LOOK })
+    await illustrate(bed.core, bed.runtime, { kind: 'sheet', target: elder.id }, task)
+    const hers = (await project.findCharacter(elder.id))!.visual!.sheet!
+    const SISTER = '十九岁的姑娘，圆脸，两条辫子，蓝布学生装'
+    const card = await project.saveCharacter({ name: '沈蕙', role: 'supporting', appearance: SISTER })
+    await project.saveCharacter({ id: elder.id, relationships: [{ target: card.id, kind: '姐妹' }] })
+    const calls = images.calls.length
+    const asks = bed.llm.requests.length
+    // Given with nothing said of it: not "the whole look as in this picture" — that is the sister. Her own words stay
+    // written out, the picture is called another person's, by name and by what the two are, and what is wanted of it
+    // is said for the author: the cut of the face.
+    const drawn = await illustrate(bed.core, bed.runtime, { kind: 'sheet', target: card.id, references: [{ path: hers }] }, task)
+    expect(images.calls).toHaveLength(calls + 1)
+    expect(images.calls.at(-1)!.references).toHaveLength(1)
+    const brief = drawn.prompt
+    expect(brief).toContain(`人物「沈蕙」：${SISTER}`)
+    expect(brief).not.toContain('见图1')
+    expect(brief).toContain('参考图：图1 是另一个人「沈砚」（和「沈蕙」：姐妹）的人设图（相貌像沈砚：只取脸型和五官，看得出是一家人；不是同一个人——头发照文字写的梳，不戴图上的发饰；年纪、体型和衣着也照文字）。')
+    expect(brief).toContain(`${THEIRS}`)
+    expect(brief).toContain('标着“另一个人”的图上是别人：画的不是那个人，只取括号里说的那几样。')
+    // What is wanted of it is for whoever writes the prompt to work in, as anything said of a picture given is.
+    expect(bed.llm.requests.length).toBe(asks + 1)
+    expect(bed.llm.requests.at(-1)!.prompt).toContain('图1：相貌像沈砚：只取脸型和五官，看得出是一家人；不是同一个人——头发照文字写的梳，不戴图上的发饰；年纪、体型和衣着也照文字\n')
+    // On its record: a picture the author gave, and whose.
+    expect(drawn.parts?.references).toEqual([expect.objectContaining({ path: hers, given: true, label: expect.stringContaining('另一个人「沈砚」') })])
+    expect(drawn.parts?.pieces?.find(part => part.of === 'look')?.byPicture).toBeUndefined()
+    // The sister's own sheet is untouched, and the new one is the younger one's.
+    expect((await project.findCharacter(elder.id))!.visual!.sheet).toBe(hers)
+    expect((await project.findCharacter(card.id))!.visual!.sheet).toBe(drawn.path)
+    // What the author says is wanted of it holds instead — still as another person's picture.
+    const dressed = await illustrate(bed.core, bed.runtime, { kind: 'sheet', target: card.id, references: [{ path: hers, note: '只要这身衣服的款式' }] }, task)
+    expect(dressed.prompt).toContain('图1 是另一个人「沈砚」（和「沈蕙」：姐妹）的人设图（只要这身衣服的款式）')
+    expect(dressed.prompt).not.toContain('相貌像沈砚')
+    // A picture of the person herself — an earlier sheet of hers — is no other person's: the look goes by it, as before.
+    const own = await illustrate(bed.core, bed.runtime, { kind: 'sheet', target: card.id, references: [{ path: drawn.path }] }, task)
+    expect(own.prompt).toContain('人物「沈蕙」：见图1')
+    expect(own.prompt).not.toContain('另一个人')
+    // Of an outfit, a picture given is the outfit, whoever wears it there: the sister's sheet lends her clothes, not her face.
+    const look = await illustrate(bed.core, bed.runtime, { kind: 'sheet', target: card.id, look: '姐姐的衣服', prompt: '借来的亚麻长外衣', references: [{ path: hers }] }, task)
+    expect(look.prompt).toContain('图1 是沈蕙的主造型；图2 是作者给的参考图。')
+    expect(look.prompt).toContain('没说的，衣着、装备和头发的梳法照图')
+    expect(look.prompt).not.toContain('另一个人')
+  })
+
+  it('send of another person\'s sheet one figure — and its head and shoulders alone where a likeness is all that is wanted', async () => {
+    const { bed, images } = await studio()
+    const { project } = bed.runtime
+    bed.llm.responder = request => JSON.stringify({ prompt: /## 说明\n([\s\S]*?)\n\n## /.exec(request.prompt)?.[1] ?? request.prompt, replaced: [] })
+    // A sheet as one is drawn: three figures side by side, 900 by 600.
+    const [width, height] = [900, 600]
+    const pixels = new Uint8Array(width * height * 3).fill(236)
+    for (const [from, to] of [[80, 260], [380, 520], [640, 820]] as const) for (let y = 50; y < 570; y++) for (let x = from; x < to; x++) pixels.set([70, 90, 96], (y * width + x) * 3)
+    const hers = await project.writeAsset('images/sheet-沈砚-0a0a0a0a.png', await cutPng({ width, height, kind: 2, each: 3, pixels }, { left: 0, top: 0, width, height }))
+    await project.saveCharacter({ name: '沈砚', role: 'protagonist', appearance: LOOK, visual: { sheet: hers } })
+    const card = await project.saveCharacter({ name: '沈蕙', role: 'supporting', appearance: '十九岁的姑娘，圆脸，两条辫子，蓝布学生装' })
+    // Nothing said of it: the face is wanted — the head and shoulders of the front view go, not the figure (its
+    // clothes came along) and not the sheet (the side view's hair did). The record says what went.
+    const like = await illustrate(bed.core, bed.runtime, { kind: 'sheet', target: card.id, references: [{ path: hers }] }, task)
+    const face = pixelsOf(images.calls.at(-1)!.references[0]!.data)!
+    expect(face.width).toBeLessThan(330)
+    expect(face.height).toBeLessThan(200)
+    expect(like.parts?.references).toEqual([expect.objectContaining({ path: hers, given: true, sheet: true, front: true, face: true })])
+    // Something else said of it — the clothes, say: the front view whole, one figure of the three.
+    const dressed = await illustrate(bed.core, bed.runtime, { kind: 'sheet', target: card.id, references: [{ path: hers, note: '只要这身衣服的款式' }] }, task)
+    const front = pixelsOf(images.calls.at(-1)!.references[0]!.data)!
+    expect(front.width).toBeLessThan(330)
+    expect(front.height).toBe(600)
+    expect(dressed.parts?.references?.[0]).toMatchObject({ front: true })
+    expect(dressed.parts?.references?.[0]?.face).toBeUndefined()
   })
 
   it('are asked for by name: one that is gone, or given to a picture that takes none, is said', async () => {

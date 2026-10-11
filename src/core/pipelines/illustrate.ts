@@ -46,14 +46,14 @@ import { clip, clipTail, fuzzyFind, hashText, newId, sameName, slugify } from '.
 import { leadOf, portraitsOf, PROMPT_HEADROOM, promptTokens, promptWriteOf, type PictureLead } from '../../shared/images'
 import { inStage, looksWhole, stageAt } from '../../shared/stages'
 import { blocksOf, figureSpots } from '../../shared/reader'
-import { sheetPool } from '../../shared/sheets'
+import { picturesKept, sheetFronts, sheetPool } from '../../shared/sheets'
 import { groupOf } from '../../shared/world'
 import { detectCharacters } from '../context'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { asArray, asList, asRecord, asText } from '../llm'
 import { assign } from '../crew'
 import { extensionOf, referencesRefused, type ImageProvider, type ImageReference } from '../media/image'
-import { frontView } from '../media/front'
+import { faceView, frontView } from '../media/front'
 import { pixelsOf } from '../media/pixels'
 import { castAt } from './growth'
 import { cleanGuides } from './guides'
@@ -296,17 +296,20 @@ export function wardrobeOf(card: CharacterCard): string | undefined {
 }
 
 /** A picture that goes along with a prompt: where it lies, who or what it shows — and whether it is a design sheet, which shows one person several times over. */
-export interface Held { path: string; label: string; sheet?: boolean; /** The author gave it to this picture to go by. */ given?: boolean; /** …and said this is wanted of it. */ note?: string }
+export interface Held { path: string; label: string; sheet?: boolean; /** The author gave it to this picture to go by. */ given?: boolean; /** …and said this is wanted of it. */ note?: string; /** It is a picture of somebody else than the one drawn — by name. */ another?: string; /** …a sheet of theirs of which a likeness is all that is wanted: the head and shoulders of its front view go, and no more — `cut` out of its three figures, or of the `whole` picture where it shows the front view alone. */ likeness?: 'cut' | 'whole' }
 
 /** The front views cut out of design sheets, by book, sheet and the sheet's size: a sheet is looked into once, however many pictures are held against it. */
 const fronts = new Map<string, Promise<Uint8Array | undefined>>()
 
-/** The front view of a sheet of this book; nothing where none can be told apart in it. */
-async function frontOf(root: string, path: string, sheet: Uint8Array, signal: AbortSignal | undefined): Promise<Uint8Array | undefined> {
-  const key = `${root}\n${path}\n${sheet.byteLength}`
+/**
+ * The front view of a sheet of this book; nothing where none can be told apart in it.
+ * @param face - of that view, the head and shoulders alone (`whole`: the sheet is the front view already).
+ */
+async function frontOf(root: string, path: string, sheet: Uint8Array, signal: AbortSignal | undefined, face?: 'cut' | 'whole'): Promise<Uint8Array | undefined> {
+  const key = `${root}\n${path}\n${sheet.byteLength}${face !== undefined ? `\nface:${face}` : ''}`
   let found = fronts.get(key)
   if (found === undefined) {
-    found = frontView(sheet, signal).catch(() => undefined)
+    found = (face !== undefined ? faceView(sheet, signal, face === 'whole') : frontView(sheet, signal)).catch(() => undefined)
     if (fronts.size >= 64) fronts.delete(fronts.keys().next().value!)
     fronts.set(key, found)
     // Stopped half-way, it is not known to have none.
@@ -1005,6 +1008,35 @@ async function givenPictures(project: ProjectRuntime['project'], given: readonly
 }
 
 /**
+ * A picture the author gave a design sheet to go by that is a picture of somebody else — that person's sheet, a
+ * portrait of them. It shows another person, and is called that: by name, with what the cards say the two are to
+ * each other. Where the author said nothing of what is wanted of it, what is wanted is the likeness kin have — the
+ * cut of the face — and not the person: given over with nothing said, the whole look would go by the picture
+ * ({@link byGiven}), and the sheet asked for would come back as theirs.
+ * @param records - the pictures on record: a sheet or a portrait a card no longer keeps is still theirs by its record.
+ */
+function ofAnother(reference: Held, card: CharacterCard, cards: readonly CharacterCard[], records: readonly IllustrationInfo[], plang: PromptLanguage): Held {
+  const record = records.find(item => item.path === reference.path && (item.kind === 'sheet' || item.kind === 'portrait') && item.target !== undefined)
+  const other = cards.find(each => each.id !== card.id && picturesKept(each).includes(reference.path))
+    ?? (record !== undefined && record.target !== card.id ? cards.find(each => each.id === record.target) : undefined)
+  if (other === undefined || picturesKept(card).includes(reference.path)) return reference
+  const sheet = record !== undefined ? record.kind === 'sheet' : sheetPool(other).includes(reference.path) || (other.visual?.looks ?? []).some(look => look.sheet === reference.path)
+  // What the two are to each other, as either card has it.
+  const tie = (from: CharacterCard, to: CharacterCard): string | undefined => from.relationships?.find(relation => relation.target === to.id || sameName(relation.target, to.name))?.kind.trim()
+  const kin = [tie(card, other), tie(other, card)].find(kind => kind !== undefined && kind.length > 0)
+  const note = reference.note ?? L(plang,
+    // (Said of the hair by itself: with the head along, the hair and what is worn in it came too — tried.)
+    `相貌像${other.name}：只取脸型和五官，看得出是一家人；不是同一个人——头发照文字写的梳，不戴图上的发饰；年纪、体型和衣着也照文字`,
+    `looks like ${other.name}: the cut of the face and the features alone, plainly of one family; not the same person — the hair is worn as the words say, without what is worn in it there; age, build and clothing as the words have them too`)
+  const whose = L(plang,
+    `另一个人「${other.name}」${kin !== undefined ? `（和「${card.name}」：${kin}）` : ''}的${sheet ? '人设图' : '立绘'}`,
+    `${sheet ? 'the design sheet' : 'a portrait'} of another person, ${other.name}${kin !== undefined ? ` (to ${card.name}: ${kin})` : ''}`)
+  // (What a sheet of theirs is: three figures, or the front view alone — as their card has it.)
+  const frontOnly = sheet && (sheetFronts(other).has(reference.path) || (other.visual?.looks ?? []).some(look => look.sheet === reference.path && look.sheetFront === true))
+  return { ...reference, label: L(plang, `${whose}（${note}）`, `${whose} (${note})`), note, another: other.name, ...(sheet ? { sheet: !frontOnly } : { sheet: false }), ...(sheet && reference.note === undefined ? { likeness: frontOnly ? 'whole' as const : 'cut' as const } : {}) }
+}
+
+/**
  * How somebody or something looks, where the author gave the picture one to go by and said nothing of what is wanted
  * of it: it is as that picture shows — the line points to it ("见图1"), the way a person's line points to their
  * sheet, and the words stay beside the pointer for where no picture can go. Written out beside the picture, a
@@ -1038,10 +1070,14 @@ function withGiven(own: Pick<RenderInput, 'references' | 'referenceNote'>, given
   const theirs = L(lang,
     `作者给的参考图，括号里是作者说的话：说了要它什么的，那一样照图画——文字里另有写法的，以图为准——别的照文字；没说的，${says.takes}照图，图上看不出的照文字。`,
     `Of a reference the author gave, the brackets hold what the author said: where that says what is wanted of it, that follows the picture — over what the words say of it — and the rest follows the words; where it does not, ${says.takes} follows the picture, and the words say what the picture does not show. `)
+  // A picture of somebody else is no picture of who is drawn: said, or the model draws the person it was handed.
+  const others = given.some(reference => reference.another !== undefined)
+    ? L(lang, '标着“另一个人”的图上是别人：画的不是那个人，只取括号里说的那几样。', 'A picture called another person\'s shows somebody else: they are not who is drawn — only what the brackets say is taken of them. ')
+    : ''
   const rest = first.length > 0
     ? L(lang, '它们的背景、构图和光线同样不要带过来；画风照上面写的。', 'Their backgrounds, composition and light stay behind as well; the style is the one written above.')
     : says.frame
-  return { references: [...before, ...given], referenceNote: `${first}${theirs}${rest}` }
+  return { references: [...before, ...given], referenceNote: `${first}${theirs}${others}${rest}` }
 }
 
 // ───────────────────────────── one picture ─────────────────────────────
@@ -1377,7 +1413,7 @@ export async function renderImage(core: NovelCore, runtime: ProjectRuntime, inpu
   /** As a record keeps it: where, who — and that it is a sheet, for the picture drawn again from that record. */
   const stayed = (reference: Held): Held => ({ path: reference.path, label: reference.label, ...(reference.sheet === false ? { sheet: false } : isSheet(reference) ? { sheet: true } : {}), ...(reference.given === true ? { given: true } : {}) })
   /** …and, of one that went, that it went as its front view. */
-  const kept = (reference: Held & { front?: boolean }): Held & { front?: boolean } => ({ ...stayed(reference), ...(reference.front === true ? { front: true } : {}) })
+  const kept = (reference: Held & { front?: boolean; face?: boolean }): Held & { front?: boolean; face?: boolean } => ({ ...stayed(reference), ...(reference.front === true ? { front: true } : {}), ...(reference.face === true ? { face: true } : {}) })
   let left: Held[] = taken === undefined ? [] : wanted.slice(taken, own).map(stayed)
   for (const reference of wanted) {
     if (references.length >= most) break
@@ -1385,9 +1421,14 @@ export async function renderImage(core: NovelCore, runtime: ProjectRuntime, inpu
       const data = await project.readFile(reference.path)
       // A design sheet goes as its front view alone, wherever the picture asked for is not itself a sheet: handed all
       // three figures a model draws three people, and no words about what a sheet is kept one from it (TODO #191).
-      const front = input.kind !== 'sheet' && isSheet(reference) ? await frontOf(project.root, reference.path, data, task.signal) : undefined
+      // Somebody else's sheet is no sheet of who is drawn: one figure of it goes whatever picture is asked for — a
+      // sheet too — and, where their likeness is all that is wanted, the head and shoulders of that figure alone
+      // (with the figure whole the clothes came along, and with the sheet whole the side view's hair: tried).
+      const lent = reference.another !== undefined
+      const face = lent && reference.likeness !== undefined ? await frontOf(project.root, reference.path, data, task.signal, reference.likeness) : undefined
+      const front = face ?? ((lent || input.kind !== 'sheet') && isSheet(reference) ? await frontOf(project.root, reference.path, data, task.signal) : undefined)
       references.push(front !== undefined
-        ? { ...stayed(reference), front: true, image: { data: front, mime: 'image/png', label: reference.label } }
+        ? { ...stayed(reference), front: true, ...(face !== undefined ? { face: true } : {}), image: { data: front, mime: 'image/png', label: reference.label } }
         : { ...stayed(reference), image: { data, mime: /\.jpe?g$/i.test(reference.path) ? 'image/jpeg' : /\.webp$/i.test(reference.path) ? 'image/webp' : /\.gif$/i.test(reference.path) ? 'image/gif' : 'image/png', label: reference.label } })
     } catch {
       // A reference whose file is gone is simply not sent.
@@ -2487,6 +2528,12 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
     // What a sheet shows: the person three times, or — where the author says so, for an image model that cannot keep
     // three alike — the front view alone.
     const frontOnly = image.sheet === 'front'
+    // A picture given that is somebody else's — a parent's sheet, a sister's — is that person's, and says so: what it
+    // gives is a likeness, not the look. (Of a look, a picture given is the outfit, whoever wears it there.)
+    const lent = look === undefined && given.length > 0 ? await (async () => {
+      const records = await project.illustrations()
+      return given.map(reference => ofAnother(reference, card, characters, records, plang))
+    })() : given
     const sheetInput: RenderInput = {
       ...compose([
         use(frontOnly ? `人物设定图（正面全身）：「${card.name}」` : `人物设定图（三视图）：「${card.name}」`, frontOnly ? `a character design sheet (front view, full body) of ${card.name}` : `a character design sheet (turnaround) of ${card.name}`),
@@ -2495,7 +2542,7 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
           ? piece('frame', L(plang, '只画这一个人，一次——正面，全身站姿，站直，两手自然垂在身侧，表情平静；素净的浅色背景，不要任何文字与标注', 'this one person, once — front view, full body, standing straight, hands at the sides, neutral expression; a plain light ground, no text or labels'))
           : piece('frame', L(plang, '同一个人的全身站姿画三次——正面、侧面、背面，从左到右等距并排，比例与衣着完全一致，表情平静；素净的浅色背景，不要任何文字与标注', 'the same person drawn three times, full body, standing — front view, side view, back view — evenly spaced left to right, identical proportions and clothing, neutral expression; a plain light ground, no text or labels')),
         // (Held against their portrait or their main look, that is the picture that shows who they are.)
-        portrait === undefined && base === undefined ? byGiven(personPiece(card), given) : personPiece(card),
+        portrait === undefined && base === undefined ? byGiven(personPiece(card), lent) : personPiece(card),
         piece('outfit', look?.prompt),
         piece('ask', look === undefined ? direction : undefined),
       ], plang),
@@ -2527,7 +2574,7 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
           'It is the same person: face, hair colour and build follow the reference; clothing, gear and how the hair is worn follow the outfit described above — wherever that differs from the reference, draw the description.'),
       // (Of a look, a picture given with nothing said of it is the outfit: said so for whoever writes the prompt,
       // who takes the words of the outfit that it stands in for out.)
-      } : {}, look !== undefined ? given.map(reference => (reference.note === undefined ? { ...reference, note: L(plang, '这身装束照它', 'the outfit as in this one') } : reference)) : given, plang, {
+      } : {}, look !== undefined ? given.map(reference => (reference.note === undefined ? { ...reference, note: L(plang, '这身装束照它', 'the outfit as in this one') } : reference)) : lent, plang, {
         // Of a look, what a picture given shows is the outfit; of the person, the person.
         takes: look !== undefined
           ? L(plang, '衣着、装备和头发的梳法', 'the clothing, the gear and how the hair is worn')

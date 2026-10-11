@@ -103,6 +103,47 @@ export function firstFigure(image: PngPixels): { left: number; width: number } |
 }
 
 /**
+ * The head and shoulders of a sheet's front view, as a picture of its own (a PNG): what a likeness is taken from
+ * where the likeness is all that is wanted — the face of a parent or a sister for somebody of their family. With the
+ * whole figure along, an image model brings its clothes too, and with the whole sheet its side view's hair (tried).
+ * @param whole - the picture is one figure already (a sheet of the front view alone): looked at as it is.
+ * @returns nothing where no figure can be told apart, or the picture cannot be read here.
+ */
+export async function faceView(sheet: Uint8Array, signal?: AbortSignal, whole = false): Promise<Uint8Array | undefined> {
+  const png = sheet.byteLength > 8 && sheet[0] === 0x89 && sheet[1] === 0x50 ? sheet : await asPng(sheet, signal)
+  if (png === undefined) return undefined
+  const image = await readPng(png)
+  if (image === undefined) return undefined
+  const figure = whole ? { left: 0, width: image.width } : firstFigure(image)
+  if (figure === undefined) return undefined
+  // The ground, as the strip's own upper corners have it: there is ground on either side of a figure.
+  const corners = [figure.left + 1, figure.left + figure.width - 2].map(x => colourAt(image, Math.min(image.height - 1, 2) * image.width + Math.max(0, Math.min(image.width - 1, x))))
+  const ground = [0, 1, 2].map(channel => (corners[0]![channel]! + corners[1]![channel]!) / 2)
+  // The rows the figure takes: where more than a sliver of the strip is not ground.
+  const sliver = Math.max(2, Math.round(figure.width * 0.03))
+  const taken = (y: number): boolean => {
+    let filled = 0
+    for (let x = figure.left; x < figure.left + figure.width; x++) {
+      const [r, g, b] = colourAt(image, y * image.width + x)
+      if (Math.abs(r - ground[0]!) > NEAR || Math.abs(g - ground[1]!) > NEAR || Math.abs(b - ground[2]!) > NEAR) filled += 1
+      if (filled >= sliver) return true
+    }
+    return false
+  }
+  let top = 0
+  while (top < image.height && !taken(top)) top += 1
+  let bottom = image.height - 1
+  while (bottom > top && !taken(bottom)) bottom -= 1
+  const tall = bottom - top + 1
+  if (tall < 64) return undefined
+  // Head and shoulders: a little under a third of somebody standing, with some ground above the hair.
+  const pad = Math.round(tall * 0.03)
+  const from = Math.max(0, top - pad)
+  const height = Math.min(image.height - from, Math.round(tall * 0.3) + (top - from))
+  return await cutPng(image, { left: figure.left, top: from, width: figure.width, height })
+}
+
+/**
  * The front view of a design sheet, as a picture of its own (a PNG): the first of the figures it shows side by side.
  * @returns nothing where no figure can be told apart — the sheet then goes along whole — or where the picture is of a
  *   kind that cannot be read here (not a PNG, and no ffmpeg on this computer to make it one).

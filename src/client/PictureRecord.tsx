@@ -491,7 +491,7 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
               const body = (
                 <>
                   <img alt={reference.label} loading="lazy" src={mediaUrl(reference.path)} />
-                  <figcaption>{t(`第 ${index + 1} 张 · ${reference.label}`, `#${index + 1} · ${reference.label}`)}<Chip tone={status.tone}>{status.label}</Chip>{reference.front === true ? <Chip title={t('人设图上有正面、侧面、背面三个身影；整张发过去，绘图模型会照着画出三个人', 'A sheet shows front, side and back; sent whole, an image model draws three people')}>{t('只发了正面那个身影', 'Its front view only')}</Chip> : null}</figcaption>
+                  <figcaption>{t(`第 ${index + 1} 张 · ${reference.label}`, `#${index + 1} · ${reference.label}`)}<Chip tone={status.tone}>{status.label}</Chip>{reference.face === true ? <Chip title={t('只要相貌：整个身影发过去，衣服也会被带过来', 'A likeness is all that is wanted: with the whole figure the clothes come along')}>{t('只发了头肩', 'Head and shoulders only')}</Chip> : reference.front === true ? <Chip title={t('人设图上有正面、侧面、背面三个身影；整张发过去，绘图模型会照着画出三个人', 'A sheet shows front, side and back; sent whole, an image model draws three people')}>{t('只发了正面那个身影', 'Its front view only')}</Chip> : null}</figcaption>
                 </>
               )
               return known && onOpen !== undefined

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 import { describe, expect, it } from 'vitest'
-import { firstFigure, frontView } from '../src/core/media/front'
+import { faceView, firstFigure, frontView } from '../src/core/media/front'
 import { pixelsOf } from '../src/core/media/pixels'
 import { cutPng, readPng, type PngPixels } from '../src/core/media/png'
 import { asPng } from '../src/core/media/press'
@@ -115,5 +115,30 @@ describe('the front view of a design sheet', () => {
     expect(await frontView(new Uint8Array([0x89, 0x50, 1, 2, 3, 4, 5, 6, 7, 8]))).toBeUndefined()
     const lone = sheetOf(900, 600, [{ from: 300, to: 600 }])
     expect(await frontView(await cutPng(lone, whole(lone)))).toBeUndefined()
+  })
+
+  it('hands back the head and shoulders of the front view, where a likeness is all that is wanted of a sheet', async () => {
+    // (A figure here stands from 8% to 95% of the height: 48 to 570 of 600 — 522 tall.)
+    const sheet = sheetOf(900, 600, [{ from: 80, to: 260 }, { from: 380, to: 520 }, { from: 640, to: 820 }])
+    const face = (await faceView(await cutPng(sheet, whole(sheet))))!
+    const size = pixelsOf(face)!
+    // As wide as the front view; a little under a third of the figure, from just above its top.
+    expect(size.width).toBe(pixelsOf((await frontView(await cutPng(sheet, whole(sheet))))!)!.width)
+    expect(size.height).toBeGreaterThan(150)
+    expect(size.height).toBeLessThan(200)
+    const cut = (await readPng(face))!
+    // Ground above the head, the figure under it, and nothing of the next figure.
+    expect(cut.pixels[(2 * cut.width + Math.floor(cut.width / 2)) * 3]).toBeGreaterThan(200)
+    expect(cut.pixels[((cut.height - 2) * cut.width + Math.floor(cut.width / 2)) * 3]).toBeLessThan(120)
+    expect(cut.pixels[((cut.height - 2) * cut.width + cut.width - 1) * 3]).toBeGreaterThan(200)
+    // A sheet that is the front view alone is looked at as it is: one figure, its head and shoulders.
+    const lone = sheetOf(400, 600, [{ from: 120, to: 280 }])
+    expect(await faceView(await cutPng(lone, whole(lone)))).toBeUndefined()
+    const alone = pixelsOf((await faceView(await cutPng(lone, whole(lone)), undefined, true))!)!
+    expect(alone.width).toBe(400)
+    expect(alone.height).toBeGreaterThan(150)
+    expect(alone.height).toBeLessThan(200)
+    // What cannot be read gives nothing: the picture then goes as it would have.
+    expect(await faceView(new Uint8Array([0x89, 0x50, 1, 2, 3, 4, 5, 6, 7, 8]))).toBeUndefined()
   })
 })

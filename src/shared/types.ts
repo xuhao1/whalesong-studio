@@ -2133,9 +2133,10 @@ export interface IllustrationParts {
    * Reference images sent along: project-relative path and who it shows. `sheet`: it is somebody's design sheet — one
    * person seen from several sides. `front`: of that sheet only the front view went, cut out of it — handed all its
    * figures, an image model draws as many people. `given`: the author gave it to this picture to go by (a photograph
-   * of the thing, a costume, a face) — not one the Studio holds the picture against by itself.
+   * of the thing, a costume, a face) — not one the Studio holds the picture against by itself. `face`: of a sheet
+   * that is somebody else's only the head and shoulders of its front view went — a likeness was all that was wanted.
    */
-  references?: { path: string; label: string; sheet?: boolean; front?: boolean; given?: boolean }[]
+  references?: { path: string; label: string; sheet?: boolean; front?: boolean; given?: boolean; face?: boolean }[]
   /** What the prompt said of the reference images: who each one shows, and what they are there for. */
   referenceNote?: string
   /**

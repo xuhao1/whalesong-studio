@@ -9,7 +9,7 @@
  *   ROLE_LABELS…     how parts are called, and where somebody stands at a chapter of a line
  */
 import { ImageTrialDialog, ManyModels, SpeechTrialDialog, type DrawAsk } from '../Trial'
-import { GuidePictures, useGiven } from '../Guides'
+import { GuidePictures, useGiven, type SheetLender } from '../Guides'
 import { ImportPicture } from '../ImportPicture'
 import { PortraitInText } from '../Figures'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
@@ -19,7 +19,7 @@ import { legacyLook, sceneFor, scenePictures, scenesOf, shotOf } from '../../sha
 import { clip as clipText } from '../../shared/text'
 import { detailsOf, foldDetails } from '../../shared/card'
 import { leadOf, portraitsOf, withBookImage } from '../../shared/images'
-import { sheetsOf } from '../../shared/sheets'
+import { picturesKept, sheetsOf } from '../../shared/sheets'
 import { lifeEnd, lifeLine, type Life, type LifeEvent, type LifeStanding } from '../../shared/life'
 import { lines, options, useAssist } from '../forms'
 import { sceneOf, sheetsDrawn, type PortraitScene } from '../labels'
@@ -543,6 +543,18 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
   // Pictures the author gives their design sheet to go by — a face, a costume: sent to the image model with every
   // sheet of theirs drawn from this page, until taken off again.
   const [sheetGiven, setSheetGiven] = useGiven(`${root}\nsheet:${card.id}`)
+  // The others who have a design sheet: any of theirs can be given to this one's — a parent's, a sister's — for the
+  // likeness of family. Those the cards tie to this person come first.
+  const lenders = useMemo((): SheetLender[] => {
+    const tie = (from: CharacterCard, to: CharacterCard): string | undefined => from.relationships?.find(relation => relation.target === to.id || relation.target === to.name)?.kind.trim() || undefined
+    return project.characters
+      .filter(other => other.id !== card.id && other.visual?.sheet !== undefined)
+      .map((other): SheetLender => {
+        const kin = tie(card, other) ?? tie(other, card)
+        return { name: other.name, sheet: other.visual!.sheet!, ...(kin !== undefined ? { tie: kin } : {}), pictures: picturesKept(other) }
+      })
+      .sort((left, right) => Number(right.tie !== undefined) - Number(left.tie !== undefined))
+  }, [project.characters, card])
   useEffect(() => {
     setPortraitFrom(undefined)
     setSheetFrom(undefined)
@@ -834,7 +846,7 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
             ]}
           />
         </label>
-        <GuidePictures label={t('人设图参考图', 'Pictures for the sheet')} ask={t('要它的什么：脸、发型、这身衣服（不填：整个样子照它）', 'What of it is wanted: the face, the hair, these clothes (left empty: the whole look)')} value={sheetGiven} onChange={setSheetGiven} disabled={dirty} />
+        <GuidePictures label={t('人设图参考图', 'Pictures for the sheet')} ask={t('要它的什么：脸、发型、这身衣服（不填：整个样子照它）', 'What of it is wanted: the face, the hair, these clothes (left empty: the whole look)')} value={sheetGiven} onChange={setSheetGiven} disabled={dirty} people={lenders} />
         {portraitAgainst === 'sheet' && sheetAgainst === 'portrait' && hasSheet ? <p className="nv-muted nv-small">{t('两张互相照着：重画哪张都会像另一张。', 'Each is held against the other: either, drawn again, comes back like the other.')}</p> : null}
         {portraitBehind ? <p className="nv-muted nv-small">{t('立绘不是照现在这张人设图画的。', 'The portrait was not drawn against the sheet in use now.')}</p> : null}
         {sheetBehind ? <p className="nv-muted nv-small">{t('人设图不是照现在这张立绘画的。', 'The sheet was not drawn against the portrait in use now.')}</p> : null}

@@ -12,7 +12,18 @@
 import { useCallback, useRef, useState } from 'react'
 import type { PictureGuide, PicturesRead, ReferencesLooked } from '../shared/types'
 import { PickPicture } from './PlacePicture'
-import { Button, cx, plainEnter, ProjectImage, TextInput, useProject, useStudio, useT } from './ui'
+import { Button, Chip, cx, Modal, plainEnter, ProjectImage, TextInput, useProject, useStudio, useT } from './ui'
+
+/** Somebody whose design sheet can be given to the drawing of another person's: one of their family is drawn by it. */
+export interface SheetLender {
+  name: string
+  /** The sheet that is theirs now. */
+  sheet: string
+  /** What the cards say they are to whoever is drawn ("姐妹", "father"). */
+  tie?: string
+  /** Every picture kept of them: one of these among the pictures given is theirs, whichever way it was chosen. */
+  pictures: readonly string[]
+}
 
 /** The most one piece of work is given; the Host holds to the same. */
 const MOST = 12
@@ -79,12 +90,17 @@ export async function encoded(file: File, asIs = 1_500_000, longEdge = LONG_EDGE
  * @param chapter - the chapter in hand, whose own pictures the chooser lists first.
  * @param label - what they are called here, where "pictures to go by" does not say whose they are.
  * @param ask - what the field beside each picture asks for, where it is not a moment of the plot.
+ * @param people - where the pictures are for somebody's design sheet: the others who have one, any of which can be
+ *   given — a parent's, a sister's — for the likeness of family.
  */
-export function GuidePictures({ value, onChange, disabled, chapter, hint, label, ask }: { value: readonly PictureGuide[]; onChange: (next: PictureGuide[]) => void; disabled?: boolean; chapter?: string | undefined; hint?: string; label?: string; ask?: string }) {
+export function GuidePictures({ value, onChange, disabled, chapter, hint, label, ask, people }: { value: readonly PictureGuide[]; onChange: (next: PictureGuide[]) => void; disabled?: boolean; chapter?: string | undefined; hint?: string; label?: string; ask?: string; people?: readonly SheetLender[] }) {
   const { controller } = useStudio()
   const t = useT()
   const { root } = useProject()
   const [picking, setPicking] = useState(false)
+  const [lending, setLending] = useState(false)
+  /** Whose picture one of them is, where it is somebody else's. */
+  const whose = (path: string): SheetLender | undefined => people?.find(person => person.pictures.includes(path))
   const [bringing, setBringing] = useState(false)
   const input = useRef<HTMLInputElement>(null)
   const full = value.length >= MOST
@@ -109,6 +125,7 @@ export function GuidePictures({ value, onChange, disabled, chapter, hint, label,
     <div className={cx('nv-guides', disabled === true && 'is-off')}>
       <div className="nv-guides-head">
         <span className="nv-guides-label">{label ?? t('参考图', 'Pictures to go by')}{value.length > 0 ? ` · ${value.length}` : ''}</span>
+        {people !== undefined ? <Button size="sm" variant="ghost" icon="users" disabled={disabled === true || full || people.length === 0} title={people.length === 0 ? t('还没有别的人有人设图', 'Nobody else has a design sheet yet') : t('照另一个人的人设图画：相貌像一家人——画父母子女、兄弟姐妹', 'By another person\'s design sheet: the likeness of family — for a parent, a child, a sibling')} onClick={() => { setLending(true) }}>{t('照别人的人设图…', 'Somebody else\'s sheet…')}</Button> : null}
         <Button size="sm" variant="ghost" icon="image" disabled={disabled === true || full} onClick={() => { setPicking(true) }}>{t('从本书的图里选…', 'From the book…')}</Button>
         <Button size="sm" variant="ghost" icon="upload" busy={bringing} disabled={disabled === true || full} pending={t('正在带进来…', 'Bringing it in…')} onClick={() => { input.current?.click() }}>{t('从电脑选…', 'From this computer…')}</Button>
         <input ref={input} type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden onChange={(event) => { bring(event.target.files) }} />
@@ -120,13 +137,27 @@ export function GuidePictures({ value, onChange, disabled, chapter, hint, label,
             <div key={guide.path} className="nv-guide">
               <span className="nv-guide-no">{at + 1}</span>
               <ProjectImage path={guide.path} alt="" className="nv-guide-thumb" />
-              <GuideNote note={guide.note ?? ''} disabled={disabled === true} {...(ask !== undefined ? { ask } : {})} onCommit={(note) => { onChange(value.map((item, index) => (index === at ? (note.length > 0 ? { path: item.path, note } : { path: item.path }) : item))) }} />
+              {whose(guide.path) !== undefined ? <Chip tone="violet" title={t('这是另一个人的图：画的不是他', 'Another person\'s picture: not who is drawn')}>{whose(guide.path)!.name}</Chip> : null}
+              <GuideNote note={guide.note ?? ''} disabled={disabled === true} {...(whose(guide.path) !== undefined ? { ask: t(`要它的什么（不填：相貌像${whose(guide.path)!.name}，像一家人；别的照文字）`, `What of it is wanted (left empty: the family likeness of ${whose(guide.path)!.name}; the rest as the words say)`) } : ask !== undefined ? { ask } : {})} onCommit={(note) => { onChange(value.map((item, index) => (index === at ? (note.length > 0 ? { path: item.path, note } : { path: item.path }) : item))) }} />
               <button type="button" className="nv-guide-drop" disabled={disabled === true} title={t('不用这张', 'Leave this one out')} aria-label={t('不用这张', 'Leave this one out')} onClick={() => { onChange(value.filter((_item, index) => index !== at)) }}>×</button>
             </div>
           ))}
         </div>
       ) : null}
       {picking ? <PickPicture {...(chapter !== undefined ? { chapter } : {})} onPick={(image) => { add(image.path); setPicking(false) }} onClose={() => { setPicking(false) }} /> : null}
+      {lending && people !== undefined ? (
+        <Modal wide title={t('照谁的人设图', 'Whose design sheet')} onClose={() => { setLending(false) }}>
+          <p className="nv-muted nv-small">{t('画出来相貌像他、看得出是一家人，不是同一个人；年纪、发式、衣着照这张卡上写的。想要别的，选完在图后面写一句。', 'The likeness of family, not the same person; age, hair and clothing as this card has them. For something else, say so beside the picture once it is chosen.')}</p>
+          <div className="nv-gallery-grid nv-pick-grid">
+            {people.map(person => (
+              <button key={person.sheet} type="button" className="nv-gallery-item" disabled={value.some(guide => guide.path === person.sheet)} onClick={() => { add(person.sheet); setLending(false) }}>
+                <ProjectImage path={person.sheet} alt={person.name} />
+                <span className="nv-gallery-caption"><span>{person.name}</span>{person.tie !== undefined ? <Chip tone="violet">{person.tie}</Chip> : null}</span>
+              </button>
+            ))}
+          </div>
+        </Modal>
+      ) : null}
     </div>
   )
 }
