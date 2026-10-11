@@ -204,6 +204,45 @@ describe('batches of real work', () => {
       expect(order).toEqual(['beats', 'write 4', 'digest'])
     })
 
+    it('writes a run without taking memory when the digests are left out — one after the other, and in rounds', async () => {
+      const { project } = bed.runtime
+      const ids: string[] = []
+      for (let n = 1; n <= 3; n++) ids.push((await project.addChapter({ title: `第${n}回`, synopsis: `第 ${n} 回的梗概。`, beats: [{ id: `b${n}`, summary: '开场' }] })).id)
+      const order: string[] = []
+      bed.llm.responder = (request) => {
+        const all = `${request.system ?? ''}${request.stable ?? ''}${request.prompt}`
+        if (all.includes('只输出小说正文')) {
+          const n = /本章章纲[\s\S]*?第(\d)回/.exec(request.prompt)?.[1] ?? '?'
+          order.push(`write ${n}`)
+          return `第${n}回的正文写在这里。`.repeat(5)
+        }
+        if (request.prompt.includes('"verdict"')) {
+          order.push('review')
+          return JSON.stringify({ verdict: '可以', issues: [] })
+        }
+        order.push('digest')
+        return JSON.stringify({ brief: '摘要', summary: '这一回发生的事。', characters: [], facts: [], newEntities: [], threads: [] })
+      }
+      // Writing alone: nothing asks the scribe, and the next chapter still goes by the text of the one before.
+      const laid = await textPlan(bed.core, bed.runtime, { steps: ['write'], count: 2 })
+      expect(laid.columns).toEqual(['write'])
+      expect((await runBatch(laid, { origin: 'user' }, 'zh')).failed).toEqual([])
+      expect(order).toEqual(['write 1', 'write 2'])
+      expect((await project.chapterInfos()).map(info => [info.hasText, info.digested])).toEqual([[true, false], [true, false], [false, false]])
+      const writes = bed.llm.requests.filter(request => (request.system ?? '').includes('只输出小说正文'))
+      expect(writes[1]!.stable).toContain('第1回的正文写在这里。')
+
+      // In rounds: a review is what a round goes by, so it is added; memory is not.
+      order.length = 0
+      const rounds = await textPlan(bed.core, bed.runtime, { steps: ['write'], order: 'iterate' })
+      expect(rounds.columns).toEqual(['write', 'review'])
+      expect((await runBatch(rounds, { origin: 'user' }, 'zh')).failed).toEqual([])
+      expect(order).toEqual(['write 3', 'review'])
+      expect((await project.chapterInfos()).map(info => info.digested)).toEqual([false, false, false])
+      // With the digests ticked, rounds take memory as before.
+      expect((await textPlan(bed.core, bed.runtime, { steps: ['write', 'digest'], order: 'iterate', redo: true, chapters: [ids[2]!] })).columns).toEqual(['write', 'digest', 'review'])
+    })
+
     it('writes a run of chapters side by side when asked to: faster, each from its outline and the outlines before it', async () => {
       const { project } = bed.runtime
       const ids: string[] = []

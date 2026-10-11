@@ -229,9 +229,13 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
     // What a link points at may be folded away or among the advanced options: opened first, found after.
     const part: string = focus
     if (part === 'crew' || part === 'parallel' || part === 'context') setAdvanced(true)
+    // What the Studio does by itself is set for every book: shown under that view, whichever was open.
+    if (part === 'auto') setScope('global')
     if (part === 'image' || part === 'tts' || part === 'sound' || part === 'embedding') setUnfolded(previous => ({ ...previous, [part]: true }))
-    const timer = setTimeout(() => {
-      const target = page.current?.querySelector(`[data-section="${focus}"]`)
+    // Not taken back when this effect is cleaned up: taking the request off the store (below) renders the page again at
+    // once, and that very cleanup used to cancel the scroll it had just asked for. A page that is gone has nothing to find.
+    setTimeout(() => {
+      const target = page.current?.querySelector(`[data-section="${part}"]`)
       if (target !== null && target !== undefined) {
         target.scrollIntoView({ block: 'start', behavior: 'smooth' })
         target.classList.add('is-focus')
@@ -239,7 +243,6 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
       }
     }, 60)
     controller.consumeSettingsFocus()
-    return () => { clearTimeout(timer) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [controller, focus])
   const update = (patch: Partial<NovelSettings>): void => {
@@ -286,6 +289,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
       autoDigest: draft.autoDigest,
       siftCast: draft.siftCast !== false,
       planFollowsText: draft.planFollowsText !== false,
+      recheckIssues: draft.recheckIssues !== false,
       settleSuggestions: draft.settleSuggestions !== false,
       reviewAgentRevisions: draft.reviewAgentRevisions,
       agentFiles: draft.agentFiles ?? 'guide',
@@ -592,6 +596,36 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
         ) : null}
       </section>
 
+      {/* What the Studio does by itself once text is written or changed: each a switch, on the first page — every one of them is model calls nobody pressed a button for. */}
+      <section className="nv-card" data-section="auto" data-global="">
+        <SectionTitle>{t('自动做的事', 'Done by itself')}</SectionTitle>
+        <p className="nv-muted nv-small">{t('正文写了、改了之后，工坊自己接着做的。每一项都是模型调用；关掉的，要用时自己点。', 'What follows by itself once text is written or changed. Each is model calls; what is off waits for your press.')}</p>
+        <label className="nv-check">
+          <input type="checkbox" checked={draft.autoDigest} onChange={(event) => { update({ autoDigest: event.target.checked }) }} />
+          <span>{t('写完或改完一章后自动收录', 'Digest a chapter once it is written or changed')}</span>
+        </label>
+        <p className="nv-muted nv-small nv-check-note">{draft.autoDigest
+          ? t('每章一次场记调用：整章正文，加人物和设定的名单。', 'One call of the scribe a chapter: its whole text, and the lists of people and entries.')
+          : t('关着：记忆、人物履历、线索、龙套名单不再自己更新；没收录的章，后面的写作照它的章纲和带得上的正文。要收录：总览页或写作页的“收录”。', 'Off: memory, lives, threads and the list of walk-ons are no longer kept up by themselves; a chapter not digested is known to later writing by its outline and by what of its text fits. To digest: "Digest" on the overview or the writing page.')}</p>
+        <label className="nv-check">
+          <input type="checkbox" checked={draft.siftCast !== false} onChange={(event) => { update({ siftCast: event.target.checked }) }} />
+          <span>{t('收录之后，让策划筛一遍没立卡的新名字', 'After digests, have the planner look through the new names without a card')}</span>
+        </label>
+        <p className="nv-muted nv-small nv-check-note">{t('策划是 agent，会去书里查：有新名字时，这一趟比收录本身贵得多。', 'The planner is an agent and looks things up in the book: where there are new names, this costs far more than the digest itself.')}</p>
+        <label className="nv-check">
+          <input type="checkbox" checked={draft.settleSuggestions !== false} onChange={(event) => { update({ settleSuggestions: event.target.checked }) }} />
+          <span>{t('设定建议由策划审定后自动收进（不勾：逐条等我采纳）', 'Suggestions for the bible are settled by the planner and entered (off: each waits for me)')}</span>
+        </label>
+        <label className="nv-check">
+          <input type="checkbox" checked={draft.planFollowsText !== false} onChange={(event) => { update({ planFollowsText: event.target.checked }) }} />
+          <span>{t('正文改了之后，章纲和节拍自动照正文更新', 'Once a chapter\'s text is changed, its plan and beats are set by the text')}</span>
+        </label>
+        <label className="nv-check">
+          <input type="checkbox" checked={draft.recheckIssues !== false} onChange={(event) => { update({ recheckIssues: event.target.checked }) }} />
+          <span>{t('采纳修订之后，自动核对这一章还开着的审校意见', 'After a revision is accepted, have the issues still open in that chapter checked against the new text')}</span>
+        </label>
+      </section>
+
       {scope === 'book' ? (
         <section className="nv-card" data-section="book-image">
           <SectionTitle actions={bookView !== undefined ? <Chip tone={bookView.ready.image && !ownDirty ? 'green' : 'neutral'}>{ownDirty ? t('保存后生效', 'applies on save') : bookView.ready.image ? t('可用', 'ready') : t('还不能用', 'not ready')}</Chip> : undefined}>{t('图像：这本书自己的', 'Pictures: this book\'s own')}</SectionTitle>
@@ -834,22 +868,6 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
             ))}
           </div>
         ) : null}
-        <label className="nv-check">
-          <input type="checkbox" checked={draft.autoDigest} onChange={(event) => { update({ autoDigest: event.target.checked }) }} />
-          <span>{t('写完或改完一章后自动收录', 'Digest a chapter once it is written or changed')}</span>
-        </label>
-        <label className="nv-check">
-          <input type="checkbox" checked={draft.planFollowsText !== false} onChange={(event) => { update({ planFollowsText: event.target.checked }) }} />
-          <span>{t('正文改了之后，章纲和节拍自动照正文更新', 'Once a chapter\'s text is changed, its plan and beats are set by the text')}</span>
-        </label>
-        <label className="nv-check">
-          <input type="checkbox" checked={draft.siftCast !== false} onChange={(event) => { update({ siftCast: event.target.checked }) }} />
-          <span>{t('收录之后，让策划筛一遍没立卡的新名字', 'After digests, have the planner look through the new names without a card')}</span>
-        </label>
-        <label className="nv-check">
-          <input type="checkbox" checked={draft.settleSuggestions !== false} onChange={(event) => { update({ settleSuggestions: event.target.checked }) }} />
-          <span>{t('设定建议由策划审定后自动收进（不勾：逐条等我采纳）', 'Suggestions for the bible are settled by the planner and entered (off: each waits for me)')}</span>
-        </label>
         <label className="nv-check">
           <input type="checkbox" checked={draft.reviewAgentRevisions} onChange={(event) => { update({ reviewAgentRevisions: event.target.checked }) }} />
           <span>{t('总编发起的正文修订先作为提案，等我确认后才生效', 'Revisions requested by the showrunner wait as proposals until I accept them')}</span>

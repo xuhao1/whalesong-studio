@@ -495,8 +495,8 @@ export interface TextBatchParams {
    * `together`: side by side, as many at once as the settings allow — faster; each is written from its own outline, the
    * outlines of the chapters before it that are being written beside it, and the text there was before the batch.
    * `iterate`: in order, and then in rounds — every chapter written is reviewed, the planner mends what the reviews
-   * found across the chapters in one go, the chapters that changed are digested and reviewed again; up to `rounds`
-   * times, or until nothing of the gravity asked for (`atLeast`) is left. What a round changes is applied as it goes;
+   * found across the chapters in one go, the chapters that changed are reviewed again (digested first where `digest`
+   * is among the steps); up to `rounds` times, or until nothing of the gravity asked for (`atLeast`) is left. What a round changes is applied as it goes;
    * each text it replaces is a version of its chapter.
    */
   order?: 'sequence' | 'together' | 'iterate'
@@ -510,12 +510,10 @@ export async function textPlan(core: NovelCore, runtime: ProjectRuntime, params:
   const { project } = runtime
   const lang = promptLanguage((await project.manifest()).language)
   const wanted = new Set<TextStep>(params.steps)
-  // Written in rounds, a chapter is digested and reviewed whatever was ticked: a round goes by what the review found.
+  // Written in rounds, a chapter is reviewed whatever was ticked: a round goes by what the review found. Whether it is
+  // digested as well is the author's: memory costs a call a chapter a round, and a review reads the text itself.
   const rounds = params.order === 'iterate' && wanted.has('write')
-  if (rounds) {
-    wanted.add('digest')
-    wanted.add('review')
-  }
+  if (rounds) wanted.add('review')
   if (wanted.size === 0) throw new ProjectError('novel/invalid', '`steps` names at least one of beats, write, digest, review')
   const redo = params.redo === true
   const all = await chaptersOf(runtime, params.chapters, params.line)
@@ -614,11 +612,11 @@ export async function textPlan(core: NovelCore, runtime: ProjectRuntime, params:
     steps,
     lanes: { beats: writing && !together ? 1 : text, write: together ? text : 1, digest: writing && !together ? 1 : text, review: text },
     // Where the digests ran side by side — no writing, or writing side by side — the arcs are brought up once, at the end.
-    // Written in rounds: once every chapter is written, digested and reviewed, the rounds begin.
+    // Written in rounds: once every chapter is written and reviewed (and digested, where that was asked for), the rounds begin.
     ...(rounds ? {
       finish: async (sub: TaskContext) => {
-        await iterateChapters(core, runtime, { chapters: chapters.map(chapter => chapter.id), ...(params.rounds !== undefined ? { rounds: params.rounds } : {}), ...(params.atLeast !== undefined ? { atLeast: params.atLeast } : {}), ...(params.focus !== undefined ? { focus: params.focus } : {}) }, sub)
-        await updateArcs(core, runtime, sub).catch((error: unknown) => { if (sub.signal?.aborted === true) throw error })
+        await iterateChapters(core, runtime, { chapters: chapters.map(chapter => chapter.id), ...(params.rounds !== undefined ? { rounds: params.rounds } : {}), ...(params.atLeast !== undefined ? { atLeast: params.atLeast } : {}), ...(params.focus !== undefined ? { focus: params.focus } : {}), digest: wanted.has('digest') }, sub)
+        if (wanted.has('digest')) await updateArcs(core, runtime, sub).catch((error: unknown) => { if (sub.signal?.aborted === true) throw error })
       },
     } : wanted.has('digest') && (!writing || together) ? { finish: async (sub: TaskContext) => { await updateArcs(core, runtime, sub) } } : {}),
   }

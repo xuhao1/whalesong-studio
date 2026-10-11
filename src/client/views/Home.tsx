@@ -752,7 +752,7 @@ export function HomeView() {
               />
             ) : null}
             {stats.undigested > 0 && project.analysis?.pending.includes('digest') !== true ? (
-              <Step icon="layers" title={t(`${stats.undigested} 章尚未收录记忆`, `${stats.undigested} chapters not digested`)} body={t('收录后，后续写作才能记住这些章节发生了什么。', 'Later chapters only remember what has been digested.')} action={t('收录', 'Digest')} busy={running.some(job => job.kind === 'digest')} onClick={() => controller.guard(async () => { await controller.api.call('ai.digest', { root }) })} />
+              <Step icon="layers" title={t(`${stats.undigested} 章尚未收录记忆`, `${stats.undigested} chapters not digested`)} body={settings?.settings.autoDigest === false ? <>{t('自动收录关着：要收录在这里点。', 'Automatic digests are off: digest from here.')}{' '}<button type="button" className="nv-link" onClick={() => { controller.openSettings('auto') }}>{t('设置', 'Settings')}</button></> : t('收录后，后续写作才能记住这些章节发生了什么。', 'Later chapters only remember what has been digested.')} action={t('收录', 'Digest')} busy={running.some(job => job.kind === 'digest')} onClick={() => controller.guard(async () => { await controller.api.call('ai.digest', { root }) })} />
             ) : null}
             {next !== undefined ? (
               <Step
@@ -916,7 +916,7 @@ export function analyzeStepLabel(step: AnalyzeStep, undigested: number, t: Trans
 }
 
 /** @param quiet - something that can be done, not something that is waiting to be done: its button does not call for attention. */
-function Step({ icon, title, body, action, onClick, busy, quiet }: { icon: Parameters<typeof Icon>[0]['name']; title: string; body: string; action: string; onClick: () => void; busy?: boolean; quiet?: boolean }) {
+function Step({ icon, title, body, action, onClick, busy, quiet }: { icon: Parameters<typeof Icon>[0]['name']; title: string; body: ReactNode; action: string; onClick: () => void; busy?: boolean; quiet?: boolean }) {
   return (
     <li className="nv-step">
       <Icon name={icon} size={18} />

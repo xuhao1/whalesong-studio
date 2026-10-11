@@ -235,6 +235,8 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
   const { project, root } = useProject()
   const jobs = useSnapshot(snapshot => snapshot.jobs)
   const jump = useSnapshot(snapshot => snapshot.jump)
+  // Whether a chapter is digested by itself once it is written or changed: said where its memory is found stale.
+  const autoDigest = useSnapshot(snapshot => snapshot.settings?.settings.autoDigest)
   const revision = project.revision
   const doc = useLoad<ChapterDocument>(signal => controller.api.call('chapter.read', { root, id: chapter.id }, signal), [root, chapter.id, revision])
   // Moving this chapter to another place in the plot, while the author says where.
@@ -541,7 +543,7 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
           <div className="nv-panel-section">
             {!chapter.digested && chapter.hasText ? (
               <div className="nv-banner">
-                <span>{doc.data.memory !== undefined ? t('正文改过了，记忆已过期。', 'The text changed since this memory was taken.') : t('这一章还没有收录记忆。', 'This chapter has not been digested yet.')}</span>
+                <span>{doc.data.memory !== undefined ? t('正文改过了，记忆已过期。', 'The text changed since this memory was taken.') : t('这一章还没有收录记忆。', 'This chapter has not been digested yet.')}{autoDigest === false ? <>{' '}{t('自动收录关着。', 'Automatic digests are off.')}{' '}<button type="button" className="nv-link" onClick={() => { controller.openSettings('auto') }}>{t('设置', 'Settings')}</button></> : null}</span>
                 <Button size="sm" icon="layers" busy={running.some(job => job.kind === 'digest')} onClick={() => controller.guard(async () => { if (await settle()) { await controller.api.call('ai.digest', { root, chapters: [chapter.id], force: true }); await controller.refreshJobs() } })}>{t('收录', 'Digest')}</Button>
               </div>
             ) : null}

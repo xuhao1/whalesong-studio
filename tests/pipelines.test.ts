@@ -480,6 +480,16 @@ describe('pipelines', () => {
     expect(worn.rounds.map(round => round.round)).toEqual([1, 2])
     expect(worn).toMatchObject({ left: 1, ended: 'rounds' })
     expect(asked.filter(what => what === 'plan')).toHaveLength(2)
+
+    // Rounds without memory (the author left the digests out): what changed is reviewed again, and the scribe is not asked.
+    stubborn = false
+    await project.saveChapterText(two.id, '她右手握着剑下了山。')
+    await project.removeReview(two.id)
+    asked.length = 0
+    const lean = await iterateChapters(bed.core, bed.runtime, { chapters: [two.id], rounds: 2, digest: false }, { origin: 'user' })
+    expect(asked).toEqual(['review 2', 'plan', 'rewrite 2', 'review 2'])
+    expect(lean).toMatchObject({ left: 0, ended: 'clean' })
+    expect(await project.chapterText(two.id)).toBe('她左手握着剑下了山。')
   })
 
   it('mends several things a review found together, across chapters, each chapter once', async () => {

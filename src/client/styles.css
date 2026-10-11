@@ -700,6 +700,11 @@
   accent-color: var(--nv-brand);
 }
 
+/* What a switch means in the state it is in: under its row, in line with its words. */
+.nv-check-note {
+  margin: -2px 0 8px 22px;
+}
+
 .nv-form-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));

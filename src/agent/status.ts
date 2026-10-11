@@ -20,26 +20,34 @@ export function modeLabel(mode: WorkMode, zh: boolean): string {
   return MODE_LABEL[mode][zh ? 0 : 1]
 }
 
-function nextStep(state: ProjectState, zh: boolean): string {
+/**
+ * @param digests - whether chapters are digested by themselves. Where the author switched that off, chapters without
+ * memory are theirs to digest: they are said, and not made the showrunner's next step.
+ */
+function nextStep(state: ProjectState, zh: boolean, digests = true): string {
   const { stats } = state
   if (state.characters.length === 0 && state.world.length === 0 && stats.chapters === 0) {
     return zh ? '项目是空的：先和作者确定故事核，再建立人物、世界观与文风（novel_derive kind=foundation 可以从一个点子起步）。' : 'The project is empty: settle the premise with the author, then build characters, world and style (novel_derive kind=foundation starts from an idea).'
   }
   if (stats.chapters === 0) return zh ? '还没有大纲：用 novel_derive 推演开篇章节，或用 novel_outline 手动添加。' : 'No outline yet: derive the opening chapters with novel_derive, or add them with novel_outline.'
   const unwritten = state.chapters.find(chapter => !chapter.hasText)
-  if (stats.undigested > 0) return zh ? `有 ${stats.undigested} 章尚未收录记忆：先 novel_digest，再继续写作。` : `${stats.undigested} chapters are not digested yet: run novel_digest before writing on.`
+  if (stats.undigested > 0 && digests) return zh ? `有 ${stats.undigested} 章尚未收录记忆：先 novel_digest，再继续写作。` : `${stats.undigested} chapters are not digested yet: run novel_digest before writing on.`
+  // Switched off by the author: said, and left to them.
+  const left = stats.undigested > 0
+    ? zh ? `（作者关了自动收录：${stats.undigested} 章没有收录——作者要才收，不要自己去收。）` : ` (The author has automatic digests off: ${stats.undigested} chapter(s) are not digested — digest when the author asks, not on your own.)`
+    : ''
   if (unwritten !== undefined) {
     const planned = state.outline.volumes.flatMap(volume => volume.chapters).find(plan => plan.id === unwritten.id)
     const thin = planned?.beats === undefined || planned.beats.length === 0
     return zh
-      ? `下一章待写：第${unwritten.index}章《${unwritten.title}》（${unwritten.id}）${thin ? '，章纲还没有节拍，建议先 novel_derive kind=beats 细化' : ''}。`
-      : `Next to write: chapter ${unwritten.index} "${unwritten.title}" (${unwritten.id})${thin ? '; its outline has no beats yet — consider novel_derive kind=beats first' : ''}.`
+      ? `下一章待写：第${unwritten.index}章《${unwritten.title}》（${unwritten.id}）${thin ? '，章纲还没有节拍，建议先 novel_derive kind=beats 细化' : ''}。${left}`
+      : `Next to write: chapter ${unwritten.index} "${unwritten.title}" (${unwritten.id})${thin ? '; its outline has no beats yet — consider novel_derive kind=beats first' : ''}.${left}`
   }
-  return zh ? '已有章纲都写完了：用 novel_derive 推演后续章节，或进入修订/审校。' : 'Every outlined chapter is written: derive what comes next with novel_derive, or move to revision and review.'
+  return (zh ? '已有章纲都写完了：用 novel_derive 推演后续章节，或进入修订/审校。' : 'Every outlined chapter is written: derive what comes next with novel_derive, or move to revision and review.') + left
 }
 
 /** A few lines that keep the orchestrator oriented between tool calls. */
-export function renderDigest(state: ProjectState, mode: WorkMode, relativeRoot: string): string {
+export function renderDigest(state: ProjectState, mode: WorkMode, relativeRoot: string, digests = true): string {
   const zh = promptLanguage(state.manifest.language) === 'zh'
   const { stats } = state
   // Those the main line has not let go of: nobody the digests have dead or gone for good.
@@ -59,7 +67,7 @@ export function renderDigest(state: ProjectState, mode: WorkMode, relativeRoot: 
         stats.pendingProposals + stats.pendingSuggestions > 0 ? `待处理：修订提案 ${stats.pendingProposals}，设定建议 ${stats.pendingSuggestions}` : '',
         (state.references ?? 0) > 0 ? `参考文献：${state.references} 本在用（novel_reference 看是哪几本、作者要怎么参考）` : '',
         ...outside.map(entry => `【工坊之外的改动 ${entry.at.slice(0, 16).replace('T', ' ')} UTC】${entry.summary}`),
-        nextStep(state, true),
+        nextStep(state, true, digests),
       ]
     : [
         `[Novel project] "${state.manifest.title}" (${relativeRoot}) · mode: ${modeLabel(mode, false)}`,
@@ -68,18 +76,18 @@ export function renderDigest(state: ProjectState, mode: WorkMode, relativeRoot: 
         stats.pendingProposals + stats.pendingSuggestions > 0 ? `Waiting: ${stats.pendingProposals} revision proposals, ${stats.pendingSuggestions} bible suggestions` : '',
         (state.references ?? 0) > 0 ? `References: this book goes by ${state.references} other book(s) (novel_reference lists them and how the author wants each used)` : '',
         ...outside.map(entry => `[Changed outside the Studio, ${entry.at.slice(0, 16).replace('T', ' ')} UTC] ${entry.summary}`),
-        nextStep(state, false),
+        nextStep(state, false, digests),
       ]
   return lines.filter(line => line.length > 0).join('\n')
 }
 
 /** The full status the `novel_status` tool returns. */
-export async function renderStatus(runtime: ProjectRuntime, mode: WorkMode, relativeRoot: string, jobs: JobInfo[], detail: 'brief' | 'full'): Promise<{ text: string; state: ProjectState }> {
+export async function renderStatus(runtime: ProjectRuntime, mode: WorkMode, relativeRoot: string, jobs: JobInfo[], detail: 'brief' | 'full', digests = true): Promise<{ text: string; state: ProjectState }> {
   const state = await runtime.project.state()
   const lang = promptLanguage(state.manifest.language)
   const zh = lang === 'zh'
   const sep = zh ? '：' : ': '
-  const lines: string[] = [renderDigest(state, mode, relativeRoot), '']
+  const lines: string[] = [renderDigest(state, mode, relativeRoot, digests), '']
   const manifest = state.manifest
   if (manifest.logline !== undefined) lines.push(`${zh ? '梗概' : 'Logline'}${sep}${manifest.logline}`)
   if (detail === 'full' && manifest.premise !== undefined) lines.push(`${zh ? '故事核' : 'Premise'}${sep}${manifest.premise}`)

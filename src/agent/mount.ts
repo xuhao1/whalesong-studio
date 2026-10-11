@@ -109,7 +109,7 @@ export function mountAgent(ctx: Context): void {
         ? { ...state.switched, from: near.find(book => book.root === state.switched!.from)?.title ?? basename(state.switched.from) }
         : undefined
       const focus = focusLines({ title: project.manifest.title, path, zh, switched: from, others: near.filter(book => book.root !== root) })
-      digests.set(agent.id, { text: `${focus}\n${renderDigest(project, state.mode, path)}\n${modeRules(state.mode, zh)}`, root, ...bound })
+      digests.set(agent.id, { text: `${focus}\n${renderDigest(project, state.mode, path, novel.core.currentSettings().autoDigest)}\n${modeRules(state.mode, zh)}`, root, ...bound })
     } catch (error) {
       if (error instanceof ProjectError && error.code === 'novel/locked') {
         // The book in play is sealed and locked: whatever was known of it a moment ago is no longer the model's to use.
@@ -341,7 +341,7 @@ export function mountAgent(ctx: Context): void {
             return { kind: 'success', text: `Exported ${result.chapters} chapters → ${where}/${result.path}` }
           }
           if (command !== 'status') return { kind: 'error', text: `Unknown subcommand "${command}". Try /novel help` }
-          const { text } = await renderStatus(runtime, state.mode, where, novel.core.jobs.list(runtime.project.root), 'brief')
+          const { text } = await renderStatus(runtime, state.mode, where, novel.core.jobs.list(runtime.project.root), 'brief', novel.core.currentSettings().autoDigest)
           return { kind: 'success', text }
         } catch (error) {
           return { kind: 'error', text: errorMessage(error) }

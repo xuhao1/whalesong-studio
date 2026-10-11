@@ -35,7 +35,7 @@ export function projectTools(service: NovelService): ToolDefinition[] {
           return { text: `No novel project in ${env.workspace} yet. Agree on a title and premise with the author, then create it with novel_init (pass \`idea\` to have the premise, cast, world and opening outline drafted for you). To bring in an existing manuscript, create the project and then call novel_import.`, data: toJson({ project: null }) }
         }
         const state = await env.service.sessions.get(env.agent.id)
-        const { text, state: project } = await renderStatus(runtime, state.mode, env.where(runtime), env.core.jobs.list(runtime.project.root), args.detail ?? 'brief')
+        const { text, state: project } = await renderStatus(runtime, state.mode, env.where(runtime), env.core.jobs.list(runtime.project.root), args.detail ?? 'brief', env.core.currentSettings().autoDigest)
         const others = books.filter(ref => ref.root !== runtime.project.root)
         const shelf = others.length > 0
           ? `\n\n## Other books in reach\n${others.slice(0, 12).map(ref => `- "${ref.title}" — ${ref.relative}`).join('\n')}\nPass \`book\` to a tool to touch one of them once; pass \`project\` here to move the session onto it.`

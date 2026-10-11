@@ -85,7 +85,7 @@ export interface StudioSnapshot {
   /** Something was asked for that needs a capability nobody has set up yet: the Studio says so and shows the way. */
   needs?: { what: Capability; detail?: string; nonce: number }
   /** The part of the settings a link asked for. */
-  settingsFocus?: Capability | 'crew' | 'recommended'
+  settingsFocus?: Capability | 'crew' | 'recommended' | 'auto'
   /** A long job nobody was waiting on just finished, for one notice on screen. */
   jobEnded?: { job: JobInfo; nonce: number }
   /** The form that derives chapters was asked for from elsewhere — a finished derivation in the list of jobs: the Outline opens it. */
@@ -1172,7 +1172,7 @@ export class StudioController {
   }
 
   /** Go to the settings, at the part that sets a capability up. */
-  openSettings(focus?: Capability | 'crew' | 'recommended'): void {
+  openSettings(focus?: Capability | 'crew' | 'recommended' | 'auto'): void {
     this.navigated = true
     const { needs: _needs, settingsFocus: _focus, ...rest } = this.snapshot
     this.snapshot = { ...rest, view: 'settings', ...(focus !== undefined ? { settingsFocus: focus } : {}) }

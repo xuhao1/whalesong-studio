@@ -475,7 +475,9 @@ export function TextBatchDialog({ chapters, preset, line, onClose }: { chapters:
   const { busy, run } = useAction()
   const job = useBatchJob('text')
   const running = job?.status === 'running'
-  const [steps, setSteps] = useState<Set<TextStep>>(new Set(preset))
+  // Whether written chapters are digested is the author's setting: a run that writes begins without that step where it is off.
+  const autoDigest = useSnapshot(snapshot => snapshot.settings?.settings.autoDigest)
+  const [steps, setSteps] = useState<Set<TextStep>>(() => new Set(preset.filter(step => step !== 'digest' || !preset.includes('write') || autoDigest !== false)))
   const writing = steps.has('write')
   const unwritten = chapters.filter(chapter => !chapter.hasText)
   const [count, setCount] = useState(String(Math.min(10, Math.max(1, unwritten.length))))
@@ -495,8 +497,6 @@ export function TextBatchDialog({ chapters, preset, line, onClose }: { chapters:
     const next = new Set(steps)
     if (next.has(step)) next.delete(step)
     else next.add(step)
-    // A run of chapters is written with memory in between: the next chapter knows what the last one settled.
-    if (next.has('write')) next.add('digest')
     setSteps(next)
   }
   // What the steps have something to do for, when the author does not pick chapters one by one.
@@ -549,17 +549,19 @@ export function TextBatchDialog({ chapters, preset, line, onClose }: { chapters:
           <div className="nv-steps-pick">
             {(['beats', 'write', 'digest', 'review'] as TextStep[]).map(step => (
               <label key={step} className={cx('nv-step-pick', steps.has(step) && 'is-on')}>
-                <input type="checkbox" checked={steps.has(step)} disabled={step === 'digest' && writing} onChange={() => { toggleStep(step) }} />
+                <input type="checkbox" checked={steps.has(step)} onChange={() => { toggleStep(step) }} />
                 <span className="nv-step-name">{t(...BATCH_STEP[step]!)}</span>
-                <span className="nv-step-hint">{step === 'write' && order === 'together' ? t('各章同时写：每一章照自己的章纲，和它前面各章的章纲', 'All at once: each from its own outline and the outlines of the chapters before it') : t(...TEXT_HINT[step])}</span>
+                <span className="nv-step-hint">{step === 'write' && order === 'together' ? t('各章同时写：每一章照自己的章纲，和它前面各章的章纲', 'All at once: each from its own outline and the outlines of the chapters before it') : step === 'digest' && writing && !steps.has('digest') ? t('不勾：每章照前面的正文写，记忆等你点收录', 'Off: each chapter goes by the text before it; memory waits until you ask') : t(...TEXT_HINT[step])}</span>
               </label>
             ))}
           </div>
           {writing && order === 'iterate' ? (
             // What writing in rounds does, and what it costs: said where it is chosen.
             <div className="nv-note nv-rounds">
-              <p><strong>{t('多轮迭代', 'Writing in rounds')}</strong>{t('：各章照顺序写完、收录、审校之后，策划把审校出来的问题放在一起看，统一定下改哪几处、各怎么改（可以跨章），写手只改那几处；改过的章节重新收录、重新审校，再来一轮——直到没有这一级的问题，或轮数用完。', ': once the chapters are written in order, digested and reviewed, the planner reads what the reviews found side by side and settles which places change and how (across chapters where need be); the writer rewrites those places, and the chapters changed are digested and reviewed again — and so on, until nothing of this gravity is left or the rounds are used up.')}</p>
-              <p className="nv-muted nv-small">{t('每一轮的修改直接写进正文（下一轮要接着它改），被换掉的每一稿都留在这一章的“版本”里。比只写一遍慢得多、花得多：一轮 = 策划一趟 + 每个改到的章节各一次重写、收录、审校。', 'What a round changes goes into the text (the next round goes on from it); every draft it replaces stays among the chapter\'s versions. Much slower and dearer than writing once: a round is one run of the planner, and a rewrite, a digest and a review for each chapter it changes.')}</p>
+              <p><strong>{t('多轮迭代', 'Writing in rounds')}</strong>{steps.has('digest')
+                ? t('：各章照顺序写完、收录、审校之后，策划把审校出来的问题放在一起看，统一定下改哪几处、各怎么改（可以跨章），写手只改那几处；改过的章节重新收录、重新审校，再来一轮——直到没有这一级的问题，或轮数用完。', ': once the chapters are written in order, digested and reviewed, the planner reads what the reviews found side by side and settles which places change and how (across chapters where need be); the writer rewrites those places, and the chapters changed are digested and reviewed again — and so on, until nothing of this gravity is left or the rounds are used up.')
+                : t('：各章照顺序写完、审校之后，策划把审校出来的问题放在一起看，统一定下改哪几处、各怎么改（可以跨章），写手只改那几处；改过的章节重新审校，再来一轮——直到没有这一级的问题，或轮数用完。', ': once the chapters are written in order and reviewed, the planner reads what the reviews found side by side and settles which places change and how (across chapters where need be); the writer rewrites those places, and the chapters changed are reviewed again — and so on, until nothing of this gravity is left or the rounds are used up.')}</p>
+              <p className="nv-muted nv-small">{t('每一轮的修改直接写进正文（下一轮要接着它改），被换掉的每一稿都留在这一章的“版本”里。比只写一遍慢得多、花得多：一轮 = 策划一趟 + 每个改到的章节各一次重写、审校（勾了“收录”的再加一次收录）。', 'What a round changes goes into the text (the next round goes on from it); every draft it replaces stays among the chapter\'s versions. Much slower and dearer than writing once: a round is one run of the planner, and a rewrite and a review for each chapter it changes (and a digest, where that step is ticked).')}</p>
               <div className="nv-form-grid">
                 <Field label={t('最多几轮', 'Rounds at most')}>
                   <Select<string> value={String(rounds)} options={[1, 2, 3, 4, 5].map(count => ({ value: String(count), label: t(`${count} 轮`, `${count}`) }))} onChange={(value) => { setRounds(Number(value)) }} />

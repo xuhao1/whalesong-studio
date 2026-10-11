@@ -17,6 +17,12 @@ import { clip } from '../../shared/text'
 import { ANALYZE_STEPS, GLOSSARY_KINDS } from '../../shared/types'
 import { brief, figuresSaid, listOf, listParameter, novelTool, picturesSaid, referencesSaid, toJson } from './shared'
 
+/**
+ * Said where a chapter's text changed and nobody digested it because the author switched that off: it is a saving the
+ * author chose, so the showrunner does not spend it for them.
+ */
+const MEMORY_LEFT = 'Memory: not taken — the author has switched automatic digests off (each is a model call). Later chapters are written from this chapter\'s text as far as it fits and from its outline; lives, threads and the list of walk-ons do not know of it yet. Do not run novel_digest on your own: tell the author the memory is not taken, and digest when they ask or when the work in hand cannot do without it.'
+
 export function manuscriptTools(service: NovelService): ToolDefinition[] {
   return [
     novelTool(service, {
@@ -64,7 +70,11 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
           ...(result.referenced !== undefined ? [result.referenced.none !== undefined
             ? `References: no notes went to the writer — ${result.referenced.none}.`
             : `References: the writer was handed the chapter's reference notes (${result.referenced.chars} characters${result.referenced.fresh === true ? ', taken just now by the planner, who read the references for this chapter — one more agent run' : ', as kept on its plan'}). They are on the chapter's plan (referenceNotes) for the author to read and change.`] : []),
-          result.digested ? 'Memory digested: summary, facts and character states are up to date.' : 'Not digested yet — run novel_digest before writing later chapters.',
+          result.digested
+            ? 'Memory digested: summary, facts and character states are up to date.'
+            : env.core.currentSettings().autoDigest
+              ? 'Not digested yet — run novel_digest before writing later chapters.'
+              : MEMORY_LEFT,
           `Opens: ${result.preview.head}${result.preview.tail.length > 0 ? `\n…\nCloses: ${result.preview.tail}` : ''}`,
         ]
         const { preview: _preview, ...data } = result
@@ -178,7 +188,7 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
         '- action=delete: remove the passage `find` (all=true for every occurrence).',
         '- action=set: make `text` the whole chapter — the author\'s own draft going in, or a chapter of theirs replacing what is there.',
         'Pictures: a line of a chapter that reads `![caption](path)` is a picture the author placed in the text. Text you put in the place of text (replace, set) keeps the pictures that stood there — write their lines back where they were; one you leave out is put back for you and the result says so. A picture comes out of a chapter only when the author asks for that: action=delete with its line, alone, as `find`.',
-        'Every change keeps the text as it was as a version the author can restore, is put on the book\'s record, and has the chapter\'s memory digested again, so later chapters are written from what the page now says. The result names the characters the changed text mentions and how many later chapters already exist: check that the change agrees with their cards and with what follows (novel_search, novel_review), and say so to the author. When the author has agent changes wait for review, the change is left as a proposal instead.',
+        'Every change keeps the text as it was as a version the author can restore, is put on the book\'s record, and — unless the author has switched automatic digests off — has the chapter\'s memory digested again, so later chapters are written from what the page now says. The result names the characters the changed text mentions and how many later chapters already exist: check that the change agrees with their cards and with what follows (novel_search, novel_review), and say so to the author. When the author has agent changes wait for review, the change is left as a proposal instead.',
       ].join('\n'),
       mutating: true,
       parameters: {
@@ -218,7 +228,7 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
           result.after.length > 0 ? `Now: ${result.after}` : undefined,
           figuresSaid(result.figures, 'put'),
           result.picturesGone !== undefined ? `${result.picturesGone} picture(s) stood in what was removed and went with it — tell the author; the version above has them.` : undefined,
-          result.memory === 'digesting' ? 'Memory: the chapter is being digested again; summary, facts and character states will follow the new text.' : 'Memory: auto-digest is off, so the chapter\'s memory is stale — run novel_digest before anything is written after it.',
+          result.memory === 'digesting' ? 'Memory: the chapter is being digested again; summary, facts and character states will follow the new text.' : MEMORY_LEFT,
           result.characters.length > 0 ? `Mentions ${result.characters.join(', ')}: make sure the change agrees with their cards (novel_read what=character).` : undefined,
           result.laterChapters > 0 ? `${result.laterChapters} later chapter(s) are already written and may rest on what changed — check them (novel_search, novel_review) and tell the author what you found.` : undefined,
         ].filter((line): line is string => line !== undefined)

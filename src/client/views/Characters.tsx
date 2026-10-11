@@ -104,7 +104,7 @@ export function CardPhoto({ card, className }: { card: CharacterCard; className?
  * Everyone with a card, and the page of whoever is chosen.
  * @param shown - the cards the page's filter lets through, in the order asked for.
  * @param grouped - the order is by weight: leads, supporting parts and the long tail each under a head of their own.
- * @param searching - somebody is being looked for: nothing stays folded.
+ * @param searching - somebody is being looked for: a group the author folded shows again.
  */
 /** Everyone's life along the line of the plot the page looks at, as the Host read it off the digests. */
 export interface Lives {
@@ -275,8 +275,9 @@ export function CharacterCards({ shown, grouped, searching, lives, picks }: { sh
           <Button size="sm" variant="ghost" icon="clock" busy={growing !== undefined} pending={growing !== undefined ? t(`正在读成长轨迹 ${growing.done}/${growing.total}…`, `Reading growth ${growing.done}/${growing.total}…`) : undefined} onClick={growAll}>{t(`读成长轨迹（${ungrown.length}）`, `Read their growth (${ungrown.length})`)}</Button>
         ) : null}
         {groups.map((group) => {
-          // A long tail of walk-ons stays folded until someone looks for one of them.
-          const closed = grouped && (folded[group.key] ?? (group.key === 'minor' && group.cards.length > 8 && !searching && !group.cards.some(item => item.id === selected)))
+          // Nothing folds by itself — the long tail of minor parts and walk-ons is listed like the rest. A head folds its
+          // group when the author presses it, until somebody is looked for.
+          const closed = grouped && folded[group.key] === true && !searching
           return (
             <div key={group.key} className="nv-people-group">
               {grouped ? (

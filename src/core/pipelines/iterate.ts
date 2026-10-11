@@ -3,12 +3,13 @@
  * Writing in rounds: chapters that were written are reviewed, what the review
  * found is mended across them in one go by the planner — the same mending a
  * list of issues gets when the author hands it over ({@link fixIssues}) — the
- * chapters that changed are digested and reviewed again, and so on, until
- * nothing of the gravity asked for is left or the rounds are used up.
+ * chapters that changed are reviewed again (digested first, where digests were
+ * asked for), and so on, until nothing of the gravity asked for is left or
+ * the rounds are used up.
  *
  * It is a way of writing the author chooses, and pays for: every round is one
- * run of the planner, and a rewrite, a digest and a review for each chapter
- * it changes. What a round changes is applied to the text as it goes — a
+ * run of the planner, and a rewrite, a review and — asked for — a digest for
+ * each chapter it changes. What a round changes is applied to the text as it goes — a
  * round reads what the round before made — and every text it replaces is a
  * version of its chapter.
  */
@@ -29,6 +30,8 @@ export interface IterateParams {
   atLeast?: IssueSeverity
   /** What the reviews look at. */
   focus?: string
+  /** Digest a chapter a round changed before it is reviewed again. Default true; false leaves its memory to be taken when the author asks. */
+  digest?: boolean
 }
 
 export interface IterateRound {
@@ -128,11 +131,14 @@ export async function iterateChapters(core: NovelCore, runtime: ProjectRuntime, 
       result.ended = 'stuck'
       break
     }
-    // The chapters that changed are read again — by the scribe, for what the book now knows, and by the reviewer: what
-    // was mended is gone from the review, and what the mending broke is in it.
-    const again = task.job?.note(L(lang, `第 ${round} 轮：重新收录、审校改过的 ${rewritten.length} 章…`, `Round ${round}: digesting and reviewing the ${rewritten.length} chapter(s) that changed…`))
+    // The chapters that changed are read again — by the scribe, for what the book now knows (where digests were asked
+    // for), and by the reviewer: what was mended is gone from the review, and what the mending broke is in it.
+    const digesting = params.digest !== false
+    const again = task.job?.note(digesting
+      ? L(lang, `第 ${round} 轮：重新收录、审校改过的 ${rewritten.length} 章…`, `Round ${round}: digesting and reviewing the ${rewritten.length} chapter(s) that changed…`)
+      : L(lang, `第 ${round} 轮：重新审校改过的 ${rewritten.length} 章…`, `Round ${round}: reviewing the ${rewritten.length} chapter(s) that changed…`))
     try {
-      for (const id of rewritten) await digestChapter(core, runtime, id, task, { force: true }).catch((error: unknown) => { if (task.signal?.aborted === true) throw error })
+      if (digesting) for (const id of rewritten) await digestChapter(core, runtime, id, task, { force: true }).catch((error: unknown) => { if (task.signal?.aborted === true) throw error })
       await review(rewritten)
     } finally {
       again?.()

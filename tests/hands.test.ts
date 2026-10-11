@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { JobManager } from '../src/core/jobs'
 import { correctMemory, editChapter } from '../src/core/pipelines/edit'
+import { renderDigest } from '../src/agent/status'
 import { attachReconciler, managedKind } from '../src/core/reconcile'
 import { listWalkOns, settleWalkOn } from '../src/core/walkons'
 import { createTestBed, type TestBed } from './support/harness'
@@ -86,6 +87,21 @@ describe('exact edits', () => {
     expect(result.memory).toBe('digesting')
     const job = bed.core.jobs.list(bed.runtime.project.root).find(item => item.kind === 'digest')!
     expect(job.target).toBe(chapter)
+  })
+
+  it('leaves memory alone when auto-digest is off, and does not make a digest the showrunner\'s next step', async () => {
+    // (The bed runs with auto-digest off, as an author who switched it off does.)
+    const result = await editChapter(bed.core, bed.runtime, { chapter, action: 'append', text: '门开了。' }, agent)
+    expect(result.memory).toBe('stale')
+    await new Promise(resolve => setTimeout(resolve, 30))
+    expect(bed.core.jobs.list(bed.runtime.project.root).filter(item => item.kind === 'digest')).toEqual([])
+    expect(bed.llm.requests).toEqual([])
+    // What the showrunner is told between its calls: with digests on, chapters without memory come first; switched off, they are said and left to the author.
+    const state = await bed.runtime.project.state()
+    expect(renderDigest(state, 'draft', '.')).toContain('先 novel_digest')
+    const left = renderDigest(state, 'draft', '.', false)
+    expect(left).not.toContain('先 novel_digest')
+    expect(left).toContain('作者关了自动收录：2 章没有收录')
   })
 
   it('corrects what the book remembers without reading the chapter again', async () => {
