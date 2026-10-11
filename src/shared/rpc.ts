@@ -729,7 +729,12 @@ export interface NovelRpc {
    * stretch's; `scene`: the portrait of that moment of theirs). `front`: a sheet that is the front view alone (left
    * out: told by its shape). `spare`: it waits beside a main sheet the author chose.
    */
-  'image.import': { params: { root: string; kind: 'portrait' | 'sheet'; target: string; mediaType: string; data: string; look?: string; stage?: string; scene?: string; front?: boolean }; result: { path: string; held: string[]; spare?: boolean } }
+  /**
+   * A picture made elsewhere, brought in as one of the book's: somebody's portrait or sheet, the design art of an entry
+   * of the bible (`art`; of one turn of its course with `event`), the cover, or a picture of the gallery (`picture`; of
+   * a `chapter` where it is for that chapter's text). `image`: its record (a Host older than that sends none).
+   */
+  'image.import': { params: { root: string; kind: 'portrait' | 'sheet' | 'art' | 'cover' | 'picture'; target?: string; mediaType: string; data: string; look?: string; stage?: string; scene?: string; front?: boolean; event?: string; chapter?: string }; result: { path: string; held: string[]; spare?: boolean; image?: IllustrationInfo } }
   'image.place': { params: { root: string; picture: string; chapter: string; after?: number; quote?: string; alt?: string }; result: { chapter: string; after: number } }
   /** `released`: whose picture it was — the cards and entries it was taken off, by name. Absent from a Host before the picture was taken off them. */
   /** Take a picture out of the book — by the id of its record, or by its path where it has none: its file, its record, and off every card and entry that shows it (`released`: whose it was). */

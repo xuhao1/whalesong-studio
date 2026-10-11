@@ -11,6 +11,7 @@
  */
 import { useMemo, useState } from 'react'
 import type { IllustrationInfo } from '../shared/types'
+import { ImportPicture } from './ImportPicture'
 import { PICTURE_KIND } from './PictureRecord'
 import { Button, Chip, cx, Modal, ProjectImage, Select, Spinner, useAction, useLoad, useProject, useStudio, useT } from './ui'
 
@@ -111,6 +112,9 @@ export function PickPicture({ chapter, onPick, onClose }: { chapter?: string | u
         {chapter !== undefined && here.length > 0 ? <Chip active={filter === 'here'} tone={filter === 'here' ? 'blue' : 'neutral'} onClick={() => { setFilter('here') }}>{t(`这一章的 ${here.length}`, `Of this chapter · ${here.length}`)}</Chip> : null}
         <Chip active={filter === 'all'} tone={filter === 'all' ? 'blue' : 'neutral'} onClick={() => { setFilter('all') }}>{t(`全部 ${all.length}`, `All · ${all.length}`)}</Chip>
         {kinds.map(kind => <Chip key={kind} active={filter === kind} tone={filter === kind ? 'blue' : 'neutral'} onClick={() => { setFilter(kind) }}>{t(...PICTURE_KIND[kind])}</Chip>)}
+        <span className="nv-spacer" />
+        {/* One that is not in the book yet: brought in — it is one of the book's pictures from then on — and chosen. */}
+        <ImportPicture kind="picture" of={chapter !== undefined ? { chapter } : {}} variant="outline" label={t('从电脑导入…', 'From this computer…')} quiet onDone={(_path, image) => { void onPick(image) }} />
       </div>
       {images.data === undefined ? <div className="nv-center"><Spinner /></div> : list.length === 0 ? <p className="nv-muted">{t('这本书还没有图。', 'The book has no pictures yet.')}</p> : (
         <div className="nv-gallery-grid nv-pick-grid">

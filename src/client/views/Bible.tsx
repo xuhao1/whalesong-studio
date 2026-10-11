@@ -20,6 +20,7 @@ import { HistoryButton, RemovedCards } from '../History'
 import { DeletePicture, PictureViewer, usePictures, type LookOf } from '../PictureRecord'
 import { artsOf, isArtOf } from '../../shared/arts'
 import { ManyModels } from '../Trial'
+import { ImportPicture } from '../ImportPicture'
 import { GuidePictures, useGiven } from '../Guides'
 import { clip as clipText } from '../../shared/text'
 import { containment, type Nested } from '../../shared/ties'
@@ -574,6 +575,7 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
                 title={dirty ? t('先保存当前修改', 'Save your edits first') : event.what.trim().length === 0 ? t('先写上发生了什么', 'Say what happened first') : t('画它在这件事之后的样子', 'Draw it as it is after this event')}
               >{event.image !== undefined ? t('重画', 'Redraw') : t('画这时的样子', 'Draw it then')}</Button>
               <ManyModels disabled={dirty || event.what.trim().length === 0} title={t('多模型：几个绘图服务各画一张它这时的样子', 'Several models: as it is then, from each image service')} ask={() => (controller.need('image') ? { title: `${entry.name} · ${clipText(event.what, 16)}`, method: 'image.create', params: { kind: picture ?? 'location', target: entry.id, event: `${event.chapter}:${event.kind}` } } : undefined)} />
+              <ImportPicture kind="art" of={{ entry: entry.id, event: `${event.chapter}:${event.kind}` }} disabled={dirty || event.what.trim().length === 0} />
             </span>
           ) } : {})}
         />
@@ -639,6 +641,8 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
               {draft.visualImage !== undefined ? t('再画一张设定图', 'Draw another') : house ? t('画设定图', 'Draw its design art') : picture === 'item' ? t('画物品设定图', 'Draw the object') : t('画场景设定图', 'Draw the place')}
             </Button>
             <ManyModels disabled={dirty} title={t('多模型：几个绘图服务各画一张设定图来比', 'Several models: its design art from each image service, to compare')} ask={() => (controller.need('image') ? { title: `${entry.name} · ${t('设定图', 'design art')}`, method: 'image.create', params: { kind: picture ?? 'location', target: entry.id, ...(given.length > 0 ? { references: given } : {}) } } : undefined)} />
+            {/* A photograph, a drawing of the author's own: one more of its pictures, as one drawn here would be. */}
+            <ImportPicture kind="art" of={{ entry: entry.id }} disabled={dirty} onDone={(path) => { setPicked(path) }} />
             {/* (With several kept, the one to delete is the one picked in the row above, by the button there.) */}
             {draft.visualImage !== undefined && arts.length <= 1 ? <DeletePicture bare path={draft.visualImage} disabled={dirty || drawing} /> : null}
           </div>

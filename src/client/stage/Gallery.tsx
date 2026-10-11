@@ -10,6 +10,7 @@ import {
 } from '../ui'
 import { ArtBatchDialog, batchOf } from '../Batch'
 import { ManyModels } from '../Trial'
+import { ImportPicture } from '../ImportPicture'
 import { sheetsDrawn } from '../labels'
 import { useSheetsAsk, type SheetsChoice } from '../SheetsAsk'
 import { NeedsSetup } from '../views/Settings'
@@ -36,16 +37,68 @@ const GROUPS: { id: SubjectGroup; label: [string, string] }[] = [
 const groupOfWorld = (category: WorldCategory | string | undefined): SubjectGroup | undefined => (
   category === 'location' || category === 'setting' ? 'places' : category === 'faction' ? 'houses' : category === 'item' ? 'things' : undefined)
 
+/**
+ * Pictures of the author's own, brought in several at once. Said first what they are: pictures of the gallery, hanging
+ * nowhere — to be put into a chapter's text, given to a drawing to go by, made the cover — or the design art of a
+ * place, a house or a thing, or somebody's design sheets or portraits: those join the pictures kept of it, of them,
+ * where the one in use is chosen.
+ */
+function BringDialog({ onClose }: { onClose: () => void }) {
+  const t = useT()
+  const { project } = useProject()
+  const [as, setAs] = useState<'picture' | 'art' | 'sheet' | 'portrait'>('picture')
+  const [whose, setWhose] = useState('')
+  const owners = as === 'art'
+    ? project.world.filter(entry => groupOfWorld(entry.category) !== undefined).map(entry => ({ value: entry.id, label: entry.name }))
+    : as === 'picture' ? [] : project.characters.map(card => ({ value: card.id, label: card.name }))
+  return (
+    <Modal title={t('从电脑导入图片', 'Bring pictures in')} onClose={onClose}>
+      <Field label={t('它们是', 'They are')}>
+        <Select value={as} options={[
+          { value: 'picture', label: t('图库里的图（不挂在谁名下）', 'Pictures of the gallery (nobody\'s)') },
+          { value: 'art', label: t('地点 / 家族与组织 / 物品的设定图', 'Design art of a place, a house or a thing') },
+          { value: 'sheet', label: t('人物的人设图', 'Somebody\'s design sheets') },
+          { value: 'portrait', label: t('人物的立绘', 'Somebody\'s portraits') },
+        ]} onChange={(value) => { setAs(value); setWhose('') }} />
+      </Field>
+      {as !== 'picture' ? (
+        <Field label={as === 'art' ? t('谁的', 'Whose') : t('人物', 'Character')}>
+          <Select value={whose} options={[{ value: '', label: t('请选择…', 'Choose…') }, ...owners]} onChange={setWhose} />
+        </Field>
+      ) : null}
+      <p className="nv-muted nv-small">
+        {as === 'picture' ? t('之后可以插进正文、当参考图、设为封面。', 'They can go into a chapter\'s text, be given to a drawing to go by, or be made the cover.')
+          : as === 'art' ? t('都进它的设定图那一组；用哪张，在它的页面上选。', 'They join its design pictures; which one is in use is chosen on its page.')
+            : as === 'sheet' ? t('都进这个人的人设图那一组；用哪张，在人物页上选。', 'They join their design sheets; which one is in use is chosen on their page.')
+              : t('都进这个人的立绘那一组；代表立绘在人物页上选。', 'They join their portraits; the one that stands for them is chosen on their page.')}
+      </p>
+      <div className="nv-row">
+        <ImportPicture
+          kind={as}
+          of={as === 'art' ? { entry: whose } : as === 'picture' ? {} : { character: whose }}
+          multiple
+          variant="primary"
+          label={t('选择图片…', 'Choose pictures…')}
+          disabled={as !== 'picture' && whose.length === 0}
+          onAll={() => { onClose() }}
+        />
+      </div>
+    </Modal>
+  )
+}
+
 export function Gallery() {
   const { controller } = useStudio()
   const t = useT()
   const { project, root } = useProject()
   const jobs = useSnapshot(snapshot => snapshot.jobs)
   const images = useLoad(signal => controller.api.call('image.list', { root }, signal), [root, project.revision])
-  const [filter, setFilter] = useState<IllustrationInfo['kind'] | 'all'>('all')
+  const [filter, setFilter] = useState<IllustrationInfo['kind'] | 'all' | 'imported'>('all')
   const [open, setOpen] = useState<IllustrationInfo | undefined>()
   const [creating, setCreating] = useState(false)
   const [batching, setBatching] = useState(false)
+  // Pictures of the author's own, brought in several at once.
+  const [bringing, setBringing] = useState(false)
   const [kind, setKind] = useState<CreateKind>('cover')
   const [target, setTarget] = useState('')
   const [prompt, setPrompt] = useState('')
@@ -83,10 +136,11 @@ export function Gallery() {
   }, [images.data, project.characters, project.world, project.chapters, project.lines])
   const [group, setGroup] = useState<SubjectGroup | 'all'>('all')
   const [subject, setSubject] = useState<string | undefined>()
-  const ofKind = (images.data?.images ?? []).filter(image => filter === 'all' || image.kind === filter)
+  const ofKind = (images.data?.images ?? []).filter(image => filter === 'all' || (filter === 'imported' ? image.imported === true : image.kind === filter))
   const inGroup = (image: IllustrationInfo, wanted: SubjectGroup): boolean => [...(subjects.shown.get(image.id) ?? [])].some(id => subjects.byId.get(id)?.group === wanted)
   const list = ofKind.filter(image => (group === 'all' || inGroup(image, group)) && (subject === undefined || subjects.shown.get(image.id)?.has(subject) === true))
   const kinds = [...new Set((images.data?.images ?? []).map(image => image.kind))]
+  const broughtIn = (images.data?.images ?? []).filter(image => image.imported === true).length
   // Whoever has pictures, with how many, most first: what there is to list by.
   const counted = useMemo(() => {
     const counts = new Map<string, number>()
@@ -191,10 +245,12 @@ export function Gallery() {
         <div className="nv-chips">
           <Chip active={filter === 'all'} tone={filter === 'all' ? 'blue' : 'neutral'} onClick={() => { setFilter('all') }}>{t('全部', 'All')}</Chip>
           {kinds.map(item => <Chip key={item} active={filter === item} tone={filter === item ? 'blue' : 'neutral'} onClick={() => { setFilter(item) }}>{t(...KIND[item])}</Chip>)}
+          {broughtIn > 0 ? <Chip active={filter === 'imported'} tone={filter === 'imported' ? 'blue' : 'neutral'} onClick={() => { setFilter('imported') }} title={t('从电脑导入的，不是这里画的', 'Brought in from this computer, not drawn here')}>{t(`导入的 ${broughtIn}`, `Brought in · ${broughtIn}`)}</Chip> : null}
         </div>
         <span className="nv-spacer" />
         {drawing > 0 ? <span className="nv-muted nv-small"><Spinner size={12} /> {t(`${drawing} 张绘制中`, `${drawing} in progress`)}</span> : null}
         {(images.data?.images ?? []).length > 0 ? <Button size="sm" variant={picking ? 'primary' : 'ghost'} icon="check" onClick={() => { setPicking(value => !value); setPicked(new Set()) }}>{picking ? t('完成', 'Done') : t('多选', 'Select')}</Button> : null}
+        <Button size="sm" icon="upload" onClick={() => { setBringing(true) }} title={t('从电脑导入图片：照片、自己画的，可以一次选很多张', 'Bring pictures in from this computer — photographs, drawings of your own — many at once')}>{t('导入…', 'Bring in…')}</Button>
         <Button size="sm" icon="layers" onClick={() => { setBatching(true) }} title={t('补齐还没有的图和声线', 'Make the pictures and voices still missing')}>{t('批量绘制…', 'Draw in a batch…')}</Button>
         <Button variant="primary" size="sm" icon="plus" onClick={() => { if (controller.need('image')) setCreating(true) }}>{t('画一张', 'New picture')}</Button>
       </div>
@@ -328,6 +384,7 @@ export function Gallery() {
         </Modal>
       ) : null}
       {batching ? <ArtBatchDialog onClose={() => { setBatching(false); images.reload() }} /> : null}
+      {bringing ? <BringDialog onClose={() => { setBringing(false); images.reload() }} /> : null}
       {confirm.element}
       {sheets.element}
     </div>

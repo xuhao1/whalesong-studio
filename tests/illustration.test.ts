@@ -1783,6 +1783,75 @@ describe('the pictures kept of somebody, and taking one away', () => {
     await expect(importPicture(bed.runtime, { kind: 'sheet', target: card.id, look: '没有这身', data: file(7) })).rejects.toThrow(/no look/)
   })
 
+  it('takes in a photograph as the design art of a place, a house or a thing, as the cover, or as a picture of the gallery', async () => {
+    const { bed, images } = await studio()
+    const { project } = bed.runtime
+    const { importPicture } = await import('../src/core/pipelines/illustrate')
+    const { artsOf, isArtOf } = await import('../src/shared/arts')
+    const chapter = await project.addChapter({ title: '抄检' })
+    const file = (tail: number): Uint8Array => Uint8Array.from([...PIXEL, ...new Array<number>(64).fill(tail)])
+    const garden = await project.saveWorld({ name: '大观园', category: 'location', summary: '省亲别院', events: [{ chapter: chapter.id, kind: 'decline', what: '抄检之后，园中日见冷清' }] })
+    const house = await project.saveWorld({ name: '贾府', category: 'faction', summary: '宁荣二府' })
+    const mirror = await project.saveWorld({ name: '风月宝鉴', category: 'item', summary: '一面两面可照的镜子' })
+    await project.saveWorld({ name: '金玉良缘', category: 'rule', summary: '一句谶语' })
+    // A place: the photograph is its design art, the main picture; on record as a place's, brought in — no prompt,
+    // nothing drawn — and named as one drawn here is (told as its art by its name).
+    const photo = await importPicture(bed.runtime, { kind: 'art', target: '大观园', data: file(1) })
+    expect(photo.held).toEqual(['大观园'])
+    expect(photo.spare).toBeUndefined()
+    expect(photo.info).toMatchObject({ kind: 'location', target: garden.id, imported: true, prompt: '', size: '1x1' })
+    expect(isArtOf(garden.id, photo.info.path)).toBe(true)
+    expect((await project.findWorld(garden.id))!.visualImage).toBe(photo.info.path)
+    // Another: kept beside the first, and the main one while none was chosen.
+    const second = await importPicture(bed.runtime, { kind: 'art', target: garden.id, data: file(2) })
+    expect((await project.findWorld(garden.id))!.visualImage).toBe(second.info.path)
+    expect(artsOf((await project.findWorld(garden.id))!).map(art => art.path).sort()).toEqual([photo.info.path, second.info.path].sort())
+    // With a main picture chosen, one brought in waits beside it, not in use.
+    await project.saveWorld({ id: garden.id, visualMain: photo.info.path })
+    const third = await importPicture(bed.runtime, { kind: 'art', target: garden.id, data: file(3) })
+    expect(third.spare).toBe(true)
+    const kept = (await project.findWorld(garden.id))!
+    expect(kept.visualImage).toBe(photo.info.path)
+    expect(artsOf(kept)).toHaveLength(3)
+    // Of one turn of its course: that turn's picture — the design art stays what it was, and the file is not told as design art.
+    const then = await importPicture(bed.runtime, { kind: 'art', target: garden.id, event: `${chapter.id}:decline`, data: file(4) })
+    const after = (await project.findWorld(garden.id))!
+    expect(after.events).toMatchObject([{ kind: 'decline', image: then.info.path }])
+    expect(after.visualImage).toBe(photo.info.path)
+    expect(artsOf(after)).toHaveLength(3)
+    expect(isArtOf(garden.id, then.info.path)).toBe(false)
+    await expect(importPicture(bed.runtime, { kind: 'art', target: garden.id, event: `${chapter.id}:end`, data: file(5) })).rejects.toThrow(/has nothing at/)
+    // A house is kept as a place is; a thing as a thing.
+    const crest = await importPicture(bed.runtime, { kind: 'art', target: house.id, data: file(6) })
+    expect(crest.info).toMatchObject({ kind: 'location', target: house.id })
+    expect((await project.findWorld(house.id))!.visualImage).toBe(crest.info.path)
+    const glass = await importPicture(bed.runtime, { kind: 'art', target: '风月宝鉴', data: file(7) })
+    expect(glass.info).toMatchObject({ kind: 'item', target: mirror.id })
+    expect(glass.info.path).toMatch(/^assets\/images\/item-.+\.png$/)
+    expect((await project.findWorld(mirror.id))!.visualImage).toBe(glass.info.path)
+    // An idea of the world has no design art; nothing by that name has none either.
+    await expect(importPicture(bed.runtime, { kind: 'art', target: '金玉良缘', data: file(8) })).rejects.toThrow(/no design art/)
+    await expect(importPicture(bed.runtime, { kind: 'art', target: '没有这个地方', data: file(8) })).rejects.toThrow(/no world entry/)
+    // The cover.
+    const cover = await importPicture(bed.runtime, { kind: 'cover', data: file(9) })
+    expect(cover.info).toMatchObject({ kind: 'cover', imported: true })
+    expect((await project.manifest()).cover).toBe(cover.info.path)
+    // A picture of the gallery: nobody's, hanging nowhere; brought in for a chapter's text, it is that chapter's.
+    const loose = await importPicture(bed.runtime, { kind: 'picture', data: file(10) })
+    expect(loose.held).toEqual([])
+    expect(loose.info).toMatchObject({ kind: 'scene', imported: true })
+    expect(loose.info.target).toBeUndefined()
+    const page = await importPicture(bed.runtime, { kind: 'picture', chapter: chapter.id, data: file(11) })
+    expect(page.info).toMatchObject({ kind: 'scene', target: chapter.id, imported: true })
+    await expect(importPicture(bed.runtime, { kind: 'picture', chapter: '没有这一章', data: file(12) })).rejects.toThrow(/no chapter/)
+    // The same file again is the same picture: one file, one record.
+    const again = await importPicture(bed.runtime, { kind: 'picture', data: file(10) })
+    expect(again.info.id).toBe(loose.info.id)
+    expect((await project.illustrations()).filter(item => item.imported === true)).toHaveLength(9)
+    // Nothing of it was drawn.
+    expect(images.calls).toHaveLength(0)
+  })
+
   it('draws a picture again from its whole prompt as the author rewrote it: sent as it stands, with what they keep out and the pictures it had', async () => {
     const { bed, images } = await studio()
     const { project } = bed.runtime

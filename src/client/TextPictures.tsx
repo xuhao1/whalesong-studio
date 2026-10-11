@@ -9,9 +9,10 @@
  * another put in out of everything the book has drawn. All of it is done in
  * the text the author has open: it is their edit, saved as any other is.
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { embeddedPictures, movedPicture, pictureChanged, proseLines, withoutPicture, withPicture, type EmbeddedPicture, type PictureBlock } from '../shared/embedded'
 import { clip } from '../shared/text'
+import { ImportPicture } from './ImportPicture'
 import { PictureViewer } from './PictureRecord'
 import { PickPicture } from './PlacePicture'
 import { Button, cx, Modal, plainEnter, ProjectImage, useMediaUrl, useT } from './ui'
@@ -101,6 +102,9 @@ export function TextPictures({ chapter, text, onText, caret, onReveal }: { chapt
   const prose = useMemo(() => proseLines(text), [text])
   const [viewing, setViewing] = useState<string | undefined>()
   const [picking, setPicking] = useState(false)
+  // The text as it stands when a picture brought in arrives: the author may have gone on writing while it was sent.
+  const latest = useRef(text)
+  latest.current = text
   // The picture being given another place, while the author says which.
   const [placing, setPlacing] = useState<EmbeddedPicture | undefined>()
   const where = (picture: EmbeddedPicture): string => (picture.after === 0 ? t('在最前面', 'At the top') : t(`第 ${picture.after} 段后：${clip(picture.follows ?? '', 22)}`, `After line ${picture.after}: ${clip(picture.follows ?? '', 30)}`))
@@ -108,6 +112,8 @@ export function TextPictures({ chapter, text, onText, caret, onReveal }: { chapt
     <div className="nv-panel-section nv-text-pictures">
       <div className="nv-row-wrap">
         <Button size="sm" icon="plus" onClick={() => { setPicking(true) }} title={t('从这本书已有的图里选一张，插到光标所在的那一段之后', 'Choose one of the book\'s pictures; it goes after the line the caret is in')}>{t('从图库插入…', 'From the gallery…')}</Button>
+        {/* One of the author's own that is not in the book yet: brought in, and put after the line the caret is in. */}
+        <ImportPicture kind="picture" of={{ chapter }} variant="outline" label={t('从电脑插入…', 'From this computer…')} quiet onDone={(path) => { onText(withPicture(latest.current, { path, alt: '' }, caret())) }} />
         <span className="nv-muted nv-small">{pictures.length > 0 ? t(`正文里 ${pictures.length} 张`, `${pictures.length} in the text`) : t('正文里还没有图', 'No picture in the text yet')}</span>
       </div>
       {pictures.map(picture => (

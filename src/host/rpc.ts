@@ -1041,19 +1041,22 @@ export function createHandlers(service: NovelService): Handlers {
       // A picture of one turn of a place's course says so: the page that asked marks that turn as being drawn.
       return job(runtime, 'illustrate', `illustrate ${params.kind}${params.event !== undefined ? ` at ${params.event}` : ''}`, params.target, async task => await illustrate(core, runtime, params, task))
     },
-    'image.import': async ({ root, kind, target, mediaType, data, look, stage, scene, front }) => {
-      if (kind !== 'portrait' && kind !== 'sheet') throw new ProjectError('novel/invalid', 'a picture is brought in as a portrait or as a design sheet')
+    'image.import': async ({ root, kind, target, mediaType, data, look, stage, scene, front, event, chapter }) => {
+      if (!['portrait', 'sheet', 'art', 'cover', 'picture'].includes(String(kind))) throw new ProjectError('novel/invalid', 'a picture is brought in as a portrait, a design sheet, the design art of an entry (art), the cover, or a picture of the gallery (picture)')
       if (!['image/png', 'image/jpeg', 'image/webp'].includes(String(mediaType))) throw new ProjectError('novel/invalid', 'a picture brought in is a PNG, JPEG or WebP')
       const taken = await importPicture(await open(root), {
         kind,
-        target: requireString(target, 'target'),
+        // Whose it is: said for a portrait, a sheet and design art; the cover and a picture of the gallery are nobody's.
+        ...(kind === 'cover' || kind === 'picture' ? {} : { target: requireString(target, 'target') }),
         data: Buffer.from(requireString(data, 'data'), 'base64'),
         ...(typeof look === 'string' && look.length > 0 ? { look } : {}),
         ...(typeof stage === 'string' && stage.length > 0 ? { stage } : {}),
         ...(typeof scene === 'string' && scene.length > 0 ? { scene } : {}),
         ...(typeof front === 'boolean' ? { front } : {}),
+        ...(typeof event === 'string' && event.length > 0 ? { event } : {}),
+        ...(typeof chapter === 'string' && chapter.length > 0 ? { chapter } : {}),
       })
-      return { path: taken.info.path, held: taken.held, ...(taken.spare === true ? { spare: true } : {}) }
+      return { path: taken.info.path, held: taken.held, image: taken.info, ...(taken.spare === true ? { spare: true } : {}) }
     },
     'image.whole': async ({ root, picture, fromWords }) => {
       const { held: _held, ...whole } = await pictureWhole(core, await open(root), picture, { fromWords: fromWords === true })

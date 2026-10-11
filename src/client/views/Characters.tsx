@@ -701,6 +701,16 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
     await controller.refreshProject()
     controller.toast('success', path === undefined ? t('不再选定：它还是主人设图，但下次新画的会顶替它', 'No longer chosen: it is the main sheet still, but the next one drawn takes its place') : t('这张是主人设图了：之后画这个人都照着它', 'This is the main sheet now: every later picture of them is drawn against it'))
   })
+  // What a sheet shows — the person once, from the front, or three times side by side — where its shape told it wrong
+  // (a photograph brought in, wider than tall, of one person): said by the author, kept with the sheet.
+  const setFront = (path: string, front: boolean): Promise<unknown> => controller.guard(async () => {
+    const fronts = new Set(kept.filter(sheet => sheet.front).map(sheet => sheet.path))
+    if (front) fronts.add(path)
+    else fronts.delete(path)
+    await controller.api.call('character.save', { root, card: { id: card.id, visual: { ...joining(path), fronts: [...fronts] } } })
+    await controller.refreshProject()
+    controller.toast('success', front ? t('记下了：这张只有一个人。作参考时整张发', 'Noted: it shows them once. It goes along whole') : t('记下了：这张是三视图。作参考时只发正面那个身影', 'Noted: three views. Only the front figure goes along'))
+  })
   const useSheetFor = (path: string, stage: string | undefined): Promise<unknown> => controller.guard(async () => {
     await controller.api.call('character.save', { root, card: { id: card.id, ...(sheetPaths.includes(path) ? {} : { visual: joining(path) }), stages: stagesWith(path, stage) } })
     await controller.refreshProject()
@@ -799,6 +809,15 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
                   </label>
                 ) : null}
                 <Button size="sm" variant="ghost" icon="wand" disabled={dirty} title={dirty ? t('先保存当前修改', 'Save your edits first') : t('把这张人设图和你写的一句话发给绘图模型，只改那一处；画出来的顶替这张，这张留着', 'Send this sheet with a sentence of yours: that one thing is changed. What comes of it takes this one\'s place; this one is kept')} onClick={() => { setViewStart('change'); setViewing(sheetAt.path) }}>{t('照这张改…', 'Change this one…')}</Button>
+                <label className="nv-sheet-use" title={t('三视图：作参考时只发正面那个身影，头像取它。只有正面：整张发。导入的照片按形状猜，猜错了在这里改', 'Three views: only the front figure goes along, and the face is taken from it. Front only: it goes along whole. A photograph brought in is told by its shape — put it right here')}>
+                  <span>{t('这张是', 'It shows')}</span>
+                  <Select
+                    value={sheetAt.front ? 'front' : 'views'}
+                    disabled={dirty}
+                    onChange={(to) => { void setFront(sheetAt.path, to === 'front') }}
+                    options={[{ value: 'views', label: t('三视图', 'Three views') }, { value: 'front', label: t('只有正面', 'Front only') }]}
+                  />
+                </label>
                 <span className="nv-spacer" />
               </>
             ) : null}

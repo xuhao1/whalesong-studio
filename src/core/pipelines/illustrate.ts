@@ -2984,29 +2984,69 @@ function pictureEnding(bytes: Uint8Array): 'png' | 'jpg' | 'webp' | undefined {
 }
 
 /**
- * Take in a picture of somebody that was made elsewhere — a file of the author's — as their portrait or their design
- * sheet: it is kept among the book's pictures and hangs where one drawn here would (their portraits, their sheets; a
- * look's sheet; a stretch's; the portrait of one of their moments). It has no prompt: its record says it was brought in.
+ * Take in a picture that was made elsewhere — a file of the author's: a photograph, a drawing, something made with
+ * another tool — as a picture of the book. It is kept among the book's pictures and hangs where one drawn here would:
+ * - `portrait` / `sheet`: somebody's (`target`) — their portraits, their sheets; a look's sheet; a stretch's; the
+ *   portrait of one of their moments;
+ * - `art`: the design art of a place, a house or a thing of the bible (`target`) — one more of its pictures, the main
+ *   one unless the author chose another — or the picture of one turn of its course (`event`);
+ * - `cover`: the book's cover;
+ * - `picture`: nowhere but the gallery — a picture of a chapter (`chapter`) where it is brought in for that chapter's text.
+ * It has no prompt: its record says it was brought in.
  * @param params.front - a sheet: whether it shows the front view alone. Left out: told by its shape — a picture wider
  *   than it is tall is taken for the three views side by side, one that stands for the single figure.
- * @throws ProjectError `novel/invalid` for a file that is no picture the Studio reads, or too large; `novel/not-found` for nobody by that name.
+ * @throws ProjectError `novel/invalid` for a file that is no picture the Studio reads, or too large, or for an entry
+ *   that has no design art (an idea of the world); `novel/not-found` for nobody, nothing and no chapter by that name.
  */
-export async function importPicture(runtime: ProjectRuntime, params: { kind: 'portrait' | 'sheet'; target: string; data: Uint8Array; look?: string; stage?: string; scene?: string; front?: boolean }): Promise<{ info: IllustrationInfo; held: string[]; spare?: boolean }> {
+export async function importPicture(runtime: ProjectRuntime, params: { kind: 'portrait' | 'sheet' | 'art' | 'cover' | 'picture'; target?: string; data: Uint8Array; look?: string; stage?: string; scene?: string; front?: boolean; event?: string; chapter?: string }): Promise<{ info: IllustrationInfo; held: string[]; spare?: boolean }> {
   const { project } = runtime
-  const card = await project.findCharacter(params.target)
-  if (card === undefined) throw new ProjectError('novel/not-found', `no character matches "${params.target}"`)
   const ending = pictureEnding(params.data)
   if (ending === undefined || params.data.length < 64) throw new ProjectError('novel/invalid', 'that is not a picture the Studio can read (PNG, JPEG, WebP)')
   if (params.data.length > 32 * 1024 * 1024) throw new ProjectError('novel/invalid', 'that picture is larger than 32 MB: bring in a smaller copy')
+  // Named as a picture of its kind drawn here is, and by what it is: the same file brought in twice is one file.
+  const stamp = hashText(Buffer.from(params.data).toString('base64')).slice(0, 8)
+  const frame = pixelsOf(params.data)
+  /** The picture kept among the book's, on record as brought in. (Brought in again: its record is there already.) */
+  const keep = async (stem: string, said: Pick<IllustrationInfo, 'kind' | 'target'>): Promise<IllustrationInfo> => {
+    const path = await project.writeAsset(`images/${stem}-${stamp}.${ending}`, params.data)
+    const there = (await project.illustrations()).find(item => item.path === path)
+    if (there !== undefined) return there
+    const record: IllustrationInfo = { id: newId('img'), path, prompt: '', ...said, createdAt: new Date().toISOString(), imported: true, ...(frame !== undefined ? { size: `${frame.width}x${frame.height}` } : {}) }
+    await project.addIllustration(record)
+    return record
+  }
+  if (params.kind === 'art') {
+    const entry = params.target !== undefined ? await project.findWorld(params.target) : undefined
+    if (entry === undefined) throw new ProjectError('novel/not-found', `no world entry matches "${params.target ?? ''}"`)
+    const group = groupOf(entry.category)
+    if (group === 'ideas') throw new ProjectError('novel/invalid', `"${entry.name}" is an idea of the world — not a place, a house or a thing: it has no design art`)
+    const turn = params.event !== undefined ? await turnOf(project, entry, params.event) : undefined
+    const kind = group === 'items' ? 'item' : 'location'
+    const record = await keep(`${kind}-${entry.id}${turn !== undefined ? `-${turn.chapter}-${turn.kind}` : ''}`, { kind, target: entry.id })
+    const hung = await hangArt(project, record.path, { as: 'art', entry: entry.id, ...(params.event !== undefined ? { event: params.event } : {}) })
+    return { info: record, held: [entry.name], ...(hung.spare ? { spare: true } : {}) }
+  }
+  if (params.kind === 'cover') {
+    const record = await keep('cover', { kind: 'cover' })
+    return { info: record, held: await hangAs(runtime, record, { as: 'cover' }) }
+  }
+  if (params.kind === 'picture') {
+    const chapter = params.chapter !== undefined ? await project.findChapter(params.chapter) : undefined
+    if (params.chapter !== undefined && chapter === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${params.chapter}"`)
+    // Of a chapter, it is listed with that chapter's pictures; of none, it is one of the gallery's like any drawn from the author's own words.
+    const record = await keep(chapter !== undefined ? `scene-${chapter.plan.id}` : 'custom', { kind: 'scene', ...(chapter !== undefined ? { target: chapter.plan.id } : {}) })
+    return { info: record, held: [] }
+  }
+  const card = params.target !== undefined ? await project.findCharacter(params.target) : undefined
+  if (card === undefined) throw new ProjectError('novel/not-found', `no character matches "${params.target ?? ''}"`)
   const stage = params.stage !== undefined ? stageOf(card, params.stage) : undefined
   if (params.stage !== undefined && stage === undefined) throw new ProjectError('novel/not-found', `${card.name} has no stretch "${params.stage}"`)
   const look = params.kind === 'sheet' && params.look !== undefined ? lookOf(card, params.look) : undefined
   if (params.kind === 'sheet' && params.look !== undefined && look === undefined) throw new ProjectError('novel/not-found', `${card.name} has no look called "${params.look}"`)
   const moment = params.kind === 'portrait' && params.scene !== undefined ? scenesOf(card).find(scene => scene.id === params.scene) : undefined
   if (params.scene !== undefined && params.kind === 'portrait' && moment === undefined) throw new ProjectError('novel/not-found', `${card.name} has no signature scene "${params.scene}"`)
-  // Named as a picture of its kind drawn here is, and by what it is: the same file brought in twice is one file.
-  const path = await project.writeAsset(`images/${params.kind}-${card.id}-${hashText(Buffer.from(params.data).toString('base64')).slice(0, 8)}.${ending}`, params.data)
-  const size = pixelsOf(params.data)
+  const path = await project.writeAsset(`images/${params.kind}-${card.id}-${stamp}.${ending}`, params.data)
+  const size = frame
   const info: IllustrationInfo = {
     id: newId('img'),
     path,
