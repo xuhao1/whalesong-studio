@@ -2171,6 +2171,44 @@ button.nv-stat:hover {
   color: var(--nv-text-3);
 }
 
+/* The editor, and behind it the passage that stays marked while the caret is elsewhere (a text box shows its
+   selection only while it has the caret): the same words laid out the same, under a box that lets them show through. */
+.nv-editor-wrap {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--nv-bg);
+}
+
+.nv-editor-wrap > textarea.nv-editor {
+  position: relative;
+  background: transparent;
+}
+
+.nv-editor-mark {
+  position: absolute;
+  top: 0;
+  left: 0;
+  flex: none;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: transparent;
+  color: transparent;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  pointer-events: none;
+  user-select: none;
+}
+
+.nv-editor-mark mark {
+  background: color-mix(in srgb, var(--nv-brand) 24%, transparent);
+  color: transparent;
+}
+
 .nv-live {
   flex: 1;
   min-height: 0;

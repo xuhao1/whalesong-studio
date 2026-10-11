@@ -9,7 +9,7 @@
  * going on to the next asks which way; and a run of chapters can be written,
  * given beats or reviewed in one go.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ChapterDocument } from '../../shared/rpc'
 import { countWords, formatCount, fuzzyFind, normalizeProse, proseOnly } from '../../shared/text'
 import { MAIN_LINE, type ChapterInfo, type JobInfo, type PictureGuide, type ReviewIssue, type TextStep, type VersionInfo } from '../../shared/types'
@@ -403,6 +403,28 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
 
   const words = useMemo(() => countWords(proseOnly(text ?? '')), [text])
   const selected = selection !== undefined && text !== undefined ? text.slice(selection.start, selection.end) : ''
+  // A text box shows its selection only while the caret is in it: the moment the author goes to say what to do with
+  // the passage — a button of the bar, the box for how to rewrite it, a dialog — it would look as if nothing were
+  // selected any more. So, whenever the caret is elsewhere, the passage is marked behind the text: the same words, laid
+  // out the same, under the box.
+  const [inText, setInText] = useState(false)
+  const marked = !inText && selection !== undefined && text !== undefined && selected.trim().length > 0 ? selection : undefined
+  const mirror = useRef<HTMLDivElement>(null)
+  const layMark = useCallback((): void => {
+    const from = area.current
+    const to = mirror.current
+    if (from === null || to === null) return
+    // As wide as the text is laid out in the box (its scroll bar, where it has one, takes room), and scrolled as far.
+    to.style.width = `${from.clientWidth}px`
+    to.scrollTop = from.scrollTop
+  }, [])
+  useLayoutEffect(layMark)
+  useEffect(() => {
+    if (marked === undefined || area.current === null || typeof ResizeObserver === 'undefined') return undefined
+    const watch = new ResizeObserver(layMark)
+    watch.observe(area.current)
+    return () => { watch.disconnect() }
+  }, [marked === undefined, layMark])
   const proposals = project.proposals.filter(proposal => proposal.chapterId === chapter.id)
   const openIssues = (doc.data?.review?.issues ?? []).filter(issue => issue.resolved !== true)
   const plan = doc.data?.plan
@@ -800,6 +822,8 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
             <span className="nv-caret" />
           </div>
         ) : (
+          <div className="nv-editor-wrap">
+          {marked !== undefined ? <div ref={mirror} className="nv-editor nv-editor-mark" aria-hidden="true">{text.slice(0, marked.start)}<mark>{text.slice(marked.start, marked.end)}</mark>{text.slice(marked.end)}{'\u200b'}</div> : null}
           <textarea
             ref={area}
             className="nv-editor"
@@ -807,6 +831,9 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
             value={text}
             placeholder={t('在这里写，或让写手按章纲起草。', 'Write here, or have the writer draft from the outline.')}
             onChange={(event) => { setText(event.target.value) }}
+            onFocus={() => { setInText(true) }}
+            onBlur={() => { setInText(false) }}
+            onScroll={layMark}
             onSelect={(event) => {
               const { selectionStart, selectionEnd } = event.currentTarget
               caretAt.current = selectionEnd
@@ -832,6 +859,7 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
               }
             }}
           />
+          </div>
         )}
       </section>
 
