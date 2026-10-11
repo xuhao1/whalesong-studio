@@ -12775,3 +12775,46 @@ button.nv-album-chapter:hover {
   margin: 2px 2px;
   background: var(--nv-border);
 }
+
+/* How large the pictures of a chapter stand in its text — the reader's own choice; left alone, as wide as the column.
+   (Never narrower than a picture is worth looking at: on a phone the column is the screen.) */
+.is-pictures-small .nv-figure img {
+  max-width: min(100%, max(40%, 220px));
+  max-height: 36vh;
+}
+
+.is-pictures-medium .nv-figure img {
+  max-width: min(100%, max(62%, 280px));
+  max-height: 54vh;
+}
+
+.is-pictures-large .nv-figure img {
+  max-width: min(100%, max(84%, 320px));
+  max-height: 72vh;
+}
+
+/* A picture of the text opens large when pressed. */
+.nv-reader-page .nv-figure img,
+.nv-script-page .nv-figure img {
+  cursor: zoom-in;
+}
+
+.nv-reader-page .nv-figure img:focus-visible,
+.nv-script-page .nv-figure img:focus-visible {
+  outline: 2px solid var(--nv-brand);
+  outline-offset: 3px;
+}
+
+/* Opened: as large as the window lets it be, whatever size it was made at — over everything the window shows. */
+.nv-album-zoom.is-largest {
+  z-index: 2147483001;
+  padding: 0;
+  font: inherit;
+}
+
+.nv-album-zoom.is-largest img {
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+  object-fit: contain;
+}

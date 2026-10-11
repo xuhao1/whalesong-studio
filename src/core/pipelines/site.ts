@@ -69,7 +69,7 @@ export interface SiteParams {
 
 /** Reading settings a site opens with: of the page (`prefs`) and of the player (`options`); a visitor's own replace them. */
 export interface SiteDefaults {
-  prefs?: { size?: number; theme?: 'auto' | 'paper' | 'night'; serif?: boolean; notes?: boolean; follow?: boolean }
+  prefs?: { size?: number; theme?: 'auto' | 'paper' | 'night'; serif?: boolean; notes?: boolean; follow?: boolean; names?: boolean; things?: boolean; moments?: boolean; pictures?: 'small' | 'medium' | 'large' | 'full' }
   options?: { rate?: number; voiceVolume?: number; ambienceVolume?: number; ambienceOn?: boolean; autoNext?: boolean }
 }
 
@@ -89,6 +89,11 @@ export function siteDefaults(raw: unknown): SiteDefaults | undefined {
     serif: flag(page?.serif),
     notes: flag(page?.notes),
     follow: flag(page?.follow),
+    // What is marked and shown in the text, and how large its pictures stand.
+    names: flag(page?.names),
+    things: flag(page?.things),
+    moments: flag(page?.moments),
+    pictures: page?.pictures === 'small' || page?.pictures === 'medium' || page?.pictures === 'large' || page?.pictures === 'full' ? page.pictures : undefined,
   })
   const options = drop({
     rate: within(player?.rate, 0.5, 2),

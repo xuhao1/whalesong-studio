@@ -12,12 +12,12 @@
  *   ScriptPage     the page
  *   chapterFigures where the chapter's pictures stand among the script's lines
  */
-import type { ReactNode, RefObject } from 'react'
+import { useState, type ReactNode, type RefObject } from 'react'
 import { alignScript, blocksOf } from '../../shared/reader'
 import type { AudioCue, AudioLine } from '../../shared/types'
 import { Icon } from '../icons'
 import type { LinePlayer, PlayerState } from '../stage/player'
-import { cueCaption, formatDuration, type Translate } from './parts'
+import { cueCaption, formatDuration, opensLarge, PictureZoom, type PictureSize, type Translate } from './parts'
 
 const cx = (...parts: (string | false | undefined | null)[]): string => parts.filter(Boolean).join(' ')
 
@@ -68,7 +68,7 @@ export interface ScriptPageProps {
   speakerOf?: ((line: AudioLine) => string | undefined) | undefined
   scroller: RefObject<HTMLDivElement | null>
   /** The reader's type: the script is set in it, a little smaller than the prose. */
-  prefs?: { size: number; serif: boolean } | undefined
+  prefs?: { size: number; serif: boolean; pictures?: PictureSize | undefined } | undefined
   /** Above the lines: the chapter's title. */
   header?: ReactNode
   /** After the lines: the way to the next chapter. */
@@ -79,15 +79,17 @@ export function ScriptPage({ t, lines, cues, state, player, pace, figures, media
   const cuesAt = new Map<string, AudioCue[]>()
   for (const cue of cues) cuesAt.set(cue.at, [...(cuesAt.get(cue.at) ?? []), cue])
   const live = new Set(state.sounding ?? [])
+  // A picture pressed: shown as large as the window lets it be.
+  const [zoomed, setZoomed] = useState<{ path: string; alt: string } | undefined>()
   const figure = (picture: { path: string; alt: string }): ReactNode => (
     <figure key={picture.path} className="nv-figure nv-line-figure">
-      <img loading="lazy" src={media(picture.path)} alt={picture.alt} />
+      <img loading="lazy" src={media(picture.path)} alt={picture.alt} {...opensLarge(() => { setZoomed(picture) }, t)} />
       {picture.alt.length > 0 ? <figcaption>{picture.alt}</figcaption> : null}
     </figure>
   )
   return (
     <div className="nv-reader-scroll" ref={scroller as RefObject<HTMLDivElement>}>
-      <div className={cx('nv-script-wrap nv-script-page', prefs?.serif === true && 'is-serif')} style={prefs !== undefined ? { fontSize: Math.max(13, prefs.size - 2) } : undefined}>
+      <div className={cx('nv-script-wrap nv-script-page', prefs?.serif === true && 'is-serif', prefs?.pictures !== undefined && prefs.pictures !== 'full' && `is-pictures-${prefs.pictures}`)} style={prefs !== undefined ? { fontSize: Math.max(13, prefs.size - 2) } : undefined}>
         {header}
         <ol className="nv-script">
           {lines.map((line, index) => {
@@ -134,6 +136,7 @@ export function ScriptPage({ t, lines, cues, state, player, pace, figures, media
         </ol>
         {footer !== undefined ? <footer className="nv-reader-foot">{footer}</footer> : null}
       </div>
+      {zoomed !== undefined ? <PictureZoom src={media(zoomed.path)} alt={zoomed.alt} t={t} onClose={() => { setZoomed(undefined) }} /> : null}
     </div>
   )
 }

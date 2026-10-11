@@ -8,7 +8,8 @@
  * Nothing here talks to the Studio's controller: whoever uses a part hands it
  * the text, the script and a way to turn a media path into a URL.
  */
-import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from 'react'
+import { createPortal } from 'react-dom'
 import { alignScript, blocksOf, segmentsOf, type Block } from '../../shared/reader'
 import { countWords, proseOnly } from '../../shared/text'
 import type { AudioCue, AudioLine } from '../../shared/types'
@@ -37,7 +38,59 @@ export interface ReaderPrefs {
   things?: boolean
   /** The pictures of people's moments are shown in the text, where the chapter tells them. Left out: they are. */
   moments?: boolean
+  /** How large the pictures of a chapter stand in its text. Left out: `full` — as wide as the column, as they always were. */
+  pictures?: PictureSize
 }
+
+/** How large a picture stands in the text: a part of the column's width and of the window's height, or all the column. */
+export type PictureSize = 'small' | 'medium' | 'large' | 'full'
+
+/**
+ * A picture of the text, as large as the window lets it be: laid over everything, put away by a press anywhere or by
+ * Escape. (Escape is taken here before the page has it: under a picture, it closes the picture and nothing else.)
+ *
+ * It is put at the top of the window, not where the page has it: a page laid out by its own width is a box of its
+ * own, and what is "fixed" inside one is fixed to that box — as tall as the page, not as the window. While the
+ * viewer fills the screen, the top of the window is the layer that viewer keeps for what lies over it.
+ */
+export function PictureZoom({ src, alt, onClose, t }: { src: string; alt?: string; onClose: () => void; t: Translate }) {
+  const here = useRef<HTMLSpanElement>(null)
+  const [top, setTop] = useState<Element | null>(null)
+  useEffect(() => {
+    const full = here.current?.closest('.nv-full.is-full')
+    setTop(full?.querySelector(':scope > .nv-full-layer') ?? full ?? document.body)
+  }, [])
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      onClose()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => { window.removeEventListener('keydown', onKey, true) }
+  }, [onClose])
+  return (
+    <>
+      <span ref={here} hidden />
+      {top !== null ? createPortal(
+        <button type="button" className="nv-album-zoom is-largest" onClick={(event) => { event.stopPropagation(); onClose() }} aria-label={t('关上大图', 'Close the picture')}>
+          <img alt={alt ?? ''} src={src} />
+        </button>,
+        top,
+      ) : null}
+    </>
+  )
+}
+
+/** What makes a picture of the text one that opens large when pressed — by the pointer, or by Enter where it has the caret. */
+export const opensLarge = (open: () => void, t: Translate): { role: 'button'; tabIndex: 0; title: string; onClick: () => void; onKeyDown: (event: ReactKeyboardEvent) => void } => ({
+  role: 'button',
+  tabIndex: 0,
+  title: t('点开放到最大', 'Open at full size'),
+  onClick: open,
+  onKeyDown: (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); open() } },
+})
 
 const PREFS_KEY = 'novel-studio:reader'
 const PLAYER_KEY = 'novel-studio:player'
@@ -168,6 +221,14 @@ export function ReaderSettings({ prefs, update, options, updateOptions, t, extra
         <div className="nv-seg" role="group">
           <button type="button" className={cx(prefs.serif && 'is-active')} onClick={() => { update({ serif: true }) }}>{t('宋体 / 衬线', 'Serif')}</button>
           <button type="button" className={cx(!prefs.serif && 'is-active')} onClick={() => { update({ serif: false }) }}>{t('黑体 / 无衬线', 'Sans')}</button>
+        </div>
+      </div>
+      <div className="nv-reader-settings-row">
+        <span className="nv-reader-settings-label" title={t('正文里的图默认多大；点一张图可以放到最大', 'How large pictures stand in the text; press one to see it at full size')}>{t('图片', 'Pictures')}</span>
+        <div className="nv-seg" role="group">
+          {([['small', '小', 'Small'], ['medium', '中', 'Medium'], ['large', '大', 'Large'], ['full', '满栏', 'Full width']] as const).map(([value, zh, en]) => (
+            <button key={value} type="button" aria-pressed={(prefs.pictures ?? 'full') === value} className={cx((prefs.pictures ?? 'full') === value && 'is-active')} onClick={() => { update({ pictures: value }) }}>{t(zh, en)}</button>
+          ))}
         </div>
       </div>
       <div className="nv-reader-settings-row">
@@ -383,9 +444,11 @@ export function ReaderPage({ t, bookTitle, chapter, text, prefs, media, lines, a
     for (const figure of figures ?? []) placed.set(figure.after, [...(placed.get(figure.after) ?? []), figure])
     return placed
   }, [figures, prefs.moments])
+  // A picture pressed: shown as large as the window lets it be.
+  const [zoomed, setZoomed] = useState<{ path: string; alt: string } | undefined>()
   const momentsAfter = (offset: number): ReactNode => (pictured.get(offset) ?? []).map(figure => (
     <figure key={`moment-${figure.path}`} className="nv-figure is-moment">
-      <img alt={figure.caption} loading="lazy" src={media(figure.path)} />
+      <img alt={figure.caption} loading="lazy" src={media(figure.path)} {...opensLarge(() => { setZoomed({ path: figure.path, alt: figure.caption }) }, t)} />
       <figcaption>
         {figure.caption}
         {onHideFigure !== undefined ? <button type="button" className="nv-figure-hide" onClick={() => { onHideFigure(figure.key ?? figure.path) }}>{t('不在正文里显示', 'Keep out of the text')}</button> : null}
@@ -569,7 +632,7 @@ export function ReaderPage({ t, bookTitle, chapter, text, prefs, media, lines, a
   const listening = lines !== undefined && onLine !== undefined
   return (
     <div className="nv-reader-scroll" ref={scroller as RefObject<HTMLDivElement>} onMouseUp={onSelect} onKeyUp={onSelect}>
-      <article className={cx('nv-reader-page', prefs.serif && 'is-serif', listening && 'is-listening')} style={{ fontSize: prefs.size }}>
+      <article className={cx('nv-reader-page', prefs.serif && 'is-serif', listening && 'is-listening', prefs.pictures !== undefined && prefs.pictures !== 'full' && `is-pictures-${prefs.pictures}`)} style={{ fontSize: prefs.size }}>
         <header className="nv-reader-head">
           <span className="nv-reader-kicker">{bookTitle} · {t(`第 ${chapter.index} 章`, `Chapter ${chapter.index}`)}</span>
           <h1>{chapter.title}</h1>
@@ -578,7 +641,7 @@ export function ReaderPage({ t, bookTitle, chapter, text, prefs, media, lines, a
           if (block.kind === 'image') {
             return (
               <figure key={block.offset} data-offset={block.offset} className="nv-figure">
-                <img alt={block.alt} loading="lazy" src={media(block.path)} />
+                <img alt={block.alt} loading="lazy" src={media(block.path)} {...opensLarge(() => { setZoomed({ path: block.path, alt: block.alt }) }, t)} />
                 {block.alt.length > 0 ? <figcaption>{block.alt}</figcaption> : null}
               </figure>
             )
@@ -661,6 +724,7 @@ export function ReaderPage({ t, bookTitle, chapter, text, prefs, media, lines, a
           </aside>
         )
       })() : null}
+      {zoomed !== undefined ? <PictureZoom src={media(zoomed.path)} alt={zoomed.alt} t={t} onClose={() => { setZoomed(undefined) }} /> : null}
       {children}
     </div>
   )

@@ -26,7 +26,7 @@ import { MAIN_LINE, type CharacterRole } from '../../shared/types'
 import type { WorldGroup } from '../../shared/world'
 import { Icon, type IconName } from '../icons'
 import { AroundGraph, bondsOf } from './around'
-import type { Translate } from './parts'
+import { PictureZoom, type Translate } from './parts'
 
 const cx = (...parts: (string | false | undefined | null)[]): string => parts.filter(Boolean).join(' ')
 
@@ -340,11 +340,7 @@ export function AlbumView({ t, album, media, at, go, onRead, onEdit, worldTools,
     </div>
   ) : null
 
-  const lightbox = zoom !== undefined ? (
-    <button type="button" className="nv-album-zoom" onClick={() => { setZoom(undefined) }} aria-label={t('关上大图', 'Close the picture')}>
-      <img alt="" src={media(zoom)} />
-    </button>
-  ) : null
+  const lightbox = zoom !== undefined ? <PictureZoom src={media(zoom)} t={t} onClose={() => { setZoom(undefined) }} /> : null
   const backLink = back !== undefined ? <button type="button" className="nv-btn nv-btn-sm nv-btn-outline nv-album-back" onClick={back.go}><Icon name="chevronLeft" size={13} /><span>{back.label}</span></button> : null
   const chapterChip = (index: number, names?: readonly string[]): ReactNode => {
     const chapter = byIndex.get(index)

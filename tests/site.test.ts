@@ -158,6 +158,9 @@ describe('a book as a site', () => {
       options: { rate: 2, voiceVolume: 0, autoNext: false },
     })
     expect(siteDefaults({ prefs: { theme: 'sepia' } })).toBeUndefined()
+    // How large pictures stand in the text, and what is marked and shown in it, go out too — a size the reader does not know is dropped.
+    expect(siteDefaults({ prefs: { pictures: 'medium', names: false, things: true, moments: false } })).toEqual({ prefs: { names: false, things: true, moments: false, pictures: 'medium' } })
+    expect(siteDefaults({ prefs: { pictures: 'huge', names: 'no' } })).toBeUndefined()
     expect(siteDefaults(undefined)).toBeUndefined()
     expect(siteDefaults('big')).toBeUndefined()
     const page = sitePage('一本书', 'zh', undefined, siteDefaults({ prefs: { size: 20, theme: 'paper' }, options: { rate: 1.25 } }))
