@@ -124,6 +124,13 @@ Output JSON only:
 {"notes": "the notes for the writer", "used": ["<title>: what of it you read"], "why": "one sentence: what you looked at and how you chose"}`)
 }
 
+/** What the pictures in a text are to whoever writes the text anew: lines that are handed back as they stand. */
+function picturesStay(lang: PromptLanguage, what: [zh: string, en: string]): string {
+  return L(lang,
+    `${what[0]}里单独成行的 ![说明](路径) 是插在那里的一张图，不是正文：原样交回——每一行都留着，一个字不改，仍是单独一行，仍在原来那一处（它前后的文字改写了，它就跟在改写后的那几句后面）。${what[0]}没有的图不要添。`,
+    `A line of ${what[1]} that reads ![caption](path) is a picture placed there, not prose: hand it back as it is — every such line kept, not a character of it changed, still a line of its own, still at the place it stood (where the words around it are rewritten, it follows the rewritten ones). Add no picture ${what[1]} does not have.`)
+}
+
 export function reviseSpanSystem(base: Base & { style: string }): string {
   return L(base.lang, `你是长篇小说《${bare(base.title)}》的作者，正在按编辑的意见改稿。你会看到设定、上下文、一段需要修改的原文和修改要求。
 
@@ -131,7 +138,8 @@ export function reviseSpanSystem(base: Base & { style: string }): string {
 1. 只输出修改后的那段文字，用来原样替换原文。不要解释，不要引号包裹，不要输出原文以外的上下文。
 2. 改动要服从修改要求；要求之外的内容尽量保留原意与信息量，前后必须与未改动的上下文严丝合缝（人称、时态、语气、衔接）。
 3. 不得违背设定与前文事实。
-4. ${outputRule(base)}
+4. ${picturesStay(base.lang, ['要改的这一段', 'the passage'])}
+5. ${outputRule(base)}
 
 【文风】
 ${base.style}`, `You are the author of the novel "${bare(base.title)}", revising to your editor's note. You get the bible, the surrounding text, the passage to change and the instruction.
@@ -140,7 +148,8 @@ Rules:
 1. Output only the rewritten passage, ready to replace the original as is. No explanation, no surrounding quotes, nothing outside the passage.
 2. Follow the instruction; keep everything it does not ask to change, and make the result join the untouched text on both sides seamlessly (person, tense, voice).
 3. Never contradict the bible or earlier chapters.
-4. ${outputRule(base)}
+4. ${picturesStay(base.lang, ['要改的这一段', 'the passage'])}
+5. ${outputRule(base)}
 
 STYLE
 ${base.style}`)
@@ -157,7 +166,8 @@ export function reviseChapterSystem(base: Base & { style: string }): string {
 1. 输出修改后的完整一章正文，只输出正文，不要标题和任何说明。
 2. 按修改要求改；要求没有涉及的情节、信息和好句子尽量保留，不要无故删减篇幅或改写无关段落。
 3. 不得违背设定与前文事实，不得改变本章在全书中的剧情功能（除非修改要求明确如此）。
-4. ${outputRule(base)}
+4. ${picturesStay(base.lang, ['本章现有正文', 'the chapter as it stands'])}
+5. ${outputRule(base)}
 
 【文风】
 ${base.style}`, `You are the author of the novel "${bare(base.title)}", rewriting a whole chapter to your editor's note. You get the bible, the story so far, the chapter as it stands and the instruction.
@@ -166,7 +176,8 @@ Rules:
 1. Output the complete revised chapter — prose only, no title, no commentary.
 2. Follow the instruction; keep plot points, information and good lines it does not touch. Do not shorten the chapter or rewrite unrelated passages without cause.
 3. Never contradict the bible or earlier chapters, and keep the chapter's job in the book unless the instruction says otherwise.
-4. ${outputRule(base)}
+4. ${picturesStay(base.lang, ['本章现有正文', 'the chapter as it stands'])}
+5. ${outputRule(base)}
 
 STYLE
 ${base.style}`)
@@ -174,6 +185,61 @@ ${base.style}`)
 
 export function reviseChapterTask(base: Base & { context: string; instruction: string }): string {
   return `${base.context}\n\n---\n${L(base.lang, '## 修改要求', '## Instruction')}\n\n${base.instruction}\n\n---\n${L(base.lang, '输出修改后的完整一章正文。', 'Output the complete revised chapter.')}`
+}
+
+/**
+ * Where a problem is mended: the places — each quoted from the text, with what is to change there — and, only where
+ * places will not do, the chapters to write over whole. What is handed in is small: the writer rewrites the places
+ * named and nothing else, so a mending comes back as changes to look at one by one, not as a chapter written again.
+ * @param base.texts - the chapters the problems were found in, whole: what `find` is copied from.
+ * @param base.wide - trace what depends on the problem through the book; otherwise the problem itself and no more.
+ * @param base.reads - whoever answers can read the book's other chapters with tools.
+ */
+export function mendTask(base: Base & { instruction: string; chapters: string; texts?: string; wide: boolean; bible?: boolean; reads: boolean }): string {
+  const zhBible = base.bible === true
+    ? '\n5. 问题的根子在设定集——人物卡或设定条目写的和正文对不上，或者设定本身要调整——把要改的地方列在 bible 里：人物的 field 用 tagline、appearance、personality、background、motivation、flaw、arc、voice、age、gender 之一，设定条目用 summary 或 body。正文没问题、只是设定写错了的，只改设定，不动正文。'
+    : ''
+  const enBible = base.bible === true
+    ? '\n5. Where the root of the problem is in the bible — a character card or a world entry that says something else than the text, or canon that itself has to change — list it under `bible`: for a character `field` is one of tagline, appearance, personality, background, motivation, flaw, arc, voice, age, gender; for a world entry, summary or body. Where the text is right and the bible is wrong, change the bible and leave the text.'
+    : ''
+  const zhShape = `{"edits": [{"chapter": 章节序号, "find": "要改的那几句原文，逐字照抄", "how": "这一处改成什么样（具体到位）"}], "chapters": [{"index": 章节序号, "reason": "为什么非整章重写不可、怎么改"}], ${base.bible === true ? '"bible": [{"kind": "character|world", "name": "人物卡或设定条目的名字", "field": "要改的字段", "value": "改成什么", "reason": "为什么"}], ' : ''}"note": "给作者，两三句话：问题出在哪、为什么改这几处"}`
+  const enShape = `{"edits": [{"chapter": 1, "find": "the sentences to change, copied word for word", "how": "what this place is to say instead, specifically"}], "chapters": [{"index": 1, "reason": "why nothing short of writing it over will do, and how"}], ${base.bible === true ? '"bible": [{"kind": "character|world", "name": "the card or entry", "field": "the field to change", "value": "what it should say", "reason": "why"}], ' : ''}"note": "for the author, in two or three sentences: where the problem lies, and why these places"}`
+  const texts = base.texts !== undefined && base.texts.trim().length > 0
+  return L(base.lang, `你是长篇小说《${bare(base.title)}》的责任编辑。下面的问题要修。请定下改哪几处、各怎么改：写手只改你点到的那几处，不重写整章。
+
+## 要修的问题
+
+${base.instruction}
+
+## 各章摘要
+
+${base.chapters}
+${texts ? `\n## 相关章节的正文（find 从这里逐字照抄）\n\n${base.texts!.trim()}\n` : ''}
+怎么定：
+1. 改动越少越好。一个问题往往不止一处可以下手——矛盾的两头改哪一头都行，缺的一句交代补在哪一段都行：挑改得最少、最不牵动别处的那一处，它可以不在发现问题的那一章。一处能解决的，不改两处。
+2. 每一处写明：chapter——第几章；find——要改的那几句原文，逐字照抄，一句到一小段，够写手下笔就行，不整段整段地圈；how——这一处改成什么样，一两句话，具体到写手照着就能改（补哪句交代、数字改成几、哪半句去掉），理由不写在这里。同一章的两处不重叠。正文里单独成行的 ![说明](路径) 是一张图，不圈进 find。${base.reads ? '别的章节的正文用你的工具读，find 以读到的为准。' : ''}
+3. ${base.wide ? '把牵连查清：别的章节里写到同一件事、要跟着变才能前后一致的地方，各列一处；无关的不动。' : '只修这个问题本身：不顺手改别的，不借机添新的情节、伏笔或交代。'}
+4. 只有零碎改解决不了——这一章的节奏、视角、语气要通篇变——才把它列进 chapters，由写手整章重写；几处改能解决的不列。没有就给空数组。${zhBible}
+
+只输出 JSON：
+${zhShape}`, `You are the editor of the novel "${bare(base.title)}". The problems below are to be mended. Settle which places change and how each does: the writer rewrites the places you name and nothing else — no chapter is written over.
+
+## What is to be mended
+
+${base.instruction}
+
+## Chapter summaries
+
+${base.chapters}
+${texts ? `\n## The chapters concerned, whole (copy \`find\` from here, word for word)\n\n${base.texts!.trim()}\n` : ''}
+How to settle it:
+1. As little as will do. A problem can usually be taken hold of in more than one place — either end of a contradiction, any paragraph a missing word of explanation could go in: choose the place that changes least and pulls least else with it; it need not be in the chapter the problem was found in. What one place mends is not mended in two.
+2. For each place: chapter — its number; find — the sentences to change, copied word for word, from one sentence to a short paragraph, enough for the writer to work on and no whole stretches; how — what this place is to say instead, in a sentence or two, specific enough to write from (which word of explanation to add, what the number becomes, which half-sentence goes); the reasons do not go here. Two places of one chapter do not overlap. A line of the text that reads ![caption](path) is a picture: keep it out of find.${base.reads ? ' Read the other chapters with your tools; find goes by what you read there.' : ''}
+3. ${base.wide ? 'Trace what hangs on it: where other chapters tell of the same thing and have to change with it for the book to agree with itself, name a place in each; leave what has nothing to do with it.' : 'Mend this problem and nothing beside it: no other change made in passing, no new turn of the plot, hint or explanation brought in under cover of it.'}
+4. Only where places will not do — the chapter's pace, point of view or voice has to change throughout — list it under chapters, for the writer to write over whole; a chapter a few places mend is not listed. An empty array when there is none.${enBible}
+
+Output JSON only:
+${enShape}`)
 }
 
 /** Decide which chapters a book-wide instruction touches. */

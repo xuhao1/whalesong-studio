@@ -21,7 +21,7 @@
  */
 import { stageAt } from '../shared/stages'
 import type { CharacterCard, ChapterMemory, ContextStrategy, PromptLanguage, WorldEntry } from '../shared/types'
-import { clip, clipTail, estimateTokens, sameName } from '../shared/text'
+import { clip, clipTail, estimateTokens, proseOnly, sameName } from '../shared/text'
 import { livesFrom, type LocatedChapter, type Project } from './project'
 import {
   L, promptLanguage, renderCharacter, renderManifest, renderMoment, renderPlan, renderThread, renderWorld,
@@ -272,10 +272,11 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
   ].join('\n\n'), share(0.4))
 
   // ── the story so far: which chapters travel word for word ──
+  // (Prose only: a picture's line in a chapter is not the story, and a writer shown such lines writes some of its own.)
   const texts = new Map<string, string>()
   const textOf = async (chapter: LocatedChapter): Promise<string> => {
     let text = texts.get(chapter.plan.id)
-    if (text === undefined) texts.set(chapter.plan.id, text = await project.chapterText(chapter.plan.id))
+    if (text === undefined) texts.set(chapter.plan.id, text = proseOnly(await project.chapterText(chapter.plan.id)))
     return text
   }
   const blockOf = async (chapter: LocatedChapter): Promise<string> => `${heading(chapter)}\n\n${await textOf(chapter)}`
@@ -348,7 +349,11 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
 
   // ── what belongs to this piece of work ──
   // (A revision that goes on from changes still waiting reads the chapter as it would stand with them in.)
-  const currentText = current !== undefined && options.includeChapterText === true ? options.chapterText ?? await textOf(current) : ''
+  // The chapter a revision rewrites travels as it stands, picture lines and all: what comes back is the whole chapter,
+  // and they are to be in it where they were. Read, reviewed or gone on from, it is prose like the others.
+  const currentText = current === undefined || options.includeChapterText !== true
+    ? ''
+    : options.purpose === 'revise' ? options.chapterText ?? await project.chapterText(current.plan.id) : proseOnly(options.chapterText ?? await textOf(current))
   const previous = written.at(-1)
   const previousText = previous !== undefined ? await textOf(previous) : ''
 

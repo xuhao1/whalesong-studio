@@ -79,6 +79,16 @@ export function useMendings(): number {
   return useSnapshot(snapshot => snapshot.jobs.filter(job => job.status === 'running' && job.kind === 'revise' && job.project === root).length)
 }
 
+/** How one issue is mended: the place it quotes, a place the planner settles, the chapter written over, or traced through the book. */
+export type MendScope = 'passage' | 'place' | 'book' | 'chapter'
+
+/**
+ * Problems of how the words are put — style, language, pace — are mended where the review points; problems of things
+ * not agreeing — a fact, a time, a cause, how somebody behaves — show at one place and can be mended at another, so
+ * for those the planner settles where. Either can be asked for from the card's menu.
+ */
+const AT_THE_QUOTE = new Set(['style', 'language', 'pacing'])
+
 /** Under which name what the author is typing about an issue is kept on this screen. */
 export const issueNoteKey = (chapterId: string, issueId: string): string => `issue.note.${chapterId}.${issueId}`
 
@@ -93,7 +103,7 @@ export function IssueCard({ chapterId, issue, onLocate, onChanged, before, after
   onLocate?: (quote: string) => void
   onChanged?: () => void
   before?: () => Promise<boolean>
-  after?: (scope: 'passage' | 'book') => void
+  after?: (scope: MendScope) => void
   className?: string
   /** One of a batch to be mended together: shown with a tick box. */
   selected?: boolean
@@ -107,6 +117,7 @@ export function IssueCard({ chapterId, issue, onLocate, onChanged, before, after
   const mends = project.proposals.filter(proposal => proposal.status === 'pending' && (proposal.issues?.includes(issue.id) === true || (issue.mending !== undefined && (proposal.batchId === issue.mending || proposal.batches?.includes(issue.mending) === true))))
   const mendsHere = mends.filter(proposal => proposal.chapterId === chapterId)
   const mendsElsewhere = mends.filter(proposal => proposal.chapterId !== chapterId)
+  const elsewhere = new Set(mendsElsewhere.map(proposal => proposal.chapterId)).size
   const [asked, setAsked] = useState(false)
   const revising = useRunningJob(job => job.kind === 'revise') !== undefined
   const under = useMendings()
@@ -119,16 +130,21 @@ export function IssueCard({ chapterId, issue, onLocate, onChanged, before, after
   }
   const here = useAction()
   const everywhere = useAction()
+  const whole = useAction()
   const settle = useAction()
-  const fix = (scope: 'passage' | 'book') => async (): Promise<void> => {
+  // The mending the card's first button does: at the quoted place, or at the place the planner settles.
+  const settled = issue.quote === undefined || !AT_THE_QUOTE.has(issue.type)
+  const fix = (scope: MendScope) => async (): Promise<void> => {
     if (before !== undefined && !(await before())) return
     await controller.api.call('ai.fixIssue', { root, chapter: chapterId, issue: issue.id, scope, order, ...(note.trim().length > 0 ? { note: note.trim() } : {}) })
     await controller.refreshJobs()
     controller.toast('info', under > 0 && order === 'queue'
       ? t(`排在前面 ${under} 个修复后面，接着它们改；改好之后，对比会出现在这条问题下面。`, `In line behind ${under} mending(s), going on from them; the changes will show beneath this issue.`)
       : scope === 'book'
-        ? t('策划正在查这个问题牵涉的范围；改好之后，对比会出现在这条问题下面。', 'The planner is tracing how far this reaches; the changes will show beneath this issue.')
-        : t('改好之后，对比会出现在这条问题下面。', 'The rewrite will show beneath this issue.'))
+        ? t('策划正在查这个问题牵涉到哪几处；改好之后，每一处的对比会出现在这条问题下面。', 'The planner is tracing which places this reaches; each change will show beneath this issue.')
+        : scope === 'place' || (scope === 'passage' && issue.quote === undefined)
+          ? t('策划在定改哪一处；改好之后，对比会出现在这条问题下面。', 'The planner is settling which place to change; the change will show beneath this issue.')
+          : t('改好之后，对比会出现在这条问题下面。', 'The rewrite will show beneath this issue.'))
     setAsked(true)
     after?.(scope)
   }
@@ -163,12 +179,18 @@ export function IssueCard({ chapterId, issue, onLocate, onChanged, before, after
       <footer>
         {open ? (
           <>
-            <Button size="sm" icon="wand" busy={here.busy} pending={t('正在开始…', 'Starting…')} onClick={() => here.run(fix('passage'))} title={issue.quote !== undefined ? t('只改引文这一处', 'Rewrite the quoted place only') : t('按它重写这一章', 'Rewrite the chapter for it')}>
-              {issue.quote !== undefined ? t('修这一处', 'Mend it here') : t('修这一章', 'Mend the chapter')}
+            <Button size="sm" icon="wand" busy={here.busy} pending={t('正在开始…', 'Starting…')} onClick={() => here.run(fix(settled ? 'place' : 'passage'))} title={settled ? t('策划定改哪一处最省，写手只改那一处', 'The planner settles which place mends it with the least change; the writer rewrites that place only') : t('只改引文这一处', 'Rewrite the quoted place only')}>
+              {settled ? t('修一处', 'Mend one place') : t('修这一处', 'Mend it here')}
             </Button>
-            <Button size="sm" icon="layers" busy={everywhere.busy} pending={t('正在开始…', 'Starting…')} onClick={() => everywhere.run(fix('book'))} title={t('让策划查清牵涉的章节和设定，一起改', 'The planner traces the chapters and the bible it reaches, and mends them together')}>
+            <Button size="sm" icon="layers" busy={everywhere.busy} pending={t('正在开始…', 'Starting…')} onClick={() => everywhere.run(fix('book'))} title={t('策划查清牵涉到别的章节和设定的哪几处，一处处改', 'The planner traces the chapters and the bible it reaches, and mends them together')}>
               {t('全局修复', 'Mend it everywhere')}
             </Button>
+            <Menu icon="more" variant="ghost" size="sm" align="end" items={[
+              ...(issue.quote !== undefined ? [settled
+                ? { label: t('只改引文这一处', 'Rewrite the quoted place only'), icon: 'wand' as const, onSelect: () => { void whole.run(fix('passage')) } }
+                : { label: t('让策划定改哪一处', 'Let the planner settle the place'), icon: 'wand' as const, onSelect: () => { void whole.run(fix('place')) } }] : []),
+              { label: t('整章重写', 'Rewrite the whole chapter'), icon: 'refresh', onSelect: () => { void whole.run(fix('chapter')) } },
+            ]} />
             {under > 0 ? <MendOrderMenu /> : null}
           </>
         ) : null}
@@ -187,11 +209,13 @@ export function IssueCard({ chapterId, issue, onLocate, onChanged, before, after
       </footer>
       {asked && revising && mends.length === 0 ? <p className="nv-muted nv-small">{t('正在改…', 'Being mended…')}</p> : null}
       {mendsHere.map(proposal => (proposal.issues?.length ?? 0) > 1
-        ? <details key={proposal.id} className="nv-issue-mend"><summary>{t(`这一章的修改（同时修 ${proposal.issues!.length} 个问题）`, `This chapter's change (mends ${proposal.issues!.length} issues)`)}</summary><ProposalCard bare proposal={proposal} onSettled={() => { onChanged?.() }} /></details>
+        ? <details key={proposal.id} className="nv-issue-mend"><summary>{proposal.kind === 'span' ? t(`一处修改（这一批在修这一章的 ${proposal.issues!.length} 个问题）`, `A change to one place (the batch mends ${proposal.issues!.length} issues of this chapter)`) : t(`这一章的修改（同时修 ${proposal.issues!.length} 个问题）`, `This chapter's change (mends ${proposal.issues!.length} issues)`)}</summary><ProposalCard bare proposal={proposal} onSettled={() => { onChanged?.() }} /></details>
         : <ProposalCard key={proposal.id} bare proposal={proposal} onSettled={() => { onChanged?.() }} />)}
       {mendsElsewhere.length > 0 ? (
         <details className="nv-issue-mend">
-          <summary>{t(`这次修复还改了别的 ${mendsElsewhere.length} 章`, `This mending also changed ${mendsElsewhere.length} other chapter(s)`)}</summary>
+          <summary>{elsewhere === mendsElsewhere.length
+            ? t(`这次修复还改了别的 ${elsewhere} 章`, `This mending also changed ${elsewhere} other chapter(s)`)
+            : t(`这次修复还改了别的 ${elsewhere} 章里的 ${mendsElsewhere.length} 处`, `This mending also changed ${mendsElsewhere.length} place(s) in ${elsewhere} other chapter(s)`)}</summary>
           {mendsElsewhere.map(proposal => <ProposalCard key={proposal.id} bare proposal={proposal} showChapter onSettled={() => { onChanged?.() }} />)}
         </details>
       ) : null}
@@ -259,7 +283,7 @@ export function IssueList({ chapterId, issues, onLocate, onChanged, before, afte
   onLocate?: (quote: string) => void
   onChanged?: () => void
   before?: () => Promise<boolean>
-  after?: (scope: 'passage' | 'book') => void
+  after?: (scope: MendScope) => void
   className?: string
 }) {
   const t = useT()

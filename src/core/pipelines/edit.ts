@@ -11,8 +11,9 @@
  * digested again, and the change goes on the book's record where the author
  * sees it. Nothing changes the book that the Studio does not know of.
  */
+import { embeddedPictures, keptPictures } from '../../shared/embedded'
 import { clip, countWords, fuzzyFind, proseOnly } from '../../shared/text'
-import type { ChapterMemory, CharacterMoment, FactKind, MemoryFact } from '../../shared/types'
+import type { ChapterMemory, CharacterMoment, FactKind, FiguresKept, MemoryFact } from '../../shared/types'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { ProjectError } from '../project'
 import { scheduleDigest } from './digest'
@@ -58,6 +59,14 @@ export interface EditResult {
   characters: string[]
   /** Chapters after this one that already have text and may rest on what was changed. */
   laterChapters: number
+  /**
+   * replace/set: the text put in did not have the pictures the text it replaces has — they were put back where they
+   * stood (`back`); and picture lines it had that the chapter has not were taken out (`made`). A picture goes out of
+   * a chapter by deleting its own line.
+   */
+  figures?: FiguresKept
+  /** delete: pictures that stood in what was removed, and went with it. */
+  picturesGone?: number
 }
 
 function occurrences(text: string, passage: string): number[] {
@@ -100,8 +109,25 @@ export async function editChapter(core: NovelCore, runtime: ProjectRuntime, para
   let before: string
   let after: string
   let changes = 1
+  // Text put in the place of text keeps the pictures that stood there: they are the author's, placed by hand, and what
+  // is written over them is written by somebody who was changing words.
+  let back = 0
+  let made = 0
+  let gone = 0
+  // (Not where the passage changed is a picture's own line and nothing else: that change is about the picture. And a
+  // line naming a picture the book has is a picture put in, not one made up.)
+  const named = [...(incoming ?? '').matchAll(/!\[[^\]]*\]\(\s*([^)\s]+)[^)]*\)/g)].map(match => match[1]!)
+  const also = new Set<string>()
+  for (const path of named) if (/^assets\/[^\0]+\.(png|jpe?g|webp|gif)$/i.test(path) && !path.split('/').includes('..') && await project.has(path)) also.add(path)
+  const holding = (was: string, now: string): string => {
+    if (was.trim().length > 0 && proseOnly(was).trim().length === 0) return now
+    const held = keptPictures(was, now, { also })
+    back += held.back
+    made += held.made
+    return held.text
+  }
   if (params.action === 'set') {
-    next = needText()
+    next = holding(text, needText())
     before = text
     after = next
   } else if (params.action === 'append') {
@@ -128,14 +154,19 @@ export async function editChapter(core: NovelCore, runtime: ProjectRuntime, para
       const replacement = params.action === 'delete' ? '' : needText()
       let out = ''
       let cursor = 0
+      let put = replacement
       for (const place of places) {
-        out += text.slice(cursor, place.start) + replacement
+        const was = text.slice(place.start, place.end)
+        // (Removing a passage removes what stands in it — said in the result; a picture alone is removed by its own line.)
+        if (params.action === 'delete') gone += embeddedPictures(was).length
+        else put = holding(was, replacement)
+        out += text.slice(cursor, place.start) + (params.action === 'delete' ? '' : put)
         cursor = place.end
       }
       next = out + text.slice(cursor)
       // A removed paragraph leaves no hole behind.
       if (params.action === 'delete') next = next.replace(/\n{3,}/g, '\n\n').replace(/^\n+/u, '')
-      after = replacement
+      after = params.action === 'delete' ? '' : put
     }
   }
   if (next === text) throw new ProjectError('novel/invalid', 'that would change nothing — the text already reads this way')
@@ -160,6 +191,8 @@ export async function editChapter(core: NovelCore, runtime: ProjectRuntime, para
     memory: 'unchanged',
     characters,
     laterChapters,
+    ...(back > 0 || made > 0 ? { figures: { back, made } } : {}),
+    ...(gone > 0 ? { picturesGone: gone } : {}),
   }
   const reason = params.reason?.trim()
   if (!result.applied) {
@@ -172,6 +205,7 @@ export async function editChapter(core: NovelCore, runtime: ProjectRuntime, para
       before: span ? before : text,
       after: span ? after : next,
       createdBy: task.origin,
+      ...(result.figures !== undefined ? { figures: result.figures } : {}),
     })
     result.proposalId = proposal.id
     return result

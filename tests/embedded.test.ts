@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 /** The pictures a chapter's text has in it: found, moved, taken out, put in — in the text itself. */
 import { describe, expect, it } from 'vitest'
-import { embeddedPictures, movedPicture, pictureChanged, proseLines, textBlocks, withoutPicture, withPicture, withProse, type ProseBlock } from '../src/shared/embedded'
+import { embeddedPictures, keptPictures, movedPicture, pictureChanged, proseLines, textBlocks, withoutPicture, withPicture, withProse, type ProseBlock } from '../src/shared/embedded'
 
 const TEXT = '第一段。\n\n![灯](assets/images/a.png)\n\n第二段。\n\n第三段。\n\n![雨](assets/images/b.png)\n'
 
@@ -90,5 +90,75 @@ describe('pictures in a chapter\'s text', () => {
     expect(pictureChanged(TEXT, line, { path: 'has space.png' })).toBe(TEXT)
     expect(pictureChanged(TEXT, 0, { path: 'assets/images/c.png' })).toBe(TEXT)
     expect(pictureChanged('  ![灯](a.png)', 0, { path: 'b.png' })).toBe('  ![灯](b.png)')
+  })
+})
+
+describe('a text written anew, held against the pictures it had', () => {
+  const A = '![灯](assets/images/a.png)'
+  const B = '![雨](assets/images/b.png)'
+  const ONE = '沈蘅没有应。门缝里塞进一张湿剪报，纸角碰到柜台，发出轻响。'
+  const TWO = '阿棠盯着她，半天才说出一句话来：断肠斋的灯今晚没有点。'
+  const THREE = '她把那支旧笔放回抽屉，抽屉合上的时候，外头的雨正好停了。'
+  const WAS = `${ONE}\n\n${A}\n\n${TWO}\n\n${THREE}\n\n${B}\n`
+  const one = '沈蘅没有应声。门缝里塞进来一张湿透的剪报，纸角碰到柜台，轻轻一响。'
+  const two = '阿棠盯着她看了半天，才说：断肠斋的灯，今晚没有点。'
+  const three = '她把旧笔放回抽屉。抽屉合上时，外头的雨正好停了。'
+
+  it('leaves alone a rewriting that has them as they stood', () => {
+    const now = `${one}\n\n${A}\n\n${two}\n\n\n${three}\n\n${B}`
+    expect(keptPictures(WAS, now)).toEqual({ text: now, back: 0, made: 0 })
+    expect(keptPictures('没有图。', '还是没有图。')).toEqual({ text: '还是没有图。', back: 0, made: 0 })
+    expect(keptPictures(WAS, WAS).text).toBe(WAS)
+  })
+
+  it('puts back one that was left out, after the line the one it followed became', () => {
+    expect(keptPictures(WAS, `${one}\n\n${two}\n\n${three}`)).toEqual({ text: `${one}\n\n${A}\n\n${two}\n\n${three}\n\n${B}`, back: 2, made: 0 })
+    // Lines parted by single breaks, as an imported book has them: the picture still gets a line of its own.
+    expect(keptPictures(WAS, `${one}\n${two}\n${three}\n`).text).toBe(`${one}\n\n${A}\n\n${two}\n${three}\n\n${B}\n`)
+    // The paragraphs changed places: it goes with the one it followed, not with the place.
+    expect(keptPictures(WAS, `${two}\n\n${one}\n\n${three}\n\n${B}`).text).toBe(`${two}\n\n${one}\n\n${A}\n\n${three}\n\n${B}`)
+    // The line it followed is gone: before the one that followed it.
+    expect(keptPictures(WAS, `${two}\n\n${three}\n\n${B}`).text).toBe(`${A}\n\n${two}\n\n${three}\n\n${B}`)
+    // At the top, it stays at the top.
+    expect(keptPictures(`${A}\n\n${ONE}`, one).text).toBe(`${A}\n\n${one}`)
+  })
+
+  it('keeps pictures that stood together in their order, whichever of them was left out', () => {
+    const pair = `${ONE}\n\n${A}\n\n${B}\n\n${TWO}`
+    expect(keptPictures(pair, `${one}\n\n${two}`).text).toBe(`${one}\n\n${A}\n\n${B}\n\n${two}`)
+    expect(keptPictures(pair, `${one}\n\n${B}\n\n${two}`).text).toBe(`${one}\n\n${A}\n\n${B}\n\n${two}`)
+    expect(keptPictures(pair, `${one}\n\n${A}\n\n${two}`).text).toBe(`${one}\n\n${A}\n\n${B}\n\n${two}`)
+  })
+
+  it('where nothing reads like what was there, puts each as far down the text as it stood', () => {
+    const fresh = ['第一段全新。', '第二段全新。', '第三段全新。', '第四段全新。', '第五段全新。', '第六段全新。']
+    // After one of three lines, and at the end: after two of six, and at the end.
+    expect(keptPictures(WAS, fresh.join('\n\n'))).toEqual({ text: `${fresh.slice(0, 2).join('\n\n')}\n\n${A}\n\n${fresh.slice(2).join('\n\n')}\n\n${B}`, back: 2, made: 0 })
+    // A translation, line for line: each is where it was.
+    expect(keptPictures(WAS, 'She did not answer.\n\nA-Tang stared.\n\nShe put the pen back.').text).toBe(`She did not answer.\n\n${A}\n\nA-Tang stared.\n\nShe put the pen back.\n\n${B}`)
+    // Nothing came back but the pictures have somewhere to be.
+    expect(keptPictures(WAS, '').text).toBe(`${A}\n\n${B}`)
+  })
+
+  it('takes out a picture line of the rewriting\'s own making, and gives a spoilt path back', () => {
+    // A file the text does not show; the same picture a second time.
+    expect(keptPictures(WAS, `${one}\n\n${A}\n\n${two}\n\n![窗](assets/images/w.png)\n\n${three}\n\n${B}\n\n${B}`)).toEqual({ text: `${one}\n\n${A}\n\n${two}\n\n${three}\n\n${B}`, back: 0, made: 2 })
+    expect(keptPictures('一句话。', '改过的一句话。\n\n![插图](x.png)')).toEqual({ text: '改过的一句话。', back: 0, made: 1 })
+    // As many made up as left out: each made-up one is the picture missing at its place.
+    expect(keptPictures(WAS, `${one}\n\n![lamp](pictures/lamp.png)\n\n${two}\n\n${three}\n\n![rain](pictures/rain.png)`)).toEqual({ text: `${one}\n\n${A}\n\n${two}\n\n${three}\n\n${B}`, back: 0, made: 0 })
+    // The folder changed, the file not: the same picture.
+    expect(keptPictures(WAS, `${one}\n\n![灯](images/a.png)\n\n${two}\n\n${three}`).text).toBe(`${one}\n\n${A}\n\n${two}\n\n${three}\n\n${B}`)
+    // A picture the book has, named by a hand that may place one, is left where it was written.
+    const placed = `${one}\n\n${A}\n\n${two}\n\n![门](assets/images/door.png)\n\n${three}\n\n${B}`
+    expect(keptPictures(WAS, placed, { also: new Set(['assets/images/door.png']) })).toEqual({ text: placed, back: 0, made: 0 })
+  })
+
+  it('gives a picture run into a line its own line again, and keeps what the text says under it', () => {
+    expect(keptPictures(WAS, `${one}${A}\n\n${two}\n\n${three}\n\n${B}`).text).toBe(`${one}\n\n${A}\n\n${two}\n\n${three}\n\n${B}`)
+    expect(keptPictures(WAS, `${one}\n\n![一盏灯](assets/images/a.png)\n\n${two}\n\n${three}\n\n${B}`).text).toBe(`${one}\n\n${A}\n\n${two}\n\n${three}\n\n${B}`)
+    // A translation's caption is the translation's.
+    expect(keptPictures(WAS, `One.\n\n![a lamp](assets/images/a.png)\n\nTwo.\n\nThree.\n\n![rain](assets/images/b.png)`, { captions: 'theirs' }).text).toBe(`One.\n\n![a lamp](assets/images/a.png)\n\nTwo.\n\nThree.\n\n![rain](assets/images/b.png)`)
+    // The white space the rewriting came with at either end is its own.
+    expect(keptPictures(`${ONE}\n\n${A}`, `\n${one}\n`).text).toBe(`\n${one}\n\n${A}\n`)
   })
 })

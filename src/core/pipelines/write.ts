@@ -4,7 +4,8 @@
  * context. The orchestrator never writes prose itself — it decides what gets
  * written and passes a brief; this pipeline turns that into text on disk.
  */
-import { chapterBudgetOf, MAIN_LINE, type ChapterInfo, type PictureGuide, type PicturesRead } from '../../shared/types'
+import { keptPictures } from '../../shared/embedded'
+import { chapterBudgetOf, MAIN_LINE, type ChapterInfo, type FiguresKept, type PictureGuide, type PicturesRead } from '../../shared/types'
 import { clipTail, countWords, normalizeProse, proseOnly } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { LlmCallError, type LlmResponse } from '../llm'
@@ -78,6 +79,12 @@ export interface WriteResult {
   brief?: string
   /** Where the author gave pictures for the chapter: how many, and who looked at them. */
   pictures?: PicturesRead
+  /**
+   * The pictures in the chapter's text: `back` — how many the chapter had before it was drafted over, carried into the
+   * new draft (after the lines most like the ones they stood by, else as far down as they stood); `made` — how many
+   * picture lines the writer put in of its own making, taken out.
+   */
+  figures?: FiguresKept
   /**
    * The book has references: what the writer was handed of them — the notes kept on the chapter's plan. `fresh`: the
    * planner took them just now, for this pass. `none`: no notes went along, and why (the planner looked and found
@@ -246,6 +253,12 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
   // The model wrote something, and all of it was a heading or a fence.
   if (written.trim().length === 0) throw new ProjectError('novel/empty', lang === 'zh' ? '写手模型的回复里没有正文（只有标题或空白）。请再试一次。' : 'the writer model\'s reply held no prose (only a heading or blank lines) — try again')
 
+  // Pictures in a chapter's text are lines the author placed, not prose the writer writes. A line of the writer's own
+  // making shows nothing and comes out. A chapter drafted over again keeps the ones it had: none is where it was —
+  // the prose is new — so each goes after what reads most like the lines it stood by, or as far down as it stood.
+  const held = keptPictures(mode === 'continue' ? '' : existing, written)
+  written = held.text
+  const figures = held.back > 0 || held.made > 0 ? { figures: { back: held.back, made: held.made } } : {}
   const finalText = mode === 'continue' ? `${existing}\n\n${written}` : written
   if (!dry) task.job?.rewrite(written)
   // Written to be compared: the chapter keeps its text, and the draft goes back to whoever asked.
@@ -275,7 +288,7 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
     title: chapter.plan.title,
     index: chapter.index,
     mode,
-    wordsWritten: countWords(written),
+    wordsWritten: countWords(proseOnly(written)),
     wordsTotal: saved.words,
     ...(target !== undefined ? { budget: target } : {}),
     model: `${route.provider}/${route.model}`,
@@ -292,6 +305,7 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
     ...(params.brief !== undefined ? { brief: params.brief } : {}),
     ...(guided !== undefined ? { pictures: picturesRead(guided)! } : {}),
     ...(referenced !== undefined ? { referenced } : {}),
+    ...figures,
     ...(dry ? { text: finalText } : {}),
   }
 }

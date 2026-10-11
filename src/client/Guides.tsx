@@ -10,7 +10,7 @@
  * beside the writer's brief, beside the button that draws.
  */
 import { useCallback, useRef, useState } from 'react'
-import type { PictureGuide, PicturesRead, ReferencesLooked } from '../shared/types'
+import type { FiguresKept, PictureGuide, PicturesRead, ReferencesLooked } from '../shared/types'
 import { encoded } from './ImportPicture'
 import { PickPicture } from './PlacePicture'
 import { Button, Chip, cx, Modal, plainEnter, ProjectImage, TextInput, useProject, useStudio, useT } from './ui'
@@ -143,6 +143,21 @@ function GuideNote({ note, disabled, ask, onCommit }: { note: string; disabled: 
   }
   const commit = (): void => { if (text.trim() !== note) onCommit(text.trim()) }
   return <TextInput className="nv-guide-note" value={text} disabled={disabled} placeholder={ask ?? t('说一句（可不填）：这是哪一幕、要它的什么', 'A word on it (optional): what it is, what of it matters')} onChange={(event) => { setText(event.target.value) }} onBlur={commit} onKeyDown={(event) => { if (plainEnter(event)) (event.target as HTMLInputElement).blur() }} />
+}
+
+/**
+ * In a sentence, what was done for the pictures in a text a model wrote anew: the ones it left out put back, lines of
+ * its own making taken out. `drafted`: the text was written over from nothing, so the pictures are in new places.
+ */
+export function figuresKeptWord(figures: FiguresKept | undefined, t: (zh: string, en: string) => string, how: 'revised' | 'drafted' = 'revised'): string | undefined {
+  if (figures === undefined || (figures.back <= 0 && figures.made <= 0)) return undefined
+  const said: string[] = []
+  if (figures.back > 0) said.push(how === 'drafted'
+    ? t(`原来正文里的 ${figures.back} 张图带进了新稿，照原来的远近放的`, `the ${figures.back} picture(s) the chapter had are in the new draft, as far down it as they stood`)
+    : t(`改稿漏掉了正文里的 ${figures.back} 张图，已放回原处`, `the rewrite left out ${figures.back} picture(s) of the text: put back where they stood`))
+  if (figures.made > 0) said.push(t(`写手自己添的 ${figures.made} 行图去掉了（书里没有那张图）`, `${figures.made} picture line(s) of the writer's own making taken out (the book has no such picture)`))
+  const whole = said.join(t('；', '; '))
+  return `${whole.charAt(0).toUpperCase()}${whole.slice(1)}`
 }
 
 /** How the pictures given to a piece of work were read, in a line for whoever gave them. */

@@ -553,7 +553,8 @@ export interface NovelRpc {
   'ai.reviseChapter': { params: { root: string; chapter: string; instruction: string; /** Pictures to rewrite it by, in place of the ones kept on its plan. */ guides?: PictureGuide[] }; result: JobStarted }
   /** Mend what a review found: at the place it quotes (`passage`), or wherever it reaches (`book` — the planner traces it through the chapters and the bible). `note` is what the author wants done about it. Changes come back as proposals. */
   /** `order` — `queue`: after the mendings already asked for, going on from what they leave waiting; `apart` (as before it could be said): at once, on the text as it stands. */
-  'ai.fixIssue': { params: { root: string; chapter: string; issue: string; note?: string; scope: 'passage' | 'book'; order?: 'queue' | 'apart' }; result: JobStarted }
+  /** `scope`: `passage` — the place the issue quotes (the planner's choice of place where it quotes none); `place` — the planner settles which place mends it, whatever it quotes; `book` — traced through the book; `chapter` — the chapter written over whole, asked for as such. */
+  'ai.fixIssue': { params: { root: string; chapter: string; issue: string; note?: string; scope: 'passage' | 'place' | 'book' | 'chapter'; order?: 'queue' | 'apart' }; result: JobStarted }
   'ai.reviseBook': { params: { root: string; instruction: string; chapters?: string[]; /** The line of the plot the revision is of, when it is not the main one. */ line?: string; order?: 'queue' | 'apart'; /** Pictures the revision goes by. */ guides?: PictureGuide[] }; result: JobStarted }
   'ai.digest': { params: { root: string; chapters?: string[]; force?: boolean }; result: JobStarted }
   'ai.review': { params: { root: string; chapter: string; focus?: string }; result: JobStarted }

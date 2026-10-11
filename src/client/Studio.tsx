@@ -7,7 +7,8 @@
  */
 import { Component, Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { formatCount } from '../shared/text'
-import { WORK_MODES, type JobInfo, type ProjectRef, type ProjectState, type WorkMode } from '../shared/types'
+import { WORK_MODES, type FiguresKept, type JobInfo, type ProjectRef, type ProjectState, type WorkMode } from '../shared/types'
+import { figuresKeptWord } from './Guides'
 import type { NovelApi } from './api'
 import { JobBar } from './JobBar'
 import { RecommendedNotice } from './Recommended'
@@ -195,7 +196,10 @@ function JobNotice() {
     if (ended === undefined) return
     const output = (ended.job.result?.output ?? {}) as { rendered?: number; failed?: number; cached?: number; panels?: number; lines?: number }
     const batch = batchOf(ended.job)
-    if (batch !== undefined) {
+    if (ended.job.kind === 'write' || ended.job.kind === 'revise') {
+      const said = figuresKeptWord((ended.job.result?.output as { figures?: FiguresKept } | undefined)?.figures, t, ended.job.kind === 'write' ? 'drafted' : 'revised')
+      if (said !== undefined) controller.toast('info', ended.job.kind === 'write' ? `${said}${t('——在右栏“图”里可以挪', ' — move them in the Pictures column')}` : said, 9000)
+    } else if (batch !== undefined) {
       const done = batch.rows.reduce((sum, row) => sum + Object.values(row.steps).filter(step => step.state === 'done').length, 0)
       controller.toast(batch.failed > 0 ? 'info' : 'success', batch.failed > 0
         ? t(`批量任务结束：${done} 步完成，${batch.failed} 步失败，原因见“任务”`, `Batch finished: ${done} done, ${batch.failed} failed — see Tasks`)

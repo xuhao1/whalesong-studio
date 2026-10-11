@@ -268,11 +268,38 @@ describe('pipelines', () => {
     for (const part of ['第一章写她是左撇子', '改成左手', '顺便让她握得更紧', '右手握着剑。']) expect(asked, part).toContain(part)
     await acceptProposal(bed.core, bed.runtime, here.passage!.proposalId!, { origin: 'user' })
     expect(await project.chapterText(plan.id)).toContain('左手握着剑。')
-    // A problem that quotes no sentence is the chapter's to mend.
+    // A problem that quotes no sentence is not the chapter's to be written over for: the planner settles which place
+    // mends it — quoting the text as it stands, and sent back when what it quotes is not there — and the writer
+    // rewrites that place and nothing else. It comes back as a small change of its own, beneath the issue.
+    const before = await project.chapterText(plan.id)
+    let scoped = 0
+    bed.llm.responder = (request) => {
+      if (request.prompt.includes('责任编辑')) {
+        scoped += 1
+        return JSON.stringify({ edits: [{ chapter: 1, find: scoped === 1 ? '她问了一声，握着剑。' : '“有人吗？”她问。', how: '让她站一会儿再开口，慢下来' }], chapters: [], note: '只要这一处慢下来。' })
+      }
+      return '她站了很久，才问：“有人吗？”'
+    }
+    const placed = await fixIssue(bed.core, bed.runtime, { chapter: plan.id, issue: 'i2', scope: 'passage' }, { origin: 'user' })
+    expect(placed.scope).toBe('places')
+    const planner = bed.llm.requests.filter(request => request.prompt.includes('责任编辑'))
+    // Told: as little as will do, one place where one will do, quoted word for word; the chapter goes along whole to quote from.
+    for (const part of ['这一章收得太快', '一处能解决的，不改两处', '逐字照抄', '只修这个问题本身', '相关章节的正文', '“有人吗？”她问。']) expect(planner[0]!.prompt, part).toContain(part)
+    expect(planner).toHaveLength(2)
+    expect(planner[1]!.prompt).toContain('第 1 章里找不到这段原文')
+    expect(placed.book!.results).toMatchObject([{ index: 1, kind: 'span', reason: '让她站一会儿再开口，慢下来' }])
+    expect(placed.book!.note).toBe('只要这一处慢下来。')
+    const writer = bed.llm.requests.at(-1)!.prompt
+    for (const part of ['这一章收得太快', '这一次只改下面这一处。策划定的改法：让她站一会儿再开口，慢下来', '<<<\n“有人吗？”她问。\n>>>']) expect(writer, part).toContain(part)
+    const small = (await project.proposals()).find(item => item.id === placed.book!.results[0]!.proposalId)!
+    expect(small).toMatchObject({ kind: 'span', status: 'pending', before: '“有人吗？”她问。', after: '她站了很久，才问：“有人吗？”', issues: ['i2'], batchId: placed.book!.batchId })
+    expect((await project.review(plan.id))!.issues[1]!.mending).toBe(placed.book!.batchId)
+    expect(await project.chapterText(plan.id)).toBe(before)
+    // Written over whole only when that is asked for in so many words.
     bed.llm.responder = () => '她推开门。屋里很黑。\n\n“有人吗？”她问。左手握着剑，站了很久。'
-    const whole = await fixIssue(bed.core, bed.runtime, { chapter: plan.id, issue: 'i2', scope: 'passage' }, { origin: 'user' })
+    const whole = await fixIssue(bed.core, bed.runtime, { chapter: plan.id, issue: 'i2', scope: 'chapter' }, { origin: 'user' })
     expect(whole.scope).toBe('chapter')
-    expect(whole.passage!.proposalId).toBeDefined()
+    expect((await project.proposals()).find(item => item.id === whole.passage!.proposalId)).toMatchObject({ kind: 'chapter', issues: ['i2'] })
     await expect(fixIssue(bed.core, bed.runtime, { chapter: plan.id, issue: 'nope', scope: 'passage' }, { origin: 'user' })).rejects.toThrow('no review issue')
   })
 
@@ -316,7 +343,7 @@ describe('pipelines', () => {
 
     // A whole-chapter mending in its turn: the writer reads the chapter with every waiting change in.
     bed.llm.responder = () => '她推开门。屋里黑得像一口井。\n\n“有人吗？”她问。左手死死握着剑，站了很久。'
-    const fourth = (await fixIssue(bed.core, bed.runtime, { chapter: plan.id, issue: 'i3', scope: 'passage', onto: true }, { origin: 'user' })).passage!.proposalId!
+    const fourth = (await fixIssue(bed.core, bed.runtime, { chapter: plan.id, issue: 'i3', scope: 'chapter', onto: true }, { origin: 'user' })).passage!.proposalId!
     const asked = bed.llm.requests.at(-1)!.prompt
     expect(asked).toContain('屋里黑得像一口井。')
     expect(asked).toContain('左手死死握着剑。')

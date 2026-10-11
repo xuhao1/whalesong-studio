@@ -10,7 +10,7 @@ import { ProviderError } from '../../core/media/http'
 import { ProjectError } from '../../core/project'
 import { displayPath } from '../../core/util/fs'
 import type { NovelService } from '../../host/service'
-import type { JobKind, PicturesRead, ReferencesLooked } from '../../shared/types'
+import type { FiguresKept, JobKind, PicturesRead, ReferencesLooked } from '../../shared/types'
 
 /** JSON a tool may return (the Harness requires lossless JSON). */
 export type Json = string | number | boolean | null | Json[] | { [key: string]: Json }
@@ -248,6 +248,22 @@ export function listOf(value: unknown): string[] | undefined {
 export function picturesSaid(read: PicturesRead | undefined, who: string): string | undefined {
   if (read === undefined) return undefined
   return `Pictures: ${read.count} given — ${read.by === 'vision' ? `put into words for the ${who} by ${read.model ?? 'the picture model'}` : read.unsure === true ? `sent to the ${who}'s model, which does not say whether it takes pictures: tell the author, and that a model to look at pictures can be set (novel_settings: vision)` : `looked at by the ${who}'s own model`}.`
+}
+
+/**
+ * What was done for the pictures in a chapter's text when the text was written anew, as a line of a tool's answer.
+ * @param how - `revised`: a model rewrote text that had them; `drafted`: a chapter drafted over from nothing;
+ * `put`: text the showrunner put in the place of text.
+ */
+export function figuresSaid(figures: FiguresKept | undefined, how: 'revised' | 'drafted' | 'put' = 'revised'): string | undefined {
+  if (figures === undefined || (figures.back <= 0 && figures.made <= 0)) return undefined
+  const back = figures.back <= 0 ? undefined : how === 'drafted'
+    ? `the ${figures.back} picture(s) the chapter had in its text are in the new draft — placed by the lines most like the ones they stood by, else as far down as they stood; the author can move them (the Pictures column beside the text)`
+    : how === 'put'
+      ? `the text you put in did not have ${figures.back} picture line(s) that stood there: they were put back where they stood (a picture is taken out with action=delete on its own line, and only when the author asks)`
+      : `the writer left out ${figures.back} picture line(s) of the text: they were put back where they stood`
+  const made = figures.made <= 0 ? undefined : `${figures.made} picture line(s) naming no picture of the book were taken out`
+  return `Pictures in the text: ${[back, made].filter(part => part !== undefined).join('; ')}.`
 }
 
 /**

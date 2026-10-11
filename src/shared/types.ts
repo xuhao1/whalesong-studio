@@ -1034,9 +1034,17 @@ export interface Proposal {
   supersededBy?: string
   /** Where it was written by pictures the author gave: how many, and who looked at them. */
   pictures?: PicturesRead
+  /** Where the rewriting had not handed back the text's own pictures as they stood: what was done about it. */
+  figures?: FiguresKept
   createdBy: 'agent' | 'user'
   createdAt: Timestamp
 }
+
+/**
+ * What was done for the pictures in a text when a model wrote the text anew: `back` — how many it had left out, put
+ * back where they stood; `made` — how many picture lines of its own making (a file the text does not show) were taken out.
+ */
+export interface FiguresKept { back: number; made: number }
 
 export type IssueSeverity = 'high' | 'medium' | 'low'
 export type IssueType = 'continuity' | 'character' | 'world' | 'timeline' | 'style' | 'pacing' | 'logic' | 'language'

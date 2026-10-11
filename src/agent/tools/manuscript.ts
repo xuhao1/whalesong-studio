@@ -15,7 +15,7 @@ import { containedPath } from '../../core/util/fs'
 import type { NovelService } from '../../host/service'
 import { clip } from '../../shared/text'
 import { ANALYZE_STEPS, GLOSSARY_KINDS } from '../../shared/types'
-import { brief, listOf, listParameter, novelTool, picturesSaid, referencesSaid, toJson } from './shared'
+import { brief, figuresSaid, listOf, listParameter, novelTool, picturesSaid, referencesSaid, toJson } from './shared'
 
 export function manuscriptTools(service: NovelService): ToolDefinition[] {
   return [
@@ -59,6 +59,7 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
           `${result.mode === 'continue' ? 'Continued' : 'Drafted'} chapter ${result.index} "${result.title}" (${result.chapterId}): ${result.wordsWritten} words written, ${result.wordsTotal} in the chapter now.`,
           `Writer: ${result.model}; length: ${result.budget !== undefined ? `about ${result.budget} recommended` : 'left to the writer'}; story so far: ${story}${result.following !== undefined ? `, plus the ${result.following} chapter(s) after it` : ''} (~${result.contextTokens} tokens${result.cachedTokens !== undefined ? `, ${result.cachedTokens} read from the provider's cache` : ''}); cast in view: ${result.cast.join(', ') || 'none'}.${result.continued ? ' The model hit its output limit and the chapter was completed by continuation.' : ''}`,
           ...(result.pictures !== undefined ? [picturesSaid(result.pictures, 'writer')!] : []),
+          ...(figuresSaid(result.figures, 'drafted') !== undefined ? [figuresSaid(result.figures, 'drafted')!] : []),
           // The book's references: what the writer was handed of them, and where that came from.
           ...(result.referenced !== undefined ? [result.referenced.none !== undefined
             ? `References: no notes went to the writer — ${result.referenced.none}.`
@@ -78,7 +79,7 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
         '- scope=passage: rewrite one passage in place. Quote it exactly in `quote` (copy it from novel_read) and say what to change in `instruction`.',
         '- scope=chapter: rewrite one whole chapter to `instruction`.',
         '- scope=book: apply one instruction across the book ("rename the city to …", "make her colder until chapter 8"). Triage decides which chapters it touches (or pass `chapters`); each becomes a proposal for the author to review unless apply=true.',
-        '- scope=issues: mend what reviews found, together — also across chapters. Name them in `issues` as `<chapter>:<issue id>` (ids are in a chapter\'s review: novel_review, novel_read what=review), or pass `severity` (high | medium | low) to take every open issue that grave or graver, in `chapters` if given. `instruction` is what the author says of the whole batch (optional); what they said of single issues is kept with those and goes along. One planner reads them side by side and settles which chapters change and how — also chapters nobody named, where they tell of the same facts — and each chapter is rewritten once, so one fact is mended one way throughout. Every change waits as a proposal; changes to the bible wait as suggestions.',
+        '- scope=issues: mend what reviews found, together — also across chapters. Name them in `issues` as `<chapter>:<issue id>` (ids are in a chapter\'s review: novel_review, novel_read what=review), or pass `severity` (high | medium | low) to take every open issue that grave or graver, in `chapters` if given. `instruction` is what the author says of the whole batch (optional); what they said of single issues is kept with those and goes along. One planner reads them side by side and settles which places change and how — as few as mend them, also in chapters nobody named where they tell of the same facts — and the writer rewrites those places and nothing else, so one fact is mended one way throughout and nothing is written over that did not have to be (a chapter is rewritten whole only where the planner says places will not do). Every place comes back as a proposal of its own; changes to the bible wait as suggestions.',
         '- scope=accept / scope=reject: settle a pending proposal by `proposal` id. Rejecting one that was made on top of earlier waiting changes brings those back to wait by themselves.',
         'book / issues, `order`: mendings do not lock each other out. `queue` (the default) waits for the mendings already under way and goes on from the changes they leave waiting — a chapter with a change waiting is rewritten as it would read with that accepted, and the new proposal stands for the earlier ones (one to accept); use it when what is mended hangs together. `apart` starts at once on the text as it stands — for mendings that have nothing to do with each other (another line of the plot, a far part of the story), which are quicker side by side.',
         'Every applied change snapshots the previous text first. Passage and chapter revisions apply directly unless the author turned on review of agent revisions; pass apply=false to always leave a proposal.',
@@ -123,9 +124,9 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
             ...(onto ? { onto: true } : {}),
           }, task)))
           if (result.book === undefined) return { text: 'No open issue matches: nothing was handed over. Review the chapters first (novel_review), or name the issues.', record: false }
-          const lines = result.book.results.map(item => `- chapter ${item.index} "${item.title}": ${item.wordsBefore} → ${item.wordsAfter} words, proposal ${item.proposalId ?? ''} — ${brief(item.reason, 120)}`)
+          const lines = result.book.results.map(item => `- ${item.kind === 'span' ? 'a place in ' : ''}chapter ${item.index} "${item.title}"${item.kind === 'chapter' ? ' (written over whole)' : ''}: ${item.wordsBefore} → ${item.wordsAfter} words, proposal ${item.proposalId ?? ''} — ${brief(item.reason, 120)}`)
           return {
-            text: `${result.issues} issue(s) in ${result.chapters} chapter(s) were read together; ${result.book.results.length} chapter(s) rewritten${result.book.failed.length > 0 ? `, ${result.book.failed.length} failed` : ''}.${result.book.note !== undefined ? `\n${result.book.note}` : ''}\n${lines.join('\n')}${result.book.failed.map(item => `\n✗ ${item.chapterId}: ${item.error}`).join('')}${(result.book.bible?.length ?? 0) > 0 ? `\nChanges to the bible wait among the suggestions: ${result.book.bible!.map(item => `${item.name} · ${item.field}`).join(', ')}.` : ''}\nThe proposals wait for the author in Novel Studio → Review; the issues stay open, marked as handed over, until the author settles them. Tell the author which chapters changed and why.`,
+            text: `${result.issues} issue(s) in ${result.chapters} chapter(s) were read together; ${result.book.results.length} change(s) made${result.book.failed.length > 0 ? `, ${result.book.failed.length} failed` : ''}.${result.book.note !== undefined ? `\n${result.book.note}` : ''}\n${lines.join('\n')}${result.book.failed.map(item => `\n✗ ${item.chapterId}: ${item.error}`).join('')}${(result.book.bible?.length ?? 0) > 0 ? `\nChanges to the bible wait among the suggestions: ${result.book.bible!.map(item => `${item.name} · ${item.field}`).join(', ')}.` : ''}\nThe proposals wait for the author in Novel Studio → Review; the issues stay open, marked as handed over, until the author settles them. Tell the author which chapters changed and why.`,
             data: toJson(result),
           }
         }
@@ -153,13 +154,13 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
           const quote = args.quote
           const result = await env.job('revise', 'revise passage', chapter, async task => await reviseSpan(env.core, runtime, { chapter, quote, instruction, ...(pictures !== undefined ? { guides: pictures } : {}), ...(args.apply !== undefined ? { apply: args.apply } : {}) }, task))
           return {
-            text: `${result.applied ? 'Revised' : `Proposed (${result.proposalId})`} a passage in chapter ${result.index} "${result.title}": ${result.wordsBefore} → ${result.wordsAfter} words.${result.pictures !== undefined ? `\n${picturesSaid(result.pictures, 'writer')!}` : ''}\n\nNow reads:\n${clip(result.after, 1200)}`,
+            text: `${result.applied ? 'Revised' : `Proposed (${result.proposalId})`} a passage in chapter ${result.index} "${result.title}": ${result.wordsBefore} → ${result.wordsAfter} words.${result.pictures !== undefined ? `\n${picturesSaid(result.pictures, 'writer')!}` : ''}${figuresSaid(result.figures) !== undefined ? `\n${figuresSaid(result.figures)!}` : ''}\n\nNow reads:\n${clip(result.after, 1200)}`,
             data: toJson({ ...result, before: undefined }),
           }
         }
         const result = await env.job('revise', 'revise chapter', chapter, async task => await reviseChapter(env.core, runtime, { chapter, instruction, ...(pictures !== undefined ? { guides: pictures } : {}), ...(args.apply !== undefined ? { apply: args.apply } : {}) }, task))
         return {
-          text: `${result.applied ? 'Rewrote' : `Proposed (${result.proposalId}) a rewrite of`} chapter ${result.index} "${result.title}": ${result.wordsBefore} → ${result.wordsAfter} words.${result.pictures !== undefined ? `\n${picturesSaid(result.pictures, 'writer')!}` : ''}\nOpens: ${result.after.slice(0, 200)}`,
+          text: `${result.applied ? 'Rewrote' : `Proposed (${result.proposalId}) a rewrite of`} chapter ${result.index} "${result.title}": ${result.wordsBefore} → ${result.wordsAfter} words.${result.pictures !== undefined ? `\n${picturesSaid(result.pictures, 'writer')!}` : ''}${figuresSaid(result.figures) !== undefined ? `\n${figuresSaid(result.figures)!}` : ''}\nOpens: ${result.after.slice(0, 200)}`,
           data: toJson({ ...result, before: undefined, after: undefined }),
         }
       },
@@ -174,6 +175,7 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
         '- action=append: add `text` to the end of the chapter.',
         '- action=delete: remove the passage `find` (all=true for every occurrence).',
         '- action=set: make `text` the whole chapter — the author\'s own draft going in, or a chapter of theirs replacing what is there.',
+        'Pictures: a line of a chapter that reads `![caption](path)` is a picture the author placed in the text. Text you put in the place of text (replace, set) keeps the pictures that stood there — write their lines back where they were; one you leave out is put back for you and the result says so. A picture comes out of a chapter only when the author asks for that: action=delete with its line, alone, as `find`.',
         'Every change keeps the text as it was as a version the author can restore, is put on the book\'s record, and has the chapter\'s memory digested again, so later chapters are written from what the page now says. The result names the characters the changed text mentions and how many later chapters already exist: check that the change agrees with their cards and with what follows (novel_search, novel_review), and say so to the author. When the author has agent changes wait for review, the change is left as a proposal instead.',
       ].join('\n'),
       mutating: true,
@@ -203,7 +205,7 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
         const what = result.action === 'set' ? 'set the whole text of' : result.action === 'append' ? 'appended to' : result.action === 'insert' ? 'inserted into' : result.action === 'delete' ? `removed ${result.changes > 1 ? `${result.changes} passages` : 'a passage'} from` : `changed ${result.changes > 1 ? `${result.changes} places` : 'a passage'} in`
         if (!result.applied) {
           return {
-            text: `Proposed (${result.proposalId}): ${what} ${where}, ${result.wordsBefore} → ${result.wordsAfter} words. The author has agent changes wait for review: it is in Novel Studio → Review, or settle it with novel_revise scope=accept/reject.`,
+            text: `Proposed (${result.proposalId}): ${what} ${where}, ${result.wordsBefore} → ${result.wordsAfter} words. The author has agent changes wait for review: it is in Novel Studio → Review, or settle it with novel_revise scope=accept/reject.${figuresSaid(result.figures, 'put') !== undefined ? `\n${figuresSaid(result.figures, 'put')!}` : ''}${result.picturesGone !== undefined ? `\n${result.picturesGone} picture(s) stand in what it removes and would go with it — tell the author.` : ''}`,
             data: toJson(result),
             record: { summary: [`对第 ${result.index} 章《${result.title}》提了一处直接改动（等你确认）${args.reason !== undefined ? `——${brief(args.reason, 80)}` : ''}`, `Proposed a direct change to ${where}${args.reason !== undefined ? ` — ${brief(args.reason, 80)}` : ''}`], chapter: result.chapterId },
           }
@@ -212,6 +214,8 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
           `Done: ${what} ${where}, ${result.wordsBefore} → ${result.wordsAfter} words.${result.version !== undefined ? ` The text as it was is version ${result.version} (novel_manage action=restore_version undoes this).` : ''}`,
           result.action !== 'set' && result.before.length > 0 ? `Was: ${result.before}` : undefined,
           result.after.length > 0 ? `Now: ${result.after}` : undefined,
+          figuresSaid(result.figures, 'put'),
+          result.picturesGone !== undefined ? `${result.picturesGone} picture(s) stood in what was removed and went with it — tell the author; the version above has them.` : undefined,
           result.memory === 'digesting' ? 'Memory: the chapter is being digested again; summary, facts and character states will follow the new text.' : 'Memory: auto-digest is off, so the chapter\'s memory is stale — run novel_digest before anything is written after it.',
           result.characters.length > 0 ? `Mentions ${result.characters.join(', ')}: make sure the change agrees with their cards (novel_read what=character).` : undefined,
           result.laterChapters > 0 ? `${result.laterChapters} later chapter(s) are already written and may rest on what changed — check them (novel_search, novel_review) and tell the author what you found.` : undefined,

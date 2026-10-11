@@ -9,14 +9,15 @@
  * A revision either applies at once (the old text is snapshotted first) or
  * becomes a proposal that waits for accept/reject in the review panel.
  */
-import { MAIN_LINE, type IssueSeverity, type PictureGuide, type PicturesRead, type Proposal, type ReviewIssue } from '../../shared/types'
+import { keptPictures } from '../../shared/embedded'
+import { MAIN_LINE, type FiguresKept, type IssueSeverity, type PictureGuide, type PicturesRead, type Proposal, type ReviewIssue } from '../../shared/types'
 import { clip, clipTail, countWords, fuzzyFind, newId } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { asArray, asRecord, asText } from '../llm'
-import { assign } from '../crew'
+import { assign, crewPlan } from '../crew'
 import type { LocatedChapter } from '../project'
 import { ProjectError } from '../project'
-import { architectSystem, reviseChapterSystem, reviseChapterTask, reviseSpanSystem, reviseSpanTask, triageTask } from '../prompts'
+import { architectSystem, mendTask, reviseChapterSystem, reviseChapterTask, reviseSpanSystem, reviseSpanTask, triageTask } from '../prompts'
 import { L, promptLanguage, renderStyle } from '../render'
 import { mapLimit } from '../util/async'
 import { scheduleDigest } from './digest'
@@ -40,6 +41,8 @@ export interface ReviseSpanParams {
   onto?: boolean
   /** Pictures to rewrite the passage by: given for this rewrite, and for no other (the chapter's own are for writing the chapter). */
   guides?: PictureGuide[]
+  /** The mending it is one place of: its proposal is grouped with the others of it. */
+  batchId?: string
 }
 
 export interface ReviseChapterParams {
@@ -73,6 +76,13 @@ export interface ReviseResult {
   after: string
   /** Where it was written by pictures: how many, and who looked at them. */
   pictures?: PicturesRead
+  /** The pictures in the text were not all handed back as they stood: how many were put back, how many of the writer's own making taken out. */
+  figures?: FiguresKept
+}
+
+/** What was done for a text's pictures, where anything was. */
+function figuresOf(kept: { back: number; made: number }): { figures?: FiguresKept } {
+  return kept.back > 0 || kept.made > 0 ? { figures: { back: kept.back, made: kept.made } } : {}
 }
 
 function shouldApply(core: NovelCore, task: TaskContext, explicit: boolean | undefined, fallback: boolean): boolean {
@@ -205,6 +215,10 @@ export async function reviseSpan(core: NovelCore, runtime: ProjectRuntime, param
   })
   let after = cleanProse(response.text).replace(/^<<<\s*/, '').replace(/\s*>>>$/, '').trim()
   if (after.length === 0) throw new ProjectError('novel/empty', 'the writer model returned an empty revision')
+  // The passage's pictures are the text's, not the writer's: one left out goes back where it stood.
+  const held = keptPictures(passage, after)
+  after = held.text.trim()
+  const figures = figuresOf(held)
   // Keep the passage's own framing: a selection inside a paragraph must not gain paragraph breaks at its edges.
   const leading = /^\s*/.exec(passage)?.[0] ?? ''
   const trailing = /\s*$/.exec(passage)?.[0] ?? ''
@@ -221,21 +235,22 @@ export async function reviseSpan(core: NovelCore, runtime: ProjectRuntime, param
     before: passage,
     after,
     ...(guided !== undefined ? { pictures: picturesRead(guided)! } : {}),
+    ...figures,
   }
-  const read = guided !== undefined ? { pictures: picturesRead(guided)! } : {}
+  const read = { ...(guided !== undefined ? { pictures: picturesRead(guided)! } : {}), ...figures }
   if (apply) {
     await project.saveChapterText(chapter.plan.id, text.slice(0, range.start) + after + text.slice(range.end), { reason: 'before-revise' })
     scheduleDigest(core, runtime, chapter.plan.id, task)
   } else if (based.used.length === 0 || (based.used.every(proposal => proposal.kind === 'span') && found.text.includes(passage))) {
     // A change of its own — also when it was written knowing the ones that wait: the passage is as the book has it,
     // and none of them rewrites the chapter, so each is accepted or turned down by itself.
-    const proposal = await project.addProposal({ chapterId: chapter.plan.id, kind: 'span', instruction: params.instruction, before: passage, after, createdBy: task.origin, ...read, ...(params.issues !== undefined && params.issues.length > 0 ? { issues: params.issues } : {}) })
+    const proposal = await project.addProposal({ chapterId: chapter.plan.id, kind: 'span', instruction: params.instruction, before: passage, after, createdBy: task.origin, ...read, ...(params.batchId !== undefined ? { batchId: params.batchId } : {}), ...(params.issues !== undefined && params.issues.length > 0 ? { issues: params.issues } : {}) })
     result.proposalId = proposal.id
   } else {
     // The passage is one a waiting change made, or stands in a chapter rewritten whole: one proposal for the chapter
     // with all of them and this one in.
     const taken = await takenIn(runtime, based.used, params.issues, lang)
-    const proposal = await project.addProposal({ chapterId: chapter.plan.id, kind: 'chapter', instruction: params.instruction, before: found.text, after: text.slice(0, range.start) + after + text.slice(range.end), createdBy: task.origin, ...read, ...taken.carried })
+    const proposal = await project.addProposal({ chapterId: chapter.plan.id, kind: 'chapter', instruction: params.instruction, before: found.text, after: text.slice(0, range.start) + after + text.slice(range.end), createdBy: task.origin, ...read, ...(params.batchId !== undefined ? { batchId: params.batchId } : {}), ...taken.carried })
     await settleTakenIn(runtime, taken.settle, proposal.id)
     result.proposalId = proposal.id
   }
@@ -273,8 +288,12 @@ export async function reviseChapter(core: NovelCore, runtime: ProjectRuntime, pa
     ...(task.signal !== undefined ? { signal: task.signal } : {}),
     onText: (_delta, total) => { task.job?.rewrite(total) },
   })
-  const after = cleanProse(response.text, chapter.plan.title)
-  if (after.length === 0) throw new ProjectError('novel/empty', 'the writer model returned an empty revision')
+  const written = cleanProse(response.text, chapter.plan.title)
+  if (written.length === 0) throw new ProjectError('novel/empty', 'the writer model returned an empty revision')
+  // The chapter's pictures stay in it through a rewriting: one the writer left out goes back where it stood.
+  const held = keptPictures(based.text, written)
+  const after = held.text
+  const figures = figuresOf(held)
   if (response.finish === 'max-tokens' && countWords(after) < words * 0.8) {
     throw new ProjectError('novel/truncated', 'the revision was cut off at the output limit — clear or raise "max output tokens" on the writer role in Novel Studio → Settings (a model that reasons spends its reasoning out of the same allowance), or revise the chapter in smaller passages')
   }
@@ -289,6 +308,7 @@ export async function reviseChapter(core: NovelCore, runtime: ProjectRuntime, pa
     before: text,
     after,
     ...(guided !== undefined ? { pictures: picturesRead(guided)! } : {}),
+    ...figures,
   }
   if (apply) {
     await project.saveChapterText(chapter.plan.id, after, { reason: 'before-revise', status: chapter.plan.status === 'final' ? 'final' : 'revised' })
@@ -303,6 +323,7 @@ export async function reviseChapter(core: NovelCore, runtime: ProjectRuntime, pa
       after,
       createdBy: task.origin,
       ...(guided !== undefined ? { pictures: picturesRead(guided)! } : {}),
+      ...figures,
       ...(params.batchId !== undefined ? { batchId: params.batchId } : {}),
       ...taken.carried,
     })
@@ -322,8 +343,12 @@ export interface ReviseBookParams {
   concurrency?: number
   /** The planner may also say what the bible should read otherwise; each such change waits as a suggestion. */
   bible?: boolean
-  /** What the writer of one chapter is told, in place of the instruction with the planner's reason for that chapter appended. */
-  brief?: (chapterId: string, reason: string) => string
+  /**
+   * What the writer of one chapter is told, in place of the instruction with the planner's reason for that chapter
+   * appended. `place`: it is told to whoever rewrites one place of the chapter — what is being mended there, for it
+   * to know; what that place is to become is said after it.
+   */
+  brief?: (chapterId: string, reason: string, place?: boolean) => string
   /** The review issues a chapter's rewrite mends, for its proposal to say so. */
   issuesOf?: (chapterId: string) => string[]
   /** The line of the plot the revision is of, by id, when it is not the main one: its chapters are the ones looked at, numbered along it. */
@@ -332,7 +357,25 @@ export interface ReviseBookParams {
   onto?: boolean
   /** Pictures the revision goes by: the planner scopes it with them, and each chapter is rewritten by them. */
   guides?: PictureGuide[]
+  /**
+   * Mend by places: the planner names the places that change — each quoted from the text, with what is to change
+   * there — and the writer rewrites those and nothing else, so every place comes back as a change of its own to look
+   * at. A chapter is written over whole only where the planner says places will not do.
+   */
+  places?: boolean
+  /** With `places`: the problem itself and no more — what hangs on it elsewhere in the book is not traced. */
+  narrow?: boolean
+  /** With `places`: chapters whose text goes to the planner whole, to quote from — the ones the problems were found in. */
+  texts?: string[]
+  /** With `places`: the issues every change of this mending is for, whichever chapter it lands in (in place of `issuesOf`). */
+  mends?: string[]
 }
+
+/** A place the planner named: where it is in its chapter, and what is to change there. */
+interface Place { id: string; index: number; start: number; end: number; quote: string; how: string }
+
+/** How much of the chapters concerned goes to the planner word for word, in characters; past this, it reads them with its tools. */
+const PLACES_TEXT = 36000
 
 export interface ReviseBookResult {
   batchId: string
@@ -341,7 +384,8 @@ export interface ReviseBookResult {
   untouched: number
   /** Changes to the bible the planner proposed; they wait among the suggestions. */
   bible?: { name: string; field: string }[]
-  results: (Pick<ReviseResult, 'chapterId' | 'title' | 'index' | 'applied' | 'proposalId' | 'wordsBefore' | 'wordsAfter'> & { reason: string })[]
+  /** One for each change made: a place rewritten (`span`) or a chapter written over — several of one chapter where several of its places changed. */
+  results: (Pick<ReviseResult, 'chapterId' | 'title' | 'index' | 'applied' | 'proposalId' | 'wordsBefore' | 'wordsAfter' | 'figures'> & { reason: string; kind?: 'span' | 'chapter' })[]
   failed: { chapterId: string; error: string }[]
   /** Where pictures were given: how many, and who looked at them — the planner that scoped it, or the writer where the chapters were named. */
   pictures?: PicturesRead
@@ -360,6 +404,8 @@ export async function reviseBook(core: NovelCore, runtime: ProjectRuntime, param
   let note: string | undefined
   let bible: { name: string; field: string }[] = []
   let pictures: PicturesRead | undefined
+  const byPlace = params.places === true
+  let places: Place[] = []
   if (params.chapters !== undefined && params.chapters.length > 0) {
     targets = []
     for (const ref of params.chapters) {
@@ -377,20 +423,50 @@ export async function reviseBook(core: NovelCore, runtime: ProjectRuntime, param
       const pending = waiting.filter(proposal => proposal.chapterId === info.id)
       lines.push(`${info.index}. ${info.title}\n${text}${pending.length > 0 ? `\n${L(lang, `（这一章已有 ${pending.length} 处还没采纳的修改，这次会接着它们改：${clip(pending.map(proposal => proposal.instruction.replace(/\s+/g, ' ')).join('；'), 240)}）`, `(${pending.length} change(s) to this chapter still wait, and this revision goes on from them: ${clip(pending.map(proposal => proposal.instruction.replace(/\s+/g, ' ')).join('; '), 300)})`)}` : ''}`)
     }
+    // Mended by places, the planner quotes the text: each chapter as this mending finds it — with what waits laid in,
+    // where it goes on from that — and the ones the problems were found in go along whole, to be quoted from.
+    const stands = new Map<string, string>()
+    let whole = ''
+    if (byPlace) {
+      for (const info of infos) {
+        const text = await project.chapterText(info.id)
+        stands.set(info.id, params.onto === true ? (await onPending(runtime, info.id, text)).text : text)
+      }
+      const shown: string[] = []
+      let room = PLACES_TEXT
+      for (const id of params.texts ?? []) {
+        const info = infos.find(candidate => candidate.id === id)
+        const text = stands.get(id)
+        if (info === undefined || text === undefined || text.length > room) continue
+        room -= text.length
+        shown.push(`${L(lang, `### 第 ${info.index} 章《${info.title}》`, `### Chapter ${info.index}, "${info.title}"`)}\n\n${text}`)
+      }
+      whole = shown.join('\n\n')
+    }
     // The planner scopes the revision with the pictures it goes by in sight (or in words).
-    const guided = await guidePictures(core, runtime, await core.route('architect', runtime, task), params.guides, 'revise', task)
+    const route = await core.route('architect', runtime, task)
+    const guided = await guidePictures(core, runtime, route, params.guides, 'revise', task)
     pictures = picturesRead(guided)
+    const summaries = `${lines.join('\n\n')}${guided !== undefined ? `\n\n${guided.text}` : ''}`
+    const reads = crewPlan(core, 'architect', manifest).mode !== 'call' && core.roles !== undefined && core.roles.can(route)
     const { value } = await assign(core, runtime, task, {
       role: 'architect',
-      label: L(lang, '全书修订 · 划定范围', 'Book-wide revision · scope'),
+      label: byPlace ? L(lang, '修问题 · 定在哪几处改', 'Mending · which places change') : L(lang, '全书修订 · 划定范围', 'Book-wide revision · scope'),
       line: along ?? MAIN_LINE,
-      tool: 'submit_scope',
-      what: L(lang, '哪些章节要改、各自怎么改', 'which chapters change, and how each of them does'),
+      tool: byPlace ? 'submit_places' : 'submit_scope',
+      what: byPlace ? L(lang, '改哪几处、各怎么改', 'which places change, and how each of them does') : L(lang, '哪些章节要改、各自怎么改', 'which chapters change, and how each of them does'),
       system: architectSystem(lang),
       ...(guided !== undefined && guided.images.length > 0 ? { images: guided.images } : {}),
-      prompt: triageTask({ lang, language: manifest.language, title: manifest.title, instruction: params.instruction, chapters: `${lines.join('\n\n')}${guided !== undefined ? `\n\n${guided.text}` : ''}`, ...(params.bible === true ? { bible: true } : {}) }),
+      prompt: byPlace
+        ? mendTask({ lang, language: manifest.language, title: manifest.title, instruction: params.instruction, chapters: summaries, ...(whole.length > 0 ? { texts: whole } : {}), wide: params.narrow !== true, reads, ...(params.bible === true ? { bible: true } : {}) })
+        : triageTask({ lang, language: manifest.language, title: manifest.title, instruction: params.instruction, chapters: summaries, ...(params.bible === true ? { bible: true } : {}) }),
       temperature: 0.2,
-      validate: raw => asRecord(raw),
+      // What is quoted is looked for in the text at once: a place that is not there is sent back to be quoted as it stands.
+      validate: (raw) => {
+        const record = asRecord(raw)
+        if (byPlace) places = placesIn(record, infos, stands, lang)
+        return record
+      },
     })
     note = asText(value.note)
     if (params.bible === true) bible = await proposeBibleEdits(runtime, asArray(value.bible), lang)
@@ -401,6 +477,12 @@ export async function reviseBook(core: NovelCore, runtime: ProjectRuntime, param
       const info = infos.find(candidate => candidate.index === index)
       if (info !== undefined && !targets.some(target => target.id === info.id)) targets.push({ id: info.id, reason: asText(item.reason) ?? params.instruction })
     }
+    // A chapter written over whole takes the places named in it along: they are said to whoever writes it over.
+    for (const target of targets) {
+      const inside = places.filter(place => place.id === target.id)
+      if (inside.length > 0) target.reason = `${target.reason}${lang === 'zh' ? '；' : '; '}${inside.map(place => place.how).join(lang === 'zh' ? '；' : '; ')}`
+    }
+    places = places.filter(place => !targets.some(target => target.id === place.id))
   }
 
   const batchId = newId('batch')
@@ -408,14 +490,18 @@ export async function reviseBook(core: NovelCore, runtime: ProjectRuntime, param
   const results: ReviseBookResult['results'] = []
   const failed: ReviseBookResult['failed'] = []
   let done = 0
-  task.job?.progress(0, targets.length)
-  await mapLimit(targets, params.concurrency ?? await core.parallelFor('text', runtime), async (target) => {
+  const total = targets.length + places.length
+  task.job?.progress(0, total)
+  // Per-chapter streams would interleave in one job buffer, so the batch reports progress only.
+  const inner = (): TaskContext => ({ origin: task.origin, ...(task.signal !== undefined ? { signal: task.signal } : {}), ...(task.agentRoute !== undefined ? { agentRoute: task.agentRoute } : {}) })
+  const issuesFor = (chapterId: string): string[] | undefined => params.mends ?? params.issuesOf?.(chapterId)
+  const colon = lang === 'zh' ? '：' : ': '
+  const over = async (target: { id: string; reason: string }): Promise<void> => {
     try {
       const instruction = params.brief !== undefined ? params.brief(target.id, target.reason === params.instruction ? '' : target.reason)
-        : target.reason === params.instruction ? params.instruction : `${params.instruction}\n\n${L(lang, '具体到本章', 'For this chapter specifically')}${lang === 'zh' ? '：' : ': '}${target.reason}`
-      // Per-chapter streams would interleave in one job buffer, so the batch reports progress only.
-      const inner: TaskContext = { origin: task.origin, ...(task.signal !== undefined ? { signal: task.signal } : {}), ...(task.agentRoute !== undefined ? { agentRoute: task.agentRoute } : {}) }
-      const result = await reviseChapter(core, runtime, { chapter: target.id, instruction, apply, batchId, ...(params.onto === true ? { onto: true } : {}), ...(params.issuesOf !== undefined ? { issues: params.issuesOf(target.id) } : {}), ...(params.guides !== undefined && params.guides.length > 0 ? { guides: params.guides } : {}) }, inner)
+        : target.reason === params.instruction ? params.instruction : `${params.instruction}\n\n${L(lang, '具体到本章', 'For this chapter specifically')}${colon}${target.reason}`
+      const issues = issuesFor(target.id)
+      const result = await reviseChapter(core, runtime, { chapter: target.id, instruction, apply, batchId, ...(params.onto === true ? { onto: true } : {}), ...(issues !== undefined ? { issues } : {}), ...(params.guides !== undefined && params.guides.length > 0 ? { guides: params.guides } : {}) }, inner())
       results.push({
         chapterId: result.chapterId,
         title: result.title,
@@ -425,6 +511,8 @@ export async function reviseBook(core: NovelCore, runtime: ProjectRuntime, param
         wordsBefore: result.wordsBefore,
         wordsAfter: result.wordsAfter,
         reason: target.reason,
+        ...(byPlace ? { kind: 'chapter' as const } : {}),
+        ...(result.figures !== undefined ? { figures: result.figures } : {}),
       })
       pictures ??= result.pictures
     } catch (error) {
@@ -432,11 +520,92 @@ export async function reviseBook(core: NovelCore, runtime: ProjectRuntime, param
       failed.push({ chapterId: target.id, error: error instanceof Error ? error.message : String(error) })
     }
     done += 1
-    task.job?.progress(done, targets.length)
-  }, task.signal)
+    task.job?.progress(done, total)
+  }
+  // The places of one chapter are rewritten one after the other, top to bottom — each change laid where the one
+  // before left the text (applied), or beside it (waiting) — and chapters side by side. The writer is told what is
+  // being mended, and of this one place what the planner settled.
+  const here = async (group: Place[]): Promise<void> => {
+    for (const place of group.sort((left, right) => left.start - right.start)) {
+      try {
+        const told = params.brief !== undefined ? params.brief(place.id, '', true) : params.instruction
+        const instruction = `${told}\n\n${L(lang, '这一次只改下面这一处。策划定的改法', 'This time only the passage below changes. What the planner settled for it')}${colon}${place.how}`
+        const issues = issuesFor(place.id)
+        const result = await reviseSpan(core, runtime, { chapter: place.id, quote: place.quote, start: place.start, instruction, apply, batchId, ...(params.onto === true ? { onto: true } : {}), ...(issues !== undefined ? { issues } : {}), ...(params.guides !== undefined && params.guides.length > 0 ? { guides: params.guides } : {}) }, inner())
+        results.push({
+          chapterId: result.chapterId,
+          title: result.title,
+          index: result.index,
+          applied: result.applied,
+          ...(result.proposalId !== undefined ? { proposalId: result.proposalId } : {}),
+          wordsBefore: result.wordsBefore,
+          wordsAfter: result.wordsAfter,
+          reason: place.how,
+          kind: 'span',
+          ...(result.figures !== undefined ? { figures: result.figures } : {}),
+        })
+        pictures ??= result.pictures
+      } catch (error) {
+        if (task.signal?.aborted === true) throw error
+        failed.push({ chapterId: place.id, error: error instanceof Error ? error.message : String(error) })
+      }
+      done += 1
+      task.job?.progress(done, total)
+    }
+  }
+  const groups = new Map<string, Place[]>()
+  for (const place of places) groups.set(place.id, [...(groups.get(place.id) ?? []), place])
+  const work: (() => Promise<void>)[] = [...targets.map(target => async () => { await over(target) }), ...[...groups.values()].map(group => async () => { await here(group) })]
+  await mapLimit(work, params.concurrency ?? await core.parallelFor('text', runtime), async (run) => { await run() }, task.signal)
   results.sort((left, right) => left.index - right.index)
   task.job?.result({ batchId })
-  return { batchId, ...(note !== undefined ? { note } : {}), untouched: infos.length - targets.length, ...(bible.length > 0 ? { bible } : {}), results, failed, ...(pictures !== undefined ? { pictures } : {}) }
+  const touched = new Set([...targets.map(target => target.id), ...places.map(place => place.id)])
+  return { batchId, ...(note !== undefined ? { note } : {}), untouched: infos.length - touched.size, ...(bible.length > 0 ? { bible } : {}), results, failed, ...(pictures !== undefined ? { pictures } : {}) }
+}
+
+/**
+ * The places a planner named, each found in its chapter. What is quoted is looked for where it is said to stand —
+ * white space and the style of quotation marks forgiven, nothing else — and what is wrong with any of them is said
+ * all at once, for the planner to hand the whole in again.
+ * @throws Error naming every place that cannot be used, and why.
+ */
+function placesIn(record: Record<string, unknown>, infos: readonly { id: string; index: number; title: string }[], stands: ReadonlyMap<string, string>, lang: 'zh' | 'en'): Place[] {
+  const wrong: string[] = []
+  const places: Place[] = []
+  asArray(record.edits).forEach((entry, at) => {
+    const item = asRecord(entry)
+    const nth = at + 1
+    const index = Number(item.chapter ?? item.index)
+    const info = infos.find(candidate => candidate.index === index)
+    const find = asText(item.find)
+    const how = asText(item.how)
+    if (info === undefined) {
+      wrong.push(L(lang, `edits 第 ${nth} 条：没有第 ${String(item.chapter ?? item.index)} 章，或它还没有正文`, `edits[${nth}]: there is no chapter ${String(item.chapter ?? item.index)}, or it has no text yet`))
+      return
+    }
+    if (find === undefined || [...find].length < 2 || how === undefined) {
+      wrong.push(L(lang, `edits 第 ${nth} 条：find（要改的原文）和 how（改成什么样）都要写`, `edits[${nth}]: both find (the text to change) and how (what it is to say instead) are needed`))
+      return
+    }
+    const text = stands.get(info.id) ?? ''
+    const range = fuzzyFind(text, find)
+    if (range === undefined) {
+      wrong.push(L(lang, `edits 第 ${nth} 条：第 ${info.index} 章里找不到这段原文——find 从正文里逐字照抄，不改写、不省略、不用省略号连接两处：“${clip(find, 60)}”`, `edits[${nth}]: chapter ${info.index} does not have this text — copy find word for word from the chapter, nothing reworded, nothing left out, no ellipsis joining two places: "${clip(find, 80)}"`))
+      return
+    }
+    const all = countWords(text)
+    if (all > 400 && countWords(text.slice(range.start, range.end)) > all * 0.6) {
+      wrong.push(L(lang, `edits 第 ${nth} 条：圈了第 ${info.index} 章的大半——缩到真要改的那几句；这一章真要通篇改，就把它列进 chapters`, `edits[${nth}]: this takes in most of chapter ${info.index} — narrow it to the sentences that have to change; where the chapter has to change throughout, list it under chapters instead`))
+      return
+    }
+    if (places.some(other => other.id === info.id && range.start < other.end && other.start < range.end)) {
+      wrong.push(L(lang, `edits 第 ${nth} 条：和前面的一条在第 ${info.index} 章里重叠——并成一处`, `edits[${nth}]: overlaps an earlier place in chapter ${info.index} — make them one`))
+      return
+    }
+    places.push({ id: info.id, index: info.index, start: range.start, end: range.end, quote: text.slice(range.start, range.end), how })
+  })
+  if (wrong.length > 0) throw new Error(`${wrong.join('\n')}\n${L(lang, '改好这几条，把整个结果重新交一次。', 'Put these right and hand the whole result in again.')}`)
+  return places
 }
 
 const CHARACTER_FIELDS = ['tagline', 'appearance', 'personality', 'background', 'motivation', 'flaw', 'arc', 'voice', 'age', 'gender']
@@ -483,16 +652,23 @@ export interface FixIssueParams {
   /** What the author wants done about it, in their words. */
   note?: string
   /**
-   * `passage`: the place the issue quotes (the whole chapter where it quotes none).
-   * `book`: wherever the problem reaches — the planner traces it through the chapters and the bible.
+   * `passage`: the place the issue quotes; where it quotes none (or what it quoted is no longer there), the planner
+   * settles which place — or few places — mends it with the least change, in this chapter or at the other end of
+   * what does not agree, and the writer rewrites those and nothing else.
+   * `book`: wherever the problem reaches — the planner traces it through the chapters and the bible, and names the
+   * places that change with it.
+   * `place`: the planner settles the place whatever the issue quotes — what a review quotes is where the problem
+   * shows, which for things that do not agree is not always where it is mended with the least change.
+   * `chapter`: the chapter written over whole for it — asked for in so many words, never fallen back to.
    */
-  scope: 'passage' | 'book'
+  scope: 'passage' | 'place' | 'book' | 'chapter'
   /** Go on from the changes that still wait (`ReviseChapterParams.onto`): a mending that follows others. */
   onto?: boolean
 }
 
 export interface FixIssueResult {
-  scope: 'passage' | 'chapter' | 'book'
+  /** How it was mended: the quoted `passage` rewritten; `places` the planner chose; the `chapter` written over; or traced through the `book`. */
+  scope: 'passage' | 'places' | 'chapter' | 'book'
   passage?: ReviseResult
   book?: ReviseBookResult
 }
@@ -534,7 +710,7 @@ export async function fixIssue(core: NovelCore, runtime: ProjectRuntime, params:
   const lang = promptLanguage((await project.manifest()).language)
   const where = { index: chapter.index, title: chapter.plan.title }
   if (params.scope === 'book') {
-    const book = await reviseBook(core, runtime, { instruction: issueInstruction(lang, where, issue, params.note, true), bible: true, ...(chapter.line !== undefined ? { line: chapter.line } : {}), ...(params.onto === true ? { onto: true } : {}), issuesOf: chapterId => (chapterId === chapter.plan.id ? [issue.id] : []) }, task)
+    const book = await reviseBook(core, runtime, { instruction: issueInstruction(lang, where, issue, params.note, true), bible: true, places: true, texts: [chapter.plan.id], ...(chapter.line !== undefined ? { line: chapter.line } : {}), ...(params.onto === true ? { onto: true } : {}), issuesOf: chapterId => (chapterId === chapter.plan.id ? [issue.id] : []) }, task)
     // Handed over: the issue says with which batch of proposals, and they are shown beneath it.
     const current = await project.review(chapter.plan.id)
     if (current !== undefined) await project.saveReview({ ...current, issues: current.issues.map(item => item.id === issue.id ? { ...item, mending: book.batchId } : item) })
@@ -544,9 +720,18 @@ export async function fixIssue(core: NovelCore, runtime: ProjectRuntime, params:
   const onto = params.onto === true ? { onto: true } : {}
   // (Going on from what waits, the quote is looked for in the chapter as it would stand with that in.)
   const text = params.onto === true ? (await onPending(runtime, chapter.plan.id, await project.chapterText(chapter.plan.id))).text : await project.chapterText(chapter.plan.id)
-  const range = issue.quote !== undefined ? fuzzyFind(text, issue.quote.trim()) : undefined
-  // A problem that quotes nothing — pacing, a missing beat — or whose quote has since been rewritten is the chapter's.
-  if (range === undefined) return { scope: 'chapter', passage: await reviseChapter(core, runtime, { chapter: chapter.plan.id, instruction, issues: [issue.id], ...onto }, task) }
+  const range = issue.quote !== undefined && params.scope !== 'place' ? fuzzyFind(text, issue.quote.trim()) : undefined
+  // Written over whole only when that is what was asked for.
+  if (params.scope === 'chapter') return { scope: 'chapter', passage: await reviseChapter(core, runtime, { chapter: chapter.plan.id, instruction, issues: [issue.id], ...onto }, task) }
+  // A problem that quotes nothing — a contradiction, a missing word of explanation, a beat that comes too soon — or
+  // whose quote has since been rewritten can mostly be taken hold of in more than one place, and one is enough: the
+  // planner settles which, and the writer rewrites that place. Nothing is written over for it.
+  if (range === undefined) {
+    const book = await reviseBook(core, runtime, { instruction, places: true, narrow: true, texts: [chapter.plan.id], mends: [issue.id], ...(chapter.line !== undefined ? { line: chapter.line } : {}), ...onto }, task)
+    const current = await project.review(chapter.plan.id)
+    if (current !== undefined) await project.saveReview({ ...current, issues: current.issues.map(item => item.id === issue.id ? { ...item, mending: book.batchId } : item) })
+    return { scope: 'places', book }
+  }
   return { scope: 'passage', passage: await reviseSpan(core, runtime, { chapter: chapter.plan.id, start: range.start, end: range.end, quote: text.slice(range.start, range.end), instruction, issues: [issue.id], ...onto }, task) }
 }
 
@@ -650,26 +835,31 @@ async function fixOnLine(core: NovelCore, runtime: ProjectRuntime, params: FixIs
   const head = (chapter: Found['chapter']): string => L(lang, `### 第 ${chapter.index} 章《${chapter.title}》`, `### Chapter ${chapter.index}, "${chapter.title}"`)
   const all = [...byChapter.values()].map(items => `${head(items[0]!.chapter)}\n${items.map(told).join('\n')}`).join('\n\n')
   const instruction = L(lang,
-    `审校在这本书里发现了下面 ${found.length} 个问题，作者要把它们一起修掉：\n\n${all}\n${said.length > 0 ? `\n作者对这一批的总要求（以此为准）：${said}\n` : ''}\n请把它们放在一起看：同一章的几个问题在一次修改里改完；彼此有牵连的（同一个事实、同一条因果、同一个人物的表现）前后改成一致，不要这一章改成这样、那一章改成那样。除了上面点到的章节，还有哪些章节写到了与它们相关的事实、因果或人物表现，需要一起改才能前后一致；与此无关的内容保持原样。`,
-    `A review found the ${found.length} problems below in this book, and the author wants them mended together:\n\n${all}\n${said.length > 0 ? `\nWhat the author says of the whole batch (this decides): ${said}\n` : ''}\nRead them side by side: the problems of one chapter are mended in one rewrite of it; those that hang together (one fact, one chain of cause, how one person behaves) are mended the same way from chapter to chapter. Besides the chapters named above, which chapters state facts, causes or behaviour that depend on them and have to change with them for the book to agree with itself; leave everything else as it is.`)
+    `审校在这本书里发现了下面 ${found.length} 个问题，作者要把它们一起修掉：\n\n${all}\n${said.length > 0 ? `\n作者对这一批的总要求（以此为准）：${said}\n` : ''}\n请把它们放在一起看：一处改动能同时解决几个问题的，就只改那一处；彼此有牵连的（同一个事实、同一条因果、同一个人物的表现）前后改成一致，不要这一章改成这样、那一章改成那样。除了上面点到的章节，还有哪些章节写到了与它们相关的事实、因果或人物表现，需要一起改才能前后一致；与此无关的内容保持原样。`,
+    `A review found the ${found.length} problems below in this book, and the author wants them mended together:\n\n${all}\n${said.length > 0 ? `\nWhat the author says of the whole batch (this decides): ${said}\n` : ''}\nRead them side by side: where one change mends several of them, make that one change; those that hang together (one fact, one chain of cause, how one person behaves) are mended the same way from chapter to chapter. Besides the chapters named above, which chapters state facts, causes or behaviour that depend on them and have to change with them for the book to agree with itself; leave everything else as it is.`)
   const oneLine = found.map(item => L(lang, `第 ${item.chapter.index} 章：${clip(item.issue.explanation, 60)}`, `Chapter ${item.chapter.index}: ${clip(item.issue.explanation, 80)}`)).join('\n')
   const book = await reviseBook(core, runtime, {
     instruction,
     bible: true,
+    // By places: the planner names what changes where, and each place comes back as a change of its own.
+    places: true,
+    texts: [...byChapter.keys()],
     ...(line !== MAIN_LINE ? { line } : {}),
     ...(params.onto === true ? { onto: true } : {}),
     issuesOf: chapterId => (byChapter.get(chapterId) ?? []).map(item => item.issue.id),
     // The writer of one chapter mends what is that chapter's — in full — and knows what else is being mended, to agree with it.
-    brief: (chapterId, reason) => {
+    brief: (chapterId, reason, place) => {
       const mine = byChapter.get(chapterId)
       return [
         mine !== undefined
-          ? L(lang, `审校在这一章发现了下面的问题，这一次一起改掉：\n${mine.map(told).join('\n')}`, `A review found the problems below in this chapter; mend them all in this rewrite:\n${mine.map(told).join('\n')}`)
+          ? place === true
+            ? L(lang, `这一章正在修下面的问题（你只改交给你的那一处；别的地方另有安排）：\n${mine.map(told).join('\n')}`, `These problems of this chapter are being mended (you change the one place handed to you; the others are seen to separately):\n${mine.map(told).join('\n')}`)
+            : L(lang, `审校在这一章发现了下面的问题，这一次一起改掉：\n${mine.map(told).join('\n')}`, `A review found the problems below in this chapter; mend them all in this rewrite:\n${mine.map(told).join('\n')}`)
           : L(lang, '这一章本身没有被点名的问题：它写到了别的章节正在修的事，要跟着改才能前后一致。', 'No problem was named in this chapter itself: it tells of things being mended in other chapters, and has to change with them for the book to agree with itself.'),
         said.length > 0 ? L(lang, `作者对这一批的总要求（以此为准）：${said}`, `What the author says of the whole batch (this decides): ${said}`) : '',
         reason.length > 0 ? L(lang, `策划对这一章的安排：${reason}`, `What the planner settled for this chapter: ${reason}`) : '',
         found.length > (mine?.length ?? 0) ? L(lang, `这一批同时在修的问题（别的章节的不在这一章里改；写到相关的事时与它们的改法保持一致）：\n${oneLine}`, `What is being mended in the same batch (other chapters' problems are not mended here; where this chapter touches them, agree with how they are mended):\n${oneLine}`) : '',
-        L(lang, '只改为解决这些问题必须改的地方，别的不要动。', 'Change only what mending these takes; leave the rest as it is.'),
+        place === true ? '' : L(lang, '只改为解决这些问题必须改的地方，别的不要动。', 'Change only what mending these takes; leave the rest as it is.'),
       ].filter(part => part.length > 0).join('\n\n')
     },
   }, task)

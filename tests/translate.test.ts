@@ -26,8 +26,9 @@ describe('translating a book', () => {
     const read = readTranslation('# The Ghostwriter\'s Rules\n\nRain. She wrote.\n\n![a pen](assets/images/pen.png)\n\n=====TERMS=====\n[{"source":"断肠斋","target":"Heartbreak Studio","kind":"place","note":"an old bookshop"},{"source":"","target":"x"},{"source":"寄死笔","target":"the Dead-Letter Pen","kind":"weapon"},{"source":"斋","target":"zhai","kind":"term"}]', true)
     expect(read).toEqual({ title: 'The Ghostwriter\'s Rules', text: 'Rain. She wrote.\n\n![a pen](assets/images/pen.png)', terms: [{ source: '断肠斋', target: 'Heartbreak Studio', kind: 'place', note: 'an old bookshop' }, { source: '寄死笔', target: 'the Dead-Letter Pen' }] })
     // A picture keeps its path whatever a translator made of it; what is said under it is the translation's.
-    expect(samePictures('前文\n\n![柜台上的信](assets/images/a.png)\n\n![笔](assets/images/b.png "笔")', 'Before\n\n![Letters on the counter](assets/pictures/a.png)\n\n![The pen](资产/b.png)')).toBe('Before\n\n![Letters on the counter](assets/images/a.png)\n\n![The pen](assets/images/b.png "笔")')
-    expect(samePictures('![a](x.png)', 'No picture here.')).toBe('No picture here.')
+    expect(samePictures('前文\n\n![柜台上的信](assets/images/a.png)\n\n![笔](assets/images/b.png "笔")', 'Before\n\n![Letters on the counter](assets/pictures/a.png)\n\n![The pen](资产/b.png)')).toBe('Before\n\n![Letters on the counter](assets/images/a.png)\n\n![The pen](assets/images/b.png)')
+    // One the translator left out goes back in, as far down the text as it stood (no line of a translation reads like the original's).
+    expect(samePictures('![a](x.png)\n\n第一段。\n\n第二段。\n\n![b](y.png)\n\n第三段。', 'One.\n\nTwo.\n\nThree.')).toBe('![a](x.png)\n\nOne.\n\nTwo.\n\n![b](y.png)\n\nThree.')
     // A later stretch has no title to read; a list that is broken leaves the translation standing.
     expect(readTranslation('# Not a title here\n\nText.', false)).toEqual({ text: '# Not a title here\n\nText.', terms: [] })
     expect(readTranslation('Text.\n=====TERMS=====\n[{"source": broken', false)).toEqual({ text: 'Text.', terms: [] })

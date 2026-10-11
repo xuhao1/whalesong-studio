@@ -19,6 +19,7 @@
  */
 import type { CharacterCard, GlossaryTerm, ModelRoute, WorldEntry } from '../../shared/types'
 import { GLOSSARY_KINDS } from '../../shared/types'
+import { keptPictures } from '../../shared/embedded'
 import { clip, clipTail, countWords } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { assign } from '../crew'
@@ -95,19 +96,14 @@ export function readTranslation(reply: string, titled: boolean): { title?: strin
   return { ...(title !== undefined && title.length > 0 ? { title } : {}), text, terms }
 }
 
-const PICTURE = /!\[([^\]]*)\]\(([^)\s]+)([^)]*)\)/g
-
 /**
  * A translation with its pictures where the original has them: a picture's line is a path into the book's files, and
- * a path a translator "translated" shows nothing. Where both texts have as many pictures, each in the translation
- * gets the path of the one at its place in the original (what is said under it stays as translated).
+ * a path a translator "translated" shows nothing. Each picture of the translation gets the path of the one at its
+ * place in the original (what is said under it stays as translated); one the translator left out goes back in, as far
+ * down the text as it stood ({@link keptPictures}).
  */
 export function samePictures(original: string, translated: string): string {
-  const paths = [...original.matchAll(PICTURE)].map(match => `${match[2]}${match[3]}`)
-  const mine = [...translated.matchAll(PICTURE)]
-  if (paths.length === 0 || paths.length !== mine.length) return translated
-  let at = 0
-  return translated.replace(PICTURE, (_whole, alt: string) => `![${alt}](${paths[at++]})`)
+  return keptPictures(original, translated, { captions: 'theirs' }).text
 }
 
 /** Whether a text has a word in it: a name in letters as a whole word whatever its case, anything else as it stands. */

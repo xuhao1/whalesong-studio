@@ -752,11 +752,12 @@ export function createHandlers(service: NovelService): Handlers {
       const located = await runtime.project.findChapter(requireString(chapter, 'chapter'))
       if (located === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${chapter}"`)
       const wide = scope === 'book'
+      const whole = scope === 'chapter'
       // Named as the kind of revision it is, so that it reads as one wherever jobs are listed.
-      return job(runtime, 'revise', wide ? 'revise book' : 'revise passage', wide ? undefined : located.plan.id, async task => await mendInTurn(runtime, order === 'queue' ? 'queue' : 'apart', task, async onto => await fixIssue(core, runtime, {
+      return job(runtime, 'revise', wide ? 'revise book' : whole ? 'revise chapter' : 'revise passage', wide ? undefined : located.plan.id, async task => await mendInTurn(runtime, order === 'queue' ? 'queue' : 'apart', task, async onto => await fixIssue(core, runtime, {
         chapter: located.plan.id,
         issue: requireString(issue, 'issue'),
-        scope: wide ? 'book' : 'passage',
+        scope: wide ? 'book' : whole ? 'chapter' : scope === 'place' ? 'place' : 'passage',
         ...(typeof note === 'string' && note.trim().length > 0 ? { note: note.trim() } : {}),
         ...(onto ? { onto: true } : {}),
       }, task)))
