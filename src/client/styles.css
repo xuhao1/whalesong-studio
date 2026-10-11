@@ -12793,6 +12793,22 @@ button.nv-album-chapter:hover {
   max-height: 72vh;
 }
 
+/* As wide as the screen: out of the column of text, across the pane the page scrolls in, whatever size it was made at. */
+.is-pictures-screen .nv-figure {
+  width: var(--nv-pane, 100%);
+  max-width: none;
+  margin-right: 0;
+  margin-left: calc(50% - var(--nv-pane, 100%) / 2);
+}
+
+.is-pictures-screen .nv-figure img {
+  display: block;
+  width: 100%;
+  max-width: none;
+  max-height: none;
+  border-radius: 0;
+}
+
 /* A picture of the text opens large when pressed. */
 .nv-reader-page .nv-figure img,
 .nv-script-page .nv-figure img {

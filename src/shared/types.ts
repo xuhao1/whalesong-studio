@@ -162,6 +162,12 @@ export interface SceneShot {
   why?: string
   /** The words of the moment it was made of (their hash): it is made anew once they say something else. */
   of: string
+  /**
+   * By which rules it was made. 2: `outfit` is only what the text has them wear otherwise than usual, or what is
+   * different about them just then — left out, they are as they usually look. Absent: an earlier frame, whose
+   * `outfit` may be their usual clothes written out again; it is made anew before it is drawn from.
+   */
+  v?: number
 }
 
 /** A moment of the book a person is remembered by, written as the picture a portrait of it would be. */
@@ -2093,6 +2099,15 @@ export interface IllustrationPiece {
   standing?: string
   /** A `look` in an outfit the picture that shows them does not show (the outfit has no sheet of its own): the outfit, in words — said beside the pointer to that picture. */
   wearing?: string
+  /**
+   * A `look` read in a stretch of their life that says something of its own about how they look, while the picture
+   * that goes along is the card's: what that stretch says (`words`) and what it is called — said beside the pointer.
+   */
+  then?: { title: string; words: string }
+  /** A `look`: what the author has just said of the person — in their look since a moment ago, on no picture yet — said beside the pointer. */
+  added?: string
+  /** A `look` pointed to a picture drawn before the words for it were last changed: the picture is what the drawing went by. */
+  moved?: boolean
   /**
    * A `look` that was not written out: the picture that shows them went along, and the line only points to it
    * (`text` is that pointer, as sent). How they look was left to the picture — `image.looks`.

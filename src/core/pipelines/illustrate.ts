@@ -562,6 +562,7 @@ function readShot(value: Record<string, unknown>, told: string): SceneShot | und
     ...(things.length > 0 ? { things } : {}),
     ...(why !== undefined ? { why } : {}),
     of: shotKey(told),
+    v: 2,
   }
 }
 
@@ -1145,8 +1146,8 @@ function referenceLineOf(held: readonly { label: string }[], lang: PromptLanguag
   return lang === 'zh'
     // (What somebody wears in this picture is the picture's own words to say: a moment in other clothes is drawn in
     // those, whatever the sheet shows them in.)
-    ? `参考图：${held.map((reference, index) => `图${index + 1} 是${reference.label}`).join('；')}。${note ?? '人物的脸、发型和体型照各自的图；衣着和随身的东西，上面另写了的照文字，没写的照图。场所和物件的结构与材质照图。不要重新设计；构图、动作、神情和光线照上面的文字。'}`
-    : `Reference pictures: ${held.map((reference, index) => `Image ${index + 1} shows ${reference.label}`).join('; ')}. ${note ?? 'Each person\'s face, hair and build follow their picture; what they wear and carry follows the words above where those say otherwise, and their picture where they do not. A place or a thing follows its picture in structure and materials. Nothing is redesigned; composition, action, expression and light follow the words above.'}`
+    ? `参考图：${held.map((reference, index) => `图${index + 1} 是${reference.label}`).join('；')}。${note ?? '人物的脸和体型照各自的图；发型、衣着和随身的东西，上面另写了的照文字，没写的照图。场所和物件的结构与材质照图。不要重新设计；构图、动作、神情和光线照上面的文字。'}`
+    : `Reference pictures: ${held.map((reference, index) => `Image ${index + 1} shows ${reference.label}`).join('; ')}. ${note ?? 'Each person\'s face and build follow their picture; their hair, what they wear and what they carry follow the words above where those say otherwise, and their picture where they do not. A place or a thing follows its picture in structure and materials. Nothing is redesigned; composition, action, expression and light follow the words above.'}`
 }
 
 /** A prompt speaks of the pictures that go along with it: by number, or as reference pictures at all. */
@@ -1190,12 +1191,13 @@ const piece = (of: IllustrationPiece['of'], text: string | undefined, from?: Ill
 const lookFrom = (card: CharacterCard): NonNullable<IllustrationPiece['from']> => (card.visual?.prompt !== undefined && card.visual.prompt.length > 0 ? 'anchor' : 'card')
 
 /** How somebody looks — in what they wear there, where it is not their usual — as a part of a picture they are in. */
-function personPiece(card: CharacterCard, options: { look?: CharacterLook | undefined; secondary?: boolean; /** Written out whatever picture goes along: the words have just been changed, and no picture shows that yet. */ written?: boolean } = {}): IllustrationPiece | undefined {
+function personPiece(card: CharacterCard, options: { look?: CharacterLook | undefined; secondary?: boolean; /** What the author has just said of them — in their look since a moment ago, and on no picture yet: said beside the pointer to their picture. */ added?: string | undefined } = {}): IllustrationPiece | undefined {
   const words = looksOf(card, options.look)
-  // (Read in a stretch of their life that says something of its own about their looks while the sheet along is the
-  // card's — `lookApart`: that sheet does not show it, so they are written out.)
-  const apart = (card as { lookApart?: boolean }).lookApart === true && options.look?.sheet === undefined
-  const shown = options.written === true || apart ? undefined : referenceOf(card, options.look)?.path
+  // Read in a stretch of their life that says something of its own about their looks while the sheet along is the
+  // card's (`lookThen`): the sheet shows who they are, and what the stretch says is added to the pointer — not how
+  // they usually look all over again. (An outfit with a sheet of its own shows them as they are in it.)
+  const then = options.look?.sheet === undefined ? (card as { lookThen?: { title: string; words: string } }).lookThen : undefined
+  const shown = referenceOf(card, options.look)?.path
   // Nothing says how they look, and no picture shows it: there is nothing to say of them.
   if (words.length === 0 && shown === undefined) return undefined
   const standing = looksOf(card)
@@ -1207,6 +1209,8 @@ function personPiece(card: CharacterCard, options: { look?: CharacterLook | unde
     ...(shown !== undefined ? { path: shown } : {}),
     ...(standing !== words ? { standing } : {}),
     ...(unseen !== undefined && unseen.length > 0 ? { wearing: unseen } : {}),
+    ...(then !== undefined ? { then } : {}),
+    ...(options.added !== undefined && options.added.trim().length > 0 ? { added: options.added.trim() } : {}),
   }
 }
 
@@ -1256,7 +1260,7 @@ function partLabel(part: IllustrationPiece, lang: PromptLanguage): string {
  * @param pictured - the pictures that go along, in the order the prompt numbers them, where a person one of them
  *   shows is to be pointed to instead of written out (`image.looks`); left out, everybody is written out.
  */
-export function compose(parts: readonly (IllustrationPiece | undefined)[], lang: PromptLanguage, pictured?: { paths: readonly string[] }): Pick<RenderInput, 'subject' | 'pieces'> {
+export function compose(parts: readonly (IllustrationPiece | undefined)[], lang: PromptLanguage, pictured?: { paths: readonly string[]; /** Pictures drawn before the words for whom they show were last changed: noted on the line that points to one. */ moved?: ReadonlySet<string> }): Pick<RenderInput, 'subject' | 'pieces'> {
   /** The number a picture that goes along is spoken of by. */
   const numberOf = (path: string | undefined): number => (path !== undefined && pictured !== undefined ? pictured.paths.indexOf(path) + 1 : 0)
   const pieces = parts
@@ -1264,12 +1268,16 @@ export function compose(parts: readonly (IllustrationPiece | undefined)[], lang:
     // Somebody whose picture goes along is pointed to there, where the author has looks left to pictures: their
     // standing look is not written out beside a picture that shows it.
     .map((part): IllustrationPiece => {
-      const { byPicture: _was, words: _kept, ...rest } = part
+      const { byPicture: _was, words: _kept, moved: _moved, ...rest } = part
       const at = part.of === 'look' ? numberOf(part.path) : 0
       if (at === 0) return { ...rest, text: tidy(part.text) }
-      const wearing = part.wearing !== undefined ? tidy(part.wearing) : ''
+      // Beside the pointer, only what that picture does not show: what a stretch of their life says of their looks,
+      // an outfit that has no sheet, what the author has just said of them. How they usually look is not said again.
+      const then = part.then !== undefined && tidy(part.then.words).length > 0 ? L(lang, `；这时（${part.then.title}）：${tidy(part.then.words)}`, `; at this time (${part.then.title}): ${tidy(part.then.words)}`) : ''
+      const wearing = part.wearing !== undefined && tidy(part.wearing).length > 0 ? L(lang, `；这一身：${tidy(part.wearing)}`, `; wearing: ${tidy(part.wearing)}`) : ''
+      const added = part.added !== undefined && tidy(part.added).length > 0 ? L(lang, `；刚说的：${tidy(part.added)}`, `; just said of them: ${tidy(part.added)}`) : ''
       // (What the line would have said is kept beside the pointer, unsent: a picture drawn again where no picture can go is drawn from it.)
-      return { ...rest, text: `${L(lang, `见图${at}`, `see Image ${at}`)}${wearing.length > 0 ? L(lang, `；这一身：${wearing}`, `; wearing: ${wearing}`) : ''}`, byPicture: true, ...(tidy(part.text).length > 0 ? { words: tidy(part.text) } : {}) }
+      return { ...rest, text: `${L(lang, `见图${at}`, `see Image ${at}`)}${then}${wearing}${added}`, byPicture: true, ...(pictured?.moved?.has(part.path!) === true ? { moved: true } : {}), ...(tidy(part.text).length > 0 ? { words: tidy(part.text) } : {}) }
     })
     .filter(part => part.text.length > 0)
     .map((part, at) => ({ part, at }))
@@ -1450,9 +1458,10 @@ export async function renderImage(core: NovelCore, runtime: ProjectRuntime, inpu
   // Whoever a picture that goes along shows is pointed to there, not written out again — unless the author has looks
   // written out every time (`image.looks`).
   const pointing = (await core.imageOf(runtime)).looks !== 'always'
-  // …and unless the words have moved on since that picture was drawn: a look rewritten after its sheet (a scar the
-  // author just added, a braid taken out) is in the words alone, and a line that only pointed to the picture would
-  // lose it. Such a person is written out, picture or no picture — until their sheet is drawn again.
+  // A picture that goes along is what the drawing goes by, also where the words for whom it shows were changed after
+  // it was drawn: said twice — by the picture and again in words — a look is pulled two ways, and the author asked
+  // for it not to be said again (2026-10-11). That the words have moved on is noted on the picture's record, on
+  // the line that points to it: to have the change in pictures, the sheet is drawn again.
   const behind = new Set<string>()
   if (pointing && input.pieces !== undefined) {
     const shown = input.pieces.filter(part => part.of === 'look' && part.path !== undefined)
@@ -1490,8 +1499,8 @@ export async function renderImage(core: NovelCore, runtime: ProjectRuntime, inpu
       return { held, referenceLine: line, subject: sentence, full: sentence, pieces: undefined, prompt, fitted, result, changed: true }
     }
     // The brief as it is with these pictures along: a person one of them shows has a line that points to it.
-    const paths = held.map(reference => (behind.has(reference.path) ? '' : reference.path))
-    const laid = input.verbatim !== true && pointing && input.pieces !== undefined && input.pieces.some(part => part.of === 'look' && part.path !== undefined && paths.includes(part.path)) ? compose(input.pieces, plang, { paths }) : undefined
+    const paths = held.map(reference => reference.path)
+    const laid = input.verbatim !== true && pointing && input.pieces !== undefined && input.pieces.some(part => part.of === 'look' && part.path !== undefined && paths.includes(part.path)) ? compose(input.pieces, plang, { paths, moved: behind }) : undefined
     // The author's whole prompt goes as it stands — less its lines on pictures, where none goes along after all.
     const unpointed = (text: string): string => (input.pointers ?? []).reduce((now, pointer) => now.replace(new RegExp(`(见图|see Image )\\s*${pointer.n}(?!\\d)`, 'g'), pointer.words), text)
     const full = input.verbatim === true ? (held.length === 0 ? unpointed(withoutPictureLines(whole)) : whole) : laid?.subject ?? whole
@@ -2355,8 +2364,10 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
         scene = sceneWords(chosen)
         drawnOf = chosen
         told = chosen
-        // The frame made of it before holds while the moment is told as it was then.
+        // The frame made of it before holds while the moment is told as it was then — one made by the earlier rules,
+        // which had their usual clothes written out again, is made anew.
         shot = shotOf(chosen)
+        if (shot !== undefined && shot.v === undefined && shot.outfit !== undefined) shot = undefined
         momentAt = chosen.chapter
         shown = { text: chosen.text, title: chosen.title, id: chosen.id, ...(chosen.chapter !== undefined ? { chapter: chosen.chapter } : {}), ...(found !== undefined ? { found } : {}), ...(found !== undefined && chosen.why !== undefined ? { why: chosen.why } : {}) }
       } else if (none !== undefined) shown = { none }
@@ -2445,8 +2456,8 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
 
     if (params.kind === 'portrait') {
       // What the author just said of the person went into their look a moment ago: no picture of them shows it yet,
-      // so this once they are written out, sheet or no sheet.
-      const justNoted = sorted !== undefined && sorted.unsorted !== true && sorted.kept.length > 0
+      // so this once it is said beside the pointer to their picture — that, and not all of how they look.
+      const justNoted = sorted !== undefined && sorted.unsorted !== true && sorted.kept.length > 0 ? sorted.kept.join(L(plang, '；', '; ')) : undefined
       // What they wear in the moment, where it is one of the looks they have a sheet of: said, and shown, as that look.
       const wearsLook = shot?.look !== undefined ? lookOf(card, shot.look) : undefined
       const composed = scene !== undefined && scene.length > 0
@@ -2459,7 +2470,7 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
             piece('setting', shot?.setting, 'shot'),
             // In their scene the person is still what the picture is of — it is also a face of theirs.
             piece('frame', L(plang, `以「${card.name}」为主体，半身到七分身，脸看得清${others.length > 0 ? '；别的人只作陪衬' : ''}`, `${card.name} is its subject: waist-up to three-quarter length, the face clearly seen${others.length > 0 ? '; anybody else is secondary' : ''}`)),
-            personPiece(card, { written: justNoted, look: wearsLook }),
+            personPiece(card, { added: justNoted, look: wearsLook }),
             // What they have on in this moment, as the text around it says: under their name, after their own line.
             shot?.outfit !== undefined ? { of: 'outfit' as const, text: shot.outfit, from: 'shot' as const, name: card.name } : undefined,
             ...others.map(other => personPiece(other, { secondary: true })),
@@ -2476,7 +2487,7 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
             piece('frame', direction !== undefined ? L(plang, '半身像', 'waist-up') : L(plang, '半身像，面向镜头，素净的浅色背景', 'waist-up, facing the viewer, on a plain light ground')),
             // …and is the picture, in the author's words: said before who they are.
             piece('picture', direction),
-            personPiece(card, { written: justNoted }),
+            personPiece(card, { added: justNoted }),
             piece('expression', card.personality !== undefined ? clip(card.personality, lang === 'zh' ? 60 : 80, '') : undefined),
           ], plang)
       // A portrait drawn after the sheet shows the same person as the sheet; in their scene, whoever else it shows is

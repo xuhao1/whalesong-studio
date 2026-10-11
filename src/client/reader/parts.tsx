@@ -42,8 +42,29 @@ export interface ReaderPrefs {
   pictures?: PictureSize
 }
 
-/** How large a picture stands in the text: a part of the column's width and of the window's height, or all the column. */
-export type PictureSize = 'small' | 'medium' | 'large' | 'full'
+/**
+ * How large a picture stands in the text: a part of the column's width and of the window's height; all the column
+ * (`full`); or out of the column, as wide as the screen the page is read on (`screen`).
+ */
+export type PictureSize = 'small' | 'medium' | 'large' | 'full' | 'screen'
+
+/**
+ * How wide the pane a page scrolls in is — while something on the page is to be as wide as it. (A picture as wide as
+ * the screen stands out of the column of text; the column does not know how wide what it stands in is.)
+ */
+export function usePaneWidth(scroller: RefObject<HTMLElement | null> | undefined, on: boolean): number | undefined {
+  const [width, setWidth] = useState<number | undefined>()
+  useEffect(() => {
+    const element = scroller?.current
+    if (!on || element === null || element === undefined) { setWidth(undefined); return }
+    const measure = (): void => { setWidth(element.clientWidth) }
+    measure()
+    const watching = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : undefined
+    watching?.observe(element)
+    return () => { watching?.disconnect() }
+  }, [scroller, on])
+  return width
+}
 
 /**
  * A picture of the text, as large as the window lets it be: laid over everything, put away by a press anywhere or by
@@ -224,9 +245,9 @@ export function ReaderSettings({ prefs, update, options, updateOptions, t, extra
         </div>
       </div>
       <div className="nv-reader-settings-row">
-        <span className="nv-reader-settings-label" title={t('正文里的图默认多大；点一张图可以放到最大', 'How large pictures stand in the text; press one to see it at full size')}>{t('图片', 'Pictures')}</span>
+        <span className="nv-reader-settings-label" title={t('正文里的图默认多大。满栏：和文字那一栏一样宽；满屏：宽度占满屏幕。点一张图可以放到最大', 'How large pictures stand in the text. Column: as wide as the text; Screen: as wide as the screen. Press one to see it at full size')}>{t('图片', 'Pictures')}</span>
         <div className="nv-seg" role="group">
-          {([['small', '小', 'Small'], ['medium', '中', 'Medium'], ['large', '大', 'Large'], ['full', '满栏', 'Full width']] as const).map(([value, zh, en]) => (
+          {([['small', '小', 'Small'], ['medium', '中', 'Medium'], ['large', '大', 'Large'], ['full', '满栏', 'Column'], ['screen', '满屏', 'Screen']] as const).map(([value, zh, en]) => (
             <button key={value} type="button" aria-pressed={(prefs.pictures ?? 'full') === value} className={cx((prefs.pictures ?? 'full') === value && 'is-active')} onClick={() => { update({ pictures: value }) }}>{t(zh, en)}</button>
           ))}
         </div>
@@ -446,6 +467,8 @@ export function ReaderPage({ t, bookTitle, chapter, text, prefs, media, lines, a
   }, [figures, prefs.moments])
   // A picture pressed: shown as large as the window lets it be.
   const [zoomed, setZoomed] = useState<{ path: string; alt: string } | undefined>()
+  // Pictures as wide as the screen stand out of the column: as wide as the pane the page scrolls in.
+  const pane = usePaneWidth(scroller, prefs.pictures === 'screen')
   const momentsAfter = (offset: number): ReactNode => (pictured.get(offset) ?? []).map(figure => (
     <figure key={`moment-${figure.path}`} className="nv-figure is-moment">
       <img alt={figure.caption} loading="lazy" src={media(figure.path)} {...opensLarge(() => { setZoomed({ path: figure.path, alt: figure.caption }) }, t)} />
@@ -632,7 +655,7 @@ export function ReaderPage({ t, bookTitle, chapter, text, prefs, media, lines, a
   const listening = lines !== undefined && onLine !== undefined
   return (
     <div className="nv-reader-scroll" ref={scroller as RefObject<HTMLDivElement>} onMouseUp={onSelect} onKeyUp={onSelect}>
-      <article className={cx('nv-reader-page', prefs.serif && 'is-serif', listening && 'is-listening', prefs.pictures !== undefined && prefs.pictures !== 'full' && `is-pictures-${prefs.pictures}`)} style={{ fontSize: prefs.size }}>
+      <article className={cx('nv-reader-page', prefs.serif && 'is-serif', listening && 'is-listening', prefs.pictures !== undefined && prefs.pictures !== 'full' && `is-pictures-${prefs.pictures}`)} style={{ fontSize: prefs.size, ...(pane !== undefined ? { ['--nv-pane' as string]: `${pane}px` } : {}) }}>
         <header className="nv-reader-head">
           <span className="nv-reader-kicker">{bookTitle} · {t(`第 ${chapter.index} 章`, `Chapter ${chapter.index}`)}</span>
           <h1>{chapter.title}</h1>

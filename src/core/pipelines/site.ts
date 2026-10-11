@@ -69,7 +69,7 @@ export interface SiteParams {
 
 /** Reading settings a site opens with: of the page (`prefs`) and of the player (`options`); a visitor's own replace them. */
 export interface SiteDefaults {
-  prefs?: { size?: number; theme?: 'auto' | 'paper' | 'night'; serif?: boolean; notes?: boolean; follow?: boolean; names?: boolean; things?: boolean; moments?: boolean; pictures?: 'small' | 'medium' | 'large' | 'full' }
+  prefs?: { size?: number; theme?: 'auto' | 'paper' | 'night'; serif?: boolean; notes?: boolean; follow?: boolean; names?: boolean; things?: boolean; moments?: boolean; pictures?: 'small' | 'medium' | 'large' | 'full' | 'screen' }
   options?: { rate?: number; voiceVolume?: number; ambienceVolume?: number; ambienceOn?: boolean; autoNext?: boolean }
 }
 
@@ -93,7 +93,7 @@ export function siteDefaults(raw: unknown): SiteDefaults | undefined {
     names: flag(page?.names),
     things: flag(page?.things),
     moments: flag(page?.moments),
-    pictures: page?.pictures === 'small' || page?.pictures === 'medium' || page?.pictures === 'large' || page?.pictures === 'full' ? page.pictures : undefined,
+    pictures: page?.pictures === 'small' || page?.pictures === 'medium' || page?.pictures === 'large' || page?.pictures === 'full' || page?.pictures === 'screen' ? page.pictures : undefined,
   })
   const options = drop({
     rate: within(player?.rate, 0.5, 2),

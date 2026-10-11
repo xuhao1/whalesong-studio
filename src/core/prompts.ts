@@ -1573,7 +1573,7 @@ function shotRules(words: PromptLanguage, styled: boolean): { zh: string[]; en: 
   return {
     zh: [
       `action：这一刻的画面，一两句，不超过 60 字——这个人什么姿势、在做什么、什么神情、手里拿着什么。画面里还有别的人，就各用半句交代他在哪、在做什么。写一个定格的瞬间：不写前因后果，不写对白、心里想的和比喻，不写眼睛看不见的。用${inZh}写。`,
-      `outfit：这个人此刻的穿戴，一句话，不超过 40 字——衣服的款式和颜色、头上戴的、头发怎样、此刻身上有什么不同（淋湿、带伤、戴孝、沾了泥）。照正文写：这一幕或它之前交代过的，照交代的；任务里的正文没有交代，用你的工具到这一章和前面的章节里去查；查过仍然没有另外交代，就是平常那一身——照"平常的样子"里的衣着简要写出来。只写看得见的衣着和头发，不写长相、气味和质感的形容。他这时穿的正是下面列出的某一身造型：在 look 里写那身造型的名字（没有列出造型，或者哪一身都不是：look 留空）。用${inZh}写。`,
+      `outfit：这个人此刻**和平常不一样**的穿戴，一句话，不超过 40 字——换了的衣服（款式和颜色）、头上戴的、头发此刻怎样、身上有什么不同（淋湿、带伤、戴孝、沾了泥）。照正文写：这一幕或它之前交代过的，照交代的；任务里的正文没有交代，用你的工具到这一章和前面的章节里去查。查过仍然没有另外交代，就是平常那一身：**outfit 留空**——平常的样子画的时候由人设图和人物那一行给出，不要在这里再写一遍。只写看得见的衣着和头发，不写长相、气味和质感的形容。他这时穿的正是下面列出的某一身造型：在 look 里写那身造型的名字（没有列出造型，或者哪一身都不是：look 留空）。用${inZh}写。`,
       `setting：周围的环境，一两句，不超过 60 字——在哪（室内还是室外、什么样的地方）、身边有什么、什么时辰和天气、光从哪里来。照正文写，正文没有的不添。用${inZh}写。`,
       'people：画面里别的人的名字（没有就空）。place：设定里对得上的地点名（没有就空）。things：画面里出现的、设定里有的物件名。只写任务里列出来的名字——它们有设定图的会作为参考图带上；它们长什么样，仍然要在 action / setting 里写出来。',
       ...(styled ? ['画风里对年代、形制有规定的（发式、服饰、建筑、器物属于哪个朝代、哪种式样），穿戴和环境里这些东西照它写；正文的写法与它不一样时以画风为准。'] : []),
@@ -1581,7 +1581,7 @@ function shotRules(words: PromptLanguage, styled: boolean): { zh: string[]; en: 
     ],
     en: [
       `action: the instant shown, a sentence or two, 40 words at most — how this person holds themselves, what they are doing, the expression, what is in their hands. Anybody else in the frame gets half a sentence: where they are, what they do. One instant held still: nothing of what led to it or follows, no speech, no thoughts, no similes, nothing the eye cannot see. Written in ${inEn}.`,
-      `outfit: what this person wears in it, one sentence, 30 words at most — the cut and colour of the clothes, what is on their head, how their hair is, what is different about them just now (soaked, wounded, in mourning, muddied). As the text has it: what the moment or the text before it says, as said; where the text in the task does not say, look it up with your tools in this chapter and the ones before; where it still says nothing else, it is what they usually wear — said briefly, from the clothing in "how they usually look". Only clothing and hair the eye sees: nothing of their features, of scent, of how things feel. Where what they wear is one of the looks listed below: put that look's name in look (no looks listed, or none of them: look stays empty). Written in ${inEn}.`,
+      `outfit: what this person has on in it **that is not as usual**, one sentence, 30 words at most — other clothes (cut and colour), what is on their head, how their hair is just then, what is different about them (soaked, wounded, in mourning, muddied). As the text has it: what the moment or the text before it says, as said; where the text in the task does not say, look it up with your tools in this chapter and the ones before. Where it still says nothing else, they are in what they usually wear: **leave outfit empty** — how they usually look is given by their design sheet and their own line when the picture is drawn, and is not written again here. Only clothing and hair the eye sees: nothing of their features, of scent, of how things feel. Where what they wear is one of the looks listed below: put that look's name in look (no looks listed, or none of them: look stays empty). Written in ${inEn}.`,
       `setting: what is around them, a sentence or two, 40 words at most — where (indoors or out, what kind of place), what is near, the hour and the weather, where the light comes from. As the text has it; nothing the text does not have. Written in ${inEn}.`,
       'people: the names of anybody else in the frame (none: empty). place: the place of the bible it is set in (none: empty). things: the things of the bible that are in the frame. Only names listed in the task — the design art of those that have any goes along with the picture; what they look like is still to be said in action / setting.',
       ...(styled ? ['Where the art direction fixes a period or a form (which dynasty or fashion hair, dress, buildings and objects belong to), clothing and surroundings are written in that form; where the text says otherwise, the art direction holds.'] : []),
@@ -1604,7 +1604,7 @@ export function momentShotTask(base: Base & { name: string; moment: string; chap
   const avoid = (base.avoid ?? []).join(base.lang === 'zh' ? '、' : ', ')
   const rules = shotRules(base.words, (base.artStyle?.trim() ?? '').length > 0)
   const told = base.passage !== undefined && base.passage.trim().length > 0
-  return L(base.lang, `要给《${bare(base.title)}》里的「${base.name}」画一张立绘，画的是下面这一幕。请把它整理成一格画面：这一刻在做什么，此刻穿着什么，周围是什么样。
+  return L(base.lang, `要给《${bare(base.title)}》里的「${base.name}」画一张立绘，画的是下面这一幕。请把它整理成一格画面：这一刻在做什么，此刻穿的和平常有什么不一样，周围是什么样。
 
 ## 这一幕
 ${base.moment}
@@ -1616,9 +1616,9 @@ ${base.cast !== undefined && base.cast.length > 0 ? `\n## 这一章里别的人�
 ${avoid.length > 0 ? avoid : '（无特别限制）'}
 
 交回的内容：
-${[...rules.zh, 'why：一句话，不超过 50 字——穿戴和环境是照正文哪里定的；哪一样正文没有交代、照平常写的，也说一声。'].map((rule, at) => `${at + 1}. ${rule}`).join('\n')}
+${[...rules.zh, 'why：一句话，不超过 50 字——穿戴和环境是照正文哪里定的；正文没有另外交代穿戴、所以 outfit 留空的，也说一声。'].map((rule, at) => `${at + 1}. ${rule}`).join('\n')}
 
-只输出 JSON：{${rules.keys}, "why": ""}`, `A portrait of ${base.name} in "${bare(base.title)}" is to be drawn, of the moment below. Make one frame of it: what is being done in that instant, what they have on, what is around them.
+只输出 JSON：{${rules.keys}, "why": ""}`, `A portrait of ${base.name} in "${bare(base.title)}" is to be drawn, of the moment below. Make one frame of it: what is being done in that instant, what they have on that is not as usual, what is around them.
 
 ## The moment
 ${base.moment}
@@ -1630,7 +1630,7 @@ ${base.cast !== undefined && base.cast.length > 0 ? `\n## Others of the chapter 
 ${avoid.length > 0 ? avoid : '(nothing in particular)'}
 
 To hand in:
-${[...rules.en, 'why: one sentence, 35 words at most — where in the text the clothing and the surroundings are from; and which of them the text does not say, so that it is as usual.'].map((rule, at) => `${at + 1}. ${rule}`).join('\n')}
+${[...rules.en, 'why: one sentence, 35 words at most — where in the text the clothing and the surroundings are from; and, where the text says nothing else of what is worn and outfit is left empty, that it is so.'].map((rule, at) => `${at + 1}. ${rule}`).join('\n')}
 
 Output JSON only: {${rules.keys}, "why": ""}`)
 }

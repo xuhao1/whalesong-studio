@@ -343,6 +343,13 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
   const withAction = (item: Omit<Standing, 'action'>, action: Standing['action'] | undefined): Standing => (action !== undefined ? { ...item, action } : item)
   if (changed) standing.push(withAction({ tone: 'info', text: t('照着另一张图改的：发给绘图模型的只有那张图和改哪一处。', 'Another picture, changed: the image model got that picture and what to change, nothing else.') }, open(references[0]?.path, t('看原图', 'See that picture'))))
   if (image.verbatim === true) standing.push({ tone: 'info', text: t('照你改写的整段提示词画的：工坊没有另加画风和说明。', 'Drawn from the whole prompt as you rewrote it: the Studio added no art direction and no lines of its own.') })
+  // Somebody whose line pointed to their picture, drawn before the words for them were last changed: the picture is
+  // what this was drawn by — said, so that a change the author made to their look is not looked for here in vain.
+  for (const piece of parts?.pieces ?? []) {
+    if (piece.of !== 'look' || piece.moved !== true) continue
+    const who = (piece.name ?? '').replace(/（[^）]*）$/u, '')
+    standing.push({ tone: 'info', text: t(`「${who}」照的是带上的那张图：外貌的文字在那张图之后改过，改动不在这张图里。要让它进画面，重画人设图。`, `${who} was drawn by the picture that went along: the words for how they look were changed after that picture, and the change is not in this one. To have it in pictures, draw the design sheet again.`) })
+  }
   if (made !== undefined) {
     standing.push({ tone: 'info', text: t(`原来是作为「${t(...PICTURE_KIND[made.kind])}${madeWhose !== undefined ? ` · ${madeWhose}` : ''}」画的，后来你把它改作了现在的用途：下面的提示词和参考图是当时的。`, `Drawn as "${t(...PICTURE_KIND[made.kind])}${madeWhose !== undefined ? ` · ${madeWhose}` : ''}", and said since to be for this: the prompt and the references below are of then.`) })
   }

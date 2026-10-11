@@ -61,7 +61,7 @@ describe('pictures the author gives one picture to go by', () => {
     expect(brief).toContain(`${THEIRS}这个人的样子（脸、发式、体型和衣着）照图，图上看不出的照文字。`)
     expect(brief).toContain('这里要的是素净背景上的三视图：站直，两手空着、自然垂在身侧。参考图里的背景、姿势、手里拿的东西、光线和构图都不要带过来；画风照上面写的。')
     // (Not what is said of sheets and design art that go along by themselves.)
-    expect(brief).not.toContain('人物的脸、发型和体型照各自的图')
+    expect(brief).not.toContain('人物的脸和体型照各自的图')
     expect(bed.llm.requests).toHaveLength(2)
     expect(bed.llm.requests[1]!.prompt).toContain('the prompt still says "黑发在颈后盘成扁平的髻"')
     const asked = bed.llm.requests[0]!.prompt
