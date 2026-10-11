@@ -6,7 +6,7 @@
  * to the views.
  */
 import { Component, Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
-import { formatCount } from '../shared/text'
+import { clip, formatCount } from '../shared/text'
 import { WORK_MODES, type FiguresKept, type JobInfo, type ProjectRef, type ProjectState, type WorkMode } from '../shared/types'
 import { figuresKeptWord } from './Guides'
 import type { NovelApi } from './api'
@@ -196,7 +196,22 @@ function JobNotice() {
     if (ended === undefined) return
     const output = (ended.job.result?.output ?? {}) as { rendered?: number; failed?: number; cached?: number; panels?: number; lines?: number }
     const batch = batchOf(ended.job)
-    if (ended.job.kind === 'write' || ended.job.kind === 'revise') {
+    if (ended.job.kind === 'revise' && ended.job.title === 'amend chapter') {
+      // A chapter the writer went through: the places that changed wait as proposals; none changed is said with its reason.
+      const found = (ended.job.result?.output ?? {}) as { places?: number; applied?: boolean; whole?: boolean; note?: string; refused?: string[]; figures?: FiguresKept }
+      const places = found.places ?? 0
+      const note = found.note !== undefined && found.note.length > 0 ? clip(found.note, 160) : undefined
+      const kept = figuresKeptWord(found.figures, t, 'revised')
+      if (places === 0) {
+        controller.toast('info', `${(found.refused?.length ?? 0) > 0 ? t(`写手列出的 ${found.refused!.length} 处改动都对不上正文，这一章没有动。`, `None of the ${found.refused!.length} change(s) the writer listed could be found in the text: the chapter is as it was.`) : t('这一章没有改动。', 'Nothing in the chapter was changed.')}${note !== undefined ? t(`写手：${note}`, ` The writer: ${note}`) : ''}`, 12000)
+      } else {
+        controller.toast('success', `${found.applied === true
+          ? t(`改了 ${places} 处，已写进正文。`, `${places} place(s) changed and written into the text.`)
+          : found.whole === true
+            ? t(`改了 ${places} 处：接着还没采纳的修改改的，合成了这一章的一条提案。`, `${places} place(s) changed: made on top of changes still waiting, so they are one proposal for the chapter.`)
+            : t(`改了 ${places} 处，每处一条提案。`, `${places} place(s) changed — a proposal each.`)}${note !== undefined ? t(`写手：${note}`, ` The writer: ${note}`) : ''}${(found.refused?.length ?? 0) > 0 ? t(`（另有 ${found.refused!.length} 处对不上正文，没有改。）`, ` (${found.refused!.length} more could not be found in the text and were not made.)`) : ''}${kept !== undefined ? ` ${kept}` : ''}`, 9000)
+      }
+    } else if (ended.job.kind === 'write' || ended.job.kind === 'revise') {
       const said = figuresKeptWord((ended.job.result?.output as { figures?: FiguresKept } | undefined)?.figures, t, ended.job.kind === 'write' ? 'drafted' : 'revised')
       if (said !== undefined) controller.toast('info', ended.job.kind === 'write' ? `${said}${t('——在右栏“图”里可以挪', ' — move them in the Pictures column')}` : said, 9000)
     } else if (batch !== undefined) {

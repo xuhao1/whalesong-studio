@@ -6,7 +6,8 @@ import { digestPending } from '../../core/pipelines/digest'
 import { correctMemory, editChapter, type EditAction, type MemoryPatch } from '../../core/pipelines/edit'
 import { analyzeBook, importManuscript, readBookFile, importLine, rereadBook } from '../../core/pipelines/import'
 import { reviewChapter } from '../../core/pipelines/review'
-import { acceptProposal, rejectProposal, fixIssues, mendInTurn, reviseBook, reviseChapter, reviseSpan } from '../../core/pipelines/revise'
+import { acceptProposal, rejectProposal, restoreProposal, fixIssues, mendInTurn, reviseBook, reviseChapter, reviseSpan, settledProposals } from '../../core/pipelines/revise'
+import { amendChapter } from '../../core/pipelines/amend'
 import { writeChapter } from '../../core/pipelines/write'
 import { cleanGuides } from '../../core/pipelines/guides'
 import { settleTerms, translateChapters, untranslateChapter } from '../../core/pipelines/translate'
@@ -87,24 +88,26 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
       description: [
         'Have the writer model revise existing prose.',
         '- scope=passage: rewrite one passage in place. Quote it exactly in `quote` (copy it from novel_read) and say what to change in `instruction`.',
-        '- scope=chapter: rewrite one whole chapter to `instruction`.',
+        '- scope=chapter: change one chapter to `instruction`. The writer goes through the chapter as an agent and changes the places the instruction reaches, one at a time — the rest of the chapter is not written again, so it cannot drift, and each place that changed is a small proposal of its own (or is written in at once, see below). This is the way for anything short of a new chapter: "make her colder in the scene with her brother", "cut what repeats chapter 2", "the letter is blue, not white". Pass whole=true only where the change is of all of it — another voice or point of view throughout, the scenes in another order: then the chapter is written over start to end, as one proposal.',
         '- scope=book: carry one instruction through the book ("rename the city to …", "her watch is a wristwatch now"). A planner reads the book and names the places the instruction reaches — each quoted from its chapter, with what changes there — and the writer rewrites those places and nothing else: every place is a small proposal of its own for the author to review (unless apply=true). A chapter is written over whole only where the planner says places will not do (a change of voice or pace throughout). `chapters` keeps it to those chapters.',
         '- scope=issues: mend what reviews found, together — also across chapters. Name them in `issues` as `<chapter>:<issue id>` (ids are in a chapter\'s review: novel_review, novel_read what=review), or pass `severity` (high | medium | low) to take every open issue that grave or graver, in `chapters` if given. `instruction` is what the author says of the whole batch (optional); what they said of single issues is kept with those and goes along. One planner reads them side by side and settles which places change and how — as few as mend them, also in chapters nobody named where they tell of the same facts — and the writer rewrites those places and nothing else, so one fact is mended one way throughout and nothing is written over that did not have to be (a chapter is rewritten whole only where the planner says places will not do). Every place comes back as a proposal of its own; changes to the bible wait as suggestions.',
         '- scope=accept / scope=reject: settle a pending proposal by `proposal` id. Rejecting one that was made on top of earlier waiting changes brings those back to wait by themselves.',
+        '- scope=turned_down: list the proposals the author turned down (kept in Review → Archive), the latest first, for `chapter` or the whole book — what each changed, and whether it could still be taken. scope=restore puts one of them back to wait, by `proposal` id: for a no the author says was a slip. Only on the author\'s word; then accept it if they say so.',
         'book / issues, `order`: mendings do not lock each other out. `queue` (the default) waits for the mendings already under way and goes on from the changes they leave waiting — a chapter with a change waiting is rewritten as it would read with that accepted, and the new proposal stands for the earlier ones (one to accept); use it when what is mended hangs together. `apart` starts at once on the text as it stands — for mendings that have nothing to do with each other (another line of the plot, a far part of the story), which are quicker side by side.',
         'Every applied change snapshots the previous text first. Passage and chapter revisions apply directly unless the author turned on review of agent revisions; pass apply=false to always leave a proposal.',
       ].join('\n'),
-      mutating: args => args.scope !== 'reject',
+      mutating: args => args.scope !== 'reject' && args.scope !== 'turned_down',
       parameters: {
-        scope: { type: 'string', required: true, enum: ['passage', 'chapter', 'book', 'issues', 'accept', 'reject'] },
+        scope: { type: 'string', required: true, enum: ['passage', 'chapter', 'book', 'issues', 'accept', 'reject', 'turned_down', 'restore'] },
         issues: listParameter('issues: which review issues, each as `<chapter>:<issue id>`.'),
         severity: { type: 'string', enum: ['high', 'medium', 'low'], description: 'issues: instead of naming them, every open issue this grave or graver.' },
         chapter: { type: 'string', description: 'passage/chapter: which chapter.' },
         quote: { type: 'string', description: 'passage: the exact text to rewrite.' },
         instruction: { type: 'string', description: 'What to change and why.' },
         chapters: listParameter('book: only these chapters may change.'),
-        proposal: { type: 'string', description: 'accept/reject: the proposal id.' },
+        proposal: { type: 'string', description: 'accept/reject/restore: the proposal id.' },
         apply: { type: 'boolean', description: 'Apply immediately (true) or leave a proposal (false).' },
+        whole: { type: 'boolean', description: 'chapter: write the chapter over start to end instead of changing it place by place — only for a change that is of all of it.' },
         order: { type: 'string', enum: ['queue', 'apart'], description: 'book/issues: after the mendings under way and on top of their changes (queue, default), or at once by itself (apart).' },
         pictures: listParameter('passage/chapter/book: pictures of the book the author gave to revise by (project-relative paths) — the writer looks at them, or is told what they show (see novel_write). Only pictures the author pointed at. A chapter rewritten whole goes by the pictures kept on its plan without their being named.'),
       },
@@ -119,6 +122,19 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
           }
           const rejected = await rejectProposal(runtime, args.proposal)
           return { text: rejected !== undefined ? `Rejected proposal ${args.proposal}.` : `No proposal "${args.proposal}".` }
+        }
+        if (args.scope === 'turned_down') {
+          const found = await settledProposals(runtime, { ...(args.chapter !== undefined ? { chapter: args.chapter } : {}), limit: 40 })
+          if (found.total === 0) return { text: args.chapter !== undefined ? 'Nothing was turned down for that chapter.' : 'No proposal was turned down in this book (or none is kept any more).' }
+          const index = new Map<string, number>()
+          for (const item of found.items) if (!index.has(item.chapterId)) index.set(item.chapterId, (await runtime.project.findChapter(item.chapterId))?.index ?? 0)
+          const lines = found.items.map(item => `- ${item.id} · chapter ${index.get(item.chapterId) || '?'} · ${item.kind === 'span' ? 'a passage' : 'the whole chapter'}${item.settledAt !== undefined ? ` · turned down ${item.settledAt.slice(0, 16).replace('T', ' ')}` : ''}${item.stands ? '' : item.kind === 'span' ? ' · its sentences are gone from the chapter: it cannot be taken any more' : ' · the chapter changed since: taken, it writes over what came after'}\n  asked: ${brief(item.instruction, 100)}\n  was: ${brief(item.before, 80)}\n  would read: ${brief(item.after, 80)}`)
+          return { text: `${found.total} proposal(s) turned down${found.total > found.items.length ? ` (the latest ${found.items.length} shown)` : ''} — the author sees them under Review → Archive. scope=restore with \`proposal\` puts one back to wait.\n${lines.join('\n')}`, data: toJson({ total: found.total, items: found.items.map(item => ({ ...item, before: undefined, after: undefined })) }) }
+        }
+        if (args.scope === 'restore') {
+          if (args.proposal === undefined) throw new ProjectError('novel/invalid', 'pass the proposal id in `proposal`')
+          const back = await restoreProposal(runtime, args.proposal)
+          return { text: `Proposal ${back.id} waits again for the author (chapter ${back.chapterId}); it was not accepted — settle it with scope=accept, or leave it to the author in Novel Studio → Review.` }
         }
         if (args.scope === 'issues') {
           const named = (listOf(args.issues) ?? []).map((item) => {
@@ -168,6 +184,21 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
           return {
             text: `${result.applied ? 'Revised' : `Proposed (${result.proposalId})`} a passage in chapter ${result.index} "${result.title}": ${result.wordsBefore} → ${result.wordsAfter} words.${result.pictures !== undefined ? `\n${picturesSaid(result.pictures, 'writer')!}` : ''}${figuresSaid(result.figures) !== undefined ? `\n${figuresSaid(result.figures)!}` : ''}\n\nNow reads:\n${clip(result.after, 1200)}`,
             data: toJson({ ...result, before: undefined }),
+          }
+        }
+        if (args.whole !== true) {
+          const result = await env.job('revise', 'amend chapter', chapter, async task => await amendChapter(env.core, runtime, { chapter, instruction, ...(pictures !== undefined ? { guides: pictures } : {}), ...(args.apply !== undefined ? { apply: args.apply } : {}) }, task))
+          const how = result.by === 'agent' ? `the writer went through it as an agent${result.steps !== undefined ? ` (${result.steps} tool calls)` : ''}` : 'the writer listed the changes in one request'
+          const settled = result.places === 0
+            ? 'Nothing was changed'
+            : result.applied
+              ? `${result.places} place(s) changed and written into the text`
+              : result.whole === true
+                ? `${result.places} place(s) changed, proposed as one change to the chapter (${result.proposalIds[0] ?? ''}) because it goes on from changes that were waiting`
+                : `${result.places} place(s) changed, each a proposal of its own (${result.proposalIds.join(', ')})`
+          return {
+            text: `Chapter ${result.index} "${result.title}": ${settled} — ${how}; ${result.wordsBefore} → ${result.wordsAfter} words.${result.note.length > 0 ? `\nThe writer: ${clip(result.note, 600)}` : ''}${result.fellBack !== undefined ? `\n${result.fellBack}` : ''}${result.refused !== undefined ? `\nChanges that could not be made:\n${result.refused.map(line => `- ${line}`).join('\n')}` : ''}${result.pictures !== undefined ? `\n${picturesSaid(result.pictures, 'writer')!}` : ''}${figuresSaid(result.figures) !== undefined ? `\n${figuresSaid(result.figures)!}` : ''}${result.places > 0 && !result.applied ? '\nThe proposals wait for the author in Novel Studio → Review, and beside the chapter on the writing page (or settle them with scope=accept/reject).' : ''}${result.places === 0 ? '\nIf the instruction is of the whole chapter (its voice, its point of view, its order of scenes), ask again with whole=true.' : ''}`,
+            data: toJson(result),
           }
         }
         const result = await env.job('revise', 'revise chapter', chapter, async task => await reviseChapter(env.core, runtime, { chapter, instruction, ...(pictures !== undefined ? { guides: pictures } : {}), ...(args.apply !== undefined ? { apply: args.apply } : {}) }, task))

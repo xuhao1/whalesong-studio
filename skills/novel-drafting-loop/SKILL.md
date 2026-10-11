@@ -51,7 +51,7 @@ A book can hold more than one way the story goes: the main line, and plot lines 
 ## When a chapter comes back wrong
 
 - **Drifted from the outline** — the beats were too loose. Tighten them, then redraft (`mode=draft`); do not patch drift with revisions. A redraft of a chapter that has chapters after it is written to lead into them: if the point of the redraft is to change where the story goes, change the outline after it first (`novel_derive after=<chapter> mode=replace`, or `mode=branch` to keep both ways).
-- **Right events, wrong voice** — check the style profile's "never" list and add what went wrong as a rule; revise the chapter (`novel_revise scope=chapter`) with that one instruction.
+- **Right events, wrong voice** — check the style profile's "never" list and add what went wrong as a rule; revise the chapter with that one instruction — `novel_revise scope=chapter` where it is a matter of places, `whole=true` where the voice is wrong throughout.
 - **A character out of character** — compare with their card (personality, speech habits, what they would never do). If the card is thin, the fix belongs in the bible first.
 - **One bad passage** — `novel_revise scope=passage`, quoting it exactly.
 - **Too short or cut off** — `mode=continue` with a brief that says where to pick up and where to stop.

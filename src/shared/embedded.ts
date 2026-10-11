@@ -13,6 +13,11 @@
 /** A picture's line, whole: what it shows in words, and where the file is. */
 const PICTURE_LINE = /^!\[([^\]]*)\]\(([^)\s]+)\)$/
 
+/** Whether a line of a text is a picture placed in it, and not prose. */
+export function isPictureLine(line: string): boolean {
+  return PICTURE_LINE.test(line.trim())
+}
+
 /** One picture in a chapter's text. */
 export interface EmbeddedPicture {
   path: string

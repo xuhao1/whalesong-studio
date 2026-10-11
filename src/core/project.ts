@@ -2506,7 +2506,9 @@ export class Project {
     let found: Proposal | undefined
     await this.updateState<Proposal[]>(['proposals.json'], [], current => current.map((item) => {
       if (item.id !== id) return item
-      found = { ...item, status }
+      // When it was settled is kept with it; put back to wait, it has not been.
+      const { settledAt: _was, ...rest } = item
+      found = { ...rest, status, ...(status !== 'pending' ? { settledAt: new Date().toISOString() } : {}) }
       return found
     }))
     return found
@@ -3502,6 +3504,8 @@ export class Project {
       stats,
       suggestions,
       proposals: proposals.filter(proposal => proposal.status === 'pending'),
+      // (One a later proposal took in was not turned down by anybody: it is that proposal's to bring back.)
+      ...(proposals.some(proposal => proposal.status === 'rejected' && proposal.supersededBy === undefined) ? { turnedDown: proposals.filter(proposal => proposal.status === 'rejected' && proposal.supersededBy === undefined).length } : {}),
       presence,
       ...(cover !== undefined ? { cover } : {}),
       activity,

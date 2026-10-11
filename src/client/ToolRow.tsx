@@ -103,7 +103,7 @@ function describe(tool: string, args: Record<string, unknown>): Described {
     }
     case 'novel_crew': {
       const role = text(args.role)
-      const names: Record<string, [string, string]> = { analyst: ['场记', 'Continuity'], architect: ['策划', 'Planner'], director: ['导演', 'Director'], producer: ['后期', 'Post-production'] }
+      const names: Record<string, [string, string]> = { analyst: ['场记', 'Continuity'], architect: ['策划', 'Planner'], director: ['导演', 'Director'], producer: ['后期', 'Post-production'], writer: ['写手', 'Writer'] }
       const name = role !== undefined ? names[role] : undefined
       return { icon: 'users', title: name !== undefined ? [`班底 · 交给${name[0]}`, `Crew · ${name[1]}`] : ['班底', 'Crew'], summary: join(text(args.action) === 'list' ? 'list' : undefined, short(text(args.task), 80)), target: { view: 'home' } }
     }

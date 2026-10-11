@@ -4,27 +4,30 @@
  * found while digesting, review issues per chapter, and book-wide revisions
  * (including carrying a changed setting or character through the manuscript).
  */
-import { Fragment, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useState, type ReactNode } from 'react'
 import { clip } from '../../shared/text'
-import { MAIN_LINE, type ChapterInfo, type IssueSeverity, type PictureGuide, type PicturesRead, type Proposal, type TextStep } from '../../shared/types'
+import { MAIN_LINE, type ChapterInfo, type IssueSeverity, type PictureGuide, type PicturesRead, type Proposal, type SettledProposal, type TextStep } from '../../shared/types'
 import { GuidePictures, picturesReadWord } from '../Guides'
-import { ProposalCard } from '../components/ProposalCard'
+import { ProposalCard, SettledCard } from '../components/ProposalCard'
 import { SEVERITY, SEVERITY_TONE, SUGGESTION_KIND } from '../labels'
 import { IssueBatchBar, IssueCard, MendOrderMenu, useMendOrder } from '../Issues'
 import { Icon } from '../icons'
 import { BatchMatrix, batchOf, useBatchJob } from '../Batch'
 import {
   Button, Chip, cx, Empty, Field, Progress, SectionTitle, Select, Tabs, TextArea, TextInput, useAction, useBookLine, useConfirm, useKept, useLoad, useProject, useRunningJob, useSnapshot, useStudio, useT,
-  ViewButton,
+  ViewButton, type Translate,
 } from '../ui'
 import { JobBar } from '../JobBar'
 
-type ReviewTab = 'proposals' | 'suggestions' | 'issues' | 'book'
+type ReviewTab = 'proposals' | 'suggestions' | 'issues' | 'book' | 'archive'
 
 export function ReviewView() {
   const t = useT()
   const { project } = useProject()
-  const [tab, setTab] = useState<ReviewTab>(project.proposals.length > 0 || project.suggestions.length === 0 ? 'proposals' : 'suggestions')
+  const asked = useSnapshot(snapshot => snapshot.archiveAsked)
+  const [tab, setTab] = useState<ReviewTab>(asked !== undefined ? 'archive' : project.proposals.length > 0 || project.suggestions.length === 0 ? 'proposals' : 'suggestions')
+  // A link from elsewhere ("the ones turned down for this chapter") opens the archive, each time it is followed.
+  useEffect(() => { if (asked !== undefined) setTab('archive') }, [asked?.nonce])
   const issues = project.chapters.reduce((sum, chapter) => sum + (chapter.openIssues ?? 0), 0)
   return (
     <div className="nv-page nv-review">
@@ -33,13 +36,97 @@ export function ReviewView() {
         { value: 'suggestions', label: t('设定建议', 'Bible suggestions'), icon: 'sparkles', badge: project.suggestions.length },
         { value: 'issues', label: t('审校问题', 'Issues'), icon: 'alert', badge: issues },
         { value: 'book', label: t('全书修订', 'Book-wide revision'), icon: 'wand' },
+        { value: 'archive', label: t('归档', 'Archive'), icon: 'history' },
       ]} />
       {tab === 'proposals' ? <Proposals /> : null}
       {tab === 'suggestions' ? <Suggestions /> : null}
       {tab === 'issues' ? <Issues /> : null}
       {tab === 'book' ? <BookRevision onStarted={() => { setTab('proposals') }} /> : null}
+      {tab === 'archive' ? <Archive {...(asked?.chapter !== undefined ? { chapter: asked.chapter } : {})} key={asked?.nonce ?? 0} /> : null}
     </div>
   )
+}
+
+/**
+ * The proposals that were settled — above all the ones turned down, kept so that a no can be read again and taken
+ * back: each can be put back to wait, or taken after all; the ones of one round, all at once.
+ * @param chapter - opened for one chapter: only its proposals, until the author asks for the book's.
+ */
+function Archive({ chapter }: { chapter?: string }) {
+  const { controller } = useStudio()
+  const t = useT()
+  const { project, root } = useProject()
+  const { busy, run } = useAction()
+  const [what, setWhat] = useState<'rejected' | 'accepted'>('rejected')
+  const [only, setOnly] = useState(chapter ?? '')
+  // (Read again whenever the book changes: a proposal settled on another page belongs here at once.)
+  const found = useLoad(async () => await controller.api.call('proposal.archive', { root, what, ...(only.length > 0 ? { chapter: only } : {}) }), [root, what, only, project.revision])
+  const items = found.data?.items ?? []
+  // The ones of one round stand together, under what the round was asked.
+  const rounds: SettledProposal[][] = []
+  for (const item of items) {
+    const last = rounds.at(-1)
+    if (last !== undefined && item.batchId !== undefined && last[0]!.batchId === item.batchId && last[0]!.chapterId === item.chapterId && last[0]!.instruction === item.instruction) last.push(item)
+    else rounds.push([item])
+  }
+  // (In the order they stand in the text, whatever order they were settled in.)
+  for (const round of rounds) round.sort((left, right) => (left.at ?? 0) - (right.at ?? 0))
+  const backAll = (round: SettledProposal[]): Promise<unknown> => run(async () => {
+    let failed = 0
+    for (const proposal of round.filter(item => item.kind !== 'span' || item.stands)) {
+      try {
+        await controller.api.call('proposal.restore', { root, id: proposal.id })
+      } catch {
+        failed += 1
+      }
+    }
+    found.reload()
+    if (failed > 0) controller.toast('error', t(`${failed} 条没能放回`, `${failed} could not be put back`))
+    else controller.toast('success', t('都放回去了：在“修订提案”里', 'All put back: they wait under Proposals'))
+  })
+  const named = project.chapters.filter(candidate => candidate.hasText)
+  return (
+    <div className="nv-proposals">
+      <div className="nv-row nv-archive-bar">
+        <Chip tone="amber" active={what === 'rejected'} onClick={() => { setWhat('rejected') }}>{t('已放弃', 'Turned down')}{what === 'rejected' && found.data !== undefined ? ` ${found.data.total}` : ''}</Chip>
+        <Chip tone="green" active={what === 'accepted'} onClick={() => { setWhat('accepted') }}>{t('已采纳', 'Accepted')}{what === 'accepted' && found.data !== undefined ? ` ${found.data.total}` : ''}</Chip>
+        <span className="nv-spacer" />
+        <Select value={only} onChange={setOnly} options={[{ value: '', label: t('全部章节', 'Every chapter') }, ...named.map(candidate => ({ value: candidate.id, label: t(`第 ${candidate.index} 章 ${candidate.title}`, `Ch. ${candidate.index} ${candidate.title}`) }))]} />
+      </div>
+      {found.error !== undefined ? <p className="nv-note">{found.error}</p> : null}
+      {found.data !== undefined && items.length === 0 ? (
+        <Empty icon="history" title={what === 'rejected' ? t('没有放弃过的提案', 'Nothing was turned down') : t('没有采纳过的提案', 'Nothing was accepted')}>{what === 'rejected' ? t('放弃的提案会留在这里，可以放回去。', 'A proposal you turn down is kept here, and can be put back.') : t('采纳过的提案留在这里备查。', 'What you accepted is kept here for the record.')}</Empty>
+      ) : null}
+      {rounds.map(round => (
+        <section key={round[0]!.id} className="nv-card">
+          {round.length > 1 ? (
+            <>
+              <SectionTitle actions={what === 'rejected' ? <Button size="sm" variant="ghost" icon="undo" busy={busy} onClick={() => { void backAll(round) }}>{t(`这 ${round.length} 条都放回`, `Put all ${round.length} back`)}</Button> : undefined}>{batchTitle(round[0]!.batchId ?? '', round, new Map(project.chapters.map(candidate => [candidate.id, candidate.index])), t)}</SectionTitle>
+              <p className="nv-proposal-instruction">{round[0]!.instruction}</p>
+            </>
+          ) : null}
+          {round.map(proposal => <SettledCard key={proposal.id} proposal={proposal} showChapter bare={round.length > 1} onChanged={() => { found.reload() }} />)}
+        </section>
+      ))}
+      {found.data !== undefined && found.data.total > items.length ? <p className="nv-muted nv-small">{t(`这里是最近的 ${items.length} 条，共 ${found.data.total} 条。`, `These are the latest ${items.length} of ${found.data.total}.`)}</p> : null}
+    </div>
+  )
+}
+
+/** What a round of changes is called: whose it is, and how much of the book it touches. */
+function batchTitle(batch: string, items: Proposal[], order: Map<string, number>, t: Translate): string {
+  if (batch.length === 0) return t('单独的提案', 'Individual proposals')
+  const chapters = [...new Set(items.map(item => item.chapterId))]
+  const places = items.filter(item => item.kind === 'span').length
+  if (chapters.length === 1) {
+    const index = order.get(chapters[0]!)
+    return places === items.length
+      ? t(`第 ${index ?? '?'} 章的修改 · ${items.length} 处`, `Changes to chapter ${index ?? '?'} · ${items.length} place(s)`)
+      : t(`第 ${index ?? '?'} 章的修改`, `A change to chapter ${index ?? '?'}`)
+  }
+  return places > 0
+    ? t(`一批修改 · ${items.length} 条，${chapters.length} 章`, `A round of changes · ${items.length} in ${chapters.length} chapters`)
+    : t(`全书修订 · ${items.length} 章`, `Book-wide revision · ${items.length} chapters`)
 }
 
 function Proposals() {
@@ -79,9 +166,10 @@ function Proposals() {
               <Button size="sm" variant="ghost" busy={busy} onClick={() => { confirm.ask(t(`放弃这 ${items.length} 条提案？`, `Reject these ${items.length} proposals?`), () => { settleAll(items, false) }) }}>{t('全部放弃', 'Reject all')}</Button>
               <Button size="sm" variant="primary" icon="check" busy={busy} onClick={() => { confirm.ask(t(`采纳这 ${items.length} 条提案？采纳前的正文会存入各章的"版本"。`, `Accept these ${items.length} proposals? The text before each one is kept under Versions.`), () => { settleAll(items, true) }) }}>{t('全部采纳', 'Accept all')}</Button>
             </>
-          ) : undefined}>{batch.length > 0 ? t(`全书修订 · ${items.length} 章`, `Book-wide revision · ${items.length} chapters`) : t('单独的提案', 'Individual proposals')}</SectionTitle>
+          ) : undefined}>{batchTitle(batch, items, order, t)}</SectionTitle>
           {batch.length > 0 ? <p className="nv-proposal-instruction">{items[0]!.instruction}</p> : null}
-          {items.map(proposal => <ProposalCard key={proposal.id} proposal={proposal} showChapter />)}
+          {/* (Asked the same thing, every one of them: it is said once, above.) */}
+          {items.map(proposal => <ProposalCard key={proposal.id} proposal={proposal} showChapter bare={batch.length > 0 && items.length > 1 && items.every(item => item.instruction === items[0]!.instruction)} />)}
         </section>
       ))}
       {confirm.element}

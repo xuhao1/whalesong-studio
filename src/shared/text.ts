@@ -238,6 +238,121 @@ export function changedCore(before: string, after: string, unique?: (stretch: st
   return core.before.length > 0 ? core : whole
 }
 
+/** One place where a text was changed: the stretch of whole sentences that is no longer what it was, what stands there now, and where the stretch began. */
+export interface ChangedPart { before: string; after: string; start: number }
+
+/** Past this many pairs of sentences the places are not told apart: the change is one stretch (see {@link changedCore}). */
+const PARTS_MOST = 6_000_000
+
+/**
+ * Every place where a text was changed, each by itself: the two texts are held against one another sentence by
+ * sentence, and each stretch that is not the same in both is one part — so that a text somebody went through, changing
+ * a line here and a line there, comes back as those changes and not as the text written again. A part is of whole
+ * sentences; where something was only added or only taken out, the sentence before it (else the one after) is in it,
+ * so that there is a place to find; a part is widened, a sentence at a time, until `unique` says its `before` is found
+ * once only; and parts that come to share a sentence are one.
+ * @param unique - whether a stretch of `before` stands once only in the text it is to be found in.
+ * @returns the parts in the order they stand, none where the texts are the same.
+ */
+export function changedParts(before: string, after: string, unique?: (stretch: string) => boolean): ChangedPart[] {
+  if (before === after) return []
+  const was = sentences(before)
+  const now = sentences(after)
+  let head = 0
+  while (head < was.length && head < now.length && was[head] === now[head]) head += 1
+  let tail = 0
+  while (tail < was.length - head && tail < now.length - head && was[was.length - 1 - tail] === now[now.length - 1 - tail]) tail += 1
+  const rows = was.length - head - tail
+  const cols = now.length - head - tail
+  if (rows * cols > PARTS_MOST) return [changedCore(before, after, unique)]
+  // The longest run of sentences the two middles share, in order.
+  const width = cols + 1
+  const table = new Uint32Array((rows + 1) * width)
+  for (let row = rows - 1; row >= 0; row--) {
+    for (let col = cols - 1; col >= 0; col--) {
+      table[row * width + col] = was[head + row] === now[head + col]
+        ? table[(row + 1) * width + col + 1]! + 1
+        : Math.max(table[(row + 1) * width + col]!, table[row * width + col + 1]!)
+    }
+  }
+  // The texts as a run of units: a sentence both have, or a stretch that differs (sentences of the one, of the other).
+  type Unit = { same: boolean; was: string; now: string }
+  const units: Unit[] = []
+  const shared = (sentence: string): void => { units.push({ same: true, was: sentence, now: sentence }) }
+  const differs = (left: string, right: string): void => {
+    const last = units.at(-1)
+    if (last !== undefined && !last.same) {
+      last.was += left
+      last.now += right
+    } else {
+      units.push({ same: false, was: left, now: right })
+    }
+  }
+  for (let at = 0; at < head; at++) shared(was[at]!)
+  let row = 0
+  let col = 0
+  while (row < rows || col < cols) {
+    if (row < rows && col < cols && was[head + row] === now[head + col]) {
+      shared(was[head + row]!)
+      row += 1
+      col += 1
+    } else if (col < cols && (row >= rows || table[row * width + col + 1]! >= table[(row + 1) * width + col]!)) {
+      differs('', now[head + col]!)
+      col += 1
+    } else {
+      differs(was[head + row]!, '')
+      row += 1
+    }
+  }
+  for (let at = was.length - tail; at < was.length; at++) shared(was[at]!)
+
+  // A part is a run of units with something changed in it: [from, to).
+  let parts = units.flatMap((unit, at) => unit.same ? [] : [{ from: at, to: at + 1 }])
+  const cut = (part: { from: number; to: number }): ChangedPart => {
+    let left = units.slice(part.from, part.to).map(unit => unit.was).join('')
+    let right = units.slice(part.from, part.to).map(unit => unit.now).join('')
+    let start = units.slice(0, part.from).map(unit => unit.was).join('').length
+    // The white space both end with (the break before what follows) belongs to neither side of the change.
+    const closing = /\s*$/.exec(left)![0]
+    if (closing.length > 0 && right.endsWith(closing) && right.length > closing.length) {
+      left = left.slice(0, left.length - closing.length)
+      right = right.slice(0, right.length - closing.length)
+    }
+    const opening = /^\s*/.exec(left)![0]
+    if (opening.length > 0 && right.startsWith(opening)) {
+      left = left.slice(opening.length)
+      right = right.slice(opening.length)
+      start += opening.length
+    }
+    return { before: left, after: right, start }
+  }
+  /** Whether a part has to take in another sentence: nothing to find it by, nothing left of it, or found in more places than one. */
+  const short = (part: { from: number; to: number }): boolean => {
+    const made = cut(part)
+    return made.before.trim().length === 0 || made.after.trim().length === 0 || (unique !== undefined && !unique(made.before))
+  }
+  for (let round = 0; round <= units.length; round++) {
+    let widened = false
+    for (const part of parts) {
+      if (!short(part)) continue
+      if (part.from > 0) part.from -= 1
+      else if (part.to < units.length) part.to += 1
+      else continue
+      widened = true
+    }
+    // Parts that have come to share a sentence are one change. (Side by side they stay two: neither is in the other's way.)
+    const joined: { from: number; to: number }[] = []
+    for (const part of parts) {
+      const last = joined.at(-1)
+      if (last !== undefined && part.from < last.to) last.to = Math.max(last.to, part.to)
+      else joined.push(part)
+    }
+    parts = joined
+    if (!widened) break
+  }
+  return parts.map(cut).filter(part => part.before !== part.after)
+}
+
 /** Format a word count compactly: 1234 → "1.2k", 123456 → "12.3万" for CJK locales. */
 export function formatCount(count: number, locale: string): string {
   if (locale.startsWith('zh')) {

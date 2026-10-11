@@ -38,7 +38,8 @@ import {
 import { buildFoundation, derivedPlan, deriveBeats, deriveChapters, deriveToLook, keepDerivedPlan, planOfText, settleDerivedPlan, whatIf } from '../core/pipelines/plot'
 import { clearReview, listReviews, noteIssue, recheckIssues, resolveIssue, reviewChapter } from '../core/pipelines/review'
 import { plansOfText } from '../core/pipelines/follow'
-import { fixIssue, fixIssues, acceptProposal, rejectProposal, reviseBook, reviseChapter, reviseSpan, mendInTurn } from '../core/pipelines/revise'
+import { fixIssue, fixIssues, acceptProposal, rejectProposal, restoreProposal, reviseBook, reviseChapter, reviseSpan, mendInTurn, settledProposals } from '../core/pipelines/revise'
+import { amendChapter } from '../core/pipelines/amend'
 import { writeChapter } from '../core/pipelines/write'
 import { imageSetups, speechSetups, trialDerive, trialSpeak, trialWrite } from '../core/pipelines/trial'
 import { cleanGuides } from '../core/pipelines/guides'
@@ -741,10 +742,13 @@ export function createHandlers(service: NovelService): Handlers {
         return rest
       })
     },
-    'ai.reviseChapter': async ({ root, chapter, instruction, guides }) => {
+    'ai.reviseChapter': async ({ root, chapter, instruction, guides, whole }) => {
       const runtime = await open(root)
+      const asked = { chapter, instruction: requireString(instruction, 'instruction'), apply: false, ...(Array.isArray(guides) && guides.length > 0 ? { guides: cleanGuides(guides) } : {}) }
+      // Gone through place by place unless the whole of it is asked for: only what changes is written again.
+      if (whole !== true) return job(runtime, 'revise', 'amend chapter', chapter, async task => await amendChapter(core, runtime, asked, task))
       return job(runtime, 'revise', 'revise chapter', chapter, async (task) => {
-        const { before: _before, after: _after, ...rest } = await reviseChapter(core, runtime, { chapter, instruction: requireString(instruction, 'instruction'), apply: false, ...(Array.isArray(guides) && guides.length > 0 ? { guides: cleanGuides(guides) } : {}) }, task)
+        const { before: _before, after: _after, ...rest } = await reviseChapter(core, runtime, asked, task)
         return rest
       })
     },
@@ -967,6 +971,8 @@ export function createHandlers(service: NovelService): Handlers {
     },
     'proposal.accept': async ({ root, id }) => await acceptProposal(core, await open(root), id, { origin: 'user' }),
     'proposal.reject': async ({ root, id }) => ({ ok: (await rejectProposal(await open(root), id)) !== undefined }),
+    'proposal.archive': async ({ root, chapter, what, limit }) => await settledProposals(await open(root), { ...(typeof chapter === 'string' && chapter.length > 0 ? { chapter } : {}), what: what === 'accepted' ? 'accepted' : 'rejected', ...(typeof limit === 'number' && limit > 0 ? { limit: Math.min(1000, Math.floor(limit)) } : {}) }),
+    'proposal.restore': async ({ root, id }) => await restoreProposal(await open(root), requireString(id, 'id')),
     'review.resolve': async ({ root, chapter, issue, resolved }) => ({ ok: (await resolveIssue(await open(root), chapter, issue, resolved)) !== undefined }),
     'review.note': async ({ root, chapter, issue, note }) => ({ ok: (await noteIssue(await open(root), requireString(chapter, 'chapter'), requireString(issue, 'issue'), typeof note === 'string' ? note : '')) !== undefined }),
     'review.list': async ({ root }) => ({ reviews: await listReviews(await open(root)) }),

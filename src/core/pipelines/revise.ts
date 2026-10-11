@@ -10,7 +10,7 @@
  * becomes a proposal that waits for accept/reject in the review panel.
  */
 import { keptPictures } from '../../shared/embedded'
-import { MAIN_LINE, type FiguresKept, type IssueSeverity, type PictureGuide, type PicturesRead, type Proposal, type ReviewIssue } from '../../shared/types'
+import { MAIN_LINE, type FiguresKept, type IssueSeverity, type PictureGuide, type PicturesRead, type Proposal, type ReviewIssue, type SettledProposal } from '../../shared/types'
 import { changedCore, clip, clipTail, countWords, fuzzyFind, newId, occurrences } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { asArray, asRecord, asText } from '../llm'
@@ -89,17 +89,17 @@ export interface ReviseResult {
 }
 
 /** What was done for a text's pictures, where anything was. */
-function figuresOf(kept: { back: number; made: number }): { figures?: FiguresKept } {
+export function figuresOf(kept: { back: number; made: number }): { figures?: FiguresKept } {
   return kept.back > 0 || kept.made > 0 ? { figures: { back: kept.back, made: kept.made } } : {}
 }
 
-function shouldApply(core: NovelCore, task: TaskContext, explicit: boolean | undefined, fallback: boolean): boolean {
+export function shouldApply(core: NovelCore, task: TaskContext, explicit: boolean | undefined, fallback: boolean): boolean {
   if (explicit !== undefined) return explicit
   if (task.origin === 'agent') return !core.currentSettings().reviewAgentRevisions
   return fallback
 }
 
-async function requireChapter(runtime: ProjectRuntime, ref: string): Promise<{ chapter: LocatedChapter; text: string }> {
+export async function requireChapter(runtime: ProjectRuntime, ref: string): Promise<{ chapter: LocatedChapter; text: string }> {
   const chapter = await runtime.project.findChapter(ref)
   if (chapter === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${ref}"`)
   const text = await runtime.project.chapterText(chapter.plan.id)
@@ -111,7 +111,7 @@ async function requireChapter(runtime: ProjectRuntime, ref: string): Promise<{ c
  * The chapter as it would read with what waits for it accepted, oldest first: a whole-chapter change where nothing was
  * taken in before it, a passage where it is still found. What could not be taken in is left waiting by itself.
  */
-async function onPending(runtime: ProjectRuntime, chapterId: string, text: string): Promise<{ text: string; used: Proposal[] }> {
+export async function onPending(runtime: ProjectRuntime, chapterId: string, text: string): Promise<{ text: string; used: Proposal[] }> {
   const waiting = (await runtime.project.proposals()).filter(proposal => proposal.status === 'pending' && proposal.chapterId === chapterId).sort((left, right) => left.createdAt.localeCompare(right.createdAt))
   let out = text
   const used: Proposal[] = []
@@ -134,7 +134,7 @@ async function onPending(runtime: ProjectRuntime, chapterId: string, text: strin
  * for now — read once the rewrite is back: the author may have settled one of them while the writer worked.
  * @returns `carried`: the fields for the new proposal; `settle`: the proposals it takes the place of.
  */
-async function takenIn(runtime: ProjectRuntime, used: readonly Proposal[], issues: readonly string[] | undefined, lang: 'zh' | 'en'): Promise<{ carried: Partial<Proposal>; settle: Proposal[] }> {
+export async function takenIn(runtime: ProjectRuntime, used: readonly Proposal[], issues: readonly string[] | undefined, lang: 'zh' | 'en'): Promise<{ carried: Partial<Proposal>; settle: Proposal[] }> {
   if (used.length === 0) return { carried: issues !== undefined && issues.length > 0 ? { issues: [...issues] } : {}, settle: [] }
   const now = new Map((await runtime.project.proposals()).map(proposal => [proposal.id, proposal.status]))
   const settle = used.filter(proposal => now.get(proposal.id) === 'pending')
@@ -158,12 +158,12 @@ async function takenIn(runtime: ProjectRuntime, used: readonly Proposal[], issue
 }
 
 /** The proposals a later one took in are settled by it: they wait no longer by themselves. */
-async function settleTakenIn(runtime: ProjectRuntime, used: readonly Proposal[], by: string): Promise<void> {
+export async function settleTakenIn(runtime: ProjectRuntime, used: readonly Proposal[], by: string): Promise<void> {
   for (const proposal of used) await runtime.project.supersedeProposal(proposal.id, by)
 }
 
 /** Find a quoted passage; with a position hint, the occurrence nearest to it wins. */
-function locateQuote(text: string, quote: string, near?: number): { start: number; end: number } | undefined {
+export function locateQuote(text: string, quote: string, near?: number): { start: number; end: number } | undefined {
   if (near !== undefined) {
     let best: number | undefined
     for (let at = text.indexOf(quote); at >= 0; at = text.indexOf(quote, at + 1)) {
@@ -984,4 +984,48 @@ export async function rejectProposal(runtime: ProjectRuntime, id: string): Promi
   const rejected = await runtime.project.setProposalStatus(id, 'rejected')
   if (rejected?.supersedes !== undefined && rejected.supersedes.length > 0) await runtime.project.restoreSuperseded(id)
   return rejected
+}
+
+/**
+ * The proposals the author settled, the latest first — what was turned down above all: it is kept so that it can be
+ * read again and, where the no was a slip, put back. One that a later proposal took in is not among them: nobody
+ * turned it down, and the proposal that stands for it brings it back when that one is turned down.
+ * @param options.chapter - only this chapter's.
+ * @param options.what - `rejected` (the default) or `accepted`.
+ * @returns the proposals, each with whether it could still be taken (`stands`), and how many there are in all.
+ */
+export async function settledProposals(runtime: ProjectRuntime, options: { chapter?: string; what?: 'rejected' | 'accepted'; limit?: number } = {}): Promise<{ items: SettledProposal[]; total: number }> {
+  const { project } = runtime
+  const what = options.what ?? 'rejected'
+  const chapter = options.chapter !== undefined ? (await project.findChapter(options.chapter))?.plan.id ?? options.chapter : undefined
+  const when = (proposal: Proposal): string => proposal.settledAt ?? proposal.createdAt
+  const all = (await project.proposals())
+    .filter(proposal => proposal.status === what && proposal.supersededBy === undefined && (chapter === undefined || proposal.chapterId === chapter))
+    .sort((left, right) => when(right).localeCompare(when(left)))
+  const shown = all.slice(0, Math.max(1, options.limit ?? 200))
+  const texts = new Map<string, string>()
+  const items: SettledProposal[] = []
+  for (const proposal of shown) {
+    if (!texts.has(proposal.chapterId)) texts.set(proposal.chapterId, await project.chapterText(proposal.chapterId).catch(() => ''))
+    const text = texts.get(proposal.chapterId)!
+    items.push({ ...proposal, stands: proposal.kind === 'chapter' ? text === proposal.before : locateQuote(text, proposal.before, proposal.at) !== undefined })
+  }
+  return { items, total: all.length }
+}
+
+/**
+ * Put a proposal the author turned down back to wait: the no is taken back, and it can be accepted like any other.
+ * Where it had been made on top of changes that waited — and they wait again since it was turned down — it stands for
+ * them once more.
+ * @throws ProjectError `novel/not-found`; `novel/invalid` where it was not turned down by the author.
+ */
+export async function restoreProposal(runtime: ProjectRuntime, id: string): Promise<Proposal> {
+  const { project } = runtime
+  const proposal = (await project.proposals()).find(item => item.id === id)
+  if (proposal === undefined) throw new ProjectError('novel/not-found', `no proposal "${id}"`)
+  if (proposal.status !== 'rejected') throw new ProjectError('novel/invalid', `proposal "${id}" is ${proposal.status}, not turned down — there is nothing to put back`)
+  if (proposal.supersededBy !== undefined) throw new ProjectError('novel/invalid', `proposal "${id}" was taken into a later one (${proposal.supersededBy}) and is settled by that one`)
+  const back = (await project.setProposalStatus(id, 'pending'))!
+  for (const earlier of proposal.supersedes ?? []) await project.supersedeProposal(earlier, id)
+  return back
 }

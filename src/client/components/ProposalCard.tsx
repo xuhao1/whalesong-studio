@@ -2,7 +2,7 @@
 /** A pending manuscript change with its diff and the accept / reject decision. */
 import { useMemo, useState } from 'react'
 import { countWords } from '../../shared/text'
-import type { Proposal } from '../../shared/types'
+import type { Proposal, SettledProposal } from '../../shared/types'
 import { figuresKeptWord, picturesReadWord } from '../Guides'
 import { compactDiff, diffInline, diffText } from '../diff'
 import { Button, Chip, cx, useAction, useProject, useStudio, useT } from '../ui'
@@ -54,6 +54,60 @@ export function ProposalCard({ proposal, showChapter, onSettled, bare }: { propo
         <span className="nv-spacer" />
         <Button size="sm" variant="ghost" icon="x" busy={busy} onClick={() => { settle(false) }}>{t('放弃', 'Reject')}</Button>
         <Button size="sm" variant="primary" icon="check" busy={busy} onClick={() => { settle(true) }}>{t('采纳', 'Accept')}</Button>
+      </footer>
+    </article>
+  )
+}
+
+/**
+ * A proposal the author settled, as the archive shows it. One that was turned down can be put back to wait, or taken
+ * after all — a no that was a slip of the hand is not the end of it.
+ * @param bare - under the instruction of its round, which is said once above.
+ */
+export function SettledCard({ proposal, showChapter, bare, onChanged }: { proposal: SettledProposal; showChapter?: boolean; bare?: boolean; onChanged?: () => void }) {
+  const { controller } = useStudio()
+  const t = useT()
+  const { project, root } = useProject()
+  const { busy, run } = useAction()
+  const [whole, setWhole] = useState(false)
+  const chapter = project.chapters.find(candidate => candidate.id === proposal.chapterId)
+  const down = proposal.status === 'rejected'
+  // A passage whose sentences are gone from the chapter cannot be taken any more; a whole chapter can, over what came since.
+  const gone = proposal.kind === 'span' && !proposal.stands
+  const back = (accept: boolean): Promise<unknown> => run(async () => {
+    await controller.api.call('proposal.restore', { root, id: proposal.id })
+    if (accept) await controller.api.call('proposal.accept', { root, id: proposal.id })
+    controller.toast('success', accept ? t('采纳了，已写进正文', 'Accepted, and written into the text') : t('放回去了：它又在待处理的提案里', 'Put back: it waits among the proposals again'))
+    onChanged?.()
+  })
+  const when = new Date(proposal.settledAt ?? proposal.createdAt).toLocaleString()
+  return (
+    <article className="nv-proposal nv-proposal-settled">
+      <header className="nv-proposal-head">
+        <Chip tone={down ? 'amber' : 'green'}>{down ? t('已放弃', 'Turned down') : t('已采纳', 'Accepted')}</Chip>
+        <Chip tone={proposal.kind === 'chapter' ? 'violet' : 'blue'}>{proposal.kind === 'chapter' ? t('整章', 'Chapter') : t('片段', 'Passage')}</Chip>
+        {showChapter === true && chapter !== undefined ? (
+          <button type="button" className="nv-link" onClick={() => { controller.setView('write', chapter.id) }}>{t(`第 ${chapter.index} 章 ${chapter.title}`, `Ch. ${chapter.index} ${chapter.title}`)}</button>
+        ) : null}
+        <span className="nv-muted nv-small">{proposal.settledAt !== undefined ? when : t(`提出于 ${when}`, `made ${when}`)}</span>
+      </header>
+      {bare === true ? null : <p className="nv-proposal-instruction">{proposal.instruction}</p>}
+      {proposal.rationale !== undefined ? <p className="nv-muted nv-small">{proposal.rationale}</p> : null}
+      <DiffView before={proposal.before} after={proposal.after} whole={whole} />
+      {down && !proposal.stands ? (
+        <p className="nv-note nv-small">{gone
+          ? t('它要改的那几句已经不在正文里了：放回去也采纳不了。', 'The sentences it changes are no longer in the chapter: put back, it could not be taken.')
+          : t('这一章在它之后改过：采纳它，会用它的整章盖掉之后的改动（之前的正文在“版本”里）。', 'The chapter was changed since: taken, it writes its whole chapter over what came after (the text before is kept under Versions).')}</p>
+      ) : null}
+      <footer className="nv-proposal-foot">
+        <Button size="sm" variant="ghost" onClick={() => { setWhole(value => !value) }}>{whole ? t('只看改动', 'Changes only') : t('看全文对比', 'Full text')}</Button>
+        <span className="nv-spacer" />
+        {down ? (
+          <>
+            <Button size="sm" variant="ghost" icon="undo" busy={busy} disabled={gone} onClick={() => { back(false) }} title={t('放回待处理的提案里，之后再定', 'Back among the waiting proposals, to settle later')}>{t('放回', 'Put back')}</Button>
+            <Button size="sm" variant="primary" icon="check" busy={busy} disabled={gone} onClick={() => { back(true) }}>{t('采纳', 'Accept')}</Button>
+          </>
+        ) : <span className="nv-muted nv-small">{t('要撤回，用这一章的“版本”', 'To undo it, use the chapter\'s Versions')}</span>}
       </footer>
     </article>
   )

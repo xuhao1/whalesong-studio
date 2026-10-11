@@ -2536,6 +2536,40 @@ button.nv-stat:hover {
   border-left-color: var(--nv-brand);
 }
 
+/* The proposals that were turned down for the chapter, folded under the ones that wait. */
+.nv-turned-down {
+  margin-top: 6px;
+}
+
+.nv-turned-down > summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  cursor: pointer;
+  color: var(--nv-text-2);
+  font-size: 12px;
+}
+
+.nv-turned-down > .nv-proposal {
+  margin-top: 8px;
+}
+
+.nv-proposal-settled {
+  opacity: 0.92;
+}
+
+.nv-archive-bar {
+  gap: 8px;
+  align-items: center;
+}
+
+/* Every change that waits for the chapter, settled at once: the row above the cards. */
+.nv-proposals-all {
+  padding: 2px 0 8px;
+  gap: 6px;
+}
+
 .nv-live-proposal {
   display: flex;
   flex-direction: column;

@@ -889,6 +889,7 @@ const CREW_NAMES: Record<string, [string, string]> = {
   architect: ['策划', 'Planner'],
   director: ['导演', 'Director'],
   producer: ['后期', 'Post-production'],
+  writer: ['写手', 'Writer'],
 }
 
 export function crewLabel(role: string, t: Translate): string {

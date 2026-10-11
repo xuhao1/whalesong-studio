@@ -26,7 +26,7 @@ import type {
   TtsProviderKind, TtsSettings, SpeechTrial, PictureGuide, ReferenceAspect, ReferenceShelf,
   AmbiencePreset, AudioCue, AudioLine, AudioScript, BookLock, ChapterMemory, ChapterPlan, ChapterReview, IssueSeverity, CharacterCard, CharacterRole, ComicBoard, ComicPanel, LifeMark, SheetsAsk,
   ChapterVideo, CrewRole, DerivedChapter, DerivedPlan, GateKind, GateState, IllustrationInfo, ImageTrial, JobInfo, SettledSuggestion, ModelRoute, NovelSettings, PictureEdit, PictureWhole, PlaySession, PlayTurn, ProjectManifest, ProjectRef, ProjectState, RecommendedState,
-  Proposal, SearchHit, SearchSource, SoundKind, StageStatus, StageStep, StoryboardDensity, StyleProfile, TextRole, TextStep, VersionInfo, WalkOn, WorkMode, WorldEntry, HistoryKind, HistoryVersion, GlossaryTerm, ChapterTranslation,
+  Proposal, SearchHit, SearchSource, SettledProposal, SoundKind, StageStatus, StageStep, StoryboardDensity, StyleProfile, TextRole, TextStep, VersionInfo, WalkOn, WorkMode, WorldEntry, HistoryKind, HistoryVersion, GlossaryTerm, ChapterTranslation,
 } from './types'
 
 /**
@@ -556,7 +556,12 @@ export interface NovelRpc {
   // ── model work (jobs) ──
   'ai.write': { params: { root: string; chapter?: string; brief?: string; mode?: 'draft' | 'continue'; words?: number; style?: string; /** With no chapter named: the line of the plot to go on with. */ line?: string; /** Pictures to write this pass by, instead of the ones kept on the chapter's plan. */ guides?: PictureGuide[] }; result: JobStarted }
   'ai.reviseSpan': { params: { root: string; chapter: string; start: number; end: number; quote?: string; instruction: string; /** Pictures to rewrite the passage by. */ guides?: PictureGuide[] }; result: JobStarted }
-  'ai.reviseChapter': { params: { root: string; chapter: string; instruction: string; /** Pictures to rewrite it by, in place of the ones kept on its plan. */ guides?: PictureGuide[] }; result: JobStarted }
+  /**
+   * A chapter changed to one instruction. The writer goes through it and changes the places the instruction reaches —
+   * each comes back as a proposal of its own, and nothing else of the chapter is output again. `whole`: the chapter is
+   * written over instead, start to end (one proposal), for a change that is of all of it — its voice, its point of view.
+   */
+  'ai.reviseChapter': { params: { root: string; chapter: string; instruction: string; /** Pictures to revise it by, in place of the ones kept on its plan. */ guides?: PictureGuide[]; whole?: boolean }; result: JobStarted }
   /** Mend what a review found: at the place it quotes (`passage`), or wherever it reaches (`book` — the planner traces it through the chapters and the bible). `note` is what the author wants done about it. Changes come back as proposals. */
   /** `order` — `queue`: after the mendings already asked for, going on from what they leave waiting; `apart` (as before it could be said): at once, on the text as it stands. */
   /** `scope`: `passage` — the place the issue quotes (the planner's choice of place where it quotes none); `place` — the planner settles which place mends it, whatever it quotes; `book` — traced through the book; `chapter` — the chapter written over whole, asked for as such. */
@@ -650,6 +655,10 @@ export interface NovelRpc {
   'ai.index': { params: { root: string }; result: JobStarted }
   'proposal.accept': { params: { root: string; id: string }; result: Proposal }
   'proposal.reject': { params: { root: string; id: string }; result: { ok: boolean } }
+  /** The proposals the author settled, the latest first: what was turned down (the default) or what was accepted, of one chapter or of the book. `total` counts them all; `items` are the latest `limit`. */
+  'proposal.archive': { params: { root: string; chapter?: string; what?: 'rejected' | 'accepted'; limit?: number }; result: { items: SettledProposal[]; total: number } }
+  /** Put a proposal that was turned down back to wait. */
+  'proposal.restore': { params: { root: string; id: string }; result: Proposal }
   'review.resolve': { params: { root: string; chapter: string; issue: string; resolved: boolean }; result: { ok: boolean } }
   /** Throw a chapter's review away. */
   'review.clear': { params: { root: string; chapter: string }; result: { removed: boolean } }

@@ -9,12 +9,12 @@
  * going on to the next asks which way; and a run of chapters can be written,
  * given beats or reviewed in one go.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ChapterDocument } from '../../shared/rpc'
 import { countWords, formatCount, fuzzyFind, normalizeProse, proseOnly } from '../../shared/text'
-import { MAIN_LINE, type ChapterInfo, type JobInfo, type PictureGuide, type ReviewIssue, type TextStep, type VersionInfo } from '../../shared/types'
+import { MAIN_LINE, type ChapterInfo, type JobInfo, type PictureGuide, type ReviewIssue, type TextStep, type VersionInfo, type Proposal } from '../../shared/types'
 import { BatchMatrix, chapterJob, TextBatchDialog, useBatchJob } from '../Batch'
-import { DiffView, ProposalCard } from '../components/ProposalCard'
+import { DiffView, ProposalCard, SettledCard } from '../components/ProposalCard'
 import { ChapterTree } from '../ChapterTree'
 import { TranslateDialog } from '../Translate'
 import { ChapterPortraits } from '../Figures'
@@ -389,6 +389,21 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
   const [inText, setInText] = useState(false)
   const marked = !inText && selection !== undefined && text !== undefined && selected.trim().length > 0 ? selection : undefined
   const proposals = project.proposals.filter(proposal => proposal.chapterId === chapter.id)
+  // The proposals of one round that were all asked the same thing stand together under it.
+  const proposalRounds = useMemo(() => {
+    const rounds: { said?: string; items: Proposal[] }[] = []
+    for (const proposal of proposals) {
+      const last = rounds.at(-1)
+      if (last !== undefined && proposal.batchId !== undefined && last.items[0]!.batchId === proposal.batchId && last.items[0]!.instruction === proposal.instruction) last.items.push(proposal)
+      else rounds.push({ items: [proposal] })
+    }
+    for (const round of rounds) if (round.items.length > 1) round.said = round.items[0]!.instruction
+    return rounds
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project.proposals, chapter.id])
+  // The proposals turned down for this chapter, where the Host keeps any (an older Host says nothing of them).
+  const archive = useLoad(async () => (project.turnedDown ?? 0) > 0 ? await controller.api.call('proposal.archive', { root, chapter: chapter.id, limit: 60 }) : undefined, [root, chapter.id, project.revision, project.turnedDown])
+  const turnedDown = archive.data?.items ?? []
   const openIssues = (doc.data?.review?.issues ?? []).filter(issue => issue.resolved !== true)
   const plan = doc.data?.plan
   const empty = (text ?? '').trim().length === 0
@@ -414,7 +429,8 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
     await controller.refreshJobs()
     setBrief('')
   })
-  const reviseChapter = (): Promise<unknown> | undefined => {
+  /** The chapter changed to what the box says: gone through place by place — or, `whole`, written over start to end. */
+  const reviseChapter = (whole = false): Promise<unknown> | undefined => {
     const instruction = brief.trim()
     if (instruction.length === 0) {
       controller.toast('info', t('先在上面的输入框里写下要怎么改。', 'Say how to change the chapter in the box above first.'))
@@ -423,11 +439,24 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
     return controller.guard(async () => {
       if (!(await settle())) return undefined
       showPanel('proposals')
-      await controller.api.call('ai.reviseChapter', { root, chapter: chapter.id, instruction })
+      await controller.api.call('ai.reviseChapter', { root, chapter: chapter.id, instruction, ...(whole ? { whole: true } : {}) })
       await controller.refreshJobs()
       setBrief('')
     })
   }
+  /** Every proposal that waits for this chapter, taken or turned down in the order they stand in the text. */
+  const settleProposals = (accept: boolean): Promise<unknown> => controller.guard(async () => {
+    let failed = 0
+    for (const proposal of [...proposals].sort((left, right) => (left.at ?? 0) - (right.at ?? 0))) {
+      try {
+        if (accept) await controller.api.call('proposal.accept', { root, id: proposal.id })
+        else await controller.api.call('proposal.reject', { root, id: proposal.id })
+      } catch {
+        failed += 1
+      }
+    }
+    if (failed > 0) controller.toast('error', t(`${failed} 条提案没能处理，正文可能已被改过`, `${failed} proposal(s) could not be applied: the text may have changed`))
+  })
   const reviseSelection = (instruction: string): Promise<unknown> | undefined => {
     if (selection === undefined || text === undefined) return undefined
     const raw = text.slice(selection.start, selection.end)
@@ -585,12 +614,33 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
           <div className="nv-panel-section">
             {revising !== undefined ? (
               <div className="nv-live-proposal">
-                <div className="nv-row"><Spinner size={12} /><span>{jobPulse(revising, t) ?? t('写手正在改写…', 'The writer is revising…')}</span><span className="nv-spacer" /><Button size="sm" variant="ghost" icon="stop" onClick={() => { void controller.cancelJob(revising.id) }}>{t('停止', 'Stop')}</Button></div>
+                <div className="nv-row"><Spinner size={12} /><span>{jobPulse(revising, t) ?? (revising.title === 'amend chapter' ? t('写手在一处处改…', 'The writer is going through the chapter…') : t('写手正在改写…', 'The writer is revising…'))}</span><span className="nv-spacer" /><Button size="sm" variant="ghost" icon="stop" onClick={() => { void controller.cancelJob(revising.id) }}>{t('停止', 'Stop')}</Button></div>
                 {reviseStream.length > 0 ? <div className="nv-prose nv-prose-small">{reviseStream.split('\n').filter(line => line.trim().length > 0).slice(-12).map((line, index) => <p key={index}>{line}</p>)}</div> : null}
               </div>
             ) : null}
-            {proposals.map(proposal => <ProposalCard key={proposal.id} proposal={proposal} />)}
-            {proposals.length === 0 && revising === undefined ? <p className="nv-muted">{t('在正文里选中文字让写手改写，改动先作为提案放在这里。', 'Select text in the chapter to have the writer rework it; the change waits here as a proposal.')}</p> : null}
+            {proposals.length > 1 ? (
+              <div className="nv-row nv-proposals-all">
+                <span className="nv-muted nv-small">{t(`${proposals.length} 处修改在等`, `${proposals.length} changes waiting`)}</span>
+                <span className="nv-spacer" />
+                <Button size="sm" variant="ghost" onClick={() => { confirm.ask(t(`放弃这 ${proposals.length} 处修改？`, `Turn down these ${proposals.length} changes?`), () => { void settleProposals(false) }) }}>{t('全部放弃', 'Reject all')}</Button>
+                <Button size="sm" variant="primary" icon="check" onClick={() => { void settleProposals(true) }}>{t('全部采纳', 'Accept all')}</Button>
+              </div>
+            ) : null}
+            {proposalRounds.map(round => round.said !== undefined ? (
+              // One round of changes to one instruction: what was asked is said once, above its places.
+              <Fragment key={round.items[0]!.id}>
+                <p className="nv-proposal-instruction">{round.said}</p>
+                {round.items.map(proposal => <ProposalCard key={proposal.id} bare proposal={proposal} />)}
+              </Fragment>
+            ) : round.items.map(proposal => <ProposalCard key={proposal.id} proposal={proposal} />))}
+            {proposals.length === 0 && revising === undefined ? <p className="nv-muted">{t('写一句要求点“改这一章”，或在正文里选中一段让写手改写：改动先作为提案放在这里。', 'Write a brief and press Revise, or select a passage for the writer to rework: the changes wait here as proposals.')}</p> : null}
+            {turnedDown.length > 0 ? (
+              // What was turned down for this chapter is kept: a slip of the hand is put back from here.
+              <details className="nv-turned-down">
+                <summary>{t(`放弃过的 ${turnedDown.length} 条`, `${turnedDown.length} turned down`)}<button type="button" className="nv-link" onClick={(event) => { event.preventDefault(); controller.openArchive(chapter.id) }}>{t('在归档里看', 'Open the archive')}</button></summary>
+                {turnedDown.map(proposal => <SettledCard key={proposal.id} proposal={proposal} onChanged={() => { archive.reload() }} />)}
+              </details>
+            ) : null}
           </div>
         ) : null}
 
@@ -700,9 +750,10 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
               ? <Button variant="danger" icon="stop" onClick={() => { void controller.cancelJob(writing.id) }}>{t('停止', 'Stop')}</Button>
               : <Button variant="primary" icon="feather" onClick={() => { write(empty ? 'draft' : 'continue') }}>{empty ? t('写这一章', 'Write it') : t('续写', 'Continue')}</Button>}
             {writing === undefined ? <Button variant="outline" icon="layers" onClick={() => { void save().then(() => { setComparing(true) }) }} title={t('让几个模型各写一稿这一章，并排着看，采纳一稿——正文不动，采纳了才换', 'Have several models write this chapter, read the drafts side by side and take one — the chapter keeps its text until you do')}>{t('对比…', 'Compare…')}</Button> : null}
+            {!empty && writing === undefined ? <Button variant="outline" icon="wand" busy={revising !== undefined && revising.title === 'amend chapter'} disabled={revising !== undefined} onClick={() => { reviseChapter() }} title={t('写手照左边的要求在这一章里一处处改，不重写整章；每一处是一条提案', 'The writer changes this chapter place by place to the brief on the left, without writing it over; each place is a proposal')}>{t('改这一章', 'Revise')}</Button> : null}
             {!empty && writing === undefined ? (
               <Menu icon="chevronDown" variant="outline" size="md" align="end" items={[
-                { label: t('按要求修改整章（生成提案）', 'Revise the whole chapter (as a proposal)'), icon: 'wand', onSelect: reviseChapter },
+                { label: t('整章重写（生成提案）', 'Write the chapter over (as a proposal)'), icon: 'refresh', onSelect: () => { reviseChapter(true) } },
                 { label: t('从头重新起草（旧稿存入版本）', 'Redraft from the top (old text is versioned)'), icon: 'refresh', onSelect: () => { confirm.ask(t('用新稿替换这一章现有的正文？旧稿会存入“版本”。', 'Replace this chapter\'s text with a new draft? The old one is kept under Versions.'), () => { write('draft') }) } },
                 'separator',
                 { label: t('审校这一章', 'Review this chapter'), icon: 'checkCircle', onSelect: () => { showPanel('issues'); void controller.guard(async () => { if (await settle()) { await controller.api.call('ai.review', { root, chapter: chapter.id }); await controller.refreshJobs() } }) } },

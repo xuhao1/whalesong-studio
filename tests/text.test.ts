@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 import { describe, expect, it } from 'vitest'
 import { plainChapterTitle } from '../src/core/pipelines/plot'
-import { changedCore, clip, clipTail, countWords, embeddedImages, estimateTokens, fuzzyFind, occurrences, proseOnly, sentences, slugify } from '../src/shared/text'
+import { changedCore, changedParts, clip, clipTail, countWords, embeddedImages, estimateTokens, fuzzyFind, occurrences, proseOnly, sentences, slugify } from '../src/shared/text'
 
 describe('text helpers', () => {
   it('counts CJK characters and Latin words', () => {
@@ -76,6 +76,45 @@ describe('what a rewriting of a passage changed', () => {
     // Nothing changed, or nothing shared: the pair as given.
     expect(changedCore('甲。乙。', '甲。乙。')).toEqual({ before: '甲。乙。', after: '甲。乙。', start: 0 })
     expect(changedCore('甲。', '全换了。')).toEqual({ before: '甲。', after: '全换了。', start: 0 })
+  })
+
+  it('tells every place a text was changed apart from the others', () => {
+    const was = '甲。乙。丙。\n\n丁。戊。己。\n\n庚。辛。'
+    // Two sentences changed, far apart: two places, each of its own sentence.
+    expect(changedParts(was, '甲。乙改了。丙。\n\n丁。戊。己。\n\n庚改了。辛。')).toEqual([
+      { before: '乙。', after: '乙改了。', start: 2 },
+      { before: '庚。', after: '庚改了。', start: 16 },
+    ])
+    // Something added, something taken out: each with the sentence beside it, so that there is a place to find.
+    expect(changedParts(was, '甲。乙。丙。新的一句。\n\n丁。己。\n\n庚。辛。')).toEqual([
+      { before: '丙。', after: '丙。新的一句。', start: 4 },
+      { before: '丁。戊。', after: '丁。', start: 8 },
+    ])
+    // Changes in sentences that touch are one place.
+    expect(changedParts(was, '甲。乙改。丙改。\n\n丁。戊。己。\n\n庚。辛。')).toEqual([{ before: '乙。丙。', after: '乙改。丙改。', start: 2 }])
+    // A paragraph taken out whole goes with the one before it.
+    expect(changedParts('甲。\n\n乙。\n\n丙。', '甲。\n\n丙。')).toEqual([{ before: '甲。\n\n乙。', after: '甲。', start: 0 }])
+    // Nothing changed: no places. Everything changed: one.
+    expect(changedParts(was, was)).toEqual([])
+    expect(changedParts('甲。', '全换了。')).toEqual([{ before: '甲。', after: '全换了。', start: 0 }])
+    // Put together again, place by place from the end, the places make the changed text of the original.
+    const now = '开头加的。甲。乙改了。丙。\n\n丁。己。\n\n庚。辛。末尾加的。'
+    let made = was
+    for (const part of [...changedParts(was, now)].reverse()) {
+      expect(made.slice(part.start, part.start + part.before.length)).toBe(part.before)
+      made = made.slice(0, part.start) + part.after + made.slice(part.start + part.before.length)
+    }
+    expect(made).toBe(now)
+  })
+
+  it('widens a place until it is found once only, and joins the places that come to touch', () => {
+    // "好。" stands three times: changed alone, the place takes in the sentence before it.
+    const was = '他说：好。她想了想。乙。好。丙。丁。好。'
+    const parts = changedParts(was, '他说：好。她想了想。乙。好的。丙。丁。好。', stretch => occurrences(was, stretch) === 1)
+    expect(parts).toEqual([{ before: '乙。好。', after: '乙。好的。', start: 10 }])
+    // Two of them changed with one sentence between: each widens to that sentence's side, and they do not swallow each other.
+    const both = changedParts('甲。好。乙。丙。好。丁。', '甲。好的。乙。丙。好吧。丁。', stretch => occurrences('甲。好。乙。丙。好。丁。', stretch) === 1)
+    expect(both).toEqual([{ before: '甲。好。', after: '甲。好的。', start: 0 }, { before: '丙。好。', after: '丙。好吧。', start: 6 }])
   })
 
   it('widens what it keeps until it is found once only', () => {

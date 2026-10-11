@@ -86,6 +86,8 @@ export interface StudioSnapshot {
   needs?: { what: Capability; detail?: string; nonce: number }
   /** The part of the settings a link asked for. */
   settingsFocus?: Capability | 'crew' | 'recommended' | 'auto'
+  /** The archive of settled proposals was asked for from elsewhere — of one chapter, where one is named: the Review page opens it. */
+  archiveAsked?: { chapter?: string; nonce: number }
   /** A long job nobody was waiting on just finished, for one notice on screen. */
   jobEnded?: { job: JobInfo; nonce: number }
   /** The form that derives chapters was asked for from elsewhere — a finished derivation in the list of jobs: the Outline opens it. */
@@ -268,6 +270,8 @@ export class StudioController {
   private onShelf = false
   /** Jobs somebody awaits: their outcome reaches the author through that caller. */
   private readonly followed = new Set<string>()
+  /** The jobs somebody started with `run` and waits for: what they came to is that caller's to say. */
+  private readonly awaited = new Set<string>()
   /** Each job's status at the last look, to notice the ones that end. */
   private readonly seen = new Map<string, JobInfo['status']>()
   private readonly since = Date.now()
@@ -980,11 +984,18 @@ export class StudioController {
       if (job.status === 'running' || before === job.status) continue
       // What was already over when this Studio opened is history, and the showrunner reports its own jobs in the conversation.
       const watched = before === 'running' || (before === undefined && Date.parse(job.startedAt) >= this.since - 2000)
-      if (!watched || job.origin !== 'user' || this.followed.has(job.id)) continue
+      if (!watched || job.origin !== 'user') continue
+      // A job whose text is only shown as it comes (the writing page's live line) is not waited for by anybody: what it
+      // came to is still said. One started with `run` is its caller's to report.
+      if (job.status === 'done' && !this.awaited.has(job.id) && (job.kind === 'write' || job.kind === 'revise')) {
+        // A chapter gone through place by place: how many places changed — or that none did, and why — is what the author asked.
+        // A text written anew whose pictures had to be seen to: said, since the Studio did that by itself.
+        if ((job.kind === 'revise' && job.title === 'amend chapter') || (job.result?.output as { figures?: unknown } | undefined)?.figures !== undefined) this.set({ jobEnded: { job, nonce: Date.now() } })
+        continue
+      }
+      if (this.followed.has(job.id)) continue
       if (job.status === 'failed') this.report(new Error(job.error ?? 'failed'))
       else if (job.status === 'done' && (job.kind === 'audio' || job.kind === 'comic' || job.kind === 'batch' || (job.kind === 'review' && job.title === 'recheck issues') || (job.kind === 'derive' && job.title === 'plans follow text') || (job.kind === 'bible' && (job.title === 'sift cast' || job.title === 'settle suggestions')))) this.set({ jobEnded: { job, nonce: Date.now() } })
-      // A text written anew whose pictures had to be seen to: said, since the Studio did that by itself.
-      else if (job.status === 'done' && (job.kind === 'write' || job.kind === 'revise') && (job.result?.output as { figures?: unknown } | undefined)?.figures !== undefined) this.set({ jobEnded: { job, nonce: Date.now() } })
     }
   }
 
@@ -996,6 +1007,7 @@ export class StudioController {
    */
   async run<M extends JobMethod>(method: M, params: RpcParams<M>, onText?: (text: string, info: JobInfo) => void): Promise<JobInfo> {
     const started = await this.api.call(method, params) as JobStarted
+    this.awaited.add(started.jobId)
     void this.refreshJobs()
     try {
       return await this.follow(started.jobId, onText).done
@@ -1177,6 +1189,12 @@ export class StudioController {
     const { needs: _needs, settingsFocus: _focus, ...rest } = this.snapshot
     this.snapshot = { ...rest, view: 'settings', ...(focus !== undefined ? { settingsFocus: focus } : {}) }
     this.emit()
+  }
+
+  /** Go to the proposals that were settled — what was turned down, to be read again and put back. */
+  openArchive(chapter?: string): void {
+    this.navigated = true
+    this.set({ view: 'review', archiveAsked: { ...(chapter !== undefined ? { chapter } : {}), nonce: Date.now() } })
   }
 
   /** The settings showed what a link asked for. */

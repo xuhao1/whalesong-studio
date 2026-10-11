@@ -1089,6 +1089,20 @@ export interface Proposal {
   figures?: FiguresKept
   createdBy: 'agent' | 'user'
   createdAt: Timestamp
+  /** When it was accepted or turned down; absent while it waits, and on one settled before this was kept. */
+  settledAt?: Timestamp
+}
+
+/**
+ * A proposal the author settled, as the archive shows it: one turned down can be put back to wait — a slip of the hand
+ * is not the end of it.
+ */
+export interface SettledProposal extends Proposal {
+  /**
+   * Whether it could still be taken as it is: a passage — the sentences it replaces are still in the chapter; a whole
+   * chapter — the chapter reads as it did when the proposal was made (taken otherwise, it writes over what came since).
+   */
+  stands: boolean
 }
 
 /**
@@ -1743,7 +1757,8 @@ export type JobKind =
 
 /** One piece of work a role of the crew did inside a job. */
 export interface CrewRun {
-  role: CrewRole
+  /** One of the crew — or the writer, where the writer went through a text as an agent. */
+  role: CrewRole | 'writer'
   /** What it was asked to do, in a few words. */
   label: string
   /** `agent`: on the agent loop, with tools. `call`: one request — the role is set that way, or cannot run as an agent, or its agent run fell through. */
@@ -2593,6 +2608,8 @@ export interface ProjectState {
   derived?: { chapters: number; at: string }
   suggestions: Suggestion[]
   proposals: Proposal[]
+  /** How many proposals the author turned down are kept, to be looked at again and put back (`proposal.archive`); absent where none is, and on a Host from before they were shown. */
+  turnedDown?: number
   presence: CastPresence[]
   /** The chapters whose text is a translation made here, by id: what each was translated from and into. Left out where there is none. */
   translations?: Record<string, ChapterTranslation>
