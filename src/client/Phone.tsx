@@ -9,11 +9,14 @@
  * small screen, and where the page was opened through the door. Two: the door
  * itself — an address on the local network through which a phone reaches the
  * page DSH serves on this computer (`host/remote.ts`), opened and closed here.
+ * Open, it stays open; its link is good for one run of DSH. Left open when DSH
+ * was stopped, it is opened again — with a new link — by this page when DSH is
+ * back ({@link useKeptDoor}), and said.
  */
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { qrPath } from '../shared/qr'
 import type { RemoteStatus } from '../shared/rpc'
-import { Button, Modal, Spinner, useAction, useLoad, useStudio, useT } from './ui'
+import { Button, cx, Modal, Spinner, useAction, useLoad, useStudio, useT } from './ui'
 
 const KEY = 'novel-studio:cover'
 /** Narrower than this, DSH's sidebar leaves the Studio no room. */
@@ -81,16 +84,58 @@ export function CoverSwitch() {
     : <Button variant="ghost" size="sm" icon="maximize" onClick={() => { cover.set(true) }} title={t('工坊铺满屏幕，盖住 DSH 的边栏', 'The Studio over the whole screen, DSH\'s sidebar covered')}>{t('铺满', 'Fill')}</Button>
 }
 
+/** Whether the door stands open, as this page last heard: an open door is never one the page does not show. */
+let doorOpen = false
+const doorWatchers = new Set<() => void>()
+const heard = (status: RemoteStatus | undefined): void => {
+  const open = status?.running === true
+  if (open === doorOpen) return
+  doorOpen = open
+  for (const watcher of doorWatchers) watcher()
+}
+const useDoorOpen = (): boolean => useSyncExternalStore((watcher) => {
+  doorWatchers.add(watcher)
+  return () => { doorWatchers.delete(watcher) }
+}, () => doorOpen, () => false)
+
+/** Asked once for each time the page is loaded: DSH started anew is a page loaded anew. */
+let askedOfDoor = false
+
+/**
+ * The door the author left open, opened again. Its link is good for one run of DSH: when DSH has been started anew
+ * the door is shut and its link dead, and only the page of this computer — signed in to DSH — can open another. So
+ * the page does, once, where the author wanted the door kept open; and says so, the link being a new one.
+ */
+export function useKeptDoor(ready: boolean): void {
+  const { controller } = useStudio()
+  const t = useT()
+  useEffect(() => {
+    if (!ready || askedOfDoor) return
+    askedOfDoor = true
+    void (async () => {
+      const status = await controller.api.call('remote.status', {})
+      heard(status)
+      // (A page that came through the door finds it open; a Host from before the door was kept answers without `kept`.)
+      if (status.kept !== true || status.running || !status.possible || throughDoor()) return
+      heard(await controller.api.call('remote.open', {}))
+      // (Nobody pressed anything for this, and the phone has to be given the new link: it stays long enough to be read.)
+      controller.toast('info', t('手机入口又开了。DSH 重启过，链接换了：点手机图标扫新的码', 'The door for a phone is open again. DSH was restarted, so its link is a new one: scan it from the phone icon'), 15_000)
+    })().catch(() => {})
+  }, [controller, t, ready])
+}
+
 /**
  * The way to the door's dialog: an icon in a bar — wherever the Studio is shown, its own page or a tab beside a
  * conversation. (It used to stand on the page alone, and was not to be found by an author who works in the tab.)
+ * Lit while the door stands open.
  */
 export function RemoteButton() {
   const t = useT()
   const [open, setOpen] = useState(false)
+  const lit = useDoorOpen()
   return (
     <>
-      <Button variant="ghost" size="sm" icon="phone" onClick={() => { setOpen(true) }} title={t('在手机上操作工坊…', 'Work the Studio from a phone…')} />
+      <Button variant="ghost" size="sm" icon="phone" className={cx(lit && 'is-active')} onClick={() => { setOpen(true) }} title={lit ? t('手机入口开着…', 'The door for a phone is open…') : t('在手机上操作工坊…', 'Work the Studio from a phone…')} />
       {open ? <RemoteDialog onClose={() => { setOpen(false) }} /> : null}
     </>
   )
@@ -122,10 +167,11 @@ export function RemoteDialog({ onClose }: { onClose: () => void }) {
   const [status, setStatus] = useState<RemoteStatus | undefined>(undefined)
   const { busy, run } = useAction()
   const now = status ?? loaded.data
+  useEffect(() => { heard(now) }, [now])
   const [pick, setPick] = useState(0)
   const turn = (open: boolean): Promise<unknown> => run(async () => { setStatus(await controller.api.call(open ? 'remote.open' : 'remote.close', {})) })
+  const keep = (on: boolean): Promise<unknown> => run(async () => { setStatus(await controller.api.call('remote.keep', { keep: on })) })
   const url = now?.urls[Math.min(pick, Math.max(0, (now?.urls.length ?? 1) - 1))]
-  const until = now?.until !== undefined ? new Date(now.until).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : undefined
   return (
     <Modal
       title={t('在手机上操作工坊', 'Work the Studio from a phone')}
@@ -148,7 +194,7 @@ export function RemoteDialog({ onClose }: { onClose: () => void }) {
           <p>{t('同一个 Wi-Fi 下，用手机浏览器打开这台电脑上的 DSH，工坊铺满屏幕。', 'On the same Wi-Fi, a phone\'s browser opens the DSH of this computer, the Studio filling its screen.')}</p>
           <ul className="nv-plain-list nv-small">
             <li>{t('入口开着时，拿到链接的人能操作这台电脑上的整个 DSH（对话、工具、设置），不只是工坊——不要给别人。', 'While it is open, whoever has the link works all of DSH on this computer (conversations, tools, settings), not the Studio alone — give it to nobody.')}</li>
-            <li>{t(`链接每次打开都换；${12} 小时后自己关，重启 DSH 也会关。工坊更新后点“重启”不会关它，链接照旧。`, 'The link is a new one each time; it closes by itself after 12 hours, and when DSH restarts. The Studio\'s own "Restart" after an update leaves it open, the link as it was.')}</li>
+            <li>{t('开了就一直开着，到你关掉。每次重启 DSH，链接换一个；工坊自己的“重启”不换。', 'Once open it stays open until you close it. Each time DSH is restarted its link is a new one; the Studio\'s own "Restart" leaves it as it was.')}</li>
             <li>{t('局域网里不加密。', 'Nothing is encrypted on the local network.')}</li>
           </ul>
         </>
@@ -169,7 +215,11 @@ export function RemoteDialog({ onClose }: { onClose: () => void }) {
                 {now.urls.some(other => /\.local$/u.test(new URL(other).hostname)) ? t('（带 .local 的那个，路由器给电脑换了地址也还能用）', ' (the one ending in .local keeps working when the router gives this computer another address)') : null}
               </p>
             ) : null}
-            <p className="nv-small nv-muted">{t(`开到 ${until ?? ''}；工坊更新后点“重启”不会关它。拿到链接的人能操作这台电脑上的整个 DSH。`, `Open until ${until ?? ''}; the Studio's "Restart" after an update leaves it open. Whoever has the link works all of DSH on this computer.`)}</p>
+            <p className="nv-small nv-muted">{t('一直开着，到你关掉。这个链接用到 DSH 下一次重启。拿到它的人能操作这台电脑上的整个 DSH。', 'Open until you close it. This link is good until DSH is next restarted. Whoever has it works all of DSH on this computer.')}</p>
+            <label className="nv-check nv-small" title={t('要在这台电脑上打开工坊，它才开得了：手机经它用的是这个网页的登录', 'It takes the Studio opened on this computer: a phone goes through it on this page\'s sign-in')}>
+              <input type="checkbox" checked={now.kept === true} disabled={busy} onChange={(event) => { void keep(event.target.checked) }} />
+              <span>{t('DSH 重启后自己再开，链接换新的', 'Opened again after DSH restarts, with a new link')}</span>
+            </label>
           </div>
         </div>
       ) : null}

@@ -145,7 +145,7 @@ export class NovelService extends Service {
     ctx.effect(() => () => { this.core.dispose(); stopLocalWorkers() }, 'novel: studio engine')
     this.share = new ShareServer(this.core, (message, error) => { this.log(message, error) })
     ctx.effect(() => () => { void this.share.close().catch(() => {}) }, 'novel: reader for other devices')
-    this.remote = new RemoteDoor((message, error) => { this.log(message, error) })
+    this.remote = new RemoteDoor((message, error) => { this.log(message, error) }, undefined, join(this.core.settings.folder, 'phone-door.json'))
     // (Open while the Host half before this one was replaced: opened again as it was — a phone at work keeps its link.)
     void this.remote.resume().catch(() => {})
     ctx.effect(() => () => { void this.remote.park().catch(() => {}) }, 'novel: the door for a phone')

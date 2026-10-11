@@ -16,18 +16,21 @@ import { Button, useAction, useProject, useStudio, useT } from './ui'
 /** A picture given to steer by is sent no larger than this on its long edge: enough for a model to read, small enough to send. */
 const LONG_EDGE = 2048
 
+/** Bytes as they are sent to the Host: base64, made a stretch at a time (a whole picture at once is too many arguments). */
+export function base64Of(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer)
+  let text = ''
+  for (let at = 0; at < bytes.length; at += 0x8000) text += String.fromCharCode(...bytes.subarray(at, at + 0x8000))
+  return btoa(text)
+}
+
 /**
  * A picture file as it is sent to the Host: scaled down where it is very large, as JPEG (or PNG where it has transparency to keep).
  * @param asIs - up to how many bytes it goes as it is, and how long its long edge may be otherwise: a picture to steer
  *   by is only read; one that becomes a picture of the book is kept as fine as it came.
  */
 export async function encoded(file: File, asIs = 1_500_000, longEdge = LONG_EDGE): Promise<{ mediaType: string; data: string }> {
-  const base64 = (buffer: ArrayBuffer): string => {
-    const bytes = new Uint8Array(buffer)
-    let text = ''
-    for (let at = 0; at < bytes.length; at += 0x8000) text += String.fromCharCode(...bytes.subarray(at, at + 0x8000))
-    return btoa(text)
-  }
+  const base64 = base64Of
   const plain = async (): Promise<{ mediaType: string; data: string }> => ({ mediaType: file.type, data: base64(await file.arrayBuffer()) })
   // A small picture of a kind the Host takes goes as it is; an animation is never redrawn.
   if (file.type === 'image/gif' || (file.size <= asIs && ['image/png', 'image/jpeg', 'image/webp'].includes(file.type))) return await plain()

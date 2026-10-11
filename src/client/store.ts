@@ -1110,12 +1110,13 @@ export class StudioController {
     this.set({ settings: taking(await this.api.call('setup.dismiss', {})) })
   }
 
-  toast(kind: Toast['kind'], text: string): void {
+  /** @param stay - how long it stays, in milliseconds, where it says something to act on that nobody asked for just now. */
+  toast(kind: Toast['kind'], text: string, stay?: number): void {
     const id = ++this.toastSeq
     this.set({ toasts: [...this.snapshot.toasts, { id, kind, text }].slice(-4) })
     setTimeout(() => {
       if (!this.disposed) this.set({ toasts: this.snapshot.toasts.filter(toast => toast.id !== id) })
-    }, kind === 'error' ? 8000 : 3500)
+    }, stay ?? (kind === 'error' ? 8000 : 3500))
   }
 
   dismissToast(id: number): void {

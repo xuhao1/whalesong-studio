@@ -19,7 +19,7 @@ import {
   Button, CrewRuns, cx, Empty, Menu, Modal, OverlayRootProvider, Popover, Progress, Spinner, StudioProvider, ThoughtButton, Toasts, useAction, useConfirm, useSnapshot, useStudio, useT,
   type StudioHost, type Translate,
 } from './ui'
-import { CoverProvider, CoverSwitch, RemoteButton, useCover, useCovering } from './Phone'
+import { CoverProvider, CoverSwitch, RemoteButton, useCover, useCovering, useKeptDoor } from './Phone'
 import { BibleView } from './views/Bible'
 import { CastView } from './views/Cast'
 import { HomeView, Onboarding, useRemoveBook } from './views/Home'
@@ -283,6 +283,7 @@ function Shell() {
   const view = useSnapshot(snapshot => snapshot.view)
   const lock = useSnapshot(snapshot => snapshot.lock)
   const [searching, setSearching] = useState(false)
+  useKeptDoor(status !== 'loading' && status !== 'error')
 
   if (status === 'loading') return <div className="nv-center"><Spinner size={20} /></div>
   if (status === 'error') {

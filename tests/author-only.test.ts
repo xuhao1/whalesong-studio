@@ -5,8 +5,10 @@
  * Bringing a file of this computer into the book as a picture, and saying
  * what a picture of the book is for, are done by the author where the picture
  * is shown. Neither the showrunner nor the crew has a tool for either — the
- * author's word (2026-10-11: "不要给总编这个权限"). This reads the sources of
- * everything an agent can call and fails where one of them reaches for it.
+ * author's word (2026-10-11: "不要给总编这个权限"). Setting a picture straight
+ * by hand (cut, turned) is of the same kind: the picture that comes of it is
+ * bytes handed in from the page. This reads the sources of everything an agent
+ * can call and fails where one of them reaches for any of these.
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
@@ -22,11 +24,11 @@ function sources(dir: string): string[] {
 }
 
 describe('what only the author does', () => {
-  it('gives no agent a way to bring a file in as a picture, or to say what a picture is for', () => {
+  it('gives no agent a way to bring a file in as a picture, to say what a picture is for, or to hand in one cut and turned', () => {
     // The showrunner's tools, and the tools the crew's roles are given.
     const files = [...sources(join(ROOT, 'agent')), join(ROOT, 'core', 'crew.ts')]
     expect(files.length).toBeGreaterThan(5)
-    const reaching = files.filter(file => /\b(importPicture|usePictureAs|refilePicture|takeDown)\b|image\.(import|use)\b/.test(readFileSync(file, 'utf8')))
+    const reaching = files.filter(file => /\b(importPicture|usePictureAs|refilePicture|takeDown|adjustPicture)\b|image\.(import|use|adjust)\b/.test(readFileSync(file, 'utf8')))
     expect(reaching.map(file => file.slice(ROOT.length + 1))).toEqual([])
   })
 })

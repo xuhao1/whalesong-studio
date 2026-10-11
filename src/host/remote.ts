@@ -14,11 +14,15 @@
  *
  * What comes through the door is all of DSH — conversations, tools, settings —
  * not the Studio alone: the link is to be given to nobody else. It is opened
- * by the author, for some hours, and is not remembered: a restart of DSH closes
- * it. The Studio's own Host half being replaced while DSH runs (an update taken
- * in with "Restart") does not: an open door is handed to the Host half that
- * comes next — the same link, the same hours — so that a phone at work is not
- * shut out by every release.
+ * by the author and stays open until they close it. Its link holds for as long
+ * as DSH runs and no longer: the token is made anew each time DSH starts, and
+ * is kept nowhere but in this process. What is remembered across a restart is
+ * only that the author wants the door open (`keep`): the Studio's page of this
+ * computer then opens it again — with a new link — once DSH is back, since
+ * only that page has the sign-in a door hands on. The Studio's own Host half
+ * being replaced while DSH runs (an update taken in with "Restart") changes
+ * nothing: an open door is handed to the Host half that comes next, the same
+ * link, so that a phone at work is not shut out by every release.
  *
  * Meant to be taken away again once DSH can be reached from a phone by itself.
  */
@@ -28,12 +32,13 @@ import { connect } from 'node:net'
 import type { Duplex } from 'node:stream'
 import type { RemoteStatus } from '../shared/rpc'
 import { errorMessage } from '../core/util/async'
+import { readJson, removePath, writeJson } from '../core/util/fs'
 import { addresses } from './share'
 
 export const DEFAULT_REMOTE_PORT = 4329
 const PORT_TRIES = 20
-/** How long the door stays open where the author did not close it. */
-export const REMOTE_HOURS = 12
+/** How long a device keeps the door's cookie: the token it holds ends sooner — when DSH is started anew, or the door closed. */
+const COOKIE_DAYS = 30
 const COOKIE = 'nv-door'
 /**
  * Readable by the page, and saying nothing but that it came through the door — the door's port, so that a page of the
@@ -106,19 +111,40 @@ export class RemoteDoor {
   private token = ''
   private target: RemoteTarget | undefined
   private since: number | undefined
-  private closing: NodeJS.Timeout | undefined
   private failure: string | undefined
   private readonly sockets = new Set<Duplex>()
+  private wanted: boolean | undefined
 
-  /** @param host - the interface to listen on: every one, so that a device on the network reaches it. */
-  constructor(private readonly log: (message: string, error?: unknown) => void, private readonly host = '0.0.0.0') {}
+  /**
+   * @param host - the interface to listen on: every one, so that a device on the network reaches it.
+   * @param note - the small file that remembers the author wants the door open; left out, nothing is remembered.
+   */
+  constructor(private readonly log: (message: string, error?: unknown) => void, private readonly host = '0.0.0.0', private readonly note?: string) {}
 
-  status(possible: boolean): RemoteStatus {
+  /**
+   * Whether the author left the door to be open: after a restart of DSH it is then opened again, with a new link, by
+   * the Studio's page of this computer. Never the link itself — that is not kept.
+   */
+  async kept(): Promise<boolean> {
+    if (this.wanted === undefined) this.wanted = this.note === undefined ? false : (await readJson<{ keep?: unknown }>(this.note).catch(() => undefined))?.keep === true
+    return this.wanted
+  }
+
+  /** Remember that the door is to be open across restarts of DSH — or, `false`, that it is not. */
+  async keep(on: boolean): Promise<void> {
+    this.wanted = on
+    if (this.note === undefined) return
+    if (on) await writeJson(this.note, { keep: true })
+    else await removePath(this.note).catch(() => {})
+  }
+
+  async status(possible: boolean): Promise<RemoteStatus> {
     const running = this.server !== undefined && this.port !== undefined
     return {
       possible,
       running,
-      ...(running ? { port: this.port!, urls: addresses().map(address => `http://${address}:${this.port}/?k=${this.token}`), since: new Date(this.since!).toISOString(), until: new Date(this.since! + REMOTE_HOURS * 3_600_000).toISOString() } : { urls: [] }),
+      kept: await this.kept(),
+      ...(running ? { port: this.port!, urls: addresses().map(address => `http://${address}:${this.port}/?k=${this.token}`), since: new Date(this.since!).toISOString() } : { urls: [] }),
       ...(this.failure !== undefined ? { error: this.failure } : {}),
     }
   }
@@ -143,7 +169,7 @@ export class RemoteDoor {
   }
 
   /**
-   * Take up a door the Host half before this one left open: the same port and link, for what is left of its hours.
+   * Take up a door the Host half before this one left open: the same port and link.
    * @returns whether there was one.
    */
   async resume(): Promise<boolean> {
@@ -151,7 +177,7 @@ export class RemoteDoor {
     slot[SLOT] = undefined
     if (left === undefined || this.server !== undefined) return false
     const now = Date.now()
-    if (now - left.at > TAKE_UP_WITHIN || now >= left.since + REMOTE_HOURS * 3_600_000) return false
+    if (now - left.at > TAKE_UP_WITHIN) return false
     this.target = left.target
     this.failure = undefined
     // (The same port, or the link the phone holds leads nowhere. The Host half that left it may still be letting
@@ -189,8 +215,6 @@ export class RemoteDoor {
     }
     this.server = server
     this.since = since
-    this.closing = setTimeout(() => { void this.close() }, Math.max(1000, since + REMOTE_HOURS * 3_600_000 - Date.now()))
-    this.closing.unref()
   }
 
   async close(): Promise<void> {
@@ -200,8 +224,6 @@ export class RemoteDoor {
     this.target = undefined
     this.token = ''
     this.since = undefined
-    if (this.closing !== undefined) clearTimeout(this.closing)
-    this.closing = undefined
     if (server === undefined) return
     for (const socket of this.sockets) socket.destroy()
     this.sockets.clear()
@@ -216,10 +238,10 @@ export class RemoteDoor {
     if (key !== null && response !== undefined) {
       if (!same(key, this.token)) {
         response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' })
-        response.end('This link is no longer good. Open the door again in the Studio and use the new one.')
+        response.end('This link is no longer good: it is a new one each time DSH is started. Open the Studio on the computer and use the one it shows now.')
         return false
       }
-      const life = `Max-Age=${REMOTE_HOURS * 3600}; Path=/; SameSite=Lax`
+      const life = `Max-Age=${COOKIE_DAYS * 86_400}; Path=/; SameSite=Lax`
       response.writeHead(303, {
         'set-cookie': [`${COOKIE}=${this.token}; HttpOnly; ${life}`, `${MARK}=${this.port ?? 1}; ${life}`],
         'cache-control': 'no-store',

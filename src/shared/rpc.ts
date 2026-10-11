@@ -25,7 +25,7 @@ import type {
   UsageSummary,
   TtsProviderKind, TtsSettings, SpeechTrial, PictureGuide, ReferenceAspect, ReferenceShelf,
   AmbiencePreset, AudioCue, AudioLine, AudioScript, BookLock, ChapterMemory, ChapterPlan, ChapterReview, IssueSeverity, CharacterCard, CharacterRole, ComicBoard, ComicPanel, LifeMark, SheetsAsk,
-  ChapterVideo, CrewRole, GateKind, GateState, IllustrationInfo, ImageTrial, JobInfo, SettledSuggestion, ModelRoute, NovelSettings, PictureWhole, PlaySession, PlayTurn, ProjectManifest, ProjectRef, ProjectState, RecommendedState,
+  ChapterVideo, CrewRole, GateKind, GateState, IllustrationInfo, ImageTrial, JobInfo, SettledSuggestion, ModelRoute, NovelSettings, PictureEdit, PictureWhole, PlaySession, PlayTurn, ProjectManifest, ProjectRef, ProjectState, RecommendedState,
   Proposal, SearchHit, SearchSource, SoundKind, StageStatus, StageStep, StoryboardDensity, StyleProfile, TextRole, TextStep, VersionInfo, WalkOn, WorkMode, WorldEntry, HistoryKind, HistoryVersion, GlossaryTerm, ChapterTranslation,
 } from './types'
 
@@ -180,8 +180,11 @@ export interface RemoteStatus {
   /** Addresses a device on the same network opens, the likeliest first. Each carries the door's token. */
   urls: string[]
   since?: string
-  /** When it closes by itself. */
-  until?: string
+  /**
+   * The author wants it open: when DSH has been started anew, the Studio's page of this computer opens it again — with
+   * a new link, the old one being good for one run of DSH only.
+   */
+  kept?: boolean
   error?: string
 }
 
@@ -738,6 +741,14 @@ export interface NovelRpc {
   /** Say what a picture of the book is for: taken down from whoever held it, hung where it is said to belong, filed as that. */
   'image.use': { params: { root: string; picture: string; as: 'portrait' | 'sheet' | 'art' | 'chapter' | 'gallery'; target?: string; scene?: string; front?: boolean }; result: { image: IllustrationInfo; held: string[]; released: string[]; spare?: boolean } }
   'image.place': { params: { root: string; picture: string; chapter: string; after?: number; quote?: string; alt?: string }; result: { chapter: string; after: number } }
+  /**
+   * A picture set straight by hand — turned, mirrored, a part of it kept ({@link PictureEdit}): what came of it, made
+   * on the page from the picture's own pixels (`data`, of `mediaType`), is kept as a picture of its own and stands
+   * where the picture stood, which stays in the book. Of a picture that was itself made this way, the pixels are those
+   * of the one it was made of (`from`), and what is made stands in for the earlier one; with nothing done (`edit`
+   * empty, no `data`) the hand-work is undone (`restored`). The author's, on the page: no tool does this.
+   */
+  'image.adjust': { params: { root: string; picture: string; from?: string; edit: PictureEdit; mediaType?: string; data?: string }; result: { image: IllustrationInfo; held: string[]; restored?: boolean; /** The earlier one it stands in for, taken out of the book — */ dropped?: string; /** — or kept, for the chapters that show it. */ shown?: string[] } }
   /** `released`: whose picture it was — the cards and entries it was taken off, by name. Absent from a Host before the picture was taken off them. */
   /** Take a picture out of the book — by the id of its record, or by its path where it has none: its file, its record, and off every card and entry that shows it (`released`: whose it was). */
   'image.delete': { params: { root: string; id?: string; path?: string; /** Several at once, by path. */ paths?: string[] }; result: { ok: boolean; released?: string[]; /** How many pictures went, where several were named. */ removed?: number } }
@@ -843,10 +854,14 @@ export interface NovelRpc {
 
   // ── reading on other devices ──
   'share.status': { params: Record<string, never>; result: ShareStatus }
-  /** The door for working the Studio from a phone. `open` / `close` it; it is never remembered across a restart. */
+  /**
+   * The door for working the Studio from a phone. `open` it and it stays open until it is `close`d; its link holds for
+   * one run of DSH. What a restart of DSH keeps is that it is wanted open (`keep`; `open` says so, `close` takes it back).
+   */
   'remote.status': { params: Record<string, never>; result: RemoteStatus }
   'remote.open': { params: Record<string, never>; result: RemoteStatus }
   'remote.close': { params: Record<string, never>; result: RemoteStatus }
+  'remote.keep': { params: { keep: boolean }; result: RemoteStatus }
   /** Switch the reader for other devices on or off, share or stop sharing a book, move it to another port, or replace its address (`renew`) so earlier links stop working. */
   'share.update': { params: { enabled?: boolean; book?: { root: string; shared: boolean; mode?: 'read' | 'edit' }; port?: number; renew?: boolean }; result: ShareStatus }
 

@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 import { createServer, type IncomingMessage, type Server } from 'node:http'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { connect } from 'node:net'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { loopbackPort, RemoteDoor, signInOf } from '../src/host/remote'
 
@@ -72,9 +75,9 @@ describe('the door through which a phone works the Studio', () => {
   })
 
   it('lets in who has the link, and hands every request on as this computer\'s browser would send it', async () => {
-    expect(door.status(true)).toMatchObject({ possible: true, running: false, urls: [] })
+    expect(await door.status(true)).toMatchObject({ possible: true, running: false, urls: [] })
     await door.open({ port: target, cookie: 'dsh-auth-x=signed' }, 0)
-    const status = door.status(true)
+    const status = await door.status(true)
     expect(status.running).toBe(true)
     expect(status.urls.length).toBeGreaterThan(0)
     const link = new URL(status.urls[0]!)
@@ -144,15 +147,15 @@ describe('the door through which a phone works the Studio', () => {
 
     // Closed: the link is dead, and the next one is another.
     await door.close()
-    expect(door.status(true).running).toBe(false)
+    expect((await door.status(true)).running).toBe(false)
     await expect(fetch(`${base}/`, { headers: { cookie: held } })).rejects.toThrow()
     await door.open({ port: target, cookie: 'dsh-auth-x=signed' }, 0)
-    expect(new URL(door.status(true).urls[0]!).searchParams.get('k')).not.toBe(token)
+    expect(new URL((await door.status(true)).urls[0]!).searchParams.get('k')).not.toBe(token)
   })
 
-  it('is handed to the Host half that comes next when the Studio is restarted: the same link, the same hours', async () => {
+  it('is handed to the Host half that comes next when the Studio is restarted: the same link', async () => {
     await door.open({ port: target, cookie: 'dsh-auth-x=signed' }, 0)
-    const before = door.status(true)
+    const before = await door.status(true)
     const token = new URL(before.urls[0]!).searchParams.get('k')!
     const held = `nv-door=${token}`
     const base = `http://127.0.0.1:${before.port}`
@@ -160,15 +163,15 @@ describe('the door through which a phone works the Studio', () => {
 
     // The Host half goes: the door is shut, and what it was is left for the next one.
     await door.park()
-    expect(door.status(true).running).toBe(false)
+    expect((await door.status(true)).running).toBe(false)
     await expect(fetch(`${base}/page`, { headers: { cookie: held } })).rejects.toThrow()
 
     // The next Host half takes it up: the port, the link and the time it has been open are as they were.
     const next = new RemoteDoor(() => {}, '127.0.0.1')
     try {
       expect(await next.resume()).toBe(true)
-      const after = next.status(true)
-      expect([after.running, after.port, after.since, after.until]).toEqual([true, before.port, before.since, before.until])
+      const after = await next.status(true)
+      expect([after.running, after.port, after.since]).toEqual([true, before.port, before.since])
       expect(new URL(after.urls[0]!).searchParams.get('k')).toBe(token)
       const through = await fetch(`${base}/page`, { headers: { cookie: held } })
       expect([through.status, await through.text()]).toEqual([200, 'GET /page '])
@@ -186,5 +189,60 @@ describe('the door through which a phone works the Studio', () => {
     await door.park()
     await door.open({ port: target, cookie: 'dsh-auth-x=signed' }, 0)
     expect(await new RemoteDoor(() => {}, '127.0.0.1').resume()).toBe(false)
+  })
+
+  it('stays open until it is closed, and remembers across a restart of DSH only that it is wanted — never its link', async () => {
+    const folder = await mkdtemp(join(tmpdir(), 'nv-door-'))
+    const note = join(folder, 'phone-door.json')
+    const first = new RemoteDoor(() => {}, '127.0.0.1', note)
+    let second: RemoteDoor | undefined
+    try {
+      // Nothing is wanted where nothing was said; a door without a note remembers nothing.
+      expect(await first.kept()).toBe(false)
+      expect((await door.status(true)).kept).toBe(false)
+      await door.keep(true)
+      expect(await new RemoteDoor(() => {}, '127.0.0.1').kept()).toBe(false)
+
+      await first.open({ port: target, cookie: 'dsh-auth-x=signed' }, 0)
+      await first.keep(true)
+      const open = await first.status(true)
+      const token = new URL(open.urls[0]!).searchParams.get('k')!
+      // It says since when it is open, and no longer when it would close: it does not, by itself.
+      expect([open.running, open.kept, typeof open.since, 'until' in open]).toEqual([true, true, 'string', false])
+      // What is on disk is the wish alone.
+      const written = await readFile(note, 'utf8')
+      expect(JSON.parse(written)).toEqual({ keep: true })
+      expect(written).not.toContain(token)
+      // The cookie a device is given outlives a day: it is the token that ends, with the run of DSH.
+      const let_in = await fetch(`http://127.0.0.1:${open.port}/?k=${token}`, { redirect: 'manual' })
+      expect(let_in.status).toBe(303)
+      expect(let_in.headers.getSetCookie().join('\n')).toMatch(/nv-door=.*Max-Age=2592000/)
+
+      // DSH is stopped and started: nothing of the door is left in the process. The door that comes after knows it
+      // is wanted, stands shut until the page of this computer opens it — and its link is another.
+      await first.close()
+      second = new RemoteDoor(() => {}, '127.0.0.1', note)
+      expect(await second.resume()).toBe(false)
+      expect(await second.status(true)).toMatchObject({ running: false, kept: true, urls: [] })
+      await second.open({ port: target, cookie: 'dsh-auth-x=signed; dsh-run=second' }, 0)
+      const again = await second.status(true)
+      const fresh = new URL(again.urls[0]!).searchParams.get('k')!
+      expect(fresh).not.toBe(token)
+      // The old link is refused, and told why; the new one hands on with the sign-in of the page that opened it.
+      const stale = await fetch(`http://127.0.0.1:${again.port}/?k=${token}`, { redirect: 'manual' })
+      expect([stale.status, await stale.text()]).toEqual([403, expect.stringContaining('each time DSH is started')])
+      expect((await fetch(`http://127.0.0.1:${again.port}/page`, { headers: { cookie: `nv-door=${token}` } })).status).toBe(403)
+      expect((await fetch(`http://127.0.0.1:${again.port}/page`, { headers: { cookie: `nv-door=${fresh}` } })).status).toBe(200)
+      expect(seen.at(-1)!.headers.cookie).toBe('dsh-auth-x=signed; dsh-run=second')
+
+      // Said to be wanted no longer: the note is gone, and a door after the next restart is not opened again.
+      await second.keep(false)
+      await expect(readFile(note, 'utf8')).rejects.toThrow()
+      expect(await new RemoteDoor(() => {}, '127.0.0.1', note).kept()).toBe(false)
+    } finally {
+      await first.close()
+      await second?.close()
+      await rm(folder, { recursive: true, force: true })
+    }
   })
 })

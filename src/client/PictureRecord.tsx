@@ -29,6 +29,7 @@ import type { IllustrationInfo, IllustrationPiece, PictureGuide, PictureWhole } 
 import { Button, Chip, cx, Modal, Spinner, TextArea, TextInput, useAction, useConfirm, useLoad, useMediaUrl, useProject, useSnapshot, useStudio, useT, plainEnter } from './ui'
 import { leftBehind } from './labels'
 import { PlacePicture } from './PlacePicture'
+import { AdjustPicture } from './AdjustPicture'
 import { PictureUse } from './PictureUse'
 import { Icon } from './icons'
 
@@ -341,6 +342,10 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
   const standing: Standing[] = []
   const open = (path: string | undefined, label: string): Standing['action'] | undefined => (path !== undefined && onOpen !== undefined ? { label, run: () => { onOpen(path) } } : undefined)
   const withAction = (item: Omit<Standing, 'action'>, action: Standing['action'] | undefined): Standing => (action !== undefined ? { ...item, action } : item)
+  // Made of another by hand — cut, turned, mirrored — or the one such a picture was made of: each says where the other is.
+  if (image.edited !== undefined) standing.push(withAction({ tone: 'info', text: t('裁切 / 旋转过的一张：原图留着。', 'Cropped or turned by hand: the picture it was made of is kept.') }, open(image.edited.of, t('看原图', 'See the original'))))
+  const madeOfIt = [...pictures.byPath.values()].find(other => other.edited?.of === image.path)
+  if (madeOfIt !== undefined) standing.push(withAction({ tone: 'info', text: t('这是原图：有一张照它裁切 / 旋转出来的。', 'This is the original: a picture was made of it by cropping or turning.') }, open(madeOfIt.path, t('看那一张', 'See that one'))))
   if (changed) standing.push(withAction({ tone: 'info', text: t('照着另一张图改的：发给绘图模型的只有那张图和改哪一处。', 'Another picture, changed: the image model got that picture and what to change, nothing else.') }, open(references[0]?.path, t('看原图', 'See that picture'))))
   if (image.verbatim === true) standing.push({ tone: 'info', text: t('照你改写的整段提示词画的：工坊没有另加画风和说明。', 'Drawn from the whole prompt as you rewrote it: the Studio added no art direction and no lines of its own.') })
   // Somebody whose line pointed to their picture, drawn before the words for them were last changed: the picture is
@@ -489,7 +494,8 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
               ? t(`导演把画图说明写成了提示词（约 ${sent.compact.from} → ${sent.compact.tokens ?? sent.compact.from} 个 token；这个模型读 ${sent.compact.limit} 个）`, `the director wrote the prompt out from the brief (about ${sent.compact.from} → ${sent.compact.tokens ?? sent.compact.from} tokens; this model reads ${sent.compact.limit})`)
               : t(`导演把提示词从约 ${sent.compact.from} 个 token 压到了约 ${sent.compact.tokens ?? sent.compact.limit} 个（这个模型只读 ${sent.compact.limit} 个）${sent.compact.cut === true ? '；他写的仍超出一点，末尾放不下的截掉了' : ''}`, `the director brought the prompt from about ${sent.compact.from} tokens to about ${sent.compact.tokens ?? sent.compact.limit} (this model reads ${sent.compact.limit})${sent.compact.cut === true ? '; what he wrote was still a little over, and its end was left off' : ''}`)}</span> : null}
         {image.size !== undefined ? <span>{t(`要的尺寸 ${image.size}`, `asked for ${image.size}`)}{sent?.size !== undefined && sent.size.replace('*', 'x') !== image.size ? t(`（发给接口的是 ${sent.size}）`, ` (the service was sent ${sent.size})`) : ''}</span> : sent?.size !== undefined ? <span>{t(`发给接口的尺寸 ${sent.size}`, `the service was sent ${sent.size}`)}</span> : null}
-        {natural !== undefined ? <span>{t(`画出来 ${natural.width}×${natural.height}`, `drawn at ${natural.width}×${natural.height}`)}</span> : null}
+        {/* Cut or turned by hand since: what was asked for and sent is of the picture it was made of; this is what it is now. */}
+        {natural !== undefined ? <span>{image.edited !== undefined ? t(`现在 ${natural.width}×${natural.height}`, `now ${natural.width}×${natural.height}`) : t(`画出来 ${natural.width}×${natural.height}`, `drawn at ${natural.width}×${natural.height}`)}</span> : null}
       </p>
 
       {image.passage !== undefined ? (
@@ -660,6 +666,8 @@ export function PictureViewer({ path, title, note, footer, start, onClose, onEdi
   // What it is for, said anew: whose it is, and as what. Said so here, the page's own name for it holds no longer.
   const [using, setUsing] = useState(false)
   const [refiled, setRefiled] = useState(false)
+  // Set straight by hand: turned, mirrored, a part of it kept — as a picture of its own, this one staying.
+  const [adjusting, setAdjusting] = useState(false)
   // Another picture looked at: no way is open under it — but the one the page asked for is, on the picture it opened.
   const openedWith = useRef(start !== undefined ? path : undefined)
   useEffect(() => {
@@ -710,6 +718,7 @@ export function PictureViewer({ path, title, note, footer, start, onClose, onEdi
         {footer !== undefined ? footer(image) : null}
         <Button variant="outline" icon="link" disabled={drawing} onClick={() => { setUsing(true) }} title={t('说这张图是谁的什么：某个人的立绘 / 人设图，某处、某物的设定图，某一章的图，或这本书的封面', 'Say whose picture this is, and as what: somebody\'s portrait or design sheet, the design art of a place or a thing, a picture of a chapter, or the book\'s cover')}>{t('用作…', 'Use as…')}</Button>
         <Button variant="outline" icon="book" onClick={() => { setPlacing(true) }} title={t('把这张图插到某一章正文的某一段之后', 'Put this picture into a chapter, after a paragraph of your choosing')}>{t('插入正文…', 'Place in the text…')}</Button>
+        <Button variant="outline" icon="crop" disabled={drawing} onClick={() => { setAdjusting(true) }} title={t('裁切、旋转、镜像：存成一张新图，原图留着', 'Crop, turn, mirror: kept as a picture of its own, the original staying')}>{t('裁切 · 旋转…', 'Crop · rotate…')}</Button>
         {image !== undefined ? (
           <>
             {/* Pressed again, a way stays open (a second click that closed it looked like nothing happening); its form has the way out. */}
@@ -744,6 +753,7 @@ export function PictureViewer({ path, title, note, footer, start, onClose, onEdi
       </div>
       {comparing && image !== undefined ? <ImageTrialDialog of={{ picture: { path: image.path, kind: image.kind } }} onClose={() => { setComparing(false) }} onChanged={() => { onChanged?.() }} /> : null}
       {using ? <PictureUse path={at} image={image} natural={natural?.path === at ? natural : undefined} onClose={() => { setUsing(false) }} onDone={() => { setRefiled(true); onChanged?.() }} /> : null}
+      {adjusting ? <AdjustPicture path={at} image={image} onClose={() => { setAdjusting(false) }} onDone={(now) => { setAdjusting(false); redrawn(now) }} /> : null}
       {placing ? <PlacePicture image={image} path={at} chapter={image !== undefined && (image.kind === 'scene' || image.kind === 'panel') ? image.target : undefined} onClose={() => { setPlacing(false) }} /> : null}
     </Modal>
   )

@@ -2266,6 +2266,23 @@ export interface IllustrationInfo {
   trial?: { id: string; label: string; hang?: PictureHang; batch?: string }
   /** The picture of a passage of a chapter: the passage it was drawn of (`quote`; absent where the chapter as a whole was), and what told the director who is in it and where (`why`). */
   passage?: { quote?: string; why?: string }
+  /**
+   * Made by hand of another picture of the book — turned, mirrored, cut ({@link PictureEdit}) — which is kept (`of`,
+   * its path). What else its record says is that picture's: how it was drawn, what it is of. Worked on again, it is
+   * made anew from that picture, not from itself.
+   */
+  edited?: PictureEdit & { of: string }
+}
+
+/**
+ * What was done by hand to a picture to make another of it, in the order it is done: mirrored left to right, turned by
+ * quarters clockwise, and a part of what then stands kept.
+ */
+export interface PictureEdit {
+  flip?: boolean
+  turn?: 1 | 2 | 3
+  /** The part kept, in fractions of the width and the height of the picture as it stands mirrored and turned. */
+  crop?: { x: number; y: number; width: number; height: number }
 }
 
 /**

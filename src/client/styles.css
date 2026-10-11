@@ -11198,6 +11198,112 @@ button.nv-album-chapter:hover {
   align-self: flex-start;
 }
 
+/* ───────────── a picture set straight by hand ─────────────
+   Turned, mirrored, a part of it kept: the picture as large as the dialog has room for, the part kept under a box
+   that is dragged by its corners and edges, what is left out dimmed. */
+
+.nv-modal-adjust {
+  width: min(980px, 100%);
+}
+
+.nv-adjust {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.nv-adjust-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.nv-adjust-shape {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  margin-left: 8px;
+  white-space: nowrap;
+}
+
+.nv-adjust-size {
+  font-variant-numeric: tabular-nums;
+}
+
+.nv-adjust-room {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: calc(100cqh - 270px);
+  min-height: 220px;
+  /* Room for the handles of a cut that reaches the picture's edge. */
+  padding: 10px;
+  border-radius: var(--nv-radius-s);
+  background: var(--nv-surface-2);
+}
+
+.nv-adjust-board {
+  position: relative;
+  flex: none;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.nv-adjust-shade {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.nv-adjust-shade > div {
+  position: absolute;
+  box-shadow: 0 0 0 4000px rgb(0 0 0 / 55%);
+}
+
+.nv-adjust-board > canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.nv-adjust-box {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid rgb(255 255 255 / 95%);
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 45%);
+  cursor: move;
+}
+
+.nv-adjust-handle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  margin: -6px;
+  border: 1px solid rgb(0 0 0 / 55%);
+  border-radius: 2px;
+  background: #fff;
+}
+
+/* A finger needs more to hold than a pointer does. */
+.nv-adjust-handle::after {
+  position: absolute;
+  inset: -10px;
+  content: '';
+}
+
+.nv-adjust-handle.is-nw { top: 0; left: 0; cursor: nwse-resize; }
+.nv-adjust-handle.is-n { top: 0; left: 50%; cursor: ns-resize; }
+.nv-adjust-handle.is-ne { top: 0; left: 100%; cursor: nesw-resize; }
+.nv-adjust-handle.is-e { top: 50%; left: 100%; cursor: ew-resize; }
+.nv-adjust-handle.is-se { top: 100%; left: 100%; cursor: nwse-resize; }
+.nv-adjust-handle.is-s { top: 100%; left: 50%; cursor: ns-resize; }
+.nv-adjust-handle.is-sw { top: 100%; left: 0; cursor: nesw-resize; }
+.nv-adjust-handle.is-w { top: 50%; left: 0; cursor: ew-resize; }
+
 .nv-picture-facts {
   min-width: 0;
 }

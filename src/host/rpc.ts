@@ -29,7 +29,7 @@ import { publishSite, siteChaptersUpTo, siteDefaults, siteFolder } from '../core
 import { listChapters, listLines, listSides, readAlbum, readPosition, readSide, savePosition } from '../core/reader'
 import { albumCounts, albumEmpty } from '../shared/album'
 import { sceneOfPicture, scenesOf } from '../shared/art'
-import { deriveArtDirection, deriveLook, deriveScenes, deriveVisual, hangPicture, illustrate, importPicture, pictureWhole, redrawPicture, usePictureAs } from '../core/pipelines/illustrate'
+import { adjustPicture, deriveArtDirection, deriveLook, deriveScenes, deriveVisual, hangPicture, illustrate, importPicture, pictureWhole, redrawPicture, usePictureAs } from '../core/pipelines/illustrate'
 import { analyzeBook, importManuscript, readBookFile, importLine, rereadBook } from '../core/pipelines/import'
 import { applyOutlineOps, type OutlineOp } from '../core/pipelines/outline'
 import {
@@ -57,7 +57,7 @@ import type { BookSettingsView, CodexStatus, ContextView, CrewView, FindMatch, M
 import { speechSetupName, switchTts, ttsService, ttsWays, withBook } from '../shared/images'
 import { PROJECT_HOMEPAGE, type SetupPart } from '../shared/services'
 import { hashText, proseOnly } from '../shared/text'
-import { ANALYZE_STEPS, CREW_ROLES, GLOSSARY_KINDS, MAIN_LINE, STAGE_STEPS, STORYBOARD_DENSITIES, TEXT_STEPS, type GlossaryTerm, type JobKind, type NovelSettings, type ProjectManifest, type StageStep, type TextRole, type TextStep, type WorkMode, type HistoryKind } from '../shared/types'
+import { ANALYZE_STEPS, CREW_ROLES, GLOSSARY_KINDS, MAIN_LINE, STAGE_STEPS, STORYBOARD_DENSITIES, TEXT_STEPS, type GlossaryTerm, type JobKind, type NovelSettings, type PictureEdit, type ProjectManifest, type StageStep, type TextRole, type TextStep, type WorkMode, type HistoryKind } from '../shared/types'
 import { settleTerms, translateChapters, untranslateChapter } from '../core/pipelines/translate'
 import { recommendedView, settleRecommended } from './recommended'
 import type { NovelService } from './service'
@@ -1260,6 +1260,17 @@ export function createHandlers(service: NovelService): Handlers {
       await (await open(root)).project.forgetRemoved(historyKind(kind), requireString(id, 'id'))
       return { ok: true }
     },
+    'image.adjust': async ({ root, picture, from, edit, mediaType, data }) => {
+      if (data !== undefined && !['image/png', 'image/jpeg', 'image/webp'].includes(String(mediaType))) throw new ProjectError('novel/invalid', 'what comes of a picture is a PNG, JPEG or WebP')
+      const said = (typeof edit === 'object' && edit !== null && !Array.isArray(edit) ? edit : {}) as PictureEdit
+      const done = await adjustPicture(await open(root), {
+        picture: requireString(picture, 'picture'),
+        ...(typeof from === 'string' && from.length > 0 ? { from } : {}),
+        edit: said,
+        ...(typeof data === 'string' && data.length > 0 ? { data: Buffer.from(data, 'base64') } : {}),
+      })
+      return { image: done.info, held: done.held, ...(done.restored === true ? { restored: true } : {}), ...(done.dropped !== undefined ? { dropped: done.dropped } : {}), ...(done.shown !== undefined ? { shown: done.shown } : {}) }
+    },
     'image.place': async ({ root, picture, chapter, after, quote, alt }) => {
       const runtime = await open(root)
       const placed = await runtime.project.placePicture(requireString(chapter, 'chapter'), requireString(picture, 'picture'), {
@@ -1520,18 +1531,25 @@ export function createHandlers(service: NovelService): Handlers {
     'share.status': async () => await service.share.status(),
 
     // ── the Studio worked from a phone ──
-    'remote.status': async () => service.remote.status(loopbackPort(calling.getStore()?.web?.host) !== undefined),
+    'remote.status': async () => await service.remote.status(loopbackPort(calling.getStore()?.web?.host) !== undefined),
     'remote.open': async () => {
       const web = calling.getStore()?.web
       const port = loopbackPort(web?.host)
       // The desktop app shows its pages without a web server: there is nothing to hand a phone on to.
       if (port === undefined) throw new ProjectError('novel/invalid', 'DSH is not serving a web page here: start it as `dsh web` on this computer, open the Studio in that page, and open the door from there')
       await service.remote.open({ port, cookie: signInOf(web?.cookie) })
-      return service.remote.status(true)
+      // Opened, it is wanted open: after a restart of DSH the page opens it again, with a new link.
+      await service.remote.keep(true)
+      return await service.remote.status(true)
     },
     'remote.close': async () => {
       await service.remote.close()
-      return service.remote.status(loopbackPort(calling.getStore()?.web?.host) !== undefined)
+      await service.remote.keep(false)
+      return await service.remote.status(loopbackPort(calling.getStore()?.web?.host) !== undefined)
+    },
+    'remote.keep': async ({ keep }) => {
+      await service.remote.keep(keep === true)
+      return await service.remote.status(loopbackPort(calling.getStore()?.web?.host) !== undefined)
     },
     'share.update': async ({ enabled, book, port, renew }) => await service.updateShare({
       ...(typeof enabled === 'boolean' ? { enabled } : {}),

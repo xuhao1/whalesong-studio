@@ -40,7 +40,8 @@
  * for word — so that a look nobody asked for can be traced to where it came from.
  */
 import { lookWords, mergeAvoid, PICTURE_TO_CHANGE, pictureSize, pictureWords, resolveArtStyle, sceneFor, sceneOfPicture, scenesOf, sceneWords, shotKey, shotOf, splitAvoid, tidyPart as tidy, type ArtSource } from '../../shared/art'
-import type { CharacterCard, CharacterLook, CharacterStage, ComicPanel, ImageTrial, TrialPicture, IllustrationInfo, IllustrationParts, IllustrationPiece, IllustrationSent, PictureGuide, PictureHang, PictureWhole, PromptLanguage, SceneShot, SignatureScene, SortedNotes, WorldEntry, WorldEvent } from '../../shared/types'
+import type { CharacterCard, CharacterLook, CharacterStage, ComicPanel, ImageTrial, TrialPicture, IllustrationInfo, IllustrationParts, IllustrationPiece, IllustrationSent, PictureEdit, PictureGuide, PictureHang, PictureWhole, PromptLanguage, SceneShot, SignatureScene, SortedNotes, WorldEntry, WorldEvent } from '../../shared/types'
+import { editOf, editState, untouched } from '../../shared/edit'
 import { MAIN_LINE, referencesOf } from '../../shared/types'
 import { clip, clipTail, fuzzyFind, hashText, newId, sameName, slugify } from '../../shared/text'
 import { leadOf, portraitsOf, PROMPT_HEADROOM, promptTokens, promptWriteOf, type PictureLead } from '../../shared/images'
@@ -3149,6 +3150,100 @@ export async function usePictureAs(runtime: ProjectRuntime, params: { picture: s
     return { info, held: [hung.entry.name], released, ...(hung.spare ? { spare: true } : {}) }
   }
   return { info, held: [], released }
+}
+
+/** What a picture of the book made of another by hand comes back with. */
+export interface AdjustedPicture {
+  /** The picture that stands there now: the one made — or, the hand-work undone, the one it was made of. */
+  info: IllustrationInfo
+  /** Who and what holds it now, by name. */
+  held: string[]
+  /** The hand-work was undone: the picture it was made of stands in its place again. */
+  restored?: boolean
+  /** The picture made of the same one before, which this one stands in for: taken out of the book (its path) — */
+  dropped?: string
+  /** — or kept, for the chapters whose text shows it (their titles). */
+  shown?: string[]
+}
+
+/**
+ * A picture of the book set straight by hand — turned by quarters, mirrored, a part of it kept. What came of it was
+ * made on the page that shows the picture, from that picture's own pixels (`data`), and is kept here as a picture of
+ * its own: on record as made of the other (`edited`), with what else that one's record says, and standing wherever
+ * that one stood — on a card, an entry, a storyboard, the cover. The picture it was made of stays in the book, beside
+ * it where pictures are kept side by side.
+ *
+ * A picture that was itself made this way is worked on from the one it came of (`from`): what is made then stands in
+ * for the earlier one, which is taken out of the book — it is all in the one it came of and the three numbers of its
+ * making — unless a chapter's text still shows it. With nothing done to that picture (`edit` empty), the hand-work is
+ * undone: the picture it came of stands there again.
+ *
+ * (The author's, on the page that shows the picture: no tool of the showrunner's does this.)
+ * @param params.picture - the picture worked on, by the id of its record or by its path.
+ * @param params.from - the picture the pixels were taken of, where it is not `picture` itself: the one `picture` was made of.
+ * @throws ProjectError `novel/not-found` for a picture that is not in the book; `novel/invalid` for bytes that are no
+ *   picture, for one named as made of a picture it was not made of, and where nothing was done to a picture not made by hand.
+ */
+export async function adjustPicture(runtime: ProjectRuntime, params: { picture: string; from?: string; edit: PictureEdit; data?: Uint8Array }): Promise<AdjustedPicture> {
+  const { project } = runtime
+  const isPicture = async (path: string): Promise<boolean> => /^assets\/[^\0]+\.(png|jpe?g|webp|gif)$/i.test(path) && !path.split('/').includes('..') && await project.has(path)
+  const all = await project.pictures()
+  const known = all.find(item => item.id === params.picture || item.path === params.picture)
+  const path = known?.path ?? params.picture.trim()
+  if (!await isPicture(path)) throw new ProjectError('novel/not-found', `no picture of the book matches "${params.picture}"`)
+  const base = params.from !== undefined && params.from.trim().length > 0 ? params.from.trim() : path
+  if (base !== path && (known?.edited?.of !== base || !await isPicture(base))) throw new ProjectError('novel/invalid', `"${path}" was not made of "${base}", or that picture is no longer in the book`)
+  const state = editState(params.edit)
+  const again = base !== path
+
+  /** The earlier one made of the same picture, once another stands in for it: out of the book, unless a text shows it. */
+  const retire = async (): Promise<Pick<AdjustedPicture, 'dropped' | 'shown'>> => {
+    const shown = await project.textsShowing(path)
+    if (shown.length > 0) {
+      await project.takeDown(path)
+      return { shown }
+    }
+    await project.removePicture({ path })
+    return { dropped: path }
+  }
+
+  if (untouched(state)) {
+    if (!again) throw new ProjectError('novel/invalid', 'nothing was done to the picture')
+    // Undone: the picture it was made of stands where it stood. (Kept beside it, it is listed once.)
+    const held = await project.replacePicture(path, base)
+    await project.trialsInstead(path, base)
+    const retired = await retire()
+    const info = (await project.pictures()).find(item => item.path === base) ?? { id: base, path: base, prompt: '', kind: known?.kind ?? 'scene', createdAt: new Date().toISOString() }
+    return { info, held, restored: true, ...retired }
+  }
+
+  const data = params.data
+  const ending = data !== undefined ? pictureEnding(data) : undefined
+  if (data === undefined || ending === undefined || data.length < 64) throw new ProjectError('novel/invalid', 'what came of the picture is not a picture the Studio can read (PNG, JPEG, WebP)')
+  if (data.length > 48 * 1024 * 1024) throw new ProjectError('novel/invalid', 'what came of the picture is larger than 48 MB')
+  // Named after the picture it came of, and by what it is: the same hand-work done twice is one file.
+  const stem = base.split('/').pop()!.replace(/\.[a-z]+$/i, '').replace(/-[0-9a-f]{8}$/i, '')
+  const next = await project.writeAsset(`images/${stem}-${hashText(Buffer.from(data).toString('base64')).slice(0, 8)}.${ending}`, data)
+  const frame = pixelsOf(data)
+  const edited = { of: base, ...editOf(state) }
+  let info = all.find(item => item.path === next)
+  if (next === path || next === base) throw new ProjectError('novel/invalid', 'nothing was done to the picture')
+  if (info === undefined) {
+    // What its record says is the record of the picture it was made of, as that one is filed now; waiting to be
+    // taken, of several drawn to compare, is that picture's affair and not this one's.
+    const { trial, ...rest } = known ?? { id: '', path, prompt: '', kind: 'scene' as const, createdAt: '' }
+    const { hang: _waits, ...tried } = trial ?? { id: '', label: '' }
+    // (`size` stays what was asked of the image service for the picture it was made of: nothing was asked for this
+    // one. How large it is, is read off the picture.)
+    info = { ...rest, id: newId('img'), path: next, createdAt: new Date().toISOString(), ...(trial !== undefined ? { trial: tried } : {}), edited }
+    await project.addIllustration(info)
+  }
+  const was = await project.readFile(path).then(pixelsOf).catch(() => undefined)
+  const held = await project.replacePicture(path, next)
+  await project.trialsInstead(path, next)
+  // A sheet cut down from the figures side by side to one that stands alone is a sheet of the front view from here on.
+  if (frame !== undefined && frame.width <= frame.height * 1.15 && was !== undefined && was.width > was.height * 1.15) await project.sheetShowsOne(next)
+  return { info, held, ...(again ? await retire() : {}) }
 }
 
 /** References and avoid terms for a picture that shows these characters (comic panels, covers composed elsewhere). */

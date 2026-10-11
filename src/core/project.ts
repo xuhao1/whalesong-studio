@@ -3000,9 +3000,17 @@ export class Project {
     let path: string | undefined = ref.path?.trim()
     await this.updateState<IllustrationInfo[]>(['illustrations.json'], [], (current) => {
       const record = ref.id !== undefined ? current.find(item => item.id === ref.id) : current.find(item => item.path === path)
-      if (record === undefined) return current
-      path = record.path
-      return current.filter(item => item !== record)
+      if (record !== undefined) path = record.path
+      if (path === undefined) return current
+      // A picture made of this one by hand (cut, turned) has nothing to be made anew from once this is gone: it is a
+      // picture on its own from here on.
+      const made = current.some(item => item.edited?.of === path)
+      if (record === undefined && !made) return current
+      return current.filter(item => item !== record).map((item) => {
+        if (item.edited?.of !== path) return item
+        const { edited: _made, ...alone } = item
+        return alone
+      })
     })
     if (path === undefined || path.length === 0) return []
     if (!/^assets\/[^\0]+\.(png|jpe?g|webp|gif)$/i.test(path) || path.split('/').includes('..')) throw new ProjectError('novel/invalid', `"${path}" is not one of the book's pictures`)
@@ -3227,6 +3235,42 @@ export class Project {
     const next = `${before}${before.length > 0 ? '\n\n' : ''}${tag}${rest.length > 0 ? `\n\n${rest}` : '\n'}`
     await this.saveChapterText(chapter.plan.id, next, { reason: 'before-illustration' })
     return { chapter: chapter.plan.id, after }
+  }
+
+  /** The chapters whose text shows a picture — a line of it names the picture — on every line of the plot, by title. */
+  async textsShowing(path: string): Promise<string[]> {
+    const outline = await this.outline()
+    const shown: string[] = []
+    for (const plan of [...outline.volumes.flatMap(volume => volume.chapters), ...(outline.lines ?? []).flatMap(line => line.chapters)]) {
+      const text = await this.chapterText(plan.id).catch(() => '')
+      if (text.includes(`](${path})`)) shown.push(plan.title)
+    }
+    return shown
+  }
+
+  /**
+   * A design sheet that has come to show one figure alone — cut down from the three views to the one that faces — is
+   * kept as that wherever it is somebody's sheet: one of theirs, a stretch's, a look's. Whoever shows it, or holds a
+   * picture against it, then takes it whole.
+   */
+  async sheetShowsOne(path: string): Promise<void> {
+    for (const card of await this.characters()) {
+      const fronts = sheetFronts(card)
+      const looks = card.visual?.looks ?? []
+      const stages = card.stages ?? []
+      const listed = sheetPool(card).includes(path) && !fronts.has(path)
+      const dressed = looks.some(look => look.sheet === path && look.sheetFront !== true)
+      const aged = stages.some(stage => stage.visual?.sheet === path && stage.visual.sheetFront !== true)
+      if (!listed && !dressed && !aged) continue
+      await this.saveCharacter({
+        id: card.id,
+        ...(listed || dressed ? { visual: {
+          ...(listed ? { fronts: [...fronts, path] } : {}),
+          ...(dressed ? { looks: looks.map(look => (look.sheet === path ? { ...look, sheetFront: true } : look)) } : {}),
+        } } : {}),
+        ...(aged ? { stages: stages.map(stage => (stage.visual?.sheet === path ? { ...stage, visual: { ...stage.visual, sheetFront: true } } : stage)) } : {}),
+      })
+    }
   }
 
   /** {@link removePicture}, by the id of a picture's record. */
