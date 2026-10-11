@@ -1124,10 +1124,11 @@ export function createHandlers(service: NovelService): Handlers {
       const record = (await project.pictures()).find(item => item.path === taken)
       if (record === undefined) throw new ProjectError('novel/not-found', `no picture on record at "${taken}"`)
       let replaced: string[] = []
-      if (typeof instead === 'string' && instead.length > 0 && instead !== taken) {
+      // (One that waits to take a picture's place says so itself — and says whose, as that stands now: another of the
+      // same comparison may have been taken since the dialog that asks was opened.)
+      if (record.trial?.hang?.as !== 'instead' && typeof instead === 'string' && instead.length > 0 && instead !== taken) {
         // In the place of the picture it was tried against, wherever that one hung; the one replaced stays in the gallery.
         replaced = await project.replacePicture(instead, taken)
-        // A portrait that hung nowhere all the same is one of theirs: it joins the others, first.
       }
       // Drawn anew to be compared, it says itself where it goes: where one drawn the usual way would have been put.
       if (replaced.length === 0 && record.trial?.hang !== undefined) replaced = await hangPicture(await open(root), record)

@@ -9,51 +9,115 @@
  * writer's model) or chapters to come (the planner's). Nothing a comparison
  * makes takes the place of anything until the author takes it.
  */
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { ModelOption } from '../shared/rpc'
-import type { ImageTrial, JobInfo, PictureGuide, SpeechTrial, TrialDraft, TrialPicture, TrialTake } from '../shared/types'
+import type { IllustrationInfo, ImageTrial, JobInfo, PictureGuide, SpeechTrial, TrialDraft, TrialPicture, TrialTake } from '../shared/types'
 import { imageSetupName, speechSetupName } from '../shared/images'
 import { RpcError } from './api'
 import { ImageModelField, ModelField, speechEndpoint, speechSuggestions, withSpeechModel } from './ModelField'
 import { Button, Chip, cx, Field, Modal, ProjectImage, Select, Spinner, TextArea, TextInput, useLoad, useMediaUrl, useProject, useSnapshot, useStudio, useT } from './ui'
 
-/** A job started here and watched until it is over: what it has said so far, and how it ended. */
-function useTrialJob(): { start: (begin: () => Promise<{ jobId: string } | { jobId: string }[]>) => void; live: JobInfo | undefined; done: JobInfo | undefined; busy: boolean; error: string | undefined; stop: () => void } {
+/**
+ * What a dialog started, by what it draws: found again when the dialog is opened again on the same thing — the jobs
+ * (they go on drawing whether or not anybody watches) and, of a press that drew many things, its round.
+ */
+const begun = new Map<string, { ids: string[]; round?: string }>()
+/** How many dialogs are open on a thing right now: what finishes with none open is said where the author is. */
+const watched = new Map<string, number>()
+/** The jobs whose end was said already (a dialog opened and closed twice has two watchers of the same jobs). */
+const told = new Set<string>()
+
+/**
+ * A job started here and watched until it is over: what it has said so far, and how it ended.
+ * @param key - what the dialog draws. With it, a job started before the dialog was closed is taken up again when it
+ *   is opened on the same thing, and `unseen` is called when the job ends with no dialog open on it.
+ */
+function useTrialJob(key?: string, unseen?: (ended: { infos: JobInfo[]; error?: string }) => void): { start: (begin: () => Promise<{ jobId: string } | { jobId: string }[]>, round?: string) => void; live: JobInfo | undefined; done: JobInfo | undefined; busy: boolean; error: string | undefined; round: string | undefined; stop: () => void } {
   const { controller } = useStudio()
-  const [jobId, setJobId] = useState<string | undefined>()
+  const known = key !== undefined ? begun.get(key) : undefined
+  // Still at it when the dialog is opened again: said at once, off the jobs the Studio knows of. (One that is over
+  // is not taken up again: what it drew and nobody took is in the gallery, and is read from there.)
+  const still = useSnapshot(snapshot => (known?.ids ?? []).some(id => snapshot.jobs.find(job => job.id === id)?.status === 'running'))
+  const [jobId, setJobId] = useState<string | undefined>(still ? known?.ids.at(-1) : undefined)
+  const [round, setRound] = useState<string | undefined>(known?.round)
   const [done, setDone] = useState<JobInfo | undefined>()
-  const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | undefined>()
   const live = useSnapshot(snapshot => (jobId !== undefined ? snapshot.jobs.find(job => job.id === jobId) : undefined))
-  const start = (begin: () => Promise<{ jobId: string } | { jobId: string }[]>): void => {
-    setBusy(true)
-    setDone(undefined)
-    setError(undefined)
+  const [busy, setBusy] = useState(still)
+  const say = useRef(unseen)
+  say.current = unseen
+  const wait = (ids: string[]): void => {
     void (async () => {
+      let ended: { infos: JobInfo[]; error?: string } = { infos: [] }
       try {
         // One press may be several jobs (a portrait for each of a list of people): it is over when they all are.
-        const begun = await begin()
-        const all = Array.isArray(begun) ? begun : [begun]
-        const started = all.at(-1)!
-        setJobId(started.jobId)
-        void controller.refreshJobs()
-        const infos = await Promise.all(all.map(async one => await controller.follow(one.jobId).done))
-        const info = infos.find(one => one.status === 'done') ?? infos.at(-1)!
-        setDone(info)
-        const failed = infos.filter(one => one.status === 'failed')
-        if (failed.length === infos.length) setError(failed[0]?.error ?? 'failed')
+        const infos = await Promise.all(ids.map(async id => await controller.follow(id).done))
+        setDone(infos.find(one => one.status === 'done') ?? infos.at(-1))
+        ended = { infos }
       } catch (reason) {
-        setError(reason instanceof RpcError || reason instanceof Error ? reason.message : String(reason))
+        const message = reason instanceof RpcError || reason instanceof Error ? reason.message : String(reason)
+        setError(message)
+        ended = { infos: [], error: message }
       } finally {
         setBusy(false)
         void controller.refreshJobs()
       }
+      // Nobody was looking: said once, where the author is now.
+      const name = ids.join(',')
+      if (key !== undefined && (watched.get(key) ?? 0) === 0 && !told.has(name)) {
+        told.add(name)
+        say.current?.(ended)
+      }
     })()
   }
-  return { start, live: done ?? live, done, busy, error, stop: () => { if (jobId !== undefined) void controller.api.call('jobs.cancel', { id: jobId }).catch(() => {}) } }
+  useEffect(() => {
+    if (key === undefined) return undefined
+    watched.set(key, (watched.get(key) ?? 0) + 1)
+    if (still && known !== undefined) wait(known.ids)
+    return () => { watched.set(key, Math.max(0, (watched.get(key) ?? 1) - 1)) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key])
+  const start = (begin: () => Promise<{ jobId: string } | { jobId: string }[]>, inRound?: string): void => {
+    setBusy(true)
+    setDone(undefined)
+    setError(undefined)
+    setRound(inRound)
+    void (async () => {
+      try {
+        const started = await begin()
+        const ids = (Array.isArray(started) ? started : [started]).map(one => one.jobId)
+        if (key !== undefined) begun.set(key, { ids, ...(inRound !== undefined ? { round: inRound } : {}) })
+        setJobId(ids.at(-1))
+        void controller.refreshJobs()
+        wait(ids)
+      } catch (reason) {
+        setError(reason instanceof RpcError || reason instanceof Error ? reason.message : String(reason))
+        setBusy(false)
+      }
+    })()
+  }
+  return { start, live: done ?? live, done, busy, error, round, stop: () => { for (const id of (key !== undefined ? begun.get(key)?.ids : undefined) ?? (jobId !== undefined ? [jobId] : [])) void controller.api.call('jobs.cancel', { id }).catch(() => {}) } }
 }
 
 const took = (seconds: number, t: (zh: string, en: string) => string): string => (seconds > 0 ? t(`${seconds} 秒`, `${seconds}s`) : '')
+
+/** What a job that drew to compare says of one thing: each service's picture of it, or why there is none. (Of a press that drew many things it says the last of them, and how many pictures in all.) */
+function triedOf(info: JobInfo | undefined): TrialPicture[] {
+  const said = info?.result?.trial ?? (info?.result?.output as { tried?: unknown } | undefined)?.tried
+  return Array.isArray(said) ? said as TrialPicture[] : []
+}
+
+/** Of a press that drew many things: the pictures a service did not make of something the others drew, and what the first of them answered. */
+function missedBy(info: JobInfo | undefined): { count: number; why: string } | undefined {
+  const said = (info?.result?.missed ?? (info?.result?.output as { missed?: unknown } | undefined)?.missed) as { count?: unknown; why?: unknown } | undefined
+  return said !== undefined && typeof said.count === 'number' && said.count > 0 ? { count: said.count, why: typeof said.why === 'string' ? said.why : '' } : undefined
+}
+
+/** How many pictures a job drew to be compared. */
+function drawnBy(info: JobInfo): number {
+  const all = (info.result?.output as { tried?: unknown } | undefined)?.tried ?? info.result?.tried
+  return typeof all === 'number' ? all : triedOf(info).filter(picture => picture.path !== undefined).length
+}
 
 // ───────────────────────────── pictures ─────────────────────────────
 
@@ -78,16 +142,69 @@ export interface DrawAsk {
   instead?: string
 }
 
+/** What a dialog of pictures is opened on: somebody (a portrait of theirs), a picture there is, or any drawing a button starts. */
+type TrialOf = { character?: { id: string; name: string }; picture?: { path: string; kind: string }; draw?: DrawAsk }
+
+/**
+ * The thing a dialog draws, said so that it can be found again: a name for it (what the dialog started is kept
+ * under it), and — of one thing, not of a press that draws many — where its pictures wait to go, which tells the
+ * ones drawn before and not taken yet. `stands`: of a picture drawn again, the one that stands in its place now.
+ */
+function thingOf(of: TrialOf, params: Record<string, unknown> | undefined, stands: string | undefined): { key: string; waits?: (image: IllustrationInfo) => boolean } {
+  const draw = of.draw
+  const text = (value: unknown): string => (typeof value === 'string' ? value.trim() : '')
+  const asked = draw?.params ?? params ?? {}
+  if (of.picture !== undefined || draw?.method === 'image.redraw') {
+    const path = of.picture?.path ?? draw?.instead ?? text(asked.picture)
+    const now = stands ?? path
+    return { key: `instead:${path}`, waits: image => image.trial?.hang?.as === 'instead' && image.trial.hang.of === now }
+  }
+  if (draw?.many === true || draw?.calls !== undefined) return { key: `many:${draw.method}:${JSON.stringify(draw.calls ?? draw.params)}` }
+  if (draw?.method === 'comic.render') {
+    const panels = Array.isArray(asked.panels) ? asked.panels : []
+    const chapter = text(asked.chapter)
+    if (panels.length !== 1) return { key: `many:comic:${chapter}:${panels.join(',')}` }
+    return { key: `panel:${chapter}:${String(panels[0])}`, waits: image => image.trial?.hang?.as === 'panel' && image.trial.hang.chapter === chapter && image.trial.hang.panel === panels[0] }
+  }
+  if (draw !== undefined && draw.method !== 'image.create') return { key: `many:${draw.method}:${JSON.stringify(draw.params)}` }
+  const kind = of.character !== undefined && draw === undefined ? 'portrait' : text(asked.kind)
+  const target = of.character !== undefined && draw === undefined ? of.character.id : text(asked.target)
+  const stage = text(asked.stage)
+  const look = text(asked.look)
+  if (kind === 'portrait') return { key: `portrait:${target}:${stage}`, waits: image => image.trial?.hang?.as === 'portrait' && image.trial.hang.character === target && (image.trial.hang.stage ?? '') === stage }
+  if (kind === 'sheet') {
+    return {
+      key: `sheet:${target}:${look}:${stage}`,
+      waits: (image) => {
+        const hang = image.trial?.hang
+        if (hang?.as !== 'sheet' || hang.character !== target) return false
+        return look.length > 0 ? hang.look?.id === look || hang.look?.name === look : hang.look === undefined && (hang.stage ?? '') === stage
+      },
+    }
+  }
+  if (kind === 'location' || kind === 'item') {
+    const event = text(asked.event)
+    return { key: `art:${target}:${event}`, waits: image => image.trial?.hang?.as === 'art' && image.trial.hang.entry === target && (image.trial.hang.event ?? '') === event }
+  }
+  if (kind === 'cover') return { key: 'cover', waits: image => image.trial?.hang?.as === 'cover' }
+  if (kind === 'scene') {
+    const quote = text(asked.quote)
+    return { key: `passage:${target}:${quote}`, waits: image => image.trial?.hang?.as === 'passage' && image.trial.hang.chapter === target && (image.trial.hang.quote ?? '') === quote }
+  }
+  // (A picture of nothing the book keeps hangs nowhere: there is no telling which of those was this one.)
+  return { key: `free:${JSON.stringify(asked)}` }
+}
+
 /**
  * A picture drawn once with each of several image services.
  * @param of.picture - a picture there is: it is drawn again as it is, by each service. `of.character`: a portrait
  *   of theirs is drawn by each (`params`: which moment, plain or not, what was asked of it). `of.draw`: any drawing
  *   a button of the Studio starts, by each.
  */
-export function ImageTrialDialog({ of, params, onClose, onChanged }: { of: { character?: { id: string; name: string }; picture?: { path: string; kind: string }; draw?: DrawAsk }; params?: Record<string, unknown>; onClose: () => void; onChanged?: () => void }) {
+export function ImageTrialDialog({ of, params, onClose, onChanged }: { of: TrialOf; params?: Record<string, unknown>; onClose: () => void; onChanged?: () => void }) {
   const { controller } = useStudio()
   const t = useT()
-  const { root } = useProject()
+  const { root, project } = useProject()
   const setups = useLoad(signal => controller.api.call('trial.setups', { root }, signal), [root])
   const [rows, setRows] = useState<Row[] | undefined>()
   useEffect(() => {
@@ -95,12 +212,35 @@ export function ImageTrialDialog({ of, params, onClose, onChanged }: { of: { cha
     // Whatever can draw right now takes part unless the author says otherwise.
     setRows(setups.data.image.map(setup => ({ key: setup.id, setup: { label: setup.label, image: setup.image }, ready: setup.ready, current: setup.current, on: setup.ready, model: setup.image.model ?? '' })))
   }, [setups.data, rows])
-  const job = useTrialJob()
+  const draw = of.draw
+  const many = draw?.many === true
+  const instead = of.picture?.path ?? draw?.instead
+  // Of a picture drawn again: the one that stands in its place now — the one taken here, once one is.
+  const [stands, setStands] = useState<string | undefined>()
+  const thing = thingOf(of, params, stands)
+  const job = useTrialJob(thing.key, (ended) => {
+    // Closed before it was over: the pictures wait all the same, and the author is told where.
+    const drawn = ended.infos.reduce((sum, info) => sum + drawnBy(info), 0)
+    const missed = ended.infos.map(missedBy).find(one => one !== undefined)
+    if (ended.error !== undefined) controller.toast('error', t(`对比图没画成：${ended.error}`, `The pictures to compare were not drawn: ${ended.error}`))
+    else controller.toast('success', t(`对比图画好了${drawn > 0 ? ` ${drawn} 张` : ''}：都留着，在页头的“待采纳”里，随时去选${missed !== undefined ? `。另有 ${missed.count} 张没画成（${missed.why}）` : ''}`, `The pictures to compare are drawn${drawn > 0 ? ` (${drawn})` : ''}: all kept, under "To take" in the header, to choose whenever you like${missed !== undefined ? `. ${missed.count} more could not be drawn (${missed.why})` : ''}`))
+  })
   const [dropOthers, setDropOthers] = useState(false)
-  const [taken, setTaken] = useState<string | undefined>()
+  const [taken, setTaken] = useState<TrialPicture | undefined>()
   // The pictures of the round that were deleted when one was taken: no longer shown.
   const [gone, setGone] = useState<ReadonlySet<string>>(new Set())
-  const pictures = ((job.live?.result?.trial ?? (job.done?.result?.output as { tried?: TrialPicture[] } | undefined)?.tried) as TrialPicture[] | undefined) ?? []
+  const fresh = triedOf(job.live)
+  // What was drawn of this thing before and has not been taken: a dialog closed loses nothing — it is all here again.
+  const kept = useLoad(signal => controller.api.call('image.list', { root }, signal), [root, project.revision])
+  const waiting = (kept.data?.images ?? []).filter(image => image.trial?.hang !== undefined)
+  const earlier: (TrialPicture & { at?: string })[] = thing.waits === undefined ? [] : waiting
+    .filter(image => thing.waits!(image) && !fresh.some(picture => picture.path === image.path))
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+    .map(image => ({ label: image.trial!.label, path: image.path, ...(image.model !== undefined ? { model: image.model } : {}), seconds: 0, at: image.createdAt }))
+  const pictures: (TrialPicture & { at?: string })[] = [...fresh, ...(taken !== undefined && !fresh.some(picture => picture.path === taken.path) ? [taken] : []), ...earlier]
+  // Of a press that drew many things: what still waits of its round, and by whom.
+  const roundWaits = job.round === undefined ? [] : waiting.filter(image => image.trial?.batch === job.round)
+  const roundLabels = [...new Set(roundWaits.map(image => image.trial!.label))]
   const chosen = (rows ?? []).filter(row => row.on)
   const trials: ImageTrial[] = chosen.map((row) => {
     const model = row.model.trim()
@@ -110,18 +250,14 @@ export function ImageTrialDialog({ of, params, onClose, onChanged }: { of: { cha
     return { label: imageSetupName({ provider: image.provider ?? 'none', ...(image.baseURL !== undefined ? { baseURL: image.baseURL } : {}), model }), image }
   })
   const distinct = new Set(trials.map(trial => JSON.stringify(trial.image))).size
-  const draw = of.draw
-  const many = draw?.many === true
   // The pictures of one press that drew many things: taken together by service, or one by one in the gallery.
-  const [round, setRound] = useState<string | undefined>()
+  const round = job.round
   const [roundTaken, setRoundTaken] = useState<string | undefined>()
-  const instead = of.picture?.path ?? draw?.instead
   const start = (): void => {
     setTaken(undefined)
     setGone(new Set())
     setRoundTaken(undefined)
     const id = `round-${Date.now().toString(36)}`
-    if (many) setRound(id)
     job.start(async (): Promise<{ jobId: string } | { jobId: string }[]> => {
       if (draw !== undefined) {
         const batch = many ? { trialBatch: id } : {}
@@ -133,7 +269,7 @@ export function ImageTrialDialog({ of, params, onClose, onChanged }: { of: { cha
       return of.picture !== undefined
         ? await controller.api.call('image.redraw', { root, picture: of.picture.path, trials })
         : await controller.api.call('image.create', { root, kind: 'portrait', target: of.character!.id, ...(params ?? {}), trials } as never)
-    })
+    }, many ? id : undefined)
   }
   const takeRound = (label: string): Promise<unknown> => controller.guard(async () => {
     if (round === undefined) return
@@ -145,8 +281,10 @@ export function ImageTrialDialog({ of, params, onClose, onChanged }: { of: { cha
   })
   const take = (picture: TrialPicture): Promise<unknown> => controller.guard(async () => {
     const others = dropOthers ? pictures.flatMap(other => (other.path !== undefined && other.path !== picture.path ? [other.path] : [])) : []
-    const done = await controller.api.call('trial.adopt', { root, path: picture.path!, ...(instead !== undefined ? { instead } : {}), ...(others.length > 0 ? { others } : {}) })
-    setTaken(picture.path)
+    const done = await controller.api.call('trial.adopt', { root, path: picture.path!, ...(instead !== undefined ? { instead: stands ?? instead } : {}), ...(others.length > 0 ? { others } : {}) })
+    setTaken(picture)
+    // It stands where the picture it was tried against stood: the rest of them wait to take that place from it.
+    if (instead !== undefined) setStands(picture.path)
     if (others.length > 0) setGone(previous => new Set([...previous, ...others]))
     await controller.refreshProject()
     onChanged?.()
@@ -156,11 +294,12 @@ export function ImageTrialDialog({ of, params, onClose, onChanged }: { of: { cha
   const again = (row: Row): void => { setRows(previous => (previous === undefined ? previous : [...previous.slice(0, previous.indexOf(row) + 1), { ...row, key: `${row.key}+${previous.length}`, current: false, on: true, model: '' }, ...previous.slice(previous.indexOf(row) + 1)])) }
   const running = job.busy
   const title = draw !== undefined ? t(`用几个绘图服务画：${draw.title}`, `By several image services: ${draw.title}`) : of.picture !== undefined ? t('换几个绘图服务画同一张', 'The same picture by several image services') : t(`用几个绘图服务画「${of.character?.name ?? ''}」的立绘`, `A portrait of ${of.character?.name ?? ''} by several image services`)
-  const finished = many && job.done !== undefined && job.done.status === 'done' 
+  // Over — now, or while the dialog was closed: what its round still has to be taken says so.
+  const finished = many && !running && ((job.done !== undefined && job.done.status === 'done') || roundWaits.length > 0)
   return (
     <Modal wide className="nv-modal-trial" title={title} onClose={onClose} footer={(
       <>
-        <span className="nv-muted nv-small">{many ? t('每一样各画一张。画出来的不替换任何图，采纳了才算。', 'One picture each, of every thing. Nothing is replaced until you take it.') : t('同一段提示词、同样的参考图，各画一张。画出来的不替换任何图，采纳了才算。', 'The same words and the same reference pictures, one picture each. Nothing is replaced until you take one.')}</span>
+        <span className="nv-muted nv-small">{many ? t('每一样各画一张，都留着；采纳了才算。可以关掉，之后再选。', 'One picture each, of every thing, all kept; nothing counts until taken. Close this and choose later.') : t('各画一张，都留着；采纳了才算。可以关掉，之后再选。', 'One picture each, all kept; nothing counts until one is taken. Close this and choose later.')}</span>
         <span className="nv-spacer" />
         {running ? <Button variant="ghost" onClick={job.stop}>{t('停止', 'Stop')}</Button> : null}
         <Button variant="primary" icon="layers" busy={running} disabled={distinct < 1 || chosen.length === 0} pending={t('正在画…', 'Drawing…')} onClick={start}>{many ? t(`每样画 ${trials.length} 张`, `${trials.length} of each`) : pictures.length > 0 ? t(`再画一轮（${trials.length} 张）`, `Another round (${trials.length})`) : t(`画 ${trials.length} 张来比`, `Draw ${trials.length} to compare`)}</Button>
@@ -189,13 +328,14 @@ export function ImageTrialDialog({ of, params, onClose, onChanged }: { of: { cha
       {many && (running || finished) ? (
         // Many things, each by every service: too many to lay out here — taken by service at once, or one by one in the gallery.
         <div className="nv-trial-round">
-          {running ? <p className="nv-muted"><Spinner /> {t('正在画。画好的陆续出现在“演出 → 插图 → 待采纳”里。', 'Drawing. The pictures appear under Stage → Pictures → To take as they come.')}</p> : (
+          {running ? <p className="nv-muted"><Spinner /> {t('正在画。画好的陆续出现在页头的“待采纳”里；这里可以关掉。', 'Drawing. The pictures appear under "To take" in the header as they come; this can be closed.')}</p> : (
             <>
               <p>{t('画好了。这一批用谁画的？', 'Done. Whose pictures does this round take?')}</p>
+              {missedBy(job.done) !== undefined ? <p className="nv-note is-warn">{t(`有 ${missedBy(job.done)!.count} 张没画成：${missedBy(job.done)!.why}`, `${missedBy(job.done)!.count} could not be drawn: ${missedBy(job.done)!.why}`)}</p> : null}
               <div className="nv-row-wrap">
-                {trials.map(trial => (roundTaken === trial.label
-                  ? <Chip key={trial.label} tone="green">{t(`用了「${trial.label}」的`, `took ${trial.label}'s`)}</Chip>
-                  : <Button key={trial.label} size="sm" variant="outline" icon="check" disabled={roundTaken !== undefined} onClick={() => takeRound(trial.label)}>{t(`都用「${trial.label}」的`, `All by ${trial.label}`)}</Button>))}
+                {(roundLabels.length > 0 || roundTaken !== undefined ? [...new Set([...roundLabels, ...(roundTaken !== undefined ? [roundTaken] : [])])] : trials.map(trial => trial.label)).map(label => (roundTaken === label
+                  ? <Chip key={label} tone="green">{t(`用了「${label}」的`, `took ${label}'s`)}</Chip>
+                  : <Button key={label} size="sm" variant="outline" icon="check" disabled={roundTaken !== undefined} onClick={() => takeRound(label)}>{t(`都用「${label}」的`, `All by ${label}`)}</Button>))}
                 <Button size="sm" variant="ghost" icon="image" onClick={() => { controller.navigate({ view: 'stage', tab: 'gallery' }); onClose() }}>{t('逐个挑…', 'Choose one by one…')}</Button>
               </div>
               <label className="nv-check nv-small">
@@ -210,21 +350,21 @@ export function ImageTrialDialog({ of, params, onClose, onChanged }: { of: { cha
         <>
           <div className="nv-trial-grid">
             {pictures.filter(picture => picture.path === undefined || !gone.has(picture.path)).map((picture, at) => (
-              <figure key={`${picture.label}:${at}`} className={cx('nv-trial-cell', picture.path !== undefined && picture.path === taken && 'is-taken')}>
+              <figure key={picture.path ?? `${picture.label}:${at}`} className={cx('nv-trial-cell', picture.path !== undefined && picture.path === taken?.path && 'is-taken')}>
                 <div className="nv-trial-picture">
                   {picture.path !== undefined ? <ProjectImage path={picture.path} alt={picture.label} /> : picture.error !== undefined ? <p className="nv-trial-failed">{picture.error}</p> : <Spinner />}
                 </div>
                 <figcaption>
                   <strong>{picture.label}</strong>
-                  <span className="nv-muted nv-small">{picture.path !== undefined ? took(picture.seconds, t) : picture.error !== undefined ? t('没画成', 'failed') : t('正在画…', 'drawing…')}</span>
-                  {picture.path !== undefined ? (picture.path === taken ? <Chip tone="green">{t('用了这张', 'taken')}</Chip> : <Button size="sm" variant="outline" icon="check" onClick={() => take(picture)}>{t('用这张', 'Take this one')}</Button>) : null}
+                  <span className="nv-muted nv-small">{picture.path !== undefined ? (picture.at !== undefined ? t(`之前画的 · ${new Date(picture.at).toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`, `drawn before · ${new Date(picture.at).toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`) : took(picture.seconds, t)) : picture.error !== undefined ? t('没画成', 'failed') : t('正在画…', 'drawing…')}</span>
+                  {picture.path !== undefined ? (picture.path === taken?.path ? <Chip tone="green">{t('用了这张', 'taken')}</Chip> : <Button size="sm" variant="outline" icon="check" onClick={() => take(picture)}>{t('用这张', 'Take this one')}</Button>) : null}
                 </figcaption>
               </figure>
             ))}
           </div>
           <label className="nv-check nv-small">
             <input type="checkbox" checked={dropOthers} onChange={(event) => { setDropOthers(event.target.checked) }} />
-            <span>{t('采纳一张时，把这一轮其余的删掉（不勾：留在图库里，不进正文）', 'When one is taken, delete the rest of this round (unticked: they stay in the gallery, out of the text)')}</span>
+            <span>{t('采纳一张时，把这里其余的删掉（不勾：都留着，之后还能改选）', 'When one is taken, delete the others here (unticked: all kept, to choose again later)')}</span>
           </label>
         </>
       ) : null}

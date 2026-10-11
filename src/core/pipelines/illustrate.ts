@@ -1765,33 +1765,44 @@ export async function redrawPicture(core: NovelCore, runtime: ProjectRuntime, pa
         }),
   }, task)
   if (trying) {
-    // The same picture by other services, beside the one there is: nothing takes its place until the author says so.
-    const tried = await drawTrials(core, runtime, params.trials!, render, task)
+    // The same picture by other services, beside the one there is: nothing takes its place until the author says so —
+    // and each waits for that, saying whose place it would take, whenever the author comes back to choose.
+    const tried = await drawTrials(core, runtime, params.trials!, async trial => await render({ ...trial, hang: { as: 'instead', of: record.path } }), task)
     if (tried.first === undefined) throw new ProviderError(tried.pictures.map(picture => `${picture.label}: ${picture.error ?? 'no picture'}`).join('; '), undefined, 'TRIAL_FAILED')
     return { ...tried.first, replaced: [], tried: tried.pictures }
   }
   const info = await render()
-  const replaced = await project.replacePicture(record.path, info.path)
+  const replaced = await inPlaceOf(project, record, info.path)
+  task.job?.result({ replaced })
+  return { ...info, replaced }
+}
+
+/**
+ * A picture put where another stands: wherever that one hangs — and, where it hung nowhere, among the pictures of its
+ * kind that somebody keeps.
+ * @returns whose picture it is now, by name; nobody where it is in the gallery alone.
+ */
+async function inPlaceOf(project: ProjectRuntime['project'], old: Pick<IllustrationInfo, 'path' | 'kind' | 'target'>, next: string): Promise<string[]> {
+  const replaced = await project.replacePicture(old.path, next)
   // A portrait that hung nowhere — an earlier one, out of the gallery — is a portrait of theirs all the same: it joins the others, first.
-  if (replaced.length === 0 && record.kind === 'portrait' && record.target !== undefined) {
-    const card = await project.findCharacter(record.target)
+  if (replaced.length === 0 && old.kind === 'portrait' && old.target !== undefined) {
+    const card = await project.findCharacter(old.target)
     if (card !== undefined) {
-      await project.saveCharacter({ id: card.id, visual: { portrait: info.path } })
+      await project.saveCharacter({ id: card.id, visual: { portrait: next } })
       replaced.push(card.name)
     }
   }
   // So is a design sheet of theirs that was on no list (not a look's — those are named after the look): it joins the
   // sheets kept of them, after the others — drawn from one that was not in use, it is not in use either.
-  if (replaced.length === 0 && record.kind === 'sheet' && record.target !== undefined) {
-    const card = await project.findCharacter(record.target)
-    const named = record.path.split('/').pop()!.replace(/-[0-9a-f]{8}\.[a-z]+$/i, '')
+  if (replaced.length === 0 && old.kind === 'sheet' && old.target !== undefined) {
+    const card = await project.findCharacter(old.target)
+    const named = old.path.split('/').pop()!.replace(/-[0-9a-f]{8}\.[a-z]+$/i, '')
     if (card !== undefined && !(card.visual?.looks ?? []).some(look => named === `sheet-${card.id}-${look.id}`)) {
-      await project.saveCharacter({ id: card.id, visual: { sheets: [...sheetPool(card), info.path] } })
+      await project.saveCharacter({ id: card.id, visual: { sheets: [...sheetPool(card), next] } })
       replaced.push(card.name)
     }
   }
-  task.job?.result({ replaced })
-  return { ...info, replaced }
+  return replaced
 }
 
 // ───────────────────────────── the sheet first ─────────────────────────────
@@ -2841,6 +2852,12 @@ async function hangAs(runtime: ProjectRuntime, record: IllustrationInfo, hang: P
   } else if (hang.as === 'panel') {
     await project.patchComicPanels(hang.chapter, new Map([[hang.panel, { image: record.path }]]))
     held.push((await project.findChapter(hang.chapter))?.plan.title ?? hang.chapter)
+  } else if (hang.as === 'instead') {
+    // Where the picture it was tried against stands — as that one is kept now, or, gone from the book, as this one says of itself.
+    const old = (await project.pictures()).find(item => item.path === hang.of)
+    held.push(...await inPlaceOf(project, old ?? { path: hang.of, kind: record.kind, ...(record.target !== undefined ? { target: record.target } : {}) }, record.path))
+    // What else waits to take that place waits to take it from this one now.
+    await project.trialsInstead(hang.of, record.path)
   }
   return held
 }

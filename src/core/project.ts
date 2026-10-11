@@ -2972,6 +2972,18 @@ export class Project {
     await this.holdFigure(path, false)
   }
 
+  /**
+   * The picture others waited to take the place of has had its place taken (`by`): they wait to take it from that
+   * one now — a second one chosen of the same comparison goes where the first went.
+   */
+  async trialsInstead(of: string, by: string): Promise<void> {
+    await this.updateState<IllustrationInfo[]>(['illustrations.json'], [], current => current.map((item) => {
+      const hang = item.trial?.hang
+      if (item.path === by || hang === undefined || hang.as !== 'instead' || hang.of !== of) return item
+      return { ...item, trial: { ...item.trial!, hang: { as: 'instead', of: by } } }
+    }))
+  }
+
   async addIllustration(info: IllustrationInfo): Promise<void> {
     await this.updateState<IllustrationInfo[]>(['illustrations.json'], [], current => [...current, info])
   }
@@ -3382,6 +3394,8 @@ export class Project {
       undigested: chapters.filter(chapter => chapter.hasText && !chapter.digested).length,
     }
     const references = await this.referenceCount()
+    // Pictures drawn to be compared that nobody has taken yet: said with the book, so that wherever the author is they can be found again.
+    const waiting = (await this.illustrations()).filter(item => item.trial?.hang !== undefined).length
     return {
       root: this.root,
       revision: this.revision,
@@ -3407,6 +3421,7 @@ export class Project {
       ...(Object.keys(graph).length > 0 ? { graph } : {}),
       ...(Object.keys(translations).length > 0 ? { translations } : {}),
       ...(references > 0 ? { references } : {}),
+      ...(waiting > 0 ? { waiting } : {}),
     }
   }
 

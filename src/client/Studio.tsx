@@ -484,6 +484,13 @@ function Header({ onSearch }: { onSearch: () => void }) {
       <div className="nv-header-tools">
         <ModeSwitch />
         <JobsButton />
+        {/* Pictures drawn to be compared that nobody has taken yet: kept, and found again from every page. */}
+        {(project.waiting ?? 0) > 0 ? (
+          <button type="button" className="nv-jobs-button" onClick={() => { controller.navigate({ view: 'stage', tab: 'gallery' }) }} title={t(`待采纳：${project.waiting} 张对比图留着没选，点开去选`, `To take: ${project.waiting} pictures drawn to compare are kept and not chosen yet — open to choose`)}>
+            <Icon name="layers" size={14} />
+            <span>{project.waiting}</span>
+          </button>
+        ) : null}
         <Button variant="ghost" size="sm" icon="search" onClick={onSearch} title={t('搜索与查找', 'Search and find')} />
         <Button variant="ghost" size="sm" icon="settings" className={cx((view === 'settings' || view === 'setup' || view === 'usage') && 'is-active')} onClick={() => { controller.setView('settings') }} title={t('设置', 'Settings')} />
         <RemoteButton />

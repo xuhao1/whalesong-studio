@@ -109,6 +109,26 @@ describe('pictures tried with several services', () => {
       expect(again.replaced).toEqual([])
       expect(again.tried!.every(picture => picture.path !== undefined)).toBe(true)
       expect((await project.findCharacter(card.id))!.visual?.portrait).toBe(kept)
+
+      // Each of them waits to take that picture's place — the book says how many wait, wherever the author is — and
+      // is taken whenever they come back to it, by nothing but itself.
+      const on = async (path: string) => (await project.illustrations()).find(item => item.path === path)!
+      const [first, second] = again.tried!.map(picture => picture.path!) as [string, string]
+      expect((await on(first)).trial!.hang).toEqual({ as: 'instead', of: kept })
+      expect((await on(second)).trial!.hang).toEqual({ as: 'instead', of: kept })
+      expect((await project.state()).waiting).toBe(4)
+      const { hangPicture } = await import('../src/core/pipelines/illustrate')
+      expect(await hangPicture(bed.runtime, await on(first))).toEqual(['沈蘅'])
+      const after = (await project.findCharacter(card.id))!
+      expect(after.visual?.portrait).toBe(first)
+      expect((await on(first)).trial!.hang).toBeUndefined()
+      expect(await project.hiddenFigures()).not.toContain(first)
+      // The other of the comparison stays, and waits to take the place from the one that has it now.
+      expect((await on(second)).trial!.hang).toEqual({ as: 'instead', of: first })
+      expect((await project.state()).waiting).toBe(3)
+      expect(await hangPicture(bed.runtime, await on(second))).toEqual(['沈蘅'])
+      expect((await project.findCharacter(card.id))!.visual?.portrait).toBe(second)
+      expect((await project.state()).waiting).toBe(2)
       // Without services to try and without anything to change, a redraw still has to be told what to draw.
       await expect(redrawPicture(bed.core, bed.runtime, { picture: kept }, { origin: 'user' })).rejects.toThrow(/say what to draw/)
     } finally {
@@ -193,12 +213,19 @@ describe('pictures tried with several services', () => {
       await project.saveComicBoard({ schema: 1, chapterId: chapter.id, textHash, updatedAt: new Date().toISOString(), style: '', panels: [{ id: 'p1', lines: ['l1'], prompt: '柜台上的一盏灯', description: '灯', camera: 'still' }, { id: 'p2', lines: ['l1'], prompt: '门外的雨', description: '雨', camera: 'still' }] } as never)
       const panels = await renderPanels(bed.core, bed.runtime, { chapter: chapter.id, sheetFirst: false, trials: two }, task)
       expect(panels).toMatchObject({ rendered: 2, failed: 0, tried: 4 })
+      expect(panels.missed).toBeUndefined()
       expect((await project.comicBoard(chapter.id))!.panels.map(panel => panel.image)).toEqual([undefined, undefined])
       const round = (await project.illustrations()).filter(item => item.trial?.batch === panels.round)
       expect(round.map(item => [(item.trial!.hang as { panel: string }).panel, item.trial!.label]).sort()).toEqual([['p1', 'mine · a'], ['p1', 'mine · b'], ['p2', 'mine · a'], ['p2', 'mine · b']])
       for (const item of round.filter(entry => entry.trial!.label === 'mine · b')) await hangPicture(bed.runtime, item)
       const board = (await project.comicBoard(chapter.id))!
       expect(board.panels.map(panel => round.find(item => item.path === panel.image)?.trial!.label)).toEqual(['mine · b', 'mine · b'])
+      // A service that draws none of them is not passed over: the round says how many pictures are missing, and why.
+      const lame = await renderPanels(bed.core, bed.runtime, { chapter: chapter.id, sheetFirst: false, force: true, trials: [setup('a'), setup('broken')] }, task)
+      expect(lame).toMatchObject({ rendered: 2, failed: 0, tried: 2 })
+      expect(lame.missed?.count).toBe(2)
+      expect(lame.missed?.why).toContain('mine · broken')
+      expect(lame.missed?.why).toContain('the model fell over')
     } finally {
       await bed.cleanup()
     }

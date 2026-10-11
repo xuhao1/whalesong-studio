@@ -2239,6 +2239,7 @@ export interface IllustrationInfo {
  * where one drawn the usual way would have been put: somebody's portrait (of a stretch of their life), their design
  * sheet (of a look, of a stretch), the art of an entry of the bible (of one turn of its course: `event`), the cover,
  * the text of a chapter after the passage it is of, a panel of a storyboard. `gallery`: nowhere but the gallery.
+ * `instead`: the place of the picture it was drawn again from (`of`) — wherever that one hangs when it is taken.
  */
 export type PictureHang =
   | { as: 'portrait'; character: string; stage?: string }
@@ -2247,6 +2248,7 @@ export type PictureHang =
   | { as: 'cover' }
   | { as: 'passage'; chapter: string; quote?: string; alt?: string; insert?: boolean }
   | { as: 'panel'; chapter: string; panel: string }
+  | { as: 'instead'; of: string }
   | { as: 'gallery' }
 
 /** One service a picture is tried with: what the author reads it as, and the service itself (its part of the image settings). */
@@ -2469,6 +2471,8 @@ export interface ProjectState {
   stats: ProjectStats
   /** How many books this one goes by that are consulted now (its references); absent where it has none. */
   references?: number
+  /** How many pictures drawn to be compared wait to be taken (or let go); absent where none does, and on a Host from before they were counted. */
+  waiting?: number
   suggestions: Suggestion[]
   proposals: Proposal[]
   presence: CastPresence[]
