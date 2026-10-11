@@ -12776,37 +12776,48 @@ button.nv-album-chapter:hover {
   background: var(--nv-border);
 }
 
-/* How large the pictures of a chapter stand in its text — the reader's own choice; left alone, as wide as the column.
-   (Never narrower than a picture is worth looking at: on a phone the column is the screen.) */
-.is-pictures-small .nv-figure img {
-  max-width: min(100%, max(40%, 220px));
-  max-height: 36vh;
-}
-
-.is-pictures-medium .nv-figure img {
-  max-width: min(100%, max(62%, 280px));
-  max-height: 54vh;
-}
-
-.is-pictures-large .nv-figure img {
-  max-width: min(100%, max(84%, 320px));
-  max-height: 72vh;
-}
-
-/* As wide as the screen: out of the column of text, across the pane the page scrolls in, whatever size it was made at. */
-.is-pictures-screen .nv-figure {
-  width: var(--nv-pane, 100%);
+/* How large the pictures of a chapter stand in its text. The standard is the text's own width (--nv-pic: 1); the
+   reader may have them smaller — a part of it — or larger: out of the column on both sides, as far as the pane the
+   page scrolls in (--nv-pane, measured by the page). A picture is as wide as that whatever size it was made at, and
+   as tall as its shape then makes it. */
+.nv-reader-page .nv-figure,
+.nv-script-page .nv-figure {
+  --nv-pic-wide: min(var(--nv-pane, 100%), calc(100% * var(--nv-pic, 1)));
+  width: var(--nv-pic-wide);
   max-width: none;
   margin-right: 0;
-  margin-left: calc(50% - var(--nv-pane, 100%) / 2);
+  margin-left: calc((100% - var(--nv-pic-wide)) / 2);
 }
 
-.is-pictures-screen .nv-figure img {
+.nv-reader-page .nv-figure img,
+.nv-script-page .nv-figure img {
   display: block;
   width: 100%;
   max-width: none;
+  height: auto;
   max-height: none;
+}
+
+/* As wide as the screen: edge to edge, with no corners to round. */
+.is-pictures-screen .nv-figure img {
   border-radius: 0;
+}
+
+/* The size as the settings say it, between its two buttons: pressed, it is the standard again. */
+.nv-reader-settings-value.is-wide {
+  min-width: 52px;
+  padding: 4px 2px;
+  border: 0;
+  background: none;
+  color: var(--nv-text-2);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.nv-reader-settings-value.is-wide:disabled {
+  color: var(--nv-text);
+  cursor: default;
 }
 
 /* A picture of the text opens large when pressed. */

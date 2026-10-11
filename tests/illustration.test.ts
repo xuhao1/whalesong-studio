@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, beforeEach } from 'vitest'
 import { pictureRecord } from '../src/agent/tools/studio'
 import { sheetsAhead } from '../src/core/pipelines/comic'
-import { artDirectionOf, deriveArtDirection, deriveLook, deriveScenes, deriveVisual, illustrate, looksOf, forgetFittedPrompts } from '../src/core/pipelines/illustrate'
+import { artDirectionOf, compose, deriveArtDirection, deriveLook, deriveScenes, deriveVisual, illustrate, looksOf, forgetFittedPrompts } from '../src/core/pipelines/illustrate'
 import { castAt, deriveGrowth } from '../src/core/pipelines/growth'
 import { packContext } from '../src/core/context'
 import { inPictureAt, inStage, stageAt } from '../src/shared/stages'
@@ -981,7 +981,7 @@ describe('design sheets and looks', () => {
     // The director was handed the moment, the paragraph of the chapter that tells it, who she is and how she usually
     // looks, and what of the bible is named there; what she wears is asked for as the text has it.
     expect(frames()).toHaveLength(1)
-    for (const part of ['「黛玉」', `## 这一幕\n葬花：${BURY}`, '第 2 章《葬花》', '## 正文：讲到这一幕的地方\n黛玉在沁芳闸旁，肩上担着花锄', 'slight girl of twelve, fine arched brows', '沁芳闸（location）', 'outfit：这个人此刻**和平常不一样**的穿戴', '查过仍然没有另外交代，就是平常那一身：**outfit 留空**', 'setting：周围的环境', '写一个定格的瞬间']) expect(frames()[0], part).toContain(part)
+    for (const part of ['「黛玉」', `## 这一幕\n葬花：${BURY}`, '第 2 章《葬花》', '## 正文：讲到这一幕的地方\n黛玉在沁芳闸旁，肩上担着花锄', 'slight girl of twelve, fine arched brows', '沁芳闸（location）', 'outfit：这个人此刻**和平常不一样**的地方，几个字，不超过 20 字', '只点出不一样的那一样，不逐件描写款式、颜色和纹样', '查过仍然没有另外交代，就是平常那一身：**outfit 留空**', 'setting：周围的环境', '写一个定格的瞬间', '神情用几个字点到', '不写谁的长相、头发和衣着']) expect(frames()[0], part).toContain(part)
     // The frame stays beside the moment: it is what the next picture of it is drawn from, until the moment is told otherwise.
     expect(found[0]!.shot).toEqual(shot)
     expect(shotOf(found[0]!)).toEqual(shot)
@@ -1000,8 +1000,8 @@ describe('design sheets and looks', () => {
     expect(portrait.prompt).not.toContain('谁在做什么')
     // Her sheet goes along and says what the words say: her line points to it.
     expect(portrait.parts?.pieces?.[4]).toMatchObject({ label: '人物「黛玉」：', text: '见图1', byPicture: true })
-    expect(portrait.parts?.pieces?.[5]).toEqual({ of: 'outfit', label: '「黛玉」此刻穿着：', text: SHOT.outfit, from: 'shot', name: '黛玉' })
-    expect(portrait.prompt.split('\n').slice(0, 6)).toEqual(['用途：小说人物立绘：「黛玉」的名场面', `画面：${SHOT.action}`, `环境：${SHOT.setting}`, '构图：以「黛玉」为主体，半身到七分身，脸看得清', '人物「黛玉」：见图1', `「黛玉」此刻穿着：${SHOT.outfit}`])
+    expect(portrait.parts?.pieces?.[5]).toEqual({ of: 'outfit', label: '「黛玉」此刻：', text: SHOT.outfit, from: 'shot', name: '黛玉' })
+    expect(portrait.prompt.split('\n').slice(0, 6)).toEqual(['用途：小说人物立绘：「黛玉」的名场面', `画面：${SHOT.action}`, `环境：${SHOT.setting}`, '构图：以「黛玉」为主体，半身到七分身，脸看得清', '人物「黛玉」：见图1', `「黛玉」此刻：${SHOT.outfit}`])
     // (Which moment the picture is of is still read off its record: by the moment as told, not by the frame that was sent.)
     expect(sceneOfPicture(found.map(scene => ({ ...scene, portrait: undefined })) as never, portrait.path, { parts: portrait.parts! })?.title).toBe('葬花')
     expect(portrait.prompt).not.toContain('面向镜头')
@@ -1120,7 +1120,7 @@ describe('design sheets and looks', () => {
     const hers = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: old.id, sheetFirst: false }, task)
     expect(hers.prompt).toContain('画面：扑蝶：滴翠亭外')
     expect(hers.prompt).toContain('构图：以「宝钗」为主体，半身到七分身，脸看得清\n')
-    expect(hers.scene).toMatchObject({ title: '扑蝶', unframed: expect.stringContaining('导演没能整理出这一刻的穿着和环境') })
+    expect(hers.scene).toMatchObject({ title: '扑蝶', unframed: expect.stringContaining('导演没能整理出这一刻的画面和环境') })
     expect(hers.parts?.pieces?.find(piece => piece.of === 'scene')?.told).toBeUndefined()
 
     // Somebody the book has no moment for: the director says so, nothing is kept, the portrait is plain — and says why.
@@ -1288,8 +1288,10 @@ describe('design sheets and looks', () => {
     expect(inStage(kept, monk).visual).toMatchObject({ portrait: 'assets/images/moment.png' })
     expect(inStage(kept, monk).visual?.sheet).toBeUndefined()
     const pictured = inPictureAt(kept, monk)
-    expect([pictured.visual?.sheet, pictured.lookThen, pictured.appearance]).toEqual([main.path, { title: '出家之后', words: monk.appearance }, monk.appearance])
-    expect(inPictureAt(kept, { id: 'z', title: '老年', appearance: '须发皆白' })).toMatchObject({ lookThen: { title: '老年', words: '须发皆白' }, visual: { sheet: main.path } })
+    // (A look said whole is marked so: beside a picture it is named, not written out. A word of what is different then is said.)
+    expect([pictured.visual?.sheet, pictured.lookThen, pictured.appearance]).toEqual([main.path, { title: '出家之后', words: monk.appearance, whole: true }, monk.appearance])
+    expect(inPictureAt(kept, { id: 'z', title: '老年', age: '七十上下', appearance: '须发皆白' })).toMatchObject({ lookThen: { title: '老年', words: '须发皆白', age: '七十上下' }, visual: { sheet: main.path } })
+    expect(inPictureAt(kept, { id: 'z', title: '老年', appearance: '须发皆白' }).lookThen).toEqual({ title: '老年', words: '须发皆白' })
     // (A stretch with a sheet of its own is shown by it; one that says nothing of looks is who the card's sheet shows; no stretch, the card.)
     expect([late[0]!.visual?.sheet, (late[0] as { lookThen?: unknown }).lookThen]).toEqual([sheet.path, undefined])
     expect(inPictureAt(kept, { id: 'q', title: '入京' }).lookThen).toBeUndefined()
@@ -1370,14 +1372,14 @@ describe('what a picture is told, and what goes along with it', () => {
       '环境：夜里的灵堂，白幔低垂，烛火与火盆的光从下方照上来',
       '构图：以「凤姐」为主体，半身到七分身，脸看得清；别的人只作陪衬',
       '人物「凤姐（丧服）」：见图1',
-      '「凤姐」此刻穿着：腰间系着麻绳',
+      '「凤姐」此刻：腰间系着麻绳',
       '人物「贾琏」（陪衬）：见图2',
     ])
     expect(portrait.parts?.references?.map(reference => reference.path)).toEqual([mourning.path, his.path])
     expect(images.calls).toHaveLength(1)
     // Where no picture of her goes along, she is written out — in that look — and what she wears there follows.
     const words = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: feng.id, from: 'words' }, task)
-    expect(words.parts!.subject.split('\n').slice(4, 6)).toEqual(['人物「凤姐（丧服）」：woman of twenty, phoenix eyes, gold hairpins，plain white mourning robe, hair unadorned', '「凤姐」此刻穿着：腰间系着麻绳'])
+    expect(words.parts!.subject.split('\n').slice(4, 6)).toEqual(['人物「凤姐（丧服）」：woman of twenty, phoenix eyes, gold hairpins，plain white mourning robe, hair unadorned', '「凤姐」此刻：腰间系着麻绳'])
     // The author changes the frame on the card — it is theirs to change —: the next picture is drawn from it as changed,
     // and nobody is asked.
     const asks = bed.llm.requests.length
@@ -1457,7 +1459,10 @@ describe('what a picture is told, and what goes along with it', () => {
     expect(images.calls.length).toBe(beside + 1)
     expect(monked.parts?.references?.map(reference => reference.path)).toContain(sheetsOfHis)
     expect(monked.parts?.references?.map(reference => reference.path)).not.toContain(hisMoment)
-    expect(monked.parts!.subject.split('\n').find(line => line.startsWith('人物「宝玉」'))).toMatch(/^人物「宝玉」（陪衬）：见图\d；这时（出家之后）：剃了发的青年僧人，面容清瘦，眼窝深陷，披一领大红猩猩毡斗篷，赤着脚站在雪地里，神情空茫$/)
+    // A look said whole is not written out beside his picture: the stretch is named, the words kept on the record unsent.
+    expect(monked.parts!.subject.split('\n').find(line => line.startsWith('人物「宝玉」'))).toMatch(/^人物「宝玉」（陪衬）：见图\d；这时：出家之后$/)
+    expect(monked.parts!.subject).not.toContain('剃了发的青年僧人')
+    expect((monked.parts!.pieces ?? []).find(part => part.of === 'look' && part.name === '宝玉')).toMatchObject({ byPicture: true, then: { title: '出家之后', whole: true, words: '剃了发的青年僧人，面容清瘦，眼窝深陷，披一领大红猩猩毡斗篷，赤着脚站在雪地里，神情空茫' } })
     expect((await project.findCharacter(jia.id))!.visual?.sheet).toBe(sheetsOfHis)
     await project.saveCharacter({ id: jia.id, stages: [] })
     // The author has looks written out every time: both are, each under their name, with their pictures along all the same.
@@ -1486,6 +1491,30 @@ describe('what a picture is told, and what goes along with it', () => {
     expect(without.references).toEqual([])
     // What it looks like is still said.
     expect(without.subject).toContain('物件「寄死笔」：前清旧笔，笔杆发乌')
+  })
+})
+
+describe('beside a picture of somebody, what is said of them', () => {
+  const sheet = 'assets/images/sheet-she.png'
+  const she = { of: 'look' as const, name: '她', text: '平常的样子：青灰旗袍，低髻，银簪', path: sheet }
+  const line = (piece: object, lang: 'zh' | 'en' = 'zh', along = true): string => compose([{ ...she, ...piece }], lang, along ? { paths: [sheet] } : undefined).subject
+
+  it('points to the picture and says nothing of how they usually look', () => {
+    expect(line({})).toBe('人物「她」：见图1')
+  })
+
+  it('adds a word of what is different in a stretch of their life, and names — never writes out — a look said whole', () => {
+    expect(line({ then: { title: '病中', words: '清减了些，面色发白' } })).toBe('人物「她」：见图1；这时（病中）：清减了些，面色发白')
+    const whole = { title: '出家之后', words: '剃了发的青年僧人，面容清瘦，眼窝深陷，披一领大红猩猩毡斗篷，赤着脚站在雪地里，神情空茫', whole: true }
+    expect(line({ then: whole })).toBe('人物「她」：见图1；这时：出家之后')
+    expect(line({ then: { ...whole, age: '约二十岁' } })).toBe('人物「她」：见图1；这时：出家之后（约二十岁）')
+    expect(line({ then: { ...whole, age: 'about twenty' } }, 'en')).toMatch(/: see Image 1; at this time: 出家之后 \(about twenty\)$/)
+    // The words are kept on the part, unsent: the record says the stretch's look was not written.
+    expect((compose([{ ...she, then: whole }], 'zh', { paths: [sheet] }).pieces ?? [])[0]).toMatchObject({ byPicture: true, then: whole })
+  })
+
+  it('writes them out where no picture of them goes along', () => {
+    expect(line({ then: { title: '出家之后', words: '……', whole: true } }, 'zh', false)).toBe('人物「她」：平常的样子：青灰旗袍，低髻，银簪')
   })
 })
 

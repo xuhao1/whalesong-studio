@@ -8,9 +8,9 @@
  * Nothing here talks to the Studio's controller: whoever uses a part hands it
  * the text, the script and a way to turn a media path into a URL.
  */
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
-import { alignScript, blocksOf, segmentsOf, type Block } from '../../shared/reader'
+import { alignScript, blocksOf, fillsPane, pictureSizeOf, segmentsOf, stepPictureSize, type Block, type PictureRoom, type PictureSize } from '../../shared/reader'
 import { countWords, proseOnly } from '../../shared/text'
 import type { AudioCue, AudioLine } from '../../shared/types'
 import { Icon } from '../icons'
@@ -38,33 +38,56 @@ export interface ReaderPrefs {
   things?: boolean
   /** The pictures of people's moments are shown in the text, where the chapter tells them. Left out: they are. */
   moments?: boolean
-  /** How large the pictures of a chapter stand in its text. Left out: `full` — as wide as the column, as they always were. */
+  /** How large the pictures of a chapter stand in its text ({@link PictureSize}). Left out: the standard — as wide as the text. */
   pictures?: PictureSize
 }
 
 /**
- * How large a picture stands in the text: a part of the column's width and of the window's height; all the column
- * (`full`); or out of the column, as wide as the screen the page is read on (`screen`).
+ * How a page stands its pictures at the size the reader chose: the class and the variables its figures are laid out
+ * by. The standard is the text's own width; smaller is a part of it; larger stands out of the column on both sides,
+ * as far as the pane the page scrolls in — which is measured for that, the column not knowing how wide what it
+ * stands in is.
  */
-export type PictureSize = 'small' | 'medium' | 'large' | 'full' | 'screen'
-
-/**
- * How wide the pane a page scrolls in is — while something on the page is to be as wide as it. (A picture as wide as
- * the screen stands out of the column of text; the column does not know how wide what it stands in is.)
- */
-export function usePaneWidth(scroller: RefObject<HTMLElement | null> | undefined, on: boolean): number | undefined {
-  const [width, setWidth] = useState<number | undefined>()
+export function usePictureSize(pictures: unknown, scroller: RefObject<HTMLElement | null> | undefined): { className: string | false; style: Record<string, string> } {
+  const size = pictureSizeOf(pictures)
+  const [pane, setPane] = useState<number | undefined>()
   useEffect(() => {
     const element = scroller?.current
-    if (!on || element === null || element === undefined) { setWidth(undefined); return }
-    const measure = (): void => { setWidth(element.clientWidth) }
+    if (element === null || element === undefined) return
+    const page = element.querySelector<HTMLElement>('.nv-reader-page, .nv-script-page')
+    const measure = (): void => {
+      // (The text runs as wide as the page inside its margins.)
+      const around = page !== null ? getComputedStyle(page) : undefined
+      const text = page !== null && around !== undefined ? page.clientWidth - (parseFloat(around.paddingLeft) || 0) - (parseFloat(around.paddingRight) || 0) : element.clientWidth
+      setPane(element.clientWidth)
+      setRoom({ pane: element.clientWidth, text: Math.max(1, Math.min(text, element.clientWidth)) })
+    }
     measure()
     const watching = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : undefined
     watching?.observe(element)
-    return () => { watching?.disconnect() }
-  }, [scroller, on])
-  return width
+    if (page !== null) watching?.observe(page)
+    return () => { watching?.disconnect(); setRoom(undefined) }
+  }, [scroller])
+  return {
+    className: size === 'screen' && 'is-pictures-screen',
+    // (As wide as the screen: wider than any pane is, and held to the pane's own width.)
+    style: { '--nv-pic': size === 'screen' ? '99' : String(size), ...(pane !== undefined ? { '--nv-pane': `${pane}px` } : {}) },
+  }
 }
+
+/**
+ * The room the page on screen has for a picture — as that page last measured it — for the settings to step sizes by:
+ * a step that changes nothing there is not a step. Nothing while no page is shown (the settings opened elsewhere).
+ */
+let room: PictureRoom | undefined
+const roomWatchers = new Set<() => void>()
+function setRoom(next: PictureRoom | undefined): void {
+  if (next?.text === room?.text && next?.pane === room?.pane) return
+  room = next
+  for (const tell of roomWatchers) tell()
+}
+const watchRoom = (tell: () => void): (() => void) => { roomWatchers.add(tell); return () => { roomWatchers.delete(tell) } }
+const useRoom = (): PictureRoom | undefined => useSyncExternalStore(watchRoom, () => room, () => undefined)
 
 /**
  * A picture of the text, as large as the window lets it be: laid over everything, put away by a press anywhere or by
@@ -219,6 +242,9 @@ export function ReaderSettings({ prefs, update, options, updateOptions, t, extra
   onClose?: (() => void) | undefined
 }) {
   const [more, setMore] = useState(false)
+  const pictures = pictureSizeOf(prefs.pictures)
+  // (Stepped by what changes on the page being shown, where one is.)
+  const pictureRoom = useRoom()
   const panel = (
     <div className={cx('nv-reader-settings', onClose !== undefined && 'is-floating')} role="dialog" aria-label={t('阅读设置', 'Reading settings')}>
       <div className="nv-reader-settings-row">
@@ -245,11 +271,13 @@ export function ReaderSettings({ prefs, update, options, updateOptions, t, extra
         </div>
       </div>
       <div className="nv-reader-settings-row">
-        <span className="nv-reader-settings-label" title={t('正文里的图默认多大。满栏：和文字那一栏一样宽；满屏：宽度占满屏幕。点一张图可以放到最大', 'How large pictures stand in the text. Column: as wide as the text; Screen: as wide as the screen. Press one to see it at full size')}>{t('图片', 'Pictures')}</span>
-        <div className="nv-seg" role="group">
-          {([['small', '小', 'Small'], ['medium', '中', 'Medium'], ['large', '大', 'Large'], ['full', '满栏', 'Column'], ['screen', '满屏', 'Screen']] as const).map(([value, zh, en]) => (
-            <button key={value} type="button" aria-pressed={(prefs.pictures ?? 'full') === value} className={cx((prefs.pictures ?? 'full') === value && 'is-active')} onClick={() => { update({ pictures: value }) }}>{t(zh, en)}</button>
-          ))}
+        <span className="nv-reader-settings-label" title={t('正文里的图多大。标准：和文字一样宽；点一张图可以放到最大', 'How large pictures stand in the text. Standard: as wide as the text. Press one to see it at full size')}>{t('图片', 'Pictures')}</span>
+        <div className="nv-reader-settings-size">
+          <button type="button" className="nv-btn nv-btn-outline nv-btn-sm" disabled={stepPictureSize(pictures, -1, pictureRoom) === pictures} onClick={() => { update({ pictures: stepPictureSize(pictures, -1, pictureRoom) }) }} aria-label={t('图片小一些', 'Smaller pictures')}><span>−</span></button>
+          <button type="button" className="nv-reader-settings-value is-wide" disabled={pictures === 1} onClick={() => { update({ pictures: 1 }) }} title={pictures === 1 ? t('和文字一样宽', 'As wide as the text') : t('回到标准：和文字一样宽', 'Back to the standard: as wide as the text')}>
+            {pictures === 1 ? t('标准', 'Standard') : pictures === 'screen' || fillsPane(pictures, pictureRoom) ? t('满屏', 'Screen') : `${Math.round(pictures * 100)}%`}
+          </button>
+          <button type="button" className="nv-btn nv-btn-outline nv-btn-sm" disabled={stepPictureSize(pictures, 1, pictureRoom) === pictures} onClick={() => { update({ pictures: stepPictureSize(pictures, 1, pictureRoom) }) }} aria-label={t('图片大一些', 'Larger pictures')}><span>+</span></button>
         </div>
       </div>
       <div className="nv-reader-settings-row">
@@ -467,8 +495,8 @@ export function ReaderPage({ t, bookTitle, chapter, text, prefs, media, lines, a
   }, [figures, prefs.moments])
   // A picture pressed: shown as large as the window lets it be.
   const [zoomed, setZoomed] = useState<{ path: string; alt: string } | undefined>()
-  // Pictures as wide as the screen stand out of the column: as wide as the pane the page scrolls in.
-  const pane = usePaneWidth(scroller, prefs.pictures === 'screen')
+  // How large the pictures stand: as wide as the text, unless the reader has them smaller or larger.
+  const sized = usePictureSize(prefs.pictures, scroller)
   const momentsAfter = (offset: number): ReactNode => (pictured.get(offset) ?? []).map(figure => (
     <figure key={`moment-${figure.path}`} className="nv-figure is-moment">
       <img alt={figure.caption} loading="lazy" src={media(figure.path)} {...opensLarge(() => { setZoomed({ path: figure.path, alt: figure.caption }) }, t)} />
@@ -655,7 +683,7 @@ export function ReaderPage({ t, bookTitle, chapter, text, prefs, media, lines, a
   const listening = lines !== undefined && onLine !== undefined
   return (
     <div className="nv-reader-scroll" ref={scroller as RefObject<HTMLDivElement>} onMouseUp={onSelect} onKeyUp={onSelect}>
-      <article className={cx('nv-reader-page', prefs.serif && 'is-serif', listening && 'is-listening', prefs.pictures !== undefined && prefs.pictures !== 'full' && `is-pictures-${prefs.pictures}`)} style={{ fontSize: prefs.size, ...(pane !== undefined ? { ['--nv-pane' as string]: `${pane}px` } : {}) }}>
+      <article className={cx('nv-reader-page', prefs.serif && 'is-serif', listening && 'is-listening', sized.className)} style={{ fontSize: prefs.size, ...sized.style }}>
         <header className="nv-reader-head">
           <span className="nv-reader-kicker">{bookTitle} · {t(`第 ${chapter.index} 章`, `Chapter ${chapter.index}`)}</span>
           <h1>{chapter.title}</h1>

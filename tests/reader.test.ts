@@ -2,7 +2,7 @@
 /** The reader: where the lines of the audio script sit in the prose, and the code a phone scans to open it. */
 import { describe, expect, it } from 'vitest'
 import { qrCode, qrPath } from '../src/shared/qr'
-import { alignScript, blocksOf, segmentsOf, subtitleOf } from '../src/shared/reader'
+import { alignScript, blocksOf, fillsPane, knownPictureSize, PICTURE_SIZES, pictureSizeOf, pictureWidth, segmentsOf, stepPictureSize, subtitleOf } from '../src/shared/reader'
 
 describe('the script in the prose', () => {
   const text = '更衣间的门开了一条缝。拍卖师探进半个头。\n\n“零七。”\n\n“在。”\n\n门开了。\n她走出去。\n\n![穹顶](assets/images/dome.png)\n\n她用“我”。手册上写她应该用“我们”。'
@@ -184,6 +184,46 @@ function readQr(modules: boolean[][]): string {
   const bytes = Array.from({ length }, (_, index) => read(4 + lengthBits + index * 8, 8))
   return new TextDecoder().decode(Uint8Array.from(bytes))
 }
+
+describe('how large pictures stand in the text', () => {
+  it('has the text\'s own width for its standard, and steps smaller and larger from it', () => {
+    // Nothing chosen: as wide as the text.
+    expect(pictureSizeOf(undefined)).toBe(1)
+    expect(PICTURE_SIZES.indexOf(1)).toBeGreaterThan(0)
+    expect(PICTURE_SIZES.indexOf(1)).toBeLessThan(PICTURE_SIZES.length - 1)
+    // Smaller and larger, a step at a time, and no further than either end.
+    expect(stepPictureSize(1, -1)).toBe(0.8)
+    expect(stepPictureSize(1, 1)).toBe(1.25)
+    expect(stepPictureSize(1.5, 1)).toBe('screen')
+    expect(stepPictureSize('screen', 1)).toBe('screen')
+    expect(stepPictureSize('screen', -1)).toBe(1.5)
+    expect(stepPictureSize(0.5, -1)).toBe(0.5)
+    // What a device kept while sizes had names reads as the nearest step: "full" was the text's width, and is the standard.
+    expect(['small', 'medium', 'large', 'full', 'screen'].map(pictureSizeOf)).toEqual([0.5, 0.65, 0.8, 1, 'screen'])
+    // Anything else is no size.
+    expect([knownPictureSize('huge'), knownPictureSize(-1), knownPictureSize(Number.NaN), knownPictureSize(null)]).toEqual([undefined, undefined, undefined, undefined])
+    expect(knownPictureSize(0.7)).toBe(0.65)
+  })
+
+  it('steps by what changes on the page being looked at: a size that would look the same is passed over', () => {
+    // A wide window: the text 668 wide in a pane of 1024 — every size is a width of its own.
+    const wide = { text: 668, pane: 1024 }
+    expect([pictureWidth(0.5, wide), pictureWidth(1, wide), pictureWidth(1.25, wide), pictureWidth(1.5, wide), pictureWidth('screen', wide)]).toEqual([334, 668, 835, 1002, 1024])
+    expect([stepPictureSize(1, 1, wide), stepPictureSize(1.25, 1, wide), stepPictureSize(1.5, 1, wide), stepPictureSize('screen', 1, wide)]).toEqual([1.25, 1.5, 'screen', 'screen'])
+    expect([stepPictureSize('screen', -1, wide), stepPictureSize(1, -1, wide), stepPictureSize(0.5, -1, wide)]).toEqual([1.5, 0.8, 0.5])
+    // A phone: the text nearly as wide as the screen — one step up fills it, and that is "as wide as the screen";
+    // there is nothing larger, and one step down from it is the standard again.
+    const phone = { text: 343, pane: 375 }
+    expect(stepPictureSize(1, 1, phone)).toBe('screen')
+    expect(stepPictureSize('screen', 1, phone)).toBe('screen')
+    expect(stepPictureSize('screen', -1, phone)).toBe(1)
+    // (A size kept from a wider window that fills this pane reads as filling it, and steps as that.)
+    expect([fillsPane(1.5, phone), fillsPane(1.25, wide), fillsPane(1, phone), fillsPane('screen', undefined), fillsPane(1.5, undefined)]).toEqual([true, false, false, true, false])
+    expect([stepPictureSize(1.5, 1, phone), stepPictureSize(1.5, -1, phone)]).toEqual([1.5, 1])
+    // The text as wide as its pane: nothing larger than the standard.
+    expect(stepPictureSize(1, 1, { text: 375, pane: 375 })).toBe(1)
+  })
+})
 
 describe('the code a phone scans', () => {
   it('reads back as what was written, at every size', () => {

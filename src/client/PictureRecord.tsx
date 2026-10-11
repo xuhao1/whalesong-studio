@@ -346,8 +346,14 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
   // Somebody whose line pointed to their picture, drawn before the words for them were last changed: the picture is
   // what this was drawn by — said, so that a change the author made to their look is not looked for here in vain.
   for (const piece of parts?.pieces ?? []) {
-    if (piece.of !== 'look' || piece.moved !== true) continue
+    if (piece.of !== 'look') continue
     const who = (piece.name ?? '').replace(/（[^）]*）$/u, '')
+    // In a stretch of their life that has a look written whole, with the card's sheet along: the stretch was named
+    // and its look not sent — said, with where to go for a picture of them as they are then.
+    if (piece.byPicture === true && piece.then?.whole === true) {
+      standing.push({ tone: 'info', text: t(`「${who}」这时是「${piece.then.title}」：带上的是人物卡的人设图，这个时期的样子没有另写进提示词。要画成这时的样子，给这个时期画一张人设图。`, `${who} is in "${piece.then.title}" here: the card's design sheet went along, and that stretch's look was not written into the prompt. To have them drawn as they are then, draw a design sheet for the stretch.`) })
+    }
+    if (piece.moved !== true) continue
     standing.push({ tone: 'info', text: t(`「${who}」照的是带上的那张图：外貌的文字在那张图之后改过，改动不在这张图里。要让它进画面，重画人设图。`, `${who} was drawn by the picture that went along: the words for how they look were changed after that picture, and the change is not in this one. To have it in pictures, draw the design sheet again.`) })
   }
   if (made !== undefined) {
@@ -543,7 +549,7 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
         {parts !== undefined ? (
           <dl className="nv-parts">
             {parts.pieces !== undefined && parts.pieces.length > 0 ? parts.pieces.map((piece, index) => (
-              <PieceRow key={index} label={piece.of === 'look' ? (piece.name !== undefined && piece.name.length > 0 ? t(`「${piece.name}」的样子${piece.secondary === true ? '（陪衬）' : ''}`, `How ${piece.name} looks${piece.secondary === true ? ' (secondary)' : ''}`) : person ? t('这个人的样子', 'How they look') : t('它的样子', 'How it looks')) : piece.name !== undefined && (piece.of === 'place' || piece.of === 'thing') ? t(`「${piece.name}」的样子`, `How "${piece.name}" looks`) : image.verbatim === true && piece.of === 'composed' ? t('整段提示词（你改写的）', 'The whole prompt, as you rewrote it') : piece.of === 'outfit' && piece.from === 'shot' ? t(`${piece.name !== undefined ? `「${piece.name}」` : ''}此刻穿着`, `${piece.name !== undefined ? `${piece.name}, ` : ''}wearing in this moment`) : t(...PIECE[piece.of])} chip={piece.of === 'scene' ? `${piece.from === 'asked' ? t('导演按这一张的要求挑的', 'picked by the director for this picture') : t('人物卡上的名场面', 'one of the card\'s signature scenes')}${piece.told !== undefined ? t(' · 导演整理成一格', ' · made into one frame by the director') : ''}` : piece.from === 'shot' ? t('导演照这一幕前后的正文整理的', 'read by the director off the text around the moment') : piece.of !== 'look' ? undefined : piece.byPicture === true ? t('照参考图，没有另写', 'left to their picture, not written out') : person
+              <PieceRow key={index} label={piece.of === 'look' ? (piece.name !== undefined && piece.name.length > 0 ? t(`「${piece.name}」的样子${piece.secondary === true ? '（陪衬）' : ''}`, `How ${piece.name} looks${piece.secondary === true ? ' (secondary)' : ''}`) : person ? t('这个人的样子', 'How they look') : t('它的样子', 'How it looks')) : piece.name !== undefined && (piece.of === 'place' || piece.of === 'thing') ? t(`「${piece.name}」的样子`, `How "${piece.name}" looks`) : image.verbatim === true && piece.of === 'composed' ? t('整段提示词（你改写的）', 'The whole prompt, as you rewrote it') : piece.of === 'outfit' && piece.from === 'shot' ? t(`${piece.name !== undefined ? `「${piece.name}」` : ''}此刻`, `${piece.name !== undefined ? `${piece.name}, ` : ''}just then`) : t(...PIECE[piece.of])} chip={piece.of === 'scene' ? `${piece.from === 'asked' ? t('导演按这一张的要求挑的', 'picked by the director for this picture') : t('人物卡上的名场面', 'one of the card\'s signature scenes')}${piece.told !== undefined ? t(' · 导演整理成一格', ' · made into one frame by the director') : ''}` : piece.from === 'shot' ? t('导演照这一幕前后的正文整理的', 'read by the director off the text around the moment') : piece.of !== 'look' ? undefined : piece.byPicture === true ? t('照参考图，没有另写', 'left to their picture, not written out') : person
                 ? (piece.from === 'anchor' ? t('当时的视觉锚点（旧）', 'the visual anchor of the time (old)') : t('人物卡的外貌', 'the card\'s appearance'))
                 : (piece.from === 'anchor' ? t('条目上的"样子"', 'the entry\'s look') : t('条目的名字和概括', 'the entry\'s name and summary'))}
               >

@@ -30,7 +30,7 @@ import { createHash } from 'node:crypto'
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { availableParallelism } from 'node:os'
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path'
-import { blocksOf } from '../../shared/reader'
+import { blocksOf, knownPictureSize, type PictureSize } from '../../shared/reader'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import type { PicturePress, SoundPress } from '../media/press'
 import { ProjectError } from '../project'
@@ -69,7 +69,7 @@ export interface SiteParams {
 
 /** Reading settings a site opens with: of the page (`prefs`) and of the player (`options`); a visitor's own replace them. */
 export interface SiteDefaults {
-  prefs?: { size?: number; theme?: 'auto' | 'paper' | 'night'; serif?: boolean; notes?: boolean; follow?: boolean; names?: boolean; things?: boolean; moments?: boolean; pictures?: 'small' | 'medium' | 'large' | 'full' | 'screen' }
+  prefs?: { size?: number; theme?: 'auto' | 'paper' | 'night'; serif?: boolean; notes?: boolean; follow?: boolean; names?: boolean; things?: boolean; moments?: boolean; pictures?: PictureSize }
   options?: { rate?: number; voiceVolume?: number; ambienceVolume?: number; ambienceOn?: boolean; autoNext?: boolean }
 }
 
@@ -93,7 +93,7 @@ export function siteDefaults(raw: unknown): SiteDefaults | undefined {
     names: flag(page?.names),
     things: flag(page?.things),
     moments: flag(page?.moments),
-    pictures: page?.pictures === 'small' || page?.pictures === 'medium' || page?.pictures === 'large' || page?.pictures === 'full' || page?.pictures === 'screen' ? page.pictures : undefined,
+    pictures: knownPictureSize(page?.pictures),
   })
   const options = drop({
     rate: within(player?.rate, 0.5, 2),

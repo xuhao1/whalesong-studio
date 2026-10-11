@@ -44,7 +44,7 @@ import type { CharacterCard, CharacterLook, CharacterStage, ComicPanel, ImageTri
 import { MAIN_LINE, referencesOf } from '../../shared/types'
 import { clip, clipTail, fuzzyFind, hashText, newId, sameName, slugify } from '../../shared/text'
 import { leadOf, portraitsOf, PROMPT_HEADROOM, promptTokens, promptWriteOf, type PictureLead } from '../../shared/images'
-import { inStage, looksWhole, stageAt } from '../../shared/stages'
+import { inStage, looksWhole, stageAt, type StretchLook } from '../../shared/stages'
 import { blocksOf, figureSpots } from '../../shared/reader'
 import { picturesKept, sheetFronts, sheetPool } from '../../shared/sheets'
 import { groupOf } from '../../shared/world'
@@ -600,13 +600,13 @@ async function frameMoment(core: NovelCore, runtime: ProjectRuntime, card: Chara
   const named = (entry: WorldEntry): boolean => [entry.name, ...(entry.aliases ?? [])].some(name => [...name.trim()].length >= 2 && (around.includes(name.trim()) || (chapter?.plan.location ?? '').includes(name.trim())))
   const entries = has.world.filter(entry => groupOf(entry.category) !== 'ideas' && named(entry)).slice(0, 12)
   const wardrobe = (card.visual?.looks ?? []).map(look => `「${look.name}」${look.when !== undefined ? `（${look.when}）` : ''}${look.prompt !== undefined && look.prompt.trim().length > 0 ? `${colon}${clip(look.prompt.trim(), 80, '…')}` : ''}`)
-  const restore = task.job?.note(L(lang, `导演在读「${moment.title.length > 0 ? moment.title : card.name}」前后的正文，整理这一刻的穿着和环境…`, `The director is reading the text around "${moment.title.length > 0 ? moment.title : card.name}" for what they wear and what is around them…`))
+  const restore = task.job?.note(L(lang, `导演在读「${moment.title.length > 0 ? moment.title : card.name}」前后的正文，整理这一刻的画面和环境…`, `The director is reading the text around "${moment.title.length > 0 ? moment.title : card.name}" for what they wear and what is around them…`))
   try {
     const { value } = await assign<Record<string, unknown>>(core, runtime, task, {
       role: 'director',
       label: L(lang, `整理画面 · ${card.name}${moment.title.length > 0 ? `「${moment.title}」` : ''}`, `Framing · ${card.name}${moment.title.length > 0 ? `, "${moment.title}"` : ''}`),
       tool: 'frame_moment',
-      what: L(lang, '这一幕整理成的一格画面：这一刻在做什么、穿着什么、周围什么样', 'the one frame made of the moment: what is done in it, what is worn, what is around'),
+      what: L(lang, '这一幕整理成的一格画面：这一刻在做什么、和平常有什么不一样、周围什么样', 'the one frame made of the moment: what is done in it, what is worn, what is around'),
       // The line the moment is on: what the director reads with its own tools is that line's.
       line: chapter?.line ?? await project.lineOfCharacter(card),
       // The text around the moment comes with the task; a look further back for what they put on that day, then the answer.
@@ -1196,7 +1196,7 @@ function personPiece(card: CharacterCard, options: { look?: CharacterLook | unde
   // Read in a stretch of their life that says something of its own about their looks while the sheet along is the
   // card's (`lookThen`): the sheet shows who they are, and what the stretch says is added to the pointer — not how
   // they usually look all over again. (An outfit with a sheet of its own shows them as they are in it.)
-  const then = options.look?.sheet === undefined ? (card as { lookThen?: { title: string; words: string } }).lookThen : undefined
+  const then = options.look?.sheet === undefined ? (card as { lookThen?: StretchLook }).lookThen : undefined
   const shown = referenceOf(card, options.look)?.path
   // Nothing says how they look, and no picture shows it: there is nothing to say of them.
   if (words.length === 0 && shown === undefined) return undefined
@@ -1242,7 +1242,7 @@ function partLabel(part: IllustrationPiece, lang: PromptLanguage): string {
     case 'look': return `${named('人物', 'Person')}${part.secondary === true ? L(lang, '（陪衬）', ' (secondary)') : ''}${L(lang, '：', ': ')}`
     case 'setting': return L(lang, '环境：', 'Surroundings: ')
     // What they wear in the moment the picture is of, read off the text around it, stands under their name: it is said of one person.
-    case 'outfit': return part.from === 'shot' ? `${part.name !== undefined && part.name.length > 0 ? L(lang, `「${part.name}」`, `${part.name}, `) : ''}${L(lang, '此刻穿着：', 'wearing in this moment: ')}` : L(lang, '这身装束：', 'This outfit: ')
+    case 'outfit': return part.from === 'shot' ? `${part.name !== undefined && part.name.length > 0 ? L(lang, `「${part.name}」`, `${part.name}, `) : ''}${L(lang, '此刻：', 'just then: ')}` : L(lang, '这身装束：', 'This outfit: ')
     case 'expression': return L(lang, '神态：', 'Expression: ')
     case 'place': return `${named('地点', 'The place')}${L(lang, '：', ': ')}`
     case 'thing': return `${named('物件', 'The object')}${L(lang, '：', ': ')}`
@@ -1271,9 +1271,15 @@ export function compose(parts: readonly (IllustrationPiece | undefined)[], lang:
       const { byPicture: _was, words: _kept, moved: _moved, ...rest } = part
       const at = part.of === 'look' ? numberOf(part.path) : 0
       if (at === 0) return { ...rest, text: tidy(part.text) }
-      // Beside the pointer, only what that picture does not show: what a stretch of their life says of their looks,
-      // an outfit that has no sheet, what the author has just said of them. How they usually look is not said again.
-      const then = part.then !== undefined && tidy(part.then.words).length > 0 ? L(lang, `；这时（${part.then.title}）：${tidy(part.then.words)}`, `; at this time (${part.then.title}): ${tidy(part.then.words)}`) : ''
+      // Beside the pointer, only what that picture does not show, and in few words: what is different in a stretch
+      // of their life, an outfit that has no sheet, what the author has just said of them. How they usually look is
+      // not said again — and a stretch that says a look whole is named, not written out: a picture along is not
+      // followed by a description of the person.
+      const stretch = part.then
+      const then = stretch === undefined || tidy(stretch.words).length === 0 ? ''
+        : stretch.whole === true
+          ? L(lang, `；这时：${stretch.title}${stretch.age !== undefined ? `（${stretch.age}）` : ''}`, `; at this time: ${stretch.title}${stretch.age !== undefined ? ` (${stretch.age})` : ''}`)
+          : L(lang, `；这时（${stretch.title}）：${tidy(stretch.words)}`, `; at this time (${stretch.title}): ${tidy(stretch.words)}`)
       const wearing = part.wearing !== undefined && tidy(part.wearing).length > 0 ? L(lang, `；这一身：${tidy(part.wearing)}`, `; wearing: ${tidy(part.wearing)}`) : ''
       const added = part.added !== undefined && tidy(part.added).length > 0 ? L(lang, `；刚说的：${tidy(part.added)}`, `; just said of them: ${tidy(part.added)}`) : ''
       // (What the line would have said is kept beside the pointer, unsent: a picture drawn again where no picture can go is drawn from it.)
@@ -2423,7 +2429,7 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
         if (isAbort(error) || task.signal?.aborted === true) throw error
         // Not framed: the picture is drawn of the moment as it is told, and that is said with it.
         core.log(`could not make a frame of ${anchored.name}'s moment "${told.title}"; drawing it as it is told`, error)
-        unframed = L(lang, `导演没能整理出这一刻的穿着和环境（${error instanceof Error ? clip(error.message, 80) : '没有回答'}），照名场面原来的写法画`, `the director could not read what they wear and what is around them (${error instanceof Error ? clip(error.message, 100) : 'no answer'}); drawn of the moment as it is told`)
+        unframed = L(lang, `导演没能整理出这一刻的画面和环境（${error instanceof Error ? clip(error.message, 80) : '没有回答'}），照名场面原来的写法画`, `the director could not read what they wear and what is around them (${error instanceof Error ? clip(error.message, 100) : 'no answer'}); drawn of the moment as it is told`)
       }
       if (shown !== undefined && 'text' in shown) {
         shown = { ...shown, ...(shot !== undefined ? { shot } : {}), ...(unframed !== undefined ? { unframed } : {}) }

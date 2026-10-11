@@ -79,6 +79,18 @@ export function inStage<T extends CharacterCard>(card: T, stage: CharacterStage 
   }
 }
 
+/** What a stretch of somebody's life says of how they look, beside a picture that shows them as they usually are. */
+export interface StretchLook {
+  /** What the stretch is called. */
+  title: string
+  /** What it says of their looks. */
+  words: string
+  /** It says a look whole — not a word or two of what is different then. */
+  whole?: boolean
+  /** How old they are in it, where the stretch says. */
+  age?: string
+}
+
 /**
  * The card as a picture that has them in it goes by, in one stretch of their life — the picture of a passage, a panel,
  * somebody else's moment. As {@link inStage} reads it, but held against a design sheet wherever they have one: the
@@ -86,19 +98,23 @@ export function inStage<T extends CharacterCard>(card: T, stage: CharacterStage 
  * often as not one of their moments: a scene, with others in it, and no picture to hold a face against.
  *
  * `lookThen`: the sheet that goes along is the card's, and the stretch says something of its own about how they look
- * — what it says, and what the stretch is called. Their line points to the sheet and adds that, and only that: how
- * they usually look is what the sheet shows, and is not said again beside it.
- * (A stretch that looks wholly otherwise — a child grown up — wants a sheet of its own; until it has one, the card's
- * sheet gives the face and the stretch's words give the rest.)
+ * — what it says, and what the stretch is called. Their line points to the sheet and adds what is different then, in
+ * the few words the stretch has for it: how they usually look is what the sheet shows, and is not said again beside it.
+ * A stretch that says a look whole (`whole`) is not put beside the pointer — a picture along is not followed by a
+ * description of the person: the line names the stretch, with their age in it, and no more. (Somebody who looks
+ * wholly otherwise then — a child grown up — wants a sheet of that stretch's own; until there is one, pictures of
+ * those chapters go by the card's sheet.)
  */
-export function inPictureAt<T extends CharacterCard>(card: T, stage: CharacterStage | undefined): T & { lookThen?: { title: string; words: string } } {
+export function inPictureAt<T extends CharacterCard>(card: T, stage: CharacterStage | undefined): T & { lookThen?: StretchLook } {
   const staged = inStage(card, stage)
   const main = card.visual?.sheet
   if (stage === undefined || stage.visual?.sheet !== undefined || main === undefined) return staged
   const visual = { ...(staged.visual ?? {}), sheet: main, ...(card.visual?.sheetFront === true ? { sheetFront: true } : {}) }
   // What the stretch itself says: the phrases an earlier version kept for image models, where it has them; else its appearance.
   const words = (stage.visual?.prompt?.trim() ?? '') || (stage.appearance?.trim() ?? '')
-  return { ...staged, visual, ...(words.length > 0 ? { lookThen: { title: stage.title, words } } : {}) }
+  if (words.length === 0) return { ...staged, visual }
+  const age = stage.age?.trim() ?? ''
+  return { ...staged, visual, lookThen: { title: stage.title, words, ...(looksWhole(stage) ? { whole: true } : {}), ...(age.length > 0 ? { age } : {}) } }
 }
 
 /** A stretch in a line of words: 少年（约十三岁）· 从第 23 章起. */

@@ -159,7 +159,11 @@ describe('a book as a site', () => {
     })
     expect(siteDefaults({ prefs: { theme: 'sepia' } })).toBeUndefined()
     // How large pictures stand in the text, and what is marked and shown in it, go out too — a size the reader does not know is dropped.
-    expect(siteDefaults({ prefs: { pictures: 'medium', names: false, things: true, moments: false } })).toEqual({ prefs: { names: false, things: true, moments: false, pictures: 'medium' } })
+    expect(siteDefaults({ prefs: { pictures: 1.25, names: false, things: true, moments: false } })).toEqual({ prefs: { names: false, things: true, moments: false, pictures: 1.25 } })
+    // (A size from the two releases in which sizes had names is read as the step nearest it; a width between steps, as the nearest.)
+    expect(siteDefaults({ prefs: { pictures: 'medium' } })).toEqual({ prefs: { pictures: 0.65 } })
+    expect(siteDefaults({ prefs: { pictures: 'full' } })).toEqual({ prefs: { pictures: 1 } })
+    expect(siteDefaults({ prefs: { pictures: 7 } })).toEqual({ prefs: { pictures: 1.5 } })
     expect(siteDefaults({ prefs: { pictures: 'huge', names: 'no' } })).toBeUndefined()
     expect(siteDefaults({ prefs: { pictures: 'screen' } })).toEqual({ prefs: { pictures: 'screen' } })
     expect(siteDefaults(undefined)).toBeUndefined()

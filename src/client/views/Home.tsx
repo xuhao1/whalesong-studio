@@ -315,12 +315,10 @@ function Shelf({ onNew }: { onNew: () => void }) {
               <Icon name="sparkles" size={18} />
               <span><strong>{t('新创作', 'New work')}</strong><small>{t('开一本新书，或把写好的搬进来', 'Start a new book, or bring one in')}</small></span>
             </button>
-            {host.where === 'page' ? (
-              <button type="button" className="nv-home-cta is-quiet" onClick={() => { setRemote(true) }} title={t('在手机上操作工坊…', 'Work the Studio from a phone…')}>
-                <Icon name="phone" size={18} />
-                <span><strong>{t('手机上用', 'On a phone')}</strong></span>
-              </button>
-            ) : null}
+            <button type="button" className="nv-home-cta is-quiet" onClick={() => { setRemote(true) }} title={t('在手机上操作工坊…', 'Work the Studio from a phone…')}>
+              <Icon name="phone" size={18} />
+              <span><strong>{t('手机上用', 'On a phone')}</strong></span>
+            </button>
           </div>
           {remote ? <RemoteDialog onClose={() => { setRemote(false) }} /> : null}
         </div>

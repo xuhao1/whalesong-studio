@@ -17,7 +17,7 @@ import { alignScript, blocksOf } from '../../shared/reader'
 import type { AudioCue, AudioLine } from '../../shared/types'
 import { Icon } from '../icons'
 import type { LinePlayer, PlayerState } from '../stage/player'
-import { cueCaption, formatDuration, opensLarge, PictureZoom, usePaneWidth, type PictureSize, type Translate } from './parts'
+import { cueCaption, formatDuration, opensLarge, PictureZoom, usePictureSize, type Translate } from './parts'
 
 const cx = (...parts: (string | false | undefined | null)[]): string => parts.filter(Boolean).join(' ')
 
@@ -68,7 +68,7 @@ export interface ScriptPageProps {
   speakerOf?: ((line: AudioLine) => string | undefined) | undefined
   scroller: RefObject<HTMLDivElement | null>
   /** The reader's type: the script is set in it, a little smaller than the prose. */
-  prefs?: { size: number; serif: boolean; pictures?: PictureSize | undefined } | undefined
+  prefs?: { size: number; serif: boolean; pictures?: unknown } | undefined
   /** Above the lines: the chapter's title. */
   header?: ReactNode
   /** After the lines: the way to the next chapter. */
@@ -81,7 +81,7 @@ export function ScriptPage({ t, lines, cues, state, player, pace, figures, media
   const live = new Set(state.sounding ?? [])
   // A picture pressed: shown as large as the window lets it be.
   const [zoomed, setZoomed] = useState<{ path: string; alt: string } | undefined>()
-  const pane = usePaneWidth(scroller as RefObject<HTMLElement | null> | undefined, prefs?.pictures === 'screen')
+  const sized = usePictureSize(prefs?.pictures, scroller as RefObject<HTMLElement | null> | undefined)
   const figure = (picture: { path: string; alt: string }): ReactNode => (
     <figure key={picture.path} className="nv-figure nv-line-figure">
       <img loading="lazy" src={media(picture.path)} alt={picture.alt} {...opensLarge(() => { setZoomed(picture) }, t)} />
@@ -90,7 +90,7 @@ export function ScriptPage({ t, lines, cues, state, player, pace, figures, media
   )
   return (
     <div className="nv-reader-scroll" ref={scroller as RefObject<HTMLDivElement>}>
-      <div className={cx('nv-script-wrap nv-script-page', prefs?.serif === true && 'is-serif', prefs?.pictures !== undefined && prefs.pictures !== 'full' && `is-pictures-${prefs.pictures}`)} style={prefs !== undefined ? { fontSize: Math.max(13, prefs.size - 2), ...(pane !== undefined ? { ['--nv-pane' as string]: `${pane}px` } : {}) } : undefined}>
+      <div className={cx('nv-script-wrap nv-script-page', prefs?.serif === true && 'is-serif', sized.className)} style={{ ...(prefs !== undefined ? { fontSize: Math.max(13, prefs.size - 2) } : {}), ...sized.style }}>
         {header}
         <ol className="nv-script">
           {lines.map((line, index) => {

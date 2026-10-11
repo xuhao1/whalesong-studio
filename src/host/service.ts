@@ -82,7 +82,7 @@ export class NovelService extends Service {
   readonly keys: KeyStore
   /** The reader served to other devices on the local network; closed unless the author switched it on. */
   readonly share: ShareServer
-  /** The door for working the Studio from a phone; closed until the author opens it, and closed again with this Host half. */
+  /** The door for working the Studio from a phone; closed until the author opens it. Open while this Host half is replaced, it is handed to the next. */
   readonly remote: RemoteDoor
   /** Runs the crew's roles as agents of the Harness. */
   readonly crew: CrewRunner
@@ -146,7 +146,9 @@ export class NovelService extends Service {
     this.share = new ShareServer(this.core, (message, error) => { this.log(message, error) })
     ctx.effect(() => () => { void this.share.close().catch(() => {}) }, 'novel: reader for other devices')
     this.remote = new RemoteDoor((message, error) => { this.log(message, error) })
-    ctx.effect(() => () => { void this.remote.close().catch(() => {}) }, 'novel: the door for a phone')
+    // (Open while the Host half before this one was replaced: opened again as it was — a phone at work keeps its link.)
+    void this.remote.resume().catch(() => {})
+    ctx.effect(() => () => { void this.remote.park().catch(() => {}) }, 'novel: the door for a phone')
     this.sessionSeal = new SessionSeal(ctx, this)
     // The recommendations that came with this build are put in force, and the settings brought up against them: an update of the plugin is when they change.
     this.recommendations = loadRecommended((message, error) => { this.log(message, error) })

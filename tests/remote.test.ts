@@ -149,4 +149,42 @@ describe('the door through which a phone works the Studio', () => {
     await door.open({ port: target, cookie: 'dsh-auth-x=signed' }, 0)
     expect(new URL(door.status(true).urls[0]!).searchParams.get('k')).not.toBe(token)
   })
+
+  it('is handed to the Host half that comes next when the Studio is restarted: the same link, the same hours', async () => {
+    await door.open({ port: target, cookie: 'dsh-auth-x=signed' }, 0)
+    const before = door.status(true)
+    const token = new URL(before.urls[0]!).searchParams.get('k')!
+    const held = `nv-door=${token}`
+    const base = `http://127.0.0.1:${before.port}`
+    expect((await fetch(`${base}/page`, { headers: { cookie: held } })).status).toBe(200)
+
+    // The Host half goes: the door is shut, and what it was is left for the next one.
+    await door.park()
+    expect(door.status(true).running).toBe(false)
+    await expect(fetch(`${base}/page`, { headers: { cookie: held } })).rejects.toThrow()
+
+    // The next Host half takes it up: the port, the link and the time it has been open are as they were.
+    const next = new RemoteDoor(() => {}, '127.0.0.1')
+    try {
+      expect(await next.resume()).toBe(true)
+      const after = next.status(true)
+      expect([after.running, after.port, after.since, after.until]).toEqual([true, before.port, before.since, before.until])
+      expect(new URL(after.urls[0]!).searchParams.get('k')).toBe(token)
+      const through = await fetch(`${base}/page`, { headers: { cookie: held } })
+      expect([through.status, await through.text()]).toEqual([200, 'GET /page '])
+      expect(seen.at(-1)!.headers.cookie).toBe('dsh-auth-x=signed')
+      // Taken up once: a third Host half finds nothing waiting.
+      expect(await new RemoteDoor(() => {}, '127.0.0.1').resume()).toBe(false)
+    } finally {
+      await next.close()
+    }
+
+    // A door that was closed leaves nothing; nor does one the author closed after it was left.
+    await door.park()
+    expect(await new RemoteDoor(() => {}, '127.0.0.1').resume()).toBe(false)
+    await door.open({ port: target, cookie: 'dsh-auth-x=signed' }, 0)
+    await door.park()
+    await door.open({ port: target, cookie: 'dsh-auth-x=signed' }, 0)
+    expect(await new RemoteDoor(() => {}, '127.0.0.1').resume()).toBe(false)
+  })
 })

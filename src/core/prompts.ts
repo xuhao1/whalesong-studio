@@ -1035,7 +1035,7 @@ ${base.units}
 2. ${base.count}
 3. 什么时候换画面：动作变了、情绪转了、说话的人换了、视点或地点变了、出现了值得一看的新东西。大段对话用正反打和特写切换；长段叙述也要随内容换画面，不要让一张图从头停到尾。
 4. description 用一句话说明画面内容（给作者看）。
-5. prompt 是给绘图模型的这一格画面：景别与构图（特写 / 中景 / 远景、机位），画面里每个人在哪、在做什么、什么神态（用上面的名字称呼他们），手里和身边有什么，这一格的环境、时间、光线与气氛。80–160 字，只写眼睛看得见的。**人物的长相和衣着、场景和物件的样子不用在这里重写**：画的时候会把 characters、wearing、location、things 里点到的每一项在设定里的样子原样接在 prompt 后面——所以这四栏要填全、名字照上面的写。这一格里某样东西和设定里平常的样子不同（淋湿了、撕开了、沾了血）才在 prompt 里写出来。机构名、头衔、没列在上面的专有名词，换成它在这个故事里实际看上去的样子。不要出现文字、对白气泡、分格。
+5. prompt 是给绘图模型的这一格画面：景别与构图（特写 / 中景 / 远景、机位），画面里每个人在哪、在做什么（用上面的名字称呼他们），神情用几个字点到，手里和身边有什么，这一格的环境、时间、光线与气氛。80–160 字，只写眼睛看得见的。**人物的长相和衣着、场景和物件的样子不用在这里重写**：画的时候会把 characters、wearing、location、things 里点到的每一项在设定里的样子原样接在 prompt 后面——所以这四栏要填全、名字照上面的写。人此刻的状态不细写：谁身上和平常不一样（淋湿了、带了伤、沾了血），用几个字点到，不展开；东西和设定里平常的样子不同（撕开了、烧了一角）同样点到为止。机构名、头衔、没列在上面的专有名词，换成它在这个故事里实际看上去的样子。不要出现文字、对白气泡、分格。
 6. wearing：这一格里谁穿的不是平常那一身，就写 {"姓名": "造型名"}（造型名取自上面他的造型）；都穿平常的就留空。
 7. things：这一格画面里看得见的、列在"物件与名词"里的东西，写它们的名字；没有就留空。
 8. camera 从 still|zoom-in|zoom-out|pan-left|pan-right|pan-up|pan-down 里选一个缓慢的镜头运动。
@@ -1060,7 +1060,7 @@ Rules:
 2. ${base.count}
 3. When to cut: the action changes, the mood turns, the speaker changes, the point of view or the place changes, something worth seeing appears. Long exchanges alternate shot / reverse shot and close-ups; long narration changes picture with its content too — no single picture should sit through all of it.
 4. description: one sentence on what the panel shows (for the author).
-5. prompt: this panel's picture for the image model — shot size and composition (close-up / medium / wide, angle), where each person in frame is, what they do and how they look at it (call them by the names above), what they hold and what is beside them, the setting, hour, light and mood of this panel. 50-110 words, only what the eye can see. **How people look and dress, and how the place and the things look, is not to be written again here**: when the panel is drawn, the look the bible has for everything named under characters, wearing, location and things is put after the prompt as it stands — so fill those four in fully, with the names as written above. Write a look into the prompt only where, in this panel, it differs from the usual (soaked, torn open, bloodied). An institution, a title or a proper noun not listed above is written as what it looks like in this story. No text, speech balloons or panel borders.
+5. prompt: this panel's picture for the image model — shot size and composition (close-up / medium / wide, angle), where each person in frame is and what they do (call them by the names above), the expression in a word or two, what they hold and what is beside them, the setting, hour, light and mood of this panel. 50-110 words, only what the eye can see. **How people look and dress, and how the place and the things look, is not to be written again here**: when the panel is drawn, the look the bible has for everything named under characters, wearing, location and things is put after the prompt as it stands — so fill those four in fully, with the names as written above. The state somebody is in is not described at length: what is not as usual about them (soaked, wounded, bloodied) is named in a few words and left there; so is a thing that differs from how the bible has it (torn open, a corner burnt). An institution, a title or a proper noun not listed above is written as what it looks like in this story. No text, speech balloons or panel borders.
 6. wearing: where somebody wears something other than their usual look in this panel, {"name": "look"} (a look listed for them above); empty when everyone is in their usual.
 7. things: the things listed under "Things and terms" that can be seen in this panel, by name; empty when none.
 8. camera: one slow move from still|zoom-in|zoom-out|pan-left|pan-right|pan-up|pan-down.
@@ -1149,7 +1149,7 @@ ${avoid.length > 0 ? avoid : '（无特别限制）'}
 
 要求：
 1. 封面要让没读过的人一眼看出这是一本什么样的书：选一个最能代表这个故事的画面——人物的关系与处境、标志性的地方、一件有分量的东西，而不是把情节画成连环画。
-2. 竖幅构图；画面上方留出一块干净的空间放标题；主体在中下部。写清谁在画面里（用姓名称呼；每个人平常的样子会原样接在这条描述后面，这里不必复述）、姿态与神情、所处的环境、光线、色调与气氛。
+2. 竖幅构图；画面上方留出一块干净的空间放标题；主体在中下部。写清谁在画面里（用姓名称呼）、各自的姿态，神情用几个字点到；人物的长相、头发和衣着不写——画的时候由他们的人设图给出（没有图的，他的样子会接在这条描述后面）。然后是所处的环境、光线、色调与气氛。
 3. 只写眼睛看得见的东西。机构名、头衔、专有名词换成它在这个故事里实际的样子：材质、形状、新旧、颜色。美术风格里对年代、形制有规定的（发式、服饰、建筑、器物属于哪个朝代、哪种式样），画面里这些东西照它写；正文的写法与它不一样时以美术风格为准。
 4. "画面里不能出现"的东西不要画，也不要把这些词写进描述。不要出现任何文字、水印、边框。
 5. 120-220 字，只输出这条描述，不要任何其他内容。`, `Design the cover of the novel "${bare(base.title)}": write one picture description for an image model.
@@ -1177,7 +1177,7 @@ ${avoid.length > 0 ? avoid : '(nothing in particular)'}
 
 Requirements:
 1. A cover tells somebody who has not read the book what kind of book it is: choose the one picture that stands for this story — who these people are to each other and where they stand, a place that is the book's own, one thing that carries weight — not the plot drawn as a strip.
-2. Portrait format; a clean area at the top for the title; the subject in the middle and lower part. Say who is in the picture (by name; how each of them usually looks is added after this description as it stands, so do not restate it), their pose and expression, where they are, the light, the palette and the mood.
+2. Portrait format; a clean area at the top for the title; the subject in the middle and lower part. Say who is in the picture (by name) and how each holds themselves, the expression in a word or two; nothing of their features, hair or clothing — their design sheets give that when it is drawn (for somebody without one, their look is added after this description). Then where they are, the light, the palette and the mood.
 3. Only what the eye can see. Names of institutions, ranks and proper nouns become what they actually look like in this story: material, shape, age, colour. Where the art direction fixes a period or a form (which dynasty or fashion hair, dress, buildings and objects belong to), these are written in that form; where the text says otherwise, the art direction holds.
 4. Nothing from "must not appear" is drawn, and none of those words go into the description. No lettering, no watermark, no frame.
 5. 80-150 words. Output the description only.`)
@@ -1212,7 +1212,7 @@ ${base.artStyle}
 ${avoid.length > 0 ? avoid : '（无特别限制）'}
 
 交回的内容：
-1. picture：画面，80-160 字。${base.whole === true ? '取最有画面感的一个瞬间；' : '画的是这一段写的那一刻；'}写清景别与机位、谁在哪里做什么、神情、手里和身边的东西、光线与气氛。人物用姓名称呼；每个人平常的样子会原样接在后面、人设图也会带上，这里不必复述，只写这一刻特有的——动作、神情，以及此刻和平常不一样的穿戴。只写眼睛看得见的；机构名、头衔、专有名词写成它在这个故事里实际的样子。美术风格里对年代、形制有规定的照它写。“画面里不能出现”的东西不画，也不把这些词写进来。不要文字、水印、分格。
+1. picture：画面，80-160 字。${base.whole === true ? '取最有画面感的一个瞬间；' : '画的是这一段写的那一刻；'}写清景别与机位、谁在哪里做什么、手里和身边的东西、光线与气氛。人物用姓名称呼；每个人的样子由带上的人设图给出（没有图的，他的样子会接在后面），这里不写长相、头发和衣着，也不细写人此刻的状态：动作写清楚，神情几个字；此刻和平常不一样的地方（淋湿、带伤、换了哪身衣服）用几个字点到，不展开。只写眼睛看得见的；机构名、头衔、专有名词写成它在这个故事里实际的样子。美术风格里对年代、形制有规定的照它写。“画面里不能出现”的东西不画，也不把这些词写进来。不要文字、水印、分格。
 2. people：画面里出现的人，写姓名（照上面的人物表），主体在前，至多 4 个。这一段用代词、称呼指的人，从前文认出是谁；没有人物卡的人不列，只在 picture 里写出他的样子。
 3. wearing：{"姓名": "造型名"}——只给此刻穿的不是平常那一身、而且有这个造型可选的人。
 4. place：这一幕所在的地方，写设定里的条目名；设定里没有就不写。
@@ -1242,7 +1242,7 @@ ${base.artStyle}
 ${avoid.length > 0 ? avoid : '(nothing in particular)'}
 
 What to hand in:
-1. picture: the picture, 50-110 words. ${base.whole === true ? 'The single most visual moment; ' : 'The moment the passage tells; '}state shot and viewpoint, who is where doing what, expressions, what is in hand and at hand, light and mood. Call people by name; how each usually looks is added after it as it stands and their design sheets go along, so do not restate it — write only what is of this moment: action, expression, and whatever they wear that is not their usual. Only what the eye can see; names of institutions, titles and proper nouns as what they actually look like in this story. Where the art direction fixes a period or a form, write in that form. Nothing from "Must not appear" is drawn, and none of those words is written. No text, watermark or panel borders.
+1. picture: the picture, 50-110 words. ${base.whole === true ? 'The single most visual moment; ' : 'The moment the passage tells; '}state shot and viewpoint, who is where doing what, what is in hand and at hand, light and mood. Call people by name; how each looks is given by the design sheet that goes along (for somebody without one, their look is added after it), so nothing of features, hair or clothing here, and the state somebody is in is not described at length: the action plainly, the expression in a word or two; what is not as usual about them just then (soaked, wounded, which other clothes) named in a few words and left there. Only what the eye can see; names of institutions, titles and proper nouns as what they actually look like in this story. Where the art direction fixes a period or a form, write in that form. Nothing from "Must not appear" is drawn, and none of those words is written. No text, watermark or panel borders.
 2. people: who is in the frame, by name (as the list above has them), its subject first, four at most. Whoever the passage means by a pronoun or a form of address is told from the text before it; somebody with no card is not listed, only described in the picture.
 3. wearing: {"name": "look name"} — only for somebody who wears something other than their usual here, and has that look to choose.
 4. place: where the moment is set, by the name of its entry in the bible; nothing where the bible has none.
@@ -1572,18 +1572,18 @@ function shotRules(words: PromptLanguage, styled: boolean): { zh: string[]; en: 
   const inEn = words === 'zh' ? 'Chinese' : 'English'
   return {
     zh: [
-      `action：这一刻的画面，一两句，不超过 60 字——这个人什么姿势、在做什么、什么神情、手里拿着什么。画面里还有别的人，就各用半句交代他在哪、在做什么。写一个定格的瞬间：不写前因后果，不写对白、心里想的和比喻，不写眼睛看不见的。用${inZh}写。`,
-      `outfit：这个人此刻**和平常不一样**的穿戴，一句话，不超过 40 字——换了的衣服（款式和颜色）、头上戴的、头发此刻怎样、身上有什么不同（淋湿、带伤、戴孝、沾了泥）。照正文写：这一幕或它之前交代过的，照交代的；任务里的正文没有交代，用你的工具到这一章和前面的章节里去查。查过仍然没有另外交代，就是平常那一身：**outfit 留空**——平常的样子画的时候由人设图和人物那一行给出，不要在这里再写一遍。只写看得见的衣着和头发，不写长相、气味和质感的形容。他这时穿的正是下面列出的某一身造型：在 look 里写那身造型的名字（没有列出造型，或者哪一身都不是：look 留空）。用${inZh}写。`,
+      `action：这一刻的画面，一两句，不超过 50 字——这个人什么姿势、在做什么、手里拿着什么；神情用几个字点到。画面里还有别的人，就各用半句交代他在哪、在做什么。写一个定格的瞬间：不写前因后果，不写对白、心里想的和比喻，不写眼睛看不见的；不写谁的长相、头发和衣着——那些照各人的人设图。用${inZh}写。`,
+      `outfit：这个人此刻**和平常不一样**的地方，几个字，不超过 20 字——换了哪身衣服、头上戴了什么、身上有什么不同（淋湿、带伤、戴孝、沾了泥）。只点出不一样的那一样，不逐件描写款式、颜色和纹样，不写长相。照正文写：这一幕或它之前交代过的，照交代的；任务里的正文没有交代，用你的工具到这一章和前面的章节里去查。查过仍然没有另外交代，就是平常那一身：**outfit 留空**——平常的样子画的时候由人设图给出，不要在这里再写一遍。他这时穿的正是下面列出的某一身造型：在 look 里写那身造型的名字（没有列出造型，或者哪一身都不是：look 留空）。用${inZh}写。`,
       `setting：周围的环境，一两句，不超过 60 字——在哪（室内还是室外、什么样的地方）、身边有什么、什么时辰和天气、光从哪里来。照正文写，正文没有的不添。用${inZh}写。`,
-      'people：画面里别的人的名字（没有就空）。place：设定里对得上的地点名（没有就空）。things：画面里出现的、设定里有的物件名。只写任务里列出来的名字——它们有设定图的会作为参考图带上；它们长什么样，仍然要在 action / setting 里写出来。',
+      'people：画面里别的人的名字（没有就空）。place：设定里对得上的地点名（没有就空）。things：画面里出现的、设定里有的物件名。只写任务里列出来的名字——它们有设定图的会作为参考图带上；地点和物件长什么样，仍然要在 setting 里写出来，人长什么样不写。',
       ...(styled ? ['画风里对年代、形制有规定的（发式、服饰、建筑、器物属于哪个朝代、哪种式样），穿戴和环境里这些东西照它写；正文的写法与它不一样时以画风为准。'] : []),
       '只有读过这本书才懂的名字，写成它实际的样子；"不能出现"的东西不写。不写画风、镜头、画质。未成年的人物不写亲热和裸露的画面。',
     ],
     en: [
-      `action: the instant shown, a sentence or two, 40 words at most — how this person holds themselves, what they are doing, the expression, what is in their hands. Anybody else in the frame gets half a sentence: where they are, what they do. One instant held still: nothing of what led to it or follows, no speech, no thoughts, no similes, nothing the eye cannot see. Written in ${inEn}.`,
-      `outfit: what this person has on in it **that is not as usual**, one sentence, 30 words at most — other clothes (cut and colour), what is on their head, how their hair is just then, what is different about them (soaked, wounded, in mourning, muddied). As the text has it: what the moment or the text before it says, as said; where the text in the task does not say, look it up with your tools in this chapter and the ones before. Where it still says nothing else, they are in what they usually wear: **leave outfit empty** — how they usually look is given by their design sheet and their own line when the picture is drawn, and is not written again here. Only clothing and hair the eye sees: nothing of their features, of scent, of how things feel. Where what they wear is one of the looks listed below: put that look's name in look (no looks listed, or none of them: look stays empty). Written in ${inEn}.`,
+      `action: the instant shown, a sentence or two, 35 words at most — how this person holds themselves, what they are doing, what is in their hands; the expression in a word or two. Anybody else in the frame gets half a sentence: where they are, what they do. One instant held still: nothing of what led to it or follows, no speech, no thoughts, no similes, nothing the eye cannot see; nothing of anybody's features, hair or clothing — those go by each person's design sheet. Written in ${inEn}.`,
+      `outfit: what is **not as usual** about this person in it, a few words, 12 at most — which other clothes, what is on their head, what is different about them (soaked, wounded, in mourning, muddied). Name the one thing that differs: no cut, colour or pattern piece by piece, nothing of their features. As the text has it: what the moment or the text before it says, as said; where the text in the task does not say, look it up with your tools in this chapter and the ones before. Where it still says nothing else, they are in what they usually wear: **leave outfit empty** — how they usually look is given by their design sheet when the picture is drawn, and is not written again here. Where what they wear is one of the looks listed below: put that look's name in look (no looks listed, or none of them: look stays empty). Written in ${inEn}.`,
       `setting: what is around them, a sentence or two, 40 words at most — where (indoors or out, what kind of place), what is near, the hour and the weather, where the light comes from. As the text has it; nothing the text does not have. Written in ${inEn}.`,
-      'people: the names of anybody else in the frame (none: empty). place: the place of the bible it is set in (none: empty). things: the things of the bible that are in the frame. Only names listed in the task — the design art of those that have any goes along with the picture; what they look like is still to be said in action / setting.',
+      'people: the names of anybody else in the frame (none: empty). place: the place of the bible it is set in (none: empty). things: the things of the bible that are in the frame. Only names listed in the task — the design art of those that have any goes along with the picture; what a place or a thing looks like is still to be said in setting, what a person looks like is not written.',
       ...(styled ? ['Where the art direction fixes a period or a form (which dynasty or fashion hair, dress, buildings and objects belong to), clothing and surroundings are written in that form; where the text says otherwise, the art direction holds.'] : []),
       'A name only a reader of the book understands is written as what it looks like; nothing from "must not appear". No words about art style, camera or image quality. Somebody who is not yet an adult is not written into a moment of intimacy or nudity.',
     ],
@@ -1812,7 +1812,7 @@ export function imagePromptTask(base: Base & { brief: string; avoid: string[]; t
   const enTo = base.to === 'zh' ? 'Chinese' : 'English'
   const fit = base.tokens !== undefined
   const share = fit ? Math.max(10, Math.floor(base.tokens! * 100 / base.estimate / 5) * 5) : 100
-  return L(base.lang, `《${bare(base.title)}》要画一张图。下面是工坊排好的画图说明：一行一段，每段行首是它的名字（用途、画面、环境、构图、人物、某人此刻穿着、地点、物件、这一张的要求、画风、参考图、不要出现——有哪段算哪段）。请把它写成发给绘图模型（${base.model}）的提示词：${working ? '画出来的应当是这张图，照作者对这一张的要求改过' : '画出来的应当是同一张图'}。${fit ? `这个模型一次只读得进大约 ${base.tokens} 个 token，超出的部分它看不到；这份说明现在大约 ${base.estimate} 个。` : ''}
+  return L(base.lang, `《${bare(base.title)}》要画一张图。下面是工坊排好的画图说明：一行一段，每段行首是它的名字（用途、画面、环境、构图、人物、某人此刻、地点、物件、这一张的要求、画风、参考图、不要出现——有哪段算哪段）。请把它写成发给绘图模型（${base.model}）的提示词：${working ? '画出来的应当是这张图，照作者对这一张的要求改过' : '画出来的应当是同一张图'}。${fit ? `这个模型一次只读得进大约 ${base.tokens} 个 token，超出的部分它看不到；这份说明现在大约 ${base.estimate} 个。` : ''}
 
 ## 画图说明
 ${base.brief}
@@ -1826,11 +1826,11 @@ ${asked.length > 0 ? '0a' : '0'}. 作者对一张参考图说了要它什么的�
 0. 作者的要求不是另加的一行，是要改进提示词里去的。只动它说到的那几段；别的段——连同行首的段名（「人物「某某」」这样带着名字的照样带着）——照说明原样，不拆、不并、不改写：
    - 姿势、动作、神情、手里拿的东西：改「画面」；说明里没有「画面」这一段时（人设图就没有），改「构图」里说姿势的那半句，不要为它新加一段。
    - 地点、时间、天气、光线：改「环境」；说明里没有这一段时，只有作者的要求说到了这些，才加一段「环境」，放在「画面」后面。「画风」里的话不搬到别的段里去；说明要的是素净的背景而作者没说要别的，背景就还是素净的。
-   - 景别、取景：改「构图」。长相、发式：改这个人「人物」那一行。穿戴：改「此刻穿着」；没有这一段时写在他「人物」那一行里。
+   - 景别、取景：改「构图」。长相、发式：改这个人「人物」那一行。穿戴和此刻的状态：改「此刻」；没有这一段时写在他「人物」那一行里。
    说明里原有的写法和作者的要求对不上的，以作者的要求为准，改掉——两种说法不要都留着（要求手里拿着东西，就不再写两手垂在身侧）。指着参考图的人（"见图1"）被要求改了某一处，在他那一行里写明这一处照文字、不照图。改完之后，提示词里没有「这一张的要求」这一段，也没有哪一行是把作者的话原样抄下来的。` : ''}
 1. 分段和次序照原样：一段一行，行首保留那一段的名字；说明里没有的段不添${asked.length > 0 ? '（第 0 条说的除外）' : ''}。模型从头读起，所以这个次序不要动。
 2. 全文用${zhTo}写，段名也是。说明里用别的语言写的内容译过来——人物的外貌常是一串英文短语——特征一样不丢：年纪、脸、发式、体型、衣着的款式颜色纹样、随身的东西。人名、地名、物名不译。
-3. 同一件事只说一次。「画面」写这一刻：谁在做什么；「环境」写在哪、什么光线和气氛（没有这一段时这些在「画面」里）；「人物」写每个人长什么样；「此刻穿着」写这个人这一刻的穿戴。两处重复的留在该在的那一段；说法不一样时，动作和神情以「画面」为准，穿戴以「此刻穿着」为准（没有这一段时以「画面」为准），长相以「人物」为准。
+3. 同一件事只说一次。「画面」写这一刻：谁在做什么；「环境」写在哪、什么光线和气氛（没有这一段时这些在「画面」里）；「人物」写每个人长什么样；「此刻」写这个人这一刻和平常不一样的地方（换了的衣服、淋湿、带伤）。两处重复的留在该在的那一段；说法不一样时，动作和神情以「画面」为准，穿戴以「此刻」为准（没有这一段时以「画面」为准），长相以「人物」为准。
 4. 只写眼睛看得见的。${working ? '除了作者的要求带来的改动，' : ''}不添说明里没有的内容，不改画的是什么；解释、客套和不影响画面的话去掉。
 5. ${base.references > 0 ? `这张图带 ${base.references} 张参考图：「参考图」那一段留着——${base.to === 'zh' ? '「图1」「图2」' : '"Image 1", "Image 2"'}这样的编号和它各是谁一个不少，哪些照图画、哪些照文字，意思不变，可以写得更紧。` : '这张图不带参考图：提示词里不要出现“参考图”这一段，也不要有任何说到参考图的话。'}
 6. ${avoid.length > 0 ? '提示词里不要有「不要出现」这一段，也不要把下面那份清单抄进来：它另有一栏交给模型，写进提示词反而会把那些东西招来。能靠把画面里实际有的东西说清楚来避开的，就在前面那样写（写明是明制的发髻，而不是写“没有辫子”）。' : '「不要出现」那一段，说明里有就留着，放在最后：能靠把画面里实际有的东西说清楚来避开的，就在前面那样写（写明是明制的发髻，而不是写“没有辫子”）；非点名不可的才列，短短一行。'}
@@ -1851,11 +1851,11 @@ ${asked.length > 0 ? '0a' : '0'}. Where the author said what is wanted of a refe
 0. Has what the author asked worked into it — not added as a line. Only the parts it speaks of are touched; every other part — with its name as the brief has it (a person's line keeps the person's name) — stays as the brief has it: not split, not merged, not reworded.
    - Pose, action, expression, what is in the hands: in "The picture"; where the brief has no such part (a design sheet has none), in the half of the framing that says how they stand — no part is added for it.
    - Place, time, weather, light: in "Surroundings"; where the brief has no such part, one is added — after the picture — only if the author speaks of these. Nothing of the art direction is moved into another part; where the brief asks for a plain ground and the author asked for nothing else, the ground stays plain.
-   - How close and from where: in the framing. Face and hair: in that person's line. What is worn: in "wearing in this moment"; in the person's line, with no such part.
+   - How close and from where: in the framing. Face and hair: in that person's line. What is worn and the state they are in: in "just then"; in the person's line, with no such part.
    Where the brief says otherwise, what the author asked holds and the brief's wording goes — never both (asked to hold something, the hands are no longer "at the sides"). Of somebody who is pointed to by a reference picture ("see Image 1") and asked to differ from it in something, their line says that this goes by the words, not the picture. Once it is worked in, the prompt has no part "Asked of this one", and no line that is the author's sentence copied out.` : ''}
 1. Keeps the parts and their order: a line a part, each under its name; no part is added that the brief does not have${asked.length > 0 ? ' (but for what 0 says)' : ''}. The model reads from the top, so the order stays.
 2. Is in ${enTo} throughout, the names of the parts too. What the brief has in another language is translated — how a person looks is often a run of English phrases — with no feature lost: age, face, hair, build, the cut, colour and pattern of what they wear, what they carry. Names of people, places and things are not translated.
-3. Says each thing once. "The picture" has the moment: who does what; "Surroundings" has where, in what light and mood (with no such part, the picture has these); the people's lines have how each of them looks; "wearing in this moment" has what that person has on in it. What is said in two parts stays in the one it belongs to; where they differ, action and expression go by the picture, what is worn by "wearing in this moment" (with no such part, by the picture), looks by the person's line.
+3. Says each thing once. "The picture" has the moment: who does what; "Surroundings" has where, in what light and mood (with no such part, the picture has these); the people's lines have how each of them looks; "just then" has what is not as usual about that person in it (other clothes, soaked, wounded). What is said in two parts stays in the one it belongs to; where they differ, action and expression go by the picture, what is worn by "just then" (with no such part, by the picture), looks by the person's line.
 4. Says only what the eye can see. ${working ? 'But for what the author asked, it adds' : 'Adds'} nothing the brief does not have and does not change what the picture shows; explanations, courtesies and words that change nothing in the picture go.
 5. ${base.references > 0 ? `${base.references} reference picture(s) go along with this one: the part on them stays — every number (${base.to === 'zh' ? '图1, 图2' : 'Image 1, Image 2'}) with who or what it shows, what is to follow a picture and what the words — tightened if you like, with nothing of its meaning lost.` : 'No reference picture goes along with this one: the prompt has no part on reference pictures, and says nothing of any.'}
 6. ${avoid.length > 0 ? 'Has no part on what must not appear, and none of the list below copied into it: that goes to the model in a field of its own, and written into the prompt it would call those things up. Where saying plainly what is there keeps a thing out, say that earlier on (the Ming topknot, not "no queue").' : 'Keeps the part on what must not appear where the brief has one, last: where saying plainly what is there keeps a thing out, say that earlier on (the Ming topknot, not "no queue"); only what has to be named is listed, in one short line.'}

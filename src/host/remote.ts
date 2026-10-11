@@ -14,7 +14,11 @@
  *
  * What comes through the door is all of DSH — conversations, tools, settings —
  * not the Studio alone: the link is to be given to nobody else. It is opened
- * by the author, for some hours, and is not remembered: a restart closes it.
+ * by the author, for some hours, and is not remembered: a restart of DSH closes
+ * it. The Studio's own Host half being replaced while DSH runs (an update taken
+ * in with "Restart") does not: an open door is handed to the Host half that
+ * comes next — the same link, the same hours — so that a phone at work is not
+ * shut out by every release.
  *
  * Meant to be taken away again once DSH can be reached from a phone by itself.
  */
@@ -82,6 +86,20 @@ function cookiesOf(request: IncomingMessage): Map<string, string> {
   return out
 }
 
+/** What a door open while its Host half is replaced leaves for the next one, in this process's memory alone. */
+interface Parked {
+  port: number
+  token: string
+  target: RemoteTarget
+  since: number
+  /** When it was left: taken up only by a Host half that comes right after. */
+  at: number
+}
+const SLOT = Symbol.for('novel-studio:door-for-a-phone')
+/** How long what was left waits to be taken up: a Host half replaced is back within seconds. */
+const TAKE_UP_WITHIN = 120_000
+const slot = globalThis as unknown as Record<symbol, Parked | undefined>
+
 export class RemoteDoor {
   private server: Server | undefined
   private port: number | undefined
@@ -110,7 +128,52 @@ export class RemoteDoor {
     this.target = target
     this.failure = undefined
     if (this.server !== undefined) return
-    this.token = randomBytes(24).toString('base64url')
+    slot[SLOT] = undefined
+    await this.listenAs(randomBytes(24).toString('base64url'), port, Date.now())
+  }
+
+  /**
+   * Close the door as its Host half goes, leaving what the next Host half needs to open it again as it was: the
+   * port, the link's token, where it hands on to, and since when it has been open. Kept in memory only.
+   */
+  async park(): Promise<void> {
+    const open = this.server !== undefined && this.port !== undefined && this.target !== undefined && this.since !== undefined
+    slot[SLOT] = open ? { port: this.port!, token: this.token, target: this.target!, since: this.since!, at: Date.now() } : undefined
+    await this.close()
+  }
+
+  /**
+   * Take up a door the Host half before this one left open: the same port and link, for what is left of its hours.
+   * @returns whether there was one.
+   */
+  async resume(): Promise<boolean> {
+    const left = slot[SLOT]
+    slot[SLOT] = undefined
+    if (left === undefined || this.server !== undefined) return false
+    const now = Date.now()
+    if (now - left.at > TAKE_UP_WITHIN || now >= left.since + REMOTE_HOURS * 3_600_000) return false
+    this.target = left.target
+    this.failure = undefined
+    // (The same port, or the link the phone holds leads nowhere. The Host half that left it may still be letting
+    // go of the port: tried again for a moment.)
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await this.listenAs(left.token, left.port, left.since, 1)
+        return true
+      } catch (error) {
+        if (attempt >= 14 || this.server !== undefined) {
+          this.target = undefined
+          this.failure = undefined
+          this.log('the door for a phone could not be opened again', error)
+          return false
+        }
+        await new Promise<void>((resolve) => { setTimeout(resolve, 200) })
+      }
+    }
+  }
+
+  private async listenAs(token: string, port: number, since: number, tries = PORT_TRIES): Promise<void> {
+    this.token = token
     const server = createServer((request, response) => { this.answer(request, response) })
     server.on('upgrade', (request, socket, head) => { this.upgrade(request, socket, head) })
     server.on('connection', (socket) => {
@@ -118,14 +181,15 @@ export class RemoteDoor {
       socket.on('close', () => { this.sockets.delete(socket) })
     })
     try {
-      this.port = await listen(server, this.host, port)
+      this.port = await listen(server, this.host, port, tries)
     } catch (error) {
+      this.token = ''
       this.failure = errorMessage(error)
       throw error
     }
     this.server = server
-    this.since = Date.now()
-    this.closing = setTimeout(() => { void this.close() }, REMOTE_HOURS * 3_600_000)
+    this.since = since
+    this.closing = setTimeout(() => { void this.close() }, Math.max(1000, since + REMOTE_HOURS * 3_600_000 - Date.now()))
     this.closing.unref()
   }
 
@@ -252,8 +316,8 @@ export class RemoteDoor {
   }
 }
 
-async function listen(server: Server, host: string, from: number): Promise<number> {
-  for (let port = from; port < from + PORT_TRIES; port++) {
+async function listen(server: Server, host: string, from: number, tries = PORT_TRIES): Promise<number> {
+  for (let port = from; port < from + tries; port++) {
     try {
       await new Promise<void>((resolve, reject) => {
         const failed = (error: Error): void => { reject(error) }
@@ -269,5 +333,5 @@ async function listen(server: Server, host: string, from: number): Promise<numbe
       if ((error as NodeJS.ErrnoException).code !== 'EADDRINUSE') throw error
     }
   }
-  throw new Error(`no free port between ${from} and ${from + PORT_TRIES - 1}`)
+  throw new Error(tries === 1 ? `port ${from} is taken` : `no free port between ${from} and ${from + tries - 1}`)
 }

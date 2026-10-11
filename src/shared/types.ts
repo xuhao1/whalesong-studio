@@ -2101,9 +2101,11 @@ export interface IllustrationPiece {
   wearing?: string
   /**
    * A `look` read in a stretch of their life that says something of its own about how they look, while the picture
-   * that goes along is the card's: what that stretch says (`words`) and what it is called — said beside the pointer.
+   * that goes along is the card's: what that stretch says (`words`) and what it is called. A word or two of what is
+   * different then is said beside the pointer; a look said whole (`whole`) is not — the line names the stretch, with
+   * their age in it (`age`), and the words are kept here unsent.
    */
-  then?: { title: string; words: string }
+  then?: { title: string; words: string; whole?: boolean; age?: string }
   /** A `look`: what the author has just said of the person — in their look since a moment ago, on no picture yet — said beside the pointer. */
   added?: string
   /** A `look` pointed to a picture drawn before the words for it were last changed: the picture is what the drawing went by. */

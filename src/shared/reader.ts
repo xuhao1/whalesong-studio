@@ -7,6 +7,60 @@
  */
 import { countWords } from './text'
 
+/**
+ * How large the pictures of a chapter stand in its text: their width as a part of the text's own — 1, as wide as the
+ * text, is the standard, and what a reader who chose nothing has — or `screen`, as wide as the screen it is read on.
+ */
+export type PictureSize = number | 'screen'
+
+/** The sizes a reader steps through, smaller to larger: the text's own width in the middle, the screen's at the end. */
+export const PICTURE_SIZES: readonly PictureSize[] = [0.5, 0.65, 0.8, 1, 1.25, 1.5, 'screen']
+
+/** What the sizes were called while they had names (two releases, a day): each read as the step nearest what it was. */
+const NAMED_SIZES: Readonly<Record<string, PictureSize>> = { small: 0.5, medium: 0.65, large: 0.8, full: 1, screen: 'screen' }
+
+/** A size as it was kept — on a device, in a published page — as one of the steps; nothing where it is no size. */
+export function knownPictureSize(raw: unknown): PictureSize | undefined {
+  const value = typeof raw === 'string' ? NAMED_SIZES[raw] : raw
+  if (value === 'screen') return 'screen'
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return undefined
+  const widths = PICTURE_SIZES.filter((step): step is number => typeof step === 'number')
+  return widths.reduce((nearest, step) => (Math.abs(step - value) < Math.abs(nearest - value) ? step : nearest), 1)
+}
+
+/** The size pictures stand at: what was kept, or the standard — as wide as the text. */
+export const pictureSizeOf = (raw: unknown): PictureSize => knownPictureSize(raw) ?? 1
+
+/** The room a picture has on a page: how wide the text runs, and how wide the pane the page scrolls in is. */
+export interface PictureRoom {
+  text: number
+  pane: number
+}
+
+/** How wide a picture of that size stands on such a page: so much of the text's width, and never wider than the pane. */
+export const pictureWidth = (size: PictureSize, room: PictureRoom): number => (size === 'screen' ? room.pane : Math.min(room.pane, room.text * size))
+
+/**
+ * One step smaller or larger; the size itself at either end.
+ * @param room - the page being looked at, where there is one: a step that would change nothing on it is passed over
+ *   (on a narrow pane every size past the text's width is the pane's width), and the first size that fills the pane
+ *   is "as wide as the screen". Without it, the next size in the row.
+ */
+export function stepPictureSize(size: PictureSize, by: -1 | 1, room?: PictureRoom): PictureSize {
+  const now = pictureSizeOf(size)
+  const at = PICTURE_SIZES.indexOf(now)
+  if (room === undefined) return PICTURE_SIZES[Math.min(PICTURE_SIZES.length - 1, Math.max(0, at + by))]!
+  const wide = pictureWidth(now, room)
+  if (by > 0) {
+    const next = PICTURE_SIZES.slice(at + 1).find(candidate => pictureWidth(candidate, room) > wide + 1)
+    return next === undefined ? now : pictureWidth(next, room) >= room.pane - 0.5 ? 'screen' : next
+  }
+  return PICTURE_SIZES.slice(0, at).reverse().find(candidate => pictureWidth(candidate, room) < wide - 1) ?? now
+}
+
+/** Whether a picture of that size fills the pane of such a page from edge to edge. */
+export const fillsPane = (size: PictureSize, room: PictureRoom | undefined): boolean => size === 'screen' || (room !== undefined && size > 1 && pictureWidth(size, room) >= room.pane - 0.5)
+
 export type Block =
   | { kind: 'paragraph'; text: string; offset: number }
   | { kind: 'image'; alt: string; path: string; offset: number }

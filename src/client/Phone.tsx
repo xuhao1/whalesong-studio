@@ -81,12 +81,13 @@ export function CoverSwitch() {
     : <Button variant="ghost" size="sm" icon="maximize" onClick={() => { cover.set(true) }} title={t('工坊铺满屏幕，盖住 DSH 的边栏', 'The Studio over the whole screen, DSH\'s sidebar covered')}>{t('铺满', 'Fill')}</Button>
 }
 
-/** The way to the door's dialog: an icon in a bar. Only on the Studio's own page — a tab beside a conversation is not what a phone opens. */
+/**
+ * The way to the door's dialog: an icon in a bar — wherever the Studio is shown, its own page or a tab beside a
+ * conversation. (It used to stand on the page alone, and was not to be found by an author who works in the tab.)
+ */
 export function RemoteButton() {
-  const { host } = useStudio()
   const t = useT()
   const [open, setOpen] = useState(false)
-  if (host.where !== 'page') return null
   return (
     <>
       <Button variant="ghost" size="sm" icon="phone" onClick={() => { setOpen(true) }} title={t('在手机上操作工坊…', 'Work the Studio from a phone…')} />
@@ -147,7 +148,7 @@ export function RemoteDialog({ onClose }: { onClose: () => void }) {
           <p>{t('同一个 Wi-Fi 下，用手机浏览器打开这台电脑上的 DSH，工坊铺满屏幕。', 'On the same Wi-Fi, a phone\'s browser opens the DSH of this computer, the Studio filling its screen.')}</p>
           <ul className="nv-plain-list nv-small">
             <li>{t('入口开着时，拿到链接的人能操作这台电脑上的整个 DSH（对话、工具、设置），不只是工坊——不要给别人。', 'While it is open, whoever has the link works all of DSH on this computer (conversations, tools, settings), not the Studio alone — give it to nobody.')}</li>
-            <li>{t(`链接每次打开都换；${12} 小时后自己关，重启 DSH 也会关。`, 'The link is a new one each time; it closes by itself after 12 hours, and when DSH restarts.')}</li>
+            <li>{t(`链接每次打开都换；${12} 小时后自己关，重启 DSH 也会关。工坊更新后点“重启”不会关它，链接照旧。`, 'The link is a new one each time; it closes by itself after 12 hours, and when DSH restarts. The Studio\'s own "Restart" after an update leaves it open, the link as it was.')}</li>
             <li>{t('局域网里不加密。', 'Nothing is encrypted on the local network.')}</li>
           </ul>
         </>
@@ -165,9 +166,10 @@ export function RemoteDialog({ onClose }: { onClose: () => void }) {
               <p className="nv-small nv-muted">
                 {t('打不开就换一个地址：', 'If it does not open, try another address: ')}
                 {now.urls.map((other, at) => <button key={other} type="button" className="nv-link nv-small" disabled={at === pick} onClick={() => { setPick(at) }}>{new URL(other).hostname}</button>)}
+                {now.urls.some(other => /\.local$/u.test(new URL(other).hostname)) ? t('（带 .local 的那个，路由器给电脑换了地址也还能用）', ' (the one ending in .local keeps working when the router gives this computer another address)') : null}
               </p>
             ) : null}
-            <p className="nv-small nv-muted">{t(`开到 ${until ?? ''}。拿到链接的人能操作这台电脑上的整个 DSH。`, `Open until ${until ?? ''}. Whoever has the link works all of DSH on this computer.`)}</p>
+            <p className="nv-small nv-muted">{t(`开到 ${until ?? ''}；工坊更新后点“重启”不会关它。拿到链接的人能操作这台电脑上的整个 DSH。`, `Open until ${until ?? ''}; the Studio's "Restart" after an update leaves it open. Whoever has the link works all of DSH on this computer.`)}</p>
           </div>
         </div>
       ) : null}
