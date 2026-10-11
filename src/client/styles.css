@@ -8369,6 +8369,13 @@ blockquote.nv-passage-quote {
   align-self: flex-end;
 }
 
+/* The buttons of an open way to draw a picture again, at the foot of the dialog. */
+.nv-picture-redraw-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .nv-picture-redraw-field {
   display: flex;
   flex-direction: column;

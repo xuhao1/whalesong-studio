@@ -1254,9 +1254,13 @@ describe('design sheets and looks', () => {
     const [early, late] = [await castAt(bed.runtime, ids[0], [kept]), await castAt(bed.runtime, ids[3], [kept])]
     expect([early[0]!.visual?.sheet, looksOf(early[0]!)]).toEqual([main.path, '面若中秋之月，圆脸，穿大红袄，约七岁（幼年）'])
     expect([late[0]!.visual?.sheet, late[0]!.age, looksOf(late[0]!)]).toEqual([sheet.path, '约十三岁（少年）', '十三岁的少年，身量长开，面若中秋之月，束发戴小冠，穿大红箭袖袍，腰间系着五彩丝绦，约十三岁（少年）'])
-    // A stretch that looks different and has nothing drawn for it yet shows none of another time's pictures.
+    // A stretch that only says what is different then is still who the card's sheet shows: the sheet goes along, the
+    // words say the difference. (Its portrait is that stretch's to have.)
     const old = inStage(kept, { id: 'z', title: '老年', appearance: '须发皆白' })
-    expect([old.appearance, old.visual?.sheet, old.visual?.portrait]).toEqual(['面若中秋之月，圆脸，穿大红袄；老年：须发皆白', undefined, undefined])
+    expect([old.appearance, old.visual?.sheet, old.visual?.portrait]).toEqual(['面若中秋之月，圆脸，穿大红袄；老年：须发皆白', main.path, undefined])
+    // A stretch with a look of its own, written whole, and nothing drawn for it yet shows none of another time's pictures.
+    const other = inStage(kept, { id: 'w', title: '出家之后', appearance: '剃了发的中年僧人，面容清瘦，眼窝深陷，披一领大红猩猩毡斗篷，赤着脚站在雪地里，神情空茫' })
+    expect([other.appearance, other.visual?.sheet, other.visual?.portrait]).toEqual(['剃了发的中年僧人，面容清瘦，眼窝深陷，披一领大红猩猩毡斗篷，赤着脚站在雪地里，神情空茫', undefined, undefined])
     // (A stretch of an earlier version that still keeps phrases for image models is drawn from those, as it was.)
     expect(looksOf(inStage(kept, { id: 'y', title: '旧', appearance: '白发', visual: { prompt: 'old man, white hair' } }))).toBe('old man, white hair')
 
@@ -1392,6 +1396,22 @@ describe('what a picture is told, and what goes along with it', () => {
     expect(lines[4]).toBe('人物「宝玉」（陪衬）：见图2')
     expect(lines[5]).toBe('物件「会真记」：线装薄册，蓝布封面')
     expect(portrait.prompt).toContain('参考图：图1 是黛玉；图2 是宝玉；图3 是物品「会真记」。')
+    // Somebody who has a sheet is never drawn one again for a picture that has them in it — whatever a stretch of
+    // their life says of them. He has stretches now, each with a word of how he is then: read at the moment's chapter
+    // his card shows that stretch, and his sheet is still the one he has. (Drawn again for every portrait of hers, it
+    // would be a new main sheet each time.)
+    const sheetsOfHis = (await project.findCharacter(jia.id))!.visual?.sheet
+    await project.saveCharacter({ id: jia.id, stages: [{ id: 'weak', title: '病中', appearance: '清减了些，面色发白' }, { id: 'well', title: '病愈', from: chapter.id, appearance: '气色好了，腰间多了一块玉' }] })
+    const drawnBefore = images.calls.length
+    const again = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: lin.id }, task)
+    expect(images.calls.length).toBe(drawnBefore + 1)
+    expect(again.sheets).toBeUndefined()
+    expect((await project.findCharacter(jia.id))!.visual?.sheet).toBe(sheetsOfHis)
+    expect((await project.findCharacter(jia.id))!.visual?.sheets).toBeUndefined()
+    // His sheet goes along, and what is different in this stretch is said in words.
+    expect(again.parts?.references?.map(reference => reference.path)).toContain(sheetsOfHis)
+    expect(again.parts!.subject).toContain('病愈：气色好了，腰间多了一块玉')
+    await project.saveCharacter({ id: jia.id, stages: [] })
     // The author has looks written out every time: both are, each under their name, with their pictures along all the same.
     await bed.core.settings.update({ image: { ...bed.core.currentSettings().image, looks: 'always' } })
     const written = await illustrate(bed.core, bed.runtime, { kind: 'portrait', target: lin.id }, task)

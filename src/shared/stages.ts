@@ -30,9 +30,21 @@ export function stageAt(card: Pick<CharacterCard, 'stages'>, chapter: string | u
   return found
 }
 
-/** Whether a stretch says how they look in words of its own: then the card's look, and its pictures, are of another time. */
+/** Whether a stretch says how they look in words of its own: then the card's look is of another time. */
 export function looksApart(stage: CharacterStage | undefined): boolean {
   return (stage?.visual?.prompt ?? '').trim().length > 0 || (stage?.appearance ?? '').trim().length > 0
+}
+
+/** How long what a stretch says of their looks has to be to be a look by itself — shorter, it is what is different then, said after how they usually look. */
+const WHOLE_LOOK = 40
+
+/**
+ * Whether a stretch says how they look whole — a look of its own, which a design sheet can be drawn from and which the
+ * card's own sheet does not show. A sentence of what is different then ("thinner, the arm in a sling") is not that:
+ * they are still who the card's sheet shows, and it goes along.
+ */
+export function looksWhole(stage: CharacterStage | undefined): boolean {
+  return (stage?.visual?.prompt ?? '').trim().length > 0 || (stage?.appearance ?? '').trim().length >= WHOLE_LOOK
 }
 
 /**
@@ -46,7 +58,9 @@ export function inStage<T extends CharacterCard>(card: T, stage: CharacterStage 
   const { prompt: _prompt, negative: _negative, sheet: _sheet, sheetFront: _front, portrait: _portrait, ...kept } = card.visual ?? {}
   const prompt = stage.visual?.prompt?.trim() || (apart ? undefined : card.visual?.prompt)
   const negative = stage.visual?.negative?.trim() || card.visual?.negative
-  const sheet = stage.visual?.sheet ?? (apart ? undefined : card.visual?.sheet)
+  // The stretch's own sheet; else the card's — unless the stretch has a look of its own, whole: that sheet is of
+  // somebody who looks otherwise. (A stretch that only says what is different then is still shown by the card's sheet.)
+  const sheet = stage.visual?.sheet ?? (looksWhole(stage) ? undefined : card.visual?.sheet)
   // Whether the sheet is the front view alone goes with the sheet that is used: the stretch's own, or the card's.
   const front = stage.visual?.sheet !== undefined ? stage.visual.sheetFront === true : sheet !== undefined && card.visual?.sheetFront === true
   const portrait = stage.visual?.portrait ?? (apart ? undefined : card.visual?.portrait)
@@ -54,8 +68,9 @@ export function inStage<T extends CharacterCard>(card: T, stage: CharacterStage 
   // How they look in it: what the stretch says — whole where it says enough to be a look by itself, else after how
   // they usually look, as what is different then.
   const own = stage.appearance?.trim() ?? ''
-  const usual = card.appearance?.trim() ?? ''
-  const appearance = own.length === 0 ? undefined : own.length >= 40 || usual.length === 0 ? own : `${usual}；${stage.title}：${own}`
+  // (How they usually look: the card's appearance — on a card of an earlier version that has none, the phrases it keeps for image models.)
+  const usual = (card.appearance?.trim() ?? '') || (card.visual?.prompt?.trim() ?? '')
+  const appearance = own.length === 0 ? undefined : own.length >= WHOLE_LOOK || usual.length === 0 ? own : `${usual}；${stage.title}：${own}`
   return {
     ...card,
     ...(stage.age !== undefined ? { age: stage.age } : {}),

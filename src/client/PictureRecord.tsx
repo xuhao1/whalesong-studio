@@ -22,6 +22,7 @@
 import { ImageTrialDialog, ManyModels } from './Trial'
 import { GuidePictures } from './Guides'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { lookWords, pictureWords, resolveArtStyle, sceneOfPicture, scenePictures, splitAvoid, tidyPart, type ArtSource, scenesOf, sceneWords } from '../shared/art'
 import { sheetsOf } from '../shared/sheets'
 import type { IllustrationInfo, IllustrationPiece, PictureGuide, PictureWhole } from '../shared/types'
@@ -120,7 +121,7 @@ export function DeletePicture({ path, onDone, bare, disabled }: { path: string; 
  * A picture drawn again from where it is shown: its words rewritten, or the picture itself changed in one thing.
  * The new picture takes this one's place wherever it hangs; this one stays in the gallery.
  */
-function RedrawPicture({ image, mode, onDone, onBusy, onCancel }: { image: IllustrationInfo; mode: 'words' | 'change'; /** Drawn: the picture that came of it, as far as the job said. */ onDone: (drawn: IllustrationInfo | undefined) => void; /** Being drawn, or no longer: while it is, the form is not to be put away. */ onBusy: (busy: boolean) => void; onCancel: () => void }) {
+function RedrawPicture({ image, mode, onDone, onBusy, onCancel, actionsAt }: { image: IllustrationInfo; mode: 'words' | 'change'; /** Where its buttons go: the foot of the dialog, where the button that opened it was — the hand is there already. Not there yet (or not given): under the form. */ actionsAt?: HTMLElement | null; /** Drawn: the picture that came of it, as far as the job said. */ onDone: (drawn: IllustrationInfo | undefined) => void; /** Being drawn, or no longer: while it is, the form is not to be put away. */ onBusy: (busy: boolean) => void; onCancel: () => void }) {
   const { controller } = useStudio()
   const t = useT()
   const { root } = useProject()
@@ -177,6 +178,14 @@ function RedrawPicture({ image, mode, onDone, onBusy, onCancel }: { image: Illus
       }
     })
   }
+  // Cancel, several models, draw: one row — put at the foot of the dialog, in the place of the button that opened this.
+  const actions = (
+    <>
+        <Button variant="ghost" disabled={busy} onClick={onCancel}>{t('取消', 'Cancel')}</Button>
+        <ManyModels label={t('多模型…', 'Several models…')} disabled={!ready || busy} title={t('多模型：照这里写的，由几个绘图服务各画一张来比；采纳的那张顶替原图', 'Several models: as written here, by each image service, to compare; the one taken goes in this picture\'s place')} ask={() => (controller.need('image') ? { title: mode === 'words' ? t('改提示词重画', 'redrawn from its prompt') : t('照着这张改', 'this picture changed'), method: 'image.redraw', params: { picture: image.id, ...redrawn() }, instead: image.path } : undefined)} onChanged={() => { void controller.refreshProject() }} />
+        <Button variant="primary" icon="image" busy={busy} disabled={!ready} pending={t('正在画…', 'Drawing…')} onClick={go}>{mode === 'words' ? t('照这段重画', 'Draw from these words') : t('照着它改', 'Draw it changed')}</Button>
+    </>
+  )
   return (
     <div className="nv-picture-redraw">
       {mode === 'words' && whole === undefined ? <Spinner /> : mode === 'words' && all !== undefined ? (
@@ -208,11 +217,7 @@ function RedrawPicture({ image, mode, onDone, onBusy, onCancel }: { image: Illus
           <p className="nv-muted nv-small">{t('发给绘图模型的只有这张图和这句话。', 'The image model gets this picture and these words, nothing else.')}</p>
         </>
       )}
-      <span className="nv-row">
-        <Button variant="ghost" disabled={busy} onClick={onCancel}>{t('取消', 'Cancel')}</Button>
-        <ManyModels label={t('多模型…', 'Several models…')} disabled={!ready || busy} title={t('多模型：照这里写的，由几个绘图服务各画一张来比；采纳的那张顶替原图', 'Several models: as written here, by each image service, to compare; the one taken goes in this picture\'s place')} ask={() => (controller.need('image') ? { title: mode === 'words' ? t('改提示词重画', 'redrawn from its prompt') : t('照着这张改', 'this picture changed'), method: 'image.redraw', params: { picture: image.id, ...redrawn() }, instead: image.path } : undefined)} onChanged={() => { void controller.refreshProject() }} />
-        <Button variant="primary" icon="image" busy={busy} disabled={!ready} pending={t('正在画…', 'Drawing…')} onClick={go}>{mode === 'words' ? t('照这段重画', 'Draw from these words') : t('照着它改', 'Draw it changed')}</Button>
-      </span>
+      {actionsAt !== undefined && actionsAt !== null ? createPortal(actions, actionsAt) : <span className="nv-row">{actions}</span>}
     </div>
   )
 }
@@ -598,6 +603,8 @@ export function PictureViewer({ path, title, note, footer, start, onClose, onEdi
     setFresh(drawn)
     setOpened(drawn.path)
   }
+  // Where the buttons of an open way to draw it again are put: the foot of the dialog.
+  const [actionsAt, setActionsAt] = useState<HTMLElement | null>(null)
   const nameOf = (record: IllustrationInfo): string | undefined => (record.target === undefined ? undefined
     : project.characters.find(card => card.id === record.target)?.name
       ?? project.world.find(entry => entry.id === record.target)?.name
@@ -612,7 +619,17 @@ export function PictureViewer({ path, title, note, footer, start, onClose, onEdi
   // The page's own name for it holds for the picture the page opened — not for one drawn from it since.
   const heading = first && opened === path && title !== undefined ? title : image !== undefined ? `${t(...PICTURE_KIND[image.kind])}${nameOf(image) !== undefined ? ` · ${nameOf(image)}` : ''}` : title ?? t('图片', 'Picture')
   return (
-    <Modal wide className="nv-modal-picture" title={heading} onClose={onClose} footer={first ? (
+    <Modal wide className="nv-modal-picture" title={heading} onClose={onClose} footer={first && image !== undefined && redraw !== undefined ? (
+      // A way to draw it again is open: its own buttons stand here — cancel, several models, draw — where the button
+      // that opened it stood. (That button left standing, lit, beside a form whose own button was across the dialog,
+      // was the one pressed: and it did nothing.)
+      <>
+        <a className="nv-link" href={controller.api.media(project.manifest.id, at, { download: true })}>{t('下载', 'Download')}</a>
+        <span className="nv-spacer" />
+        <span className="nv-muted nv-small">{redraw === 'words' ? t('改提示词重画', 'Rewrite and redraw') : t('照着这张改', 'Change this picture')}</span>
+        <span ref={setActionsAt} className="nv-picture-redraw-actions" />
+      </>
+    ) : first ? (
       <>
         <a className="nv-link" href={controller.api.media(project.manifest.id, at, { download: true })}>{t('下载', 'Download')}</a>
         <span className="nv-spacer" />
@@ -635,7 +652,7 @@ export function PictureViewer({ path, title, note, footer, start, onClose, onEdi
           {!first ? <button type="button" className="nv-link nv-small nv-picture-back" onClick={() => { setTrail(previous => previous.slice(0, -1)) }}><Icon name="chevronLeft" size={12} />{t('回到上一张', 'Back to the picture before')}</button> : null}
           <img className="nv-picture-large" alt={heading} src={mediaUrl(at)} onLoad={(event) => { setNatural({ path: at, width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight }) }} />
           {first && opened === path && note !== undefined && redraw === undefined ? <div className="nv-muted nv-small">{note}</div> : null}
-          {first && image !== undefined && redraw !== undefined ? <RedrawPicture key={`${redraw}:${image.id}`} image={image} mode={redraw} onDone={redrawn} onBusy={setDrawing} onCancel={() => { setRedraw(undefined) }} /> : null}
+          {first && image !== undefined && redraw !== undefined ? <RedrawPicture key={`${redraw}:${image.id}`} image={image} mode={redraw} onDone={redrawn} onBusy={setDrawing} onCancel={() => { setRedraw(undefined) }} actionsAt={actionsAt} /> : null}
         </div>
         <div className={cx('nv-picture-facts', image === undefined && 'is-bare')}>
           {image !== undefined

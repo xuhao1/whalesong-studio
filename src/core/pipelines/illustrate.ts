@@ -44,7 +44,7 @@ import type { CharacterCard, CharacterLook, CharacterStage, ComicPanel, ImageTri
 import { MAIN_LINE, referencesOf } from '../../shared/types'
 import { clip, clipTail, fuzzyFind, hashText, newId, sameName, slugify } from '../../shared/text'
 import { leadOf, portraitsOf, PROMPT_HEADROOM, promptTokens, promptWriteOf, type PictureLead } from '../../shared/images'
-import { inStage, looksApart, stageAt } from '../../shared/stages'
+import { inStage, looksWhole, stageAt } from '../../shared/stages'
 import { blocksOf, figureSpots } from '../../shared/reader'
 import { sheetPool } from '../../shared/sheets'
 import { groupOf } from '../../shared/world'
@@ -1759,8 +1759,12 @@ export async function lackingSheets(core: NovelCore, runtime: ProjectRuntime, pe
   const lead = given ?? leadOf(await core.imageOf(runtime))
   // Nothing is drawn for another picture's sake; and where the portrait leads, nothing comes before a portrait.
   if (lead === 'none' || (lead === 'portrait' && who === 'everyone')) return []
+  // Whether somebody has a sheet is read off their card as the book has it — not off the card as one chapter reads
+  // it: there a stretch of their life with a look of its own shows no sheet, and the main sheet they have would be
+  // drawn again for every picture that only has them in it.
+  const kept = new Map((await runtime.project.characters()).map(card => [card.id, card]))
   // Nothing says how they look: there is nothing to draw a sheet from, and a picture is made of what the passage gives.
-  const lacking = people.filter(card => card.visual?.sheet === undefined && looksOf(card).length > 0)
+  const lacking = people.filter(card => (kept.get(card.id) ?? card).visual?.sheet === undefined && looksOf(card).length > 0)
   if (lacking.length === 0 || who === 'everyone') return lacking
   const back = await comingBack(runtime.project, lacking)
   return lacking.filter(card => back.has(card.id))
@@ -2178,7 +2182,9 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
     const against = params.kind === 'portrait' && (params.from === 'sheet' || params.from === 'words') ? params.from : undefined
     const sheetComesFirst = against === 'sheet' || (against === undefined && lead === 'sheet')
     const sheetGoesAlong = against === 'sheet' || (against === undefined && lead !== 'portrait')
-    if (stage !== undefined && params.kind === 'portrait' && looksApart(stage) && stage.visual?.sheet === undefined && params.sheetFirst !== false && sheetComesFirst) {
+    // (A stretch with a look of its own, whole, and no sheet yet gets its sheet first. One that only says what is
+    // different then is held against the card's sheet.)
+    if (stage !== undefined && params.kind === 'portrait' && looksWhole(stage) && stage.visual?.sheet === undefined && params.sheetFirst !== false && sheetComesFirst) {
       const restore = task.job?.note(L(lang, `先画「${anchored.name}」${stage.title}时的人设图…`, `First the design sheet of ${anchored.name} in "${stage.title}"…`))
       try {
         await illustrate(core, runtime, { kind: 'sheet', target: anchored.id, stage: stage.id }, { origin: task.origin, ...(task.signal !== undefined ? { signal: task.signal } : {}), ...(task.agentRoute !== undefined ? { agentRoute: task.agentRoute } : {}) })
@@ -2228,7 +2234,11 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
     // drawn side by side with the rest, none after another.
     const [mine, others] = await Promise.all([
       params.kind === 'portrait' && against !== 'words' ? sheeted([anchored], 'everyone', against === 'sheet' ? 'sheet' : undefined) : Promise.resolve([anchored]),
-      beside.others.length > 0 ? sheeted(beside.others, 'returning') : Promise.resolve([] as CharacterCard[]),
+      // (Asked of their cards as the book has them, and read as the moment's chapter has them after — the way a
+      // chapter's picture does it. A card read at a chapter may show no sheet where the person has one.)
+      beside.others.length > 0
+        ? sheeted(beside.others.map(other => characters.find(card => card.id === other.id) ?? other), 'returning').then(async cards => (momentAt !== undefined ? await castAt(runtime, momentAt, cards) : cards))
+        : Promise.resolve([] as CharacterCard[]),
     ])
     const whole = mine[0]!
     const card = stage !== undefined ? inStage(whole, stageOf(whole, stage.id)) : whole
