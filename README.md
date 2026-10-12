@@ -155,7 +155,7 @@ Needs Node.js 22+.
 ```sh
 git clone https://github.com/xuhao1/dsh-novel-writer.git
 cd dsh-novel-writer
-npm install     # installs dependencies and builds lib/
+npm install     # installs dependencies; builds lib/ when the checkout has none
 npm pack        # writes dsh-novel-writer-<version>.tgz
 ```
 

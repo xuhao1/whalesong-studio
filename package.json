@@ -59,7 +59,7 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
-    "prepare": "node scripts/build.mjs",
+    "prepare": "node scripts/prepare.mjs",
     "watch": "node scripts/build.mjs --watch",
     "typecheck": "tsc -p tsconfig.host.json --noEmit && tsc -p tsconfig.client.json --noEmit",
     "test": "vitest run",

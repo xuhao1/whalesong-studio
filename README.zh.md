@@ -159,7 +159,7 @@ dsh plugin --profile web remove dsh-novel-writer
 ```sh
 git clone https://github.com/xuhao1/dsh-novel-writer.git
 cd dsh-novel-writer
-npm install     # 安装依赖并构建 lib/
+npm install     # 安装依赖；还没有 lib/ 时构建一份
 npm pack        # 生成 dsh-novel-writer-<版本>.tgz
 ```
 

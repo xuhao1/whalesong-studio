@@ -7,7 +7,7 @@ Thanks for wanting to make Novel Studio better. This page covers how the code is
 You need Node.js 22 or later. DeepSeek Harness itself is a dev dependency, so nothing else has to be installed.
 
 ```sh
-npm install        # installs dependencies and builds lib/
+npm install        # installs dependencies; builds lib/ only when the checkout has none — a lib/ that is there is replaced by a release alone
 npm run check      # typecheck (host + browser), unit tests, build into .dev/stage (what `npm run dev` runs)
 npm run release    # the same checks, then lib/ is updated in place — what an installed or linked copy runs
 npm run push       # after a release is committed: main goes to GitHub, fast-forward only, looked over for credentials first
