@@ -2594,6 +2594,8 @@ export interface TrialDraft {
   label: string
   provider: string
   model: string
+  /** The reasoning level its writer was to think at, where the comparison named one. */
+  effort?: string
   text?: string
   words?: number
   seconds: number

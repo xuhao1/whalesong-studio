@@ -548,27 +548,94 @@ function ModelChecklist({ picked, onChange, disabled, hint }: { picked: Readonly
   )
 }
 
-const routesOf = (picked: ReadonlySet<string>): { provider: string; model: string }[] => [...picked].map((key) => { const [provider, model] = key.split('\u0000'); return { provider: provider!, model: model! } })
+/**
+ * How hard each picked model is to think: the reasoning levels it runs at, one run a level. A model nothing is said
+ * of runs once, as it does by default (`''`); one given two levels is compared with itself.
+ */
+type Levels = Readonly<Record<string, readonly string[]>>
 
-/** The model a role runs on for the book in hand, as the settings have it — picked to begin with, so a comparison is against what is in use. */
-function useRoleModel(role: 'writer' | 'architect'): string | undefined {
+const levelsOf = (levels: Levels, key: string): readonly string[] => { const mine = levels[key]; return mine !== undefined && mine.length > 0 ? mine : [''] }
+
+/** One route a run: each picked model at each of its levels. The level is always said — the empty one is "as the model has it by default". */
+const routesOf = (picked: ReadonlySet<string>, levels: Levels = {}): { provider: string; model: string; reasoningEffort: string }[] => [...picked].flatMap((key) => {
+  const [provider, model] = key.split('\u0000')
+  return levelsOf(levels, key).map(level => ({ provider: provider!, model: model!, reasoningEffort: level }))
+})
+
+/** The most runs one comparison takes (the Host's own limit). */
+const MOST_RUNS = 8
+
+/** The model a role runs on for the book in hand, and how hard it is set to think, as the settings have it — picked to begin with, so a comparison is against what is in use. */
+function useRoleModel(role: 'writer' | 'architect'): { model: string; provider?: string; effort?: string } | undefined {
   const root = useSnapshot(snapshot => snapshot.root)
   const settings = useSnapshot(snapshot => snapshot.settings)
   const rows = (settings?.book !== undefined && settings.book.root === root ? settings.book.context : undefined) ?? settings?.context
-  return rows?.find(row => row.role === role)?.model
+  const row = rows?.find(one => one.role === role)
+  return row?.model !== undefined ? { model: row.model, ...(row.provider !== undefined ? { provider: row.provider } : {}), ...(row.effort !== undefined ? { effort: row.effort } : {}) } : undefined
 }
 
-function usePicked(inUse: string | undefined): [Set<string>, (next: Set<string>) => void] {
+function usePicked(inUse: { model: string; provider?: string; effort?: string } | undefined): { picked: Set<string>; setPicked: (next: Set<string>) => void; levels: Levels; setLevels: (next: Levels) => void } {
   const models = useSnapshot(snapshot => snapshot.settings?.models)
   const [picked, setPicked] = useState<Set<string>>(new Set())
+  const [levels, setLevels] = useState<Levels>({})
   const [seeded, setSeeded] = useState(false)
   useEffect(() => {
     if (seeded || models === undefined || inUse === undefined) return
-    const mine = models.find(model => model.id === inUse)
-    if (mine !== undefined) setPicked(new Set([keyOf(mine)]))
+    const mine = models.find(model => model.id === inUse.model && model.provider === inUse.provider) ?? models.find(model => model.id === inUse.model)
+    if (mine !== undefined) {
+      setPicked(new Set([keyOf(mine)]))
+      // The one in use begins at the level it is in use at.
+      if (inUse.effort !== undefined) setLevels({ [keyOf(mine)]: [inUse.effort] })
+    }
     setSeeded(true)
-  }, [seeded, models, inUse])
-  return [picked, setPicked]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seeded, models, inUse?.model, inUse?.provider, inUse?.effort])
+  return { picked, setPicked, levels, setLevels }
+}
+
+/** The reasoning levels of the picked models, a row a model: chosen as the settings choose them, from what the model itself offers. */
+function EffortRows({ picked, levels, onChange, disabled }: { picked: ReadonlySet<string>; levels: Levels; onChange: (next: Levels) => void; disabled: boolean }) {
+  const t = useT()
+  const models = useSnapshot(snapshot => snapshot.settings?.models) ?? []
+  const rows = [...picked].map(key => models.find(model => keyOf(model) === key)).filter((model): model is ModelOption => model !== undefined)
+  if (rows.length === 0) return null
+  return (
+    <div className="nv-trial-efforts">
+      <span className="nv-muted nv-small">{t('思考强度', 'Reasoning effort')}</span>
+      {rows.map(model => <EffortRow key={keyOf(model)} model={model} levels={levelsOf(levels, keyOf(model))} disabled={disabled} onChange={(mine) => { onChange({ ...levels, [keyOf(model)]: mine }) }} />)}
+    </div>
+  )
+}
+
+function EffortRow({ model, levels, onChange, disabled }: { model: ModelOption; levels: readonly string[]; onChange: (next: string[]) => void; disabled: boolean }) {
+  const { controller } = useStudio()
+  const t = useT()
+  const details = useLoad(async signal => await controller.api.call('model.info', { provider: model.provider, model: model.id }, signal), [model.provider, model.id])
+  const efforts = details.data?.efforts ?? []
+  const byDefault = efforts.find(effort => effort.id === details.data?.defaultEffort)?.name
+  const options = [
+    { value: '', label: byDefault !== undefined ? t(`模型默认（${byDefault}）`, `Model default (${byDefault})`) : t('模型默认', 'Model default') },
+    ...efforts.map(effort => ({ value: effort.id, label: effort.name })),
+    // A level the role is set to that the model does not list (any more): shown as it is, not silently dropped.
+    ...levels.filter(level => level !== '' && !efforts.some(effort => effort.id === level)).map(level => ({ value: level, label: level })),
+  ]
+  const free = options.find(option => !levels.includes(option.value))
+  return (
+    <div className="nv-trial-effort">
+      <span className="nv-trial-effort-name" title={model.providerName}>{model.name !== model.id && model.name.length > 0 ? model.name : model.id}</span>
+      {details.data === undefined ? <span className="nv-muted nv-small">{details.error !== undefined ? t('没读到它的思考档位：按模型默认', 'Its reasoning levels could not be read: the model\'s default') : t('读取中…', 'reading…')}</span> : efforts.length === 0 && levels.every(level => level === '') ? <span className="nv-muted nv-small">{t('这个模型没有可选的思考档位', 'This model offers no reasoning levels')}</span> : (
+        <>
+          {levels.map((level, at) => (
+            <span key={at} className="nv-trial-effort-pick">
+              <Select value={level} disabled={disabled} options={options.map(option => ({ ...option, disabled: option.value !== level && levels.includes(option.value) }))} onChange={(value) => { onChange(levels.map((old, index) => (index === at ? value : old))) }} />
+              {levels.length > 1 ? <button type="button" className="nv-link nv-small" disabled={disabled} title={t('不比这一档', 'Leave this level out')} onClick={() => { onChange(levels.filter((_old, index) => index !== at)) }}>×</button> : null}
+            </span>
+          ))}
+          {free !== undefined ? <button type="button" className="nv-link nv-small" disabled={disabled} title={t('同一个模型再跑一遍，用另一档思考强度', 'The same model once more, at another reasoning level')} onClick={() => { onChange([...levels, free.value]) }}>{t('＋ 再比一档', '+ another level')}</button> : null}
+        </>
+      )}
+    </div>
+  )
 }
 
 /** One chapter written by several models, side by side; the one taken becomes the chapter (what it had stays among its versions). */
@@ -577,7 +644,8 @@ export function WriteTrialDialog({ chapter, brief: given, onClose, onTaken }: { 
   const t = useT()
   const { root } = useProject()
   const inUse = useRoleModel('writer')
-  const [picked, setPicked] = usePicked(inUse)
+  const { picked, setPicked, levels, setLevels } = usePicked(inUse)
+  const routes = routesOf(picked, levels)
   const [brief, setBrief] = useState(given ?? '')
   const job = useTrialJob()
   const drafts = ((job.live?.result?.drafts ?? (job.done?.result?.output as { drafts?: TrialDraft[] } | undefined)?.drafts) as TrialDraft[] | undefined) ?? []
@@ -595,7 +663,7 @@ export function WriteTrialDialog({ chapter, brief: given, onClose, onTaken }: { 
   const [taken, setTaken] = useState<string | undefined>()
   const start = (): void => {
     setTaken(undefined)
-    job.start(async () => await controller.api.call('trial.write', { root, chapter: chapter.id, ...(brief.trim().length > 0 ? { brief: brief.trim() } : {}), with: routesOf(picked) }))
+    job.start(async () => await controller.api.call('trial.write', { root, chapter: chapter.id, ...(brief.trim().length > 0 ? { brief: brief.trim() } : {}), with: routes }))
   }
   const take = (draft: TrialDraft): Promise<unknown> => controller.guard(async () => {
     await controller.api.call('chapter.restore', { root, id: chapter.id, version: draft.version! })
@@ -610,10 +678,11 @@ export function WriteTrialDialog({ chapter, brief: given, onClose, onTaken }: { 
         <span className="nv-muted nv-small">{t('同样的上下文和要求，各写一稿。正文不动，采纳了才换；每一稿都留在这一章的“版本”里。', 'The same context and brief, one draft each. The chapter keeps its text until you take one; every draft is kept among its versions.')}</span>
         <span className="nv-spacer" />
         {job.busy ? <Button variant="ghost" onClick={job.stop}>{t('停止', 'Stop')}</Button> : null}
-        <Button variant="primary" icon="layers" busy={job.busy} disabled={picked.size === 0} pending={t('正在写…', 'Writing…')} onClick={start}>{t(`${picked.size} 个模型各写一稿`, `One draft each by ${picked.size}`)}</Button>
+        <Button variant="primary" icon="layers" busy={job.busy} disabled={routes.length === 0 || routes.length > MOST_RUNS} title={routes.length > MOST_RUNS ? t(`一次最多比 ${MOST_RUNS} 稿`, `At most ${MOST_RUNS} drafts at once`) : undefined} pending={t('正在写…', 'Writing…')} onClick={start}>{routes.length === picked.size ? t(`${picked.size} 个模型各写一稿`, `One draft each by ${picked.size}`) : t(`${picked.size} 个模型写 ${routes.length} 稿`, `${routes.length} drafts by ${picked.size} model(s)`)}</Button>
       </>
     )}>
-      <ModelChecklist picked={picked} onChange={setPicked} disabled={job.busy} hint={inUse !== undefined ? t(`写手现在用的是 ${inUse}`, `the writer runs on ${inUse}`) : undefined} />
+      <ModelChecklist picked={picked} onChange={setPicked} disabled={job.busy} hint={inUse !== undefined ? t(`写手现在用的是 ${inUse.model}`, `the writer runs on ${inUse.model}`) : undefined} />
+      <EffortRows picked={picked} levels={levels} onChange={setLevels} disabled={job.busy} />
       <Field label={t('给写手的要求（可不填）', 'Brief for the writer (optional)')}>
         <TextArea value={brief} minRows={2} disabled={job.busy} onChange={(event) => { setBrief(event.target.value) }} />
       </Field>
@@ -665,11 +734,12 @@ export function DeriveTrialDialog<Plan extends TrialPlanView>({ count, direction
   const t = useT()
   const { root } = useProject()
   const inUse = useRoleModel('architect')
-  const [picked, setPicked] = usePicked(inUse)
+  const { picked, setPicked, levels, setLevels } = usePicked(inUse)
+  const routes = routesOf(picked, levels)
   const job = useTrialJob()
   const plans = ((job.live?.result?.plans ?? (job.done?.result?.output as { plans?: Plan[] } | undefined)?.plans) as Plan[] | undefined) ?? []
   const start = (): void => {
-    job.start(async () => await controller.api.call('trial.derive', { root, count, ...(direction !== undefined && direction.trim().length > 0 ? { direction: direction.trim() } : {}), ...(volume !== undefined && volume.length > 0 ? { volume } : {}), ...(guides !== undefined && guides.length > 0 ? { guides: [...guides] } : {}), with: routesOf(picked) }))
+    job.start(async () => await controller.api.call('trial.derive', { root, count, ...(direction !== undefined && direction.trim().length > 0 ? { direction: direction.trim() } : {}), ...(volume !== undefined && volume.length > 0 ? { volume } : {}), ...(guides !== undefined && guides.length > 0 ? { guides: [...guides] } : {}), with: routes }))
   }
   return (
     <Modal wide className="nv-modal-trial" title={t(`几个模型各推演 ${count} 章`, `${count} chapter(s) planned by several models`)} onClose={onClose} footer={(
@@ -677,10 +747,11 @@ export function DeriveTrialDialog<Plan extends TrialPlanView>({ count, direction
         <span className="nv-muted nv-small">{t('同样的材料和方向，各出一版。只是预览，采纳了才进大纲。', 'The same material and direction, one plan each. Previews only: nothing enters the outline until you take one.')}</span>
         <span className="nv-spacer" />
         {job.busy ? <Button variant="ghost" onClick={job.stop}>{t('停止', 'Stop')}</Button> : null}
-        <Button variant="primary" icon="layers" busy={job.busy} disabled={picked.size === 0} pending={t('正在推演…', 'Planning…')} onClick={start}>{t(`${picked.size} 个模型各推一版`, `One plan each by ${picked.size}`)}</Button>
+        <Button variant="primary" icon="layers" busy={job.busy} disabled={routes.length === 0 || routes.length > MOST_RUNS} title={routes.length > MOST_RUNS ? t(`一次最多比 ${MOST_RUNS} 版`, `At most ${MOST_RUNS} plans at once`) : undefined} pending={t('正在推演…', 'Planning…')} onClick={start}>{routes.length === picked.size ? t(`${picked.size} 个模型各推一版`, `One plan each by ${picked.size}`) : t(`${picked.size} 个模型推 ${routes.length} 版`, `${routes.length} plans by ${picked.size} model(s)`)}</Button>
       </>
     )}>
-      <ModelChecklist picked={picked} onChange={setPicked} disabled={job.busy} hint={inUse !== undefined ? t(`策划现在用的是 ${inUse}`, `the planner runs on ${inUse}`) : undefined} />
+      <ModelChecklist picked={picked} onChange={setPicked} disabled={job.busy} hint={inUse !== undefined ? t(`策划现在用的是 ${inUse.model}`, `the planner runs on ${inUse.model}`) : undefined} />
+      <EffortRows picked={picked} levels={levels} onChange={setLevels} disabled={job.busy} />
       {direction !== undefined && direction.trim().length > 0 ? <p className="nv-muted nv-small">{t(`方向：${direction.trim()}`, `Direction: ${direction.trim()}`)}</p> : null}
       {guides !== undefined && guides.length > 0 ? <p className="nv-muted nv-small">{t(`带 ${guides.length} 张参考图：能看图的模型自己看，看不了的由“看图的模型”先看成文字`, `With ${guides.length} picture(s): a model that sees looks itself; for one that does not, the picture model puts them into words`)}</p> : null}
       {job.error !== undefined ? <p className="nv-note is-warn">{job.error}</p> : null}

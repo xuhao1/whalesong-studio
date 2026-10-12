@@ -312,6 +312,10 @@ export interface SiteDone {
 export interface ContextView {
   role: TextRole
   model?: string
+  /** Whose model it is, among DSH's providers. */
+  provider?: string
+  /** The reasoning level the role's model is set to think at, where one is set. */
+  effort?: string
   /** The model's context window; absent when neither DSH nor the endpoint says, and a cautious figure is assumed. */
   window?: number
   /** Tokens of the manuscript's own text sent word for word, in whole chapters. */
@@ -766,11 +770,11 @@ export interface NovelRpc {
    */
   'trial.adoptRound': { params: { root: string; round: string; label: string; others?: boolean }; result: { taken: number; removed: number } }
   /** Have several of DSH's models write the same chapter at once; the chapter keeps its text, the drafts are kept among its versions (job result: `drafts`). */
-  'trial.write': { params: { root: string; chapter?: string; brief?: string; mode?: 'draft' | 'continue'; words?: number; line?: string; guides?: PictureGuide[]; with: { provider: string; model: string; reasoningEffort?: string }[] }; result: JobStarted }
+  'trial.write': { params: { root: string; chapter?: string; brief?: string; mode?: 'draft' | 'continue'; words?: number; line?: string; guides?: PictureGuide[]; with: { provider: string; model: string; /** A level of the model's own (`model.info`); the empty string: as the model has it by default; left out: as the role has it, where this is the role's model. */ reasoningEffort?: string }[] }; result: JobStarted }
   /** One draft of such a comparison, whole: its text. */
   'trial.draft': { params: { root: string; chapter: string; version: string }; result: { text: string } }
   /** Have several of DSH's models plan the same chapters to come at once: previews only (job result: `plans`). */
-  'trial.derive': { params: { root: string; count?: number; direction?: string; volume?: string; guides?: PictureGuide[]; with: { provider: string; model: string; reasoningEffort?: string }[] }; result: JobStarted }
+  'trial.derive': { params: { root: string; count?: number; direction?: string; volume?: string; guides?: PictureGuide[]; with: { provider: string; model: string; /** A level of the model's own (`model.info`); the empty string: as the model has it by default; left out: as the role has it, where this is the role's model. */ reasoningEffort?: string }[] }; result: JobStarted }
   'image.sheetsFirst': { params: { root: string; asks: SheetsAsk[] }; result: { people: { id: string; name: string }[]; unknown: number; /** The sheets would be drawn after the portraits asked for, against them (`image.lead` is `portrait`). */ after?: boolean } }
   'image.list': { params: { root: string }; result: { images: IllustrationInfo[] } }
   /** The portraits of people and where each stands in the book — those of one chapter, of one person, or all — the ones kept out of the text among them. */

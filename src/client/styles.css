@@ -12791,6 +12791,38 @@ button.nv-album-chapter:hover {
   gap: 4px;
 }
 
+.nv-trial-efforts {
+  display: grid;
+  gap: 6px;
+}
+
+.nv-trial-effort {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.nv-trial-effort-name {
+  flex: 0 1 220px;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nv-trial-effort-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.nv-trial-effort .nv-select {
+  width: auto;
+  min-width: 9em;
+}
+
 .nv-trial-columns {
   display: grid;
   grid-auto-columns: minmax(280px, 1fr);

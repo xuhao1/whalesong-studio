@@ -179,7 +179,7 @@ export function createHandlers(service: NovelService): Handlers {
       // A book with budgets of its own is shown with them.
       const context = withBook(settings, manifest).context
       const budgets = contextBudgets(context.strategy, context.budgetTokens, window, context.sideTokens)
-      rows.push({ role, ...(route !== undefined ? { model: route.model } : {}), ...(window !== undefined ? { window } : {}), textBudget: budgets.textBudget, sideBudget: budgets.sideBudget })
+      rows.push({ role, ...(route !== undefined ? { model: route.model, provider: route.provider } : {}), ...(route?.reasoningEffort !== undefined && route.reasoningEffort.length > 0 ? { effort: route.reasoningEffort } : {}), ...(window !== undefined ? { window } : {}), textBudget: budgets.textBudget, sideBudget: budgets.sideBudget })
     }
     return rows
   }

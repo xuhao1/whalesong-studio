@@ -65,8 +65,11 @@ export function withModel(setup: ImageTrial, model: string): ImageTrial {
   return { label: imageSetupName({ provider: image.provider ?? 'none', ...(image.baseURL !== undefined ? { baseURL: image.baseURL } : {}), model }), image }
 }
 
-/** A model, as it is said beside what it made. */
-const modelName = (route: Pick<ModelRoute, 'provider' | 'model'>): string => `${route.model}`
+/** The reasoning level a route names, where it names one: a route that says none runs as the model does by default. */
+const effortOf = (route: Pick<ModelRoute, 'reasoningEffort'>): string | undefined => (typeof route.reasoningEffort === 'string' && route.reasoningEffort.length > 0 ? route.reasoningEffort : undefined)
+
+/** A model, as it is said beside what it made: with the level it was to think at, where one was named — the same model at two levels is two things compared. */
+const modelName = (route: Pick<ModelRoute, 'provider' | 'model' | 'reasoningEffort'>): string => `${route.model}${effortOf(route) !== undefined ? ` · ${effortOf(route)}` : ''}`
 
 const seconds = (since: number): number => Math.round((Date.now() - since) / 100) / 10
 
@@ -78,9 +81,24 @@ const quiet = (task: TaskContext): TaskContext => {
 
 function checked(routes: readonly ModelRoute[]): ModelRoute[] {
   const out = routes.filter(route => typeof route?.provider === 'string' && route.provider.length > 0 && typeof route.model === 'string' && route.model.length > 0)
-  if (out.length === 0) throw new ProjectError('novel/invalid', 'name the models to compare: `with` takes routes of DSH\'s ({provider, model})')
+  if (out.length === 0) throw new ProjectError('novel/invalid', 'name the models to compare: `with` takes routes of DSH\'s ({provider, model, reasoningEffort?})')
   if (out.length > 8) throw new ProjectError('novel/invalid', 'eight models at once is the most a comparison takes')
   return out
+}
+
+/**
+ * The routes of a comparison, each as it is to run. A route that names the model a role runs on anyway runs as the
+ * role has it — its temperature, its output limit, its reasoning level — wherever the comparison says nothing else:
+ * the one in use is compared as it is in use. A reasoning level is said by `reasoningEffort`; the empty string says
+ * "as the model has it by default", and is not filled in from the role.
+ */
+async function asRun(core: NovelCore, runtime: ProjectRuntime, role: 'writer' | 'architect', routes: readonly ModelRoute[], task: TaskContext): Promise<ModelRoute[]> {
+  const own = await core.route(role, runtime, task).catch(() => undefined)
+  return routes.map((route) => {
+    if (own === undefined || own.baseURL !== undefined || own.provider !== route.provider || own.model !== route.model) return route
+    const { for: _for, ...mine } = own
+    return { ...mine, ...route }
+  })
 }
 
 /**
@@ -89,11 +107,11 @@ function checked(routes: readonly ModelRoute[]): ModelRoute[] {
  * chapter by restoring it) and handed back to be read side by side.
  */
 export async function trialWrite(core: NovelCore, runtime: ProjectRuntime, params: WriteParams & { with: ModelRoute[] }, task: TaskContext): Promise<{ chapterId: string; drafts: TrialDraft[] }> {
-  const routes = checked(params.with)
+  const routes = await asRun(core, runtime, 'writer', checked(params.with), task)
   const { with: _with, ...write } = params
   const chapter = write.chapter !== undefined ? await runtime.project.findChapter(write.chapter) : undefined
   if (write.chapter !== undefined && chapter === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${write.chapter}"`)
-  const drafts: TrialDraft[] = routes.map(route => ({ label: modelName(route), provider: route.provider, model: route.model, seconds: 0 }))
+  const drafts: TrialDraft[] = routes.map(route => ({ label: modelName(route), provider: route.provider, model: route.model, ...(effortOf(route) !== undefined ? { effort: effortOf(route)! } : {}), seconds: 0 }))
   let chapterId = chapter?.plan.id ?? ''
   const say = (): void => { task.job?.result({ ...(chapterId.length > 0 ? { trialOf: chapterId } : {}), drafts: drafts.map(({ text: _text, ...draft }) => draft) }) }
   say()
@@ -106,7 +124,7 @@ export async function trialWrite(core: NovelCore, runtime: ProjectRuntime, param
       chapterId = made.chapterId
       const text = made.text ?? ''
       // Kept among the chapter's versions: a draft that is not taken now can be taken later.
-      const version = await runtime.project.snapshot(made.chapterId, `trial-${slugify(route.model, 'model')}`, text)
+      const version = await runtime.project.snapshot(made.chapterId, `trial-${slugify(route.model, 'model')}${effortOf(route) !== undefined ? `-${slugify(effortOf(route)!, 'level')}` : ''}`, text)
       drafts[at] = { ...drafts[at]!, text, words: countWords(proseOnly(text)), seconds: seconds(began), ...(version !== undefined ? { version } : {}) }
     } catch (error) {
       if (isAbort(error) || task.signal?.aborted === true) throw error
@@ -124,6 +142,8 @@ export interface TrialPlan {
   label: string
   provider: string
   model: string
+  /** The reasoning level its planner was to think at, where the comparison named one. */
+  effort?: string
   chapters?: DerivedChapter[]
   rationale?: string
   seconds: number
@@ -135,9 +155,9 @@ export interface TrialPlan {
  * outline. The author reads them side by side and adds the one they take (or none).
  */
 export async function trialDerive(core: NovelCore, runtime: ProjectRuntime, params: DeriveChaptersParams & { with: ModelRoute[] }, task: TaskContext): Promise<{ plans: TrialPlan[] }> {
-  const routes = checked(params.with)
+  const routes = await asRun(core, runtime, 'architect', checked(params.with), task)
   const { with: _with, ...derive } = params
-  const plans: TrialPlan[] = routes.map(route => ({ label: modelName(route), provider: route.provider, model: route.model, seconds: 0 }))
+  const plans: TrialPlan[] = routes.map(route => ({ label: modelName(route), provider: route.provider, model: route.model, ...(effortOf(route) !== undefined ? { effort: effortOf(route)! } : {}), seconds: 0 }))
   const say = (): void => { task.job?.result({ plans: plans.map(plan => ({ ...plan })) }) }
   say()
   task.job?.progress(0, routes.length)

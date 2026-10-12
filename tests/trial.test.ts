@@ -271,6 +271,66 @@ describe('a chapter written by several models', () => {
   })
 })
 
+describe('how hard each model of a comparison is to think', () => {
+  it('runs a model at the level named for it, the same model at two levels as two drafts, and the one in use as it is in use', async () => {
+    const bed = await createTestBed({ settings: { models: { writer: { provider: 'fake', model: 'mine', reasoningEffort: 'high', temperature: 0.4 } } } })
+    try {
+      const { project } = bed.runtime
+      const chapter = await project.addChapter({ title: '雨夜', synopsis: '她在雨夜里等一封信。' })
+      bed.llm.responder = request => `${request.route.model}/${request.route.reasoningEffort ?? '-'} 写的：雨下了一夜。`
+      const result = await trialWrite(bed.core, bed.runtime, { chapter: chapter.id, brief: '写得冷一点', with: [
+        // The writer's own model with nothing said of it: as the writer has it.
+        { provider: 'fake', model: 'mine' },
+        // The same, said to think as the model does by default: not filled in from the writer.
+        { provider: 'fake', model: 'mine', reasoningEffort: '' },
+        // Another model, at two levels: compared with itself.
+        { provider: 'fake', model: 'other', reasoningEffort: 'low' },
+        { provider: 'fake', model: 'other', reasoningEffort: 'max' },
+        // Another model with nothing said: nothing of the writer's goes to it.
+        { provider: 'fake', model: 'plain' },
+      ] }, { origin: 'user' })
+      const asked = bed.llm.requests.filter(request => request.prompt.includes('写得冷一点')).map(request => [request.route.model, request.route.reasoningEffort ?? '', request.route.temperature])
+      expect(asked.sort()).toEqual([
+        ['mine', '', 0.4],
+        ['mine', 'high', 0.4],
+        ['other', 'low', undefined],
+        ['other', 'max', undefined],
+        ['plain', '', undefined],
+      ])
+      // Told apart beside what they made, and among the chapter's versions.
+      expect(result.drafts.map(draft => [draft.label, draft.effort])).toEqual([
+        ['mine · high', 'high'],
+        ['mine', undefined],
+        ['other · low', 'low'],
+        ['other · max', 'max'],
+        ['plain', undefined],
+      ])
+      expect(result.drafts.map(draft => draft.text)).toEqual(['mine/high 写的：雨下了一夜。', 'mine/ 写的：雨下了一夜。', 'other/low 写的：雨下了一夜。', 'other/max 写的：雨下了一夜。', 'plain/- 写的：雨下了一夜。'])
+      expect((await project.versions(chapter.id)).map(version => version.reason).sort()).toEqual(['trial-mine', 'trial-mine-high', 'trial-other-low', 'trial-other-max', 'trial-plain'])
+      for (const draft of result.drafts) expect(await project.versionText(chapter.id, draft.version!)).toBe(draft.text)
+    } finally {
+      await bed.cleanup()
+    }
+  })
+
+  it('has a planner think at the level named, too', async () => {
+    const bed = await createTestBed()
+    try {
+      const { project } = bed.runtime
+      const first = await project.addChapter({ title: '开头', synopsis: '故事开始。' })
+      await project.saveChapterText(first.id, '故事开始了。')
+      bed.llm.responder = request => JSON.stringify({ chapters: [{ title: `${request.route.model}/${request.route.reasoningEffort ?? '-'}`, synopsis: '接着往下。' }] })
+      const result = await trialDerive(bed.core, bed.runtime, { count: 1, with: [{ provider: 'fake', model: 'north', reasoningEffort: 'low' }, { provider: 'fake', model: 'north', reasoningEffort: 'high' }] }, { origin: 'user' })
+      expect(result.plans.map(plan => [plan.label, plan.effort, plan.chapters?.map(chapter => chapter.title)])).toEqual([
+        ['north · low', 'low', ['north/low']],
+        ['north · high', 'high', ['north/high']],
+      ])
+    } finally {
+      await bed.cleanup()
+    }
+  })
+})
+
 describe('chapters to come planned by several models', () => {
   it('shows what each would add, and adds nothing', async () => {
     const bed = await createTestBed()
