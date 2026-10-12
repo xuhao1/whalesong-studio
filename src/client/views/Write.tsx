@@ -492,13 +492,13 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
       : t('策划照你说的在这一章里找；找到的记在右边“问题”里，这一次不改。', 'The planner is looking for it in this chapter; what is found is filed under Issues on the right, and nothing is changed this time.'))
     return undefined
   })
-  const leadFromBrief = (): void => {
+  const leadFromBrief = (fix: boolean): void => {
     const lead = brief.trim()
     if (lead.length === 0) {
-      controller.toast('info', t('先在输入框里写下你发现的问题。', 'Say what you noticed in the box first.'))
+      controller.toast('info', t('先在输入框里写下这一章哪里不对、要改什么。', 'Say in the box what is wrong with the chapter first.'))
       return
     }
-    void leadHere(lead, undefined, true).then(() => { setBrief('') })
+    void leadHere(lead, undefined, fix).then(() => { setBrief('') })
   }
   // The passage a picture is being asked of: what the author wants of it is asked first.
   const [picturing, setPicturing] = useState<string | undefined>()
@@ -649,7 +649,7 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
           <div className="nv-panel-section">
             {revising !== undefined ? (
               <div className="nv-live-proposal">
-                <div className="nv-row"><Spinner size={12} /><span>{jobPulse(revising, t) ?? (revising.title === 'amend chapter' ? mendBy === 'planner' ? t('策划在一处处改…', 'The planner is going through the chapter…') : t('写手在一处处改…', 'The writer is going through the chapter…') : rewriteBy === 'planner' ? t('编排模型正在改写…', 'The crew\'s model is revising…') : t('写手正在改写…', 'The writer is revising…'))}</span><span className="nv-spacer" /><Button size="sm" variant="ghost" icon="stop" onClick={() => { void controller.cancelJob(revising.id) }}>{t('停止', 'Stop')}</Button></div>
+                <div className="nv-row"><Spinner size={12} /><span>{jobPulse(revising, t) ?? (revising.title === 'amend chapter' ? mendBy === 'planner' ? t('策划在一处处改…', 'The planner is going through the chapter…') : t('写手在一处处改…', 'The writer is going through the chapter…') : revising.title === 'review by lead' ? t('策划在照你说的找…', 'The planner is looking for what you said…') : rewriteBy === 'planner' ? t('编排模型正在改写…', 'The crew\'s model is revising…') : t('写手正在改写…', 'The writer is revising…'))}</span><span className="nv-spacer" /><Button size="sm" variant="ghost" icon="stop" onClick={() => { void controller.cancelJob(revising.id) }}>{t('停止', 'Stop')}</Button></div>
                 {reviseStream.length > 0 ? <div className="nv-prose nv-prose-small">{reviseStream.split('\n').filter(line => line.trim().length > 0).slice(-12).map((line, index) => <p key={index}>{line}</p>)}</div> : null}
               </div>
             ) : null}
@@ -668,7 +668,7 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
                 {round.items.map(proposal => <ProposalCard key={proposal.id} bare proposal={proposal} />)}
               </Fragment>
             ) : round.items.map(proposal => <ProposalCard key={proposal.id} proposal={proposal} />))}
-            {proposals.length === 0 && revising === undefined ? <p className="nv-muted">{t('写一句要求点“改这一章”，或在正文里选中一段让写手改写：改动先作为提案放在这里。', 'Write a brief and press Revise, or select a passage for the writer to rework: the changes wait here as proposals.')}</p> : null}
+            {proposals.length === 0 && revising === undefined ? <p className="nv-muted">{t('写一句话点“修改一章”，或在正文里选中一段改写：改动先作为提案放在这里。', 'Write a sentence and press Mend the chapter, or select a passage to rework: the changes wait here as proposals.')}</p> : null}
             {turnedDown.length > 0 ? (
               // What was turned down for this chapter is kept: a slip of the hand is put back from here.
               <details className="nv-turned-down">
@@ -793,16 +793,26 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
           </div>
         ) : (
           <div className="nv-brief-bar">
-            <TextInput className="nv-grow" value={brief} placeholder={empty ? t('给写手的要求', 'What to ask of the writer') : t('续写的方向、整章要怎么改，或你发现的问题', 'Where to continue, how the chapter should change — or something you noticed in it')} onChange={(event) => { setBrief(event.target.value) }} onKeyDown={(event) => { if (plainEnter(event) && writing === undefined) write(empty ? 'draft' : 'continue') }} />
+            <TextInput className="nv-grow" value={brief} placeholder={empty ? t('给写手的要求', 'What to ask of the writer') : t('续写的方向，或这一章哪里不对、要改什么', 'Where to continue — or what is wrong with this chapter')} onChange={(event) => { setBrief(event.target.value) }} onKeyDown={(event) => { if (plainEnter(event) && writing === undefined) write(empty ? 'draft' : 'continue') }} />
             {writing !== undefined
               ? <Button variant="danger" icon="stop" onClick={() => { void controller.cancelJob(writing.id) }}>{t('停止', 'Stop')}</Button>
               : <Button variant="primary" icon="feather" onClick={() => { write(empty ? 'draft' : 'continue') }}>{empty ? t('写这一章', 'Write it') : t('续写', 'Continue')}</Button>}
             {writing === undefined ? <Button variant="outline" icon="layers" onClick={() => { void save().then(() => { setComparing(true) }) }} title={t('让几个模型各写一稿这一章，并排着看，采纳一稿——正文不动，采纳了才换', 'Have several models write this chapter, read the drafts side by side and take one — the chapter keeps its text until you do')}>{t('对比…', 'Compare…')}</Button> : null}
-            {!empty && writing === undefined ? <Button variant="outline" icon="wand" busy={revising !== undefined && revising.title === 'amend chapter'} disabled={revising !== undefined} onClick={() => { reviseChapter() }} title={mendBy === 'planner' ? t('策划（编排模型）照左边的要求在这一章里一处处改，不重写整章；每一处是一条提案', 'The planner (the crew\'s model) changes this chapter place by place to the brief on the left, without writing it over; each place is a proposal') : t('写手照左边的要求在这一章里一处处改，不重写整章；每一处是一条提案', 'The writer changes this chapter place by place to the brief on the left, without writing it over; each place is a proposal')}>{t('改这一章', 'Revise')}</Button> : null}
-            {!empty && writing === undefined ? <Button variant="outline" icon="alert" onClick={leadFromBrief} title={t('照引导审校：把左边这句话当作你在这一章里发现的问题——策划找出来、记成审校问题，再修；修改是小提案，出现在各条问题下面', 'A review by your lead: the sentence on the left is taken as something you noticed in this chapter — the planner finds it, files it as issues, and mends it by small proposals beneath them')}>{t('有问题', 'It has a problem')}</Button> : null}
             {!empty && writing === undefined ? (
-              <Menu icon="chevronDown" variant="outline" size="md" align="end" items={[
-                { label: rewriteBy === 'planner' ? t('整章重写（编排模型写，生成提案）', 'Write the chapter over (the crew\'s model; as a proposal)') : t('整章重写（生成提案）', 'Write the chapter over (as a proposal)'), icon: 'refresh', onSelect: () => { reviseChapter(true) } },
+              // One button for changing the chapter: what the author says is found in it and mended; the triangle beside it
+              // holds the other ways — the chapter gone through to a brief, the finding alone, the chapter written over.
+              <div className="nv-split-btn">
+                <Button variant="outline" icon="wand" onClick={() => { leadFromBrief(true) }} title={t('把左边这句话当作你在这一章里发现的问题：策划找出来、记成审校问题，再只改有毛病的那几处——每一处是一条小提案，出现在各条问题下面', 'The sentence on the left is taken as something you noticed in this chapter: the planner finds it, files it as issues and changes only the places at fault — each a small proposal beneath its issue')}>{t('修改一章', 'Mend the chapter')}</Button>
+                <Menu icon="chevronDown" variant="outline" size="md" align="end" items={[
+                  { label: mendBy === 'planner' ? t('改这一章：策划照要求一处处改', 'Revise: the planner goes through it to the brief') : t('改这一章：写手照要求一处处改', 'Revise: the writer goes through it to the brief'), icon: 'wand', disabled: revising !== undefined, onSelect: () => { reviseChapter() } },
+                  { label: t('只找出问题，先不改', 'Find and file it only'), icon: 'alert', onSelect: () => { leadFromBrief(false) } },
+                  'separator',
+                  { label: rewriteBy === 'planner' ? t('整章重写（编排模型写，生成提案）', 'Write the chapter over (the crew\'s model; as a proposal)') : t('整章重写（生成提案）', 'Write the chapter over (as a proposal)'), icon: 'refresh', onSelect: () => { reviseChapter(true) } },
+                ]} />
+              </div>
+            ) : null}
+            {!empty && writing === undefined ? (
+              <Menu icon="more" variant="outline" size="md" align="end" items={[
                 { label: t('从头重新起草（旧稿存入版本）', 'Redraft from the top (old text is versioned)'), icon: 'refresh', onSelect: () => { confirm.ask(t('用新稿替换这一章现有的正文？旧稿会存入“版本”。', 'Replace this chapter\'s text with a new draft? The old one is kept under Versions.'), () => { write('draft') }) } },
                 'separator',
                 { label: t('审校这一章', 'Review this chapter'), icon: 'checkCircle', onSelect: () => { showPanel('issues'); void controller.guard(async () => { if (await settle()) { await controller.api.call('ai.review', { root, chapter: chapter.id }); await controller.refreshJobs() } }) } },

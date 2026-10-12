@@ -1008,6 +1008,8 @@
   z-index: 30;
   display: flex;
   flex-direction: column;
+  /* As wide as what it says (its anchor is often one small button, which would leave it at the least width). */
+  width: max-content;
   min-width: 180px;
   max-width: min(340px, 86vw);
   max-height: 60vh;

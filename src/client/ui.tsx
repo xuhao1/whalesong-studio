@@ -636,6 +636,20 @@ export function Menu({ label, icon, items, variant = 'ghost', size = 'sm', align
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
+  // The side asked for is kept unless the list would run out of the Studio there and fits on the other side.
+  const [side, setSide] = useState(align)
+  useLayoutEffect(() => {
+    const anchor = ref.current
+    const list = listRef.current
+    if (!open || anchor === null || list === null) { setSide(align); return }
+    const frame = (anchor.closest('.nv-root') ?? document.documentElement).getBoundingClientRect()
+    const at = anchor.getBoundingClientRect()
+    const width = list.getBoundingClientRect().width
+    const fitsStart = at.left + width <= frame.right - 4
+    const fitsEnd = at.right - width >= frame.left + 4
+    setSide(align === 'end' ? (fitsEnd || !fitsStart ? 'end' : 'start') : (fitsStart || !fitsEnd ? 'start' : 'end'))
+  }, [open, align])
   useEffect(() => {
     if (!open) return
     const onDown = (event: MouseEvent): void => {
@@ -653,7 +667,7 @@ export function Menu({ label, icon, items, variant = 'ghost', size = 'sm', align
     <div className="nv-menu" ref={ref}>
       <Button variant={variant} size={size} icon={icon} aria-haspopup="menu" aria-expanded={open} onClick={() => { setOpen(value => !value) }}>{label}</Button>
       {open ? (
-        <div className={cx('nv-menu-list', align === 'end' && 'is-end')} role="menu">
+        <div ref={listRef} className={cx('nv-menu-list', side === 'end' && 'is-end')} role="menu">
           {items.map((item, index) => item === 'separator'
             ? <div key={index} className="nv-menu-sep" />
             : (

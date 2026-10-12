@@ -512,7 +512,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
         {/* Whose model writes the words of a change made by places: a model fit to write chapters is not always fit for a pinned, small change. */}
         {scope !== 'book' ? (
           <div className="nv-form-grid">
-            <Field label={t('按处修改由谁写', 'Who writes a change made by places')} hint={t('修审校问题、照引导审校、全书修订、“改这一章”：每一处改好的文字由哪个模型写。', 'Mending issues, a review by a lead, a revision through the book, a chapter revised in place: whose model writes what each place is to read.')}>
+            <Field label={t('按处修改由谁写', 'Who writes a change made by places')} hint={t('修审校问题、照引导审校（写作页的“修改一章”）、全书修订、照要求通篇改一章：每一处改好的文字由哪个模型写。', 'Mending issues, a review by a lead, a revision through the book, a chapter revised in place: whose model writes what each place is to read.')}>
               <Select<'writer' | 'planner'>
                 value={draft.mendBy === 'writer' ? 'writer' : 'planner'}
                 options={[
