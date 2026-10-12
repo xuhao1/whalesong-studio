@@ -7,13 +7,14 @@
  */
 import type { ProjectRuntime } from './core'
 import { findJotting, foundJottings, jottingName } from './jottings'
+import { derivationLine, derivationsView, derivationWhole } from './derivations'
 import { ProjectError, type LineScope, type Project } from './project'
 import { L, promptLanguage, renderCharacter, renderPlan, renderStyle, renderThread, renderWorld, roleLabel } from './render'
 import { lifeLine } from '../shared/life'
 import { clip } from '../shared/text'
 import { MAIN_LINE, type SearchSource } from '../shared/types'
 
-export const READ_KINDS = ['chapter', 'outline', 'character', 'world', 'style', 'memory', 'threads', 'review', 'versions', 'jottings'] as const
+export const READ_KINDS = ['chapter', 'outline', 'character', 'world', 'style', 'memory', 'threads', 'review', 'versions', 'jottings', 'derivations'] as const
 export type ReadKind = typeof READ_KINDS[number]
 
 export const SEARCH_SOURCES: SearchSource[] = ['manuscript', 'character', 'world', 'memory', 'outline', 'jotting']
@@ -254,6 +255,28 @@ export async function readBook(runtime: ProjectRuntime, request: ReadRequest, to
       return {
         text: `The author's jottings — loose notes: ideas not settled, never canon (the bible and the text hold where they differ). ${tools.read} what=jottings ref=<id> reads one whole.\n\n${found.map(item => `- [${item.id}; ${item.kind}; ${item.updatedAt.slice(0, 10)}] ${item.title !== undefined ? `${item.title} — ` : ''}${clip(item.text.replace(/\s+/g, ' '), 160)}`).join('\n')}`,
         data: found,
+      }
+    }
+    case 'derivations': {
+      // How the outline came to be: what the author gave each derivation to go by, what the planner handed in and said.
+      const view = await derivationsView(project)
+      // A reader kept to one line reads what was derived for that line.
+      const mine = kept !== undefined && scope !== undefined
+        ? view.items.filter(item => item.covers.some(cover => scope.reads(cover.id)) || (item.covers.length === 0 && (item.line ?? MAIN_LINE) === scope.line))
+        : view.items
+      if (given !== undefined) {
+        const one = mine.find(item => item.id === given)
+        if (one !== undefined) return { text: derivationWhole(one, lang, nameOf), data: { id: one.id, kind: one.kind, chapters: one.covers.map(cover => cover.id) } }
+        // By a chapter: the records that chapter came of.
+        const chapter = await project.findChapter(given, scope?.line)
+        const of = chapter !== undefined ? mine.filter(item => item.chapters.includes(chapter.plan.id)) : []
+        if (of.length === 0) throw new ProjectError('novel/not-found', `no derivation record matches "${given}" — pass a record's id from ${tools.read} what=derivations, or a chapter that a derivation planned`)
+        return { text: of.reverse().map(item => derivationWhole(item, lang, nameOf)).join('\n\n════\n\n'), data: of.map(item => ({ id: item.id, kind: item.kind })) }
+      }
+      if (mine.length === 0) return { text: 'The book keeps no records of derivations (they are kept from the first derivation made since records began; what was planned before has none).', data: [] }
+      return {
+        text: `Records of how the outline was derived, the latest first — what the author gave each to go by, and where its chapters stand now. ${tools.read} what=derivations ref=<id> reads one whole (every hand-in, what the planner said of it); ref=<chapter> reads the ones that chapter came of.\n\n${mine.map(item => derivationLine(item, lang)).join('\n')}`,
+        data: mine.map(item => ({ id: item.id, kind: item.kind, at: item.at, chapters: item.covers.map(cover => cover.id) })),
       }
     }
     default:

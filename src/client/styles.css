@@ -13034,6 +13034,142 @@ button.nv-album-chapter:hover {
   object-fit: contain;
 }
 
+/* The records of the book's derivations: what was asked, what came back, which chapters it covers. */
+.nv-derivations .nv-modal-body {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.nv-derivations-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.nv-derivations-gap {
+  width: 10px;
+}
+
+.nv-derivations-add {
+  margin-left: auto;
+}
+
+.nv-derivations-list {
+  display: grid;
+  gap: 10px;
+}
+
+.nv-derivation {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--nv-border);
+  border-radius: 10px;
+  background: var(--nv-surface);
+}
+
+.nv-derivation.is-kept {
+  border-style: dashed;
+}
+
+.nv-derivation.is-gone {
+  opacity: 0.7;
+}
+
+.nv-derivation > header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.nv-derivation-covers {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.nv-derivation-covers .nv-link.is-here {
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+.nv-derivation-tools {
+  margin-left: auto;
+}
+
+.nv-derivation-part {
+  display: grid;
+  gap: 4px;
+}
+
+.nv-derivation-part > h5 {
+  color: var(--nv-text-2);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.nv-derivation-said {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.nv-derivation-turns > summary {
+  cursor: pointer;
+  color: var(--nv-text-2);
+  font-size: 13px;
+}
+
+.nv-derivation-turn {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.nv-derivation > footer {
+  display: grid;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--nv-border);
+}
+
+.nv-derivations-range {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.nv-derivations-range .nv-select {
+  flex: 1 1 140px;
+  min-width: 120px;
+  max-width: 260px;
+}
+
+.nv-derivations-gone {
+  flex: 1 1 200px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nv-chapter-intent {
+  margin: 6px 0 0;
+}
+
+.nv-chapter-intent > svg {
+  margin-right: 5px;
+  vertical-align: -2px;
+}
+
+.nv-chapter-intent > .nv-link {
+  margin-left: 8px;
+}
+
 /* The author's jottings: a box to write one in, then the notes, the latest first. */
 .nv-jottings {
   display: grid;

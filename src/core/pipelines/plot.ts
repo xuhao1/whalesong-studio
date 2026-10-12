@@ -7,11 +7,12 @@
  *   plan of the text    a chapter that is written → its plan (or its beats alone) as its text has it,
  *   what-if     alternative directions with their consequences, nothing is changed.
  */
-import { MAIN_LINE, type Beat, type ChapterPlan, type CharacterCard, type DerivedChapter, type DerivedPlan, type PictureGuide, type PicturesRead, type PlotLine, type ReferencesLooked, type StyleProfile, type WorldCategory, type WorldEntry } from '../../shared/types'
+import { MAIN_LINE, type Beat, type ChapterPlan, type CharacterCard, type DerivationTurn, type DerivedChapter, type DerivedPlan, type PictureGuide, type PicturesRead, type PlotLine, type ReferencesLooked, type StyleProfile, type WorldCategory, type WorldEntry } from '../../shared/types'
 import { clip, hashText, newId, sameName } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { asArray, asList, asRecord, asText } from '../llm'
 import { assign } from '../crew'
+import { amendDerivation, askedBy, logDerivation, settleDerivation } from '../derivations'
 import type { Project } from '../project'
 import { ProjectError } from '../project'
 import { architectSystem, beatTask, planOfTextTask, deriveBeatsTask, deriveChaptersTask, digestSystem, foundationTask, reviseChaptersFollowUp, whatIfTask } from '../prompts'
@@ -131,6 +132,8 @@ export interface DeriveChaptersResult {
   replaced?: { chapters: number; kept?: { id: string; title: string } }
   /** A plan adjusted (`revise`): the planner that derived it went on from where it was, rather than somebody new being handed it. */
   resumed?: true
+  /** The record this derivation is kept under: what was asked, what came back and what was said of it. */
+  record?: string
 }
 
 /** Models like to number a chapter inside its title ("第3章：…", "Chapter 3 - …"); the outline numbers chapters itself. */
@@ -226,6 +229,8 @@ export async function deriveChapters(core: NovelCore, runtime: ProjectRuntime, p
   let referenced: ReferencesLooked | undefined
   let resumed = false
   let previous: string | undefined
+  // The record of this derivation: kept from the first round that puts chapters into the outline, and added to by each.
+  let record: string | undefined
   const rounds = Math.ceil(wanted / DERIVE_ROUND)
   for (let round = 0; round < rounds; round++) {
     task.signal?.throwIfAborted()
@@ -239,6 +244,9 @@ export async function deriveChapters(core: NovelCore, runtime: ProjectRuntime, p
       ...(task.signal !== undefined ? { signal: task.signal } : {}),
     })
     const nameOf = (ref: string): string => characters.find(card => card.id === ref)?.name ?? ref
+    // The chapter the new ones follow where they are added to the end of a line: the last one it has now — which may be
+    // planned and not written, and is then not the planner's to plan again.
+    const last = mode === 'append' && inside === undefined ? (await project.chapterInfos(line?.id)).at(-1) : undefined
     const { value, referenced: looked, resumed: wentOn } = await assign(core, runtime, task, {
       role: 'architect',
       // A plan handed in to be looked at may have a word of the author's to follow: the planner that derived it is
@@ -263,6 +271,7 @@ export async function deriveChapters(core: NovelCore, runtime: ProjectRuntime, p
         ...(situation !== undefined ? { situation } : {}),
         ...(revise !== undefined ? { revise: { plan: planLines(revise.chapters, ref => characters.find(card => card.id === ref)?.name ?? ref, zh), feedback: revise.feedback.trim() } } : {}),
         ...(inside !== undefined ? { after: `${inside.index}. ${inside.plan.title}` } : {}),
+        ...(last !== undefined ? { follows: { label: `${last.index}. ${last.title}`, written: last.hasText } } : {}),
         ...(guided !== undefined ? { pictures: guided.text } : {}),
       }),
       ...(guided !== undefined && guided.images.length > 0 ? { images: guided.images } : {}),
@@ -319,7 +328,30 @@ export async function deriveChapters(core: NovelCore, runtime: ProjectRuntime, p
       const located = await project.findChapter(plan.id)
       added.push({ id: plan.id, title: plan.title, index: located?.index ?? 0 })
     }
+    // What the author gave to go by and what the planner said of what it handed in stay with the book: the outline
+    // these chapters are will be edited, and whoever writes them is to know what they were meant to be.
+    const told = rationales.length > 0 ? rationales.join('\n\n') : undefined
+    const ids = added.map(item => item.id)
+    if (record === undefined) {
+      record = (await logDerivation(project, {
+        kind: 'chapters',
+        by: askedBy(task),
+        state: 'entered',
+        mode,
+        ...(line !== undefined ? { line: line.id } : {}),
+        ...(params.direction !== undefined ? { direction: params.direction } : {}),
+        ...(fork !== undefined ? { after: { id: fork.plan.id, title: fork.plan.title, index: fork.index } } : {}),
+        ...(guided !== undefined && guided.guides.length > 0 ? { guides: guided.guides } : {}),
+        turns: [{ at: new Date().toISOString(), ...(told !== undefined ? { rationale: told } : {}), chapters: [...chapters] }],
+        chapters: ids,
+      })).id
+    } else {
+      await amendDerivation(project, record, kept => ({ ...kept, turns: [{ ...kept.turns[0]!, ...(told !== undefined ? { rationale: told } : {}), chapters: [...chapters] }], chapters: ids }))
+    }
     task.job?.result({ added: added.map(item => item.id) })
+  }
+  if (record !== undefined && (guided !== undefined || referenced !== undefined)) {
+    await amendDerivation(project, record, kept => ({ ...kept, ...(guided !== undefined ? { pictures: picturesRead(guided)! } : {}), ...(referenced !== undefined ? { referenced } : {}) }))
   }
   if (rounds > 1) task.job?.progress(rounds, rounds)
   task.job?.result({ added: added.map(item => item.id), ...(line !== undefined ? { line: line.id } : {}) })
@@ -332,6 +364,7 @@ export async function deriveChapters(core: NovelCore, runtime: ProjectRuntime, p
     ...(guided !== undefined ? { pictures: picturesRead(guided)! } : {}),
     ...(referenced !== undefined ? { referenced } : {}),
     ...(resumed ? { resumed: true as const } : {}),
+    ...(record !== undefined ? { record } : {}),
   }
 }
 
@@ -391,12 +424,47 @@ export async function keepDerivedPlan(runtime: ProjectRuntime, plan: DerivedPlan
   await runtime.project.writeState(['derived.json'], plan)
 }
 
-/** The plan kept was added to the outline, or discarded: nothing waits any more, and its planner is let go. */
-export async function settleDerivedPlan(core: NovelCore, runtime: ProjectRuntime): Promise<boolean> {
+/**
+ * The plan kept was added to the outline, or discarded: nothing waits any more, and its planner is let go. Its record
+ * is told which: `entered` — the ids of the chapters it became, in order — or, with none, that it was let go.
+ */
+export async function settleDerivedPlan(core: NovelCore, runtime: ProjectRuntime, entered?: readonly string[]): Promise<boolean> {
   core.roles?.release?.(derivedKey(runtime.project.root))
-  if (await derivedPlan(runtime) === undefined) return false
+  const plan = await derivedPlan(runtime)
+  if (plan === undefined) return false
+  if (plan.record !== undefined) await settleDerivation(runtime.project, plan.record, entered)
   await runtime.project.removeState('derived.json')
   return true
+}
+
+/**
+ * A plan the author took from several derived side by side: kept to be looked at like one derived alone — in the
+ * place of the one that waited — and recorded as what it is.
+ */
+export async function takeDerivedPlan(core: NovelCore, runtime: ProjectRuntime, taken: { chapters: DerivedChapter[]; rationale?: string; volume?: string; direction?: string }): Promise<DerivedPlan> {
+  // Another planner's than the one kept for the plan before: nobody is there to go on from this one.
+  await settleDerivedPlan(core, runtime)
+  const at = new Date().toISOString()
+  const direction = taken.direction?.trim() ?? ''
+  const rationale = taken.rationale?.trim() ?? ''
+  const record = await logDerivation(runtime.project, {
+    kind: 'chapters',
+    by: 'author',
+    state: 'waiting',
+    mode: 'append',
+    ...(direction.length > 0 ? { direction } : {}),
+    turns: [{ at, ...(rationale.length > 0 ? { rationale } : {}), chapters: taken.chapters }],
+  })
+  const plan: DerivedPlan = {
+    at,
+    chapters: taken.chapters,
+    ...(rationale.length > 0 ? { rationale } : {}),
+    ...(taken.volume !== undefined && taken.volume.length > 0 ? { volume: taken.volume } : {}),
+    ...(direction.length > 0 ? { direction } : {}),
+    record: record.id,
+  }
+  await keepDerivedPlan(runtime, plan)
+  return plan
 }
 
 /** What comes of chapters derived to be looked at: the derivation, and the plan as it now waits with the book. */
@@ -414,7 +482,9 @@ export interface DeriveLookResult extends DeriveChaptersResult {
 export async function deriveToLook(core: NovelCore, runtime: ProjectRuntime, params: Omit<DeriveChaptersParams, 'apply' | 'revise'> & { feedback?: string; job?: string }, task: TaskContext): Promise<DeriveLookResult> {
   const { feedback, job, ...rest } = params
   const said = feedback?.trim() ?? ''
-  const waiting = said.length > 0 ? await derivedPlan(runtime) : undefined
+  // (The plan that waits now: adjusted where the author has a word to say of it, else let go for the one derived here.)
+  const standing = await derivedPlan(runtime)
+  const waiting = said.length > 0 ? standing : undefined
   if (said.length > 0 && waiting === undefined) throw new ProjectError('novel/not-found', 'no derived plan is waiting to be adjusted — derive one first')
   // A plan adjusted stays the plan it was: for the same volume and line, after the same chapter, by the same direction.
   const volume = waiting !== undefined ? waiting.volume : rest.volume
@@ -433,8 +503,31 @@ export async function deriveToLook(core: NovelCore, runtime: ProjectRuntime, par
   if (result.chapters.length === 0) return result
   // (The chapter they follow is kept by its id: whoever adds the plan later names no chapter anew.)
   const follows = after !== undefined && after.trim().length > 0 ? await runtime.project.findChapter(after.trim(), result.line?.id) : undefined
+  // Its record: a first hand-in opens one; a hand-in adjusted by the author's word is one more turn of the same.
+  const now = new Date().toISOString()
+  const turn: DerivationTurn = { at: now, ...(waiting !== undefined ? { feedback: said } : {}), ...(result.rationale !== undefined ? { rationale: result.rationale } : {}), chapters: result.chapters, ...(result.resumed === true ? { resumed: true } : {}) }
+  // (A plan adjusted by the planner that derived it reads nothing anew: what it read when it derived the plan stands.)
+  const read = { ...(result.pictures !== undefined ? { pictures: result.pictures } : {}), ...(result.referenced !== undefined && (waiting === undefined || result.referenced.calls > 0) ? { referenced: result.referenced } : {}) }
+  let record = waiting?.record
+  if (record !== undefined && await amendDerivation(runtime.project, record, kept => ({ ...kept, ...read, turns: [...kept.turns, turn] })) === undefined) record = undefined
+  if (record === undefined) {
+    if (waiting === undefined && standing?.record !== undefined) await settleDerivation(runtime.project, standing.record)
+    record = (await logDerivation(runtime.project, {
+      kind: 'chapters',
+      by: askedBy(task),
+      state: 'waiting',
+      mode: 'append',
+      ...(result.line !== undefined ? { line: result.line.id } : {}),
+      ...(direction !== undefined ? { direction } : {}),
+      ...(follows !== undefined ? { after: { id: follows.plan.id, title: follows.plan.title, index: follows.index } } : {}),
+      ...(rest.guides !== undefined && rest.guides.length > 0 ? { guides: rest.guides } : {}),
+      ...read,
+      // (A plan that waited from before records were kept, now adjusted: what it was is its first hand-in.)
+      turns: waiting !== undefined ? [{ at: waiting.at, ...(waiting.rationale !== undefined ? { rationale: waiting.rationale } : {}), chapters: waiting.chapters }, turn] : [turn],
+    })).id
+  }
   const plan: DerivedPlan = {
-    at: new Date().toISOString(),
+    at: now,
     ...(job !== undefined ? { job } : {}),
     chapters: result.chapters,
     ...(result.rationale !== undefined ? { rationale: result.rationale } : {}),
@@ -445,9 +538,10 @@ export async function deriveToLook(core: NovelCore, runtime: ProjectRuntime, par
     ...(waiting !== undefined ? { feedback: [...(waiting.feedback ?? []), said] } : {}),
     ...(result.pictures !== undefined ? { pictures: result.pictures } : waiting?.pictures !== undefined ? { pictures: waiting.pictures } : {}),
     ...(result.referenced !== undefined ? { referenced: result.referenced } : waiting?.referenced !== undefined ? { referenced: waiting.referenced } : {}),
+    record,
   }
   await keepDerivedPlan(runtime, plan)
-  return { ...result, waiting: plan }
+  return { ...result, waiting: plan, record }
 }
 
 /**
@@ -471,7 +565,7 @@ export async function enterDerivedPlan(core: NovelCore, runtime: ProjectRuntime)
     previous = made.id
     added.push({ id: made.id, title: made.title, index: (await project.findChapter(made.id))?.index ?? 0 })
   }
-  await settleDerivedPlan(core, runtime)
+  await settleDerivedPlan(core, runtime, added.map(item => item.id))
   return { added, ...(line !== undefined ? { line: { id: line.id, title: line.title } } : {}) }
 }
 
@@ -505,6 +599,10 @@ export interface DeriveBeatsResult {
   applied: boolean
   /** Where the book has references and derivations look in them first: what the planner read there. */
   referenced?: ReferencesLooked
+  /** What the planner says of how it laid them out. */
+  rationale?: string
+  /** The record this is kept under, where the beats went into the plan. */
+  record?: string
 }
 
 export async function deriveBeats(core: NovelCore, runtime: ProjectRuntime, params: { chapter: string; direction?: string; apply?: boolean }, task: TaskContext): Promise<DeriveBeatsResult> {
@@ -544,7 +642,9 @@ export async function deriveBeats(core: NovelCore, runtime: ProjectRuntime, para
   const synopsis = asText(value.synopsis)
   const cast = asList(value.characters).map(resolve)
   const pov = asText(value.pov)
+  const rationale = asText(value.rationale)
   const applied = params.apply !== false
+  let record: string | undefined
   if (applied) {
     await project.updateChapter(chapter.plan.id, {
       beats,
@@ -553,8 +653,18 @@ export async function deriveBeats(core: NovelCore, runtime: ProjectRuntime, para
       ...(pov !== undefined ? { pov: resolve(pov) } : {}),
       ...(chapter.plan.status === 'idea' ? { status: 'outlined' as const } : {}),
     })
+    record = (await logDerivation(project, {
+      kind: 'beats',
+      by: askedBy(task),
+      ...(chapter.line !== undefined ? { line: chapter.line } : {}),
+      ...(params.direction !== undefined ? { direction: params.direction } : {}),
+      ...(chapter.plan.guides !== undefined && chapter.plan.guides.length > 0 ? { guides: chapter.plan.guides } : {}),
+      turns: [{ at: new Date().toISOString(), ...(rationale !== undefined ? { rationale } : {}), beats }],
+      chapters: [chapter.plan.id],
+      ...(referenced !== undefined ? { referenced } : {}),
+    })).id
   }
-  return { chapterId: chapter.plan.id, title: chapter.plan.title, index: chapter.index, ...(synopsis !== undefined ? { synopsis } : {}), beats, applied, ...(referenced !== undefined ? { referenced } : {}) }
+  return { chapterId: chapter.plan.id, title: chapter.plan.title, index: chapter.index, ...(synopsis !== undefined ? { synopsis } : {}), beats, applied, ...(referenced !== undefined ? { referenced } : {}), ...(rationale !== undefined ? { rationale } : {}), ...(record !== undefined ? { record } : {}) }
 }
 
 export interface TouchBeatsParams {
@@ -676,6 +786,7 @@ export async function touchBeats(core: NovelCore, runtime: ProjectRuntime, param
     // (Counted against the beats as they were shown; one taken away meanwhile only moves it up.)
     const at = Math.min(current.length, value.after ?? current.length)
     await project.updateChapter(chapter.plan.id, { beats: [...current.slice(0, at), made, ...current.slice(at)], ...(chapter.plan.status === 'idea' ? { status: 'outlined' as const } : {}) })
+    await logDerivation(project, { kind: 'beat', by: askedBy(task), mode: 'add', ...(chapter.line !== undefined ? { line: chapter.line } : {}), direction: ask, turns: [{ at: new Date().toISOString(), ...(value.why !== undefined ? { rationale: value.why } : {}), beats: [made] }], chapters: [chapter.plan.id] })
     return { chapterId: chapter.plan.id, title: chapter.plan.title, index: chapter.index, added: made, at: at + 1, beats: current.length + 1, ...(value.why !== undefined ? { why: value.why } : {}) }
   }
   const byId = new Map<string, Beat | 'remove'>()
@@ -687,6 +798,7 @@ export async function touchBeats(core: NovelCore, runtime: ProjectRuntime, param
   await project.updateChapter(chapter.plan.id, { beats: next })
   const changed = [...byId.values()].filter((beat): beat is Beat => beat !== 'remove')
   const removed = [...byId.entries()].filter(([, beat]) => beat === 'remove').map(([id]) => id)
+  await logDerivation(project, { kind: 'beat', by: askedBy(task), mode: 'change', ...(chapter.line !== undefined ? { line: chapter.line } : {}), direction: ask, turns: [{ at: new Date().toISOString(), ...(value.why !== undefined ? { rationale: value.why } : {}), beats: changed }], chapters: [chapter.plan.id] })
   return { chapterId: chapter.plan.id, title: chapter.plan.title, index: chapter.index, changed, ...(removed.length > 0 ? { removed } : {}), beats: next.length, ...(value.why !== undefined ? { why: value.why } : {}) }
 }
 
@@ -853,6 +965,8 @@ export interface WhatIfResult {
   pictures?: PicturesRead
   /** Where the book has references and derivations look in them first: what the planner read there. */
   referenced?: ReferencesLooked
+  /** The record the question and its ways on are kept under. */
+  record?: string
 }
 
 export async function whatIf(core: NovelCore, runtime: ProjectRuntime, params: { question: string; branches?: number; /** Pictures the ways on are weighed with. */ guides?: PictureGuide[] }, task: TaskContext): Promise<WhatIfResult> {
@@ -886,21 +1000,33 @@ export async function whatIf(core: NovelCore, runtime: ProjectRuntime, params: {
     },
   })
   const recommendation = asText(value.recommendation)
+  const branches = asArray(value.branches).map(asRecord).map((branch) => {
+    const risks = asText(branch.risks)
+    const payoff = asText(branch.payoff)
+    return {
+      title: asText(branch.title) ?? L(lang, '走向', 'Direction'),
+      development: asText(branch.development) ?? '',
+      consequences: asList(branch.consequences),
+      ...(risks !== undefined ? { risks } : {}),
+      ...(payoff !== undefined ? { payoff } : {}),
+    }
+  })
+  // Nothing of the outline changes by a what-if — which is why what it found would be nowhere, were it not kept.
+  const record = await logDerivation(project, {
+    kind: 'whatif',
+    by: askedBy(task),
+    direction: params.question,
+    ...(guided !== undefined && guided.guides.length > 0 ? { guides: guided.guides } : {}),
+    turns: [{ at: new Date().toISOString(), branches, ...(recommendation !== undefined ? { recommendation } : {}) }],
+    ...(guided !== undefined ? { pictures: picturesRead(guided)! } : {}),
+    ...(referenced !== undefined ? { referenced } : {}),
+  })
   return {
-    branches: asArray(value.branches).map(asRecord).map((branch) => {
-      const risks = asText(branch.risks)
-      const payoff = asText(branch.payoff)
-      return {
-        title: asText(branch.title) ?? L(lang, '走向', 'Direction'),
-        development: asText(branch.development) ?? '',
-        consequences: asList(branch.consequences),
-        ...(risks !== undefined ? { risks } : {}),
-        ...(payoff !== undefined ? { payoff } : {}),
-      }
-    }),
+    branches,
     ...(recommendation !== undefined ? { recommendation } : {}),
     ...(guided !== undefined ? { pictures: picturesRead(guided)! } : {}),
     ...(referenced !== undefined ? { referenced } : {}),
+    record: record.id,
   }
 }
 
@@ -1005,15 +1131,21 @@ export async function buildFoundation(core: NovelCore, runtime: ProjectRuntime, 
   })
   let chapterCount = 0
   const firstVolume = (await project.outline()).volumes[0]!
+  const opened: { id: string; chapter: DerivedChapter }[] = []
   for (const chapter of opening) {
     const cast = asList(chapter.characters).map(resolve)
-    await project.addChapter({
+    const plan = await project.addChapter({
       title: plainChapterTitle(asText(chapter.title)!),
       status: 'outlined',
       ...pickText(chapter, ['synopsis', 'purpose']),
       ...(cast.length > 0 ? { characters: cast } : {}),
     } as Partial<ChapterPlan> & { title: string }, { volume: firstVolume.id })
+    opened.push({ id: plan.id, chapter: { title: plan.title, ...(plan.synopsis !== undefined ? { synopsis: plan.synopsis } : {}), ...(plan.purpose !== undefined ? { purpose: plan.purpose } : {}), characters: cast, beats: [], threads: [] } })
     chapterCount += 1
+  }
+  // The idea the book began with is what its opening chapters were planned from: kept, for whoever writes them.
+  if (params.idea.trim().length > 0) {
+    await logDerivation(project, { kind: 'foundation', by: askedBy(task), direction: params.idea, turns: [{ at: new Date().toISOString(), chapters: opened.map(item => item.chapter) }], chapters: opened.map(item => item.id) })
   }
   // The look of its pictures, from what was just laid down: a book has one of its own from the start.
   task.job?.progress(2, 3, L(lang, '定画风', 'settling the look of its pictures'))

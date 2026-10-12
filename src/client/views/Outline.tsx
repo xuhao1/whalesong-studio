@@ -12,6 +12,7 @@ import { ChapterTree, useOutlineOps } from '../ChapterTree'
 import { MoveChapters } from '../MoveChapters'
 import { HistoryButton } from '../History'
 import { BeatAsk } from '../Beats'
+import { ChapterIntent, DerivationsButton } from '../Derivations'
 import { PlotGraph } from './PlotGraph'
 import { CHAPTER_STATUS, CHAPTER_STATUS_TONE, THREAD_KIND, THREAD_STATUS, THREAD_STATUS_TONE } from '../labels'
 import {
@@ -90,7 +91,7 @@ function Chapters({ onGraph }: { onGraph: () => void }) {
           onOpen={(id) => { setDeriving(false); controller.focusChapter(id) }}
           onLine={() => { setDeriving(false) }}
           onGraph={onGraph}
-          tools={<Button size="sm" variant={deriving ? 'primary' : 'outline'} icon="sparkles" onClick={() => { setDeriving(!deriving) }} title={project.derived !== undefined ? t(`上次推演出的 ${project.derived.chapters} 章还没加入大纲：点开就在`, `${project.derived.chapters} chapter(s) derived before are not in the outline yet: they are here`) : t('让策划排出这条线接下来的章纲，或问一个"如果"', 'Have the planner plot what comes next on this line, or ask a what-if')}>{project.derived !== undefined ? t(`推演 · ${project.derived.chapters} 章待看`, `Derive · ${project.derived.chapters} to read`) : t('推演', 'Derive')}</Button>}
+          tools={<><DerivationsButton /><Button size="sm" variant={deriving ? 'primary' : 'outline'} icon="sparkles" onClick={() => { setDeriving(!deriving) }} title={project.derived !== undefined ? t(`上次推演出的 ${project.derived.chapters} 章还没加入大纲：点开就在`, `${project.derived.chapters} chapter(s) derived before are not in the outline yet: they are here`) : t('让策划排出这条线接下来的章纲，或问一个"如果"', 'Have the planner plot what comes next on this line, or ask a what-if')}>{project.derived !== undefined ? t(`推演 · ${project.derived.chapters} 章待看`, `Derive · ${project.derived.chapters} to read`) : t('推演', 'Derive')}</Button></>}
           note={fillable.data !== undefined && fillable.data.chapters > 0 ? (
             <div className="nv-note nv-outline-fill">
               <span>{t(`${fillable.data.chapters} 章的章纲还有空项，收录结果里有。`, `${fillable.data.chapters} chapter outline(s) have empty items the digests can fill.`)}</span>
@@ -383,6 +384,8 @@ function ChapterPlanEditor({ plan, index, plans }: { plan: ChapterPlan; index: n
           <Button variant="primary" busy={busy} disabled={!dirty} onClick={save}>{t('保存', 'Save')}</Button>
         </div>
       </header>
+      {/* The thinking this chapter was derived with: what goes along when its beats are laid out and it is written. */}
+      <ChapterIntent chapter={plan.id} />
 
       <div className="nv-form-grid">
         <Field label={t('标题', 'Title')}><TextInput value={draft.title} onChange={(event) => { set('title', event.target.value) }} /></Field>
@@ -626,9 +629,10 @@ export function Derive({ onApplied, only, preset }: {
   const derived: DerivedPlan | undefined = local ?? kept.data
   // (What the Host keeps of the same derivation says more — what was said of it before: once it is read, it is what shows.)
   useEffect(() => { if (local?.job !== undefined && kept.data?.job === local.job) setLocal(undefined) }, [kept.data, local])
-  const settle = async (): Promise<void> => {
+  /** @param entered - the chapters the plan became, where it was added to the outline; left out: it is let go. */
+  const settle = async (entered?: string[]): Promise<void> => {
     setLocal(undefined)
-    await controller.api.call('outline.settleDerived', { root }).catch(() => {})
+    await controller.api.call('outline.settleDerived', { root, ...(entered !== undefined && entered.length > 0 ? { entered } : {}) }).catch(() => {})
     kept.reload()
     await controller.refreshProject().catch(() => {})
   }
@@ -795,8 +799,11 @@ export function Derive({ onApplied, only, preset }: {
         })
       })
       let first: string | undefined
+      // The chapters the plan became, in order: its record is told, so that whoever writes them is handed what they were derived with.
+      const entered: string[] = []
       if (derived.after === undefined) {
-        first = (await apply(ops)).find(result => result.op === 'add-chapter')?.id
+        for (const result of await apply(ops)) if (result.op === 'add-chapter' && result.id !== undefined) entered.push(result.id)
+        first = entered[0]
       } else {
         // Derived to follow a chapter that is not its line's last: each goes in after the one before it.
         let previous: string | undefined = derived.after
@@ -806,11 +813,12 @@ export function Derive({ onApplied, only, preset }: {
           if (op.op === 'add-chapter') {
             previous = made?.id ?? previous
             first ??= made?.id
+            if (made?.id !== undefined) entered.push(made.id)
           }
         }
       }
       if (first !== undefined) controller.focusChapter(first)
-      await settle()
+      await settle(entered)
       controller.toast('success', t('已加入大纲', 'Added to the outline'))
       onApplied()
     })
@@ -902,7 +910,7 @@ export function Derive({ onApplied, only, preset }: {
               <TextArea value={feedback} minRows={2} placeholder={t('例：第三章太赶，拆成两章；让程砚秋晚一章出场', 'e.g. Chapter three is rushed — split it in two; bring Cheng in a chapter later')} onChange={(event) => { setFeedback(event.target.value) }} />
             </Field>
             <div className="nv-form-actions">
-              <Button variant="ghost" disabled={working !== undefined} onClick={() => { void settle() }} title={t('这一版不要了', 'This plan is not wanted')}>{t('放弃', 'Discard')}</Button>
+              <Button variant="ghost" disabled={working !== undefined} onClick={() => { void settle() }} title={t('这一版不要了（推演记录里留着）', 'This plan is not wanted (it stays among the derivation records)')}>{t('放弃', 'Discard')}</Button>
               <Button icon="refresh" disabled={working !== undefined} onClick={() => { derive() }} title={t('不看这一版，照上面的方向从头另推一版', 'Leave this plan and derive another from the direction above')}>{t('重新推演', 'Derive again')}</Button>
               <Button icon="wand" busy={working === 'chapters' && feedback.trim().length > 0} disabled={working !== undefined || feedback.trim().length === 0} onClick={revise}>{t('照意见调整', 'Adjust by this')}</Button>
               <Button variant="primary" icon="check" busy={busy} disabled={skipped.size === derived.chapters.length} onClick={accept}>{t(`把选中的 ${derived.chapters.length - skipped.size} 章加入大纲`, `Add ${derived.chapters.length - skipped.size} chapters to the outline`)}</Button>

@@ -203,14 +203,17 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
   let continued = false
   let cached = 0
   let response: LlmResponse | undefined
+  // What the chapter was derived with went along: the key it sets is named again with what is asked last.
+  const keyed = pack.included.intent !== undefined ? { keyed: true } : {}
   for (let round = 0; round < 4; round++) {
     const soFar = written
     const prompt = round === 0
-      ? writerTask({ ...base, context: pack.rest, ...(params.brief !== undefined ? { brief: params.brief } : {}), ...(guided !== undefined ? { pictures: guided.text } : {}), ...notesForWriter, continuing: mode === 'continue', ...(target !== undefined ? { words: target } : usual !== undefined ? { usual } : {}) })
+      ? writerTask({ ...base, context: pack.rest, ...keyed, ...(params.brief !== undefined ? { brief: params.brief } : {}), ...(guided !== undefined ? { pictures: guided.text } : {}), ...notesForWriter, continuing: mode === 'continue', ...(target !== undefined ? { words: target } : usual !== undefined ? { usual } : {}) })
       // The model ran out of output room mid-chapter: show it what it wrote and let it finish.
       : writerTask({
           ...base,
           context: `${pack.rest}\n\n## ${lang === 'zh' ? '本章已有正文' : 'This chapter so far'}\n\n${mode === 'continue' ? clipTail(existing, (await core.settingsOf(runtime)).context.tailChars) + '\n\n' : ''}${soFar}`,
+          ...keyed,
           ...(params.brief !== undefined ? { brief: params.brief } : {}),
           ...(guided !== undefined ? { pictures: guided.text } : {}),
           ...notesForWriter,
@@ -296,6 +299,7 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
     contextTokens: pack.tokens,
     ...(pack.window !== undefined ? { window: pack.window } : {}),
     ...(pack.included.following > 0 ? { following: pack.included.following } : {}),
+    ...(pack.included.intent !== undefined ? { intent: pack.included.intent } : {}),
     ...(cached > 0 ? { cachedTokens: cached } : {}),
     ...(chapter.line !== undefined ? { line: chapter.line } : {}),
     cast: pack.cast.map(card => card.name),

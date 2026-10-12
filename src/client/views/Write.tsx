@@ -38,6 +38,7 @@ import {
 } from '../ui'
 import { IssueList, LeadBar, RewriteByMenu, useMendBy, useMendOrder, useReachItems, useRewriteBy } from '../Issues'
 import { BeatAsk } from '../Beats'
+import { ChapterIntent } from '../Derivations'
 import { JobBar } from '../JobBar'
 
 type PanelTab = 'plan' | 'memory' | 'issues' | 'versions' | 'proposals' | 'pictures'
@@ -867,6 +868,9 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
             <button type="button" className="nv-link" onClick={() => { controller.setView('outline', chapter.id) }}>{t('看摘记', 'See them')}</button>
           </p>
         ) : null}
+
+        {/* What the writer is handed of how this chapter came to be planned: the direction given then, what the planner said. */}
+        {selected.length === 0 && plan !== undefined ? <ChapterIntent chapter={chapter.id} /> : null}
 
         {!empty && writing === undefined ? <NextChapter chapter={chapter} path={path} lineId={lineId} onBranch={onBranch} onLine={onLine} onDerive={onDerive} /> : null}
 

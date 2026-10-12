@@ -35,7 +35,7 @@ import { applyOutlineOps, type OutlineOp } from '../core/pipelines/outline'
 import {
   ensurePortrait, novelizePlay, paintPlayScene, playTurn, rewindPlay, setPlayOutcome, startPlay, voicePlayLine,
 } from '../core/pipelines/play'
-import { buildFoundation, derivedPlan, deriveBeats, deriveChapters, deriveToLook, keepDerivedPlan, planOfText, settleDerivedPlan, touchBeats, whatIf } from '../core/pipelines/plot'
+import { buildFoundation, derivedPlan, deriveBeats, deriveChapters, deriveToLook, planOfText, settleDerivedPlan, takeDerivedPlan, touchBeats, whatIf } from '../core/pipelines/plot'
 import { clearReview, listReviews, noteIssue, recheckIssues, resolveIssue, reviewChapter } from '../core/pipelines/review'
 import { plansOfText } from '../core/pipelines/follow'
 import { fixIssue, fixIssues, acceptProposal, rejectProposal, restoreProposal, reviewByLead, reviseBook, reviseChapter, reviseSpan, mendInTurn, settledProposals } from '../core/pipelines/revise'
@@ -46,6 +46,7 @@ import { cleanGuides } from '../core/pipelines/guides'
 import { consultReferences } from '../core/pipelines/consult'
 import { addBookReference, addTextReference, referenceShelf, removeReference, setReferenceUse, updateReference } from '../core/references'
 import { jottingsView, removeJotting, restoreJotting, saveJotting, setJottingsSearch } from '../core/jottings'
+import { derivationsView, noteDerivation, removeDerivation, restoreDerivation, updateDerivation } from '../core/derivations'
 import { ProjectError } from '../core/project'
 import { cardWalkOns, siftCast } from '../core/pipelines/cast'
 import { overrule, settleSuggestions, settlesItself } from '../core/pipelines/settle'
@@ -711,6 +712,38 @@ export function createHandlers(service: NovelService): Handlers {
       await setJottingsSearch(project, on)
       return await jottingsView(project)
     },
+    'derivations.list': async ({ root }) => await derivationsView((await open(root)).project),
+    'derivations.update': async ({ root, id, note, carry, text, chapters }) => {
+      const { project } = await open(root)
+      await updateDerivation(project, requireString(id, 'id'), {
+        ...(typeof note === 'string' ? { note } : {}),
+        ...(typeof carry === 'boolean' ? { carry } : {}),
+        ...(typeof text === 'string' ? { text } : {}),
+        ...(Array.isArray(chapters) ? { chapters: chapters.filter((chapter): chapter is string => typeof chapter === 'string') } : {}),
+      })
+      return await derivationsView(project)
+    },
+    'derivations.note': async ({ root, chapters, text, line }) => {
+      const { project } = await open(root)
+      // (Named by what the outline has: an id that is no chapter's is not kept.)
+      const known: string[] = []
+      for (const ref of Array.isArray(chapters) ? chapters : []) {
+        const chapter = typeof ref === 'string' ? await project.findChapter(ref, typeof line === 'string' && line.length > 0 ? line : undefined) : undefined
+        if (chapter !== undefined) known.push(chapter.plan.id)
+      }
+      await noteDerivation(project, { chapters: known, text: requireString(text, 'text'), ...(typeof line === 'string' && line.length > 0 && line !== MAIN_LINE ? { line } : {}) })
+      return await derivationsView(project)
+    },
+    'derivations.remove': async ({ root, id }) => {
+      const { project } = await open(root)
+      await removeDerivation(project, requireString(id, 'id'))
+      return await derivationsView(project)
+    },
+    'derivations.restore': async ({ root, id }) => {
+      const { project } = await open(root)
+      await restoreDerivation(project, requireString(id, 'id'))
+      return await derivationsView(project)
+    },
     'references.list': async ({ root }) => await referenceShelf(core, await open(root)),
     'references.add': async ({ root, book, text, file, title, note, scope }) => {
       const runtime = await open(root)
@@ -856,21 +889,11 @@ export function createHandlers(service: NovelService): Handlers {
       const plan = await derivedPlan(await open(root))
       return plan !== undefined ? { plan } : {}
     },
-    'outline.settleDerived': async ({ root }) => ({ settled: await settleDerivedPlan(core, await open(root)) }),
+    'outline.settleDerived': async ({ root, entered }) => ({ settled: await settleDerivedPlan(core, await open(root), Array.isArray(entered) ? entered.filter((id): id is string => typeof id === 'string') : undefined) }),
     'outline.keepDerived': async ({ root, chapters, rationale, volume, direction }) => {
       const runtime = await open(root)
       if (!Array.isArray(chapters) || chapters.length === 0 || chapters.some(chapter => typeof chapter?.title !== 'string')) throw new ProjectError('novel/invalid', 'a derived plan is its chapters: none were given')
-      // Another planner's than the one kept for the plan before: nobody is there to go on from this one.
-      await settleDerivedPlan(core, runtime)
-      const plan = {
-        at: new Date().toISOString(),
-        chapters,
-        ...(typeof rationale === 'string' && rationale.trim().length > 0 ? { rationale } : {}),
-        ...(typeof volume === 'string' && volume.length > 0 ? { volume } : {}),
-        ...(typeof direction === 'string' && direction.trim().length > 0 ? { direction: direction.trim() } : {}),
-      }
-      await keepDerivedPlan(runtime, plan)
-      return { plan }
+      return { plan: await takeDerivedPlan(core, runtime, { chapters, ...(typeof rationale === 'string' ? { rationale } : {}), ...(typeof volume === 'string' ? { volume } : {}), ...(typeof direction === 'string' ? { direction } : {}) }) }
     },
     'ai.deriveBeats': async ({ root, chapter, direction }) => {
       const runtime = await open(root)

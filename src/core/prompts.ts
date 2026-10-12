@@ -61,8 +61,10 @@ ${base.style}`)
  * What the writer is asked for this time, after everything it has read.
  * @param base.words - the length recommended for what this call writes; absent, the writer judges.
  * @param base.usual - how long the book's written chapters run, for a writer left to judge.
+ * @param base.keyed - what the chapter was derived with went along (see `renderIntent`): the key it sets is named
+ *   here, with what is asked last — said only among what was read, a key loses to the book's usual voice.
  */
-export function writerTask(base: Base & { context: string; brief?: string; continuing: boolean; words?: number; usual?: number; /** The pictures the author gave for this chapter, as the task tells of them. */ pictures?: string; /** What the book's references have for this chapter: the notes kept on its plan. */ references?: string; /** What the author asks of the references at large, said with the notes. */ referenceGuide?: string }): string {
+export function writerTask(base: Base & { context: string; brief?: string; continuing: boolean; words?: number; usual?: number; keyed?: boolean; /** The pictures the author gave for this chapter, as the task tells of them. */ pictures?: string; /** What the book's references have for this chapter: the notes kept on its plan. */ references?: string; /** What the author asks of the references at large, said with the notes. */ referenceGuide?: string }): string {
   const pictures = base.pictures !== undefined && base.pictures.trim().length > 0 ? `\n\n${base.pictures.trim()}` : ''
   const overall = base.referenceGuide !== undefined && base.referenceGuide.trim().length > 0 ? [`作者对参考文献的总要求：${base.referenceGuide.trim()}\n\n`, `What the author asks of the references at large: ${base.referenceGuide.trim()}\n\n`] : ['', '']
   const references = base.references !== undefined && base.references.trim().length > 0
@@ -83,7 +85,10 @@ export function writerTask(base: Base & { context: string; brief?: string; conti
     base.continuing ? '你是在续写：从"本章已有正文"的最后一个字之后接着写，不要重复已有内容，衔接处不能看出缝。直接输出续写的正文。' : '从本章第一句开始写，直接输出正文。',
     base.continuing ? 'You are continuing: pick up right after the last word of "This chapter so far", repeat nothing, and leave no seam. Output the continuation only.' : 'Start from the first sentence of the chapter. Output the prose only.',
   )
-  return `${base.context}${brief}${references}${pictures}\n\n---\n${length}\n${how}`
+  const key = base.keyed === true
+    ? L(base.lang, '基调：照上面“这几章当初定下的思路”里定的写——它和这本书平时的气氛不一样时，这一章照它。\n', 'Key: as set above under "The thinking these chapters were planned with" — where that is not the book\'s usual mood, this chapter goes by it.\n')
+    : ''
+  return `${base.context}${brief}${references}${pictures}\n\n---\n${key}${length}\n${how}`
 }
 
 /**
@@ -582,14 +587,22 @@ export function architectSystem(lang: PromptLanguage): string {
 /**
  * @param base.situation - what is particular about where these chapters go: a new line and what it parts from, a rewrite and what it gives up, a line that has to arrive somewhere.
  * @param base.after - the chapter the new ones follow, when that is not the end of the line.
+ * @param base.follows - the last chapter the line has, which the new ones follow: said, because one that is planned and
+ *   not written yet is otherwise taken for the first of "the next chapters", and planned a second time.
  */
-export function deriveChaptersTask(base: Base & { context: string; count: number; direction?: string; volume: string; situation?: string; after?: string; /** The pictures the author gave to steer these chapters, as the task tells of them. */ pictures?: string; /** The plan derived before, and what the author wants changed in it: it is adjusted, not derived anew. */ revise?: { plan: string; feedback: string } }): string {
+export function deriveChaptersTask(base: Base & { context: string; count: number; direction?: string; volume: string; situation?: string; after?: string; follows?: { label: string; written: boolean }; /** The pictures the author gave to steer these chapters, as the task tells of them. */ pictures?: string; /** The plan derived before, and what the author wants changed in it: it is adjusted, not derived anew. */ revise?: { plan: string; feedback: string } }): string {
   const pictures = base.pictures !== undefined && base.pictures.trim().length > 0 ? `\n\n${base.pictures.trim()}` : ''
   // Said with what is to be handed in, where the shape of a chapter is: which pictures it goes by.
   const pictured = pictures.length > 0 ? L(base.lang, '\n每章另加一项 "pictures"：这一章照着写的参考图的序号（如 [1]）；没有照哪张图的章写 []。', '\nGive every chapter one more field, "pictures": the numbers of the pictures it goes by (e.g. [1]); [] for a chapter that goes by none.') : ''
   const direction = base.direction !== undefined && base.direction.trim().length > 0 ? L(base.lang, `\n\n## 作者给的方向\n\n${base.direction.trim()}`, `\n\n## Direction from the author\n\n${base.direction.trim()}`) : ''
   const situation = base.situation !== undefined && base.situation.trim().length > 0 ? L(base.lang, `\n\n## 这次推演的处境\n\n${base.situation.trim()}`, `\n\n## Where these chapters go\n\n${base.situation.trim()}`) : ''
-  const after = base.after !== undefined ? L(base.lang, `这些章节接在「${base.after}」之后、大纲里它后面那一章之前：要接得上前面，也要引得出后面。\n`, `These chapters go after "${base.after}" and before the chapter the outline has after it: they have to follow from the one and lead into the other.\n`) : ''
+  const after = base.after !== undefined
+    ? L(base.lang, `这些章节接在「${base.after}」之后、大纲里它后面那一章之前：要接得上前面，也要引得出后面。\n`, `These chapters go after "${base.after}" and before the chapter the outline has after it: they have to follow from the one and lead into the other.\n`)
+    : base.follows !== undefined && base.revise === undefined
+      ? L(base.lang,
+          `这些章节接在大纲现有的最后一章「${base.follows.label}」之后${base.follows.written ? '' : '——那一章还没写，但已经排好了'}。大纲里已经有的章节都不重排，它们的事也不再讲一遍：从它之后讲起。\n`,
+          `These chapters follow the last chapter the outline has, "${base.follows.label}"${base.follows.written ? '' : ' — not written yet, but planned'}. No chapter the outline already has is planned again, and what is theirs to tell is not told a second time: go on from after it.\n`)
+      : ''
   const zhAsk = base.revise !== undefined
     ? `下面是你上一版为《${bare(base.title)}》的「${base.volume}」推演的章纲。作者看过了，提了修改意见：请照意见把这一版调整好，整版交回。
 
@@ -649,10 +662,10 @@ export function deriveBeatsTask(base: Base & { context: string; direction?: stri
   return `${base.context}${base.direction !== undefined && base.direction.trim().length > 0 ? `\n\n${L(base.lang, '## 作者给的方向', '## Direction from the author')}\n\n${base.direction.trim()}` : ''}${base.pictures !== undefined && base.pictures.trim().length > 0 ? `\n\n${base.pictures.trim()}` : ''}\n\n---\n${L(base.lang, `请把"本章章纲"细化成可以直接照着写的场景节拍（4-8 个）。每个节拍要有明确的人物意图、阻碍与转折，体现人物性格，并标出情绪走向。
 
 只输出 JSON：
-{"synopsis": "细化后的本章梗概（150-250字）", "beats": [{"summary": "节拍内容", "characters": ["人物姓名"], "location": "地点", "conflict": "冲突", "outcome": "结果", "emotion": "情绪"}], "characters": ["本章全部出场人物姓名"], "pov": "视角人物姓名"}`, `Break "This chapter's outline" down into 4-8 scene beats a writer can follow directly. Each beat needs a clear intent, an obstacle and a turn, shows character, and names the emotional movement.
+{"synopsis": "细化后的本章梗概（150-250字）", "beats": [{"summary": "节拍内容", "characters": ["人物姓名"], "location": "地点", "conflict": "冲突", "outcome": "结果", "emotion": "情绪"}], "characters": ["本章全部出场人物姓名"], "pov": "视角人物姓名", "rationale": "一两句：这样排的考虑（给作者看）"}`, `Break "This chapter's outline" down into 4-8 scene beats a writer can follow directly. Each beat needs a clear intent, an obstacle and a turn, shows character, and names the emotional movement.
 
 Output JSON only:
-{"synopsis": "refined chapter synopsis (100-160 words)", "beats": [{"summary": "what happens", "characters": ["names"], "location": "place", "conflict": "conflict", "outcome": "outcome", "emotion": "emotion"}], "characters": ["every character appearing"], "pov": "viewpoint character name"}`)}`
+{"synopsis": "refined chapter synopsis (100-160 words)", "beats": [{"summary": "what happens", "characters": ["names"], "location": "place", "conflict": "conflict", "outcome": "outcome", "emotion": "emotion"}], "characters": ["every character appearing"], "pov": "viewpoint character name", "rationale": "a sentence or two: why laid out this way (for the author)"}`)}`
 }
 
 /**

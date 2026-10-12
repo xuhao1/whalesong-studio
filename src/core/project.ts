@@ -3490,6 +3490,7 @@ export class Project {
     }
     const references = await this.referenceCount()
     const jottings = await this.jottingCount()
+    const derivations = await this.derivationCount()
     // Pictures drawn to be compared that nobody has taken yet: said with the book, so that wherever the author is they can be found again.
     const waiting = (await this.illustrations()).filter(item => item.trial?.hang !== undefined).length
     const derived = await this.readState<DerivedPlan>('derived.json')
@@ -3521,8 +3522,21 @@ export class Project {
       ...(Object.keys(translations).length > 0 ? { translations } : {}),
       ...(references > 0 ? { references } : {}),
       ...(jottings > 0 ? { jottings } : {}),
+      ...(derivations !== undefined ? { derivations } : {}),
       ...(waiting > 0 ? { waiting } : {}),
       ...(derived !== undefined && Array.isArray(derived.chapters) && derived.chapters.length > 0 ? { derived: { chapters: derived.chapters.length, at: derived.at } } : {}),
+    }
+  }
+
+  /** The records of the book's derivations: how many, and when one last changed — read off their file, which the engine keeps (`derivations/index.json`). */
+  private async derivationCount(): Promise<{ count: number; at: string } | undefined> {
+    try {
+      const file = JSON.parse((await this.readFile('derivations/index.json')).toString('utf8')) as { items?: { changed?: unknown }[] }
+      const items = Array.isArray(file.items) ? file.items : []
+      if (items.length === 0) return undefined
+      return { count: items.length, at: items.reduce((latest, item) => typeof item.changed === 'string' && item.changed > latest ? item.changed : latest, '') }
+    } catch {
+      return undefined
     }
   }
 

@@ -26,6 +26,7 @@ import { livesFrom, type LocatedChapter, type Project } from './project'
 import {
   L, promptLanguage, renderCharacter, renderManifest, renderMoment, renderPlan, renderThread, renderWorld,
 } from './render'
+import { derivationRecords, intentTitle, lineIntentsTitle, renderIntent, renderLineIntents, type IntentChapter } from './derivations'
 import { foundJottings, renderJottings } from './jottings'
 import { tokenize, type RetrievalIndex } from './retrieval'
 
@@ -103,6 +104,8 @@ export interface ContextPack {
     worldEntries: number
     /** The author's jottings that bear on the chapter and went along; absent where none did. */
     jottings?: number
+    /** Records of the derivations the chapter (or, with no chapter, the line) was planned by that went along: what the author gave them to go by, what the planner said. Absent where none did. */
+    intent?: number
     /** Chapters after the one in hand that travel word for word. */
     following: number
   }
@@ -249,6 +252,33 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
   const planText = current !== undefined ? renderPlan(current.plan, current.index, lang, nameOf) : ''
   if (current !== undefined) take('plan', L(lang, '本章章纲', 'This chapter\'s outline'), planText)
 
+  // (Prose only: a picture's line in a chapter is not the story, and a writer shown such lines writes some of its own.)
+  const texts = new Map<string, string>()
+  const textOf = async (chapter: LocatedChapter): Promise<string> => {
+    let text = texts.get(chapter.plan.id)
+    if (text === undefined) texts.set(chapter.plan.id, text = proseOnly(await project.chapterText(chapter.plan.id)))
+    return text
+  }
+
+  // The thinking the chapter was planned with — the direction the author gave when its stretch of the story was derived
+  // (which way it goes, in which key), what the planner said of what it handed in — goes to whoever lays out its beats
+  // or writes it, with which chapters that thinking covers and where this one stands among them: an outline says what
+  // happens, and what it was meant to be is said there. Counted with the plan, before anything can crowd it out.
+  let intent = 0
+  const planned = options.purpose === 'draft' || options.purpose === 'continue' || options.purpose === 'revise' || options.purpose === 'derive'
+  const records = planned ? await derivationRecords(project) : []
+  if (current !== undefined && records.length > 0) {
+    const mine = records.filter(record => record.chapters.includes(current.plan.id))
+    if (mine.length > 0) {
+      const covered = new Set(mine.flatMap(record => record.chapters))
+      const told: IntentChapter[] = []
+      for (const chapter of path) told.push({ id: chapter.plan.id, index: chapter.index, title: chapter.plan.title, written: covered.has(chapter.plan.id) && chapter.plan.id !== current.plan.id && (await textOf(chapter)).length > 0 })
+      // (Whoever lays the beats out anew is given the author's word of the moment, not the one of the time before.)
+      const made = renderIntent(mine, current.plan.id, told, lang, options.purpose !== 'derive')
+      if (made !== undefined && take('intent', intentTitle(lang), made.text, share(0.12)) > 0) intent = made.records
+    }
+  }
+
   // ── what stays the same from chapter to chapter ──
   take('project', L(lang, '作品', 'The book'), renderManifest(manifest, lang, scope.apart && scope.title !== undefined ? { title: scope.title, premise: scope.premise } : undefined))
 
@@ -279,13 +309,6 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
   ].join('\n\n'), share(0.4))
 
   // ── the story so far: which chapters travel word for word ──
-  // (Prose only: a picture's line in a chapter is not the story, and a writer shown such lines writes some of its own.)
-  const texts = new Map<string, string>()
-  const textOf = async (chapter: LocatedChapter): Promise<string> => {
-    let text = texts.get(chapter.plan.id)
-    if (text === undefined) texts.set(chapter.plan.id, text = proseOnly(await project.chapterText(chapter.plan.id)))
-    return text
-  }
   const blockOf = async (chapter: LocatedChapter): Promise<string> => `${heading(chapter)}\n\n${await textOf(chapter)}`
   const written: LocatedChapter[] = []
   const costs: number[] = []
@@ -381,7 +404,7 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
 
   // Chapters that come before this one and are not written yet — being written beside it, or left for later: what their
   // outlines say, so that this chapter follows from where they are to leave the story and does not tell their part.
-  if (current !== undefined && (options.purpose === 'draft' || options.purpose === 'continue')) {
+  if (current !== undefined && (options.purpose === 'draft' || options.purpose === 'continue' || options.purpose === 'derive')) {
     const gap = before.filter(chapter => chapter.plan.id !== current.plan.id && (texts.get(chapter.plan.id) ?? '').length === 0 && (chapter.plan.synopsis !== undefined || (chapter.plan.beats ?? []).length > 0))
     if (gap.length > 0) {
       const told = gap.map(chapter => `${heading(chapter)}  ${chapter.plan.synopsis ?? chapter.plan.beats!.map(beat => beat.summary).join(lang === 'zh' ? '；' : '; ')}`)
@@ -548,11 +571,24 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
     }
   }
 
+  // What comes next on a line is planned knowing what the stretches before it were meant to be: their key, their intent.
+  if (current === undefined && options.purpose === 'derive' && records.length > 0) {
+    const made = renderLineIntents(records, before.map(chapter => ({ id: chapter.plan.id, index: chapter.index, title: chapter.plan.title, written: false })), lang)
+    if (made !== undefined && take('intents', lineIntentsTitle(lang), made.text, share(0.08)) > 0) intent = made.records
+  }
+
   // Where the story goes next, so the writer does not pre-empt it — unless the text that follows already says so.
   if (current !== undefined && followingWhole.length === 0 && (options.purpose === 'draft' || options.purpose === 'continue')) {
     const next = path.find(chapter => chapter.index === current.index + 1)
     if (next?.plan.synopsis !== undefined) {
       take('next', L(lang, '下一章预告（只用于把握收束，不要提前写）', 'Next chapter (for landing this one only — do not write it)'), `${next.plan.title}${colon}${next.plan.synopsis}`, 400)
+    }
+  }
+  // Whoever lays out this chapter's beats leads them to where the next chapter's outline begins — where that one is not written yet (one that is, is told above).
+  if (current !== undefined && options.purpose === 'derive') {
+    const next = path.find(chapter => chapter.index === current.index + 1)
+    if (next?.plan.synopsis !== undefined && (texts.get(next.plan.id) ?? '').length === 0) {
+      take('next', L(lang, '下一章的章纲（这一章的节拍要引到那里；它的事不要提前排掉）', "The next chapter's outline (this chapter's beats lead there; what is its to tell is not told ahead)"), `${next.plan.title}${colon}${next.plan.synopsis}`, 400)
     }
   }
 
@@ -569,7 +605,7 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
 
   const render = (keys: string[]): string => keys.map(key => sections[key]).filter((section): section is Section => section !== undefined).map(section => `## ${section.title}\n\n${section.body}`).join('\n\n')
   const stable = render(stableKeys)
-  const rest = render(['gap', 'following', 'followingOutline', 'cast', 'gone', 'threads', 'lore', 'passages', 'jottings', 'next', 'tail', 'current', 'plan'])
+  const rest = render(['gap', 'following', 'followingOutline', 'cast', 'gone', 'threads', 'lore', 'passages', 'jottings', 'intents', 'next', 'tail', 'current', 'intent', 'plan'])
   const text = [stable, rest].filter(part => part.length > 0).join('\n\n')
   const stableTokens = estimateTokens(stable)
   return {
@@ -582,7 +618,7 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
     strategy: written.length === 0 ? 'full' : inWindow.length === 0 ? 'retrieval' : outside.length === 0 ? 'full' : 'window',
     language: lang,
     cast: castList,
-    included: { fullChapters: inWindow.length, summaries, passages, worldEntries, following: followingWhole.length, ...(jotted > 0 ? { jottings: jotted } : {}) },
+    included: { fullChapters: inWindow.length, summaries, passages, worldEntries, following: followingWhole.length, ...(jotted > 0 ? { jottings: jotted } : {}), ...(intent > 0 ? { intent } : {}) },
     ...(inWindow.length > 0 ? { window: { from: inWindow[0]!.index, to: inWindow.at(-1)!.index } } : {}),
   }
 }

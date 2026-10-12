@@ -23,7 +23,7 @@ import type {
   AnalyzeStep, ComfyCatalog,
   PriceEntry,
   UsageSummary,
-  TtsProviderKind, TtsSettings, SpeechTrial, PictureGuide, ReferenceAspect, ReferenceShelf, Jotting, JottingKind, JottingsView,
+  TtsProviderKind, TtsSettings, SpeechTrial, PictureGuide, ReferenceAspect, ReferenceShelf, Jotting, JottingKind, JottingsView, DerivationsView,
   AmbiencePreset, AudioCue, AudioLine, AudioScript, BookLock, ChapterMemory, ChapterPlan, ChapterReview, IssueSeverity, CharacterCard, CharacterRole, ComicBoard, ComicPanel, LifeMark, SheetsAsk,
   ChapterVideo, CrewRole, DerivedChapter, DerivedPlan, GateKind, GateState, IllustrationInfo, ImageTrial, JobInfo, SettledSuggestion, ModelRoute, NovelSettings, PictureEdit, PictureWhole, PlaySession, PlayTurn, ProjectManifest, ProjectRef, ProjectState, RecommendedState,
   Proposal, SearchHit, SearchSource, SettledProposal, SoundKind, StageStatus, StageStep, StoryboardDensity, StyleProfile, TextRole, TextStep, VersionInfo, WalkOn, WorkMode, WorldEntry, HistoryKind, HistoryVersion, GlossaryTerm, ChapterTranslation,
@@ -594,6 +594,15 @@ export interface NovelRpc {
   'guide.add': { params: { root: string; mediaType: string; data: string }; result: { path: string } }
   // ── jottings: the author's loose notes, kept with the book ──
   /** Every jotting of the book, found by the agents or not; whether they are found at all; the ones taken away lately. */
+  /** The records of the book's derivations — what was asked, what came back and what was said of it — the latest first, each with where its chapters stand now. */
+  'derivations.list': { params: { root: string }; result: DerivationsView }
+  /** What the author changes of a record: what they add to it (`note`), whether it goes along when its chapters are planned or written (`carry`); of one they wrote themself, its `text` and its `chapters`. */
+  'derivations.update': { params: { root: string; id: string; note?: string; carry?: boolean; text?: string; chapters?: string[] }; result: DerivationsView }
+  /** What the author writes down themself of a stretch of chapters: a record like one a derivation leaves. */
+  'derivations.note': { params: { root: string; chapters: string[]; text: string; line?: string }; result: DerivationsView }
+  /** A record taken away (kept among the ones taken away lately), and one of those put back. */
+  'derivations.remove': { params: { root: string; id: string }; result: DerivationsView }
+  'derivations.restore': { params: { root: string; id: string }; result: DerivationsView }
   'jottings.list': { params: { root: string }; result: JottingsView }
   /** Write one down (no `id`), or change one: only what is given changes. `hidden`: kept from the agents (true), found again (false). */
   'jottings.save': { params: { root: string; id?: string; title?: string; text?: string; kind?: JottingKind; hidden?: boolean }; result: Jotting }
@@ -628,7 +637,7 @@ export interface NovelRpc {
   /** The plan derived to be looked at and neither added nor discarded yet, where the book has one. */
   'outline.derived': { params: { root: string }; result: { plan?: DerivedPlan } }
   /** That plan was added to the outline, or is not wanted: nothing waits any more. */
-  'outline.settleDerived': { params: { root: string }; result: { settled: boolean } }
+  'outline.settleDerived': { params: { root: string; /** The chapters it became, in order, where it was added to the outline; left out: it was let go. */ entered?: string[] }; result: { settled: boolean } }
   /** A plan the author took out of several derived to be compared: it is the one that waits now, like one derived alone. */
   'outline.keepDerived': { params: { root: string; chapters: DerivedChapter[]; rationale?: string; volume?: string; direction?: string }; result: { plan: DerivedPlan } }
   'ai.deriveBeats': { params: { root: string; chapter: string; direction?: string }; result: JobStarted }

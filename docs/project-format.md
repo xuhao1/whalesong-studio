@@ -18,6 +18,7 @@ my-novel/
 │   └── video/           <chapter>.mp4 cut by post-production; work/<chapter>/ is its working directory (material lists, its scripts, intermediate files)
 ├── references/          the books this one goes by: index.json, and <id>.txt for a manuscript taken in as plain text
 ├── jottings/            the author's loose notes: index.json
+├── derivations/         how the outline came to be: index.json — a record a derivation
 ├── export/              <title>.md, .txt, .html, .epub
 └── .novel/              machine memory (see below)
 ```
@@ -228,6 +229,41 @@ How a character looks is their `appearance` — one paragraph, in the book's lan
 ```
 
 A jotting that is found is a source of the book's search (`jotting`), is listed by the crew's `book_read what=jottings` (the showrunner's `novel_read`, `novel_jot`), and — where it shares more than a stray word with what a chapter is about — goes along when that chapter is planned or written, named as an idea and not as canon. One that is `hidden`, and every one while `search` is `false`, is in no index and in no list an agent reads; the author sees them all on *Bible → Jottings*. A book taken as a reference does not open its jottings to the book that goes by it.
+
+## Derivations
+
+`derivations/index.json` holds one record for every derivation — what the author gave it to go by, what the planner handed in and said of it — and for what the author wrote down themself of a stretch of chapters.
+
+```jsonc
+{
+  "schema": 1,
+  "items": [
+    {
+      "id": "dv_ab12cd",
+      "at": "…", "changed": "…",
+      "kind": "chapters",          // chapters | beats | beat | whatif | foundation | note
+      "by": "author",              // author (a page of the Studio) | showrunner (the conversation)
+      "line": "ln_…",              // the line of the plot, where not the main one
+      "direction": "这三章要阴暗：压着写。",   // the author's words: a direction, a sentence for a beat, a what-if's question, a book's idea, a note's text
+      "mode": "append",            // chapters: append | replace | branch; a beat: add | change
+      "after": { "id": "ch004", "title": "…", "index": 4 },   // the chapter the derived ones follow, as it was then
+      "guides": [ { "path": "assets/…", "note": "…" } ],
+      "turns": [                   // every hand-in: the first, and one more for each word the author had it adjusted by
+        { "at": "…", "rationale": "…", "chapters": [ /* as handed in */ ] },
+        { "at": "…", "feedback": "渡口之后加一章夜里过河", "rationale": "…", "chapters": [ /* … */ ], "resumed": true }
+      ],                           // a turn holds `chapters`, `beats`, or `branches` + `recommendation`
+      "state": "entered",          // chapters only: waiting (still looked at) | entered (in the outline) | discarded
+      "chapters": ["ch005", "ch006", "ch007"],   // the chapters of the outline it is the thinking behind
+      "note": "顾七的玩笑要带刺。",   // what the author added afterwards
+      "carry": false,              // absent: it goes along; false: kept back
+      "pictures": { /* how the guide pictures were read */ }, "referenced": { /* what was read in the references */ }
+    }
+  ],
+  "removed": [ { /* a record taken away, with "removedAt" — the last 60, to be put back */ } ]
+}
+```
+
+A record that stands (not `waiting`, not `discarded`, `carry` not `false`) is handed to whoever lays out the beats of one of its chapters and to whoever writes or revises it — with which chapters of the line it covers and where the one in hand stands among them — and the latest stretches of a line go to whoever plans what comes next on it. Records are read on *Outline → Derivation records*, by the crew's `book_read what=derivations` and the showrunner's `novel_read`. Chapters planned before records were kept have none: the author can write one down for them (`kind: "note"`).
 
 ## References
 

@@ -696,6 +696,91 @@ export interface DerivedPlan {
   feedback?: string[]
   pictures?: PicturesRead
   referenced?: ReferencesLooked
+  /** The record this derivation is kept under (`derivations/index.json`): what was asked and what came back, each time. */
+  record?: string
+}
+
+/**
+ * What a record of a derivation is of: chapters planned (`chapters`), a chapter's beats laid out (`beats`), one beat
+ * added or some changed by a sentence (`beat`), ways on weighed (`whatif`), a new book's foundation laid from an idea
+ * (`foundation`) — or what the author wrote down themself of a stretch of chapters (`note`).
+ */
+export type DerivationKind = 'chapters' | 'beats' | 'beat' | 'whatif' | 'foundation' | 'note'
+export const DERIVATION_KINDS: readonly DerivationKind[] = ['chapters', 'beats', 'beat', 'whatif', 'foundation', 'note']
+
+/** One way on of a what-if, as the planner weighed it. */
+export interface DerivationBranch { title: string; development: string; consequences: string[]; risks?: string; payoff?: string }
+
+/** One hand-in of a derivation: the first, and one more each time the author had a word to say of the one before. */
+export interface DerivationTurn {
+  at: string
+  /** What the author said of the hand-in before: this one is that one, adjusted by it. */
+  feedback?: string
+  /** What the planner said of what it handed in: why this way. */
+  rationale?: string
+  /** The chapters as they were handed in. */
+  chapters?: DerivedChapter[]
+  /** The beats as they were handed in: a chapter's all, the one added, or the ones changed. */
+  beats?: Beat[]
+  /** The ways on, of a what-if. */
+  branches?: DerivationBranch[]
+  recommendation?: string
+  /** Adjusted by the planner that derived it, going on in its own conversation. */
+  resumed?: boolean
+}
+
+/**
+ * The record of one derivation, kept with the book (`derivations/index.json`): what the author gave it to go by, what
+ * the planner handed in and said of it — each time, where the author had it adjusted — and which chapters of the
+ * outline came of it. It is what the thinking behind a stretch of the story is read from, long after the outline it
+ * made was edited: by the author, and by whoever plans the beats of those chapters or writes them.
+ */
+export interface DerivationRecord {
+  id: string
+  /** When it was first made, and when it last changed. */
+  at: string
+  changed: string
+  kind: DerivationKind
+  /** Who asked: the author on a page of the Studio, or the showrunner in the conversation. */
+  by: 'author' | 'showrunner'
+  /** The line of the plot it was for, where that is not the main one. */
+  line?: string
+  /** What the author gave it to go by, in their words: the direction, the sentence, the question, the idea. */
+  direction?: string
+  /** Chapters: carried on, replaced what followed, or opened a line. A beat: one added, or some changed. */
+  mode?: 'append' | 'replace' | 'branch' | 'add' | 'change'
+  /** The chapter the derived ones follow, as it was called then. */
+  after?: { id: string; title: string; index: number }
+  /** The pictures the author gave to go by. */
+  guides?: PictureGuide[]
+  turns: DerivationTurn[]
+  /** Chapters derived: still looked at, in the outline, or let go. */
+  state?: 'waiting' | 'entered' | 'discarded'
+  /** The chapters of the outline it is the thinking behind, in the order they were made. */
+  chapters: string[]
+  /** What the author adds to it afterwards. */
+  note?: string
+  /** `false`: not handed to whoever plans or writes its chapters. */
+  carry?: boolean
+  pictures?: PicturesRead
+  referenced?: ReferencesLooked
+}
+
+/** A chapter a record is the thinking behind, as the outline has it now. */
+export interface DerivationCover { id: string; index: number; title: string; written: boolean; /** Its line, where not the main one. */ line?: string }
+
+/** A record as a page shows it: with where its chapters stand now. */
+export interface DerivationView extends DerivationRecord {
+  covers: DerivationCover[]
+  /** How many of its chapters the outline no longer has. */
+  lost: number
+}
+
+export interface DerivationsView {
+  /** The latest first. */
+  items: DerivationView[]
+  /** The ones taken away lately, to be put back. */
+  removed: (DerivationRecord & { removedAt: string })[]
 }
 
 export interface Volume {
@@ -2669,6 +2754,8 @@ export interface ProjectState {
   references?: number
   /** How many jottings the book keeps; absent where it has none (and on a Host from before there were any). */
   jottings?: number
+  /** The records of the book's derivations: how many, and when one last changed; absent where there is none (and on a Host from before they were kept). */
+  derivations?: { count: number; at: string }
   /** How many pictures drawn to be compared wait to be taken (or let go); absent where none does, and on a Host from before they were counted. */
   waiting?: number
   /** Chapters derived to be looked at wait to be added or discarded (`outline.derived`): how many, and since when. */
