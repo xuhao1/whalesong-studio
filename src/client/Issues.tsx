@@ -17,6 +17,7 @@ import { clip, fuzzyFind } from '../shared/text'
 import { ISSUE_TYPE, SEVERITY, SEVERITY_TONE } from './labels'
 import { ProposalCard } from './components/ProposalCard'
 import { JobBar } from './JobBar'
+import { useMaterialBy, useMaterialItems } from './Material'
 import { useState, type ReactNode } from 'react'
 import { Button, Chip, cx, Menu, Select, TextArea, TextInput, useAction, useBookLine, useKept, useProject, useRunningJob, useShared, useSnapshot, useStudio, useT } from './ui'
 
@@ -126,10 +127,14 @@ export function useReachItems(): { label: string; onSelect: () => void }[] {
 export function RewriteByMenu() {
   const t = useT()
   const [by, setBy] = useRewriteBy()
+  const [material] = useMaterialBy()
+  const materials = useMaterialItems()
   return (
-    <Menu icon="chevronDown" variant="ghost" size="sm" align="end" label={by === 'planner' ? t('编排模型改', 'By the crew\'s model') : t('写手改', 'By the writer')} items={[
+    <Menu icon="chevronDown" variant="ghost" size="sm" align="end" label={`${by === 'planner' ? t('编排模型改', 'By the crew\'s model') : t('写手改', 'By the writer')} · ${material === 'rules' ? t('按规则拼', 'packed by rule') : t('策划备料', 'planner\'s material')}`} items={[
       { label: t(`${by === 'writer' ? '✓ ' : ''}改写一段、整章重写：由写手模型写`, `${by === 'writer' ? '✓ ' : ''}A passage rewritten, a chapter written over: the writer's model`), onSelect: () => { setBy('writer') } },
       { label: t(`${by === 'planner' ? '✓ ' : ''}改写一段、整章重写：由编排模型写`, `${by === 'planner' ? '✓ ' : ''}A passage rewritten, a chapter written over: the crew's model`), onSelect: () => { setBy('planner') } },
+      'separator',
+      ...materials,
     ]} />
   )
 }

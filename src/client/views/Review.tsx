@@ -18,6 +18,7 @@ import {
   ViewButton, type Translate,
 } from '../ui'
 import { JobBar } from '../JobBar'
+import { useBookActions } from '../actions'
 
 type ReviewTab = 'proposals' | 'suggestions' | 'issues' | 'book' | 'archive'
 
@@ -132,6 +133,7 @@ function batchTitle(batch: string, items: Proposal[], order: Map<string, number>
 function Proposals() {
   const { controller } = useStudio()
   const t = useT()
+  const actions = useBookActions()
   const { project, root } = useProject()
   const { busy, run } = useAction()
   const confirm = useConfirm()
@@ -142,18 +144,7 @@ function Proposals() {
     const key = proposal.batchId ?? ''
     groups.set(key, [...(groups.get(key) ?? []), proposal])
   }
-  const settleAll = (items: Proposal[], accept: boolean): Promise<unknown> => run(async () => {
-    let failed = 0
-    for (const proposal of items) {
-      try {
-        if (accept) await controller.api.call('proposal.accept', { root, id: proposal.id })
-        else await controller.api.call('proposal.reject', { root, id: proposal.id })
-      } catch {
-        failed += 1
-      }
-    }
-    if (failed > 0) controller.toast('error', t(`${failed} 条提案没能处理，正文可能已被改过`, `${failed} proposal(s) could not be applied: the text may have changed`))
-  })
+  const settleAll = (items: Proposal[], accept: boolean): Promise<unknown> => run(async () => { await actions.settleProposals(items, accept) })
   if (project.proposals.length === 0) {
     return <Empty icon="checkCircle" title={t('没有待处理的提案', 'No proposals waiting')}>{t('写手和修订提出的改动会先来到这里。', 'Changes the writer and revisions propose arrive here first.')}</Empty>
   }
@@ -180,6 +171,7 @@ function Proposals() {
 function Suggestions() {
   const { controller } = useStudio()
   const t = useT()
+  const actions = useBookActions()
   const { project, root } = useProject()
   const { busy, run } = useAction()
   const index = new Map(project.chapters.map(chapter => [chapter.id, chapter]))
@@ -205,10 +197,7 @@ function Suggestions() {
   const due = walkOns.filter(item => item.verdict === undefined || item.chapters.length > item.verdict.seen)
   // Proposed chapter by chapter by an older version, and never looked at by the planner.
   const unsifted = project.suggestions.filter(item => item.kind === 'new-character' && item.sifted !== true).length
-  const sift = (again: boolean): Promise<unknown> => controller.guard(async () => {
-    await controller.api.call('cast.sift', { root, ...(again ? { all: true } : {}) })
-    await controller.refreshJobs()
-  })
+  const sift = (again: boolean): Promise<unknown> => controller.guard(async () => { await actions.siftCast(again) })
   const people = names.data === undefined || (unsifted === 0 && due.length === 0 && left === 0) ? null : (
     <div className="nv-note nv-sift">
       <span>
@@ -423,6 +412,7 @@ function useIssueBoard() {
 function Issues() {
   const { controller } = useStudio()
   const t = useT()
+  const actions = useBookActions()
   const { project, root } = useProject()
   const jobs = useSnapshot(snapshot => snapshot.jobs)
   const board = useIssueBoard()
@@ -471,7 +461,7 @@ function Issues() {
         <span className="nv-list-side">
           {chapter.openIssues === undefined || chapter.unreviewed === true ? <Chip>{t('未审', 'Not reviewed')}</Chip> : null}
           {chapter.openIssues === undefined ? null : chapter.openIssues === 0 ? (chapter.unreviewed === true ? null : <Chip tone="green">{t('无待办', 'Clear')}</Chip>) : board.counts(chapter.id).length > 0 ? null : <Chip tone="amber">{t(`${chapter.openIssues} 个问题`, `${chapter.openIssues} open`)}</Chip>}
-          <Button size="sm" variant="ghost" busy={reviewing.has(chapter.id)} disabled={batch !== undefined} onClick={() => controller.guard(async () => { await controller.api.call('ai.review', { root, chapter: chapter.id }); await controller.refreshJobs() })}>{chapter.openIssues === undefined || chapter.unreviewed === true ? t('审校', 'Review') : t('重审', 'Again')}</Button>
+          <Button size="sm" variant="ghost" busy={reviewing.has(chapter.id)} disabled={batch !== undefined} onClick={() => controller.guard(async () => { await actions.review(chapter.id) })}>{chapter.openIssues === undefined || chapter.unreviewed === true ? t('审校', 'Review') : t('重审', 'Again')}</Button>
           <Button size="sm" variant="ghost" icon="arrowRight" onClick={() => { controller.setView('write', chapter.id) }} title={t('打开这一章', 'Open the chapter')} />
           <ViewButton
             bare

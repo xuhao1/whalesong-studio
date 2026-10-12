@@ -116,8 +116,9 @@ export async function createTestBed(options: { settings?: Partial<NovelSettings>
   const dir = await mkdtemp(join(tmpdir(), 'novel-test-'))
   const llm = new FakeLlm()
   const roles = new FakeRoles()
-  // (Mending by places is tested with the writer rewriting each place unless a test says otherwise; what holds where nothing is set is tested by name.)
-  const settings = new SettingsStore({ ...DEFAULT_SETTINGS, autoDigest: false, siftCast: false, settleSuggestions: false, mendBy: 'writer', ...options.settings }, join(dir, 'settings.json'))
+  // (Mending by places is tested with the writer rewriting each place unless a test says otherwise; what holds where nothing is set is tested by name.
+  // The same for what a writer is handed: packed by rule here, and prepared by the planner where a test is about that.)
+  const settings = new SettingsStore({ ...DEFAULT_SETTINGS, autoDigest: false, siftCast: false, settleSuggestions: false, mendBy: 'writer', materialBy: 'rules', ...options.settings }, join(dir, 'settings.json'))
   // The ledger of a test goes where the test's book goes, never into the real Harness home.
   const usage = new UsageStore(join(dir, 'usage'))
   // Whatever a test takes off the shelf goes to a trash of its own, never to the real one.

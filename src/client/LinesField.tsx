@@ -14,7 +14,7 @@
  */
 import { useCallback, useMemo, useState } from 'react'
 import { MAIN_LINE } from '../shared/types'
-import { Button, Chip, cx, Field, Modal, useAction, useProject, useStudio, useT } from './ui'
+import { Button, Chip, cx, Field, Modal, useAction, useConfirm, useProject, useStudio, useT } from './ui'
 
 /** The lines of this book by id, the main one first; empty where the book has one line only. */
 export function useLines(): { id: string; title: string }[] {
@@ -81,8 +81,9 @@ export function useLinePicks(): LinePicks {
 }
 
 /**
- * The bar over a list that picks a batch and files it: *Select*, then tick rows — or all that are listed — and say
- * which lines they belong to. Nothing in a book of one line.
+ * The bar over a list that picks a batch: *Select*, then tick rows — or all that are listed — and say which lines
+ * they belong to (in a book of more lines than one), or delete them together (what is deleted is kept among the
+ * ones lately deleted, under the list, to be put back).
  * @param listed - the ids the list shows now, in its order: what *all* means.
  * @param kind - what the list holds: people's cards, or the bible's entries.
  */
@@ -94,9 +95,31 @@ export function LinePickBar({ picks, listed, kind }: { picks: LinePicks; listed:
   const [asking, setAsking] = useState(false)
   const [chosen, setChosen] = useState<string[]>([])
   const { busy, run } = useAction()
-  if (lines.length === 0) return null
+  const confirm = useConfirm()
   // Only what is still listed is filed: a filter changed since leaves nothing behind unseen.
   const batch = listed.filter(id => picks.ids.has(id))
+  const drop = (): Promise<unknown> => run(async () => {
+    let gone = 0
+    let failed = 0
+    for (const id of batch) {
+      try {
+        await controller.api.call(kind === 'characters' ? 'character.delete' : 'world.delete', { root, id })
+        gone += 1
+      } catch {
+        failed += 1
+      }
+    }
+    await controller.refreshProject()
+    controller.toast(failed > 0 ? 'error' : 'success', kind === 'characters'
+      ? t(`删掉了 ${gone} 张人物卡${failed > 0 ? `，${failed} 张没删成` : ''}：列表最下面“最近删除的人物”里可以恢复`, `${gone} card(s) deleted${failed > 0 ? `, ${failed} could not be` : ''}: they can be put back from "lately deleted" under the list`)
+      : t(`删掉了 ${gone} 条设定${failed > 0 ? `，${failed} 条没删成` : ''}：列表最下面“最近删除的设定”里可以恢复`, `${gone} entr${gone === 1 ? 'y' : 'ies'} deleted${failed > 0 ? `, ${failed} could not be` : ''}: they can be put back from "lately deleted" under the list`))
+    picks.stop()
+  })
+  const askDrop = (): void => {
+    confirm.ask(kind === 'characters'
+      ? t(`删掉选中的 ${batch.length} 张人物卡？他们的图留在图库里；列表最下面“最近删除的人物”里可以恢复。`, `Delete the ${batch.length} card(s) picked? Their pictures stay in the gallery; the cards can be put back from "lately deleted" under the list.`)
+      : t(`删掉选中的 ${batch.length} 条设定？它们的图留在图库里；列表最下面“最近删除的设定”里可以恢复。`, `Delete the ${batch.length} entr${batch.length === 1 ? 'y' : 'ies'} picked? Their pictures stay in the gallery; the entries can be put back from "lately deleted" under the list.`), () => { void drop() })
+  }
   const file = (): Promise<unknown> => run(async () => {
     const done = await controller.api.call('lines.assign', { root, lines: chosen, [kind]: batch })
     const count = done.characters.length + done.world.length
@@ -124,12 +147,14 @@ export function LinePickBar({ picks, listed, kind }: { picks: LinePicks; listed:
           <button type="button" className="nv-link" onClick={() => { picks.all(listed) }}>{t(`全选（${listed.length}）`, `All (${listed.length})`)}</button>
           {batch.length > 0 ? <button type="button" className="nv-link" onClick={picks.none}>{t('清空', 'None')}</button> : null}
           <span className="nv-spacer" />
-          <Button size="sm" variant="primary" disabled={batch.length === 0} onClick={() => { setChosen([]); setAsking(true) }}>{t('归到世界线…', 'File under lines…')}</Button>
+          {lines.length > 0 ? <Button size="sm" variant="primary" disabled={batch.length === 0} onClick={() => { setChosen([]); setAsking(true) }}>{t('归到世界线…', 'File under lines…')}</Button> : null}
+          <Button size="sm" variant="ghost" icon="trash" busy={busy} disabled={batch.length === 0} onClick={askDrop}>{t(`删除选中的 ${batch.length} 项`, `Delete the ${batch.length} picked`)}</Button>
           <Button size="sm" variant="ghost" onClick={picks.stop}>{t('完成', 'Done')}</Button>
         </div>
       ) : (
-        <Button size="sm" variant="ghost" icon="check" onClick={picks.start} title={t('选一批，一起归到世界线', 'Pick a batch and file it under lines of the plot')}>{t('多选', 'Select')}</Button>
+        <Button size="sm" variant="ghost" icon="check" onClick={picks.start} title={lines.length > 0 ? t('选一批：一起归到世界线，或一起删掉', 'Pick a batch: file it under lines of the plot, or delete it') : t('选一批，一起删掉', 'Pick a batch to delete together')}>{t('多选', 'Select')}</Button>
       )}
+      {confirm.element}
       {asking ? (
         <Modal title={t(`把这 ${batch.length} 项归到世界线`, `File these ${batch.length} under lines`)} onClose={() => { setAsking(false) }} footer={<>
           <Button variant="ghost" icon="sparkles" busy={busy} onClick={byText} title={t('只在某几条线的正文里出现的，归到那几条线；每条线都有、或都还没写到的，不动', 'What only some lines\' text has is filed under those; what every line has, or none yet, is left')}>{t('照正文出现在哪条线来归', 'File by where the text has them')}</Button>

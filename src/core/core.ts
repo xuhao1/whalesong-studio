@@ -18,6 +18,7 @@ import { createEmbedder } from './media/embedding'
 import type { KeySource } from './media/http'
 import { createImageProvider, type ImageBridges, type ImageProvider } from './media/image'
 import { meterEmbedder, meterImages, meterLlm, meterSpeech, UsageStore } from './usage'
+import { CallLog } from './calls'
 import { hostOf } from '../shared/services'
 import { estimateTokens } from '../shared/text'
 import { createTtsProvider, type TtsProvider } from './media/tts'
@@ -106,6 +107,8 @@ export class NovelCore {
   /** Manifest id → root of every project opened in this process; lets URLs name a project without its path. */
   /** Every call to a model, counted. */
   readonly usage: UsageStore
+  /** Every call to a text model for a book, kept: what was sent, and what was said. */
+  readonly calls: CallLog
   private readonly rootsById = new Map<string, string>()
   /** Keys of the sealed books that are unlocked right now. They live here and nowhere else, and go when the process does. */
   private readonly bookKeys = new Map<string, Buffer>()
@@ -140,7 +143,14 @@ export class NovelCore {
     this.credentials = options.credentials
     this.usage = options.usage ?? new UsageStore(undefined, options.log)
     // Made again when a call fails the way calls do in passing; every attempt is a call, and is counted as one.
-    this.llm = retrying(meterLlm(createRoutedLlm(options.llm, options.credentials), (event) => { this.usage.record(event) }))
+    this.calls = new CallLog({
+      jobs: this.jobs,
+      settings: () => this.snapshot,
+      book: async root => (await this.tryRuntime(root).catch(() => undefined))?.project,
+      log: (message, error) => { this.log(message, error) },
+    })
+    // …and kept as one: what a call made again until it worked was sent, and what it said in the end.
+    this.llm = this.calls.wrap(retrying(meterLlm(createRoutedLlm(options.llm, options.credentials), (event) => { this.usage.record(event) })))
     this.roles = options.roles
     this.settings = options.settings ?? new SettingsStore()
     this.shelf = new PrivateShelf(join(this.settings.folder, 'private-shelf.json'))
@@ -1062,12 +1072,24 @@ export class NovelCore {
     let textBudget = limit !== undefined ? Math.min(budgets.textBudget, Math.floor(limit * 0.6)) : budgets.textBudget
     const sideBudget = limit !== undefined ? Math.min(budgets.sideBudget, Math.floor(limit * 0.4)) : budgets.sideBudget
     // The chapter that is revised or reviewed goes whole, beside these budgets: where the window is small, the other
-    // chapters' text gives way to it — never the chapter to them.
-    if (ownsChapter(rest) && rest.chapter !== undefined) {
+    // chapters' text gives way to it — never the chapter to them. (What was chosen for the work goes as chosen:
+    // whoever chose held it to a size.)
+    if (rest.chosen === undefined && ownsChapter(rest) && rest.chapter !== undefined) {
       const own = estimateTokens(rest.chapterText ?? await runtime.project.chapterText(rest.chapter.plan.id))
       textBudget = Math.max(0, Math.min(textBudget, budgets.window - budgets.reserve - sideBudget - own))
     }
     return await packContext(runtime.project, runtime.index, { ...rest, textBudget, sideBudget, tailChars: settings.tailChars })
+  }
+
+  /**
+   * About how much the material the planner chooses for a chapter's writing may come to: what the story's own text
+   * may take when it is packed by rule, and never more than 120,000 tokens — it is chosen for one chapter, not carried
+   * for the book.
+   */
+  async materialBudget(runtime: ProjectRuntime, route: ModelRoute): Promise<number> {
+    const settings = (await this.settingsOf(runtime)).context
+    const budgets = contextBudgets(settings.strategy, settings.budgetTokens, await this.windowOf(route), settings.sideTokens)
+    return Math.max(8000, Math.min(120_000, budgets.textBudget > 0 ? budgets.textBudget : budgets.sideBudget))
   }
 
   /** The context window of the model behind a route, when it is known. */

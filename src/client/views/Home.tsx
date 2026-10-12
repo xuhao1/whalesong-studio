@@ -17,7 +17,7 @@ import { HistoryButton } from '../History'
 import { PrivateShelfSection } from '../PrivateShelf'
 import { useSheetsAsk } from '../SheetsAsk'
 import { ManyModels } from '../Trial'
-import { ImportPicture } from '../ImportPicture'
+import { ReadyPicture } from '../ReadyPicture'
 import { jobLabel, jobPulse } from '../Studio'
 import {
   Button, Chip, crewLabel, cx, Field, Modal, Progress, ProjectImage, SectionTitle, Select, TextArea, TextInput, useAction, useConfirm, useKept, useProject, useRunningJob,
@@ -25,6 +25,7 @@ import {
 } from '../ui'
 import { RemoteDialog } from '../Phone'
 import type { StudioController } from '../store'
+import { useBookActions } from '../actions'
 
 /**
  * Take a book off the shelf, after asking. Its files go to the trash; the
@@ -625,6 +626,7 @@ function BookConversation() {
 export function HomeView() {
   const { controller, locale } = useStudio()
   const t = useT()
+  const actions = useBookActions()
   const { project, root } = useProject()
   const jobs = useSnapshot(snapshot => snapshot.jobs)
   const settings = useSnapshot(snapshot => snapshot.settings)
@@ -690,7 +692,7 @@ export function HomeView() {
               {project.cover === undefined ? t('生成封面', 'Paint a cover') : t('重画', 'Repaint')}
             </Button>
             <ManyModels title={t('多模型：几个绘图服务各画一张封面来比', 'Several models: a cover from each image service, to compare')} ask={() => (controller.need('image') ? { title: t('封面', 'the cover'), method: 'image.create', params: { kind: 'cover' } } : undefined)} onChanged={() => { void controller.refreshProject() }} />
-            <ImportPicture kind="cover" disabled={painting} />
+            <ReadyPicture kind="cover" disabled={painting} />
             {project.cover !== undefined ? <DeletePicture bare path={project.cover} disabled={painting} /> : null}
           </div>
         </div>
@@ -752,7 +754,7 @@ export function HomeView() {
               />
             ) : null}
             {stats.undigested > 0 && project.analysis?.pending.includes('digest') !== true ? (
-              <Step icon="layers" title={t(`${stats.undigested} 章尚未收录记忆`, `${stats.undigested} chapters not digested`)} body={settings?.settings.autoDigest === false ? <>{t('自动收录关着：要收录在这里点。', 'Automatic digests are off: digest from here.')}{' '}<button type="button" className="nv-link" onClick={() => { controller.openSettings('auto') }}>{t('设置', 'Settings')}</button></> : t('收录后，后续写作才能记住这些章节发生了什么。', 'Later chapters only remember what has been digested.')} action={t('收录', 'Digest')} busy={running.some(job => job.kind === 'digest')} onClick={() => controller.guard(async () => { await controller.api.call('ai.digest', { root }) })} />
+              <Step icon="layers" title={t(`${stats.undigested} 章尚未收录记忆`, `${stats.undigested} chapters not digested`)} body={settings?.settings.autoDigest === false ? <>{t('自动收录关着：要收录在这里点。', 'Automatic digests are off: digest from here.')}{' '}<button type="button" className="nv-link" onClick={() => { controller.openSettings('auto') }}>{t('设置', 'Settings')}</button></> : t('收录后，后续写作才能记住这些章节发生了什么。', 'Later chapters only remember what has been digested.')} action={t('收录', 'Digest')} busy={running.some(job => job.kind === 'digest')} onClick={() => controller.guard(async () => { await actions.digest() })} />
             ) : null}
             {next !== undefined ? (
               <Step

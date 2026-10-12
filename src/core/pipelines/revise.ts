@@ -10,7 +10,7 @@
  * becomes a proposal that waits for accept/reject in the review panel.
  */
 import { isPictureLine, keptPictures } from '../../shared/embedded'
-import { CHAPTER_CONTEXT_DEFAULT, PASSAGE_CONTEXT_DEFAULT, MAIN_LINE, type MendReach, type ChapterReview, type FiguresKept, type IssueSeverity, type IssueType, type PictureGuide, type PicturesRead, type Proposal, type ReviewIssue, type SettledProposal } from '../../shared/types'
+import { CHAPTER_CONTEXT_DEFAULT, PASSAGE_CONTEXT_DEFAULT, MAIN_LINE, type MaterialUsed, type MendReach, type ChapterReview, type FiguresKept, type IssueSeverity, type IssueType, type PictureGuide, type PicturesRead, type Proposal, type ReviewIssue, type SettledProposal } from '../../shared/types'
 import { changedCore, clip, clipTail, countWords, fuzzyFind, hashText, newId, occurrences } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { asArray, asRecord, asText } from '../llm'
@@ -25,6 +25,7 @@ import { schedulePlanFollow } from './follow'
 import { scheduleRecheck } from './review'
 import { cleanProse } from './write'
 import { guidePictures, picturesRead } from './guides'
+import { keepMaterial, materialUsed, prepareMaterial } from './material'
 
 export interface ReviseSpanParams {
   chapter: string
@@ -63,6 +64,12 @@ export interface ReviseSpanParams {
    * author picks (`rewriteBy`); a mending says which itself (`mendBy`).
    */
   by?: 'writer' | 'planner'
+  /**
+   * Who prepares what whoever rewrites the passage is handed. Left out: as the settings say (`materialBy`) — the
+   * planner looks first. A place the planner itself settled, and said how to change, is rewritten by what the rules
+   * pack (`rules`): it was looked at already.
+   */
+  material?: 'planner' | 'rules'
 }
 
 /**
@@ -142,6 +149,8 @@ export interface ReviseChapterParams {
   issues?: string[]
   /** Whose model writes the chapter over. Left out: as the settings say (`rewriteBy`). */
   by?: 'writer' | 'planner'
+  /** Who prepares what whoever writes it over is handed; see `ReviseSpanParams.material`. */
+  material?: 'planner' | 'rules'
   /**
    * Go on from the changes that still wait for this chapter: the writer reads the chapter as it would stand with them
    * accepted, and the proposal made stands for them too — one change to look at and accept, in place of the ones it
@@ -168,6 +177,8 @@ export interface ReviseResult {
   figures?: FiguresKept
   /** Whose model wrote it: the writer's, or the planner's (the settings `rewriteBy` / `mendBy`, or as the caller said). */
   who?: 'writer' | 'planner'
+  /** What whoever wrote it was handed, and who put it together; absent where nobody was asked to write (`written`). */
+  material?: MaterialUsed
 }
 
 /** What was done for a text's pictures, where anything was. */
@@ -289,6 +300,7 @@ export async function reviseSpan(core: NovelCore, runtime: ProjectRuntime, param
   const lang = promptLanguage(manifest.language)
   let after: string
   let guided: Awaited<ReturnType<typeof guidePictures>>
+  let material: MaterialUsed | undefined
   // Whose words they are: whoever settled the place wrote them, else the model the settings (or the caller) name.
   const who: 'writer' | 'planner' = params.written !== undefined ? 'planner' : rewritesBy(core, params.by)
   if (params.written !== undefined) {
@@ -311,31 +323,41 @@ export async function reviseSpan(core: NovelCore, runtime: ProjectRuntime, param
   } else {
     const route = await core.route(who === 'planner' ? 'architect' : 'writer', runtime, task)
     guided = await guidePictures(core, runtime, route, params.guides, 'passage', task)
-    // A passage is rewritten with what bears on it — the bible, the people, the story around its chapter, and the
-    // chapter itself around the passage — not with the book: handed every chapter before and after word for word (as
-    // a chapter's writing is), the one line that says what to change was a few words at the end of hundreds of
-    // thousands, and what came back was the passage hardly touched.
+    // A passage is rewritten with what bears on it — not with the book: handed every chapter before and after word
+    // for word (as a chapter's writing once was), the one line that says what to change was a few words at the end of
+    // hundreds of thousands, and what came back was the passage hardly touched. What bears on it the planner settles,
+    // having looked — whose cards, which of the world, the lines elsewhere it has to agree with, what is asked and
+    // what must hold; where it is not asked, the rules pack the bible, the people and the story around the chapter.
+    const limit = (await core.settingsOf(runtime)).context.passageTokens ?? PASSAGE_CONTEXT_DEFAULT
+    const prepared = await prepareMaterial(core, runtime, { work: 'passage', chapter, instruction: params.instruction, text, range, budget: limit, ...(params.material !== undefined ? { by: params.material } : {}) }, task)
+    // (The planner may want the passage's whole chapter before the writer's eyes: it goes as the work has it.)
+    const whole = prepared.chosen?.chapters.includes(chapter.plan.id) === true
     const pack = await core.pack(runtime, route, {
       purpose: 'revise',
       chapter,
       brief: params.instruction,
       focus: text.slice(range.start, range.end),
-      limit: (await core.settingsOf(runtime)).context.passageTokens ?? PASSAGE_CONTEXT_DEFAULT,
+      ...(prepared.chosen !== undefined ? { chosen: prepared.chosen, ...(whole ? { includeChapterText: true, chapterText: text } : {}) } : { limit }),
       ...(task.signal !== undefined ? { signal: task.signal } : {}),
     })
+    material = materialUsed(prepared, pack)
+    task.job?.result({ chapterId: chapter.plan.id, material })
     const base = { lang, language: manifest.language, title: manifest.title }
+    const prompt = reviseSpanTask({
+      ...base,
+      context: `${pack.text}${guided !== undefined ? `\n\n${guided.text}` : ''}`,
+      before: clipTail(text.slice(0, range.start), 4000),
+      passage: text.slice(range.start, range.end),
+      after: clip(text.slice(range.end), 2000),
+      instruction: params.instruction,
+    })
+    // (Kept where the author asked for this rewriting themselves: a place of a mending is one of many, and not theirs to read by itself.)
+    if (params.batchId === undefined) await keepMaterial(runtime, { ...material, chapter: chapter.plan.id, work: 'passage', instruction: params.instruction, text: prompt }).catch((error: unknown) => { core.log(`could not keep the material of ${chapter.plan.id}`, error) })
     const response = await core.llm.complete({
       route,
       system: reviseSpanSystem({ ...base, style: renderStyle(await project.activeStyle(), lang) }),
       ...(guided !== undefined && guided.images.length > 0 ? { images: guided.images } : {}),
-      prompt: reviseSpanTask({
-        ...base,
-        context: `${pack.text}${guided !== undefined ? `\n\n${guided.text}` : ''}`,
-        before: clipTail(text.slice(0, range.start), 4000),
-        passage: text.slice(range.start, range.end),
-        after: clip(text.slice(range.end), 2000),
-        instruction: params.instruction,
-      }),
+      prompt,
       ...(task.signal !== undefined ? { signal: task.signal } : {}),
       onText: (_delta, total) => { task.job?.rewrite(total) },
     })
@@ -371,6 +393,7 @@ export async function reviseSpan(core: NovelCore, runtime: ProjectRuntime, param
     ...(guided !== undefined ? { pictures: picturesRead(guided)! } : {}),
     ...figures,
     who,
+    ...(material !== undefined ? { material } : {}),
   }
   const read = { ...(guided !== undefined ? { pictures: picturesRead(guided)! } : {}), ...figures }
   if (apply) {
@@ -412,25 +435,32 @@ export async function reviseChapter(core: NovelCore, runtime: ProjectRuntime, pa
   const route = await core.route(who === 'planner' ? 'architect' : 'writer', runtime, task)
   // Rewritten whole, the chapter still goes by the pictures the author gave it — or by the ones given to this revision.
   const guided = await guidePictures(core, runtime, route, params.guides ?? chapter.plan.guides, 'revise', task)
-  // A chapter written over to an instruction is not the book written on: it goes with the chapters next to it and
-  // what of the bible it touches — not with half the model's window of everything before, in which the instruction
-  // is one line among hundreds of thousands.
+  // A chapter written over to an instruction is not the book written on: it goes with what the planner, having
+  // looked, finds it needs — or, where the planner is not asked, with the chapters next to it and what of the bible
+  // it touches. Never with half the model's window of everything before, in which the instruction is one line among
+  // hundreds of thousands.
+  const limit = await chapterContext(core, runtime)
+  const prepared = await prepareMaterial(core, runtime, { work: 'chapter', chapter, instruction: params.instruction, text: based.text, ...(chapter.plan.referenceNotes !== undefined ? { notes: chapter.plan.referenceNotes } : {}), budget: limit, ...(params.material !== undefined ? { by: params.material } : {}) }, task)
   const pack = await core.pack(runtime, route, {
     purpose: 'revise',
     chapter,
     brief: params.instruction,
     includeChapterText: true,
-    limit: await chapterContext(core, runtime),
+    ...(prepared.chosen !== undefined ? { chosen: prepared.chosen } : { limit }),
     ...(based.used.length > 0 ? { chapterText: based.text } : {}),
     ...(task.signal !== undefined ? { signal: task.signal } : {}),
   })
+  const material = materialUsed(prepared, pack)
+  task.job?.result({ chapterId: chapter.plan.id, material })
   const base = { lang, language: manifest.language, title: manifest.title }
   const words = countWords(based.text)
+  const prompt = reviseChapterTask({ ...base, context: `${pack.text}${guided !== undefined ? `\n\n${guided.text}` : ''}`, instruction: params.instruction })
+  if (params.batchId === undefined) await keepMaterial(runtime, { ...material, chapter: chapter.plan.id, work: 'chapter', instruction: params.instruction, text: prompt }).catch((error: unknown) => { core.log(`could not keep the material of ${chapter.plan.id}`, error) })
   const response = await core.llm.complete({
     route,
     system: reviseChapterSystem({ ...base, style: renderStyle(await project.activeStyle(), lang) }),
     ...(guided !== undefined && guided.images.length > 0 ? { images: guided.images } : {}),
-    prompt: reviseChapterTask({ ...base, context: `${pack.text}${guided !== undefined ? `\n\n${guided.text}` : ''}`, instruction: params.instruction }),
+    prompt,
     ...(task.signal !== undefined ? { signal: task.signal } : {}),
     onText: (_delta, total) => { task.job?.rewrite(total) },
   })
@@ -456,6 +486,7 @@ export async function reviseChapter(core: NovelCore, runtime: ProjectRuntime, pa
     ...(guided !== undefined ? { pictures: picturesRead(guided)! } : {}),
     ...figures,
     who,
+    material,
   }
   if (apply) {
     await project.saveChapterText(chapter.plan.id, after, { reason: 'before-revise', status: chapter.plan.status === 'final' ? 'final' : 'revised' })
@@ -722,7 +753,8 @@ export async function reviseBook(core: NovelCore, runtime: ProjectRuntime, param
       const instruction = params.brief !== undefined ? params.brief(target.id, target.reason === params.instruction ? '' : target.reason)
         : target.reason === params.instruction ? params.instruction : `${params.instruction}\n\n${L(lang, '具体到本章', 'For this chapter specifically')}${colon}${target.reason}`
       const issues = issuesFor(target.id)
-      const result = await reviseChapter(core, runtime, { chapter: target.id, instruction, apply, batchId, ...(params.onto === true ? { onto: true } : {}), ...(issues !== undefined ? { issues } : {}), ...(params.guides !== undefined && params.guides.length > 0 ? { guides: params.guides } : {}) }, inner())
+      // (The planner that named this chapter looked at it: nobody looks again before it is written over.)
+      const result = await reviseChapter(core, runtime, { chapter: target.id, instruction, apply, batchId, material: 'rules', ...(params.onto === true ? { onto: true } : {}), ...(issues !== undefined ? { issues } : {}), ...(params.guides !== undefined && params.guides.length > 0 ? { guides: params.guides } : {}) }, inner())
       results.push({
         chapterId: result.chapterId,
         title: result.title,
@@ -756,7 +788,7 @@ export async function reviseBook(core: NovelCore, runtime: ProjectRuntime, param
           : L(lang, '改法没有提到的字句照原样交回，不顺手润色，不添改法之外的内容。', 'Hand back as they stand the words this does not speak of: no polishing in passing, nothing added beyond it.')}`
         const issues = issuesFor(place.id, place)
         // (Written by the planner: the place is what it handed in, and what the proposal says it is for is the mending itself.)
-        const result = await reviseSpan(core, runtime, { chapter: place.id, quote: place.quote, start: place.start, instruction: place.written !== undefined ? told : instruction, apply, batchId, tight: true, ...(place.written !== undefined ? { written: place.written, why: place.how } : { by: 'writer' as const }), ...(params.onto === true ? { onto: true } : {}), ...(issues !== undefined ? { issues } : {}), ...(params.guides !== undefined && params.guides.length > 0 ? { guides: params.guides } : {}) }, inner())
+        const result = await reviseSpan(core, runtime, { chapter: place.id, quote: place.quote, start: place.start, instruction: place.written !== undefined ? told : instruction, apply, batchId, tight: true, material: 'rules', ...(place.written !== undefined ? { written: place.written, why: place.how } : { by: 'writer' as const }), ...(params.onto === true ? { onto: true } : {}), ...(issues !== undefined ? { issues } : {}), ...(params.guides !== undefined && params.guides.length > 0 ? { guides: params.guides } : {}) }, inner())
         results.push({
           chapterId: result.chapterId,
           title: result.title,
@@ -1061,8 +1093,9 @@ export async function fixIssue(core: NovelCore, runtime: ProjectRuntime, params:
     : `${instruction}\n\n${L(lang,
       `问题露在“${clip(quoted, 120)}”这里。交给你的是它所在的这一段：在这一段里把问题改到位——为了通顺、站得住，这一段里别的句子可以跟着动，要补的写够（只用设定和前文已经有的事实，原文交代过的信息不丢）；用不着动的句子原样交回。`,
       `It shows at "${clip(quoted, 160)}". What you are handed is the passage it stands in: mend it through within that passage — other sentences of it may move for the change to read well and hold, and what has to be added is written in full (out of what the bible and the text so far already hold, with nothing the text told lost); sentences that need no change go back as they stand.`)}`
-  // (Where the author has the crew's model make such changes, the quoted place is rewritten by it.)
-  return { scope: 'passage', passage: await reviseSpan(core, runtime, { chapter: chapter.plan.id, start: wide.start, end: wide.end, quote: text.slice(wide.start, wide.end), instruction: said, issues: [issue.id], tight: true, ...onto, by: mendsDirect(core) ? 'planner' as const : 'writer' as const }, task) }
+  // (Where the author has the crew's model make such changes, the quoted place is rewritten by it. The review that
+  // found the issue looked at the chapter and said what is wrong and what to do: nobody prepares material again.)
+  return { scope: 'passage', passage: await reviseSpan(core, runtime, { chapter: chapter.plan.id, start: wide.start, end: wide.end, quote: text.slice(wide.start, wide.end), instruction: said, issues: [issue.id], tight: true, material: 'rules', ...onto, by: mendsDirect(core) ? 'planner' as const : 'writer' as const }, task) }
 }
 
 export interface LeadReviewParams {

@@ -19,6 +19,7 @@ import { byWeight, CastFilterBar, MAIN_ROLES, matchesCast, sortCast, useCastFilt
 import { CardPhoto, CharacterCards, LIFE_MARK, ROLE_LABELS, type Lives } from './Characters'
 import { lifeLine, LIFE_AWAY, type Life } from '../../shared/life'
 import { MAIN_LINE, ofLine } from '../../shared/types'
+import { useBookActions } from '../actions'
 
 /** How many notes are shown before the rest fold away: what is said first is what matters most. */
 const ADVICE_SHOWN = 6
@@ -225,7 +226,8 @@ export function CastView() {
           {tab === 'cards' && !picks.on ? <LinePickBar picks={picks} listed={shown.map(card => card.id)} kind="characters" /> : null}
         </div>
       ) : null}
-      {tab === 'cards' && plotLines.length > 0 && picks.on ? <LinePickBar picks={picks} listed={shown.map(card => card.id)} kind="characters" /> : null}
+      {tab === 'cards' && plotLines.length === 0 && !picks.on && shown.length > 1 ? <div className="nv-cast-line"><span className="nv-spacer" /><LinePickBar picks={picks} listed={shown.map(card => card.id)} kind="characters" /></div> : null}
+      {tab === 'cards' && picks.on ? <LinePickBar picks={picks} listed={shown.map(card => card.id)} kind="characters" /> : null}
 
       {tab === 'cards' ? <CharacterCards shown={shown} grouped={(filter.sort ?? 'weight') === 'weight'} searching={filter.query.trim().length > 0} lives={lives} picks={picks} /> : null}
 
@@ -581,6 +583,7 @@ function Relations({ cards }: { cards: CharacterCard[] }) {
 function WalkOns({ cards }: { cards: CharacterCard[] }) {
   const { controller } = useStudio()
   const t = useT()
+  const actions = useBookActions()
   const quote = useQuote()
   const { project, root } = useProject()
   const loaded = useLoad(signal => controller.api.call('cast.walkons', { root, ignored: true }, signal), [root, project.revision])
@@ -601,10 +604,7 @@ function WalkOns({ cards }: { cards: CharacterCard[] }) {
   const ignored = all.filter(item => item.ignored === true)
   // Whom the planner has yet to say something of: never looked at, or seen in more chapters since.
   const due = listed.filter(item => item.verdict === undefined || item.chapters.length > item.verdict.seen)
-  const sift = (again: boolean): Promise<unknown> => controller.guard(async () => {
-    await controller.api.call('cast.sift', { root, ...(again ? { all: true } : {}) })
-    await controller.refreshJobs()
-  })
+  const sift = (again: boolean): Promise<unknown> => controller.guard(async () => { await actions.siftCast(again) })
   const settle = (item: WalkOn, action: 'alias' | 'ignore' | 'restore', extra: { target?: string } = {}): Promise<unknown> => controller.guard(async () => {
     const result = await controller.api.call('cast.settle', { root, name: item.name, ...(item.story !== undefined ? { story: item.story } : {}), action, ...extra })
     loaded.set({ walkons: result.walkons })

@@ -16,7 +16,7 @@ import { containedPath } from '../../core/util/fs'
 import type { NovelService } from '../../host/service'
 import { clip } from '../../shared/text'
 import { ANALYZE_STEPS, GLOSSARY_KINDS } from '../../shared/types'
-import { brief, figuresSaid, listOf, listParameter, novelTool, picturesSaid, referencesSaid, toJson } from './shared'
+import { brief, figuresSaid, listOf, listParameter, materialSaid, novelTool, picturesSaid, referencesSaid, toJson } from './shared'
 
 /**
  * Said where a chapter's text changed and nobody digested it because the author switched that off: it is a saving the
@@ -29,12 +29,12 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
     novelTool(service, {
       name: 'novel_write',
       description: [
-        'Have the writer model draft prose for one chapter and save it. You do not write the prose yourself: you decide what the chapter must do and say so in `brief`; the writer receives the bible, the relevant characters with their current state, the story so far, retrieved earlier passages, the open threads, this chapter\'s outline and the active style.',
+        'Have the writer model draft prose for one chapter and save it. You do not write the prose yourself: you decide what the chapter must do and say so in `brief`. What the writer reads is prepared for this one chapter: the planner looks first — reads in the book as far as the chapter needs — and hands the writer its material (what is asked, where the story stands, what must hold, whose cards, which of the world, which threads, the earlier text to hold it against, the form, the voice); the Studio adds the chapter\'s outline, what it was planned with, where it has to join and the active style. (Where the author set materialBy=rules, or the planner cannot be asked, the Studio packs it by its standing rules instead; where they set materialBy=agent nobody prepares anything — the writer works as an agent: it reads in the book for itself, hands the text in with a tool and goes over what it handed in, as often as it sees fit, before it calls the work done. The result says which it was, and where the writer was to work as an agent and could not.)',
         '- `chapter`: id, number or title; omit (or "next") for the first outlined chapter without text — on the main line, or on the line of the plot named in `line` when the story has more than one way on (novel_status lists the lines). When several lines could be gone on with and the author has not said which, ask.',
-        '- `mode`: draft (default) writes the chapter from the top, replacing existing text after a snapshot; continue appends to what is there. A chapter drafted over what it has is written as one never written: the writer is shown the plan as it was meant — without the place, time, cast or threads an earlier digest filled into its blanks — no text and no memory of the old draft, and the threads without the marks that draft left. What the new draft should keep of the old one, say in `brief`.',
+        '- `mode`: draft (default) writes the chapter from the top, replacing existing text after a snapshot; continue appends to what is there. A chapter drafted over what it has is written as one never written: the writer (and the planner preparing for it) is shown the plan as it was meant — without the place, time, cast or threads an earlier digest filled into its blanks — no text and no memory of the old draft, and the threads without the marks that draft left. What the new draft should keep of the old one, say in `brief`.',
         '- `brief`: what this pass must achieve that the outline does not already say — emphasis, tone, what to hold back, how to end. Keep it short; do not restate the outline.',
-        '- `words`: a length recommended for this pass. Leave it out unless the author named one: the chapter\'s own recommendation applies (novel_outline targetWords), else the book\'s (novel_settings action=book fields.chapterBudget), and where nobody set any the writer judges the length from what the chapter has to do.',
-        'The writer reads the story so far in two layers: as many whole chapters up to this one as half its context window holds, word for word, and the chapters before those as an outline; a chapter that already has chapters after it (one written again) is given what follows too, and must lead into it.',
+        '- `words`: a length recommended for this pass (a chapter asked to be longer than a model writes in one go — some 4,000 words — is written in parts by its beats, the same material each time; one without beats cannot be parted, and comes out as long as one request yields). Leave it out unless the author named one: the chapter\'s own recommendation applies (novel_outline targetWords), else the book\'s (novel_settings action=book fields.chapterBudget), and where nobody set any the writer judges the length from what the chapter has to do.',
+        'So what you put in `brief` reaches two readers: the planner, who prepares the material by it, and the writer. Say there what the planner could not know from the book — what the author wants of this pass. Packed by rule instead, the writer reads the story so far in two layers: as many whole chapters up to this one as half its context window holds, word for word, and the chapters before those as an outline.',
         '- `pictures`: pictures of the book (project-relative paths, as novel_manage lists them) the author gave to write this pass by — a moment, a face, a place, a mood. A writer whose model takes pictures looks at them itself; otherwise the model set up to look at pictures (novel_settings: vision) says in words what they show, and without one the writer goes by what each picture is called (its record in the book, what the author said of it) — the result says which it was. Pictures kept on the chapter\'s plan (novel_outline update-chapter guides) are used without being named here. Only pictures the author pointed at: do not pick some yourself.',
         'The result gives length, the opening and closing lines and the cast used; read the chapter (novel_read) only when you need to check something specific. Make sure the chapter has beats first (novel_derive kind=beats). To write a run of chapters in one go, use novel_batch.',
       ].join('\n'),
@@ -61,21 +61,26 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
           ...(listOf(args.characters) !== undefined ? { characters: listOf(args.characters)! } : {}),
           ...(listOf(args.pictures) !== undefined ? { guides: cleanGuides(listOf(args.pictures)!) } : {}),
         }, task))
-        const story = result.strategy === 'full' ? 'everything before it word for word' : result.strategy === 'window' ? `chapters ${result.window?.from}–${result.window?.to} word for word, the ones before as an outline` : 'no chapter whole: an outline, looked-up passages and the end of the chapter before'
+        const story = result.strategy === 'chosen' ? 'what the planner chose for this chapter' : result.strategy === 'full' ? 'everything before it word for word' : result.strategy === 'window' ? `chapters ${result.window?.from}–${result.window?.to} word for word, the ones before as an outline` : 'no chapter whole: an outline, looked-up passages and the end of the chapter before'
         const lines = [
           `${result.mode === 'continue' ? 'Continued' : 'Drafted'} chapter ${result.index} "${result.title}" (${result.chapterId}): ${result.wordsWritten} words written, ${result.wordsTotal} in the chapter now.`,
           `Writer: ${result.model}; length: ${result.budget !== undefined ? `about ${result.budget} recommended` : 'left to the writer'}; story so far: ${story}${result.following !== undefined ? `, plus the ${result.following} chapter(s) after it` : ''} (~${result.contextTokens} tokens${result.cachedTokens !== undefined ? `, ${result.cachedTokens} read from the provider's cache` : ''}); cast in view: ${result.cast.join(', ') || 'none'}.${result.continued ? ' The model hit its output limit and the chapter was completed by continuation.' : ''}`,
+          ...(materialSaid(result.material) !== undefined ? [materialSaid(result.material)!] : []),
           ...(result.pictures !== undefined ? [picturesSaid(result.pictures, 'writer')!] : []),
           ...(figuresSaid(result.figures, 'drafted') !== undefined ? [figuresSaid(result.figures, 'drafted')!] : []),
           // The book's references: what the writer was handed of them, and where that came from.
           ...(result.referenced !== undefined ? [result.referenced.none !== undefined
             ? `References: no notes went to the writer — ${result.referenced.none}.`
             : `References: the writer was handed the chapter's reference notes (${result.referenced.chars} characters${result.referenced.fresh === true ? ', taken just now by the planner, who read the references for this chapter — one more agent run' : ', as kept on its plan'}). They are on the chapter's plan (referenceNotes) for the author to read and change.`] : []),
+          ...(result.parts !== undefined ? [`It was asked to be longer than a model writes in one go, and was written in ${result.parts} parts, beat by beat.`] : []),
+          ...(result.short !== undefined ? [`SHORT of what was asked: about ${result.short.asked} words were asked for and ${result.short.words} were written${result.parts === undefined && result.material?.by !== 'agent' ? ' — the chapter has no beats to write it in parts by (novel_derive kind=beats lays them out)' : ''}. Tell the author; mode=continue goes on with it.`] : []),
           result.digested
             ? 'Memory digested: summary, facts and character states are up to date.'
-            : env.core.currentSettings().autoDigest
-              ? 'Not digested yet — run novel_digest before writing later chapters.'
-              : MEMORY_LEFT,
+            : result.undigested !== undefined
+              ? `The text is saved, but the digest after it FAILED: ${result.undigested}. Tell the author; novel_digest tries again.`
+              : env.core.currentSettings().autoDigest
+                ? 'Not digested yet — run novel_digest before writing later chapters.'
+                : MEMORY_LEFT,
           `Opens: ${result.preview.head}${result.preview.tail.length > 0 ? `\n…\nCloses: ${result.preview.tail}` : ''}`,
         ]
         const { preview: _preview, ...data } = result
@@ -206,7 +211,7 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
           const quote = args.quote
           const result = await env.job('revise', 'revise passage', chapter, async task => await reviseSpan(env.core, runtime, { chapter, quote, instruction, ...(pictures !== undefined ? { guides: pictures } : {}), ...(args.apply !== undefined ? { apply: args.apply } : {}) }, task))
           return {
-            text: `${result.applied ? 'Revised' : `Proposed (${result.proposalId})`} a passage in chapter ${result.index} "${result.title}"${result.who === 'planner' ? ' (rewritten by the crew\'s model, as the author set)' : ''}: ${result.wordsBefore} → ${result.wordsAfter} words.${result.pictures !== undefined ? `\n${picturesSaid(result.pictures, 'writer')!}` : ''}${figuresSaid(result.figures) !== undefined ? `\n${figuresSaid(result.figures)!}` : ''}\n\nNow reads:\n${clip(result.after, 1200)}`,
+            text: `${result.applied ? 'Revised' : `Proposed (${result.proposalId})`} a passage in chapter ${result.index} "${result.title}"${result.who === 'planner' ? ' (rewritten by the crew\'s model, as the author set)' : ''}: ${result.wordsBefore} → ${result.wordsAfter} words.${materialSaid(result.material) !== undefined ? `\n${materialSaid(result.material)!}` : ''}${result.pictures !== undefined ? `\n${picturesSaid(result.pictures, 'writer')!}` : ''}${figuresSaid(result.figures) !== undefined ? `\n${figuresSaid(result.figures)!}` : ''}\n\nNow reads:\n${clip(result.after, 1200)}`,
             data: toJson({ ...result, before: undefined }),
           }
         }
@@ -228,7 +233,7 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
         }
         const result = await env.job('revise', 'revise chapter', chapter, async task => await reviseChapter(env.core, runtime, { chapter, instruction, ...(pictures !== undefined ? { guides: pictures } : {}), ...(args.apply !== undefined ? { apply: args.apply } : {}) }, task))
         return {
-          text: `${result.applied ? 'Rewrote' : `Proposed (${result.proposalId}) a rewrite of`} chapter ${result.index} "${result.title}": ${result.wordsBefore} → ${result.wordsAfter} words.${result.pictures !== undefined ? `\n${picturesSaid(result.pictures, 'writer')!}` : ''}${figuresSaid(result.figures) !== undefined ? `\n${figuresSaid(result.figures)!}` : ''}\nOpens: ${result.after.slice(0, 200)}`,
+          text: `${result.applied ? 'Rewrote' : `Proposed (${result.proposalId}) a rewrite of`} chapter ${result.index} "${result.title}": ${result.wordsBefore} → ${result.wordsAfter} words.${materialSaid(result.material) !== undefined ? `\n${materialSaid(result.material)!}` : ''}${result.pictures !== undefined ? `\n${picturesSaid(result.pictures, 'writer')!}` : ''}${figuresSaid(result.figures) !== undefined ? `\n${figuresSaid(result.figures)!}` : ''}\nOpens: ${result.after.slice(0, 200)}`,
           data: toJson({ ...result, before: undefined, after: undefined }),
         }
       },

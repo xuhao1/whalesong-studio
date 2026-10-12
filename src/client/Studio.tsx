@@ -36,6 +36,7 @@ import { SetupView } from './views/Setup'
 import { StageView } from './views/Stage'
 import { UsageView } from './views/Usage'
 import { WriteView } from './views/Write'
+import { CallsDialog } from './Calls'
 
 export interface StudioProps {
   api: NovelApi
@@ -223,6 +224,15 @@ function JobNotice() {
     } else if (ended.job.kind === 'write' || ended.job.kind === 'revise') {
       const said = figuresKeptWord((ended.job.result?.output as { figures?: FiguresKept } | undefined)?.figures, t, ended.job.kind === 'write' ? 'drafted' : 'revised')
       if (said !== undefined) controller.toast('info', ended.job.kind === 'write' ? `${said}${t('——在右栏“图”里可以挪', ' — move them in the Pictures column')}` : said, 9000)
+      // A chapter written that is not what was asked in one way or another: the text is saved, and what fell short is said.
+      const wrote = ended.job.kind === 'write' ? ended.job.result?.output as { short?: { asked: number; words: number }; parts?: number; undigested?: string; material?: { instead?: string; by?: string } } | undefined : undefined
+      if (wrote?.short !== undefined) {
+        controller.toast('info', t(
+          `要的是约 ${wrote.short.asked} 字，写出来 ${wrote.short.words} 字。${wrote.parts !== undefined ? `已经按节拍分 ${wrote.parts} 次写了，各段都偏短。` : wrote.material?.by === 'agent' ? '' : '这一章的章纲没有节拍，没法分几次写：先排节拍再写，'}可以点“续写”接着写。`,
+          `About ${wrote.short.asked} words were asked for; ${wrote.short.words} were written. ${wrote.parts !== undefined ? `It was written in ${wrote.parts} parts by its beats, and each came out short.` : wrote.material?.by === 'agent' ? '' : 'The chapter\'s plan has no beats to write it in parts by: lay out its beats first — or '}"Continue" goes on with it.`), 14000)
+      }
+      if (wrote?.undigested !== undefined) controller.toast('error', t(`正文存好了，但写完之后的收录没成：${wrote.undigested}。在右栏“记忆”里可以再点“收录”。`, `The text is saved, but the digest after it failed: ${wrote.undigested}. "Digest" in the memory panel tries again.`), 14000)
+      if (wrote?.material?.instead !== undefined) controller.toast('info', t(`本来要写手作为 agent 自己读、自己写，没成（${wrote.material.instead}）：这一次是照备好的材料一次写完的。`, `The writer was to write this as an agent and it came to nothing (${wrote.material.instead}): it was written in one request from prepared material instead.`), 14000)
     } else if (batch !== undefined) {
       const done = batch.rows.reduce((sum, row) => sum + Object.values(row.steps).filter(step => step.state === 'done').length, 0)
       controller.toast(batch.failed > 0 ? 'info' : 'success', batch.failed > 0
@@ -694,6 +704,7 @@ function JobsButton() {
   const jobs = useSnapshot(snapshot => snapshot.jobs)
   const project = useSnapshot(snapshot => snapshot.project)
   const [open, setOpen] = useState(false)
+  const [calls, setCalls] = useState(false)
   const running = jobs.filter(job => job.status === 'running')
   if (jobs.length === 0) return null
   return (
@@ -725,8 +736,11 @@ function JobsButton() {
               </li>
             ))}
           </ul>
+          {/* What each of these sent to a model and got back is on record, where a book is open. */}
+          {project !== undefined ? <p className="nv-muted nv-small nv-jobs-calls">{t('每次模型调用发了什么、回了什么：', 'What every call to a model sent and got back: ')}<button type="button" className="nv-link" onClick={() => { setCalls(true) }}>{t('调用记录…', 'the record of calls…')}</button></p> : null}
         </Modal>
       ) : null}
+      {calls && project !== undefined ? <CallsDialog onClose={() => { setCalls(false) }} /> : null}
     </>
   )
 }

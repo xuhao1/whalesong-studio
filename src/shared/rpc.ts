@@ -20,7 +20,7 @@ import type { Tie } from './ties'
 import type { Recommended } from './recommended'
 import type { ServiceId, SetupPart } from './services'
 import type {
-  AnalyzeStep, ComfyCatalog,
+  AnalyzeStep, ComfyCatalog, MaterialKept,
   PriceEntry,
   UsageSummary,
   TtsProviderKind, TtsSettings, SpeechTrial, PictureGuide, ReferenceAspect, ReferenceShelf, Jotting, JottingKind, JottingsView, DerivationsView,
@@ -648,6 +648,8 @@ export interface NovelRpc {
   'references.settings': { params: { root: string; beforeWriting?: boolean; beforeDeriving?: boolean; beforeReviewing?: boolean; guide?: string }; result: ReferenceShelf }
   /** Have the planner look in the references for one chapter and keep its notes on the chapter's plan. */
   'references.consult': { params: { root: string; chapter: string; direction?: string }; result: JobStarted }
+  /** What the writer was handed for the latest piece of writing done on a chapter, and who put it together; nothing where none was kept. */
+  'material.read': { params: { root: string; chapter: string; /** One of the chapter's versions: what the writer of that draft was handed, instead of the latest piece of writing on the chapter. */ version?: string }; result: { material?: MaterialKept } }
   /** The plan derived to be looked at and neither added nor discarded yet, where the book has one. */
   'outline.derived': { params: { root: string }; result: { plan?: DerivedPlan } }
   /** That plan was added to the outline, or is not wanted: nothing waits any more. */
@@ -780,7 +782,7 @@ export interface NovelRpc {
    */
   'trial.adoptRound': { params: { root: string; round: string; label: string; others?: boolean }; result: { taken: number; removed: number } }
   /** Have several of DSH's models write the same chapter at once; the chapter keeps its text, the drafts are kept among its versions (job result: `drafts`). */
-  'trial.write': { params: { root: string; chapter?: string; brief?: string; mode?: 'draft' | 'continue'; words?: number; line?: string; guides?: PictureGuide[]; with: { provider: string; model: string; /** A level of the model's own (`model.info`); the empty string: as the model has it by default; left out: as the role has it, where this is the role's model. */ reasoningEffort?: string }[] }; result: JobStarted }
+  'trial.write': { params: { root: string; chapter?: string; brief?: string; mode?: 'draft' | 'continue'; words?: number; line?: string; guides?: PictureGuide[]; with: { provider: string; model: string; /** A level of the model's own (`model.info`); the empty string: as the model has it by default; left out: as the role has it, where this is the role's model. */ reasoningEffort?: string }[]; /** The ways of preparing the writer's material to compare: with more than one, every model writes a draft by each. */ materials?: ('planner' | 'rules' | 'agent')[] }; result: JobStarted }
   /** One draft of such a comparison, whole: its text. */
   'trial.draft': { params: { root: string; chapter: string; version: string }; result: { text: string } }
   /** Have several of DSH's models plan the same chapters to come at once: previews only (job result: `plans`). */
@@ -821,7 +823,7 @@ export interface NovelRpc {
    */
   'image.import': { params: { root: string; kind: 'portrait' | 'sheet' | 'art' | 'cover' | 'picture'; target?: string; mediaType: string; data: string; look?: string; stage?: string; scene?: string; front?: boolean; event?: string; chapter?: string }; result: { path: string; held: string[]; spare?: boolean; image?: IllustrationInfo } }
   /** Say what a picture of the book is for: taken down from whoever held it, hung where it is said to belong, filed as that. */
-  'image.use': { params: { root: string; picture: string; as: 'portrait' | 'sheet' | 'art' | 'chapter' | 'gallery'; target?: string; scene?: string; front?: boolean }; result: { image: IllustrationInfo; held: string[]; released: string[]; spare?: boolean } }
+  'image.use': { params: { root: string; picture: string; as: 'portrait' | 'sheet' | 'art' | 'chapter' | 'gallery'; target?: string; scene?: string; front?: boolean; /** A sheet of one of their looks; a sheet or a portrait of one stretch of their life; the picture of one turn of an entry's course — where a picture brought in would hang. */ look?: string; stage?: string; event?: string }; result: { image: IllustrationInfo; held: string[]; released: string[]; spare?: boolean } }
   'image.place': { params: { root: string; picture: string; chapter: string; after?: number; quote?: string; alt?: string }; result: { chapter: string; after: number } }
   /**
    * A picture set straight by hand — turned, mirrored, a part of it kept ({@link PictureEdit}): what came of it, made
@@ -949,6 +951,15 @@ export interface NovelRpc {
 
   // ── settings ──
   'usage.summary': { params: { /** Only calls made for this book. */ root?: string; range?: 'today' | '7d' | '30d' | 'all' }; result: { summary: UsageSummary; prices: Record<string, PriceEntry>; /** When counting began: the first call on record. */ begun?: string } }
+  /**
+   * The record of calls for a book ({@link CallRow}): every call the Studio made to a text model for it, the latest
+   * first. `total` and `bytes` are of the whole record; `megabytes` is how much of it the book keeps (0: none is kept).
+   */
+  'calls.list': { params: { root: string; /** Only the calls made for this chapter. */ chapter?: string; limit?: number }; result: { calls: import('./types').CallRow[]; total: number; bytes: number; megabytes: number } }
+  /** One call with everything that was sent and said. */
+  'calls.read': { params: { root: string; id: string }; result: { call: import('./types').CallRecord } }
+  /** Take calls off the record for good: the ones named, or — `ids` left out — every one. */
+  'calls.remove': { params: { root: string; ids?: string[] }; result: { removed: number } }
   /**
    * Put the installed build of the Host half up in place of the one that runs, without restarting DSH.
    * Answered before it happens: `jobs` is how many running jobs the change stops. The Studio's routes are away for a moment afterwards.

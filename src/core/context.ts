@@ -48,7 +48,32 @@ export interface ArcSummary {
  * an outline; `retrieval` — no chapter whole, only the outline, what was looked
  * up, and the end of the chapter before.
  */
-export type PackedStrategy = 'full' | 'window' | 'retrieval'
+export type PackedStrategy = 'full' | 'window' | 'retrieval' | 'chosen'
+
+/**
+ * What goes along with a piece of writing where somebody chose it — the planner, having read in the book for this one
+ * piece — instead of the packer's own rules: the chapters that travel word for word and the ones told in outline, the
+ * stretches of text to hold the writing against, whose cards, which of the world, which threads; and what the planner
+ * says in its own words. With this, nothing is found by search or by nearness: what is here goes, and nothing else
+ * does — but what the work stands on whoever prepares it (the book, the world's core, the chapter's own plan and what
+ * it was planned with, where it has to join, the chapter itself where that is worked on).
+ */
+export interface ChosenMaterial {
+  /** Chapters that travel word for word, by id. */
+  chapters: string[]
+  /** Chapters told by their summaries, by id. */
+  summaries: string[]
+  /** Stretches of chapters, word for word: which chapter, the words, and what they are along for. */
+  excerpts: { chapter: string; text: string; why?: string }[]
+  /** Whose cards go whole, by id. */
+  people: string[]
+  /** Entries of the world, by id (the core ones go whatever is here). */
+  world: string[]
+  /** Threads, by id. */
+  threads: string[]
+  /** In the planner's words: what is asked of the writer, where the story stands, what must hold, the form, the voice. */
+  words: { task?: string; situation?: string; keep?: string[]; form?: string; voice?: string }
+}
 
 export interface PackOptions {
   purpose: 'draft' | 'continue' | 'revise' | 'review' | 'derive' | 'play' | 'stage'
@@ -77,6 +102,8 @@ export interface PackOptions {
   includeChapterText?: boolean
   /** With `includeChapterText`: the chapter as the task has it, where that is not how the manuscript has it yet. */
   chapterText?: string
+  /** What goes along was chosen for this piece of work: the packer's own choosing — by nearness, by search — is left out. */
+  chosen?: ChosenMaterial
   signal?: AbortSignal
 }
 
@@ -238,13 +265,16 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
   const nameOf = (ref: string): string => everyone.find(card => card.id === ref)?.name ?? ref
   const heading = (chapter: LocatedChapter): string => `${L(lang, `第${chapter.index}章`, `Chapter ${chapter.index}`)} ${chapter.plan.title}`
 
-  let side = options.sideBudget
+  // What was chosen for this piece of work goes as chosen: whoever chose measured it, and nothing of it is cut here.
+  const chosen = options.chosen
+  const free = chosen !== undefined
+  let side = free ? Number.MAX_SAFE_INTEGER : options.sideBudget
   const sections: Record<string, Section | undefined> = {}
   /** Put a section in, cut to what is left of the side budget (and to its own cap). */
   const take = (key: string, title: string, body: string, cap?: number): number => {
     const trimmed = body.trim()
     if (trimmed.length === 0 || side <= 0) return 0
-    const allowed = Math.min(side, cap ?? side)
+    const allowed = free ? Number.POSITIVE_INFINITY : Math.min(side, cap ?? side)
     let text = trimmed
     let tokens = estimateTokens(text)
     if (tokens > allowed) {
@@ -305,7 +335,8 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
   const peopleCap = share(0.3)
   let peopleTokens = 0
   const people: string[] = []
-  for (const card of ranked) {
+  // (Chosen: nobody is listed for being in the book — whoever is wanted is given whole further down, with where they stand.)
+  for (const card of free ? [] : ranked) {
     const full = ROLE_RANK[card.role] <= ROLE_RANK.supporting ? renderCharacter(card, lang, { resolveName: nameOf }) : undefined
     const cost = full !== undefined ? estimateTokens(full) : 0
     if (full !== undefined && (peopleTokens + cost <= peopleCap || inFull.size < 2)) {
@@ -316,7 +347,7 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
   }
   // Who is alive and who is gone is no part of this: that depends on the line and on the chapter in hand, and is said
   // further down, with what belongs to this piece of work.
-  const lesser = ranked.filter(card => !inFull.has(card.id))
+  const lesser = free ? [] : ranked.filter(card => !inFull.has(card.id))
   take('people', L(lang, '人物', 'Characters'), [
     ...people,
     ...(lesser.length > 0 ? [`${L(lang, '其他人物（未必出场）：', 'Others (not necessarily present):')}\n${lesser.map(card => renderCharacter(card, lang, { brief: true })).join('\n')}`] : []),
@@ -346,12 +377,14 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
   const followingWanted = withFollowing ? sum(laterCosts) : 0
   // What precedes comes first; what follows gets what that leaves, and no less than its share when both want more than there is.
   const precedingBudget = sum(costs) + followingWanted <= options.textBudget ? options.textBudget - followingWanted : options.textBudget - Math.min(followingWanted, Math.floor(options.textBudget * FOLLOWING_SHARE))
-  const first = options.textBudget > 0 ? windowStart(costs, precedingBudget) : written.length
-  const inWindow = written.slice(first)
-  const outside = written.slice(0, first)
+  const takenWhole = new Set(chosen?.chapters ?? [])
+  const first = free ? written.length : options.textBudget > 0 ? windowStart(costs, precedingBudget) : written.length
+  // Chosen: the chapters named, wherever they stand; by rule: as many of the nearest as the budget holds.
+  const inWindow = free ? written.filter(chapter => takenWhole.has(chapter.plan.id)) : written.slice(first)
+  const outside = free ? [] : written.slice(0, first)
   let followingBudget = withFollowing ? options.textBudget - sum(costs.slice(first)) : 0
-  const followingWhole: LocatedChapter[] = []
-  for (const [position, chapter] of later.entries()) {
+  const followingWhole: LocatedChapter[] = free ? later.filter(chapter => takenWhole.has(chapter.plan.id)) : []
+  for (const [position, chapter] of free ? [] : later.entries()) {
     // Nearest first, whole chapters, and without a gap: a chapter is no use without the ones between.
     if (laterCosts[position]! > followingBudget) break
     followingWhole.push(chapter)
@@ -382,14 +415,26 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
     take('earlier', inWindow.length > 0 ? L(lang, `前情梗概（第 ${windowFrom} 章之前）`, `The story before chapter ${windowFrom}, in outline`) : L(lang, '前情提要', 'The story so far'), story, cap)
   }
 
+  if (chosen !== undefined && chosen.summaries.length > 0) {
+    // The chapters whoever prepared this wants told, each by its summary — before the one in hand or after it.
+    const wanted = new Set(chosen.summaries)
+    const told = path.filter(chapter => wanted.has(chapter.plan.id) && chapter.plan.id !== current?.plan.id && !takenWhole.has(chapter.plan.id)).flatMap((chapter) => {
+      const said = memoryOf.get(chapter.plan.id)?.summary ?? chapter.plan.synopsis
+      return said !== undefined && said.trim().length > 0 ? [`${L(lang, `第${chapter.index}章`, `Ch. ${chapter.index}`)}《${chapter.plan.title}》  ${said.trim()}`] : []
+    })
+    summaries = told.length
+    take('earlier', L(lang, '相关章节的梗概', 'The chapters that bear on this, in outline'), told.join('\n'))
+  }
+
   // ── the text itself ──
   if (inWindow.length > 0) {
     const blocks: string[] = []
     for (const chapter of inWindow) blocks.push(await blockOf(chapter))
     // Named by where it starts only: the same heading when the next chapter is added to its end.
-    place('story', first === 0 ? L(lang, '前文正文（从第一章起，按顺序）', 'The text so far (from the first chapter, in order)') : L(lang, `前文正文（从第 ${inWindow[0]!.index} 章起，按顺序）`, `The text so far (from chapter ${inWindow[0]!.index} on, in order)`), blocks.join('\n\n———\n\n'))
+    place('story', free ? L(lang, '前文原文（为这一次挑出来的章节，按顺序）', 'Earlier chapters, word for word (the ones chosen for this, in order)') : first === 0 ? L(lang, '前文正文（从第一章起，按顺序）', 'The text so far (from the first chapter, in order)') : L(lang, `前文正文（从第 ${inWindow[0]!.index} 章起，按顺序）`, `The text so far (from chapter ${inWindow[0]!.index} on, in order)`), blocks.join('\n\n———\n\n'))
   }
-  const stableKeys = ['project', 'world', 'people', 'earlier', 'story']
+  // (Chosen for one piece of work, only the book and the world's core are what the next piece shares.)
+  const stableKeys = free ? ['project', 'world'] : ['project', 'world', 'people', 'earlier', 'story']
 
   // ── what belongs to this piece of work ──
   // (A revision that goes on from changes still waiting reads the chapter as it would stand with them in.)
@@ -404,8 +449,9 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
   if (later.length > 0) {
     const whole: string[] = []
     for (const chapter of followingWhole) whole.push(await blockOf(chapter))
-    const restOf = later.slice(followingWhole.length)
-    const outlineOf = restOf.map((chapter) => {
+    // (Chosen: of what follows and was not taken whole, the chapter this one leads into is told — it has to be led into, whoever chose.)
+    const restOf = free ? later.filter(chapter => !takenWhole.has(chapter.plan.id) && !(chosen?.summaries ?? []).includes(chapter.plan.id)).slice(0, 1) : later.slice(followingWhole.length)
+    const outlineOf = (free && !withFollowing ? [] : restOf).map((chapter) => {
       const memory = memoryOf.get(chapter.plan.id)
       return `${heading(chapter)}  ${memory?.summary ?? chapter.plan.synopsis ?? L(lang, '（已有正文，尚无摘要）', '(written, not yet summarized)')}`
     })
@@ -438,18 +484,22 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
     if (card !== undefined) cast.set(card.id, card)
   }
   for (const ref of options.characters ?? []) addCast(ref)
-  if (current !== undefined) {
-    addCast(current.plan.pov)
-    for (const ref of current.plan.characters ?? []) addCast(ref)
-    for (const beat of current.plan.beats ?? []) for (const ref of beat.characters ?? []) addCast(ref)
+  // Chosen: whoever was named for this piece, and nobody found by their name standing somewhere near it.
+  for (const ref of chosen?.people ?? []) addCast(ref)
+  if (!free) {
+    if (current !== undefined) {
+      addCast(current.plan.pov)
+      for (const ref of current.plan.characters ?? []) addCast(ref)
+      for (const beat of current.plan.beats ?? []) for (const ref of beat.characters ?? []) addCast(ref)
+    }
+    for (const card of detectCharacters(signals, characters)) cast.set(card.id, card)
+    // Named in the plan or in the task itself, somebody of another line comes in too — unless one of this line's people answers to that name.
+    for (const card of detectCharacters(asked, everyone.filter(candidate => !scope.has(candidate)))) {
+      if (![card.name, ...(card.aliases ?? [])].some(name => characters.some(own => called(own, name)))) cast.set(card.id, card)
+    }
+    // A book with no declared cast for the task still needs its leads in view.
+    if (cast.size === 0) for (const card of characters.filter(candidate => candidate.role === 'protagonist' || candidate.role === 'deuteragonist').slice(0, 4)) cast.set(card.id, card)
   }
-  for (const card of detectCharacters(signals, characters)) cast.set(card.id, card)
-  // Named in the plan or in the task itself, somebody of another line comes in too — unless one of this line's people answers to that name.
-  for (const card of detectCharacters(asked, everyone.filter(candidate => !scope.has(candidate)))) {
-    if (![card.name, ...(card.aliases ?? [])].some(name => characters.some(own => called(own, name)))) cast.set(card.id, card)
-  }
-  // A book with no declared cast for the task still needs its leads in view.
-  if (cast.size === 0) for (const card of characters.filter(candidate => candidate.role === 'protagonist' || candidate.role === 'deuteragonist').slice(0, 4)) cast.set(card.id, card)
   const castList = [...cast.values()].sort((left, right) => ROLE_RANK[left.role] - ROLE_RANK[right.role])
 
   // Where each of them stands now — the part of a character that changes with every chapter.
@@ -495,7 +545,7 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
     // Nothing to add to the card above: the name alone would say nothing.
     if (lines.length > 1 || !inFull.has(card.id)) castBlocks.push(lines.join('\n'))
   }
-  take('cast', L(lang, '本章人物此刻的状态', 'Where the people of this chapter stand now'), castBlocks.join('\n\n'), share(0.2))
+  take('cast', free ? L(lang, '人物（卡片，和各人此刻的状态）', 'The people (their cards, and where each stands now)') : L(lang, '本章人物此刻的状态', 'Where the people of this chapter stand now'), castBlocks.join('\n\n'), share(0.2))
 
   // Who is out of the story by now: on this chapter's own line, and as far as the chapters before it — somebody who dies
   // in chapter 16 is alive to whoever writes chapter 5 again, and alive on a line that parted before. Named whatever the
@@ -523,7 +573,16 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
     ...(thread.planted !== undefined ? { planted: thread.planted.filter(id => scope.reads(id)) } : {}),
     ...(thread.advanced !== undefined ? { advanced: thread.advanced.filter(id => scope.reads(id)) } : {}),
   }))
-  if (openThreads.length > 0) {
+  if (chosen !== undefined) {
+    // The threads named for this piece, as they stand on this line — open or not: whoever named one had a reason.
+    const mine = new Set(current?.plan.threads ?? [])
+    const named = scope.threads.filter(entry => chosen.threads.includes(entry.thread.id)).map(({ thread }) => ({
+      ...thread,
+      ...(thread.planted !== undefined ? { planted: thread.planted.filter(id => scope.reads(id)) } : {}),
+      ...(thread.advanced !== undefined ? { advanced: thread.advanced.filter(id => scope.reads(id)) } : {}),
+    }))
+    take('threads', L(lang, '这一次要顾及的线索与伏笔', 'The threads this piece has to mind'), named.map(thread => `${mine.has(thread.id) ? L(lang, '★本章涉及 ', '★ in this chapter ') : ''}${renderThread(thread, lang, chapterLabel)}`).join('\n'))
+  } else if (openThreads.length > 0) {
     const mine = new Set(current?.plan.threads ?? [])
     const ordered = [...openThreads.filter(thread => mine.has(thread.id)), ...openThreads.filter(thread => !mine.has(thread.id))]
     take('threads', L(lang, '尚未回收的线索与伏笔', 'Open threads'), ordered.map(thread => `${mine.has(thread.id) ? L(lang, '★本章涉及 ', '★ in this chapter ') : ''}${renderThread(thread, lang, chapterLabel)}`).join('\n'), share(0.08))
@@ -534,7 +593,19 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
   let worldEntries = core.length > 0 && coreTokens > 0 ? core.length : 0
   let passages = 0
   let jotted = 0
-  if (query.trim().length > 0) {
+  if (chosen !== undefined) {
+    // What of the world was named for this piece (its core went above), and the stretches of text to hold it against.
+    const picked = world.filter(entry => entry.importance !== 1 && chosen.world.includes(entry.id))
+    worldEntries += picked.length
+    take('lore', L(lang, '用得上的设定', 'What of the world this piece needs'), picked.map(entry => renderWorld(entry, lang)).join('\n\n'))
+    const order = new Map(path.map((chapter, position) => [chapter.plan.id, position]))
+    const stretches = chosen.excerpts.filter(item => order.has(item.chapter) && item.text.trim().length > 0).sort((left, right) => order.get(left.chapter)! - order.get(right.chapter)!)
+    passages = stretches.length
+    take('passages', L(lang, '要对着看的原文片段（按章节顺序）', 'Passages to hold this against, word for word (in order)'), stretches.map((item) => {
+      const chapter = path[order.get(item.chapter)!]!
+      return `〔${heading(chapter)}${item.why !== undefined && item.why.trim().length > 0 ? L(lang, `——${item.why.trim()}`, ` — ${item.why.trim()}`) : ''}〕\n${item.text.trim()}`
+    }).join('\n\n'))
+  } else if (query.trim().length > 0) {
     const named = world.filter(entry => entry.importance !== 1 && [entry.name, ...(entry.aliases ?? [])].some(name => name.length > 1 && query.includes(name)))
     const hits = await index.search(query, { sources: ['world'], limit: 6, within: (_source, ref) => world.some(entry => entry.id === ref), ...(options.signal !== undefined ? { signal: options.signal } : {}) })
     const picked = new Map<string, WorldEntry>()
@@ -570,7 +641,7 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
   // The author's jottings that bear on this chapter — a turn not thought through, a setting not settled — go along
   // where it is planned or written: found by the same search, among the ones the author lets be found, and only those
   // that share more than a stray word with what the chapter is about. Named for what they are: ideas, not canon.
-  if (query.trim().length > 0 && (options.purpose === 'draft' || options.purpose === 'continue' || options.purpose === 'derive')) {
+  if (!free && query.trim().length > 0 && (options.purpose === 'draft' || options.purpose === 'continue' || options.purpose === 'derive')) {
     const noted = await index.search(query, { sources: ['jotting'], limit: 6, ...(options.signal !== undefined ? { signal: options.signal } : {}) })
     if (noted.length > 0) {
       const about = new Set(tokenize(query).filter(term => term.length > 1))
@@ -607,8 +678,10 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
     }
   }
 
-  // With no chapter whole, the end of the one before still travels word for word.
-  if (inWindow.length === 0 && previousText.length > 0) {
+  // With no chapter whole, the end of the one before still travels word for word. (Chosen: where the chapter before
+  // was not taken whole and this piece begins or goes on the chapter, or writes it over — it has to join there.)
+  const joins = options.purpose === 'draft' || options.purpose === 'continue' || (options.purpose === 'revise' && options.includeChapterText === true)
+  if ((free ? joins && previous !== undefined && !takenWhole.has(previous.plan.id) : inWindow.length === 0) && previousText.length > 0) {
     take('tail', L(lang, `上一章《${previous!.plan.title}》结尾原文`, `End of the previous chapter, "${previous!.plan.title}"`), clipTail(previousText, options.tailChars))
   }
   if (currentText.length > 0) {
@@ -621,9 +694,22 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
     side -= estimateTokens(body)
   }
 
+  if (chosen !== undefined) {
+    const { words } = chosen
+    take('asked', L(lang, '这一次要写的（策划的交代）', 'What is to be written this time (the planner\'s brief)'), words.task ?? '')
+    take('situation', L(lang, '落笔前要知道的', 'What to know before writing'), words.situation ?? '')
+    take('keep', L(lang, '不能写错的', 'What must hold'), (words.keep ?? []).filter(item => item.trim().length > 0).map(item => `- ${item.trim()}`).join('\n'))
+    take('form', L(lang, '书写格式', 'Form'), words.form ?? '')
+    take('voice', L(lang, '文风上这一次要把握的', 'Of the voice, for this piece'), words.voice ?? '')
+  }
+
   const render = (keys: string[]): string => keys.map(key => sections[key]).filter((section): section is Section => section !== undefined).map(section => `## ${section.title}\n\n${section.body}`).join('\n\n')
   const stable = render(stableKeys)
-  const rest = render(['gap', 'following', 'followingOutline', 'cast', 'gone', 'threads', 'lore', 'passages', 'jottings', 'intents', 'next', 'tail', 'current', 'intent', 'plan'])
+  // Chosen: the brief first, then who and what, then the text to hold it against, then where it joins and how it is to
+  // be written; by rule: as it always was. Either way the chapter's own plan is read last.
+  const rest = render(free
+    ? ['asked', 'situation', 'keep', 'cast', 'gone', 'threads', 'lore', 'earlier', 'story', 'passages', 'gap', 'following', 'followingOutline', 'next', 'tail', 'form', 'voice', 'current', 'intent', 'plan']
+    : ['gap', 'following', 'followingOutline', 'cast', 'gone', 'threads', 'lore', 'passages', 'jottings', 'intents', 'next', 'tail', 'current', 'intent', 'plan'])
   const text = [stable, rest].filter(part => part.length > 0).join('\n\n')
   const stableTokens = estimateTokens(stable)
   return {
@@ -633,7 +719,7 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
     tokens: stableTokens + estimateTokens(rest),
     stableTokens,
     // With nothing written yet, all of it travels.
-    strategy: written.length === 0 ? 'full' : inWindow.length === 0 ? 'retrieval' : outside.length === 0 ? 'full' : 'window',
+    strategy: free ? 'chosen' : written.length === 0 ? 'full' : inWindow.length === 0 ? 'retrieval' : outside.length === 0 ? 'full' : 'window',
     language: lang,
     cast: castList,
     included: { fullChapters: inWindow.length, summaries, passages, worldEntries, following: followingWhole.length, ...(jotted > 0 ? { jottings: jotted } : {}), ...(intent > 0 ? { intent } : {}) },

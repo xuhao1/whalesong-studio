@@ -13,8 +13,8 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import type { ChapterDocument } from '../../shared/rpc'
 import { countWords, formatCount, fuzzyFind, normalizeProse, proseOnly } from '../../shared/text'
 import { MAIN_LINE, type ChapterInfo, type JobInfo, type PictureGuide, type ReviewIssue, type TextStep, type Proposal } from '../../shared/types'
-import { useBookActions } from '../actions'
 import { BatchMatrix, chapterJob, TextBatchDialog, useBatchJob } from '../Batch'
+import { CallsPanel } from '../Calls'
 import { ProposalCard, SettledCard } from '../components/ProposalCard'
 import { ChapterTree } from '../ChapterTree'
 import { TranslateDialog } from '../Translate'
@@ -28,6 +28,7 @@ import { CHAPTER_STATUS, CHAPTER_STATUS_TONE, ISSUE_TYPE, languageLabel, SEVERIT
 import { MoveChapters } from '../MoveChapters'
 import { framedOf, framedWord, PassagePictureDialog } from '../PassagePicture'
 import { useSheetsAsk } from '../SheetsAsk'
+import { ChapterMaterial } from '../Material'
 import { PickPicture } from '../PlacePicture'
 import { TextFigure, TextPictures } from '../TextPictures'
 import { ChapterText, type ChapterTextHandle } from '../ChapterText'
@@ -42,8 +43,9 @@ import { IssueList, LeadBar, RewriteByMenu, useMendBy, useMendOrder, useReachIte
 import { BeatAsk } from '../Beats'
 import { ChapterIntent } from '../Derivations'
 import { JobBar } from '../JobBar'
+import { useBookActions } from '../actions'
 
-type PanelTab = 'plan' | 'memory' | 'issues' | 'versions' | 'proposals' | 'pictures'
+type PanelTab = 'plan' | 'memory' | 'issues' | 'versions' | 'proposals' | 'pictures' | 'calls'
 
 const PRESETS: { id: string; label: [string, string]; instruction: [string, string] }[] = [
   { id: 'polish', label: ['润色', 'Polish'], instruction: ['润色这段文字：情节、信息与人物语气都不变，改善用词、节奏与画面感，去掉陈词滥调。', 'Polish this passage: keep the events, information and voices; improve diction, rhythm and imagery; remove clichés.'] },
@@ -216,10 +218,10 @@ interface EditorProps {
 function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOpen, setPanelOpen, onAdd, onRemove, onDerive, path, lineId, onBranch, onBatch, onLine }: EditorProps) {
   const { controller, locale } = useStudio()
   const t = useT()
+  const actions = useBookActions()
   const quote = useQuote()
   const { project, root } = useProject()
   const jobs = useSnapshot(snapshot => snapshot.jobs)
-  const actions = useBookActions()
   const jump = useSnapshot(snapshot => snapshot.jump)
   // Whether a chapter is digested by itself once it is written or changed: said where its memory is found stale.
   const autoDigest = useSnapshot(snapshot => snapshot.settings?.settings.autoDigest)
@@ -441,18 +443,7 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
     })
   }
   /** Every proposal that waits for this chapter, taken or turned down in the order they stand in the text. */
-  const settleProposals = (accept: boolean): Promise<unknown> => controller.guard(async () => {
-    let failed = 0
-    for (const proposal of [...proposals].sort((left, right) => (left.at ?? 0) - (right.at ?? 0))) {
-      try {
-        if (accept) await controller.api.call('proposal.accept', { root, id: proposal.id })
-        else await controller.api.call('proposal.reject', { root, id: proposal.id })
-      } catch {
-        failed += 1
-      }
-    }
-    if (failed > 0) controller.toast('error', t(`${failed} 条提案没能处理，正文可能已被改过`, `${failed} proposal(s) could not be applied: the text may have changed`))
-  })
+  const settleProposals = (accept: boolean): Promise<unknown> => controller.guard(async () => { await actions.settleProposals(proposals, accept) })
   const reviseSelection = (instruction: string): Promise<unknown> | undefined => {
     if (selection === undefined || text === undefined) return undefined
     const raw = text.slice(selection.start, selection.end)
@@ -551,6 +542,7 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
             { value: 'proposals', label: t('提案', 'Proposals'), badge: proposals.length },
             { value: 'versions', label: t('版本', 'Versions') },
             { value: 'pictures', label: t('配图', 'Pictures'), badge: embeddedPictures(text).length },
+            { value: 'calls', label: t('调用', 'Calls') },
           ]}
         />
         {!panelInline ? <Button variant="ghost" size="sm" icon="x" onClick={() => { setPanelOpen(false) }} /> : null}
@@ -606,7 +598,7 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
             {!chapter.digested && chapter.hasText ? (
               <div className="nv-banner">
                 <span>{doc.data.memory !== undefined ? t('正文改过了，记忆已过期。', 'The text changed since this memory was taken.') : t('这一章还没有收录记忆。', 'This chapter has not been digested yet.')}{autoDigest === false ? <>{' '}{t('自动收录关着。', 'Automatic digests are off.')}{' '}<button type="button" className="nv-link" onClick={() => { controller.openSettings('auto') }}>{t('设置', 'Settings')}</button></> : null}</span>
-                <Button size="sm" icon="layers" busy={running.some(job => job.kind === 'digest')} onClick={() => controller.guard(async () => { if (await settle()) { await controller.api.call('ai.digest', { root, chapters: [chapter.id], force: true }); await controller.refreshJobs() } })}>{t('收录', 'Digest')}</Button>
+                <Button size="sm" icon="layers" busy={running.some(job => job.kind === 'digest')} onClick={() => controller.guard(async () => { if (await settle()) { await actions.digest([chapter.id]) } })}>{t('收录', 'Digest')}</Button>
               </div>
             ) : null}
             {doc.data.memory !== undefined ? (
@@ -639,7 +631,7 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
         {panel === 'issues' ? (
           <div className="nv-panel-section">
             <div className="nv-row">
-              <Button size="sm" icon="checkCircle" busy={running.some(job => job.kind === 'review')} disabled={empty} onClick={() => controller.guard(async () => { if (await settle()) { await controller.api.call('ai.review', { root, chapter: chapter.id }); await controller.refreshJobs() } })}>{doc.data.review !== undefined && doc.data.review.unread !== true ? t('重新审校', 'Review again') : t('审校这一章', 'Review this chapter')}</Button>
+              <Button size="sm" icon="checkCircle" busy={running.some(job => job.kind === 'review')} disabled={empty} onClick={() => controller.guard(async () => { if (await settle()) { await actions.review(chapter.id) } })}>{doc.data.review !== undefined && doc.data.review.unread !== true ? t('重新审校', 'Review again') : t('审校这一章', 'Review this chapter')}</Button>
               {doc.data.review !== undefined ? <Button size="sm" variant="ghost" icon="trash" onClick={() => { confirm.ask(t('清除这一章的审校意见？', 'Clear this chapter\'s review?'), () => { void controller.guard(async () => { await controller.api.call('review.clear', { root, chapter: chapter.id }); doc.reload() }) }) }} title={t('清除这一章的审校意见', 'Clear this chapter\'s review')} /> : null}
             </div>
             {doc.data.review !== undefined
@@ -689,6 +681,9 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
 
         {/* A row a version; ticked, any number of them are laid side by side. The text as it is being typed is what they are read against. */}
         {panel === 'versions' ? <VersionsPanel chapter={{ id: chapter.id, title: chapter.title }} versions={doc.data.versions} current={text ?? doc.data.text} onChanged={() => { doc.reload() }} /> : null}
+
+        {/* Every call made to a model for this chapter: what it was sent, what it said — read whole, or two against each other. */}
+        {panel === 'calls' ? <CallsPanel chapter={chapter.id} /> : null}
       </div>
     </aside>
   )
@@ -808,8 +803,8 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
               <Menu icon="more" variant="outline" size="md" align="end" items={[
                 { label: t('从头重新起草（旧稿存入版本）', 'Redraft from the top (old text is versioned)'), icon: 'refresh', onSelect: () => { confirm.ask(t('用新稿替换这一章现有的正文？旧稿会存入“版本”。新稿照章纲从头写：不看旧稿，也不带旧稿的记忆。', 'Replace this chapter\'s text with a new draft? The old one is kept under Versions. The new draft is written from the plan: it sees neither the old one nor the old one\'s memory.'), () => { write('draft') }) } },
                 'separator',
-                { label: t('审校这一章', 'Review this chapter'), icon: 'checkCircle', onSelect: () => { showPanel('issues'); void controller.guard(async () => { if (await settle()) { await controller.api.call('ai.review', { root, chapter: chapter.id }); await controller.refreshJobs() } }) } },
-                { label: t('收录记忆', 'Digest'), icon: 'layers', onSelect: () => { showPanel('memory'); void controller.guard(async () => { if (await settle()) { await controller.api.call('ai.digest', { root, chapters: [chapter.id], force: true }); await controller.refreshJobs() } }) } },
+                { label: t('审校这一章', 'Review this chapter'), icon: 'checkCircle', onSelect: () => { showPanel('issues'); void controller.guard(async () => { if (await settle()) { await actions.review(chapter.id) } }) } },
+                { label: t('收录记忆', 'Digest'), icon: 'layers', onSelect: () => { showPanel('memory'); void controller.guard(async () => { if (await settle()) { await actions.digest([chapter.id]) } }) } },
               ]} />
             ) : null}
           </div>
@@ -844,6 +839,8 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
 
         {/* What the writer is handed of how this chapter came to be planned: the direction given then, what the planner said. */}
         {selected.length === 0 && plan !== undefined ? <ChapterIntent chapter={chapter.id} /> : null}
+        {/* What the writer is handed: who prepares it, and what the latest piece of writing on this chapter got — all of it to read. */}
+        {plan !== undefined ? <ChapterMaterial chapter={chapter.id} fresh={`${project.revision}:${running.length}`} onCompare={() => { setComparing(true) }} /> : null}
 
         {!empty && writing === undefined ? <NextChapter chapter={chapter} path={path} lineId={lineId} onBranch={onBranch} onLine={onLine} onDerive={onDerive} /> : null}
 

@@ -11,6 +11,7 @@ import { useState } from 'react'
 import { formatCount } from '../../shared/text'
 import type { PriceEntry, UsageAmount, UsageKind, UsageRow } from '../../shared/types'
 import { Button, Chip, cx, Empty, Field, Modal, SectionTitle, Spinner, TextInput, useAction, useLoad, useSnapshot, useStudio, useT, type Translate } from '../ui'
+import { CallsDialog } from '../Calls'
 
 type Range = 'today' | '7d' | '30d' | 'all'
 
@@ -56,6 +57,7 @@ export function UsageView() {
   const [range, setRange] = useState<Range>('30d')
   const [scope, setScope] = useState<'book' | 'all'>(root !== undefined ? 'book' : 'all')
   const [pricing, setPricing] = useState<UsageRow | undefined>()
+  const [calls, setCalls] = useState(false)
   const inBook = scope === 'book' && root !== undefined
   const loaded = useLoad(signal => controller.api.call('usage.summary', { range, ...(inBook ? { root } : {}) }, signal), [range, inBook, root])
   const count = (value: number): string => formatCount(Math.round(value), locale)
@@ -73,8 +75,11 @@ export function UsageView() {
           <h2>{t('用量与成本', 'Usage and cost')}</h2>
           <p className="nv-muted nv-small">{t('工坊每调用一次模型就记一笔。填上单价就能看到花费。', 'Every model call the Studio makes is noted. Enter prices to see the cost.')}</p>
         </div>
+        {/* The counts are here; what each call sent and got back is the book's record of calls. */}
+        {root !== undefined ? <Button variant="ghost" icon="list" title={t('这本书每次文字模型调用发了什么、回了什么', 'What every call to a text model for this book sent and got back')} onClick={() => { setCalls(true) }}>{t('调用记录…', 'Record of calls…')}</Button> : null}
         <Button variant="ghost" icon="refresh" busy={loaded.loading} onClick={() => { loaded.reload() }}>{t('刷新', 'Refresh')}</Button>
       </header>
+      {calls && root !== undefined ? <CallsDialog onClose={() => { setCalls(false) }} /> : null}
 
       <div className="nv-toolbar">
         <div className="nv-chips">

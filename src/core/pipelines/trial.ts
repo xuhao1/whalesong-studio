@@ -105,13 +105,20 @@ async function asRun(core: NovelCore, runtime: ProjectRuntime, role: 'writer' | 
  * Have several models write the same chapter, at the same time, from the same context and the same brief. The
  * chapter keeps its text; each draft is kept among the chapter's versions (so none is lost, and any can be made the
  * chapter by restoring it) and handed back to be read side by side.
+ * @param params.materials - the ways the chapter is written that are to be compared: with more than one named, every
+ *   model writes a draft by each — the planner's preparation beside the Studio's standing rules beside the writer at
+ *   work as an agent, the same model, the same brief. Left out: one draft a model, by whichever the settings have.
  */
-export async function trialWrite(core: NovelCore, runtime: ProjectRuntime, params: WriteParams & { with: ModelRoute[] }, task: TaskContext): Promise<{ chapterId: string; drafts: TrialDraft[] }> {
-  const routes = await asRun(core, runtime, 'writer', checked(params.with), task)
-  const { with: _with, ...write } = params
+export async function trialWrite(core: NovelCore, runtime: ProjectRuntime, params: WriteParams & { with: ModelRoute[]; materials?: ('planner' | 'rules' | 'agent')[] }, task: TaskContext): Promise<{ chapterId: string; drafts: TrialDraft[] }> {
+  const ways = [...new Set((params.materials ?? []).filter(way => way === 'planner' || way === 'rules' || way === 'agent'))]
+  // One writer a draft: each model, by each way of preparing asked for.
+  const writers: { route: ModelRoute; way?: 'planner' | 'rules' | 'agent' }[] = (await asRun(core, runtime, 'writer', checked(params.with), task)).flatMap(route => (ways.length > 0 ? ways.map(way => ({ route, way })) : [{ route }]))
+  if (writers.length > TRIAL_MOST) throw new ProjectError('novel/invalid', `${TRIAL_MOST} drafts at once is the most a comparison takes`)
+  const routes = writers.map(writer => writer.route)
+  const { with: _with, materials: _materials, ...write } = params
   const chapter = write.chapter !== undefined ? await runtime.project.findChapter(write.chapter) : undefined
   if (write.chapter !== undefined && chapter === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${write.chapter}"`)
-  const drafts: TrialDraft[] = routes.map(route => ({ label: modelName(route), provider: route.provider, model: route.model, ...(effortOf(route) !== undefined ? { effort: effortOf(route)! } : {}), seconds: 0 }))
+  const drafts: TrialDraft[] = writers.map(({ route, way }) => ({ label: modelName(route), provider: route.provider, model: route.model, ...(effortOf(route) !== undefined ? { effort: effortOf(route)! } : {}), seconds: 0, ...(way !== undefined ? { by: way } : {}) }))
   let chapterId = chapter?.plan.id ?? ''
   // The drafts of one press: told apart from those of another among the chapter's versions.
   const round = hashText(`${chapterId}${Date.now()}${Math.random()}`).slice(0, 8)
@@ -123,15 +130,22 @@ export async function trialWrite(core: NovelCore, runtime: ProjectRuntime, param
   await Promise.all(routes.map(async (route, at) => {
     const began = Date.now()
     try {
-      const made = await core.trial({ routes: { writer: route } }, () => writeChapter(core, runtime, { ...write, ...(chapterId.length > 0 ? { chapter: chapterId } : {}), dry: true, digest: false }, quiet(task)))
+      const way = writers[at]!.way
+      const made = await core.trial({ routes: { writer: route } }, () => writeChapter(core, runtime, { ...write, ...(chapterId.length > 0 ? { chapter: chapterId } : {}), ...(way !== undefined ? { material: way } : {}), dry: true, digest: false }, quiet(task)))
       chapterId = made.chapterId
       const text = made.text ?? ''
       // Kept among the chapter's versions: a draft that is not taken now can be taken later.
       // Kept with it: who wrote it — the model by its own name, the level it thought at — and that it was written to be compared.
-      const version = await runtime.project.snapshot(made.chapterId, `trial-${slugify(route.model, 'model')}${effortOf(route) !== undefined ? `-${slugify(effortOf(route)!, 'level')}` : ''}`, text, {
+      const version = await runtime.project.snapshot(made.chapterId, `trial-${slugify(route.model, 'model')}${effortOf(route) !== undefined ? `-${slugify(effortOf(route)!, 'level')}` : ''}${way !== undefined ? `-${way}` : ''}`, text, {
         how: 'trial', label: modelName(route), provider: route.provider, model: route.model, ...(effortOf(route) !== undefined ? { effort: effortOf(route)! } : {}), round, ...(brief.length > 0 ? { brief: brief.slice(0, 400) } : {}),
+        ...(made.material !== undefined ? { material: made.material } : {}),
       })
-      drafts[at] = { ...drafts[at]!, text, words: countWords(proseOnly(text)), seconds: seconds(began), ...(version !== undefined ? { version } : {}) }
+      // All the writer read goes beside the draft: two drafts are told apart by what each was written from.
+      if (version !== undefined && made.material !== undefined && made.handed !== undefined && made.handed.length > 0) {
+        await runtime.project.keepVersionMaterial(made.chapterId, version, { ...made.material, chapter: made.chapterId, work: made.mode === 'continue' ? 'continue' : 'draft', ...(brief.length > 0 ? { instruction: brief } : {}), text: made.handed, at: new Date().toISOString() })
+          .catch((error: unknown) => { core.log(`could not keep the material of a draft of ${made.chapterId}`, error) })
+      }
+      drafts[at] = { ...drafts[at]!, text, words: countWords(proseOnly(text)), seconds: seconds(began), ...(version !== undefined ? { version } : {}), ...(made.material !== undefined ? { material: made.material } : {}) }
     } catch (error) {
       if (isAbort(error) || task.signal?.aborted === true) throw error
       drafts[at] = { ...drafts[at]!, seconds: seconds(began), error: error instanceof Error ? error.message : String(error) }

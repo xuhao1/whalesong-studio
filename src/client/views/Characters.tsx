@@ -10,7 +10,7 @@
  */
 import { ImageTrialDialog, ManyModels, SpeechTrialDialog, type DrawAsk } from '../Trial'
 import { GuidePictures, useGiven, type SheetLender } from '../Guides'
-import { ImportPicture } from '../ImportPicture'
+import { ReadyPicture } from '../ReadyPicture'
 import { PortraitInText } from '../Figures'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { VoiceOption } from '../../shared/rpc'
@@ -839,10 +839,10 @@ function CharacterEditor({ card, lives, onDeleted }: { card: CharacterCard; live
         <div className="nv-person-draw">
           <Button size="sm" variant={draft.visual?.portrait === undefined ? 'primary' : 'outline'} icon="image" disabled={dirty || (drawing !== undefined && !portraitBusy)} busy={portraitBusy} pending={t('正在画立绘…', 'Drawing the portrait…')} onClick={() => draw('portrait', t('立绘已生成', 'Portrait ready'))} title={dirty ? t('先保存当前修改', 'Save your edits first') : portraitAgainst === 'words' ? t('只照文字画', 'Drawn from the words alone') : hasSheet ? t('照着人设图画', 'Drawn against the design sheet') : t('先画人设图，再照着它画立绘', 'The design sheet is drawn first, then the portrait against it')}>{draft.visual?.portrait !== undefined ? t('重画立绘', 'Redraw portrait') : t('画立绘', 'Draw portrait')}</Button>
           <Button size="sm" variant="ghost" icon="layers" disabled={dirty} onClick={() => { compare(t('立绘', 'portrait'), 'portrait') }} title={t('多模型：用几个绘图服务各画一张立绘来比——同一幕、同一段提示词、同样的参考图', 'Several models: a portrait from each image service, to compare — the same moment, the same words, the same reference pictures')} aria-label={t('多模型画立绘', 'Portrait by several models')} />
-          <ImportPicture kind="portrait" of={{ character: card.id }} disabled={dirty} />
+          <ReadyPicture kind="portrait" of={{ character: card.id }} disabled={dirty} />
           <Button size="sm" variant="outline" icon="users" disabled={dirty || (drawing !== undefined && !sheetBusy)} busy={sheetBusy} pending={t('正在画人设图…', 'Drawing the sheet…')} onClick={() => draw('sheet', draft.visual?.sheet !== undefined ? t('人设图画好了：它是主人设图了，原来那张留着（未启用）', 'Design sheet ready: it is the main sheet now, and the one before is kept, not in use') : t('人设图已生成', 'Design sheet ready'))} title={dirty ? t('先保存当前修改', 'Save your edits first') : sheetAgainst === 'portrait' ? t(`${image?.sheet === 'front' ? '正面全身' : '三视图'}，照着立绘画`, `${image?.sheet === 'front' ? 'The front view' : 'Three views'}, drawn against the portrait`) : sheetGiven.length > 0 ? t(`${image?.sheet === 'front' ? '正面全身' : '三视图'}，照文字和下面这 ${sheetGiven.length} 张参考图画`, `${image?.sheet === 'front' ? 'The front view' : 'Three views'}, drawn from the words and the ${sheetGiven.length} picture(s) given below`) : t(`${image?.sheet === 'front' ? '正面全身' : '三视图'}，只照文字画：外貌、画风和下面写的想法`, `${image?.sheet === 'front' ? 'The front view' : 'Three views'}, drawn from the words alone: the appearance, the art direction and the ideas below`)}>{sheetList.length > 0 ? t('再画一张人设图', 'Another sheet') : t('生成人设图', 'Design sheet')}</Button>
 <Button size="sm" variant="ghost" icon="layers" disabled={dirty} onClick={() => { compare(t('人设图', 'design sheet'), 'sheet') }} title={t('多模型：用几个绘图服务各画一张人设图来比', 'Several models: a design sheet from each image service, to compare')} aria-label={t('多模型画人设图', 'Design sheet by several models')} />
-          <ImportPicture kind="sheet" of={{ character: card.id }} disabled={dirty} onDone={(path) => { setPicked(`sheet:${path}`) }} />
+          <ReadyPicture kind="sheet" of={{ character: card.id }} disabled={dirty} onDone={(path) => { setPicked(`sheet:${path}`) }} />
         </div>
         <label className="nv-person-moment" title={t('这一页画的立绘照着什么画；不选就是 设置 → 图像生成 里定的', 'What a portrait drawn from this page is held against; left alone, as Settings → Images has it')}>
           <span>{t('立绘照着', 'Portrait from')}</span>
@@ -1220,10 +1220,10 @@ function StagesPanel({ card, value, dirty, busy, onChange, onDraw, onMany, onWri
                 <div className="nv-row-wrap">
                   <Button size="sm" variant="outline" icon="users" disabled={dirty || busy} title={dirty ? t('先保存当前修改', 'Save your edits first') : undefined} onClick={() => onDraw('sheet', stage)}>{stage.visual?.sheet !== undefined ? t('重画这时的人设图', 'Redraw its sheet') : t('画这时的人设图', 'Draw its sheet')}</Button>
                   <Button size="sm" variant="ghost" icon="layers" disabled={dirty} title={t('多模型：几个绘图服务各画一张这时的人设图', "Several models: this stretch's sheet from each image service")} aria-label={t('多模型', 'Several models')} onClick={() => { onMany('sheet', stage) }} />
-                  <ImportPicture kind="sheet" of={{ character: card.id, stage: stage.id }} disabled={dirty} />
+                  <ReadyPicture kind="sheet" of={{ character: card.id, stage: stage.id }} disabled={dirty} />
                   <Button size="sm" variant="outline" icon="image" disabled={dirty || busy} title={dirty ? t('先保存当前修改', 'Save your edits first') : undefined} onClick={() => onDraw('portrait', stage)}>{stage.visual?.portrait !== undefined ? t('重画这时的立绘', 'Redraw its portrait') : t('画这时的立绘', 'Draw its portrait')}</Button>
                   <Button size="sm" variant="ghost" icon="layers" disabled={dirty} title={t('多模型：几个绘图服务各画一张这时的立绘', "Several models: this stretch's portrait from each image service")} aria-label={t('多模型', 'Several models')} onClick={() => { onMany('portrait', stage) }} />
-                  <ImportPicture kind="portrait" of={{ character: card.id, stage: stage.id }} disabled={dirty} />
+                  <ReadyPicture kind="portrait" of={{ character: card.id, stage: stage.id }} disabled={dirty} />
                 </div>
               ) : null}
             </div>
@@ -1299,7 +1299,7 @@ function ScenesPanel({ id, card, value, marked, dirty, off, busy, onChange, onDr
                 {first ? <Chip>{t('立绘默认', 'Default')}</Chip> : <button type="button" className="nv-link nv-small" onClick={() => { onChange(own(value), scene.id) }}>{t('设为默认', 'Make default')}</button>}
                 <Button size="sm" variant="outline" icon="image" disabled={dirty || busy || scene.text.trim().length === 0} title={dirty ? t('先保存当前修改', 'Save your edits first') : undefined} onClick={() => onDraw(scene)}>{lead !== undefined ? t('再画一张', 'Draw another') : t('画这一幕', 'Draw it')}</Button>
                 <Button size="sm" variant="ghost" icon="layers" disabled={dirty || scene.text.trim().length === 0} title={t('多模型：几个绘图服务各画一张这一幕', "Several models: this moment from each image service")} aria-label={t('多模型', 'Several models')} onClick={() => { onMany(scene) }} />
-                <ImportPicture kind="portrait" of={{ character: card.id, scene: scene.id }} disabled={dirty || scene.text.trim().length === 0} />
+                <ReadyPicture kind="portrait" of={{ character: card.id, scene: scene.id }} disabled={dirty || scene.text.trim().length === 0} />
                 <Button size="sm" variant="ghost" icon="trash" title={t('删除', 'Delete')} onClick={() => { onChange(own(value.filter(item => item.id !== scene.id)), marked === scene.id ? undefined : marked) }} />
               </div>
               <TextArea value={scene.text} minRows={2} maxRows={8} placeholder={t('写成画面：在哪里、在做什么、手里拿着什么、光线', 'As a picture: where, doing what, holding what, the light')} onChange={(event) => { patch(scene.id, { text: event.target.value }) }} />
@@ -1365,7 +1365,7 @@ function LooksEditor({ owner, value, dirty, busy, onChange, onDraw, onMany }: { 
             <div className="nv-row-wrap">
               <Button size="sm" icon="users" disabled={dirty || busy || look.name.trim().length === 0 || (look.prompt ?? '').trim().length === 0} pending={t('正在画这套造型…', 'Drawing this look…')} title={dirty ? t('先保存人物卡', 'Save the card first') : undefined} onClick={() => onDraw(look)}>{t('画这套造型的人设图', 'Draw this look\'s sheet')}</Button>
               <Button size="sm" variant="ghost" icon="layers" disabled={dirty || look.name.trim().length === 0 || (look.prompt ?? '').trim().length === 0} title={t('多模型：几个绘图服务各画一张这套造型的人设图', "Several models: this look's sheet from each image service")} aria-label={t('多模型', 'Several models')} onClick={() => { onMany(look) }} />
-              <ImportPicture kind="sheet" of={{ character: owner, look: look.name }} disabled={dirty || look.name.trim().length === 0} />
+              <ReadyPicture kind="sheet" of={{ character: owner, look: look.name }} disabled={dirty || look.name.trim().length === 0} />
               <Button size="sm" variant="ghost" icon="trash" onClick={() => { onChange(value.filter((_, at) => at !== index)) }}>{t('移除', 'Remove')}</Button>
             </div>
           </div>

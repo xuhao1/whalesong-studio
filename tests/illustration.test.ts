@@ -1974,6 +1974,50 @@ describe('the pictures kept of somebody, and taking one away', () => {
     expect(images.calls).toHaveLength(0)
   })
 
+  it('a picture of the book is put where one brought in would hang: a look\'s sheet, a stretch\'s sheet and portrait, a turn of an entry\'s course', async () => {
+    const { bed, images } = await studio()
+    const { project } = bed.runtime
+    const { importPicture, usePictureAs } = await import('../src/core/pipelines/illustrate')
+    const { hungAt } = await import('../src/shared/hung')
+    const file = (tail: number): Uint8Array => Uint8Array.from([...PIXEL, ...new Array<number>(64).fill(tail)])
+    const chapter = await project.addChapter({ title: '抄检' })
+    const garden = await project.saveWorld({ name: '大观园', category: 'location', summary: '省亲别院', events: [{ chapter: chapter.id, kind: 'decline', what: '园子荒了' }] })
+    const card = await project.saveCharacter({ name: '林黛玉', role: 'protagonist', visual: { looks: [{ id: 'mourning', name: '丧服', prompt: '素白孝衣' }] }, stages: [{ id: 'child', title: '幼年', age: '六岁' }] })
+    const hung = async (path: string) => hungAt(await project.characters(), await project.world(), path, (await project.illustrations()).find(item => item.path === path))
+    const [main, worn, young, face, ruin] = await Promise.all([1, 2, 3, 4, 5].map(async tail => (await importPicture(bed.runtime, { kind: 'picture', data: file(tail) })).info.path)) as [string, string, string, string, string]
+
+    // Her main sheet first: what the others must leave alone.
+    await usePictureAs(bed.runtime, { picture: main, as: 'sheet', target: card.id })
+    // The sheet of one of her looks: that look's, and not one of her own sheets.
+    const look = await usePictureAs(bed.runtime, { picture: worn, as: 'sheet', target: card.id, look: '丧服' })
+    expect(look.held).toEqual(['林黛玉'])
+    expect(look.spare).toBeUndefined()
+    expect((await project.findCharacter(card.id))!.visual).toMatchObject({ sheet: main, looks: [{ id: 'mourning', sheet: worn }] })
+    expect(await hung(worn)).toMatchObject([{ as: 'sheet', id: card.id, look: { name: '丧服' } }])
+    // The sheet and the portrait of one stretch of her life: that stretch's.
+    await usePictureAs(bed.runtime, { picture: young, as: 'sheet', target: card.id, stage: 'child' })
+    await usePictureAs(bed.runtime, { picture: face, as: 'portrait', target: card.id, stage: '幼年' })
+    const grown = (await project.findCharacter(card.id))!
+    expect(grown.stages?.[0]?.visual).toMatchObject({ sheet: young, portrait: face })
+    expect(grown.visual?.sheet).toBe(main)
+    expect(await hung(young)).toMatchObject([{ as: 'sheet', id: card.id, stage: { title: '幼年' } }])
+    expect((await project.illustrations()).find(item => item.path === young)).toMatchObject({ kind: 'sheet', target: card.id })
+    // The picture of one turn of a place's course: that turn's, the place's own design art as it was (none).
+    const turn = await usePictureAs(bed.runtime, { picture: ruin, as: 'art', target: garden.id, event: `${chapter.id}:decline` })
+    expect(turn).toMatchObject({ held: ['大观园'] })
+    const place = (await project.findWorld(garden.id))!
+    expect(place.events?.[0]?.image).toBe(ruin)
+    expect(place.visualImage).toBeUndefined()
+    expect(await hung(ruin)).toMatchObject([{ as: 'art', id: garden.id, turn: true }])
+    // A look, a stretch, a turn that is not there: nothing is taken down, nothing hung.
+    const before = JSON.stringify([await project.illustrations(), await project.characters(), await project.world()])
+    await expect(usePictureAs(bed.runtime, { picture: main, as: 'sheet', target: card.id, look: '没有这身' })).rejects.toThrow(/no look/)
+    await expect(usePictureAs(bed.runtime, { picture: main, as: 'sheet', target: card.id, stage: '没有这个时期' })).rejects.toThrow(/no stage/)
+    await expect(usePictureAs(bed.runtime, { picture: main, as: 'art', target: garden.id, event: 'ch999:end' })).rejects.toThrow()
+    expect(JSON.stringify([await project.illustrations(), await project.characters(), await project.world()])).toBe(before)
+    expect(images.calls).toHaveLength(0)
+  })
+
   it('takes in a photograph as the design art of a place, a house or a thing, as the cover, or as a picture of the gallery', async () => {
     const { bed, images } = await studio()
     const { project } = bed.runtime

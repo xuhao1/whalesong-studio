@@ -85,7 +85,7 @@ export interface StudioSnapshot {
   /** Something was asked for that needs a capability nobody has set up yet: the Studio says so and shows the way. */
   needs?: { what: Capability; detail?: string; nonce: number }
   /** The part of the settings a link asked for. */
-  settingsFocus?: Capability | 'crew' | 'recommended' | 'auto'
+  settingsFocus?: Capability | 'crew' | 'recommended' | 'auto' | 'material'
   /** The archive of settled proposals was asked for from elsewhere — of one chapter, where one is named: the Review page opens it. */
   archiveAsked?: { chapter?: string; nonce: number }
   /** A long job nobody was waiting on just finished, for one notice on screen. */
@@ -997,7 +997,11 @@ export class StudioController {
       if (job.status === 'done' && !this.awaited.has(job.id) && (job.kind === 'write' || job.kind === 'revise')) {
         // A chapter gone through place by place: how many places changed — or that none did, and why — is what the author asked.
         // A text written anew whose pictures had to be seen to: said, since the Studio did that by itself.
-        if ((job.kind === 'revise' && (job.title === 'amend chapter' || job.title === 'review by lead')) || (job.result?.output as { figures?: unknown } | undefined)?.figures !== undefined) this.set({ jobEnded: { job, nonce: Date.now() } })
+        // A chapter that came out well short of the length asked for, one whose digest failed after it, one the writer
+        // was to write as an agent and could not: said too — none of them is a failure of the job, and none may pass in silence.
+        const wrote = job.kind === 'write' ? job.result?.output as { short?: unknown; undigested?: unknown; material?: { instead?: unknown } } | undefined : undefined
+        const toSay = wrote !== undefined && (wrote.short !== undefined || wrote.undigested !== undefined || wrote.material?.instead !== undefined)
+        if ((job.kind === 'revise' && (job.title === 'amend chapter' || job.title === 'review by lead')) || (job.result?.output as { figures?: unknown } | undefined)?.figures !== undefined || toSay) this.set({ jobEnded: { job, nonce: Date.now() } })
         continue
       }
       if (this.followed.has(job.id)) continue
@@ -1191,7 +1195,7 @@ export class StudioController {
   }
 
   /** Go to the settings, at the part that sets a capability up. */
-  openSettings(focus?: Capability | 'crew' | 'recommended' | 'auto'): void {
+  openSettings(focus?: Capability | 'crew' | 'recommended' | 'auto' | 'material'): void {
     this.navigated = true
     const { needs: _needs, settingsFocus: _focus, ...rest } = this.snapshot
     this.snapshot = { ...rest, view: 'settings', ...(focus !== undefined ? { settingsFocus: focus } : {}) }

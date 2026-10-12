@@ -31,6 +31,7 @@ import { focusLines, lockedContext, modeRules, movedContext, noProjectContext, O
 import { modeLabel, renderDigest, renderStatus } from './status'
 import { bibleTools } from './tools/bible'
 import { batchTools } from './tools/batch'
+import { callTools } from './tools/calls'
 import { crewTools } from './tools/crew'
 import { manuscriptTools } from './tools/manuscript'
 import { projectTools } from './tools/project'
@@ -47,7 +48,7 @@ const CONTEXT_ORDER = 200
 export function mountAgent(ctx: Context): void {
   const novel = ctx.novel
 
-  for (const tool of [...projectTools(novel), ...referenceTools_(novel), ...bibleTools(novel), ...manuscriptTools(novel), ...stageTools(novel), ...crewTools(novel), ...batchTools(novel), ...studioTools(novel)]) {
+  for (const tool of [...projectTools(novel), ...referenceTools_(novel), ...bibleTools(novel), ...manuscriptTools(novel), ...stageTools(novel), ...crewTools(novel), ...batchTools(novel), ...studioTools(novel), ...callTools(novel)]) {
     ctx.tools.register(tool)
   }
 

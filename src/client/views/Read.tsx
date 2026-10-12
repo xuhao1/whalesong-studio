@@ -45,6 +45,7 @@ import { FullButton, FullFrame, useFull } from '../reader/full'
 import type { ViewerAt } from '../store'
 import { ShareDialog } from './Share'
 import { DERIVE_TIES_HINT, TiesReport, useDeriveTies } from '../Ties'
+import { useBookActions } from '../actions'
 
 /**
  * The viewer, in the frame that can take the whole screen: whichever half is shown — the text, the people, the world,
@@ -181,6 +182,7 @@ function AlbumPage({ at, back, counts, sides }: { at: AlbumAt; /** The place in 
 function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }) {
   const { controller } = useStudio()
   const t = useT()
+  const actions = useBookActions()
   const quote = useQuote()
   const { project, root } = useProject()
   const chapterId = useSnapshot(snapshot => snapshot.chapterId)
@@ -483,7 +485,7 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
           {review === undefined ? (
             <>
               <span>{t('这一章还没有审校过，所以没有批注。', 'This chapter has not been reviewed, so there are no notes.')}</span>
-              <Button size="sm" icon="checkCircle" busy={reviewing} pending={t('审校中…', 'Reviewing…')} onClick={() => controller.guard(async () => { await controller.api.call('ai.review', { root, chapter: chapter.id }); await controller.refreshJobs() })}>{t('审校这一章', 'Review this chapter')}</Button>
+              <Button size="sm" icon="checkCircle" busy={reviewing} pending={t('审校中…', 'Reviewing…')} onClick={() => controller.guard(async () => { await actions.review(chapter.id) })}>{t('审校这一章', 'Review this chapter')}</Button>
             </>
           ) : openIssues === 0 ? (
             <span>{t('这一章的审校意见都处理完了。', 'Every note of this chapter\'s review is settled.')} <span className="nv-muted">{review.verdict}</span></span>
@@ -494,7 +496,7 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
                 {notes.loose.length > 0 ? t(`，${notes.loose.length} 条没有对应的句子。`, `, ${notes.loose.length} have no sentence of their own.`) : t('。', '.')}
               </span>
               <Button size="sm" variant="ghost" icon={looseOpen ? 'chevronUp' : 'chevronDown'} onClick={() => { setLooseOpen(!looseOpen) }}>{looseOpen ? t('收起', 'Fold') : t('列出来选', 'List them')}</Button>
-              <Button size="sm" variant="ghost" icon="checkCircle" busy={reviewing} pending={t('审校中…', 'Reviewing…')} onClick={() => controller.guard(async () => { await controller.api.call('ai.review', { root, chapter: chapter.id }); await controller.refreshJobs() })} title={t('正文改过之后重新审校一遍', 'Review again after the text has changed')}>{t('重新审校', 'Review again')}</Button>
+              <Button size="sm" variant="ghost" icon="checkCircle" busy={reviewing} pending={t('审校中…', 'Reviewing…')} onClick={() => controller.guard(async () => { await actions.review(chapter.id) })} title={t('正文改过之后重新审校一遍', 'Review again after the text has changed')}>{t('重新审校', 'Review again')}</Button>
             </>
           )}
           <Button size="sm" variant="ghost" icon="pen" onClick={() => { setLeading(!leading) }} title={t('读的时候自己发现的问题：写一句，策划在这一章里找出来、记成问题，再修', 'Something you noticed while reading: say it in a sentence, and the planner finds it in this chapter, files it, and mends it')}>{t('我发现了问题…', 'I noticed something…')}</Button>

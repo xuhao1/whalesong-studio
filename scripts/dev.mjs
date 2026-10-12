@@ -14,6 +14,12 @@
  *   npm run dev -- --workspace ~/novel  # serve a specific workspace directory
  *   npm run dev -- --home ~/.dsh        # use your real Harness home (shares models/credentials)
  *
+ * A second instance beside the first — two pieces of work at once, neither swapping the other's build or writing
+ * the other's books — takes a stage, a home, a workspace and a port of its own:
+ *
+ *   node scripts/build.mjs --stage-dir .dev/b/stage
+ *   npm run dev -- --stage-dir .dev/b/stage --home .dev/b/home --workspace .dev/b/workspace --port 3198
+ *
  * The isolated home lives in `.dev/home`. Configure model routes for it in
  * `.dev/home/profiles/web/cordis.patch.yml` (see CONTRIBUTING.md), or pass
  * `--home` to reuse a home that already has them.
@@ -44,10 +50,10 @@ if (!existsSync(dsh)) {
   console.error('[dev] node_modules/.bin/dsh is missing — run `npm install` first.')
   process.exit(1)
 }
-const stage = resolve(root, '.dev/stage')
+const stage = expand(option('stage-dir', resolve(root, '.dev/stage')))
 if (!existsSync(resolve(stage, 'lib/index.js'))) {
   console.log('[dev] the stage is not built yet — building once…')
-  const built = spawnSync(process.execPath, [resolve(root, 'scripts/build.mjs'), '--stage'], { stdio: 'inherit' })
+  const built = spawnSync(process.execPath, [resolve(root, 'scripts/build.mjs'), '--stage-dir', stage], { stdio: 'inherit' })
   if (built.status !== 0) process.exit(built.status ?? 1)
 }
 

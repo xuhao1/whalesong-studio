@@ -12,7 +12,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { digestChapter, forgetChapter } from '../src/core/pipelines/digest'
 import { writeChapter } from '../src/core/pipelines/write'
 import { readBook, searchBook } from '../src/core/reading'
-import { MAIN_LINE } from '../src/shared/types'
+import type { RoleTask } from '../src/core/roles'
+import { DEFAULT_SETTINGS } from '../src/core/settings'
 import { createTestBed, type TestBed } from './support/harness'
 
 const task = { origin: 'user' as const }
@@ -45,7 +46,7 @@ describe('a chapter\'s memory', () => {
   let bed: TestBed
   let ids: string[]
   beforeEach(async () => {
-    bed = await createTestBed({ language: 'zh', title: '青冥' })
+    bed = await createTestBed({ language: 'zh', title: '青冥', settings: { materialBy: 'rules' } })
     const { project } = bed.runtime
     await project.saveCharacter({ name: '沈璃', role: 'protagonist', tagline: '渡口的摆渡人' })
     await project.saveCharacter({ name: '陆沉', role: 'supporting', tagline: '账房先生' })
@@ -169,20 +170,34 @@ describe('a chapter\'s memory', () => {
     expect((await project.findChapter(here))!.plan.location).toBe('回文巷')
   })
 
-  it('is not there for whoever reads the book to draft the chapter', async () => {
+  it('is not there for the planner either, where the planner prepares the draft\'s material', async () => {
     const { core, runtime } = bed
+    const { project } = runtime
     const here = ids[2]!
     answer('旧稿：沈璃追到了码头。', FIRST)
     await writeChapter(core, runtime, { chapter: here, digest: true }, task)
-    // A reader kept to the line, with the chapter given as empty: the chapter being written now.
-    const anew = new Map([[here, '']])
-    const names = { read: 'book_read' }
-    const kept = { line: MAIN_LINE }
-    const read = async (what: 'chapter' | 'memory' | 'outline' | 'threads', ref?: string): Promise<string> => (await readBook(runtime, { what, ...(ref !== undefined ? { ref } : {}) }, names, kept, anew)).text
-    const seen = [await read('chapter', '3'), await read('memory', '3'), await read('outline', '3'), await read('threads'), (await searchBook(runtime, { query: '码头 截住 陆沉 笔' }, undefined, kept, anew)).text].join('\n')
+
+    await core.settings.update({ materialBy: 'planner', context: { ...DEFAULT_SETTINGS.context, plannerWholeTokens: 0 } })
+    bed.roles.enabled = true
+    const read: Record<string, string> = {}
+    bed.roles.script = async (_task, call) => {
+      read.text = await call('book_read', { what: 'chapter', ref: '3' })
+      read.memory = await call('book_read', { what: 'memory', ref: '3' })
+      read.plan = await call('book_read', { what: 'outline', ref: '3' })
+      read.threads = await call('book_read', { what: 'threads' })
+      read.search = await call('book_search', { query: '码头 截住 陆沉 笔' })
+      const said = await call('writing_material', { result: { task: '写陆沉来讨笔。', people: ['沈璃'], chapters: [2] } })
+      if (said.startsWith('ERROR')) throw new Error(said)
+    }
+    answer('新稿。', SECOND)
+    const done = await writeChapter(core, runtime, { chapter: here, digest: false }, task)
+    expect(done.material?.by).toBe('planner')
+    const asked = (bed.roles.tasks.at(-1) as RoleTask).prompt
+    const seen = [asked, read.text, read.memory, read.plan, read.threads, read.search, sentToWriter().at(-1)!.prompt].join('\n')
     for (const part of ['【旧稿的地点】', '【旧稿的时间】', '【旧稿的梗概】', '【旧稿的事实】', '码头的红伞', '旧稿：沈璃追到了码头']) expect(seen, part).not.toContain(part)
-    expect(await read('chapter', '3')).toContain('has no text yet')
-    expect(await read('memory', '3')).toContain('has no memory')
+    expect(asked).toContain('3. 《三》 未写 ← 这一章')
+    expect(read.text).toContain('has no text yet')
+    expect(read.memory).toContain('has no memory')
     // Read for its own sake — not as the chapter being written — the same chapter is there with all it has.
     expect((await readBook(runtime, { what: 'memory', ref: '3' })).text).toContain('【旧稿的事实】')
     expect((await searchBook(runtime, { query: '码头 截住 陆沉 笔' })).text).toContain('码头')

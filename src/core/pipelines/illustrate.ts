@@ -3160,9 +3160,11 @@ export async function importPicture(runtime: ProjectRuntime, params: { kind: 'po
  * hangs nowhere. It is taken down from whoever held it as theirs (a card's portraits and sheets, an entry's design
  * pictures), hung where it is said to belong, and filed as that among the book's pictures:
  * - `portrait`: one of somebody's portraits (`target`) — the picture of one of their moments (`scene`), where said;
- *   of none, where none is said, though it was drawn of one;
- * - `sheet`: one of their design sheets — the main one unless the author chose another;
- * - `art`: one of the design pictures of a place, a house or a thing (`target`) — the main one unless the author chose another;
+ *   of none, where none is said, though it was drawn of one; or the portrait of one stretch of their life (`stage`);
+ * - `sheet`: one of their design sheets — the main one unless the author chose another; or the sheet of one of their
+ *   looks (`look`), or of one stretch of their life (`stage`);
+ * - `art`: one of the design pictures of a place, a house or a thing (`target`) — the main one unless the author chose
+ *   another; or the picture of one turn of its course (`event`);
  * - `chapter`: a picture of a chapter's (`target`); `gallery`: nobody's.
  * Where the text shows it, the panel of a storyboard it is the picture of, and its being the cover are let be —
  * those show a picture, whoever's it is. A picture that waited to be taken, of several drawn to compare, is taken by this.
@@ -3174,7 +3176,7 @@ export async function importPicture(runtime: ProjectRuntime, params: { kind: 'po
  * @throws ProjectError `novel/not-found` for a picture, a character, an entry, a moment or a chapter that is not
  *   there; `novel/invalid` for an entry that is an idea of the world.
  */
-export async function usePictureAs(runtime: ProjectRuntime, params: { picture: string; as: 'portrait' | 'sheet' | 'art' | 'chapter' | 'gallery'; target?: string; scene?: string; front?: boolean }): Promise<{ info: IllustrationInfo; held: string[]; released: string[]; spare?: boolean }> {
+export async function usePictureAs(runtime: ProjectRuntime, params: { picture: string; as: 'portrait' | 'sheet' | 'art' | 'chapter' | 'gallery'; target?: string; scene?: string; front?: boolean; look?: string; stage?: string; event?: string }): Promise<{ info: IllustrationInfo; held: string[]; released: string[]; spare?: boolean }> {
   const { project } = runtime
   const known = (await project.pictures()).find(item => item.id === params.picture || item.path === params.picture)
   const path = known?.path ?? params.picture.trim()
@@ -3189,6 +3191,11 @@ export async function usePictureAs(runtime: ProjectRuntime, params: { picture: s
   if (params.as === 'chapter' && chapter === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${params.target ?? ''}"`)
   const moment = params.as === 'portrait' && params.scene !== undefined && params.scene.length > 0 ? scenesOf(card!).find(scene => scene.id === params.scene) : undefined
   if (params.as === 'portrait' && params.scene !== undefined && params.scene.length > 0 && moment === undefined) throw new ProjectError('novel/not-found', `${card!.name} has no signature scene "${params.scene}"`)
+  // One of somebody's looks, one stretch of their life, one turn of an entry's course: found before anything is taken down.
+  const look = params.as === 'sheet' && params.look !== undefined && params.look.length > 0 ? lookOf(card!, params.look) : undefined
+  if (params.as === 'sheet' && params.look !== undefined && params.look.length > 0 && look === undefined) throw new ProjectError('novel/not-found', `${card!.name} has no look called "${params.look}"`)
+  const stage = card !== undefined && look === undefined && params.stage !== undefined && params.stage.length > 0 ? stageOf(card, params.stage) : undefined
+  const turn = entry !== undefined && params.event !== undefined && params.event.length > 0 ? await turnOf(project, entry, params.event) : undefined
   // The cover the book shows for want of a chosen one — the latest drawn as a cover — stays the cover, whatever this one is filed as.
   if (known?.kind === 'cover' && (await project.manifest()).cover !== path && await project.cover() === path) await project.updateManifest({ cover: path })
   const released = await project.takeDown(path)
@@ -3201,18 +3208,18 @@ export async function usePictureAs(runtime: ProjectRuntime, params: { picture: s
   }, known)
   // (One that waited to be taken stands in the text from here on where the others of its kind would.)
   if (known?.trial?.hang !== undefined) await project.tookTrial(path)
-  if (card !== undefined && params.as === 'portrait') return { info, held: await hangAs(runtime, info, { as: 'portrait', character: card.id }), released }
+  if (card !== undefined && params.as === 'portrait') return { info, held: await hangAs(runtime, info, { as: 'portrait', character: card.id, ...(stage !== undefined ? { stage: stage.id } : {}) }), released }
   if (card !== undefined) {
     const frame = await project.readFile(path).then(pixelsOf).catch(() => undefined)
     const front = params.front ?? (frame !== undefined ? frame.width <= frame.height * 1.15 : false)
-    const chosen = (await project.findCharacter(card.id))?.visual?.mainSheet
-    const held = await hangAs(runtime, info, { as: 'sheet', character: card.id, ...(front ? { front: true } : {}) })
+    const chosen = look === undefined && stage === undefined ? (await project.findCharacter(card.id))?.visual?.mainSheet : undefined
+    const held = await hangAs(runtime, info, { as: 'sheet', character: card.id, ...(look !== undefined ? { look } : {}), ...(stage !== undefined ? { stage: stage.id } : {}), ...(front ? { front: true } : {}) })
     // Beside a main sheet the author chose it waits, not in use — as one drawn or brought in would.
     const spare = chosen !== undefined && (await project.findCharacter(card.id))?.visual?.sheet !== path
     return { info, held, released, ...(spare ? { spare: true } : {}) }
   }
   if (entry !== undefined) {
-    const hung = await hangArt(project, path, { as: 'art', entry: entry.id })
+    const hung = await hangArt(project, path, { as: 'art', entry: entry.id, ...(turn !== undefined && params.event !== undefined ? { event: params.event } : {}) })
     return { info, held: [hung.entry.name], released, ...(hung.spare ? { spare: true } : {}) }
   }
   return { info, held: [], released }

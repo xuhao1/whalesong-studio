@@ -15,6 +15,7 @@ import { countWords, formatCount, proseOnly } from '../shared/text'
 import { Compare, type CompareItem, type CompareMore } from './Compare'
 import { DiffView } from './components/ProposalCard'
 import { Icon } from './icons'
+import { DraftMaterial, wayWord } from './Material'
 import { Button, Chip, Modal, Spinner, useAction, useConfirm, useLoad, useProject, useStudio, useT, type Translate } from './ui'
 
 /** The chapter as it stands, among the things laid side by side. */
@@ -41,7 +42,7 @@ export function versionLabel(version: Pick<VersionInfo, 'reason' | 'made'>, t: T
     'edit-device': ['在其他设备上改动前', 'before an edit from another device'],
   }
   // A draft written to be compared with others: named by the model that wrote it, as the model is called.
-  if (version.made?.how === 'trial') return t(`对比稿 · ${version.made.label}`, `Draft to compare · ${version.made.label}`)
+  if (version.made?.how === 'trial') return t(`对比稿 · ${version.made.label}${version.made.material !== undefined ? ` · ${wayWord(version.made.material.by, t)}` : ''}`, `Draft to compare · ${version.made.label}${version.made.material !== undefined ? ` · ${wayWord(version.made.material.by, t)}` : ''}`)
   const label = labels[version.reason]
   // (One kept before who wrote it was kept with it: its model as the file's name has it.)
   if (label === undefined && version.reason.startsWith('trial-')) return t(`对比稿 · ${version.reason.slice(6)}`, `Draft to compare · ${version.reason.slice(6)}`)
@@ -121,6 +122,7 @@ export function useVersionColumns({ chapter, versions, keys, current, apart, onA
       key,
       title: label,
       sub: `${versionWhen(version)} · ${words(version.words)}`,
+      ...(version.made?.material !== undefined ? { note: <DraftMaterial chapter={chapter.id} version={key} material={version.made.material} /> } : {}),
       ...(read?.error !== undefined ? { error: read.error } : read?.text !== undefined ? { text: read.text } : { loading: true }),
       taken: taken === key,
       action: taken === key ? <Chip tone="green">{t('现在的正文是它', 'the text now')}</Chip> : <Button size="sm" variant="outline" icon="undo" title={t('把正文换成这一版；现在的正文先存成一个版本', 'Make this the chapter; the text as it stands is kept as a version first')} onClick={() => take(key, label)}>{t('用这一版', 'Use this one')}</Button>,

@@ -41,6 +41,7 @@ import { plansOfText } from '../core/pipelines/follow'
 import { fixIssue, fixIssues, acceptProposal, rejectProposal, restoreProposal, reviewByLead, reviseBook, reviseChapter, reviseSpan, mendInTurn, settledProposals } from '../core/pipelines/revise'
 import { amendChapter } from '../core/pipelines/amend'
 import { writeChapter } from '../core/pipelines/write'
+import { keptMaterial } from '../core/pipelines/material'
 import { imageSetups, speechSetups, trialDerive, trialSpeak, trialWrite } from '../core/pipelines/trial'
 import { cleanGuides } from '../core/pipelines/guides'
 import { consultReferences } from '../core/pipelines/consult'
@@ -801,6 +802,10 @@ export function createHandlers(service: NovelService): Handlers {
       const runtime = await open(root)
       return job(runtime, 'derive', 'read the references for a chapter', requireString(chapter, 'chapter'), async task => await consultReferences(core, runtime, { chapter: requireString(chapter, 'chapter'), ...(typeof direction === 'string' && direction.trim().length > 0 ? { direction } : {}) }, task))
     },
+    'material.read': async ({ root, chapter, version }) => {
+      const material = await keptMaterial(await open(root), requireString(chapter, 'chapter'), typeof version === 'string' && version.length > 0 ? version : undefined)
+      return material !== undefined ? { material } : {}
+    },
     'ai.reviseSpan': async ({ root, chapter, start, end, quote, instruction, guides }) => {
       const runtime = await open(root)
       return job(runtime, 'revise', 'revise passage', chapter, async (task) => {
@@ -1176,7 +1181,7 @@ export function createHandlers(service: NovelService): Handlers {
       })
       return { path: taken.info.path, held: taken.held, image: taken.info, ...(taken.spare === true ? { spare: true } : {}) }
     },
-    'image.use': async ({ root, picture, as, target, scene, front }) => {
+    'image.use': async ({ root, picture, as, target, scene, front, look, stage, event }) => {
       if (!['portrait', 'sheet', 'art', 'chapter', 'gallery'].includes(String(as))) throw new ProjectError('novel/invalid', 'a picture is used as somebody\'s portrait or design sheet, the design art of an entry (art), a picture of a chapter, or a picture of the gallery')
       const runtime = await open(root)
       const used = await usePictureAs(runtime, {
@@ -1186,6 +1191,9 @@ export function createHandlers(service: NovelService): Handlers {
         ...(as === 'gallery' ? {} : { target: requireString(target, 'target') }),
         ...(typeof scene === 'string' && scene.length > 0 ? { scene } : {}),
         ...(typeof front === 'boolean' ? { front } : {}),
+        ...(typeof look === 'string' && look.length > 0 ? { look } : {}),
+        ...(typeof stage === 'string' && stage.length > 0 ? { stage } : {}),
+        ...(typeof event === 'string' && event.length > 0 ? { event } : {}),
       })
       return { image: used.info, held: used.held, released: used.released, ...(used.spare === true ? { spare: true } : {}) }
     },
@@ -1317,7 +1325,7 @@ export function createHandlers(service: NovelService): Handlers {
       }
       return { taken, removed }
     },
-    'trial.write': async ({ root, chapter, brief, mode, words, line, guides, with: routes }) => {
+    'trial.write': async ({ root, chapter, brief, mode, words, line, guides, with: routes, materials }) => {
       const runtime = await open(root)
       return job(runtime, 'write', 'trial write', chapter, async task => await trialWrite(core, runtime, {
         ...(chapter !== undefined ? { chapter } : {}),
@@ -1327,6 +1335,7 @@ export function createHandlers(service: NovelService): Handlers {
         ...(words !== undefined ? { words } : {}),
         ...(Array.isArray(guides) ? { guides: cleanGuides(guides) } : {}),
         with: Array.isArray(routes) ? routes : [],
+        ...(Array.isArray(materials) ? { materials: materials.filter((way): way is 'planner' | 'rules' | 'agent' => way === 'planner' || way === 'rules' || way === 'agent') } : {}),
       }, task))
     },
     'trial.draft': async ({ root, chapter, version }) => {
@@ -1718,6 +1727,21 @@ export function createHandlers(service: NovelService): Handlers {
       const begun = await core.usage.begun()
       return { summary: summarize(events, prices, { since }), prices, ...(begun !== undefined ? { begun } : {}) }
     },
+    'calls.list': async ({ root, chapter, limit }) => {
+      const { project } = await open(root)
+      // Asked for by chapter however the page names it: the record files a call under the chapter's id.
+      const of = typeof chapter === 'string' && chapter.length > 0 ? (await project.findChapter(chapter))?.plan.id ?? chapter : undefined
+      const listed = await core.calls.list(project, { ...(of !== undefined ? { chapter: of } : {}), ...(typeof limit === 'number' && limit > 0 ? { limit } : {}) })
+      return { ...listed, megabytes: core.calls.megabytes() }
+    },
+    'calls.read': async ({ root, id }) => {
+      const call = await core.calls.read((await open(root)).project, requireString(id, 'id'))
+      if (call === undefined) throw new ProjectError('novel/not-found', 'that call is no longer on record')
+      return { call }
+    },
+    'calls.remove': async ({ root, ids }) => ({
+      removed: await core.calls.remove((await open(root)).project, Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : undefined),
+    }),
     'endpoint.models': async ({ url, kind, key, ref }, signal) => ({
       models: await service.endpointModels(requireString(url, 'url'), (['text', 'embedding', 'image', 'speech'] as ModelKind[]).includes(kind) ? kind : 'text', key, ref, signal),
     }),

@@ -334,9 +334,10 @@ Word counts, audio scripts and exports ignore image lines.
 | | `written` is the prompt as it was handed to the image service where that is not `prompt` (the director wrote it out, or fitted it); `verbatim: true` marks a picture drawn from its author's own whole prompt, to which the Studio added nothing. |
 | `reading.json` | where the book was last read, on whichever device: `{chapter, at, by}` — what the next device picks up. Written without touching the book's revision |
 | `graph.json` | where the author moved people to on the picture of who is what to whom: a person's id to `{x, y}` in the units of its layout; whoever is not in it stands where the layout puts them |
+| `calls/` | the record of calls: every call the Studio made to a text model for the book. `index.json` lists them (`calls`: when, the job and its step, the chapter, the role, provider, model, reasoning level, temperature, output limit, characters sent and received, tokens, milliseconds, how it ended, bytes; `parts`: the shared parts and their sizes); `<id>.json` is one call with `prompt` and `reply`, and `system` / `stable` either in it or — where long — named by `systemPart` / `stablePart`; `parts/<hash>.json` holds such a stretch once for every call that sent it. Held to `callsMb` megabytes (settings), the oldest calls going first. Safe to delete whole |
 | `index/` | the search index and embedding cache — rebuildable, safe to delete |
 
-`.novel/` is safe to commit except `index/`, which is better ignored. Deleting `.novel/memory` loses nothing that cannot be recomputed with a digest; deleting `versions/` or `history/` loses your undo history.
+`.novel/` is safe to commit except `index/` and `calls/` (large, and of use only where the calls were made), which are better ignored. Deleting `.novel/memory` loses nothing that cannot be recomputed with a digest; deleting `versions/` or `history/` loses your undo history.
 
 ## A sealed book
 

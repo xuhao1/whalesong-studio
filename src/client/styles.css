@@ -5038,6 +5038,29 @@ button.nv-stat:hover {
   transition: box-shadow 0.3s, border-color 0.3s;
 }
 
+/* (One setting among a card's, pointed at from another page.) */
+.nv-form-grid.is-focus {
+  border-radius: var(--nv-radius-s);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--nv-brand) 22%, transparent);
+  transition: box-shadow 0.3s;
+}
+
+/* What a writer was handed, to read as it read it. */
+.nv-material-text {
+  max-height: min(62vh, 720px);
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  overflow: auto;
+  border-radius: var(--nv-radius-s);
+  background: var(--nv-surface-2);
+  color: var(--nv-text-2);
+  font-family: inherit;
+  font-size: 12.5px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* ───────────── a long job, said out loud ───────────── */
 
 .nv-jobprogress {
@@ -12942,6 +12965,33 @@ button.nv-album-chapter:hover {
   margin-left: auto;
 }
 
+/* How a column's thing came to be: a line or two, the rest on hover. */
+.nv-compare-note {
+  display: flex;
+  flex: none;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--nv-border);
+  background: var(--nv-surface-2);
+}
+
+.nv-compare-note > .nv-link {
+  flex: none;
+  white-space: nowrap;
+}
+
+.nv-compare-note > span:first-child {
+  display: -webkit-box;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow-wrap: anywhere;
+}
+
 .nv-compare-body {
   flex: 1 1 auto;
   min-height: 80px;
@@ -13083,6 +13133,119 @@ h2 > .nv-memory-mark {
   justify-content: space-between;
   gap: 4px 8px;
   margin-bottom: 8px;
+}
+
+/* The record of calls: a row a call, and a call read whole — how it was set, then what was sent and said, part by part. */
+.nv-calls-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  margin-top: 8px;
+}
+
+.nv-call-list .nv-list-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+}
+
+/* Which model and how it was set is what a row is read for: said whole, on as many lines as it takes. */
+.nv-call-list .nv-list-meta {
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.nv-jobs-calls {
+  margin: 10px 0 0;
+}
+
+.nv-call {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.nv-call-facts {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.nv-call-facts th,
+.nv-call-facts td {
+  padding: 3px 10px 3px 0;
+  border-bottom: 1px solid var(--nv-border);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.nv-call-facts th {
+  width: 7em;
+  color: var(--nv-text-2);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.nv-call-facts.is-pair {
+  margin-bottom: 10px;
+}
+
+.nv-call-facts.is-pair thead th {
+  width: auto;
+  color: inherit;
+  font-weight: 600;
+}
+
+/* What was set otherwise in the two calls read against each other. */
+.nv-call-facts tr.is-unlike td {
+  background: color-mix(in srgb, var(--nv-warn) 14%, transparent);
+}
+
+.nv-call-part {
+  min-width: 0;
+  border: 1px solid var(--nv-border);
+  border-radius: var(--nv-radius-s);
+}
+
+.nv-call-part > summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.nv-call-part-name {
+  font-weight: 600;
+}
+
+.nv-call-part > p {
+  margin: 0;
+  padding: 0 10px 8px;
+}
+
+.nv-call-text {
+  max-height: 52vh;
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  border-top: 1px solid var(--nv-border);
+  background: var(--nv-surface);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Laid side by side, a column scrolls as a whole: its parts are as long as they are. */
+.nv-compare-col .nv-call-text {
+  max-height: none;
 }
 
 /* Pictures to steer by: a few thumbnails in a row, each with a word said of it. */
@@ -13384,6 +13547,23 @@ h2 > .nv-memory-mark {
 
 .nv-chapter-intent > .nv-link {
   margin-left: 8px;
+}
+
+/* Who prepares the writer's material, switched in the line itself. */
+.nv-material-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 4px;
+}
+
+.nv-material-line > svg {
+  flex: none;
+  margin-right: 1px;
+}
+
+.nv-material-line > .nv-link {
+  margin-left: 2px;
 }
 
 /* The author's jottings: a box to write one in, then the notes, the latest first. */

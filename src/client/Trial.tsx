@@ -16,6 +16,7 @@ import { imageSetupName, speechSetupName } from '../shared/images'
 import { RpcError } from './api'
 import { Compare, type CompareItem } from './Compare'
 import { ImageModelField, ModelField, speechEndpoint, speechSuggestions, withSpeechModel } from './ModelField'
+import { DraftMaterial, useMaterialBy, wayWord, type MaterialBy } from './Material'
 import { Button, Chip, cx, Field, Modal, recall, remember, Select, Spinner, TextArea, TextInput, useLoad, useMediaUrl, useProject, useSnapshot, useStudio, useT } from './ui'
 import { useVersionColumns, versionWhen } from './Versions'
 
@@ -721,6 +722,20 @@ export function WriteTrialDialog({ chapter, brief: given, current, onClose, onTa
   const inUse = useRoleModel('writer')
   const { picked, setPicked, levels, setLevels, keep } = usePicked(inUse, 'write')
   const routes = routesOf(picked, levels)
+  // How the writer's material is put together: the way in force to begin with (or the ways of the last comparison); with both, every model writes a draft by each.
+  const [inForce] = useMaterialBy()
+  const [chosen, setChosen] = useState<MaterialBy[] | undefined>(() => {
+    const kept = recall<string[]>('trial:write:ways')
+    const had = (Array.isArray(kept) ? kept : []).filter((way): way is MaterialBy => way === 'planner' || way === 'rules' || way === 'agent')
+    return had.length > 0 ? [...new Set(had)] : undefined
+  })
+  const ways: MaterialBy[] = chosen ?? [inForce]
+  const toggleWay = (way: MaterialBy): void => {
+    const next = ways.includes(way) ? ways.filter(one => one !== way) : (['planner', 'rules', 'agent'] as const).filter(one => one === way || ways.includes(one))
+    // (One way at the least: a draft is written by some way.)
+    if (next.length > 0) setChosen(next)
+  }
+  const runsCount = routes.length * ways.length
   const [brief, setBrief] = useState(given ?? '')
   const job = useTrialJob(`write:${chapter.id}`, (ended) => {
     // Closed before it was over: the drafts are among the chapter's versions all the same, and the author is told.
@@ -741,18 +756,23 @@ export function WriteTrialDialog({ chapter, brief: given, current, onClose, onTa
   const [setup, setSetup] = useState(true)
   const start = (): void => {
     keep()
+    remember('trial:write:ways', ways)
     setSetup(false)
-    job.start(async () => await controller.api.call('trial.write', { root, chapter: chapter.id, ...(brief.trim().length > 0 ? { brief: brief.trim() } : {}), with: routes }))
+    job.start(async () => await controller.api.call('trial.write', { root, chapter: chapter.id, ...(brief.trim().length > 0 ? { brief: brief.trim() } : {}), with: routes, materials: ways }))
   }
+  // Two drafts of one model are told apart by what each was written from: said in the name where the ways differ.
+  const wayOf = (draft: TrialDraft): MaterialBy | undefined => draft.material?.by ?? draft.by
+  const mixed = new Set(drafts.map(wayOf)).size > 1
   const items: CompareItem[] = [
     ...drafts.flatMap((draft, at): CompareItem[] => {
       if (draft.version !== undefined && columns.gone.has(draft.version)) return []
       const version = draft.version
       const read = version !== undefined ? columns.textOf(version) : undefined
       return [{
-        key: version ?? `${draft.provider}:${draft.model}:${at}`,
-        title: draft.label,
-        sub: draft.error !== undefined ? t('没写成', 'failed') : version !== undefined ? `${t(`${draft.words ?? 0} 字`, `${draft.words ?? 0} words`)} · ${took(draft.seconds, t)}` : t('正在写…', 'writing…'),
+        key: version ?? `${draft.provider}:${draft.model}:${draft.by ?? ''}:${at}`,
+        title: mixed && wayOf(draft) !== undefined ? `${draft.label} · ${wayWord(wayOf(draft)!, t)}` : draft.label,
+        sub: draft.error !== undefined ? t('没写成', 'failed') : version !== undefined ? `${t(`${draft.words ?? 0} 字`, `${draft.words ?? 0} words`)} · ${took(draft.seconds, t)}` : draft.by === 'planner' ? t('策划在备料，然后写…', 'the planner prepares, then it is written…') : draft.by === 'agent' ? t('写手在读书、动笔、改…', 'the writer reads, writes and goes over it…') : t('正在写…', 'writing…'),
+        ...(draft.material !== undefined ? { note: <DraftMaterial chapter={chapter.id} version={version} material={draft.material} /> } : {}),
         ...(draft.error !== undefined ? { error: draft.error } : version === undefined || read === undefined ? { loading: true } : read.error !== undefined ? { error: read.error } : { text: read.text ?? '' }),
         taken: version !== undefined && version === columns.taken,
         ...(version !== undefined ? {
@@ -763,19 +783,26 @@ export function WriteTrialDialog({ chapter, brief: given, current, onClose, onTa
     }),
     ...columns.items,
   ]
-  const runs = routes.length === picked.size ? t(`${picked.size} 个模型各写一稿`, `One draft each by ${picked.size}`) : t(`${picked.size} 个模型写 ${routes.length} 稿`, `${routes.length} drafts by ${picked.size} model(s)`)
+  const runs = runsCount === picked.size ? t(`${picked.size} 个模型各写一稿`, `One draft each by ${picked.size}`) : t(`${picked.size} 个模型写 ${runsCount} 稿`, `${runsCount} drafts by ${picked.size} model(s)`)
   return (
     <Modal wide roomy="compare" className="nv-modal-trial" title={t(`几个模型各写一遍「${chapter.title}」`, `"${chapter.title}" written by several models`)} onClose={onClose} footer={(
       <>
-        <span className="nv-muted nv-small">{t('同样的上下文和要求，各写一稿。正文不动，采纳了才换；每一稿都留在这一章的“版本”里，写着是哪个模型写的。可以关掉，之后再看。', 'The same context and brief, one draft each. The chapter keeps its text until you take one; every draft is kept among its versions, with the model that wrote it. This can be closed and read later.')}</span>
+        <span className="nv-muted nv-small">{t('同样的要求，各写一稿。正文不动，采纳了才换；每一稿都留在这一章的“版本”里，写着是哪个模型写的、拿到的是什么材料。可以关掉，之后再看。', 'The same brief, one draft each. The chapter keeps its text until you take one; every draft is kept among its versions, with the model that wrote it and what it was written from. This can be closed and read later.')}</span>
         <span className="nv-spacer" />
         {job.busy ? <Button variant="ghost" onClick={job.stop}>{t('停止', 'Stop')}</Button> : null}
-        <Button variant="primary" icon="layers" busy={job.busy} disabled={routes.length === 0 || routes.length > MOST_RUNS} title={routes.length > MOST_RUNS ? t(`一次最多比 ${MOST_RUNS} 稿`, `At most ${MOST_RUNS} drafts at once`) : undefined} pending={t('正在写…', 'Writing…')} onClick={start}>{runs}</Button>
+        <Button variant="primary" icon="layers" busy={job.busy} disabled={runsCount === 0 || runsCount > MOST_RUNS} title={runsCount > MOST_RUNS ? t(`一次最多比 ${MOST_RUNS} 稿`, `At most ${MOST_RUNS} drafts at once`) : undefined} pending={t('正在写…', 'Writing…')} onClick={start}>{runs}</Button>
       </>
     )}>
-      <Setup open={setup} onOpen={setSetup} summary={t(`参加对比的模型和要求 · 选了 ${picked.size} 个模型，${routes.length} 稿`, `Who takes part, and the brief · ${picked.size} model(s), ${routes.length} draft(s)`)}>
+      <Setup open={setup} onOpen={setSetup} summary={t(`参加对比的模型、材料和要求 · 选了 ${picked.size} 个模型，${runsCount} 稿`, `Who takes part, from what, and the brief · ${picked.size} model(s), ${runsCount} draft(s)`)}>
         <ModelChecklist picked={picked} onChange={setPicked} disabled={job.busy} hint={inUse !== undefined ? t(`写手现在用的是 ${inUse.model}`, `the writer runs on ${inUse.model}`) : undefined} />
         <EffortRows picked={picked} levels={levels} onChange={setLevels} onLeave={(key) => { const next = new Set(picked); next.delete(key); setPicked(next) }} disabled={job.busy} />
+        <div className="nv-row-wrap nv-trial-ways">
+          <span className="nv-muted nv-small">{t('交给写手的材料', 'The writer\'s material')}</span>
+          <Chip active={ways.includes('planner')} tone={ways.includes('planner') ? 'blue' : 'neutral'} title={t('策划先看这一章要什么，读书、挑材料，再交给写手', 'The planner looks at what the chapter needs, reads in the book, chooses — then the writer writes')} onClick={job.busy ? undefined : () => { toggleWay('planner') }}>{t('策划先备料', 'Prepared by the planner')}{inForce === 'planner' ? t('（现在用的）', ' (in force)') : ''}</Chip>
+          <Chip active={ways.includes('rules')} tone={ways.includes('rules') ? 'blue' : 'neutral'} title={t('原来的做法：前文原文装到窗口的一半，人物、设定、线索按规则带上', 'As it was: the story so far word for word up to half the window, with cards, the world and threads by rule')} onClick={job.busy ? undefined : () => { toggleWay('rules') }}>{t('工坊按规则拼', 'Packed by the Studio\'s rules')}{inForce === 'rules' ? t('（现在用的）', ' (in force)') : ''}</Chip>
+          <Chip active={ways.includes('agent')} tone={ways.includes('agent') ? 'blue' : 'neutral'} title={t('没有人备料：写手作为 agent 自己读书，用工具把正文交上来，再看、再改，改到满意才交稿（要写手的模型能当 agent）', 'Nobody prepares anything: the writer reads in the book as an agent, hands the text in with a tool, reads it over and changes it until it is satisfied (its model has to be one that can run as an agent)')} onClick={job.busy ? undefined : () => { toggleWay('agent') }}>{t('写手自己读、自己写', 'The writer as an agent')}{inForce === 'agent' ? t('（现在用的）', ' (in force)') : ''}</Chip>
+          {ways.length > 1 ? <span className="nv-muted nv-small">{t(`勾了 ${ways.length} 种：每个模型各写 ${ways.length} 稿`, `${ways.length} ways: ${ways.length} drafts a model`)}</span> : null}
+        </div>
         <Field label={t('给写手的要求（可不填）', 'Brief for the writer (optional)')}>
           <TextArea value={brief} minRows={2} disabled={job.busy} onChange={(event) => { setBrief(event.target.value) }} />
         </Field>

@@ -19,6 +19,7 @@
  *
  *   node scripts/build.mjs            a release: into lib/
  *   node scripts/build.mjs --stage    into .dev/stage/lib, a copy of the package the dev launcher runs
+ *   node scripts/build.mjs --stage-dir DIR   into DIR/lib, a stage of another dev instance's own
  *   node scripts/build.mjs --out DIR  into DIR
  *   node scripts/build.mjs --watch    rebuild on change, into the stage
  *
@@ -37,10 +38,14 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const pkg = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'))
 const watch = process.argv.includes('--watch')
 const dev = watch || process.argv.includes('--dev')
-/** The copy of the package the dev launcher runs: the same files, with a `lib/` of its own. */
-const stageDir = resolve(root, '.dev/stage')
+/**
+ * The copy of the package the dev launcher runs: the same files, with a `lib/` of its own. `--stage-dir DIR` names
+ * another one: a second dev instance, with a stage of its own, is not swapped under the first one's feet by a build.
+ */
+const stageFlag = process.argv.indexOf('--stage-dir')
+const stageDir = stageFlag >= 0 && process.argv[stageFlag + 1] !== undefined ? resolve(process.argv[stageFlag + 1]) : resolve(root, '.dev/stage')
 const outFlag = process.argv.indexOf('--out')
-const staged = process.argv.includes('--stage') || (watch && outFlag < 0)
+const staged = process.argv.includes('--stage') || stageFlag >= 0 || (watch && outFlag < 0)
 /** Where the build ends up. */
 const out = outFlag >= 0 && process.argv[outFlag + 1] !== undefined ? resolve(process.argv[outFlag + 1]) : staged ? resolve(stageDir, 'lib') : resolve(root, 'lib')
 /** Where esbuild writes: the place itself when watching, a directory beside it otherwise — put in place when all of it is there. */

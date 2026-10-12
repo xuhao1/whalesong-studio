@@ -64,7 +64,7 @@ ${base.style}`)
  * @param base.keyed - what the chapter was derived with went along (see `renderIntent`): the key it sets is named
  *   here, with what is asked last — said only among what was read, a key loses to the book's usual voice.
  */
-export function writerTask(base: Base & { context: string; brief?: string; continuing: boolean; words?: number; usual?: number; keyed?: boolean; /** The pictures the author gave for this chapter, as the task tells of them. */ pictures?: string; /** What the book's references have for this chapter: the notes kept on its plan. */ references?: string; /** What the author asks of the references at large, said with the notes. */ referenceGuide?: string }): string {
+export function writerTask(base: Base & { context: string; brief?: string; continuing: boolean; words?: number; usual?: number; keyed?: boolean; /** The pictures the author gave for this chapter, as the task tells of them. */ pictures?: string; /** What the book's references have for this chapter: the notes kept on its plan. */ references?: string; /** What the author asks of the references at large, said with the notes. */ referenceGuide?: string ; /** How the text is to be handed back, where that is not as the reply itself: a writer at work as an agent hands it in with a tool (`composeHow`). */ how?: string }): string {
   const pictures = base.pictures !== undefined && base.pictures.trim().length > 0 ? `\n\n${base.pictures.trim()}` : ''
   const overall = base.referenceGuide !== undefined && base.referenceGuide.trim().length > 0 ? [`作者对参考文献的总要求：${base.referenceGuide.trim()}\n\n`, `What the author asks of the references at large: ${base.referenceGuide.trim()}\n\n`] : ['', '']
   const references = base.references !== undefined && base.references.trim().length > 0
@@ -80,7 +80,7 @@ export function writerTask(base: Base & { context: string; brief?: string; conti
         `篇幅：没有规定字数，由你判断。章纲里的每个节拍都要写足、写透，不注水，也不赶进度；这一章该有多长就写多长。${base.usual !== undefined ? `本书已写的章节平均约 ${base.usual} 字，供你把握节奏，不是规定。` : ''}`,
         `Length: none is set — judge it yourself. Give every beat of the outline the room it needs, neither padded nor rushed; the chapter is as long as it has to be.${base.usual !== undefined ? ` The chapters written so far run to about ${base.usual} words on average: a sense of the book's pace, not a rule.` : ''}`,
       )
-  const how = L(
+  const how = base.how ?? L(
     base.lang,
     base.continuing ? '你是在续写：从"本章已有正文"的最后一个字之后接着写，不要重复已有内容，衔接处不能看出缝。直接输出续写的正文。' : '从本章第一句开始写，直接输出正文。',
     base.continuing ? 'You are continuing: pick up right after the last word of "This chapter so far", repeat nothing, and leave no seam. Output the continuation only.' : 'Start from the first sentence of the chapter. Output the prose only.',
@@ -127,6 +127,107 @@ What the notes hold:
 
 Output JSON only:
 {"notes": "the notes for the writer", "used": ["<title>: what of it you read"], "why": "one sentence: what you looked at and how you chose"}`)
+}
+
+/**
+ * The material for one piece of writing, prepared by the planner before the writer is asked: the writer writes in one
+ * request, with no tools, and of the book it sees what it is handed. The planner is told the work, shown what the
+ * book has — by name and size, to read in with its tools as far as the piece needs — and hands in what goes along:
+ * its own words for what is asked, where the story stands, what must hold, the form and the voice; and, by name,
+ * whose cards, which of the world, which threads, which chapters whole or in outline, which stretches of text.
+ * @param base.work - what the writer is to do, in a sentence.
+ * @param base.given - what the Studio hands the writer whatever is chosen (so that it is not chosen again).
+ * @param base.budget - about how many tokens what is chosen may come to.
+ */
+export function materialTask(base: Base & { work: string; instruction?: string; plan: string; intent?: string; passage?: string; text?: string; notes?: string; chapters: string; people: string; world: string; threads: string; given: string; budget: number; /** The line lies before the planner whole: the chapters' text and the author's jottings, beside the cards, the entries and the threads given in full under `people`, `world`, `threads`. */ whole?: { texts: string; jottings?: string } }): string {
+  const section = (title: string, body: string | undefined): string => (body !== undefined && body.trim().length > 0 ? `\n## ${title}\n${body.trim()}\n` : '')
+  return L(base.lang, `《${bare(base.title)}》的写手就要动笔了。写手一次写完、没有工具：这本书它看到的只有交给它的材料。这份材料由你来备——只备这一次用得上的。
+
+## 这一次写什么
+${base.work}
+${section('作者的要求（原话）', base.instruction)}
+## 这一章的章纲
+${base.plan}
+${section('这几章当初定下的思路', base.intent)}${section('要改的这一段，和它前后的原文', base.passage)}${section('这一章现在的正文', base.text)}${section('为这一章查好的参考摘记（会原样交给写手）', base.notes)}
+## 书里有什么（${base.whole !== undefined ? '这条线不大：正文、人物卡、设定、线索全在下面，没有别的可查' : '名字和大小；内容用 book_read / book_search 去看'}）
+### 这条线上的章节
+${base.chapters}
+${base.whole !== undefined ? `### 各章的正文（全文）\n${base.whole.texts}\n` : ''}### 人物${base.whole !== undefined ? '（每张卡的全文）' : ''}
+${base.people}
+### 设定${base.whole !== undefined ? '（每条的全文）' : ''}
+${base.world}
+### 线索
+${base.threads}
+${base.whole?.jottings !== undefined ? `### 作者的随笔（没想好的想法，不是设定：这一次用得上的，写进 situation 并说明是作者的想法）\n${base.whole.jottings}\n` : ''}
+## 不用你备的（工坊原样附给写手）
+${base.given}
+
+## 交回什么
+只输出 JSON：
+{
+  "task": "给写手的任务要求：这一次要写出什么、要做到什么——把作者的要求落到这件活上（几句话）",
+  "situation": "写手落笔前要知道的：故事此刻到了哪，谁在场，各人知道什么、不知道什么，手上有什么，刚发生了什么。只写这一次用得上的，一段话",
+  "keep": ["不能写错的事实、称谓、细节，一条一句，注明出处（第几章 / 谁的卡 / 哪条设定）；只列这一次真会碰到的"],
+  "form": "书写格式：人称与视角、时态、从哪里接起、写到哪里停、段落和对白怎么排",
+  "voice": "文风上这一次要把握的：语气、节奏、谁怎么说话（全书文风另附，不用抄）",
+  "people": ["要把人物卡整张带上的人：名字"],
+  "world": ["要带上的设定条目：名字"],
+  "threads": ["这一次要推进或要顾及的线索：标题"],
+  "chapters": [3],
+  "summaries": [1, 2],
+  "excerpts": [{"chapter": 5, "from": "这一段开头的十来个字", "to": "这一段结尾的十来个字", "why": "带它来对什么"}],
+  "note": "一两句话，给作者看：带了什么、没带什么、为什么"
+}
+
+规矩：
+1. people / world / threads 里的名字照上面列的写；没有卡片的人、没有条目的东西，写手要知道的话写进 situation。人物卡、设定条目、线索是整条原样带给写手的：带上它不用先把它读一遍。
+2. chapters 是整章原文带上的章号，summaries 是只带梗概的章号（都是这条线上的章号）；excerpts 是某一章里的一段原文：from、to 从正文里逐字照抄（各十来个字，能在那一章里对上）。
+3. 原文只带写手要对着看的——要接的那一场、要呼应的那几句、要学的那种口吻；别的事用你自己的话写进 situation 和 keep。人物卡、设定、线索也一样：只带这一次出场的人、用到的东西、要动的线索；只是沾得上边的不带。
+4. 你挑的原文、卡片和设定加起来不超过约 ${base.budget} 个 token（一个汉字约一个 token；上面每章的字数供你估）。超了会被退回。
+5. 用不上的那一项给空数组或空字符串。交上来的会当场核对：名字、章号、照抄的字句对不上的，会告诉你是哪一条。`, `The writer of "${bare(base.title)}" is about to write. It writes in one request and has no tools: of this book it sees what it is handed. You prepare that — what this one piece of writing can use, and no more.
+
+## What is written this time
+${base.work}
+${section('What the author asks (their words)', base.instruction)}
+## This chapter's outline
+${base.plan}
+${section('The thinking these chapters were planned with', base.intent)}${section('The passage to rewrite, and the text around it', base.passage)}${section('The chapter as it stands', base.text)}${section('Notes from the references, taken for this chapter (they go to the writer as they are)', base.notes)}
+## What the book has (${base.whole !== undefined ? 'this line is small: its text, its cards, its world and its threads are all below — there is nothing else to look up' : 'names and sizes; read with book_read / book_search'})
+### The chapters of this line
+${base.chapters}
+${base.whole !== undefined ? `### The chapters' text (whole)\n${base.whole.texts}\n` : ''}### People${base.whole !== undefined ? ' (every card, whole)' : ''}
+${base.people}
+### The world${base.whole !== undefined ? ' (every entry, whole)' : ''}
+${base.world}
+### Threads
+${base.threads}
+${base.whole?.jottings !== undefined ? `### The author's jottings (ideas not settled, not canon: what this piece can use goes into "situation", named as the author's idea)\n${base.whole.jottings}\n` : ''}
+## Not yours to prepare (the Studio hands the writer these as they are)
+${base.given}
+
+## What to hand in
+Output JSON only:
+{
+  "task": "what is asked of the writer: what this piece has to be and do — the author's word brought to bear on this piece of work (a few sentences)",
+  "situation": "what the writer has to know before the first word: where the story stands, who is there, what each knows and does not know, what each has in hand, what has just happened. Only what this piece can use, in a paragraph",
+  "keep": ["a fact, a form of address, a detail that must not come out wrong — one a line, with where it is from (which chapter, whose card, which entry); only what this piece will really touch"],
+  "form": "the form: person and point of view, tense, where it picks up, where it stops, how paragraphs and speech are set",
+  "voice": "what of the voice matters this time: tone, pace, how somebody speaks (the book's style goes along by itself — do not copy it)",
+  "people": ["whose card goes along whole: the name"],
+  "world": ["an entry of the world that goes along: its name"],
+  "threads": ["a thread this piece moves or has to mind: its title"],
+  "chapters": [3],
+  "summaries": [1, 2],
+  "excerpts": [{"chapter": 5, "from": "the first few words of the stretch", "to": "its last few words", "why": "what it is along for"}],
+  "note": "a sentence or two for the author: what went along, what did not, and why"
+}
+
+Rules:
+1. Names under people / world / threads are written as listed above; somebody without a card, something without an entry, goes into \`situation\` where the writer has to know of it. A card, an entry, a thread goes to the writer whole and as it is: taking one along does not take reading it first.
+2. \`chapters\` are chapters that go word for word, \`summaries\` chapters told in outline — both by their number on this line; an entry of \`excerpts\` is one stretch of a chapter's text: \`from\` and \`to\` are copied word for word from the text (a few words each, to be found in that chapter).
+3. Text goes word for word only where the writer has to have it before its eyes — the scene to pick up from, the lines to answer, a way of speaking to catch; everything else you say in your own words, in \`situation\` and \`keep\`. Cards, entries and threads likewise: whoever appears this time, what is used, the threads that move — not what merely touches on it.
+4. The text, cards and entries you choose come to no more than about ${base.budget} tokens together (the chapters' lengths above are there to reckon by). More is sent back.
+5. An item that has nothing is an empty list or an empty string. What you hand in is checked on the spot: a name, a chapter number or copied words that do not match are named to you.`)
 }
 
 /** What the pictures in a text are to whoever writes the text anew: lines that are handed back as they stand. */
@@ -2510,4 +2611,61 @@ Output JSON only: {"terms":[{"source":"as the original writes it, to the letter"
 /** What is to be given a rendering: names off the book's cards, or a stretch of its text to find the names in. */
 export function termsTask(base: { lang: PromptLanguage; settled: string; names?: string; text?: string; direction?: string }): string {
   return L(base.lang, `${base.settled.length > 0 ? `## 已经定下的（和它们保持一致，不要再给）\n${base.settled}\n\n` : ''}${base.direction !== undefined && base.direction.trim().length > 0 ? `## 作者的要求\n${base.direction.trim()}\n\n` : ''}${base.names !== undefined ? `## 要定译名的（设定里的人物和条目；“又叫”的每个写法也各给一条）\n${base.names}` : `## 一段正文：找出里面还没定译名的专名（人名和称呼、地名、家族与组织、器物、这本书自己的说法），各定一个\n${base.text ?? ''}`}`, `${base.settled.length > 0 ? `## Settled already (agree with these; do not give them again)\n${base.settled}\n\n` : ''}${base.direction !== undefined && base.direction.trim().length > 0 ? `## The author asks\n${base.direction.trim()}\n\n` : ''}${base.names !== undefined ? `## To settle (people and entries of the bible; each spelling under "also" gets a term of its own)\n${base.names}` : `## A stretch of the text: find the proper names in it that have no rendering yet (people and what they are called, places, houses and organisations, things, the book's own words) and settle one for each\n${base.text ?? ''}`}`)
+}
+
+/**
+ * What a writer is asked last when a chapter is written in parts (see `writerTask`'s `how`): a chapter asked to be
+ * longer than a model writes in one go is written beat by beat over several requests — each with the same material
+ * and the text so far, each told which beats are its own and where to stop.
+ * @param base.at - which part this is, from 0; `of`: how many there are.
+ * @param base.from - the first beat of this part, from 0; `beats`: the beats of this part, in a line each.
+ */
+export function partHow(base: Base & { at: number; of: number; from: number; beats: string[]; whole: number }): string {
+  const first = base.from + 1
+  const last = base.from + base.beats.length
+  const which = base.beats.length > 1 ? `${first}–${last}` : String(first)
+  const list = base.beats.map((beat, index) => `${base.from + index + 1}. ${beat}`).join('\n')
+  const final = base.at === base.of - 1
+  return L(base.lang,
+    `这一章要求约 ${base.whole} 字，一次写不下：分 ${base.of} 次写，这是第 ${base.at + 1} 次。上面的篇幅说的是这一次。\n${base.at > 0 ? '从“本章已有正文”的最后一个字之后接着写，不要重复已有内容，衔接处不能看出缝。' : '从本章第一句开始写。'}这一次只写章纲里的第 ${which} 个节拍：\n${list}\n${final ? '写完这几个节拍，这一章就到了结尾：照常收住。' : `写到第 ${last} 个节拍结束就停——后面的节拍留给下一次：不要提前写它们，也不要给这一章收尾。`}直接输出正文。`,
+    `This chapter is asked to run to about ${base.whole} words, more than one request holds: it is written in ${base.of} parts, and this is part ${base.at + 1}. The length above is this part's.\n${base.at > 0 ? 'Pick up right after the last word of "This chapter so far", repeat nothing, and leave no seam.' : 'Start from the first sentence of the chapter.'} Write beat${base.beats.length > 1 ? 's' : ''} ${which} of the outline, and no other:\n${list}\n${final ? 'With these beats the chapter comes to its end: close it as it should close.' : `Stop where beat ${last} ends — the beats after it are for the next part: do not write them ahead, and do not bring the chapter to a close.`} Output the prose only.`)
+}
+
+// ───────────────────────────── a chapter written by the writer as an agent ─────────────────────────────
+
+/** The tools a writer at work as an agent writes a chapter with, by name. */
+export interface ComposeTools { write: string; read: string; edit: string; done: string }
+
+/**
+ * How the writer works where it writes a chapter as an agent (`composeChapter`): nobody prepared its material — it
+ * reads in the book for itself, hands the text in with a tool, and goes over what it handed in as often as it sees
+ * fit before it calls the work done. Its persona is the writer's own (`writerSystem`): the trade and the style hold.
+ */
+export function composeRules(base: Base & ComposeTools): string {
+  return L(base.lang, `这一次你作为 agent 干这件活：材料没有人替你备，你自己读书，自己写，自己改，改到满意再交稿。
+
+1. 任务里已经给了：本章章纲和当初定下的思路、作品信息、标了“核心”的设定、和上一章衔接处的原文。别的都在书里——更早的章节、人物卡、设定条目、线索、各章的记忆——用 book_read、book_search 去读。读到这一章用得上为止：谁出场就读谁的卡，章纲提到的事就去找它当初是怎么写的；不必通读全书。
+2. 正文用 ${base.write} 提交：text 里只有正文——没有标题、章节号、说明、括号批注。一次交不下，后面几次带 append=true，接在已交的后面。上面“写作纪律”里说的“只输出正文”，指的就是你提交的这份正文。
+3. 交上来之后，正文是你手里的稿子：${base.read} 看它现在的样子；${base.edit} 改其中一处（find 是要改的原句，从现在的正文里逐字照抄，只能对上一处；replace 是改成的样子，留空就是删掉）；整段、整章不满意，就用 ${base.write} 重交。改几次都行，以最后的样子为准。
+4. 满意了调用 ${base.done}，用一两句话说你读了什么、怎么取舍的。调用之后这件活就结束了。
+5. 正文只通过工具交：写在回复里的不会进这一章。`, `This time you work as an agent: nobody prepared your material — you read in the book yourself, write, go over what you wrote, and hand it in when you are satisfied.
+
+1. The task gives you the chapter's outline and the thinking it was planned with, the book's particulars, the core entries of its world, and the text where this chapter joins the one before. Everything else is in the book — earlier chapters, character cards, entries of the world, threads, what each chapter left in memory: read it with book_read and book_search, as far as this chapter needs. Whoever is in it, read their card; whatever the outline refers to, find how it was written. The whole book need not be read.
+2. Hand the text in with ${base.write}: \`text\` holds the prose and nothing else — no title, no chapter number, no explanation, no bracketed notes. Where one call cannot hold it, the later calls say append=true and go on from what is handed in. "Output the prose only", among your rules above, is said of this text.
+3. Once handed in, the text is your draft to work on: ${base.read} shows it as it stands; ${base.edit} changes one place (\`find\` is the sentences to change, copied word for word from the text as it stands, and has to stand in one place only; \`replace\` is what they become — empty takes them out); a stretch or the whole of it you are not satisfied with is handed in again with ${base.write}. As many times as you see fit: what stands at the end is the chapter.
+4. When you are satisfied, call ${base.done} and say in a sentence or two what you read and how you decided. That ends the work.
+5. The text goes in through the tools only: what is written in a reply is no part of the chapter.`)
+}
+
+/** What a writer at work as an agent is asked last, in place of "output the prose" (see `writerTask`'s `how`). */
+export function composeHow(base: Base & ComposeTools & { continuing: boolean }): string {
+  return L(
+    base.lang,
+    base.continuing
+      ? `你是在续写：从“本章已有正文”的最后一个字之后接着写，不要重复已有内容，衔接处不能看出缝。先读你需要的；续写的部分用 ${base.write} 提交（只交新写的），要改就改，满意了调用 ${base.done}。`
+      : `从本章第一句开始写。先读你需要的；整章正文用 ${base.write} 提交，要改就改，满意了调用 ${base.done}。`,
+    base.continuing
+      ? `You are continuing: pick up right after the last word of "This chapter so far", repeat nothing, and leave no seam. Read what you need first; hand the continuation in with ${base.write} (what is new, and that only), change what you would change, and call ${base.done} when you are satisfied.`
+      : `Start from the first sentence of the chapter. Read what you need first; hand the whole chapter in with ${base.write}, change what you would change, and call ${base.done} when you are satisfied.`,
+  )
 }

@@ -10,7 +10,7 @@ import { ProviderError } from '../../core/media/http'
 import { ProjectError } from '../../core/project'
 import { displayPath } from '../../core/util/fs'
 import type { NovelService } from '../../host/service'
-import type { FiguresKept, JobKind, PicturesRead, ReferencesLooked } from '../../shared/types'
+import type { FiguresKept, JobKind, MaterialUsed, PicturesRead, ReferencesLooked } from '../../shared/types'
 
 /** JSON a tool may return (the Harness requires lossless JSON). */
 export type Json = string | number | boolean | null | Json[] | { [key: string]: Json }
@@ -277,6 +277,34 @@ export function figuresSaid(figures: FiguresKept | undefined, how: 'revised' | '
       : `the writer left out ${figures.back} picture line(s) of the text: they were put back where they stood`
   const made = figures.made <= 0 ? undefined : `${figures.made} picture line(s) naming no picture of the book were taken out`
   return `Pictures in the text: ${[back, made].filter(part => part !== undefined).join('; ')}.`
+}
+
+/**
+ * What the writer was handed for a piece of writing and who put it together, for the showrunner to pass on. Nothing,
+ * where nobody was asked to write.
+ */
+export function materialSaid(material: MaterialUsed | undefined): string | undefined {
+  if (material === undefined) return undefined
+  // Meant for the writer as an agent, and written the other way when that came to nothing.
+  const instead = material.instead !== undefined ? ` (The writer was to write this as an agent and it came to nothing — ${material.instead} — so it was written in one request instead. Tell the author.)` : ''
+  if (material.by === 'agent') {
+    return `Written by the writer as an agent: nobody prepared its material — it read in the book for itself${material.steps !== undefined ? ` (${material.steps} tool calls)` : ''}, handed the text in${material.drafts !== undefined && material.drafts > 1 ? ` ${material.drafts} times over` : ''}${material.edits !== undefined && material.edits > 0 ? ` and changed ${material.edits} place(s) of it before calling it done` : ''}. It was given ~${material.tokens} tokens to start from (the plan, what it was planned with, where the chapter joins).${material.note !== undefined ? ` Its own word: ${material.note}` : ''}`
+  }
+  if (material.by === 'rules') {
+    if (instead.length > 0) return `Material: packed by the Studio's standing rules (~${material.tokens} tokens).${instead}`
+    return material.why !== undefined
+      ? `Material: packed by the Studio's standing rules (~${material.tokens} tokens) — the planner was to prepare it and could not: ${material.why}. Tell the author.`
+      : `Material: packed by the Studio's standing rules (~${material.tokens} tokens).`
+  }
+  const went = [
+    material.chapters !== undefined && material.chapters.length > 0 ? `chapter(s) ${material.chapters.join(', ')} word for word` : undefined,
+    material.summaries !== undefined ? `${material.summaries} chapter(s) in outline` : undefined,
+    material.excerpts !== undefined ? `${material.excerpts} passage(s) of earlier text` : undefined,
+    material.people !== undefined ? `the cards of ${material.people.join(', ')}` : undefined,
+    material.world !== undefined ? `of the world: ${material.world.join(', ')}` : undefined,
+    material.threads !== undefined ? `threads: ${material.threads.join(', ')}` : undefined,
+  ].filter((part): part is string => part !== undefined)
+  return `Material: prepared for this piece by the planner (${material.how === 'agent' ? `as an agent${material.steps !== undefined ? `, ${material.steps} tool calls` : ''}` : 'in one request, choosing from the book\'s lists without reading in it'}), ~${material.tokens} tokens — ${went.length > 0 ? went.join('; ') : 'its own account of where the story stands, and nothing of the book word for word'}.${material.note !== undefined ? ` The planner: ${material.note}` : ''} The author can read all of it on the writing page (the line under the brief box).${instead}`
 }
 
 /**

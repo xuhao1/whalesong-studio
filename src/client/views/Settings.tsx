@@ -27,7 +27,7 @@ import {
   CREW_ROLES,
   type BookParallel, type CodexBridgeKind, type ContextSettings, type CrewRole, type CrewRoleSettings, type CrewSettings, type EmbeddingSettings, type GateKind, type ImageSettings, type ModelRoute, type NovelSettings, type SoundProviderKind, type SoundSettings, type TextModelRouting, type TextRole, type TtsProviderKind, type TtsSettings,
 } from '../../shared/types'
-import { CHAPTER_CONTEXT_DEFAULT, PARALLEL_DEFAULT, PARALLEL_MAX, PASSAGE_CONTEXT_DEFAULT, PLAY_CONTEXT_DEFAULT, REFERENCES_DEFAULT, REFERENCES_MAX, TTS_SERVICE_KEYS, type SoundSettings as SoundDraft } from '../../shared/types'
+import { CHAPTER_CONTEXT_DEFAULT, PARALLEL_DEFAULT, PARALLEL_MAX, PASSAGE_CONTEXT_DEFAULT, PLANNER_WHOLE_DEFAULT, PLAY_CONTEXT_DEFAULT, REFERENCES_DEFAULT, REFERENCES_MAX, TTS_SERVICE_KEYS, type SoundSettings as SoundDraft } from '../../shared/types'
 import { messageOf } from '../api'
 import { ImageModelField, ModelField, speechEndpoint, speechSuggestions, useKeyState, type KeyBag, type TypedKeys } from '../ModelField'
 import { Icon } from '../icons'
@@ -35,6 +35,7 @@ import {
   Button, Chip, Combo, cx, Field, SectionTitle, Select, Spinner, TextArea, TextInput, useAction, useKept, useLoad, useSnapshot, useStudio, useT, type ComboOption, type Translate,
 } from '../ui'
 import { QuickSetup, Readiness, Signature } from './Setup'
+import { CallsKept } from '../Calls'
 
 const ROLES: { role: TextRole; label: [string, string]; hint: [string, string] }[] = [
   { role: 'writer', label: ['写手', 'Writer'], hint: ['写正文、续写、改写。选文笔最好的模型。', 'Prose, continuations, rewrites. Pick the best stylist.'] },
@@ -230,7 +231,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
     const part: string = focus
     if (part === 'crew' || part === 'parallel' || part === 'context') setAdvanced(true)
     // What the Studio does by itself is set for every book: shown under that view, whichever was open.
-    if (part === 'auto') setScope('global')
+    if (part === 'auto' || part === 'material') setScope('global')
     if (part === 'image' || part === 'tts' || part === 'sound' || part === 'embedding') setUnfolded(previous => ({ ...previous, [part]: true }))
     // Not taken back when this effect is cleaned up: taking the request off the store (below) renders the page again at
     // once, and that very cleanup used to cancel the scroll it had just asked for. A page that is gone has nothing to find.
@@ -286,6 +287,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
       vision: draft.vision ?? null,
       crew: sectionPatch(view.settings.crew ?? {}, draft.crew ?? {}),
       textConcurrency: draft.textConcurrency ?? null,
+      callsMb: draft.callsMb ?? null,
       autoDigest: draft.autoDigest,
       siftCast: draft.siftCast !== false,
       plansFollow: draft.plansFollow === true,
@@ -293,6 +295,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
       mendBy: draft.mendBy === 'writer' ? 'writer' : 'planner',
       rewriteBy: draft.rewriteBy === 'planner' ? 'planner' : 'writer',
       mendReach: draft.mendReach === 'careful' ? 'careful' : 'bold',
+      materialBy: draft.materialBy === 'rules' || draft.materialBy === 'agent' ? draft.materialBy : 'planner',
       settleSuggestions: draft.settleSuggestions !== false,
       reviewAgentRevisions: draft.reviewAgentRevisions,
       agentFiles: draft.agentFiles ?? 'guide',
@@ -512,7 +515,19 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
         )}
         {/* Whose model writes the words of a change made by places: a model fit to write chapters is not always fit for a pinned, small change. */}
         {scope !== 'book' ? (
-          <div className="nv-form-grid">
+          <div className="nv-form-grid" data-section="material">
+            {/* What a writer is handed for a piece of writing: prepared for that piece by the planner, who looks first — or packed by rule. */}
+            <Field label={t('写作、改写前谁来备料', 'Who prepares what the writer is handed')} hint={t('写一章、续写、改写一段（润色 / 扩写 / 精简 / 按要求改）、整章重写之前，交给写手的材料从哪来。备好的材料在写作页要求框下面能看。', 'Where the material comes from before a chapter is written or gone on with, a passage rewritten, a chapter written over. What was prepared can be read under the brief box on the writing page.')}>
+              <Select<'planner' | 'rules' | 'agent'>
+                value={draft.materialBy === 'rules' || draft.materialBy === 'agent' ? draft.materialBy : 'planner'}
+                options={[
+                  { value: 'planner', label: t('策划先看：读书、挑出这一次用得上的，连同任务要求、格式、文风交给写手（默认）', 'The planner looks first: reads in the book, chooses what this piece needs, and hands it over with the task, the form and the voice (default)') },
+                  { value: 'rules', label: t('工坊按规则拼：最近的章节原文 + 检索到的片段，不经策划（快）', 'The Studio by its rules: the nearest chapters and what a search turns up, nobody looking first (quicker)') },
+                  { value: 'agent', label: t('不备料——写手作为 agent：自己读书，用工具把正文交上来，交上来之后还能反复改，满意了才交稿（写一章、续写；改写仍由策划备料）', 'Nobody — the writer as an agent: reads in the book for itself, hands the text in with a tool, goes over it as often as it sees fit (a chapter written or gone on with; rewrites still have the planner\'s material)') },
+                ]}
+                onChange={(value) => { update({ materialBy: value }) }}
+              />
+            </Field>
             <Field label={t('按处修改由谁写', 'Who writes a change made by places')} hint={t('修审校问题、照引导审校（写作页的“修改一章”）、全书修订、照要求通篇改一章：每一处改好的文字由哪个模型写。', 'Mending issues, a review by a lead, a revision through the book, a chapter revised in place: whose model writes what each place is to read.')}>
               <Select<'writer' | 'planner'>
                 value={draft.mendBy === 'writer' ? 'writer' : 'planner'}
@@ -663,6 +678,8 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
           <input type="checkbox" checked={draft.recheckIssues !== false} onChange={(event) => { update({ recheckIssues: event.target.checked }) }} />
           <span>{t('采纳修订之后，自动核对这一章还开着的审校意见', 'After a revision is accepted, have the issues still open in that chapter checked against the new text')}</span>
         </label>
+        {/* Not model calls, but done by itself all the same: every call is put on record. */}
+        <CallsKept value={draft.callsMb} onChange={(value) => { setDraft(({ callsMb: _old, ...rest }) => (value !== undefined ? { ...rest, callsMb: value } : rest)); setDirty(true) }} />
       </section>
 
       {scope === 'book' ? (
@@ -828,10 +845,11 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
               ['playTokens', t('幕间每一回合带多少上下文（tokens）', 'Context of each turn of an interlude (tokens)'), String(draft.context.playTokens ?? PLAY_CONTEXT_DEFAULT), 1],
               ['passageTokens', t('改写选中的一段带多少上下文（tokens）', 'Context a selected passage is rewritten with (tokens)'), String(draft.context.passageTokens ?? PASSAGE_CONTEXT_DEFAULT), 1],
               ['chapterTokens', t('改一章、整章重写带多少上下文（tokens）', 'Context a chapter is revised with (tokens)'), String(draft.context.chapterTokens ?? CHAPTER_CONTEXT_DEFAULT), 1],
+              ['plannerWholeTokens', t('多小的书整本摆给备料的策划（tokens；0：总是让它自己去读）', 'How small a book lies whole before the planner preparing material (tokens; 0: it always reads for itself)'), String(draft.context.plannerWholeTokens ?? PLANNER_WHOLE_DEFAULT), 0],
             ] as const).map(([key, label, everywhere, least]) => (
               <OwnMark key={key} own={own.context[key] !== undefined} scope={scope} t={t}>
                 <Field label={label}>
-                  <TextInput inputMode="numeric" value={own.context[key] !== undefined ? String(own.context[key]) : ''} placeholder={t(`沿用全局：${everywhere}`, `As for every book: ${everywhere}`)} onChange={(event) => { const value = number(event.target.value); const { [key]: _old, ...rest } = own.context; updateOwn({ context: value !== undefined && value >= (key === 'tailChars' ? 0 : 1) ? { ...rest, [key]: Math.max(least, Math.round(value)) } : rest }) }} />
+                  <TextInput inputMode="numeric" value={own.context[key] !== undefined ? String(own.context[key]) : ''} placeholder={t(`沿用全局：${everywhere}`, `As for every book: ${everywhere}`)} onChange={(event) => { const value = number(event.target.value); const { [key]: _old, ...rest } = own.context; updateOwn({ context: value !== undefined && value >= (key === 'tailChars' || key === 'plannerWholeTokens' ? 0 : 1) ? { ...rest, [key]: Math.max(least, Math.round(value)) } : rest }) }} />
                 </Field>
               </OwnMark>
             ))}
@@ -903,6 +921,9 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
           </Field>
           <Field label={t('改一章、整章重写带多少上下文（tokens）', 'Context a chapter is revised with (tokens)')} hint={t(`"改这一章"和"整章重写"用：设定、人物、前后相邻的几章；这一章自己的正文另算。留空：${CHAPTER_CONTEXT_DEFAULT.toLocaleString()}`, `For a chapter gone through or written over: the bible, the people, the chapters next to it; the chapter's own text comes besides. Empty: ${CHAPTER_CONTEXT_DEFAULT.toLocaleString()}`)}>
             <TextInput inputMode="numeric" value={draft.context.chapterTokens !== undefined ? String(draft.context.chapterTokens) : ''} placeholder={String(CHAPTER_CONTEXT_DEFAULT)} onChange={(event) => { const value = number(event.target.value); const { chapterTokens: _old, ...rest } = draft.context; update({ context: value !== undefined && value > 0 ? { ...rest, chapterTokens: Math.round(value) } : rest }) }} />
+          </Field>
+          <Field label={t('多小的书整本摆给备料的策划（tokens）', 'How small a book lies whole before the planner preparing material (tokens)')} hint={t(`“写作、改写前谁来备料”选了策划时用：一条线的正文、人物卡、设定加起来不超过这个数，策划一次请求备完；更大的书它自己去读。0：总是让它自己去读。留空：${PLANNER_WHOLE_DEFAULT.toLocaleString()}`, `Where the planner prepares the writer's material: a line whose text, cards and world come to no more than this is put before it whole, and it prepares in one request; a larger one it reads in for itself. 0: it always reads for itself. Empty: ${PLANNER_WHOLE_DEFAULT.toLocaleString()}`)}>
+            <TextInput inputMode="numeric" value={draft.context.plannerWholeTokens !== undefined ? String(draft.context.plannerWholeTokens) : ''} placeholder={String(PLANNER_WHOLE_DEFAULT)} onChange={(event) => { const value = number(event.target.value); const { plannerWholeTokens: _old, ...rest } = draft.context; update({ context: value !== undefined && value >= 0 ? { ...rest, plannerWholeTokens: Math.round(value) } : rest }) }} />
           </Field>
         </div>
         {view.context !== undefined && view.context.length > 0 ? (

@@ -11,7 +11,7 @@
  */
 import { useMemo, useState } from 'react'
 import type { IllustrationInfo } from '../shared/types'
-import { ImportPicture } from './ImportPicture'
+import { ImportPicture, type BroughtKind, type BroughtOf } from './ImportPicture'
 import { PICTURE_KIND } from './PictureRecord'
 import { Button, Chip, cx, Modal, ProjectImage, Select, Spinner, useAction, useLoad, useProject, useStudio, useT } from './ui'
 
@@ -89,10 +89,14 @@ export function PlacePicture({ image, path, chapter, onClose }: { image?: Illust
 }
 
 /**
- * A picture chosen out of everything the book has drawn.
+ * A picture chosen out of everything the book has drawn — or brought in from the author's computer, right there.
  * @param chapter - pictures of this chapter (its scenes, its panels) are listed first.
+ * @param bring - what one brought in from the computer comes in as, and whose: left out, a picture of the chapter's (or
+ *   nobody's). Said where the picture is chosen for a place of its own — somebody's sheet, an entry's design art — so
+ *   that the one brought in hangs there as it comes in.
+ * @param onPick - the picture chosen; `brought` where it was brought in just now (and hangs where `bring` says already).
  */
-export function PickPicture({ chapter, onPick, onClose }: { chapter?: string | undefined; onPick: (image: IllustrationInfo) => unknown; onClose: () => void }) {
+export function PickPicture({ chapter, bring, title, onPick, onClose }: { chapter?: string | undefined; bring?: { kind: BroughtKind; of?: BroughtOf } | undefined; title?: string | undefined; onPick: (image: IllustrationInfo, brought?: boolean) => unknown; onClose: () => void }) {
   const { controller } = useStudio()
   const t = useT()
   const { project, root } = useProject()
@@ -111,7 +115,7 @@ export function PickPicture({ chapter, onPick, onClose }: { chapter?: string | u
       ?? project.world.find(entry => entry.id === image.target)?.name
       ?? [...project.chapters, ...(project.lines ?? []).flatMap(line => line.chapters)].find(candidate => candidate.id === image.target)?.title)
   return (
-    <Modal wide title={t('选一张图', 'Choose a picture')} onClose={onClose}>
+    <Modal wide title={title ?? t('选一张图', 'Choose a picture')} onClose={onClose}>
       <div className="nv-chips">
         {chapter !== undefined && here.length > 0 ? <Chip active={filter === 'here'} tone={filter === 'here' ? 'blue' : 'neutral'} onClick={() => { setFilter('here') }}>{t(`这一章的 ${here.length}`, `Of this chapter · ${here.length}`)}</Chip> : null}
         <Chip active={filter === 'all'} tone={filter === 'all' ? 'blue' : 'neutral'} onClick={() => { setFilter('all') }}>{t(`全部 ${all.length}`, `All · ${all.length}`)}</Chip>
@@ -125,7 +129,7 @@ export function PickPicture({ chapter, onPick, onClose }: { chapter?: string | u
         ) : null}
         <span className="nv-spacer" />
         {/* One that is not in the book yet: brought in — it is one of the book's pictures from then on — and chosen. */}
-        <ImportPicture kind="picture" of={chapter !== undefined ? { chapter } : {}} variant="outline" label={t('从电脑导入…', 'From this computer…')} quiet onDone={(_path, image) => { void onPick(image) }} />
+        <ImportPicture kind={bring?.kind ?? 'picture'} of={bring !== undefined ? bring.of ?? {} : chapter !== undefined ? { chapter } : {}} variant="outline" label={t('从电脑导入…', 'From this computer…')} quiet={bring === undefined} onDone={(_path, image) => { void onPick(image, true) }} />
       </div>
       {images.data === undefined ? <div className="nv-center"><Spinner /></div> : list.length === 0 ? <p className="nv-muted">{every.length > 0 ? t('没有这样的图。', 'No such picture.') : t('这本书还没有图。', 'The book has no pictures yet.')}</p> : (
         <div className="nv-gallery-grid nv-pick-grid">

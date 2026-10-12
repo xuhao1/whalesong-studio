@@ -21,7 +21,7 @@ import { HistoryButton, RemovedCards } from '../History'
 import { DeletePicture, PictureViewer, usePictures, type LookOf } from '../PictureRecord'
 import { artsOf, isArtOf } from '../../shared/arts'
 import { ManyModels } from '../Trial'
-import { ImportPicture } from '../ImportPicture'
+import { ReadyPicture } from '../ReadyPicture'
 import { GuidePictures, useGiven } from '../Guides'
 import { clip as clipText } from '../../shared/text'
 import { containment, type Nested } from '../../shared/ties'
@@ -253,6 +253,7 @@ function World({ group }: { group: WorldGroup }) {
             ? <Select value={category} options={[{ value: 'all', label: t('全部类别', 'All categories') }, ...options(CATEGORY_LABELS, t).filter(option => used.includes(option.value))]} onChange={setCategory} />
             : <span className="nv-spacer" />}
           {project.world.length > 1 ? <Button size="sm" icon="sparkles" variant="ghost" onClick={() => { setTidying(true) }} title={t('让策划找出记重了的条目和放错类别的', 'Have the planner find entries kept twice and ones filed wrongly')}>{t('整理', 'Tidy')}</Button> : null}
+          {chosen === undefined && !picks.on && listedIds.length > 1 ? <LinePickBar picks={picks} listed={listedIds} kind="world" /> : null}
           <Button size="sm" icon="plus" variant="primary" onClick={() => { setCreating(true) }}>{t(...labels.create)}</Button>
         </div>
         {chosen !== undefined ? (
@@ -265,7 +266,7 @@ function World({ group }: { group: WorldGroup }) {
             {!picks.on ? <LinePickBar picks={picks} listed={listedIds} kind="world" /> : null}
           </div>
         ) : null}
-        {chosen !== undefined && picks.on ? <LinePickBar picks={picks} listed={listedIds} kind="world" /> : null}
+        {picks.on ? <LinePickBar picks={picks} listed={listedIds} kind="world" /> : null}
         {undrawn.length > 0 ? (
           <p className="nv-note nv-small">
             {group === 'places'
@@ -579,7 +580,7 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
                 title={dirty ? t('先保存当前修改', 'Save your edits first') : event.what.trim().length === 0 ? t('先写上发生了什么', 'Say what happened first') : t('画它在这件事之后的样子', 'Draw it as it is after this event')}
               >{event.image !== undefined ? t('重画', 'Redraw') : t('画这时的样子', 'Draw it then')}</Button>
               <ManyModels disabled={dirty || event.what.trim().length === 0} title={t('多模型：几个绘图服务各画一张它这时的样子', 'Several models: as it is then, from each image service')} ask={() => (controller.need('image') ? { title: `${entry.name} · ${clipText(event.what, 16)}`, method: 'image.create', params: { kind: picture ?? 'location', target: entry.id, event: `${event.chapter}:${event.kind}` } } : undefined)} />
-              <ImportPicture kind="art" of={{ entry: entry.id, event: `${event.chapter}:${event.kind}` }} disabled={dirty || event.what.trim().length === 0} />
+              <ReadyPicture kind="art" of={{ entry: entry.id, event: `${event.chapter}:${event.kind}` }} disabled={dirty || event.what.trim().length === 0} />
             </span>
           ) } : {})}
         />
@@ -646,7 +647,7 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
             </Button>
             <ManyModels disabled={dirty} title={t('多模型：几个绘图服务各画一张设定图来比', 'Several models: its design art from each image service, to compare')} ask={() => (controller.need('image') ? { title: `${entry.name} · ${t('设定图', 'design art')}`, method: 'image.create', params: { kind: picture ?? 'location', target: entry.id, ...(given.length > 0 ? { references: given } : {}) } } : undefined)} />
             {/* A photograph, a drawing of the author's own: one more of its pictures, as one drawn here would be. */}
-            <ImportPicture kind="art" of={{ entry: entry.id }} disabled={dirty} onDone={(path) => { setPicked(path) }} />
+            <ReadyPicture kind="art" of={{ entry: entry.id }} disabled={dirty} onDone={(path) => { setPicked(path) }} />
             {/* (With several kept, the one to delete is the one picked in the row above, by the button there.) */}
             {draft.visualImage !== undefined && arts.length <= 1 ? <DeletePicture bare path={draft.visualImage} disabled={dirty || drawing} /> : null}
           </div>

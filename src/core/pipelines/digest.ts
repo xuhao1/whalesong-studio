@@ -12,6 +12,7 @@ import type {
 import { MAIN_LINE } from '../../shared/types'
 import { clip, hashText, sameName } from '../../shared/text'
 import type { ArcSummary } from '../context'
+import { callsFor } from '../calls'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { asArray, asList, asRecord, asText } from '../llm'
 import { assign } from '../crew'
@@ -41,6 +42,11 @@ function chapterLabel(chapter: LocatedChapter, zh: boolean): string {
 
 /** Digest one chapter. Returns the stored memory unchanged when the text has not changed. */
 export async function digestChapter(core: NovelCore, runtime: ProjectRuntime, ref: string, task: TaskContext, options: { force?: boolean } = {}): Promise<ChapterMemory | undefined> {
+  // The calls it makes are on record as this chapter's, whoever digests it: a job of its own, or one that goes through many.
+  return await callsFor({ target: ref, step: 'digest' }, async () => await digestOne(core, runtime, ref, task, options))
+}
+
+async function digestOne(core: NovelCore, runtime: ProjectRuntime, ref: string, task: TaskContext, options: { force?: boolean }): Promise<ChapterMemory | undefined> {
   const { project } = runtime
   const chapter = await project.findChapter(ref)
   if (chapter === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${ref}"`)

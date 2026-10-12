@@ -349,7 +349,8 @@ describe('what is kept of a draft written to be compared', () => {
       // The model by its own name — the file's name has it with its dots gone — the level, the brief, and the round they are all of.
       expect(drafts.map(version => version.made!.label).sort()).toEqual([...routes.map(route => `${route.model}${'reasoningEffort' in route ? ' · max' : ''}`)].sort())
       const top = drafts.find(version => version.made!.effort === 'max')!
-      expect(top.made).toEqual({ how: 'trial', label: 'deepseek-v4.0-flash · max', provider: 'fake', model: 'deepseek-v4.0-flash', effort: 'max', round: top.made!.round, brief: '写得冷一点' })
+      // (And what it was written from, in short: here, what the Studio's rules pack.)
+      expect(top.made).toEqual({ how: 'trial', label: 'deepseek-v4.0-flash · max', provider: 'fake', model: 'deepseek-v4.0-flash', effort: 'max', round: top.made!.round, brief: '写得冷一点', material: { by: 'rules', tokens: top.made!.material!.tokens } })
       expect(top.reason).toBe('trial-deepseek-v4-0-flash-max')
       expect(new Set(drafts.map(version => version.made!.round)).size).toBe(1)
       // A version kept for another reason says nothing of the kind.

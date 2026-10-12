@@ -1167,6 +1167,8 @@ export interface VersionMade {
   effort?: string
   round?: string
   brief?: string
+  /** What its writer was handed, and who put it together — the planner, or the Studio by its rules: in short. The whole of it is kept beside the version (`material.read` with `version`). */
+  material?: MaterialUsed
 }
 
 export type ProposalStatus = 'pending' | 'accepted' | 'rejected'
@@ -1425,6 +1427,13 @@ export interface ContextSettings {
    * Revising a chapter is not writing the book on from it. Unset: {@link CHAPTER_CONTEXT_DEFAULT}.
    */
   chapterTokens?: number
+  /**
+   * How small a line of the plot has to be — its text, its cards, its world, in tokens — to lie before the planner
+   * whole when it prepares what a writer is handed ({@link NovelSettings.materialBy}): it then prepares in one request,
+   * with nothing left to look up. A larger one the planner reads in as an agent, as far as the piece needs. `0`: always
+   * as an agent. Unset: {@link PLANNER_WHOLE_DEFAULT}.
+   */
+  plannerWholeTokens?: number
 }
 
 /** What a turn of an interlude carries when the author has set no figure of their own. */
@@ -1433,6 +1442,8 @@ export const PLAY_CONTEXT_DEFAULT = 24_000
 export const PASSAGE_CONTEXT_DEFAULT = 24_000
 /** What a chapter is revised with, beside its own text, when the author has set no figure of their own: the chapters next to it whole, and what of the bible it touches. */
 export const CHAPTER_CONTEXT_DEFAULT = 60_000
+/** Up to this size a line of the plot is put before the planner whole when it prepares a writer's material, when the author has set no figure of their own. */
+export const PLANNER_WHOLE_DEFAULT = 32_000
 
 /** How many requests of one kind run at once when the author has set no number of their own. */
 export const PARALLEL_DEFAULT = 8
@@ -1732,6 +1743,55 @@ export interface EmbeddingSettings {
 /** How far a mending reaches ({@link NovelSettings.mendReach}). */
 export type MendReach = 'bold' | 'careful'
 
+/**
+ * What a writer was handed for one piece of writing, and who put it together ({@link NovelSettings.materialBy}).
+ */
+export interface MaterialUsed {
+  /**
+   * `planner`: chosen for this piece by the planner; `rules`: packed by the Studio's standing rules; `agent`: nobody
+   * prepared it — the writer wrote as an agent, reading in the book for itself.
+   */
+  by: 'planner' | 'rules' | 'agent'
+  /** The planner worked as an agent, reading in the book — or answered in one request, choosing from what it was shown. */
+  how?: 'agent' | 'call'
+  /** The line was small enough to lie before the planner whole — its text, its cards, its world: it chose having read all of it. */
+  whole?: boolean
+  /** Tool calls the planner made. */
+  steps?: number
+  /** About how many tokens of material went to the writer. */
+  tokens: number
+  /** Chapters that went word for word, by their place on the line; and how many were told in outline. */
+  chapters?: number[]
+  summaries?: number
+  /** Stretches of text that went word for word. */
+  excerpts?: number
+  /** Whose cards went, which entries of the world, which threads — by name. */
+  people?: string[]
+  world?: string[]
+  threads?: string[]
+  /** What the planner says of how it chose. */
+  note?: string
+  /** `rules`, though the planner was to prepare it: why. */
+  why?: string
+  /** `agent`: how often the writer handed the whole text in, and how many places of it it changed afterwards. */
+  drafts?: number
+  edits?: number
+  /** The writer was to write as an agent and it came to nothing: why. The piece was written this way instead. */
+  instead?: string
+}
+
+/** The material of the latest piece of writing done on a chapter, kept for the author to read ({@link MaterialUsed}). */
+export interface MaterialKept extends MaterialUsed {
+  chapter: string
+  /** What was written by it: a chapter from the top, a chapter gone on with, a passage rewritten, the chapter written over. */
+  work: 'draft' | 'continue' | 'passage' | 'chapter'
+  /** What was asked, where anything was. */
+  instruction?: string
+  at: Timestamp
+  /** Everything the writer read, as it read it (the standing rules of its trade and the book's style aside). */
+  text: string
+}
+
 export interface NovelSettings {
   schema: 1
   models: TextModelRouting
@@ -1773,6 +1833,18 @@ export interface NovelSettings {
    */
   rewriteBy?: 'writer' | 'planner'
   /**
+   * Who prepares what a writer is handed for a piece of writing the author asks for — a chapter written or gone on
+   * with, a passage rewritten (polished, widened, tightened, changed to a word of theirs), a chapter written over.
+   * `planner` (unset): the planner looks at the work first — reads in the book as far as the piece needs — and hands
+   * the writer its material: what is asked, where the story stands, what must hold, whose cards, which of the world,
+   * the text to hold it against, the form, the voice. `rules`: the Studio packs it by its standing rules — the
+   * nearest chapters word for word, whoever is named nearby, what a search turns up — and nobody looks first.
+   * `agent`: for a chapter written or gone on with, nobody prepares anything — the writer works as an agent: it reads
+   * in the book for itself, hands the text in with a tool, and goes over what it handed in as often as it sees fit
+   * before it calls the work done (a passage rewritten, a chapter written over go as with `planner`).
+   */
+  materialBy?: 'planner' | 'rules' | 'agent'
+  /**
    * How far a mending reaches — an issue mended, something the author noticed put right, a request carried through
    * the book, a chapter gone through to an instruction. `bold` (unset): mended through — every place it shows, what
    * has to change with each, a place taking in as much as has to move (a paragraph where a sentence will not do), a
@@ -1813,6 +1885,11 @@ export interface NovelSettings {
   setup?: { done?: boolean; at?: string }
   /** What the author pays per model, by model id: turns the usage ledger into money. */
   prices?: Record<string, PriceEntry>
+  /**
+   * The record of calls ({@link CallRow}): how many megabytes of it a book keeps, the oldest going first. Unset:
+   * {@link CALLS_MB_DEFAULT}. 0: none is kept.
+   */
+  callsMb?: number
   /** Which round of defaults this file has been brought up to; see the settings store's migration. */
   revision?: number
   /** Where these settings stand against the recommendations that ship with the plugin (`recommended.json`). */
@@ -2630,6 +2707,10 @@ export interface TrialDraft {
   model: string
   /** The reasoning level its writer was to think at, where the comparison named one. */
   effort?: string
+  /** Which way of preparing the writer's material this draft was to be written by, where the ways are what is compared. */
+  by?: 'planner' | 'rules' | 'agent'
+  /** What its writer was handed, and who put it together. */
+  material?: MaterialUsed
   text?: string
   words?: number
   seconds: number
@@ -2912,4 +2993,69 @@ export interface BookLock {
   ways: { kind: 'password' | 'device' | 'grant' | 'shelf'; id?: string; label?: string; at?: string }[]
   /** It stands on the private shelf; `own`: with a password of its own besides, which is what opens it. */
   shelf?: { own: boolean }
+}
+
+// ───────────── the record of calls ─────────────
+
+/** Megabytes of calls a book keeps where the author set no figure. */
+export const CALLS_MB_DEFAULT = 200
+
+/**
+ * One call the Studio made to a text model for a book, as the list of them shows it: when, for what work, to which
+ * model and how it was set, how much went and came back. What was sent and what was said is the call's own
+ * ({@link CallRecord}), read when it is asked for.
+ */
+export interface CallRow {
+  id: string
+  at: Timestamp
+  /** The job it was made in — what kind of work and its technical title — where it was made in one. */
+  kind?: JobKind
+  title?: string
+  job?: string
+  /** What it was within its job, where the job is more than one thing: a step of a batch (`write`, `digest`, `review`…), the digest that follows a chapter written. */
+  step?: string
+  /** The chapter it was for, where that is known. */
+  chapter?: string
+  /** What else it was for (a character, a place), as the job named it. */
+  target?: string
+  role: TextRole | 'vision'
+  provider: string
+  model: string
+  effort?: string
+  temperature?: number
+  maxTokens?: number
+  /** Characters sent — rules, what opens the request, and the request — and characters said back. */
+  sent: number
+  got: number
+  /** Tokens, as the provider counted them. */
+  input?: number
+  output?: number
+  cached?: number
+  /** Characters of reasoning the model showed. */
+  thought?: number
+  /** How long it took, in milliseconds. */
+  ms: number
+  /** How the reply ended (`stop`, `max-tokens`…); absent when the call failed. */
+  finish?: string
+  /** Why it failed, when it did; `stopped`: somebody stopped it. */
+  error?: string
+  stopped?: boolean
+  /** Pictures that went along, by what each is called. */
+  images?: string[]
+  /** Bytes it takes on disk, the parts it shares with other calls aside. */
+  bytes: number
+  /** The parts it shares with other calls (the same rules, the same story so far), by their names on disk. */
+  parts?: string[]
+}
+
+/** A call with everything that was sent and said. */
+export interface CallRecord extends CallRow {
+  /** The standing rules of the role, and the book's style where the role writes. */
+  system?: string
+  /** What opened the request and is the same over a run of calls: the book and the story so far. */
+  stable?: string
+  /** The request itself: the material of this piece and what was asked last. */
+  prompt: string
+  /** What the model said — as far as it got, where the call failed or was stopped. */
+  reply: string
 }

@@ -27,7 +27,7 @@ import {
   belongsTo, castOrder, chapterBudgetOf, MAIN_LINE,
   type ActivityEntry, type BookShows, type DerivedPlan, type ChapterTranslation, type GlossaryTerm, type HistoryKind, type HistoryVersion, type Timestamp, type CharacterLook, type CharacterMoment, type LifeMark, type ShowCount,
   type AudioScript, type CastPresence, type ChapterInfo, type ChapterMemory, type ChapterPlan, type ChapterReview, type ChapterStatus, type CharacterCard,
-  type ComicBoard, type ComicPanel, type IllustrationInfo, type Outline, type PlaySession, type PlotLine, type PlotLineInfo, type PlotLineOrigin, type PlotThread, type ProjectManifest, type ProjectState, type ProjectStats, type Proposal, type RemovedChapter,
+  type ComicBoard, type ComicPanel, type IllustrationInfo, type MaterialKept, type Outline, type PlaySession, type PlotLine, type PlotLineInfo, type PlotLineOrigin, type PlotThread, type ProjectManifest, type ProjectState, type ProjectStats, type Proposal, type RemovedChapter,
   type SettledSuggestion, type StyleProfile, type Suggestion, type ThreadTouch, type VersionInfo, type VersionMade, type VoiceCast, type Volume, type WorldEntry,
 } from '../shared/types'
 import { lifeOf, statusAt, type Life } from '../shared/life'
@@ -143,6 +143,7 @@ function madeOf(raw: string | undefined): VersionMade | undefined {
       ...(typeof said.effort === 'string' && said.effort.length > 0 ? { effort: said.effort } : {}),
       ...(typeof said.round === 'string' && said.round.length > 0 ? { round: said.round } : {}),
       ...(typeof said.brief === 'string' && said.brief.length > 0 ? { brief: said.brief } : {}),
+      ...(said.material !== undefined && said.material !== null && typeof said.material === 'object' && (said.material.by === 'planner' || said.material.by === 'rules') && typeof said.material.tokens === 'number' ? { material: said.material } : {}),
     }
   } catch {
     return undefined
@@ -458,6 +459,30 @@ export class Project {
 
   async removeState(...parts: string[]): Promise<void> {
     await this.remove(this.statePath(...parts))
+  }
+
+  // Records kept beside the book under `.novel/` that are no part of it as its pages show it (the record of calls):
+  // written, read and removed without anybody's page loading anew, and never held in memory once read.
+
+  async readRecord<T>(...parts: string[]): Promise<T | undefined> {
+    return await this.files.readJson<T>(this.statePath(...parts))
+  }
+
+  /** @returns the bytes the document takes. */
+  async writeRecord(parts: string[], value: unknown): Promise<number> {
+    const text = `${JSON.stringify(value)}\n`
+    await this.write(this.statePath(...parts), text, false)
+    return Buffer.byteLength(text)
+  }
+
+  async hasRecord(...parts: string[]): Promise<boolean> {
+    return await this.files.exists(this.statePath(...parts))
+  }
+
+  async dropRecord(...parts: string[]): Promise<void> {
+    const path = this.statePath(...parts)
+    await this.own(path, async () => { await this.files.removePath(path) })
+    this.cache.delete(path)
   }
 
   /** Serialized read-modify-write of one `.novel/` JSON document. */
@@ -2391,7 +2416,24 @@ export class Project {
     for (const name of names.slice(0, Math.max(0, names.length - keep))) {
       await this.files.removePath(join(dir, name))
       await this.files.removePath(join(dir, `${name.slice(0, -3)}.json`))
+      await this.files.removePath(join(dir, `${name.slice(0, -3)}.material.json`))
     }
+  }
+
+  /**
+   * Keep, beside a version, all its writer was handed: a draft written to be compared is read against what it was
+   * written from. It goes when the version goes.
+   */
+  async keepVersionMaterial(chapterId: string, versionId: string, kept: MaterialKept): Promise<void> {
+    if (!/^[\w.-]+$/.test(versionId)) return
+    const path = this.statePath('versions', chapterId, `${versionId}.material.json`)
+    await this.own(path, async () => { await this.files.writeAtomic(path, `${JSON.stringify(kept)}\n`) })
+  }
+
+  /** What the writer of a version was handed, where it was kept with it. */
+  async versionMaterial(chapterId: string, versionId: string): Promise<MaterialKept | undefined> {
+    if (!/^[\w.-]+$/.test(versionId)) return undefined
+    return await this.files.readJson<MaterialKept>(this.statePath('versions', chapterId, `${versionId}.material.json`))
   }
 
   async versions(chapterId: string): Promise<VersionInfo[]> {
@@ -2428,6 +2470,7 @@ export class Project {
       }
       await this.files.removePath(join(dir, `${id}.md`))
       await this.files.removePath(join(dir, `${id}.json`))
+      await this.files.removePath(join(dir, `${id}.material.json`))
       removed += 1
     }
     return { removed, kept }

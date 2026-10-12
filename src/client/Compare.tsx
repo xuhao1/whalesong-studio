@@ -22,6 +22,8 @@ export interface CompareItem {
   picture?: string
   /** Anything else a column shows: a plan, a clip to listen to. */
   body?: ReactNode
+  /** A line about how it came to be, over what it shows: what a draft was written from. */
+  note?: ReactNode
   /** Not there yet: being made, or being read. */
   loading?: boolean
   error?: string
@@ -144,6 +146,7 @@ export function Compare({ items, name, base = 340, more, className }: { items: r
                 {item.drop !== undefined ? <Button size="sm" variant="ghost" icon="trash" title={t('删掉它', 'Delete it')} aria-label={t('删掉它', 'Delete it')} onClick={() => { const drop = item.drop!; confirm.ask(drop.ask, drop.run) }} /> : null}
               </span>
             </header>
+            {item.note !== undefined ? <div className="nv-compare-note nv-muted nv-small">{item.note}</div> : null}
             <div className="nv-compare-body">
               {item.error !== undefined ? <p className="nv-trial-failed">{item.error}</p> : item.loading === true ? <div className="nv-center"><Spinner /></div> : item.picture !== undefined ? (
                 item.onOpen !== undefined

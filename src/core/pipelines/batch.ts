@@ -22,6 +22,7 @@ import {
 } from '../../shared/types'
 import { leadOf, portraitsOf } from '../../shared/images'
 import { hashText, newId, proseOnly } from '../../shared/text'
+import { callsFor } from '../calls'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import type { JobContext } from '../jobs'
 import { soundSetup } from '../media/sound'
@@ -172,7 +173,8 @@ export async function runBatch(plan: BatchPlan, task: TaskContext, lang: PromptL
       views.set(id, { state: 'running' })
       publish()
       const job = jobFor(step, id)
-      const note = await step.run({ ...task, ...(job !== undefined ? { job } : {}) })
+      // Every call the step makes is on record as this step's, for what it works on.
+      const note = await callsFor({ target: step.target, step: step.op }, async () => await step.run({ ...task, ...(job !== undefined ? { job } : {}) }))
       settle(id, 'done', note)
     } catch (error) {
       if (task.signal?.aborted === true || isAbort(error)) throw error
