@@ -1388,12 +1388,20 @@ export interface ContextSettings {
    * it. Unset: {@link PASSAGE_CONTEXT_DEFAULT}.
    */
   passageTokens?: number
+  /**
+   * Tokens of context a chapter is revised with — written over whole to an instruction, or gone through and changed
+   * where it stands — beside the chapter itself, which goes whole: the bible, the people, the chapters next to it.
+   * Revising a chapter is not writing the book on from it. Unset: {@link CHAPTER_CONTEXT_DEFAULT}.
+   */
+  chapterTokens?: number
 }
 
 /** What a turn of an interlude carries when the author has set no figure of their own. */
 export const PLAY_CONTEXT_DEFAULT = 24_000
 /** What a passage is rewritten with — the bible, the people, the story around its chapter — when the author has set no figure of their own. */
 export const PASSAGE_CONTEXT_DEFAULT = 24_000
+/** What a chapter is revised with, beside its own text, when the author has set no figure of their own: the chapters next to it whole, and what of the bible it touches. */
+export const CHAPTER_CONTEXT_DEFAULT = 60_000
 
 /** How many requests of one kind run at once when the author has set no number of their own. */
 export const PARALLEL_DEFAULT = 8

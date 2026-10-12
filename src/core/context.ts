@@ -139,12 +139,20 @@ const KEEP_SHARE = 0.75
 const FOLLOWING_SHARE = 0.3
 
 /**
+ * Whether the chapter in hand is what the work is done on — revised, reviewed — and so goes into the request whole,
+ * beside the budgets, rather than as much of its end as they leave room for.
+ */
+export function ownsChapter(options: Pick<PackOptions, 'purpose' | 'includeChapterText'>): boolean {
+  return options.includeChapterText === true && (options.purpose === 'revise' || options.purpose === 'review')
+}
+
+/**
  * How many tokens the story's own text and everything beside it may take, for
  * a model with this window.
  * @param own - the author's figure for the text; unset, the text gets half the window.
  * @param side - the author's figure for everything beside the text; unset, 22 % of the window and 120,000 at most.
  */
-export function contextBudgets(preference: ContextStrategy, own: number | undefined, contextWindow: number | undefined, side?: number): { textBudget: number; sideBudget: number; window: number } {
+export function contextBudgets(preference: ContextStrategy, own: number | undefined, contextWindow: number | undefined, side?: number): { textBudget: number; sideBudget: number; window: number; reserve: number } {
   const window = Math.max(8000, contextWindow ?? ASSUMED_CONTEXT_WINDOW)
   // What the instructions, the reply and the error of an estimate need.
   const reserve = Math.min(Math.floor(window * 0.12), 48_000)
@@ -153,9 +161,9 @@ export function contextBudgets(preference: ContextStrategy, own: number | undefi
     ? Math.max(3000, Math.min(Math.round(side), Math.floor(window / 2)))
     : Math.max(3000, Math.min(Math.floor(window * 0.22), 120_000))
   const room = Math.max(0, window - reserve - sideBudget)
-  if (preference === 'retrieval') return { textBudget: 0, sideBudget, window }
-  if (preference === 'full') return { textBudget: room, sideBudget, window }
-  return { textBudget: Math.min(room, own !== undefined && own > 0 ? Math.round(own) : Math.floor(window / 2)), sideBudget, window }
+  if (preference === 'retrieval') return { textBudget: 0, sideBudget, window, reserve }
+  if (preference === 'full') return { textBudget: room, sideBudget, window, reserve }
+  return { textBudget: Math.min(room, own !== undefined && own > 0 ? Math.round(own) : Math.floor(window / 2)), sideBudget, window, reserve }
 }
 
 /**
@@ -598,7 +606,10 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
   }
   if (currentText.length > 0) {
     const room = Math.max(1000, side - 200)
-    const body = estimateTokens(currentText) <= room ? currentText : clipTail(currentText, Math.max(options.tailChars, Math.floor(currentText.length * room / estimateTokens(currentText))))
+    // A chapter that is gone on from is read for where it stops: its end is what has to be there. A chapter that is
+    // revised or reviewed is the work itself, and travels whole whatever is left of the budget — cut to its end, it
+    // was written over, or judged, as its last few thousand characters (`ownsChapter`: who packs it makes room).
+    const body = ownsChapter(options) || estimateTokens(currentText) <= room ? currentText : clipTail(currentText, Math.max(options.tailChars, Math.floor(currentText.length * room / estimateTokens(currentText))))
     place('current', L(lang, '本章已有正文', 'This chapter so far'), body)
     side -= estimateTokens(body)
   }

@@ -10,7 +10,7 @@
  * becomes a proposal that waits for accept/reject in the review panel.
  */
 import { isPictureLine, keptPictures } from '../../shared/embedded'
-import { PASSAGE_CONTEXT_DEFAULT, MAIN_LINE, type MendReach, type ChapterReview, type FiguresKept, type IssueSeverity, type IssueType, type PictureGuide, type PicturesRead, type Proposal, type ReviewIssue, type SettledProposal } from '../../shared/types'
+import { CHAPTER_CONTEXT_DEFAULT, PASSAGE_CONTEXT_DEFAULT, MAIN_LINE, type MendReach, type ChapterReview, type FiguresKept, type IssueSeverity, type IssueType, type PictureGuide, type PicturesRead, type Proposal, type ReviewIssue, type SettledProposal } from '../../shared/types'
 import { changedCore, clip, clipTail, countWords, fuzzyFind, hashText, newId, occurrences } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { asArray, asRecord, asText } from '../llm'
@@ -393,6 +393,11 @@ export async function reviseSpan(core: NovelCore, runtime: ProjectRuntime, param
   return result
 }
 
+/** How much goes with a chapter that is revised, beside the chapter itself (`context.chapterTokens`). */
+export async function chapterContext(core: NovelCore, runtime: ProjectRuntime): Promise<number> {
+  return (await core.settingsOf(runtime)).context.chapterTokens ?? CHAPTER_CONTEXT_DEFAULT
+}
+
 export async function reviseChapter(core: NovelCore, runtime: ProjectRuntime, params: ReviseChapterParams, task: TaskContext): Promise<ReviseResult> {
   const { project } = runtime
   const { chapter, text } = await requireChapter(runtime, params.chapter)
@@ -407,11 +412,15 @@ export async function reviseChapter(core: NovelCore, runtime: ProjectRuntime, pa
   const route = await core.route(who === 'planner' ? 'architect' : 'writer', runtime, task)
   // Rewritten whole, the chapter still goes by the pictures the author gave it — or by the ones given to this revision.
   const guided = await guidePictures(core, runtime, route, params.guides ?? chapter.plan.guides, 'revise', task)
+  // A chapter written over to an instruction is not the book written on: it goes with the chapters next to it and
+  // what of the bible it touches — not with half the model's window of everything before, in which the instruction
+  // is one line among hundreds of thousands.
   const pack = await core.pack(runtime, route, {
     purpose: 'revise',
     chapter,
     brief: params.instruction,
     includeChapterText: true,
+    limit: await chapterContext(core, runtime),
     ...(based.used.length > 0 ? { chapterText: based.text } : {}),
     ...(task.signal !== undefined ? { signal: task.signal } : {}),
   })

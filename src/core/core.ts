@@ -9,7 +9,7 @@ import { mkdir, rename, rmdir, stat } from 'node:fs/promises'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 import { imageParallel, imageService, imageWays, localImages, ttsService, ttsWays, withBook } from '../shared/images'
 import { parallelOf, TTS_SERVICE_KEYS, type BookLock, type ImageSettings, type ModelRoute, type NovelSettings, type ProjectManifest, type ProjectRef, type TextRole, type TtsSettings } from '../shared/types'
-import { contextBudgets, packContext, type ContextPack, type PackOptions } from './context'
+import { contextBudgets, ownsChapter, packContext, type ContextPack, type PackOptions } from './context'
 import { currentJob, JobManager, type JobContext } from './jobs'
 import { resolveRoute, retrying, type LlmBackend } from './llm'
 import type { RoleRunner } from './roles'
@@ -19,6 +19,7 @@ import type { KeySource } from './media/http'
 import { createImageProvider, type ImageBridges, type ImageProvider } from './media/image'
 import { meterEmbedder, meterImages, meterLlm, meterSpeech, UsageStore } from './usage'
 import { hostOf } from '../shared/services'
+import { estimateTokens } from '../shared/text'
 import { createTtsProvider, type TtsProvider } from './media/tts'
 import { createSoundProvider, soundSetup, type SoundProvider } from './media/sound'
 import { BOOK_ENTRIES, MANIFEST_FILE, Project, ProjectError, type CreateProjectInput } from './project'
@@ -1058,12 +1059,15 @@ export class NovelCore {
     const settings = (await this.settingsOf(runtime)).context
     const budgets = contextBudgets(settings.strategy, settings.budgetTokens, await this.windowOf(route), settings.sideTokens)
     const { limit, ...rest } = options
-    return await packContext(runtime.project, runtime.index, {
-      ...rest,
-      textBudget: limit !== undefined ? Math.min(budgets.textBudget, Math.floor(limit * 0.6)) : budgets.textBudget,
-      sideBudget: limit !== undefined ? Math.min(budgets.sideBudget, Math.floor(limit * 0.4)) : budgets.sideBudget,
-      tailChars: settings.tailChars,
-    })
+    let textBudget = limit !== undefined ? Math.min(budgets.textBudget, Math.floor(limit * 0.6)) : budgets.textBudget
+    const sideBudget = limit !== undefined ? Math.min(budgets.sideBudget, Math.floor(limit * 0.4)) : budgets.sideBudget
+    // The chapter that is revised or reviewed goes whole, beside these budgets: where the window is small, the other
+    // chapters' text gives way to it — never the chapter to them.
+    if (ownsChapter(rest) && rest.chapter !== undefined) {
+      const own = estimateTokens(rest.chapterText ?? await runtime.project.chapterText(rest.chapter.plan.id))
+      textBudget = Math.max(0, Math.min(textBudget, budgets.window - budgets.reserve - sideBudget - own))
+    }
+    return await packContext(runtime.project, runtime.index, { ...rest, textBudget, sideBudget, tailChars: settings.tailChars })
   }
 
   /** The context window of the model behind a route, when it is known. */

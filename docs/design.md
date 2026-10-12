@@ -161,6 +161,29 @@ Shared rules: changes are **proposals** with a diff (revisions started in the St
 
 What it teaches: **a context is right for the work it was made for.** "The outline of what came before, and a window of the text" was set for writing a chapter; it was used as it stood for rewriting a passage because that shared a cache. A small piece of work handed a whole book is not made safer by it — the one line that says what to do is drowned.
 
+### A chapter revised: its neighbours, not the book — and itself, always whole
+
+The author, next: "is the mending of issues handed too much context as well?" Every way of mending was measured on an 80-chapter test book (490,000 characters, a model with a window of a million, chapter 41):
+
+| Way | Sent | |
+|---|---|---|
+| A chapter written over whole | **436K** (counted) | what a chapter is written with: nearly every other chapter word for word |
+| A chapter gone through in place (an agent) | the same, **again with every step** | seven steps: three million |
+| A chapter reviewed | about 290K a step | the forty chapters before (500K at the last chapter) |
+| An issue mended by places the planner names (one, book-wide, several together) | 30–38K a step | 23K of it a summary of every chapter of the line, 6K the chapter the issue is in |
+| A review led by what the author noticed | 8K a step for a chapter, 25K for the line | |
+| The quoted place alone | 22K, once | as of the section above |
+| Issues checked again after a change | 6K, once | |
+
+The planner's ways are small; the two that hand a whole chapter over were not. The rewrite sent with 436K — "change the ending: she does not fall asleep on his bed" — came back after 67 seconds **identical to the chapter, character for character**.
+
+- **Revising a chapter has a size of its own** (`context.chapterTokens`, 60,000 unless set; per book too), for both: the chapters next to it word for word (about two before and two after at 7,000 characters a chapter), the rest in outline; people, threads and lore as the chapter touches them. **The chapter itself comes besides, whole.**
+- **The chapter that is revised or reviewed always travels whole** (`ownsChapter`). Its text used to take what the side budget had left and was cut to its end when that ran out — a rule made for going on with a chapter, which is read for where it stops. With a small budget (a model with a small window; a context cut to size, as here) a rewrite or a review got the chapter's last three thousand characters. Now it does not compete: where the window is short, the other chapters' text gives way.
+- Same chapter, instruction and model: 436K → 54K tokens in, 67 s → 51 s; the first 5,807 characters untouched, the ending rewritten as asked. One real run of a chapter gone through in place: 7 steps of 56–61K (412K in all, 348K of it cached), 34 s, seven small proposals.
+- **Reviews are as they were**: a review holds the chapter against what came before, and the text of that is of use to it — whether it should be cut down as well is the author's to say. The planner's summary of every chapter grows with the book (23K at 80 chapters) and has no ceiling yet.
+
+What went wrong on the way: the first version set the limit and forgot that the chapter's own text is given its place last — a real run proposed the chapter at 2,395 words for 5,456, its first half gone. It showed only when each section's size was printed. **Changing a budget, print what every section got, not the total.**
+
 ### Translation: the names first, then chapter by chapter
 
 Hand a model a book of several hundred thousand words a chapter at a time, and the first thing to break is not the prose but the **names**: one person is Shen Heng in chapter three and Shen Hang in chapter forty; one thing has two renderings. A model does not remember, so nothing is left to its memory:

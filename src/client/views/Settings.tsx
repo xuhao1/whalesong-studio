@@ -27,7 +27,7 @@ import {
   CREW_ROLES,
   type BookParallel, type CodexBridgeKind, type ContextSettings, type CrewRole, type CrewRoleSettings, type CrewSettings, type EmbeddingSettings, type GateKind, type ImageSettings, type ModelRoute, type NovelSettings, type SoundProviderKind, type SoundSettings, type TextModelRouting, type TextRole, type TtsProviderKind, type TtsSettings,
 } from '../../shared/types'
-import { PARALLEL_DEFAULT, PARALLEL_MAX, PASSAGE_CONTEXT_DEFAULT, PLAY_CONTEXT_DEFAULT, REFERENCES_DEFAULT, REFERENCES_MAX, TTS_SERVICE_KEYS, type SoundSettings as SoundDraft } from '../../shared/types'
+import { CHAPTER_CONTEXT_DEFAULT, PARALLEL_DEFAULT, PARALLEL_MAX, PASSAGE_CONTEXT_DEFAULT, PLAY_CONTEXT_DEFAULT, REFERENCES_DEFAULT, REFERENCES_MAX, TTS_SERVICE_KEYS, type SoundSettings as SoundDraft } from '../../shared/types'
 import { messageOf } from '../api'
 import { ImageModelField, ModelField, speechEndpoint, speechSuggestions, useKeyState, type KeyBag, type TypedKeys } from '../ModelField'
 import { Icon } from '../icons'
@@ -827,6 +827,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
               ['sideTokens', t('设定、线索、检索片段一共占多少（tokens）', 'Bible, threads and looked-up passages together (tokens)'), draft.context.sideTokens !== undefined ? String(draft.context.sideTokens) : t('窗口的 22%', '22% of the window'), 1],
               ['playTokens', t('幕间每一回合带多少上下文（tokens）', 'Context of each turn of an interlude (tokens)'), String(draft.context.playTokens ?? PLAY_CONTEXT_DEFAULT), 1],
               ['passageTokens', t('改写选中的一段带多少上下文（tokens）', 'Context a selected passage is rewritten with (tokens)'), String(draft.context.passageTokens ?? PASSAGE_CONTEXT_DEFAULT), 1],
+              ['chapterTokens', t('改一章、整章重写带多少上下文（tokens）', 'Context a chapter is revised with (tokens)'), String(draft.context.chapterTokens ?? CHAPTER_CONTEXT_DEFAULT), 1],
             ] as const).map(([key, label, everywhere, least]) => (
               <OwnMark key={key} own={own.context[key] !== undefined} scope={scope} t={t}>
                 <Field label={label}>
@@ -899,6 +900,9 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
           </Field>
           <Field label={t('改写选中的一段带多少上下文（tokens）', 'Context a selected passage is rewritten with (tokens)')} hint={t(`设定、人物、这一章前后的故事；这一章自己在那一段前后的文字另算。留空：${PASSAGE_CONTEXT_DEFAULT.toLocaleString()}`, `The bible, the people, the story around its chapter; the chapter's own text around the passage comes besides. Empty: ${PASSAGE_CONTEXT_DEFAULT.toLocaleString()}`)}>
             <TextInput inputMode="numeric" value={draft.context.passageTokens !== undefined ? String(draft.context.passageTokens) : ''} placeholder={String(PASSAGE_CONTEXT_DEFAULT)} onChange={(event) => { const value = number(event.target.value); const { passageTokens: _old, ...rest } = draft.context; update({ context: value !== undefined && value > 0 ? { ...rest, passageTokens: Math.round(value) } : rest }) }} />
+          </Field>
+          <Field label={t('改一章、整章重写带多少上下文（tokens）', 'Context a chapter is revised with (tokens)')} hint={t(`"改这一章"和"整章重写"用：设定、人物、前后相邻的几章；这一章自己的正文另算。留空：${CHAPTER_CONTEXT_DEFAULT.toLocaleString()}`, `For a chapter gone through or written over: the bible, the people, the chapters next to it; the chapter's own text comes besides. Empty: ${CHAPTER_CONTEXT_DEFAULT.toLocaleString()}`)}>
+            <TextInput inputMode="numeric" value={draft.context.chapterTokens !== undefined ? String(draft.context.chapterTokens) : ''} placeholder={String(CHAPTER_CONTEXT_DEFAULT)} onChange={(event) => { const value = number(event.target.value); const { chapterTokens: _old, ...rest } = draft.context; update({ context: value !== undefined && value > 0 ? { ...rest, chapterTokens: Math.round(value) } : rest }) }} />
           </Field>
         </div>
         {view.context !== undefined && view.context.length > 0 ? (

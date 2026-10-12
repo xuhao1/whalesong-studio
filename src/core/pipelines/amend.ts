@@ -23,7 +23,7 @@ import { errorMessage, isAbort } from '../util/async'
 import { scheduleDigest } from './digest'
 import { schedulePlanFollow } from './follow'
 import { guidePictures, picturesRead } from './guides'
-import { figuresOf, mendsBold, mendsDirect, onPending, partedAs, requireChapter, settleTakenIn, shouldApply, takenIn } from './revise'
+import { chapterContext, figuresOf, mendsBold, mendsDirect, onPending, partedAs, requireChapter, settleTakenIn, shouldApply, takenIn } from './revise'
 
 export interface AmendParams {
   chapter: string
@@ -228,6 +228,8 @@ export async function amendChapter(core: NovelCore, runtime: ProjectRuntime, par
     chapter,
     brief: params.instruction,
     includeChapterText: true,
+    // (Sent again with every step the agent takes: the chapters next to this one, not the book — which it can read.)
+    limit: await chapterContext(core, runtime),
     ...(based.used.length > 0 ? { chapterText: based.text } : {}),
     ...(task.signal !== undefined ? { signal: task.signal } : {}),
   })
