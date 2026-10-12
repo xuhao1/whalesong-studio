@@ -11,11 +11,13 @@
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { ModelOption } from '../shared/rpc'
-import type { IllustrationInfo, ImageTrial, JobInfo, PictureGuide, SpeechTrial, TrialDraft, TrialPicture, TrialTake } from '../shared/types'
+import { TRIAL_MOST, type IllustrationInfo, type ImageTrial, type JobInfo, type PictureGuide, type SpeechTrial, type TrialDraft, type TrialPicture, type TrialTake } from '../shared/types'
 import { imageSetupName, speechSetupName } from '../shared/images'
 import { RpcError } from './api'
+import { Compare, type CompareItem } from './Compare'
 import { ImageModelField, ModelField, speechEndpoint, speechSuggestions, withSpeechModel } from './ModelField'
-import { Button, Chip, cx, Field, Modal, ProjectImage, Select, Spinner, TextArea, TextInput, useLoad, useMediaUrl, useProject, useSnapshot, useStudio, useT } from './ui'
+import { Button, Chip, cx, Field, Modal, recall, remember, Select, Spinner, TextArea, TextInput, useLoad, useMediaUrl, useProject, useSnapshot, useStudio, useT } from './ui'
+import { useVersionColumns, versionWhen } from './Versions'
 
 /**
  * What a dialog started, by what it draws: found again when the dialog is opened again on the same thing — the jobs
@@ -121,7 +123,31 @@ function drawnBy(info: JobInfo): number {
 
 // ───────────────────────────── pictures ─────────────────────────────
 
-interface Row { key: string; setup: ImageTrial; ready: boolean; current: boolean; on: boolean; model: string }
+interface Row { key: string; /** The setup it is a row of, by what the setup is: what was kept of it is found again by this. */ of: string; setup: ImageTrial; ready: boolean; current: boolean; on: boolean; model: string; /** A row the author added beside the setup's own, for another model of it: it can be taken away again. */ added?: boolean }
+
+/** A row as it took part in the comparison before this one, kept on this device. */
+interface KeptRow { of: string; on: boolean; model?: string; voice?: string; added?: boolean }
+
+/** Rows the author adds are told apart by a number of their own. */
+let addedRows = 0
+
+/**
+ * The rows of a dialog as they were when it last compared: what took part then takes part now, with the model (and
+ * voice) it had; a setup that was not there then is listed, and left out until it is ticked.
+ * @param put - a row with what was kept of it filled in.
+ */
+function rowsAsBefore<R extends { key: string; of: string; ready: boolean; current: boolean; on: boolean; added?: boolean }>(name: string, base: R[], put: (row: R, kept: KeptRow) => R): R[] {
+  const kept = (recall<{ rows?: KeptRow[] }>(`trial:${name}`)?.rows ?? []).filter(row => row !== null && typeof row === 'object' && typeof row.of === 'string')
+  if (!kept.some(row => base.some(one => one.of === row.of))) return base
+  const out: R[] = []
+  for (const one of base) {
+    const mine = kept.filter(row => row.of === one.of)
+    const own = mine.find(row => row.added !== true)
+    out.push(own !== undefined ? put({ ...one, on: own.on === true && one.ready }, own) : { ...one, on: false })
+    for (const row of mine.filter(row => row.added === true)) out.push(put({ ...one, key: `${one.key}+${addedRows += 1}`, current: false, added: true, on: row.on === true && one.ready }, row))
+  }
+  return out
+}
 
 /** The calls that draw, and can draw with several services at once. */
 export type DrawMethod = 'image.create' | 'image.redraw' | 'comic.render' | 'batch.art' | 'batch.stage'
@@ -209,8 +235,9 @@ export function ImageTrialDialog({ of, params, onClose, onChanged }: { of: Trial
   const [rows, setRows] = useState<Row[] | undefined>()
   useEffect(() => {
     if (setups.data === undefined || rows !== undefined) return
-    // Whatever can draw right now takes part unless the author says otherwise.
-    setRows(setups.data.image.map(setup => ({ key: setup.id, setup: { label: setup.label, image: setup.image }, ready: setup.ready, current: setup.current, on: setup.ready, model: setup.image.model ?? '' })))
+    // Whatever can draw right now takes part unless the author says otherwise — or said otherwise the last time.
+    const base: Row[] = setups.data.image.map(setup => ({ key: setup.id, of: `${setup.image.provider ?? ''}|${setup.image.baseURL ?? ''}|${setup.image.model ?? ''}`, setup: { label: setup.label, image: setup.image }, ready: setup.ready, current: setup.current, on: setup.ready, model: setup.image.model ?? '' }))
+    setRows(rowsAsBefore('image', base, (row, kept) => ({ ...row, model: typeof kept.model === 'string' && (kept.model.length > 0 || row.added === true) ? kept.model : row.model })))
   }, [setups.data, rows])
   const draw = of.draw
   const many = draw?.many === true
@@ -257,6 +284,8 @@ export function ImageTrialDialog({ of, params, onClose, onChanged }: { of: Trial
     setTaken(undefined)
     setGone(new Set())
     setRoundTaken(undefined)
+    // What takes part now is what the dialog opens on the next time.
+    remember('trial:image', { rows: (rows ?? []).map((row): KeptRow => ({ of: row.of, on: row.on, model: row.model, ...(row.added === true ? { added: true } : {}) })) })
     const id = `round-${Date.now().toString(36)}`
     job.start(async (): Promise<{ jobId: string } | { jobId: string }[]> => {
       if (draw !== undefined) {
@@ -291,13 +320,21 @@ export function ImageTrialDialog({ of, params, onClose, onChanged }: { of: Trial
     controller.toast('success', t(`用了「${picture.label}」画的这张${done.replaced.length > 0 ? `，换到了 ${done.replaced.join('、')} 上` : ''}${done.removed > 0 ? `；另外 ${done.removed} 张删掉了` : '；其余的还在图库里'}`, `Took the one by ${picture.label}${done.replaced.length > 0 ? `, now on ${done.replaced.join(', ')}` : ''}${done.removed > 0 ? `; the other ${done.removed} deleted` : '; the others stay in the gallery'}`))
   })
   const edit = (key: string, patch: Partial<Row>): void => { setRows(previous => previous?.map(row => (row.key === key ? { ...row, ...patch } : row))) }
-  const again = (row: Row): void => { setRows(previous => (previous === undefined ? previous : [...previous.slice(0, previous.indexOf(row) + 1), { ...row, key: `${row.key}+${previous.length}`, current: false, on: true, model: '' }, ...previous.slice(previous.indexOf(row) + 1)])) }
+  const again = (row: Row): void => { setRows(previous => (previous === undefined ? previous : [...previous.slice(0, previous.indexOf(row) + 1), { ...row, key: `${row.key}+${addedRows += 1}`, current: false, added: true, on: true, model: '' }, ...previous.slice(previous.indexOf(row) + 1)])) }
+  const leave = (key: string): void => { setRows(previous => previous?.filter(row => row.key !== key)) }
+  // A picture nobody wants, deleted where it is looked at.
+  const drop = (path: string): Promise<unknown> => controller.guard(async () => {
+    await controller.api.call('image.delete', { root, paths: [path] })
+    setGone(previous => new Set([...previous, path]))
+    await controller.refreshProject()
+    onChanged?.()
+  })
   const running = job.busy
   const title = draw !== undefined ? t(`用几个绘图服务画：${draw.title}`, `By several image services: ${draw.title}`) : of.picture !== undefined ? t('换几个绘图服务画同一张', 'The same picture by several image services') : t(`用几个绘图服务画「${of.character?.name ?? ''}」的立绘`, `A portrait of ${of.character?.name ?? ''} by several image services`)
   // Over — now, or while the dialog was closed: what its round still has to be taken says so.
   const finished = many && !running && ((job.done !== undefined && job.done.status === 'done') || roundWaits.length > 0)
   return (
-    <Modal wide className="nv-modal-trial" title={title} onClose={onClose} footer={(
+    <Modal wide roomy="compare" className="nv-modal-trial" title={title} onClose={onClose} footer={(
       <>
         <span className="nv-muted nv-small">{many ? t('每一样各画一张，都留着；采纳了才算。可以关掉，之后再选。', 'One picture each, of every thing, all kept; nothing counts until taken. Close this and choose later.') : t('各画一张，都留着；采纳了才算。可以关掉，之后再选。', 'One picture each, all kept; nothing counts until one is taken. Close this and choose later.')}</span>
         <span className="nv-spacer" />
@@ -320,6 +357,7 @@ export function ImageTrialDialog({ of, params, onClose, onChanged }: { of: Trial
                 <ImageModelField bare t={t} value={{ ...row.setup.image, provider: row.setup.image.provider ?? 'none', model: row.model }} disabled={!row.ready || running} placeholder={t('模型（留空用它配好的）', 'Model (empty: as set up)')} onChange={(model) => { edit(row.key, { model }) }} />
               </div>
               {row.ready && row.setup.image.provider !== 'codex' ? <button type="button" className="nv-link nv-small" disabled={running} onClick={() => { again(row) }} title={t('同一个服务再加一行，选另一个模型', 'Another row of the same service, for another model')}>{t('＋ 再加一个模型', '+ another model')}</button> : null}
+              {row.added === true ? <Button size="sm" variant="ghost" icon="x" disabled={running} title={t('去掉这一行', 'Take this row away')} aria-label={t('去掉这一行', 'Take this row away')} onClick={() => { leave(row.key) }} /> : null}
             </div>
           ))}
         </div>
@@ -348,20 +386,15 @@ export function ImageTrialDialog({ of, params, onClose, onChanged }: { of: Trial
       ) : null}
       {!many && pictures.length > 0 ? (
         <>
-          <div className="nv-trial-grid">
-            {pictures.filter(picture => picture.path === undefined || !gone.has(picture.path)).map((picture, at) => (
-              <figure key={picture.path ?? `${picture.label}:${at}`} className={cx('nv-trial-cell', picture.path !== undefined && picture.path === taken?.path && 'is-taken')}>
-                <div className="nv-trial-picture">
-                  {picture.path !== undefined ? <ProjectImage path={picture.path} alt={picture.label} /> : picture.error !== undefined ? <p className="nv-trial-failed">{picture.error}</p> : <Spinner />}
-                </div>
-                <figcaption>
-                  <strong>{picture.label}</strong>
-                  <span className="nv-muted nv-small">{picture.path !== undefined ? (picture.at !== undefined ? t(`之前画的 · ${new Date(picture.at).toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`, `drawn before · ${new Date(picture.at).toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`) : took(picture.seconds, t)) : picture.error !== undefined ? t('没画成', 'failed') : t('正在画…', 'drawing…')}</span>
-                  {picture.path !== undefined ? (picture.path === taken?.path ? <Chip tone="green">{t('用了这张', 'taken')}</Chip> : <Button size="sm" variant="outline" icon="check" onClick={() => take(picture)}>{t('用这张', 'Take this one')}</Button>) : null}
-                </figcaption>
-              </figure>
-            ))}
-          </div>
+          <Compare name="pictures" base={260} items={pictures.filter(picture => picture.path === undefined || !gone.has(picture.path)).map((picture, at): CompareItem => ({
+            key: picture.path ?? `${picture.label}:${at}`,
+            title: picture.label,
+            sub: picture.path !== undefined ? (picture.at !== undefined ? t(`之前画的 · ${versionWhen({ createdAt: picture.at })}`, `drawn before · ${versionWhen({ createdAt: picture.at })}`) : took(picture.seconds, t)) : picture.error !== undefined ? t('没画成', 'failed') : t('正在画…', 'drawing…'),
+            ...(picture.path !== undefined ? { picture: picture.path } : picture.error !== undefined ? { error: picture.error } : { loading: true }),
+            taken: picture.path !== undefined && picture.path === taken?.path,
+            ...(picture.path !== undefined ? { action: picture.path === taken?.path ? <Chip tone="green">{t('用了这张', 'taken')}</Chip> : <Button size="sm" variant="outline" icon="check" onClick={() => take(picture)}>{t('用这张', 'Take this one')}</Button> } : {}),
+            ...(picture.path !== undefined && picture.path !== taken?.path ? { drop: { ask: t(`删掉「${picture.label}」画的这张对比图？图片文件一起删掉，找不回来。`, `Delete this picture by ${picture.label}? The file goes too; it cannot be brought back.`), run: () => { void drop(picture.path!) } } } : {}),
+          }))} />
           <label className="nv-check nv-small">
             <input type="checkbox" checked={dropOthers} onChange={(event) => { setDropOthers(event.target.checked) }} />
             <span>{t('采纳一张时，把这里其余的删掉（不勾：都留着，之后还能改选）', 'When one is taken, delete the others here (unticked: all kept, to choose again later)')}</span>
@@ -391,7 +424,7 @@ export function ManyModels({ ask, disabled, title, label, onChanged }: { ask: Dr
 
 // ───────────────────────────── speech ─────────────────────────────
 
-interface VoiceRow { key: string; label: string; tts: SpeechTrial['tts']; ready: boolean; current: boolean; on: boolean; voice: string }
+interface VoiceRow { key: string; of: string; label: string; tts: SpeechTrial['tts']; ready: boolean; current: boolean; on: boolean; voice: string; added?: boolean }
 
 /**
  * The same words spoken by each of several speech setups, to be listened to side by side.
@@ -406,7 +439,9 @@ export function SpeechTrialDialog({ of, onClose, onChanged }: { of: { character?
   const [rows, setRows] = useState<VoiceRow[] | undefined>()
   useEffect(() => {
     if (setups.data === undefined || rows !== undefined) return
-    setRows((setups.data.speech ?? []).map(setup => ({ key: setup.id, label: setup.label, tts: setup.tts, ready: setup.ready, current: setup.current, on: setup.ready, voice: '' })))
+    const base: VoiceRow[] = (setups.data.speech ?? []).map(setup => ({ key: setup.id, of: `${setup.tts.provider ?? ''}|${setup.tts.baseURL ?? ''}|${setup.tts.model ?? ''}`, label: setup.label, tts: setup.tts, ready: setup.ready, current: setup.current, on: setup.ready, voice: '' }))
+    // As they were the last time lines were compared: the models and voices tried then.
+    setRows(rowsAsBefore('speech', base, (row, kept) => ({ ...row, voice: typeof kept.voice === 'string' ? kept.voice : '', tts: typeof kept.model === 'string' && kept.model.length > 0 && kept.model !== row.tts.model ? withSpeechModel(row.tts, { id: kept.model }) : row.tts })))
   }, [setups.data, rows])
   const [who, setWho] = useState(of.character?.id ?? '')
   const [text, setText] = useState(of.text ?? (of.character !== undefined ? t(`我是${of.character.name}。有些话，我只说一遍。`, `I am ${of.character.name}. Some things I only say once.`) : t('雨下了一夜。天亮的时候，巷子里只剩下一把撑开的伞。', 'It rained all night. By morning there was only an open umbrella left in the lane.')))
@@ -417,11 +452,13 @@ export function SpeechTrialDialog({ of, onClose, onChanged }: { of: { character?
   const [taken, setTaken] = useState<string | undefined>()
   const chosen = (rows ?? []).filter(row => row.on)
   const edit = (key: string, patch: Partial<VoiceRow>): void => { setRows(previous => previous?.map(row => (row.key === key ? { ...row, ...patch } : row))) }
-  const again = (row: VoiceRow): void => { setRows(previous => (previous === undefined ? previous : [...previous.slice(0, previous.indexOf(row) + 1), { ...row, key: `${row.key}+${previous.length}`, current: false, on: true, voice: '' }, ...previous.slice(previous.indexOf(row) + 1)])) }
+  const again = (row: VoiceRow): void => { setRows(previous => (previous === undefined ? previous : [...previous.slice(0, previous.indexOf(row) + 1), { ...row, key: `${row.key}+${addedRows += 1}`, current: false, added: true, on: true, voice: '' }, ...previous.slice(previous.indexOf(row) + 1)])) }
+  const leave = (key: string): void => { setRows(previous => previous?.filter(row => row.key !== key)) }
   const running = job.busy
   const start = (): void => {
     setTaken(undefined)
     setAsked(chosen)
+    remember('trial:speech', { rows: (rows ?? []).map((row): KeptRow => ({ of: row.of, on: row.on, ...(row.tts.model !== undefined ? { model: row.tts.model } : {}), voice: row.voice, ...(row.added === true ? { added: true } : {}) })) })
     const trials: SpeechTrial[] = chosen.map(row => ({ label: speechSetupName({ provider: row.tts.provider ?? 'none', ...(row.tts.baseURL !== undefined ? { baseURL: row.tts.baseURL } : {}), ...(row.tts.model !== undefined ? { model: row.tts.model } : {}) }), tts: row.tts, ...(row.voice.trim().length > 0 ? { voice: row.voice.trim() } : {}) }))
     job.start(async () => await controller.api.call('trial.speak', { root, text, ...(who.length > 0 ? { character: who } : {}), ...(of.direction !== undefined ? { direction: of.direction } : {}), with: trials }))
   }
@@ -435,7 +472,7 @@ export function SpeechTrialDialog({ of, onClose, onChanged }: { of: { character?
     controller.toast('success', scope === 'book' ? t(`这本书从现在起用 ${done.label} 配音`, `This book is voiced with ${done.label} from now on`) : t(`所有的书从现在起用 ${done.label} 配音；原来那套记着`, `Every book is voiced with ${done.label} from now on; the setup before is remembered`))
   })
   return (
-    <Modal wide className="nv-modal-trial" title={t('换几个配音服务念同一句', 'The same line by several speech setups')} onClose={onClose} footer={(
+    <Modal wide roomy="compare" className="nv-modal-trial" title={t('换几个配音服务念同一句', 'The same line by several speech setups')} onClose={onClose} footer={(
       <>
         <span className="nv-muted nv-small">{t('同一句话、同一个人，各念一遍。只是试听，采纳了才换。', 'The same words by the same speaker, once each. Samples only: nothing changes until you take one.')}</span>
         <span className="nv-spacer" />
@@ -462,6 +499,7 @@ export function SpeechTrialDialog({ of, onClose, onChanged }: { of: { character?
               </div>
               <TextInput className="nv-trial-voice" value={row.voice} disabled={!row.ready || running} placeholder={row.tts.provider === 'qwen-audiogen' ? t('音色（留空：照人物卡的描述）', 'Voice (empty: as the card describes it)') : t('音色（留空：它给这个人选的）', 'Voice (empty: the one it casts)')} onChange={(event) => { edit(row.key, { voice: event.target.value }) }} />
               {row.ready ? <button type="button" className="nv-link nv-small" disabled={running} onClick={() => { again(row) }} title={t('同一个服务再加一行，选另一个模型或音色', 'Another row of the same service, for another model or voice')}>{t('＋ 再加一行', '+ another row')}</button> : null}
+              {row.added === true ? <Button size="sm" variant="ghost" icon="x" disabled={running} title={t('去掉这一行', 'Take this row away')} aria-label={t('去掉这一行', 'Take this row away')} onClick={() => { leave(row.key) }} /> : null}
             </div>
           ))}
         </div>
@@ -475,26 +513,26 @@ export function SpeechTrialDialog({ of, onClose, onChanged }: { of: { character?
         <TextArea value={text} minRows={2} disabled={running} onChange={(event) => { setText(event.target.value) }} />
       </Field>
       {job.error !== undefined ? <p className="nv-note is-warn">{job.error}</p> : null}
-      {takes.length > 0 ? (
-        <div className="nv-trial-columns is-takes">
-          {takes.map((clip, at) => (
-            <TrialColumn key={`${clip.label}:${at}`} title={clip.label} sub={clip.error !== undefined ? t('没念成', 'failed') : clip.path !== undefined ? `${took(clip.seconds, t)}${clip.duration !== undefined ? ` · ${t(`${clip.duration} 秒长`, `${clip.duration}s long`)}` : ''}` : t('正在念…', 'speaking…')} taken={taken?.startsWith(`${at}:`) === true}
-              action={clip.path !== undefined ? (asked[at]?.current === true && asked[at]?.voice.trim().length === 0 && taken === undefined ? <Chip tone="blue">{t('现在用的', 'in use')}</Chip> : (
-                <span className="nv-row-wrap">
-                  {taken === `${at}:book` ? <Chip tone="green">{t('这本书用它了', 'this book\'s now')}</Chip> : <Button size="sm" variant="outline" icon="check" onClick={() => take(at, 'book')}>{t('这本书用它', 'For this book')}</Button>}
-                  {taken === `${at}:studio` ? <Chip tone="green">{t('全局用它了', 'every book\'s now')}</Chip> : <Button size="sm" variant="ghost" onClick={() => take(at, 'studio')}>{t('全局用它', 'For every book')}</Button>}
-                </span>
-              )) : undefined}>
-              {clip.error !== undefined ? <p className="nv-trial-failed">{clip.error}</p> : clip.path !== undefined ? (
-                <>
-                  <audio controls preload="auto" src={mediaUrl(clip.path, clip.seconds)} className="nv-trial-audio" />
-                  {clip.voice !== undefined ? <p className="nv-muted nv-small">{t(`音色：${clip.voice}`, `Voice: ${clip.voice}`)}</p> : null}
-                </>
-              ) : <div className="nv-center"><Spinner /></div>}
-            </TrialColumn>
-          ))}
-        </div>
-      ) : null}
+      <Compare name="clips" base={300} items={takes.map((clip, at): CompareItem => ({
+        key: `${clip.label}:${at}`,
+        title: clip.label,
+        sub: clip.error !== undefined ? t('没念成', 'failed') : clip.path !== undefined ? `${took(clip.seconds, t)}${clip.duration !== undefined ? ` · ${t(`${clip.duration} 秒长`, `${clip.duration}s long`)}` : ''}` : t('正在念…', 'speaking…'),
+        taken: taken?.startsWith(`${at}:`) === true,
+        ...(clip.error !== undefined ? { error: clip.error } : clip.path === undefined ? { loading: true } : {
+          body: (
+            <>
+              <audio controls preload="auto" src={mediaUrl(clip.path, clip.seconds)} className="nv-trial-audio" />
+              {clip.voice !== undefined ? <p className="nv-muted nv-small">{t(`音色：${clip.voice}`, `Voice: ${clip.voice}`)}</p> : null}
+            </>
+          ),
+          action: asked[at]?.current === true && asked[at]?.voice.trim().length === 0 && taken === undefined ? <Chip tone="blue">{t('现在用的', 'in use')}</Chip> : (
+            <span className="nv-row-wrap">
+              {taken === `${at}:book` ? <Chip tone="green">{t('这本书用它了', 'this book\'s now')}</Chip> : <Button size="sm" variant="outline" icon="check" onClick={() => take(at, 'book')}>{t('这本书用它', 'For this book')}</Button>}
+              {taken === `${at}:studio` ? <Chip tone="green">{t('全局用它了', 'every book\'s now')}</Chip> : <Button size="sm" variant="ghost" onClick={() => take(at, 'studio')}>{t('全局用它', 'For every book')}</Button>}
+            </span>
+          ),
+        }),
+      }))} />
     </Modal>
   )
 }
@@ -563,7 +601,7 @@ const routesOf = (picked: ReadonlySet<string>, levels: Levels = {}): { provider:
 })
 
 /** The most runs one comparison takes (the Host's own limit). */
-const MOST_RUNS = 8
+const MOST_RUNS = TRIAL_MOST
 
 /** The model a role runs on for the book in hand, and how hard it is set to think, as the settings have it — picked to begin with, so a comparison is against what is in use. */
 function useRoleModel(role: 'writer' | 'architect'): { model: string; provider?: string; effort?: string } | undefined {
@@ -574,13 +612,30 @@ function useRoleModel(role: 'writer' | 'architect'): { model: string; provider?:
   return row?.model !== undefined ? { model: row.model, ...(row.provider !== undefined ? { provider: row.provider } : {}), ...(row.effort !== undefined ? { effort: row.effort } : {}) } : undefined
 }
 
-function usePicked(inUse: { model: string; provider?: string; effort?: string } | undefined): { picked: Set<string>; setPicked: (next: Set<string>) => void; levels: Levels; setLevels: (next: Levels) => void } {
+/**
+ * The models picked for a comparison, and the levels each runs at. A dialog opens on what it compared the last time
+ * (kept on this device under `name`, as far as DSH still lists those models); where it never compared, on the model in
+ * use. `keep`: what is picked now is what it opens on next — called when a comparison is started.
+ */
+function usePicked(inUse: { model: string; provider?: string; effort?: string } | undefined, name: string): { picked: Set<string>; setPicked: (next: Set<string>) => void; levels: Levels; setLevels: (next: Levels) => void; keep: () => void } {
   const models = useSnapshot(snapshot => snapshot.settings?.models)
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [levels, setLevels] = useState<Levels>({})
   const [seeded, setSeeded] = useState(false)
   useEffect(() => {
-    if (seeded || models === undefined || inUse === undefined) return
+    if (seeded || models === undefined) return
+    const kept = recall<{ picked?: string[]; levels?: Record<string, string[]> }>(`trial:${name}`)
+    const before = (Array.isArray(kept?.picked) ? kept.picked : []).filter(key => typeof key === 'string' && models.some(model => keyOf(model) === key))
+    if (before.length > 0) {
+      setPicked(new Set(before))
+      setLevels(Object.fromEntries(before.flatMap((key) => {
+        const had = kept?.levels?.[key]
+        return Array.isArray(had) && had.length > 0 ? [[key, had.filter(level => typeof level === 'string')]] : []
+      })))
+      setSeeded(true)
+      return
+    }
+    if (inUse === undefined) return
     const mine = models.find(model => model.id === inUse.model && model.provider === inUse.provider) ?? models.find(model => model.id === inUse.model)
     if (mine !== undefined) {
       setPicked(new Set([keyOf(mine)]))
@@ -590,24 +645,25 @@ function usePicked(inUse: { model: string; provider?: string; effort?: string } 
     setSeeded(true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seeded, models, inUse?.model, inUse?.provider, inUse?.effort])
-  return { picked, setPicked, levels, setLevels }
+  const keep = (): void => { remember(`trial:${name}`, { picked: [...picked], levels: Object.fromEntries([...picked].flatMap(key => (levels[key] !== undefined && levels[key].length > 0 ? [[key, levels[key]]] : []))) }) }
+  return { picked, setPicked, levels, setLevels, keep }
 }
 
-/** The reasoning levels of the picked models, a row a model: chosen as the settings choose them, from what the model itself offers. */
-function EffortRows({ picked, levels, onChange, disabled }: { picked: ReadonlySet<string>; levels: Levels; onChange: (next: Levels) => void; disabled: boolean }) {
+/** The picked models, a row a model: how hard each is to think — chosen as the settings choose it, from what the model itself offers — and the way to leave the model out again. */
+function EffortRows({ picked, levels, onChange, onLeave, disabled }: { picked: ReadonlySet<string>; levels: Levels; onChange: (next: Levels) => void; onLeave: (key: string) => void; disabled: boolean }) {
   const t = useT()
   const models = useSnapshot(snapshot => snapshot.settings?.models) ?? []
   const rows = [...picked].map(key => models.find(model => keyOf(model) === key)).filter((model): model is ModelOption => model !== undefined)
   if (rows.length === 0) return null
   return (
     <div className="nv-trial-efforts">
-      <span className="nv-muted nv-small">{t('思考强度', 'Reasoning effort')}</span>
-      {rows.map(model => <EffortRow key={keyOf(model)} model={model} levels={levelsOf(levels, keyOf(model))} disabled={disabled} onChange={(mine) => { onChange({ ...levels, [keyOf(model)]: mine }) }} />)}
+      <span className="nv-muted nv-small">{t(`参加对比的 ${rows.length} 个模型 · 思考强度`, `The ${rows.length} model(s) compared · reasoning effort`)}</span>
+      {rows.map(model => <EffortRow key={keyOf(model)} model={model} levels={levelsOf(levels, keyOf(model))} disabled={disabled} onChange={(mine) => { onChange({ ...levels, [keyOf(model)]: mine }) }} onLeave={() => { onLeave(keyOf(model)) }} />)}
     </div>
   )
 }
 
-function EffortRow({ model, levels, onChange, disabled }: { model: ModelOption; levels: readonly string[]; onChange: (next: string[]) => void; disabled: boolean }) {
+function EffortRow({ model, levels, onChange, onLeave, disabled }: { model: ModelOption; levels: readonly string[]; onChange: (next: string[]) => void; onLeave: () => void; disabled: boolean }) {
   const { controller } = useStudio()
   const t = useT()
   const details = useLoad(async signal => await controller.api.call('model.info', { provider: model.provider, model: model.id }, signal), [model.provider, model.id])
@@ -634,83 +690,104 @@ function EffortRow({ model, levels, onChange, disabled }: { model: ModelOption; 
           {free !== undefined ? <button type="button" className="nv-link nv-small" disabled={disabled} title={t('同一个模型再跑一遍，用另一档思考强度', 'The same model once more, at another reasoning level')} onClick={() => { onChange([...levels, free.value]) }}>{t('＋ 再比一档', '+ another level')}</button> : null}
         </>
       )}
+      <span className="nv-spacer" />
+      <Button size="sm" variant="ghost" icon="x" disabled={disabled} title={t('不比这个模型', 'Leave this model out')} aria-label={t('不比这个模型', 'Leave this model out')} onClick={onLeave} />
     </div>
   )
 }
 
-/** One chapter written by several models, side by side; the one taken becomes the chapter (what it had stays among its versions). */
-export function WriteTrialDialog({ chapter, brief: given, onClose, onTaken }: { chapter: { id: string; title: string; hasText: boolean }; brief?: string; onClose: () => void; onTaken?: () => void }) {
+/** Who takes part, folded away once there is something to read: the more room for what they made. */
+function Setup({ open, onOpen, summary, children }: { open: boolean; onOpen: (open: boolean) => void; summary: string; children: ReactNode }) {
+  return (
+    <details className="nv-trial-setup" open={open} onToggle={(event) => { const now = (event.currentTarget as HTMLDetailsElement).open; if (now !== open) onOpen(now) }}>
+      <summary>{summary}</summary>
+      <div className="nv-trial-setup-body">{children}</div>
+    </details>
+  )
+}
+
+const draftsOf = (info: JobInfo | undefined): TrialDraft[] => ((info?.result?.drafts ?? (info?.result?.output as { drafts?: TrialDraft[] } | undefined)?.drafts) as TrialDraft[] | undefined) ?? []
+
+/**
+ * One chapter written by several models, side by side; the one taken becomes the chapter (what it had stays among its
+ * versions). Every draft is one of the chapter's versions, so anything else among them — the drafts of an earlier
+ * comparison, the chapter as it was — and the chapter as it stands can be laid beside the ones just written.
+ */
+export function WriteTrialDialog({ chapter, brief: given, current, onClose, onTaken }: { chapter: { id: string; title: string; hasText: boolean }; brief?: string; /** The chapter's text as it stands, to be laid beside the drafts where the author wants it there. */ current?: string | undefined; onClose: () => void; onTaken?: () => void }) {
   const { controller } = useStudio()
   const t = useT()
   const { root } = useProject()
   const inUse = useRoleModel('writer')
-  const { picked, setPicked, levels, setLevels } = usePicked(inUse)
+  const { picked, setPicked, levels, setLevels, keep } = usePicked(inUse, 'write')
   const routes = routesOf(picked, levels)
   const [brief, setBrief] = useState(given ?? '')
-  const job = useTrialJob()
-  const drafts = ((job.live?.result?.drafts ?? (job.done?.result?.output as { drafts?: TrialDraft[] } | undefined)?.drafts) as TrialDraft[] | undefined) ?? []
-  // The drafts themselves are read from where they are kept: among the chapter's versions.
-  const [texts, setTexts] = useState<Record<string, string>>({})
-  useEffect(() => {
-    for (const draft of drafts) {
-      if (draft.version === undefined || texts[draft.version] !== undefined) continue
-      const version = draft.version
-      setTexts(previous => ({ ...previous, [version]: '' }))
-      void controller.api.call('trial.draft', { root, chapter: chapter.id, version }).then((got) => { setTexts(previous => ({ ...previous, [version]: got.text })) }, () => {})
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [drafts.map(draft => draft.version ?? '').join('|')])
-  const [taken, setTaken] = useState<string | undefined>()
+  const job = useTrialJob(`write:${chapter.id}`, (ended) => {
+    // Closed before it was over: the drafts are among the chapter's versions all the same, and the author is told.
+    const written = ended.infos.flatMap(draftsOf).filter(draft => draft.version !== undefined).length
+    if (ended.error !== undefined) controller.toast('error', t(`对比稿没写成：${ended.error}`, `The drafts to compare were not written: ${ended.error}`))
+    else controller.toast('success', t(`「${chapter.title}」的对比稿写好了${written > 0 ? ` ${written} 份` : ''}：都在这一章的“版本”里；再点“对比…”就能并排看`, `The drafts of "${chapter.title}" are written${written > 0 ? ` (${written})` : ''}: all among its versions; open Compare again to read them side by side`))
+  })
+  const drafts = draftsOf(job.live)
+  const fresh = drafts.flatMap(draft => (draft.version !== undefined ? [draft.version] : []))
+  // The chapter's versions: what else there is to lay beside the drafts. (A Host from before it could list them alone lists none.)
+  const kept = useLoad(signal => controller.api.call('chapter.versions', { root, id: chapter.id }, signal).catch(() => ({ versions: [] })), [root, chapter.id, fresh.join('|')])
+  const versions = kept.data?.versions ?? []
+  const [extra, setExtra] = useState<string[]>([])
+  const columns = useVersionColumns({ chapter, versions, keys: extra.filter(key => !fresh.includes(key)), current, apart: fresh, onAdd: (key) => { setExtra(previous => (previous.includes(key) ? previous : [...previous, key])) }, onChanged: () => { kept.reload(); onTaken?.() } })
+  // Drafts written to be compared before this dialog was opened: the latest round of them is a press away.
+  const earlier = versions.filter(version => (version.made?.how === 'trial' || version.reason.startsWith('trial-')) && !fresh.includes(version.id) && !columns.gone.has(version.id))
+  const lastRound = earlier.length === 0 ? [] : earlier.filter(version => (earlier[0]!.made?.round !== undefined ? version.made?.round === earlier[0]!.made.round : version.id === earlier[0]!.id))
+  const [setup, setSetup] = useState(true)
   const start = (): void => {
-    setTaken(undefined)
+    keep()
+    setSetup(false)
     job.start(async () => await controller.api.call('trial.write', { root, chapter: chapter.id, ...(brief.trim().length > 0 ? { brief: brief.trim() } : {}), with: routes }))
   }
-  const take = (draft: TrialDraft): Promise<unknown> => controller.guard(async () => {
-    await controller.api.call('chapter.restore', { root, id: chapter.id, version: draft.version! })
-    setTaken(draft.version)
-    await controller.refreshProject()
-    onTaken?.()
-    controller.toast('success', t(`「${chapter.title}」用了 ${draft.label} 写的这一稿${chapter.hasText ? '；原来的正文在“版本”里' : ''}。其余几稿也在“版本”里。`, `"${chapter.title}" is now the draft by ${draft.label}${chapter.hasText ? '; what it had is among its versions' : ''}. The other drafts are among its versions too.`))
-  })
+  const items: CompareItem[] = [
+    ...drafts.flatMap((draft, at): CompareItem[] => {
+      if (draft.version !== undefined && columns.gone.has(draft.version)) return []
+      const version = draft.version
+      const read = version !== undefined ? columns.textOf(version) : undefined
+      return [{
+        key: version ?? `${draft.provider}:${draft.model}:${at}`,
+        title: draft.label,
+        sub: draft.error !== undefined ? t('没写成', 'failed') : version !== undefined ? `${t(`${draft.words ?? 0} 字`, `${draft.words ?? 0} words`)} · ${took(draft.seconds, t)}` : t('正在写…', 'writing…'),
+        ...(draft.error !== undefined ? { error: draft.error } : version === undefined || read === undefined ? { loading: true } : read.error !== undefined ? { error: read.error } : { text: read.text ?? '' }),
+        taken: version !== undefined && version === columns.taken,
+        ...(version !== undefined ? {
+          action: version === columns.taken ? <Chip tone="green">{t('采纳了', 'taken')}</Chip> : <Button size="sm" variant="outline" icon="check" onClick={() => columns.take(version, t(`${draft.label} 写的这一稿`, `the draft by ${draft.label}`))}>{t('采纳这一稿', 'Take this draft')}</Button>,
+          drop: { ask: t(`删掉 ${draft.label} 写的这一稿？它在“版本”里的那一份一起删掉，找不回来。`, `Delete the draft by ${draft.label}? Its copy among the versions goes too; it cannot be brought back.`), run: () => { void columns.drop([version]) } },
+        } : {}),
+      }]
+    }),
+    ...columns.items,
+  ]
+  const runs = routes.length === picked.size ? t(`${picked.size} 个模型各写一稿`, `One draft each by ${picked.size}`) : t(`${picked.size} 个模型写 ${routes.length} 稿`, `${routes.length} drafts by ${picked.size} model(s)`)
   return (
-    <Modal wide className="nv-modal-trial" title={t(`几个模型各写一遍「${chapter.title}」`, `"${chapter.title}" written by several models`)} onClose={onClose} footer={(
+    <Modal wide roomy="compare" className="nv-modal-trial" title={t(`几个模型各写一遍「${chapter.title}」`, `"${chapter.title}" written by several models`)} onClose={onClose} footer={(
       <>
-        <span className="nv-muted nv-small">{t('同样的上下文和要求，各写一稿。正文不动，采纳了才换；每一稿都留在这一章的“版本”里。', 'The same context and brief, one draft each. The chapter keeps its text until you take one; every draft is kept among its versions.')}</span>
+        <span className="nv-muted nv-small">{t('同样的上下文和要求，各写一稿。正文不动，采纳了才换；每一稿都留在这一章的“版本”里，写着是哪个模型写的。可以关掉，之后再看。', 'The same context and brief, one draft each. The chapter keeps its text until you take one; every draft is kept among its versions, with the model that wrote it. This can be closed and read later.')}</span>
         <span className="nv-spacer" />
         {job.busy ? <Button variant="ghost" onClick={job.stop}>{t('停止', 'Stop')}</Button> : null}
-        <Button variant="primary" icon="layers" busy={job.busy} disabled={routes.length === 0 || routes.length > MOST_RUNS} title={routes.length > MOST_RUNS ? t(`一次最多比 ${MOST_RUNS} 稿`, `At most ${MOST_RUNS} drafts at once`) : undefined} pending={t('正在写…', 'Writing…')} onClick={start}>{routes.length === picked.size ? t(`${picked.size} 个模型各写一稿`, `One draft each by ${picked.size}`) : t(`${picked.size} 个模型写 ${routes.length} 稿`, `${routes.length} drafts by ${picked.size} model(s)`)}</Button>
+        <Button variant="primary" icon="layers" busy={job.busy} disabled={routes.length === 0 || routes.length > MOST_RUNS} title={routes.length > MOST_RUNS ? t(`一次最多比 ${MOST_RUNS} 稿`, `At most ${MOST_RUNS} drafts at once`) : undefined} pending={t('正在写…', 'Writing…')} onClick={start}>{runs}</Button>
       </>
     )}>
-      <ModelChecklist picked={picked} onChange={setPicked} disabled={job.busy} hint={inUse !== undefined ? t(`写手现在用的是 ${inUse.model}`, `the writer runs on ${inUse.model}`) : undefined} />
-      <EffortRows picked={picked} levels={levels} onChange={setLevels} disabled={job.busy} />
-      <Field label={t('给写手的要求（可不填）', 'Brief for the writer (optional)')}>
-        <TextArea value={brief} minRows={2} disabled={job.busy} onChange={(event) => { setBrief(event.target.value) }} />
-      </Field>
+      <Setup open={setup} onOpen={setSetup} summary={t(`参加对比的模型和要求 · 选了 ${picked.size} 个模型，${routes.length} 稿`, `Who takes part, and the brief · ${picked.size} model(s), ${routes.length} draft(s)`)}>
+        <ModelChecklist picked={picked} onChange={setPicked} disabled={job.busy} hint={inUse !== undefined ? t(`写手现在用的是 ${inUse.model}`, `the writer runs on ${inUse.model}`) : undefined} />
+        <EffortRows picked={picked} levels={levels} onChange={setLevels} onLeave={(key) => { const next = new Set(picked); next.delete(key); setPicked(next) }} disabled={job.busy} />
+        <Field label={t('给写手的要求（可不填）', 'Brief for the writer (optional)')}>
+          <TextArea value={brief} minRows={2} disabled={job.busy} onChange={(event) => { setBrief(event.target.value) }} />
+        </Field>
+      </Setup>
       {job.error !== undefined ? <p className="nv-note is-warn">{job.error}</p> : null}
-      {drafts.length > 0 ? (
-        <div className="nv-trial-columns">
-          {drafts.map((draft, at) => (
-            <TrialColumn key={`${draft.provider}:${draft.model}:${at}`} title={draft.label} sub={draft.error !== undefined ? t('没写成', 'failed') : draft.version !== undefined ? `${t(`${draft.words ?? 0} 字`, `${draft.words ?? 0} words`)} · ${took(draft.seconds, t)}` : t('正在写…', 'writing…')} taken={draft.version !== undefined && draft.version === taken}
-              action={draft.version !== undefined ? (draft.version === taken ? <Chip tone="green">{t('采纳了', 'taken')}</Chip> : <Button size="sm" variant="outline" icon="check" onClick={() => take(draft)}>{t('采纳这一稿', 'Take this draft')}</Button>) : undefined}>
-              {draft.error !== undefined ? <p className="nv-trial-failed">{draft.error}</p> : draft.version !== undefined ? <div className="nv-trial-prose">{(texts[draft.version] ?? '').split(/\n{2,}/).map((paragraph, index) => <p key={index}>{paragraph}</p>)}</div> : <div className="nv-center"><Spinner /></div>}
-            </TrialColumn>
-          ))}
-        </div>
+      {lastRound.length > 0 && !lastRound.every(version => extra.includes(version.id)) ? (
+        <p className="nv-muted nv-small">
+          {t(`这一章已有 ${earlier.length} 份对比稿。`, `This chapter has ${earlier.length} draft(s) written to compare. `)}
+          <button type="button" className="nv-link" onClick={() => { setExtra(previous => [...previous, ...lastRound.map(version => version.id).filter(id => !previous.includes(id))]) }}>{t(`并排看上一轮的 ${lastRound.length} 份（${versionWhen(lastRound[0]!)}）`, `Lay out the last round's ${lastRound.length} (${versionWhen(lastRound[0]!)})`)}</button>
+        </p>
       ) : null}
+      <Compare name="drafts" items={items} more={columns.more} />
     </Modal>
-  )
-}
-
-/** One of the things compared: who made it, how it went, and what it is. */
-function TrialColumn({ title, sub, action, taken, children }: { title: string; sub: string; action?: ReactNode; taken?: boolean; children: ReactNode }) {
-  return (
-    <section className={cx('nv-trial-column', taken === true && 'is-taken')}>
-      <header>
-        <div><strong>{title}</strong><span className="nv-muted nv-small">{sub}</span></div>
-        {action}
-      </header>
-      <div className="nv-trial-body">{children}</div>
-    </section>
   )
 }
 
@@ -734,15 +811,18 @@ export function DeriveTrialDialog<Plan extends TrialPlanView>({ count, direction
   const t = useT()
   const { root } = useProject()
   const inUse = useRoleModel('architect')
-  const { picked, setPicked, levels, setLevels } = usePicked(inUse)
+  const { picked, setPicked, levels, setLevels, keep } = usePicked(inUse, 'derive')
   const routes = routesOf(picked, levels)
   const job = useTrialJob()
   const plans = ((job.live?.result?.plans ?? (job.done?.result?.output as { plans?: Plan[] } | undefined)?.plans) as Plan[] | undefined) ?? []
+  const [setup, setSetup] = useState(true)
   const start = (): void => {
+    keep()
+    setSetup(false)
     job.start(async () => await controller.api.call('trial.derive', { root, count, ...(direction !== undefined && direction.trim().length > 0 ? { direction: direction.trim() } : {}), ...(volume !== undefined && volume.length > 0 ? { volume } : {}), ...(guides !== undefined && guides.length > 0 ? { guides: [...guides] } : {}), with: routes }))
   }
   return (
-    <Modal wide className="nv-modal-trial" title={t(`几个模型各推演 ${count} 章`, `${count} chapter(s) planned by several models`)} onClose={onClose} footer={(
+    <Modal wide roomy="compare" className="nv-modal-trial" title={t(`几个模型各推演 ${count} 章`, `${count} chapter(s) planned by several models`)} onClose={onClose} footer={(
       <>
         <span className="nv-muted nv-small">{t('同样的材料和方向，各出一版。只是预览，采纳了才进大纲。', 'The same material and direction, one plan each. Previews only: nothing enters the outline until you take one.')}</span>
         <span className="nv-spacer" />
@@ -750,29 +830,30 @@ export function DeriveTrialDialog<Plan extends TrialPlanView>({ count, direction
         <Button variant="primary" icon="layers" busy={job.busy} disabled={routes.length === 0 || routes.length > MOST_RUNS} title={routes.length > MOST_RUNS ? t(`一次最多比 ${MOST_RUNS} 版`, `At most ${MOST_RUNS} plans at once`) : undefined} pending={t('正在推演…', 'Planning…')} onClick={start}>{routes.length === picked.size ? t(`${picked.size} 个模型各推一版`, `One plan each by ${picked.size}`) : t(`${picked.size} 个模型推 ${routes.length} 版`, `${routes.length} plans by ${picked.size} model(s)`)}</Button>
       </>
     )}>
-      <ModelChecklist picked={picked} onChange={setPicked} disabled={job.busy} hint={inUse !== undefined ? t(`策划现在用的是 ${inUse.model}`, `the planner runs on ${inUse.model}`) : undefined} />
-      <EffortRows picked={picked} levels={levels} onChange={setLevels} disabled={job.busy} />
-      {direction !== undefined && direction.trim().length > 0 ? <p className="nv-muted nv-small">{t(`方向：${direction.trim()}`, `Direction: ${direction.trim()}`)}</p> : null}
-      {guides !== undefined && guides.length > 0 ? <p className="nv-muted nv-small">{t(`带 ${guides.length} 张参考图：能看图的模型自己看，看不了的由“看图的模型”先看成文字`, `With ${guides.length} picture(s): a model that sees looks itself; for one that does not, the picture model puts them into words`)}</p> : null}
+      <Setup open={setup} onOpen={setSetup} summary={t(`参加对比的模型 · 选了 ${picked.size} 个模型，${routes.length} 版`, `Who takes part · ${picked.size} model(s), ${routes.length} plan(s)`)}>
+        <ModelChecklist picked={picked} onChange={setPicked} disabled={job.busy} hint={inUse !== undefined ? t(`策划现在用的是 ${inUse.model}`, `the planner runs on ${inUse.model}`) : undefined} />
+        <EffortRows picked={picked} levels={levels} onChange={setLevels} onLeave={(key) => { const next = new Set(picked); next.delete(key); setPicked(next) }} disabled={job.busy} />
+        {direction !== undefined && direction.trim().length > 0 ? <p className="nv-muted nv-small">{t(`方向：${direction.trim()}`, `Direction: ${direction.trim()}`)}</p> : null}
+        {guides !== undefined && guides.length > 0 ? <p className="nv-muted nv-small">{t(`带 ${guides.length} 张参考图：能看图的模型自己看，看不了的由“看图的模型”先看成文字`, `With ${guides.length} picture(s): a model that sees looks itself; for one that does not, the picture model puts them into words`)}</p> : null}
+      </Setup>
       {job.error !== undefined ? <p className="nv-note is-warn">{job.error}</p> : null}
-      {plans.length > 0 ? (
-        <div className="nv-trial-columns">
-          {plans.map((plan, at) => (
-            <TrialColumn key={`${plan.provider}:${plan.model}:${at}`} title={plan.label} sub={plan.error !== undefined ? t('没推成', 'failed') : plan.chapters !== undefined ? `${t(`${plan.chapters.length} 章`, `${plan.chapters.length} chapters`)} · ${took(plan.seconds, t)}` : t('正在推演…', 'planning…')}
-              action={plan.chapters !== undefined && plan.chapters.length > 0 ? <Button size="sm" variant="outline" icon="check" onClick={() => { onTake(plan); onClose() }}>{t('用这一版', 'Take this plan')}</Button> : undefined}>
-              {plan.error !== undefined ? <p className="nv-trial-failed">{plan.error}</p> : plan.chapters !== undefined ? (
-                <>
-                  <ol className="nv-trial-plan">
-                    {plan.chapters.map((item, index) => <li key={index}><strong>{item.title}</strong>{item.synopsis !== undefined ? <span>{item.synopsis}</span> : null}</li>)}
-                  </ol>
-                  {/* What it is, first; why the planner has it so, for whoever wants to read that. */}
-                  {plan.rationale !== undefined ? <details className="nv-trial-why"><summary>{t('它的说明', 'Its reasons')}</summary><p className="nv-muted nv-small">{plan.rationale}</p></details> : null}
-                </>
-              ) : <div className="nv-center"><Spinner /></div>}
-            </TrialColumn>
-          ))}
-        </div>
-      ) : null}
+      <Compare name="plans" items={plans.map((plan, at): CompareItem => ({
+        key: `${plan.provider}:${plan.model}:${at}`,
+        title: plan.label,
+        sub: plan.error !== undefined ? t('没推成', 'failed') : plan.chapters !== undefined ? `${t(`${plan.chapters.length} 章`, `${plan.chapters.length} chapters`)} · ${took(plan.seconds, t)}` : t('正在推演…', 'planning…'),
+        ...(plan.error !== undefined ? { error: plan.error } : plan.chapters === undefined ? { loading: true } : {
+          body: (
+            <>
+              <ol className="nv-trial-plan">
+                {plan.chapters.map((item, index) => <li key={index}><strong>{item.title}</strong>{item.synopsis !== undefined ? <span>{item.synopsis}</span> : null}</li>)}
+              </ol>
+              {/* What it is, first; why the planner has it so, for whoever wants to read that. */}
+              {plan.rationale !== undefined ? <details className="nv-trial-why"><summary>{t('它的说明', 'Its reasons')}</summary><p className="nv-muted nv-small">{plan.rationale}</p></details> : null}
+            </>
+          ),
+          ...(plan.chapters.length > 0 ? { action: <Button size="sm" variant="outline" icon="check" onClick={() => { onTake(plan); onClose() }}>{t('用这一版', 'Take this plan')}</Button> } : {}),
+        }),
+      }))} />
     </Modal>
   )
 }

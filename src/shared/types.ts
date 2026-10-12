@@ -1136,6 +1136,23 @@ export interface VersionInfo {
   /** Why the snapshot was taken: "before-revise", "manual", "before-import"… */
   reason: string
   words: number
+  /** How the text of it came to be, where that was kept with it: a draft written to be compared says who wrote it. */
+  made?: VersionMade
+}
+
+/**
+ * What is kept beside a version about how its text was made. `trial`: a draft written to be compared with others —
+ * by which model (`label` is the model as it is said beside the draft, with the level it was to think at), what the
+ * writer was asked for, and the comparison it is one of (`round`: the same for the drafts of one press).
+ */
+export interface VersionMade {
+  how: 'trial'
+  label: string
+  provider: string
+  model: string
+  effort?: string
+  round?: string
+  brief?: string
 }
 
 export type ProposalStatus = 'pending' | 'accepted' | 'rejected'
@@ -2590,6 +2607,9 @@ export interface TrialTake {
 }
 
 /** What one model made of a chapter written by several: the text (also kept among the chapter's versions), or why there is none. */
+/** The most runs one comparison of models takes at once: a guard against a slip, not a budget — what runs side by side is paced by the gates. */
+export const TRIAL_MOST = 32
+
 export interface TrialDraft {
   label: string
   provider: string

@@ -623,6 +623,14 @@ export function createHandlers(service: NovelService): Handlers {
       return { text }
     },
     'chapter.restore': async ({ root, id, version }) => ({ ok: await (await open(root)).project.restoreVersion(id, version) }),
+    'chapter.versions': async ({ root, id }) => ({ versions: await (await open(root)).project.versions(requireString(id, 'id')) }),
+    'chapter.dropVersions': async ({ root, id, versions }) => {
+      const { project } = await open(root)
+      const done = await project.dropVersions(requireString(id, 'id'), Array.isArray(versions) ? versions.filter((version): version is string => typeof version === 'string') : [])
+      // The page that lists them reads them again.
+      if (done.removed > 0) project.touch()
+      return done
+    },
     'search': async ({ root, query, sources, limit }, signal) => {
       const runtime = await open(root)
       const hits = await runtime.index.search(query, { limit: limit ?? 12, ...(sources !== undefined ? { sources } : {}), signal })

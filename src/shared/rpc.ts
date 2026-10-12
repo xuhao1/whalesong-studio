@@ -554,6 +554,10 @@ export interface NovelRpc {
   'chapter.save': { params: { root: string; id: string; text: string; reason?: string }; result: { words: number; changed: boolean } }
   'chapter.version': { params: { root: string; id: string; version: string }; result: { text: string } }
   'chapter.restore': { params: { root: string; id: string; version: string }; result: { ok: boolean } }
+  /** The versions kept of a chapter, the latest first — what `chapter.read` gives with the rest of the chapter, alone. */
+  'chapter.versions': { params: { root: string; id: string }; result: { versions: VersionInfo[] } }
+  /** Delete versions of a chapter for good: drafts nobody took, restore points no longer wanted. The original of a translated chapter stays (`kept` names what was asked for and was not deleted). */
+  'chapter.dropVersions': { params: { root: string; id: string; versions: string[] }; result: { removed: number; kept: string[] } }
   'search': { params: { root: string; query: string; sources?: SearchSource[]; limit?: number }; result: { hits: SearchHit[]; embedded: number; indexed: number; embeddingError?: string } }
   'find': { params: { root: string; query: string; limit?: number }; result: { matches: FindMatch[]; total: number } }
 

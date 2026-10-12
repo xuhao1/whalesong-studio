@@ -28,7 +28,7 @@ import {
   type ActivityEntry, type BookShows, type DerivedPlan, type ChapterTranslation, type GlossaryTerm, type HistoryKind, type HistoryVersion, type Timestamp, type CharacterLook, type CharacterMoment, type LifeMark, type ShowCount,
   type AudioScript, type CastPresence, type ChapterInfo, type ChapterMemory, type ChapterPlan, type ChapterReview, type ChapterStatus, type CharacterCard,
   type ComicBoard, type ComicPanel, type IllustrationInfo, type Outline, type PlaySession, type PlotLine, type PlotLineInfo, type PlotLineOrigin, type PlotThread, type ProjectManifest, type ProjectState, type ProjectStats, type Proposal, type RemovedChapter,
-  type SettledSuggestion, type StyleProfile, type Suggestion, type ThreadTouch, type VersionInfo, type VoiceCast, type Volume, type WorldEntry,
+  type SettledSuggestion, type StyleProfile, type Suggestion, type ThreadTouch, type VersionInfo, type VersionMade, type VoiceCast, type Volume, type WorldEntry,
 } from '../shared/types'
 import { lifeOf, statusAt, type Life } from '../shared/life'
 import type { LinePerson, LineThread, LineWorld } from '../shared/worldline'
@@ -127,6 +127,26 @@ const EDIT_WINDOW_MS = 5 * 60_000
 
 /** When a version's file says it was made (`2026-10-10T07-10-00-000Z`), as a time. */
 const isoOf = (stamp: string): string => stamp.replace(/^(\d{4}-\d{2}-\d{2}T\d{2})-(\d{2})-(\d{2})-(\d{3}Z)$/, '$1:$2:$3.$4')
+
+/** What a file kept beside a version says of how the version was made; nothing where it says nothing that can be read. */
+function madeOf(raw: string | undefined): VersionMade | undefined {
+  if (raw === undefined || raw.length === 0) return undefined
+  try {
+    const said = JSON.parse(raw) as Partial<VersionMade> | null
+    if (said === null || typeof said !== 'object' || said.how !== 'trial' || typeof said.model !== 'string' || typeof said.provider !== 'string') return undefined
+    return {
+      how: 'trial',
+      label: typeof said.label === 'string' && said.label.length > 0 ? said.label : said.model,
+      provider: said.provider,
+      model: said.model,
+      ...(typeof said.effort === 'string' && said.effort.length > 0 ? { effort: said.effort } : {}),
+      ...(typeof said.round === 'string' && said.round.length > 0 ? { round: said.round } : {}),
+      ...(typeof said.brief === 'string' && said.brief.length > 0 ? { brief: said.brief } : {}),
+    }
+  } catch {
+    return undefined
+  }
+}
 
 /** Put something at a path of a thing, making the way there; nothing put there takes what was there away. */
 function setAt(value: Record<string, unknown>, path: string, put: unknown): void {
@@ -2320,13 +2340,18 @@ export class Project {
   // ───────────── versions ─────────────
 
   /** Save the current (or given) text as a version. @returns the version id, or undefined for empty text. */
-  async snapshot(chapterId: string, reason: string, text?: string): Promise<string | undefined> {
+  async snapshot(chapterId: string, reason: string, text?: string, made?: VersionMade): Promise<string | undefined> {
     const content = text ?? await this.chapterText(chapterId)
     if (content.length === 0) return undefined
     const stamp = new Date().toISOString().replace(/[:.]/g, '-')
     const id = `${stamp}__${slugify(reason, 'edit')}`
     const path = this.statePath('versions', chapterId, `${id}.md`)
     await this.own(path, async () => { await this.files.writeAtomic(path, content) })
+    // How it was made is kept beside it, in a file of its own: the version itself stays the text and nothing else.
+    if (made !== undefined) {
+      const note = this.statePath('versions', chapterId, `${id}.json`)
+      await this.own(note, async () => { await this.files.writeAtomic(note, `${JSON.stringify(made, null, 2)}\n`) })
+    }
     await this.pruneVersions(chapterId)
     return id
   }
@@ -2344,7 +2369,10 @@ export class Project {
     const dir = this.statePath('versions', chapterId)
     // A chapter as it was before it was translated is its original: never let go, however many versions come after.
     const names = (await this.files.listDir(dir)).filter(name => name.endsWith('.md') && !name.endsWith(`__${ORIGINAL_REASON}.md`))
-    for (const name of names.slice(0, Math.max(0, names.length - keep))) await this.files.removePath(join(dir, name))
+    for (const name of names.slice(0, Math.max(0, names.length - keep))) {
+      await this.files.removePath(join(dir, name))
+      await this.files.removePath(join(dir, `${name.slice(0, -3)}.json`))
+    }
   }
 
   async versions(chapterId: string): Promise<VersionInfo[]> {
@@ -2356,9 +2384,34 @@ export class Project {
       const [stamp, reason] = id.split('__')
       const text = (await this.files.readText(join(dir, name))) ?? ''
       const iso = (stamp ?? '').replace(/^(\d{4}-\d{2}-\d{2}T\d{2})-(\d{2})-(\d{2})-(\d{3}Z)$/, '$1:$2:$3.$4')
-      versions.push({ id, chapterId, createdAt: iso, reason: reason ?? 'edit', words: countWords(text) })
+      // What is kept of how it was made: only a draft written to be compared has any.
+      const made = (reason ?? '').startsWith('trial') ? madeOf(await this.files.readText(join(dir, `${id}.json`))) : undefined
+      versions.push({ id, chapterId, createdAt: iso, reason: reason ?? 'edit', words: countWords(text), ...(made !== undefined ? { made } : {}) })
     }
     return versions.reverse()
+  }
+
+  /**
+   * Delete versions of a chapter for good — drafts nobody took, restore points no longer wanted. The chapter as it
+   * was before it was translated is not among what this deletes: it is the only copy of the original.
+   * @returns how many went, and the ones that were asked for and stay (`kept`).
+   */
+  async dropVersions(chapterId: string, ids: readonly string[]): Promise<{ removed: number; kept: string[] }> {
+    const dir = this.statePath('versions', chapterId)
+    const there = new Set((await this.files.listDir(dir)).filter(name => name.endsWith('.md')).map(name => name.slice(0, -3)))
+    let removed = 0
+    const kept: string[] = []
+    for (const id of new Set(ids)) {
+      if (!/^[\w.-]+$/.test(id) || !there.has(id)) continue
+      if (id.endsWith(`__${ORIGINAL_REASON}`)) {
+        kept.push(id)
+        continue
+      }
+      await this.files.removePath(join(dir, `${id}.md`))
+      await this.files.removePath(join(dir, `${id}.json`))
+      removed += 1
+    }
+    return { removed, kept }
   }
 
   async versionText(chapterId: string, versionId: string): Promise<string | undefined> {

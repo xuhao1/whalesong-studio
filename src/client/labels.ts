@@ -224,6 +224,9 @@ export function waitingLabel(method: RpcMethod): Label {
 /** A running job by the technical title its pipeline gave it. */
 const JOB_TITLES: [RegExp, Label][] = [
   [/^write$/, ['写作', 'Writing']],
+  [/^trial write$/, ['几个模型各写一稿', 'Drafts by several models']],
+  [/^trial derive$/, ['几个模型各推演', 'Plans by several models']],
+  [/^trial speak$/, ['几个配音各念一句', 'A line by several voices']],
   [/^translate$/, ['翻译', 'Translating']],
   [/^settle terms$/, ['定译名', 'Settling the names']],
   [/^publish site$/, ['发布成网站', 'Publishing the site']],

@@ -485,8 +485,31 @@ export const OverlayRootProvider = OverlayRootContext.Provider
 /** Where dialogs are put now: to hand on, or to stand in for (a frame that has the screen to itself puts them inside it). */
 export const useOverlayRoot = (): HTMLElement | null => useContext(OverlayRootContext)
 
-export function Modal({ title, onClose, children, footer, wide, className }: { title: string; onClose: () => void; children: ReactNode; footer?: ReactNode; wide?: boolean; className?: string | undefined }) {
+/** What is kept on this device under a name: a choice of how something is looked at, not a setting of the book. */
+export function recall<T>(name: string): T | undefined {
+  try {
+    const raw = globalThis.localStorage?.getItem(`novel-studio:${name}`)
+    return raw === null || raw === undefined ? undefined : JSON.parse(raw) as T
+  } catch {
+    return undefined
+  }
+}
+
+export function remember(name: string, value: unknown): void {
+  try {
+    if (value === undefined) globalThis.localStorage?.removeItem(`novel-studio:${name}`)
+    else globalThis.localStorage?.setItem(`novel-studio:${name}`, JSON.stringify(value))
+  } catch { /* a private window keeps it for this visit only */ }
+}
+
+/**
+ * @param roomy - the dialog can be made the whole window, and back, by a button in its head; which it is, is kept on
+ *   this device under this name (dialogs that lay things side by side: the more room, the more of them are seen).
+ */
+export function Modal({ title, onClose, children, footer, wide, className, roomy }: { title: string; onClose: () => void; children: ReactNode; footer?: ReactNode; wide?: boolean; className?: string | undefined; roomy?: string }) {
   const root = useContext(OverlayRootContext)
+  const t = useT()
+  const [full, setFull] = useState(() => roomy !== undefined && recall<boolean>(`roomy:${roomy}`) === true)
   // On a phone a dialog is the whole screen, and goes the way a page does: under a swipe from left to right.
   const swipe = useSwipeBack(onClose, () => globalThis.matchMedia?.('(pointer: coarse)').matches === true)
   useEffect(() => {
@@ -501,10 +524,13 @@ export function Modal({ title, onClose, children, footer, wide, className }: { t
   }, [onClose])
   const node = (
     <div className="nv-modal-mask" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
-      <div className={cx('nv-modal', wide === true && 'nv-modal-wide', className)} role="dialog" aria-modal="true" aria-label={title} {...swipe}>
+      <div className={cx('nv-modal', wide === true && 'nv-modal-wide', className, full && 'is-full')} role="dialog" aria-modal="true" aria-label={title} {...swipe}>
         <header className="nv-modal-head">
           <h3>{title}</h3>
-          <Button variant="ghost" size="sm" icon="x" onClick={onClose} aria-label="close" />
+          <span className="nv-modal-tools">
+            {roomy !== undefined ? <Button variant="ghost" size="sm" icon={full ? 'minimize' : 'maximize'} title={full ? t('还原大小', 'Back to its size') : t('铺满窗口', 'The whole window')} aria-label={full ? t('还原大小', 'Back to its size') : t('铺满窗口', 'The whole window')} onClick={() => { setFull((now) => { remember(`roomy:${roomy}`, !now ? true : undefined); return !now }) }} /> : null}
+            <Button variant="ghost" size="sm" icon="x" onClick={onClose} aria-label="close" />
+          </span>
         </header>
         <div className="nv-modal-body">{children}</div>
         {footer !== undefined ? <footer className="nv-modal-foot">{footer}</footer> : null}

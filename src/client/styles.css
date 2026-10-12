@@ -12706,63 +12706,6 @@ button.nv-album-chapter:hover {
   width: 100%;
 }
 
-.nv-trial-columns.is-takes .nv-trial-body {
-  min-height: 0;
-}
-
-.nv-trial-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 12px;
-}
-
-.nv-trial-cell {
-  display: flex;
-  flex-direction: column;
-  margin: 0;
-  overflow: hidden;
-  border: 1px solid var(--nv-border);
-  border-radius: var(--nv-radius);
-  background: var(--nv-surface);
-}
-
-.nv-trial-cell.is-taken,
-.nv-trial-column.is-taken {
-  border-color: var(--nv-success);
-  box-shadow: 0 0 0 1px var(--nv-success);
-}
-
-.nv-trial-picture {
-  display: grid;
-  place-items: center;
-  min-height: 200px;
-  background: var(--nv-surface-2);
-}
-
-.nv-trial-picture img {
-  display: block;
-  width: 100%;
-  height: auto;
-}
-
-.nv-trial-cell figcaption {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 8px;
-  padding: 8px 10px;
-}
-
-.nv-trial-cell figcaption > strong {
-  flex: 1 1 100%;
-  overflow-wrap: anywhere;
-}
-
-.nv-trial-cell figcaption > .nv-btn,
-.nv-trial-cell figcaption > .nv-chip {
-  margin-left: auto;
-}
-
 .nv-trial-failed {
   margin: 0;
   padding: 12px;
@@ -12823,49 +12766,6 @@ button.nv-album-chapter:hover {
   min-width: 9em;
 }
 
-.nv-trial-columns {
-  display: grid;
-  grid-auto-columns: minmax(280px, 1fr);
-  grid-auto-flow: column;
-  gap: 12px;
-  overflow-x: auto;
-}
-
-.nv-trial-column {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  max-height: 56vh;
-  border: 1px solid var(--nv-border);
-  border-radius: var(--nv-radius);
-  background: var(--nv-surface);
-}
-
-.nv-trial-column > header {
-  display: flex;
-  flex: none;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--nv-border);
-}
-
-.nv-trial-column > header > div {
-  display: grid;
-  min-width: 0;
-}
-
-.nv-trial-column > header strong {
-  overflow-wrap: anywhere;
-}
-
-.nv-trial-body {
-  min-height: 80px;
-  padding: 10px 12px;
-  overflow-y: auto;
-}
-
 .nv-trial-prose p {
   margin: 0 0 0.9em;
   line-height: 1.85;
@@ -12885,12 +12785,6 @@ button.nv-album-chapter:hover {
   font-size: 12.5px;
 }
 
-@container studio (max-width: 680px) {
-  .nv-trial-columns {
-    grid-auto-columns: minmax(84%, 1fr);
-  }
-}
-
 .nv-trial-why {
   margin-top: 10px;
 }
@@ -12898,6 +12792,271 @@ button.nv-album-chapter:hover {
 .nv-trial-why > summary {
   color: var(--nv-text-2);
   font-size: 12.5px;
+  cursor: pointer;
+}
+
+/* Who takes part, folded away once there is something to read. */
+.nv-trial-setup > summary {
+  color: var(--nv-text-2);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.nv-trial-setup[open] > summary {
+  margin-bottom: 8px;
+}
+
+.nv-trial-setup-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Things laid side by side to be compared: which of them, how large, and each in a column of its own. */
+.nv-compare {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.nv-compare-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.nv-compare-which {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-height: 84px;
+  overflow-y: auto;
+}
+
+.nv-compare-more.nv-select {
+  width: auto;
+  max-width: 220px;
+}
+
+.nv-compare-zoom {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+}
+
+.nv-compare-zoom[hidden] {
+  display: none;
+}
+
+.nv-compare-level {
+  min-width: 3.4em;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: var(--nv-radius-s);
+  background: none;
+  color: var(--nv-text-2);
+  font: inherit;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.nv-compare-level:hover {
+  background: var(--nv-hover);
+}
+
+.nv-compare-cols {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  padding-bottom: 4px;
+  overflow-x: auto;
+}
+
+.nv-compare-col {
+  display: flex;
+  flex: 0 0 var(--nv-compare-col, 340px);
+  flex-direction: column;
+  min-width: 0;
+  max-height: 60vh;
+  border: 1px solid var(--nv-border);
+  border-radius: var(--nv-radius);
+  background: var(--nv-surface);
+}
+
+/* One alone has the row to itself. */
+.nv-compare.is-one .nv-compare-col {
+  flex: 1 1 var(--nv-compare-col, 340px);
+}
+
+.nv-compare.is-one .nv-compare-prose {
+  max-width: 46em;
+  margin: 0 auto;
+}
+
+/* A picture is as tall as it is: the row scrolls, not the column. */
+.nv-compare-col.is-picture {
+  align-self: flex-start;
+  max-height: none;
+}
+
+.nv-compare.is-one .nv-compare-col.is-picture {
+  flex: 0 1 var(--nv-compare-col, 340px);
+}
+
+.nv-compare-col.is-taken {
+  border-color: var(--nv-success);
+  box-shadow: 0 0 0 1px var(--nv-success);
+}
+
+.nv-compare-col > header {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 8px;
+  padding: 6px 6px 6px 10px;
+  border-bottom: 1px solid var(--nv-border);
+}
+
+.nv-compare-name {
+  display: grid;
+  flex: 1 1 8em;
+  min-width: 0;
+}
+
+.nv-compare-name > strong {
+  overflow-wrap: anywhere;
+}
+
+.nv-compare-tools {
+  display: inline-flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.nv-compare-body {
+  flex: 1 1 auto;
+  min-height: 80px;
+  padding: 10px 12px;
+  overflow-y: auto;
+  font-size: var(--nv-compare-font, 14px);
+}
+
+.nv-compare-col.is-picture .nv-compare-body {
+  min-height: 0;
+  padding: 0;
+  overflow: visible;
+}
+
+.nv-compare-picture {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: var(--nv-surface-2);
+  cursor: zoom-in;
+}
+
+div.nv-compare-picture {
+  cursor: default;
+}
+
+.nv-compare-picture img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 0 0 var(--nv-radius) var(--nv-radius);
+}
+
+.nv-compare-figure {
+  margin: 0 0 0.9em;
+}
+
+.nv-compare-figure img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--nv-radius-s);
+}
+
+@container studio (max-width: 680px) {
+  .nv-compare-col {
+    flex-basis: min(var(--nv-compare-col, 340px), 86%);
+  }
+}
+
+/* A dialog made the whole window: what it lays side by side has the height that is left. */
+.nv-modal-tools {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+}
+
+.nv-modal-mask:has(> .nv-modal.is-full) {
+  padding: 0;
+}
+
+.nv-modal.is-full,
+.nv-modal.nv-modal-trial.is-full {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+}
+
+.nv-modal.is-full > .nv-modal-body {
+  flex: 1 1 auto;
+}
+
+.nv-modal.is-full .nv-compare {
+  flex: 1 1 auto;
+  min-height: 360px;
+}
+
+.nv-modal.is-full .nv-compare-cols {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.nv-modal.is-full .nv-compare-col {
+  max-height: none;
+}
+
+/* The versions of a chapter, a row a version: ticked to be laid side by side. */
+.nv-versions-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  min-height: 30px;
+  margin-bottom: 6px;
+}
+
+.nv-version {
+  display: flex;
+  align-items: stretch;
+}
+
+.nv-version > .nv-list-row {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.nv-version-pick {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  padding: 0 6px 0 4px;
   cursor: pointer;
 }
 

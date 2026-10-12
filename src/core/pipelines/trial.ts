@@ -16,7 +16,7 @@
  */
 import { imageService, imageSetupName, imageSourceOf, speechSetupName, ttsService, withBook, type BookSettings } from '../../shared/images'
 import { countWords, hashText, proseOnly, slugify } from '../../shared/text'
-import type { ImageSettings, ImageTrial, ModelRoute, NovelSettings, SpeechTrial, TrialDraft, TrialTake, TtsSettings } from '../../shared/types'
+import { TRIAL_MOST, type ImageSettings, type ImageTrial, type ModelRoute, type NovelSettings, type SpeechTrial, type TrialDraft, type TrialTake, type TtsSettings } from '../../shared/types'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { AUDIOGEN_NARRATOR, describesVoices } from '../media/voices'
 import { durationOf, encodeWav } from '../media/wav'
@@ -82,7 +82,7 @@ const quiet = (task: TaskContext): TaskContext => {
 function checked(routes: readonly ModelRoute[]): ModelRoute[] {
   const out = routes.filter(route => typeof route?.provider === 'string' && route.provider.length > 0 && typeof route.model === 'string' && route.model.length > 0)
   if (out.length === 0) throw new ProjectError('novel/invalid', 'name the models to compare: `with` takes routes of DSH\'s ({provider, model, reasoningEffort?})')
-  if (out.length > 8) throw new ProjectError('novel/invalid', 'eight models at once is the most a comparison takes')
+  if (out.length > TRIAL_MOST) throw new ProjectError('novel/invalid', `${TRIAL_MOST} runs at once is the most a comparison takes`)
   return out
 }
 
@@ -113,6 +113,9 @@ export async function trialWrite(core: NovelCore, runtime: ProjectRuntime, param
   if (write.chapter !== undefined && chapter === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${write.chapter}"`)
   const drafts: TrialDraft[] = routes.map(route => ({ label: modelName(route), provider: route.provider, model: route.model, ...(effortOf(route) !== undefined ? { effort: effortOf(route)! } : {}), seconds: 0 }))
   let chapterId = chapter?.plan.id ?? ''
+  // The drafts of one press: told apart from those of another among the chapter's versions.
+  const round = hashText(`${chapterId}${Date.now()}${Math.random()}`).slice(0, 8)
+  const brief = write.brief?.trim() ?? ''
   const say = (): void => { task.job?.result({ ...(chapterId.length > 0 ? { trialOf: chapterId } : {}), drafts: drafts.map(({ text: _text, ...draft }) => draft) }) }
   say()
   task.job?.progress(0, routes.length)
@@ -124,7 +127,10 @@ export async function trialWrite(core: NovelCore, runtime: ProjectRuntime, param
       chapterId = made.chapterId
       const text = made.text ?? ''
       // Kept among the chapter's versions: a draft that is not taken now can be taken later.
-      const version = await runtime.project.snapshot(made.chapterId, `trial-${slugify(route.model, 'model')}${effortOf(route) !== undefined ? `-${slugify(effortOf(route)!, 'level')}` : ''}`, text)
+      // Kept with it: who wrote it — the model by its own name, the level it thought at — and that it was written to be compared.
+      const version = await runtime.project.snapshot(made.chapterId, `trial-${slugify(route.model, 'model')}${effortOf(route) !== undefined ? `-${slugify(effortOf(route)!, 'level')}` : ''}`, text, {
+        how: 'trial', label: modelName(route), provider: route.provider, model: route.model, ...(effortOf(route) !== undefined ? { effort: effortOf(route)! } : {}), round, ...(brief.length > 0 ? { brief: brief.slice(0, 400) } : {}),
+      })
       drafts[at] = { ...drafts[at]!, text, words: countWords(proseOnly(text)), seconds: seconds(began), ...(version !== undefined ? { version } : {}) }
     } catch (error) {
       if (isAbort(error) || task.signal?.aborted === true) throw error
@@ -225,7 +231,7 @@ export async function trialSpeak(core: NovelCore, runtime: ProjectRuntime, param
   const { project } = runtime
   const trials = (Array.isArray(params.with) ? params.with : []).filter(trial => trial !== null && typeof trial === 'object' && typeof trial.tts?.provider === 'string' && trial.tts.provider !== 'none')
   if (trials.length === 0) throw new ProjectError('novel/invalid', 'name the speech setups to compare: `with` takes {label, tts, voice?} — see what there is with trial.setups')
-  if (trials.length > 8) throw new ProjectError('novel/invalid', 'eight setups at once is the most a comparison takes')
+  if (trials.length > TRIAL_MOST) throw new ProjectError('novel/invalid', `${TRIAL_MOST} setups at once is the most a comparison takes`)
   const text = params.text.trim().slice(0, 600)
   if (text.length === 0) throw new ProjectError('novel/invalid', 'give the words to be spoken')
   const card = params.character !== undefined && params.character.length > 0 ? await project.findCharacter(params.character) : undefined

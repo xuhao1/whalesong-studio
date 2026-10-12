@@ -12,13 +12,14 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ChapterDocument } from '../../shared/rpc'
 import { countWords, formatCount, fuzzyFind, normalizeProse, proseOnly } from '../../shared/text'
-import { MAIN_LINE, type ChapterInfo, type JobInfo, type PictureGuide, type ReviewIssue, type TextStep, type VersionInfo, type Proposal } from '../../shared/types'
+import { MAIN_LINE, type ChapterInfo, type JobInfo, type PictureGuide, type ReviewIssue, type TextStep, type Proposal } from '../../shared/types'
 import { BatchMatrix, chapterJob, TextBatchDialog, useBatchJob } from '../Batch'
-import { DiffView, ProposalCard, SettledCard } from '../components/ProposalCard'
+import { ProposalCard, SettledCard } from '../components/ProposalCard'
 import { ChapterTree } from '../ChapterTree'
 import { TranslateDialog } from '../Translate'
 import { ChapterPortraits } from '../Figures'
 import { WriteTrialDialog } from '../Trial'
+import { VersionsPanel } from '../Versions'
 import { GuidePictures, referencesLookedWord } from '../Guides'
 import { Icon } from '../icons'
 import { jobKindLabel, jobPulse } from '../Studio'
@@ -51,29 +52,10 @@ const PRESETS: { id: string; label: [string, string]; instruction: [string, stri
   { id: 'show', label: ['少说多演', 'Show, not tell'], instruction: ['把直接陈述的情绪和结论改成可见的动作、细节与反应。', 'Turn stated emotions and conclusions into visible action, detail and reaction.'] },
 ]
 
-function versionReason(reason: string, t: Translate): string {
-  const labels: Record<string, [string, string]> = {
-    'edit': ['手动编辑前', 'before an edit'],
-    'before-revise': ['修订前', 'before a revision'],
-    'before-redraft': ['重新起草前', 'before a redraft'],
-    'before-continue': ['续写前', 'before continuing'],
-    'before-restore': ['恢复版本前', 'before a restore'],
-    'before-translate': ['翻译之前（原文）', 'before it was translated (the original)'],
-    'before-import': ['导入前', 'before an import'],
-    'before-remove': ['删除章节前', 'before removal'],
-    'manual': ['手动存档', 'manual'],
-    'agent-edit': ['总编亲手改动前', 'before an edit by the showrunner'],
-    'edit-device': ['在其他设备上改动前', 'before an edit from another device'],
-  }
-  const label = labels[reason]
-  // A draft written to be compared with others: kept as a version, named by the model that wrote it.
-  if (label === undefined && reason.startsWith('trial-')) return t(`对比稿（${reason.slice(6)}）`, `a draft to compare (${reason.slice(6)})`)
-  return label !== undefined ? t(...label) : reason
-}
-
 function jobsOf(jobs: JobInfo[], chapterId: string): JobInfo[] {
   // A batch that is writing this chapter right now counts as its write job: its stream is the chapter's.
-  const own = jobs.filter(job => job.status === 'running' && job.kind !== 'batch' && (job.target === chapterId || job.result?.chapterId === chapterId))
+  // (Several models writing drafts of it to be compared is not the chapter being written: it keeps its text, and can be worked on meanwhile.)
+  const own = jobs.filter(job => job.status === 'running' && job.kind !== 'batch' && job.title !== 'trial write' && (job.target === chapterId || job.result?.chapterId === chapterId))
   const step = chapterJob(jobs, chapterId, ['write', 'derive beats', 'digest', 'review'])
   return step !== undefined && step.batch === true ? [...own, step] : own
 }
@@ -259,7 +241,6 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
   const [flagging, setFlagging] = useState<string | undefined>()
   // Pictures to rewrite a selected passage by: for that rewrite alone.
   const [spanGuides, setSpanGuides] = useState<PictureGuide[]>([])
-  const [viewing, setViewing] = useState<VersionInfo | undefined>()
   const [appending, setAppending] = useState(false)
   const area = useRef<ChapterTextHandle>(null)
   // Where the author last put the caret in the text: a picture put in from the gallery goes after that line.
@@ -363,6 +344,8 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
   // ── jobs touching this chapter ──
   const running = jobsOf(jobs, chapter.id)
   const writing = running.find(job => job.kind === 'write')
+  // Several models at drafts of this chapter right now: said on the button that opens them.
+  const trying = jobs.find(job => job.status === 'running' && job.title === 'trial write' && job.target === chapter.id)
   const revising = running.find(job => job.kind === 'revise')
   const { text: stream, thought } = useJobTail(writing?.id)
   const reviseStream = useJobStream(revising?.id)
@@ -697,25 +680,8 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
           </div>
         ) : null}
 
-        {panel === 'versions' ? (
-          <div className="nv-panel-section">
-            {doc.data.versions.length === 0 ? <p className="nv-muted">{t('每次 AI 写作、修订或恢复之前都会自动存一份历史版本。', 'A version is saved automatically before every AI draft, revision or restore.')}</p> : (
-              <ul className="nv-list">
-                {doc.data.versions.map(version => (
-                  <li key={version.id}>
-                    <button type="button" className="nv-list-row" onClick={() => { setViewing(version) }}>
-                      <span className="nv-person-text">
-                        <span className="nv-list-title">{new Date(version.createdAt).toLocaleString()}</span>
-                        <span className="nv-list-meta">{versionReason(version.reason, t)} · {formatCount(version.words, locale)}{t(' 字', ' words')}</span>
-                      </span>
-                      <Icon name="chevronRight" size={14} />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        ) : null}
+        {/* A row a version; ticked, any number of them are laid side by side. The text as it is being typed is what they are read against. */}
+        {panel === 'versions' ? <VersionsPanel chapter={{ id: chapter.id, title: chapter.title }} versions={doc.data.versions} current={text ?? doc.data.text} onChanged={() => { doc.reload() }} /> : null}
       </div>
     </aside>
   )
@@ -815,7 +781,7 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
             {writing !== undefined
               ? <Button variant="danger" icon="stop" onClick={() => { void controller.cancelJob(writing.id) }}>{t('停止', 'Stop')}</Button>
               : <Button variant="primary" icon="feather" onClick={() => { write(empty ? 'draft' : 'continue') }}>{empty ? t('写这一章', 'Write it') : t('续写', 'Continue')}</Button>}
-            {writing === undefined ? <Button variant="outline" icon="layers" onClick={() => { void save().then(() => { setComparing(true) }) }} title={t('让几个模型各写一稿这一章，并排着看，采纳一稿——正文不动，采纳了才换', 'Have several models write this chapter, read the drafts side by side and take one — the chapter keeps its text until you do')}>{t('对比…', 'Compare…')}</Button> : null}
+            {writing === undefined ? <Button variant="outline" icon="layers" onClick={() => { void save().then(() => { setComparing(true) }) }} title={t('让几个模型各写一稿这一章，并排着看，采纳一稿——正文不动，采纳了才换', 'Have several models write this chapter, read the drafts side by side and take one — the chapter keeps its text until you do')}>{trying !== undefined ? t(`对比 · 正在写 ${trying.progress?.done ?? 0}/${trying.progress?.total ?? '…'}`, `Compare · writing ${trying.progress?.done ?? 0}/${trying.progress?.total ?? '…'}`) : t('对比…', 'Compare…')}</Button> : null}
             {!empty && writing === undefined ? (
               // One button for changing the chapter: what the author says is found in it and mended; the triangle beside it
               // holds the other ways — the chapter gone through to a brief, the finding alone, the chapter written over.
@@ -947,9 +913,8 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
 
       {panelInline ? side : panelOpen ? <div className="nv-drawer-mask" onMouseDown={(event) => { if (event.target === event.currentTarget) setPanelOpen(false) }}>{side}</div> : null}
 
-      {viewing !== undefined ? <VersionModal chapterId={chapter.id} version={viewing} current={text} onClose={() => { setViewing(undefined) }} /> : null}
       {moving ? <MoveChapters chapters={[chapter.id]} onClose={() => { setMoving(false) }} /> : null}
-      {comparing ? <WriteTrialDialog chapter={{ id: chapter.id, title: chapter.title, hasText: !empty }} brief={brief} onClose={() => { setComparing(false) }} onTaken={() => { doc.reload() }} /> : null}
+      {comparing ? <WriteTrialDialog chapter={{ id: chapter.id, title: chapter.title, hasText: !empty }} brief={brief} current={text} onClose={() => { setComparing(false) }} onTaken={() => { doc.reload() }} /> : null}
       {translating ? <TranslateDialog chapters={[chapter.id]} line={lineId} onClose={() => { setTranslating(false) }} /> : null}
       {confirm.element}
       {sheets.element}
@@ -1006,24 +971,5 @@ function NextChapter({ chapter, path, lineId, onBranch, onLine, onDerive }: { ch
       })}
       {forked ? <Button size="sm" variant="ghost" icon="plus" onClick={onBranch}>{t('再开一条线', 'Yet another line')}</Button> : null}
     </div>
-  )
-}
-
-function VersionModal({ chapterId, version, current, onClose }: { chapterId: string; version: VersionInfo; current: string; onClose: () => void }) {
-  const { controller } = useStudio()
-  const t = useT()
-  const { root } = useProject()
-  const { busy, run } = useAction()
-  const old = useLoad(signal => controller.api.call('chapter.version', { root, id: chapterId, version: version.id }, signal), [root, chapterId, version.id])
-  return (
-    <Modal wide title={`${new Date(version.createdAt).toLocaleString()} · ${versionReason(version.reason, t)}`} onClose={onClose} footer={(
-      <>
-        <span className="nv-muted nv-small">{t('红色是这个版本有而现在没有的，绿色是现在新增的。', 'Red is what this version had and the current text lost; green is what the current text added.')}</span>
-        <span className="nv-spacer" />
-        <Button variant="primary" icon="undo" busy={busy} disabled={old.data === undefined} onClick={() => run(async () => { await controller.api.call('chapter.restore', { root, id: chapterId, version: version.id }); onClose() })}>{t('恢复到这个版本', 'Restore this version')}</Button>
-      </>
-    )}>
-      {old.data !== undefined ? <DiffView before={old.data.text} after={current} whole /> : old.error !== undefined ? <p className="nv-muted">{old.error}</p> : <div className="nv-center"><Spinner /></div>}
-    </Modal>
   )
 }

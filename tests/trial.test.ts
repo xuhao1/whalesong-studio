@@ -9,7 +9,7 @@ import type { AddressInfo } from 'node:net'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { imageSetups, trialDerive, trialWrite, withModel } from '../src/core/pipelines/trial'
 import { DEFAULT_SETTINGS } from '../src/core/settings'
-import type { ImageTrial } from '../src/shared/types'
+import { TRIAL_MOST, type ImageTrial } from '../src/shared/types'
 import { hashText, proseOnly } from '../src/shared/text'
 import { createTestBed, PIXEL } from './support/harness'
 
@@ -325,6 +325,68 @@ describe('how hard each model of a comparison is to think', () => {
         ['north · low', 'low', ['north/low']],
         ['north · high', 'high', ['north/high']],
       ])
+    } finally {
+      await bed.cleanup()
+    }
+  })
+})
+
+describe('what is kept of a draft written to be compared', () => {
+  it('says beside the version who wrote it, and takes more than eight models at once', async () => {
+    const bed = await createTestBed()
+    try {
+      const { project } = bed.runtime
+      const chapter = await project.addChapter({ title: '雨夜', synopsis: '她在雨夜里等一封信。' })
+      await project.saveChapterText(chapter.id, '原来的正文。')
+      await project.saveChapterText(chapter.id, '改过的正文。')
+      bed.llm.responder = request => `${request.route.model} 写的：雨下了一夜。`
+      // Ten models, one of them at two levels: eleven drafts — more than a comparison used to take.
+      const routes = [...Array.from({ length: 10 }, (_item, at) => ({ provider: 'fake', model: `deepseek-v4.${at}-flash` })), { provider: 'fake', model: 'deepseek-v4.0-flash', reasoningEffort: 'max' }]
+      const result = await trialWrite(bed.core, bed.runtime, { chapter: chapter.id, brief: '写得冷一点', with: routes }, { origin: 'user' })
+      expect(result.drafts.filter(draft => draft.version !== undefined)).toHaveLength(11)
+      const versions = await project.versions(chapter.id)
+      const drafts = versions.filter(version => version.made !== undefined)
+      // The model by its own name — the file's name has it with its dots gone — the level, the brief, and the round they are all of.
+      expect(drafts.map(version => version.made!.label).sort()).toEqual([...routes.map(route => `${route.model}${'reasoningEffort' in route ? ' · max' : ''}`)].sort())
+      const top = drafts.find(version => version.made!.effort === 'max')!
+      expect(top.made).toEqual({ how: 'trial', label: 'deepseek-v4.0-flash · max', provider: 'fake', model: 'deepseek-v4.0-flash', effort: 'max', round: top.made!.round, brief: '写得冷一点' })
+      expect(top.reason).toBe('trial-deepseek-v4-0-flash-max')
+      expect(new Set(drafts.map(version => version.made!.round)).size).toBe(1)
+      // A version kept for another reason says nothing of the kind.
+      expect(versions.find(version => version.reason === 'edit')?.made).toBeUndefined()
+      // Another comparison is another round.
+      const again = await trialWrite(bed.core, bed.runtime, { chapter: chapter.id, with: [{ provider: 'fake', model: 'other' }] }, { origin: 'user' })
+      const later = (await project.versions(chapter.id)).find(version => version.id === again.drafts[0]!.version)!
+      expect(later.made?.round).not.toBe(top.made!.round)
+      expect(later.made?.brief).toBeUndefined()
+      // There is a most all the same: a slip is refused whole, before anything is written.
+      const before = (await project.versions(chapter.id)).length
+      await expect(trialWrite(bed.core, bed.runtime, { chapter: chapter.id, with: Array.from({ length: TRIAL_MOST + 1 }, (_item, at) => ({ provider: 'fake', model: `m${at}` })) }, { origin: 'user' })).rejects.toThrow(`${TRIAL_MOST} runs at once`)
+      expect((await project.versions(chapter.id)).length).toBe(before)
+
+      // Drafts nobody took are deleted for good, what is kept beside them with them; the chapter is not touched.
+      const gone = drafts.slice(0, 3).map(version => version.id)
+      expect(await project.dropVersions(chapter.id, [...gone, 'no-such-version', '../../novel'])).toEqual({ removed: 3, kept: [] })
+      const left = await project.versions(chapter.id)
+      expect(left.some(version => gone.includes(version.id))).toBe(false)
+      for (const id of gone) expect(await project.versionText(chapter.id, id)).toBeUndefined()
+      expect(await bed.runtime.project.chapterText(chapter.id)).toContain('改过的正文。')
+      expect(left.filter(version => version.made !== undefined)).toHaveLength(9)
+    } finally {
+      await bed.cleanup()
+    }
+  })
+
+  it('never deletes a chapter as it was before it was translated', async () => {
+    const bed = await createTestBed()
+    try {
+      const { project } = bed.runtime
+      const chapter = await project.addChapter({ title: '雨夜' })
+      const original = (await project.snapshot(chapter.id, 'before-translate', '原文。'))!
+      const draft = (await project.snapshot(chapter.id, 'trial-x', '一稿。', { how: 'trial', label: 'x', provider: 'fake', model: 'x' }))!
+      expect(await project.dropVersions(chapter.id, [original, draft])).toEqual({ removed: 1, kept: [original] })
+      expect((await project.versions(chapter.id)).map(version => version.id)).toEqual([original])
+      expect(await project.versionText(chapter.id, original)).toBe('原文。')
     } finally {
       await bed.cleanup()
     }

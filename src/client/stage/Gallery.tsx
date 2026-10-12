@@ -9,6 +9,7 @@ import {
   Button, Chip, Empty, Field, Modal, ProjectImage, Select, Spinner, TextArea, TextInput, useAction, useConfirm, useLoad, useProject, useSnapshot, useStudio, useT,
 } from '../ui'
 import { ArtBatchDialog, batchOf } from '../Batch'
+import { PicturesCompare } from '../Compare'
 import { ManyModels } from '../Trial'
 import { ImportPicture } from '../ImportPicture'
 import { sheetsDrawn } from '../labels'
@@ -154,8 +155,9 @@ export function Gallery() {
   }, [subjects, filter, source, images.data])
   const groups = GROUPS.filter(item => subjects.everyone.some(candidate => candidate.group === item.id && counted.has(candidate.id)))
   const members = group === 'all' ? [] : subjects.everyone.filter(item => item.group === group && counted.has(item.id)).sort((a, b) => (group === 'chapters' ? 0 : (counted.get(b.id) ?? 0) - (counted.get(a.id) ?? 0)))
-  // Several pictures picked at once, to be deleted together.
+  // Several pictures picked at once: to be laid side by side, or deleted together.
   const [picking, setPicking] = useState(false)
+  const [comparing, setComparing] = useState<IllustrationInfo[] | undefined>()
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set())
   const pick = (id: string): void => { setPicked((previous) => { const next = new Set(previous); if (!next.delete(id)) next.add(id); return next }) }
   const chosen = list.filter(image => picked.has(image.id))
@@ -287,6 +289,7 @@ export function Gallery() {
           <button type="button" className="nv-link" onClick={() => { setPicked(new Set(list.map(image => image.id))) }}>{t(`全选（列表里的 ${list.length} 张）`, `All ${list.length} listed`)}</button>
           <button type="button" className="nv-link" onClick={() => { setPicked(new Set()) }}>{t('清空', 'None')}</button>
           <span className="nv-spacer" />
+          <Button size="sm" variant="primary" icon="layers" disabled={chosen.length === 0} title={t('把选中的图并排摆开来比', 'Lay the pictures picked side by side')} onClick={() => { setComparing(chosen) }}>{chosen.length === 1 ? t('单看这一张', 'Look at it alone') : t(`并排看 ${chosen.length} 张`, `${chosen.length} side by side`)}</Button>
           <Button size="sm" variant="danger" icon="trash" busy={busy} disabled={chosen.length === 0} onClick={removePicked}>{t(`删除选中的 ${chosen.length} 张`, `Delete the ${chosen.length} picked`)}</Button>
         </div>
       ) : null}
@@ -337,6 +340,13 @@ export function Gallery() {
         </div>
       )}
 
+      {comparing !== undefined ? (
+        <PicturesCompare
+          pictures={comparing.map(image => ({ key: image.id, path: image.path, title: `${t(...KIND[image.kind])}${nameOf(image) !== undefined ? ` · ${nameOf(image)}` : ''}${image.moment?.title !== undefined ? ` · ${image.moment.title}` : ''}`, sub: [image.trial?.label ?? image.model, image.imported === true ? t('导入的', 'brought in') : undefined, new Date(image.createdAt).toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })].filter(part => part !== undefined && part.length > 0).join(' · ') }))}
+          onOpen={(key) => { const image = comparing.find(one => one.id === key); if (image !== undefined) setOpen(image) }}
+          onClose={() => { setComparing(undefined) }}
+        />
+      ) : null}
       {open !== undefined ? (
         <PictureViewer
           path={open.path}
