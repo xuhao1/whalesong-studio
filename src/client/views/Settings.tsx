@@ -288,7 +288,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
       textConcurrency: draft.textConcurrency ?? null,
       autoDigest: draft.autoDigest,
       siftCast: draft.siftCast !== false,
-      planFollowsText: draft.planFollowsText !== false,
+      plansFollow: draft.plansFollow === true,
       recheckIssues: draft.recheckIssues !== false,
       mendBy: draft.mendBy === 'writer' ? 'writer' : 'planner',
       rewriteBy: draft.rewriteBy === 'planner' ? 'planner' : 'writer',
@@ -655,9 +655,10 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
           <span>{t('设定建议由策划审定后自动收进（不勾：逐条等我采纳）', 'Suggestions for the bible are settled by the planner and entered (off: each waits for me)')}</span>
         </label>
         <label className="nv-check">
-          <input type="checkbox" checked={draft.planFollowsText !== false} onChange={(event) => { update({ planFollowsText: event.target.checked }) }} />
-          <span>{t('正文改了之后，章纲和节拍自动照正文更新', 'Once a chapter\'s text is changed, its plan and beats are set by the text')}</span>
+          <input type="checkbox" checked={draft.plansFollow === true} onChange={(event) => { update({ plansFollow: event.target.checked }) }} />
+          <span>{t('正文改了之后，自动照正文改章纲和节拍', 'Once a chapter\'s text is changed, its plan and beats are set by the text by themselves')}</span>
         </label>
+        <p className="nv-muted nv-small nv-check-note">{t('默认不勾：章纲是你定的，写出来的正文不自己变成章纲。要更新，在那一章的章纲上点“照正文更新章纲”。', 'Off unless you tick it: the plan is your design, and text that was written does not become it by itself. To set a plan by its text, press Update the plan from the text on that chapter\'s plan.')}</p>
         <label className="nv-check">
           <input type="checkbox" checked={draft.recheckIssues !== false} onChange={(event) => { update({ recheckIssues: event.target.checked }) }} />
           <span>{t('采纳修订之后，自动核对这一章还开着的审校意见', 'After a revision is accepted, have the issues still open in that chapter checked against the new text')}</span>

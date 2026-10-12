@@ -1734,11 +1734,14 @@ export interface NovelSettings {
    */
   mendReach?: MendReach
   /**
-   * Once a chapter's text is changed after it was digested — a revision accepted, the chapter written anew, a hand in
-   * the file — have its plan (synopsis, place, time, point of view, cast and beats) read against the text and set by
-   * it; the plan as it was stays in its history. Off: the plan is set by the text only when the author asks. Unset: on.
+   * `true`: once a chapter's text is changed after it was digested — a revision accepted, the chapter written anew, a
+   * hand in the file — its plan (synopsis, place, time, point of view, cast and beats) is read against the text and
+   * set by it, by itself; the plan as it was stays in its history. **Unset: no.** A plan is the author's design, and
+   * text a model wrote does not become the plan unasked: it is set by the text where the author asks for that, on
+   * the chapter's plan. (It takes the place of `planFollowsText`, which meant yes when unset and was written out as
+   * `true` by every save of the settings page: that key is read no more, whatever it holds.)
    */
-  planFollowsText?: boolean
+  plansFollow?: boolean
   /** After chapters are digested, have the planner look through the names that have no card yet and say who is worth one. Unset: yes. */
   siftCast?: boolean
   /**

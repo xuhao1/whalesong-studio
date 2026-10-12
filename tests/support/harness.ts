@@ -117,7 +117,7 @@ export async function createTestBed(options: { settings?: Partial<NovelSettings>
   const llm = new FakeLlm()
   const roles = new FakeRoles()
   // (Mending by places is tested with the writer rewriting each place unless a test says otherwise; what holds where nothing is set is tested by name.)
-  const settings = new SettingsStore({ ...DEFAULT_SETTINGS, autoDigest: false, siftCast: false, settleSuggestions: false, planFollowsText: false, mendBy: 'writer', ...options.settings }, join(dir, 'settings.json'))
+  const settings = new SettingsStore({ ...DEFAULT_SETTINGS, autoDigest: false, siftCast: false, settleSuggestions: false, mendBy: 'writer', ...options.settings }, join(dir, 'settings.json'))
   // The ledger of a test goes where the test's book goes, never into the real Harness home.
   const usage = new UsageStore(join(dir, 'usage'))
   // Whatever a test takes off the shelf goes to a trash of its own, never to the real one.

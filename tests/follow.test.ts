@@ -44,7 +44,7 @@ describe('a plan that follows its text', () => {
 
   beforeEach(async () => {
     followTiming.delay = 5
-    bed = await createTestBed({ settings: { planFollowsText: true } })
+    bed = await createTestBed({ settings: { plansFollow: true } })
     bed.llm.responder = request => request.prompt.includes('章纲从正文重新读出来') ? planFor(request.prompt) : DIGEST
   })
   afterEach(async () => {
@@ -108,13 +108,44 @@ describe('a plan that follows its text', () => {
     await settled(3)
     expect(plans()).toBe(3)
     expect(followed()).toBe(3)
-    await bed.core.settings.update({ planFollowsText: false })
-    for (let n = 0; n < 40 && bed.core.currentSettings().planFollowsText !== false; n++) await wait(10)
+    await bed.core.settings.update({ plansFollow: false })
+    for (let n = 0; n < 40 && bed.core.currentSettings().plansFollow !== false; n++) await wait(10)
     await project.saveChapterText(chapter.id, '她在渡口等船。')
     await digestChapter(bed.core, bed.runtime, chapter.id, { origin: 'user' })
     await wait(80)
     expect(plans()).toBe(3)
     expect(followed()).toBe(3)
+  })
+
+  it('nothing follows unless the author switched it on: the plan is theirs, and the text does not become it unasked', async () => {
+    // As the Studio comes — and with the retired key still written out as it used to be by every save of the settings page.
+    for (const settings of [{}, { planFollowsText: true } as Record<string, unknown>]) {
+      const plain = await createTestBed({ settings })
+      try {
+        plain.llm.responder = request => request.prompt.includes('章纲从正文重新读出来') ? planFor(request.prompt) : DIGEST
+        const { project } = plain.runtime
+        const asked = (): number => plain.llm.requests.filter(request => request.prompt.includes('章纲从正文重新读出来')).length
+        const chapter = await project.addChapter({ title: '下山', synopsis: '作者定的：她在山门被师兄拦下，没有走成。', beats: [{ id: 'b1', summary: '在山门被师兄拦下' }] })
+        await project.saveChapterText(chapter.id, '她在旧居门口站了一会儿。\n\n师兄在山门拦住了她。')
+        await digestChapter(plain.core, plain.runtime, chapter.id, { origin: 'user' })
+        // The text is changed away from the plan — a proposal accepted, then digested again.
+        const proposal = await project.addProposal({ chapterId: chapter.id, kind: 'chapter', instruction: '改到渡口', before: '她在旧居门口站了一会儿。\n\n师兄在山门拦住了她。', after: '她在渡口等船。\n\n船夫不肯渡她。', createdBy: 'user' })
+        await acceptProposal(plain.core, plain.runtime, proposal.id, { origin: 'user' })
+        await digestChapter(plain.core, plain.runtime, chapter.id, { origin: 'user' }, { force: true })
+        await wait(80)
+        expect(asked()).toBe(0)
+        expect(plain.core.jobs.list(project.root).filter(job => job.title === FOLLOW_JOB)).toHaveLength(0)
+        const plan = (await project.findChapter(chapter.id))!.plan
+        expect(plan.synopsis).toBe('作者定的：她在山门被师兄拦下，没有走成。')
+        expect(plan.beats!.map(beat => beat.summary)).toEqual(['在山门被师兄拦下'])
+        // Asked for, it is done: the button on the chapter's plan.
+        const read = await plansOfText(plain.core, plain.runtime, { chapters: [chapter.id] }, { origin: 'user' })
+        expect(read.read).toHaveLength(1)
+        expect((await project.findChapter(chapter.id))!.plan.synopsis).toBe('沈璃在渡口等船，船夫不肯渡她。')
+      } finally {
+        await plain.cleanup()
+      }
+    }
   })
 
   it('sets the plans of several chapters by their texts in one go, leaving alone the ones already read from the text they have', async () => {

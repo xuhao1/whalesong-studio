@@ -6,12 +6,18 @@
  * accepted, the chapter written anew, a hand in the file — the plan says what
  * was meant and not what is there, and whoever goes by it afterwards (a writer
  * rewriting the chapter, the director cutting it into panels, the planner
- * deriving what follows) goes by something the book no longer says. So a
- * chapter that was digested before and is digested again has its plan read
- * against its text ({@link planOfText}: synopsis, purpose, place, time, point of
- * view, cast and beats) — in the background, a moment later, several chapters in one
- * job. A plan that already stands by the text its chapter has is left alone,
- * and the plan as it was stays in its history.
+ * deriving what follows) goes by something the book no longer says. A plan can
+ * be read against its text ({@link planOfText}: synopsis, purpose, place, time,
+ * point of view, cast and beats) — one chapter's, or several in one job; a plan
+ * that already stands by the text its chapter has is left alone, and the plan
+ * as it was stays in its history.
+ *
+ * That is the author's to ask for. A plan is what they designed, and a text a
+ * model wrote away from it is not made the plan behind their back — else the
+ * outline becomes whatever was written, and the next chapters are planned and
+ * written by that. Only where the author switched it on (`plansFollow`) does a
+ * chapter that was digested before and is changed have its plan read by itself,
+ * in the background, a moment later.
  */
 import { hashText } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
@@ -102,8 +108,11 @@ const pending = new Map<string, { timer: ReturnType<typeof setTimeout> | undefin
 /** How long after the last change the plans are read (a test shortens it). */
 export const followTiming = { delay: 2500 }
 
-/** Whether plans follow their texts by themselves (`planFollowsText`; unset: yes). */
-export const plansFollow = (core: NovelCore): boolean => core.currentSettings().planFollowsText !== false
+/**
+ * Whether plans follow their texts by themselves (`plansFollow`). Unset: no — a plan is the author's design, and what
+ * a model wrote is made the plan only where the author asks for it.
+ */
+export const plansFollow = (core: NovelCore): boolean => core.currentSettings().plansFollow === true
 
 /**
  * Have a chapter's plan read against its text once the text was changed — in the background, a moment later.
