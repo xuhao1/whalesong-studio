@@ -1594,12 +1594,17 @@ export interface NovelSettings {
   recheckIssues?: boolean
   /**
    * Who writes the words of a change made by places — an issue mended, something the author noticed put right, a
-   * request carried through the book, a chapter gone through to an instruction. `writer` (unset): the planner settles
-   * the places and the writer's model rewrites each. `planner`: the crew's model writes what each place is to read
-   * itself, and that is the proposal — the writer's model is not asked. A chapter written over whole is the writer's
-   * either way.
+   * request carried through the book, a chapter gone through to an instruction. `planner` (unset): the crew's model
+   * writes what each place is to read itself, and that is the proposal — the writer's model is not asked. `writer`:
+   * the planner settles the places and the writer's model rewrites each.
    */
   mendBy?: 'writer' | 'planner'
+  /**
+   * Whose model rewrites a passage the author selected, and writes a chapter over whole to an instruction — asked for
+   * by name, or because a mending says places will not do for it. `writer` (unset): the writer's. `planner`: the
+   * crew's. (Writing a chapter, and going on with one, is always the writer's.)
+   */
+  rewriteBy?: 'writer' | 'planner'
   /**
    * Once a chapter's text is changed after it was digested — a revision accepted, the chapter written anew, a hand in
    * the file — have its plan (synopsis, place, time, point of view, cast and beats) read against the text and set by

@@ -2145,6 +2145,13 @@ button.nv-stat:hover {
   border-bottom: 1px solid var(--nv-border);
 }
 
+/* The box the author writes in keeps a width worth writing in: where the buttons leave it none, it takes a line of its own. */
+.nv-brief-bar > .nv-grow,
+.nv-selection-bar > .nv-grow {
+  flex: 1 1 220px;
+  min-width: min(220px, 100%);
+}
+
 .nv-selection-bar {
   background: color-mix(in srgb, var(--nv-brand) 7%, transparent);
 }

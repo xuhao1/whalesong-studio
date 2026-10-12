@@ -63,7 +63,7 @@ export function useMendOrder(): [MendOrder, (order: MendOrder) => void] {
   return useShared<MendOrder>('mend.order', 'queue')
 }
 
-/** Who writes the words of a change made by places: the writer's model after the planner settled the places, or the planner's own. */
+/** Whose model writes: the writer's, or the crew's (the planner). */
 export type MendBy = 'writer' | 'planner'
 
 /**
@@ -72,7 +72,8 @@ export type MendBy = 'writer' | 'planner'
  */
 export function useMendBy(): [MendBy, (by: MendBy) => void] {
   const { controller } = useStudio()
-  const by: MendBy = useSnapshot(snapshot => snapshot.settings?.settings.mendBy) === 'planner' ? 'planner' : 'writer'
+  // (The crew's model unless the author set the writer's: a change pinned to a sentence or two is its kind of work.)
+  const by: MendBy = useSnapshot(snapshot => snapshot.settings?.settings.mendBy) === 'writer' ? 'writer' : 'planner'
   return [by, (next) => {
     void controller.guard(async () => {
       await controller.saveSettings({ mendBy: next })
@@ -80,18 +81,48 @@ export function useMendBy(): [MendBy, (by: MendBy) => void] {
   }]
 }
 
+/**
+ * Whose model rewrites a passage the author selected, and writes a chapter over whole (`rewriteBy`): the writer's
+ * unless the author set the crew's — and the way to say so from beside the buttons that rewrite.
+ */
+export function useRewriteBy(): [MendBy, (by: MendBy) => void] {
+  const { controller } = useStudio()
+  const by: MendBy = useSnapshot(snapshot => snapshot.settings?.settings.rewriteBy) === 'planner' ? 'planner' : 'writer'
+  return [by, (next) => {
+    void controller.guard(async () => {
+      await controller.saveSettings({ rewriteBy: next })
+    })
+  }]
+}
+
+/** The small triangle beside the buttons that rewrite a passage: whose model does it. */
+export function RewriteByMenu() {
+  const t = useT()
+  const [by, setBy] = useRewriteBy()
+  return (
+    <Menu icon="chevronDown" variant="ghost" size="sm" align="end" label={by === 'planner' ? t('编排模型改', 'By the crew\'s model') : t('写手改', 'By the writer')} items={[
+      { label: t(`${by === 'writer' ? '✓ ' : ''}改写一段、整章重写：由写手模型写`, `${by === 'writer' ? '✓ ' : ''}A passage rewritten, a chapter written over: the writer's model`), onSelect: () => { setBy('writer') } },
+      { label: t(`${by === 'planner' ? '✓ ' : ''}改写一段、整章重写：由编排模型写`, `${by === 'planner' ? '✓ ' : ''}A passage rewritten, a chapter written over: the crew's model`), onSelect: () => { setBy('planner') } },
+    ]} />
+  )
+}
+
 /** The small triangle beside the buttons that mend: in line or apart, and whose model writes the changed words. */
 export function MendOrderMenu() {
   const t = useT()
   const [order, setOrder] = useMendOrder()
   const [by, setBy] = useMendBy()
+  const [whole, setWhole] = useRewriteBy()
   return (
-    <Menu icon="chevronDown" variant="ghost" size="sm" align="end" label={`${order === 'queue' ? t('排队', 'In line') : t('分别', 'Apart')}${by === 'planner' ? t(' · 策划写', ' · planner writes') : ''}`} items={[
+    <Menu icon="chevronDown" variant="ghost" size="sm" align="end" label={`${order === 'queue' ? t('排队', 'In line') : t('分别', 'Apart')} · ${by === 'planner' ? t('策划写', 'planner writes') : t('写手写', 'writer writes')}`} items={[
       { label: t(`${order === 'queue' ? '✓ ' : ''}排队：等前面的修复做完，接着它们改`, `${order === 'queue' ? '✓ ' : ''}In line: after the mendings under way, going on from them`), onSelect: () => { setOrder('queue') } },
       { label: t(`${order === 'apart' ? '✓ ' : ''}分别：马上开始，各改各的`, `${order === 'apart' ? '✓ ' : ''}Apart: at once, each by itself`), onSelect: () => { setOrder('apart') } },
       'separator',
-      { label: t(`${by === 'writer' ? '✓ ' : ''}改的文字由写手模型写（策划只定在哪改）`, `${by === 'writer' ? '✓ ' : ''}The writer's model writes the changes (the planner settles where)`), onSelect: () => { setBy('writer') } },
-      { label: t(`${by === 'planner' ? '✓ ' : ''}改的文字由编排模型直接写（不经写手）`, `${by === 'planner' ? '✓ ' : ''}The crew's model writes the changes itself (no writer)`), onSelect: () => { setBy('planner') } },
+      { label: t(`${by === 'planner' ? '✓ ' : ''}按处修改：由编排模型直接写（不经写手）`, `${by === 'planner' ? '✓ ' : ''}Changes by places: the crew's model writes them itself (no writer)`), onSelect: () => { setBy('planner') } },
+      { label: t(`${by === 'writer' ? '✓ ' : ''}按处修改：策划定在哪改，写手模型写`, `${by === 'writer' ? '✓ ' : ''}Changes by places: the planner settles where, the writer's model writes`), onSelect: () => { setBy('writer') } },
+      'separator',
+      { label: t(`${whole === 'writer' ? '✓ ' : ''}整章重写：由写手模型写`, `${whole === 'writer' ? '✓ ' : ''}A chapter written over: the writer's model`), onSelect: () => { setWhole('writer') } },
+      { label: t(`${whole === 'planner' ? '✓ ' : ''}整章重写：由编排模型写`, `${whole === 'planner' ? '✓ ' : ''}A chapter written over: the crew's model`), onSelect: () => { setWhole('planner') } },
     ]} />
   )
 }

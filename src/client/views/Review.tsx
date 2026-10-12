@@ -571,7 +571,7 @@ function BookRevision({ onStarted }: { onStarted: () => void }) {
       <section className="nv-card">
         <SectionTitle>{t('对全书提一个修改要求', 'Ask for a change across the whole book')}</SectionTitle>
         <p className="nv-muted nv-small">{mendBy === 'planner'
-          ? t('策划定下改哪几处，并把每一处改好的文字直接写出来（不经写手模型）；每一处是一条提案，等你确认。', 'The planner settles which places change and writes what each is to read itself (the writer\'s model is not asked); each place waits as a proposal of its own.')
+          ? t('策划定下改哪几处，并把每一处改好的文字直接写出来；每一处是一条提案，等你确认。', 'The planner settles which places change and writes what each is to read itself; each place waits as a proposal of its own.')
           : t('策划定下改哪几处，写手只改这几处；每一处是一条提案，等你确认。', 'The planner settles which places change and the writer rewrites those only; each place waits as a proposal of its own.')}</p>
         <div className="nv-form-grid">
           {project.world.length > 0 ? (

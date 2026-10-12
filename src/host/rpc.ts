@@ -785,13 +785,14 @@ export function createHandlers(service: NovelService): Handlers {
       const runtime = await open(root)
       return job(runtime, 'digest', 'digest', chapters?.[0], async task => await digestPending(core, runtime, task, { ...(chapters !== undefined ? { chapters } : {}), ...(force !== undefined ? { force } : {}) }))
     },
-    'ai.reviewLead': async ({ root, lead, chapters, line, fix, order }) => {
+    'ai.reviewLead': async ({ root, lead, chapters, line, fix, order, passage }) => {
       const runtime = await open(root)
       const asked = {
         lead: requireString(lead, 'lead'),
         fix: fix !== false,
         ...(Array.isArray(chapters) && chapters.length > 0 ? { chapters: chapters.filter((item): item is string => typeof item === 'string') } : {}),
         ...(typeof line === 'string' && line.length > 0 ? { line } : {}),
+        ...(typeof passage === 'string' && passage.trim().length > 0 ? { passage: passage.trim() } : {}),
       }
       // Finding alone changes nothing and waits for nobody; a lead that is mended takes its turn among the mendings
       // (and is then looked for in the book as it stands by then — see `reviewByLead`).

@@ -290,7 +290,8 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
       siftCast: draft.siftCast !== false,
       planFollowsText: draft.planFollowsText !== false,
       recheckIssues: draft.recheckIssues !== false,
-      mendBy: draft.mendBy === 'planner' ? 'planner' : 'writer',
+      mendBy: draft.mendBy === 'writer' ? 'writer' : 'planner',
+      rewriteBy: draft.rewriteBy === 'planner' ? 'planner' : 'writer',
       settleSuggestions: draft.settleSuggestions !== false,
       reviewAgentRevisions: draft.reviewAgentRevisions,
       agentFiles: draft.agentFiles ?? 'guide',
@@ -510,16 +511,28 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
         )}
         {/* Whose model writes the words of a change made by places: a model fit to write chapters is not always fit for a pinned, small change. */}
         {scope !== 'book' ? (
-          <Field label={t('按处修改由谁写', 'Who writes a change made by places')} hint={t('修审校问题、照引导审校、全书修订、“改这一章”：每一处改好的文字由哪个模型写。写手模型做不好这种圈定范围的小改动时，选编排模型。整章重写始终是写手。', 'Mending issues, a review by a lead, a revision through the book, a chapter revised in place: whose model writes what each place is to read. Choose the crew\'s where the writer\'s model does not make such small, pinned changes well. A chapter written over whole is always the writer\'s.')}>
-            <Select<'writer' | 'planner'>
-              value={draft.mendBy === 'planner' ? 'planner' : 'writer'}
-              options={[
-                { value: 'writer', label: t('写手模型：策划定在哪改，写手改写', 'The writer\'s: the planner settles where, the writer rewrites') },
-                { value: 'planner', label: t('编排模型：策划直接写出改好的文字，不经写手', 'The crew\'s: the planner writes the changed words itself') },
-              ]}
-              onChange={(value) => { update({ mendBy: value }) }}
-            />
-          </Field>
+          <div className="nv-form-grid">
+            <Field label={t('按处修改由谁写', 'Who writes a change made by places')} hint={t('修审校问题、照引导审校、全书修订、“改这一章”：每一处改好的文字由哪个模型写。', 'Mending issues, a review by a lead, a revision through the book, a chapter revised in place: whose model writes what each place is to read.')}>
+              <Select<'writer' | 'planner'>
+                value={draft.mendBy === 'writer' ? 'writer' : 'planner'}
+                options={[
+                  { value: 'planner', label: t('编排模型：策划直接写出改好的文字（默认）', 'The crew\'s: the planner writes the changed words itself (default)') },
+                  { value: 'writer', label: t('写手模型：策划定在哪改，写手改写', 'The writer\'s: the planner settles where, the writer rewrites') },
+                ]}
+                onChange={(value) => { update({ mendBy: value }) }}
+              />
+            </Field>
+            <Field label={t('改写一段、整章重写由谁写', 'Who rewrites a passage or a whole chapter')} hint={t('写作页选中一段的“润色 / 扩写 / 按要求改”，整章重写，以及修复里策划说“得整章重写”的章节。写一章、续写始终是写手。', 'A selected passage polished, expanded or rewritten on the writing page; a chapter written over whole — asked for, or because a mending says places will not do. Writing a chapter and going on with one is always the writer\'s.')}>
+              <Select<'writer' | 'planner'>
+                value={draft.rewriteBy === 'planner' ? 'planner' : 'writer'}
+                options={[
+                  { value: 'writer', label: t('写手模型（默认）', 'The writer\'s (default)') },
+                  { value: 'planner', label: t('编排模型', 'The crew\'s') },
+                ]}
+                onChange={(value) => { update({ rewriteBy: value }) }}
+              />
+            </Field>
+          </div>
         ) : null}
         <VisionRow
           route={scope === 'book' ? own.vision : draft.vision}

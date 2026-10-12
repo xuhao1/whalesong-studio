@@ -208,6 +208,76 @@ describe('a review led by what the author noticed', () => {
     expect(await amendChapter(bed.core, bed.runtime, { chapter: ids.three, instruction: '开头换个说法', by: 'writer' }, task)).toMatchObject({ who: 'writer' })
   })
 
+  it('has the crew\'s model write changes by places where nothing is set, and the writer\'s rewrite a passage or a chapter — each the author\'s to set', async () => {
+    // (The bed sets the writer for changes by places; here nothing is set, as in a Studio just installed.)
+    await bed.cleanup()
+    bed = await createTestBed({ language: 'zh', title: '七日未寄', settings: { mendBy: undefined } })
+    const { project } = bed.runtime
+    const ids = await book()
+    const writer = { provider: 'p', model: 'writer-model' }
+    const crew = { provider: 'p', model: 'crew-model' }
+    await bed.core.settings.update({ models: { writer, architect: crew } as never })
+    // A request through the book: the planner writes each place itself — no writer is asked.
+    bed.llm.responder = request => planner(request) ? JSON.stringify({ edits: [{ chapter: 3, find: '她等了一夜。', replace: '她等了两夜。', why: '照要求' }], chapters: [], note: '一处。' }) : '不该问到写手'
+    const places = await reviseBook(bed.core, bed.runtime, { instruction: '等的是两夜', asked: true }, task)
+    expect(places.direct).toBe(true)
+    expect(bed.llm.requests).toHaveLength(1)
+    expect(bed.llm.requests[0]!.prompt).toContain('"replace"')
+    // Set to the writer, the planner only settles where: the place is the writer's to rewrite, by the writer's model.
+    await bed.core.settings.update({ mendBy: 'writer' })
+    bed.llm.requests.length = 0
+    bed.llm.responder = request => planner(request) ? JSON.stringify({ edits: [{ chapter: 1, find: '他说话很慢。', how: '改成很快' }], chapters: [], note: '一处。' }) : '他说话很快。'
+    const settled = await reviseBook(bed.core, bed.runtime, { instruction: '他说话很快', asked: true }, task)
+    expect(settled.direct).toBeUndefined()
+    expect(bed.llm.requests.map(request => request.route?.model)).toEqual(['crew-model', 'writer-model'])
+
+    // A passage the author picks, and a chapter written over whole: the writer's model, where nothing is set.
+    bed.llm.requests.length = 0
+    bed.llm.responder = () => '渡口空无一人。'
+    const { reviseSpan, reviseChapter } = await import('../src/core/pipelines/revise')
+    expect(await reviseSpan(bed.core, bed.runtime, { chapter: ids.three, quote: '渡口没有人。', instruction: '换个说法' }, task)).toMatchObject({ who: 'writer' })
+    bed.llm.responder = () => '渡口空无一人。\n\n她等了一夜又一夜。'
+    expect(await reviseChapter(bed.core, bed.runtime, { chapter: ids.three, instruction: '重写' }, task)).toMatchObject({ who: 'writer' })
+    expect(bed.llm.requests.map(request => request.route?.model)).toEqual(['writer-model', 'writer-model'])
+    // Set to the crew's, both go to it — and a chapter a mending says has to be written over goes the same way.
+    await bed.core.settings.update({ rewriteBy: 'planner' })
+    bed.llm.requests.length = 0
+    bed.llm.responder = () => '渡口空无一人。'
+    expect(await reviseSpan(bed.core, bed.runtime, { chapter: ids.three, quote: '渡口没有人。', instruction: '换个说法' }, task)).toMatchObject({ who: 'planner' })
+    bed.llm.responder = () => '渡口空无一人。\n\n她等了一夜又一夜。'
+    expect(await reviseChapter(bed.core, bed.runtime, { chapter: ids.three, instruction: '重写' }, task)).toMatchObject({ who: 'planner' })
+    expect(bed.llm.requests.map(request => request.route?.model)).toEqual(['crew-model', 'crew-model'])
+    bed.llm.requests.length = 0
+    bed.llm.responder = request => planner(request) ? JSON.stringify({ edits: [], chapters: [{ index: 2, reason: '语气要通篇变' }], note: '整章。' }) : '柳先生没戴眼镜。\n\n窗外有雨。'
+    const over = await reviseBook(bed.core, bed.runtime, { instruction: '第 2 章的语气整个换掉', asked: true }, task)
+    expect(over.results.map(item => item.kind)).toEqual(['chapter'])
+    expect(bed.llm.requests.map(request => request.route?.model)).toEqual(['crew-model', 'crew-model'])
+    // (Said outright for one piece of work, whatever the settings.)
+    bed.llm.responder = () => '渡口空无一人。'
+    expect(await reviseSpan(bed.core, bed.runtime, { chapter: ids.three, quote: '渡口没有人。', instruction: '换个说法', by: 'writer' }, task)).toMatchObject({ who: 'writer' })
+    expect((await project.proposals()).length).toBeGreaterThan(0)
+  })
+
+  it('is told the passage the author pointed at, and keeps the sentence they said as what the issue and the change are for', async () => {
+    const { project } = bed.runtime
+    const ids = await book()
+    bed.llm.responder = (request) => {
+      if (planner(request)) return JSON.stringify({ findings: [FOUND[1]], edits: [{ chapter: 2, find: '过了一会儿，柳先生推了推眼镜。', how: '改成揉了揉眼睛' }], chapters: [], note: '就是这一句。' })
+      return passage(request).replace('推了推眼镜', '揉了揉眼睛')
+    }
+    // Said from the editor, of the sentence selected there.
+    await reviewByLead(bed.core, bed.runtime, { lead: '他刚才不是没戴眼镜吗', chapters: [ids.two], passage: '  过了一会儿，柳先生推了推眼镜。 ' }, task)
+    const asked = bed.llm.requests.find(planner)!.prompt
+    for (const part of ['## 作者发现的问题', '他刚才不是没戴眼镜吗', '作者是指着第 2 章的这一段说的', '「过了一会儿，柳先生推了推眼镜。」', '它牵连到的别处也要找', '作者只让动这几章']) expect(asked, part).toContain(part)
+    // What is kept is what they said — on the issue, and on the change made for it.
+    expect((await project.review(ids.two))!.issues.map(issue => issue.lead)).toEqual(['他刚才不是没戴眼镜吗'])
+    const waiting = (await project.proposals()).filter(item => item.status === 'pending')
+    expect(waiting.map(item => item.before)).toEqual(['过了一会儿，柳先生推了推眼镜。'])
+    // (The writer of the place is told the lead; the passage pointed at is the planner's to go by.)
+    expect(bed.llm.requests.find(request => !planner(request))!.prompt).toContain('他刚才不是没戴眼镜吗')
+    expect(bed.llm.requests.find(request => !planner(request))!.prompt).not.toContain('作者是指着')
+  })
+
   it('shows a role the chapter as its work goes by it: what it copies from its reading tool is what it is checked against', async () => {
     const ids = await book()
     // A mending that goes on from changes still waiting reads the chapter with them laid in — through the tool too.

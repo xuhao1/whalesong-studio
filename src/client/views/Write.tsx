@@ -36,7 +36,7 @@ import {
   Button, Chip, cx, Empty, Menu, Modal, Progress, Select, Spinner, Tabs, TextInput, ThoughtButton, ThoughtPanel, useAction, useConfirm, useJobStream, useJobTail, useLoad, useProject,
   useLineView, useQuote, useSnapshot, useStudio, useT, useWidth, waysOn, type Translate, plainEnter, ViewButton,
 } from '../ui'
-import { IssueList, LeadBar, useMendBy } from '../Issues'
+import { IssueList, LeadBar, RewriteByMenu, useMendBy, useMendOrder, useRewriteBy } from '../Issues'
 import { JobBar } from '../JobBar'
 
 type PanelTab = 'plan' | 'memory' | 'issues' | 'versions' | 'proposals' | 'pictures'
@@ -253,6 +253,8 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
   // Several models at this chapter at once, to be compared.
   const [comparing, setComparing] = useState(false)
   const [custom, setCustom] = useState<string | undefined>()
+  // Something wrong the author sees in the passage they selected: said here, it is found, filed and mended (a review led by them).
+  const [flagging, setFlagging] = useState<string | undefined>()
   // Pictures to rewrite a selected passage by: for that rewrite alone.
   const [spanGuides, setSpanGuides] = useState<PictureGuide[]>([])
   const [viewing, setViewing] = useState<VersionInfo | undefined>()
@@ -407,6 +409,8 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
   const openIssues = (doc.data?.review?.issues ?? []).filter(issue => issue.resolved !== true)
   // Who goes through a chapter to an instruction: the writer, or — where the author set that — the planner.
   const [mendBy] = useMendBy()
+  // Who rewrites a selected passage, or the chapter whole: the writer, or — where the author set that — the crew's model.
+  const [rewriteBy] = useRewriteBy()
   const plan = doc.data?.plan
   const empty = (text ?? '').trim().length === 0
 
@@ -471,6 +475,30 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
       await controller.api.call('ai.reviseSpan', { root, chapter: chapter.id, start: selection.start + raw.indexOf(quote), end: selection.start + raw.indexOf(quote) + quote.length, quote, instruction, ...(spanGuides.length > 0 ? { guides: spanGuides } : {}) })
       await controller.refreshJobs()
     })
+  }
+  /**
+   * A review led by the author, from where the chapter is edited: what they noticed — of the passage selected, or of
+   * the chapter — is found in this chapter by the planner, filed as issues, and mended by small proposals.
+   */
+  const [mendOrder] = useMendOrder()
+  const leadHere = (lead: string, passage: string | undefined, fix: boolean): Promise<unknown> => controller.guard(async () => {
+    if (!(await settle())) return undefined
+    setFlagging(undefined)
+    showPanel('issues')
+    await controller.api.call('ai.reviewLead', { root, lead, chapters: [chapter.id], fix, order: mendOrder, ...(passage !== undefined && passage.length > 0 ? { passage } : {}) })
+    await controller.refreshJobs()
+    controller.toast('info', fix
+      ? t('策划照你说的在这一章里找；找到的记在右边“问题”里，改动出现在各条问题下面。', 'The planner is looking for it in this chapter; what is found is filed under Issues on the right, and the changes show beneath.')
+      : t('策划照你说的在这一章里找；找到的记在右边“问题”里，这一次不改。', 'The planner is looking for it in this chapter; what is found is filed under Issues on the right, and nothing is changed this time.'))
+    return undefined
+  })
+  const leadFromBrief = (): void => {
+    const lead = brief.trim()
+    if (lead.length === 0) {
+      controller.toast('info', t('先在输入框里写下你发现的问题。', 'Say what you noticed in the box first.'))
+      return
+    }
+    void leadHere(lead, undefined, true).then(() => { setBrief('') })
   }
   // The passage a picture is being asked of: what the author wants of it is asked first.
   const [picturing, setPicturing] = useState<string | undefined>()
@@ -621,7 +649,7 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
           <div className="nv-panel-section">
             {revising !== undefined ? (
               <div className="nv-live-proposal">
-                <div className="nv-row"><Spinner size={12} /><span>{jobPulse(revising, t) ?? (revising.title === 'amend chapter' ? mendBy === 'planner' ? t('策划在一处处改…', 'The planner is going through the chapter…') : t('写手在一处处改…', 'The writer is going through the chapter…') : t('写手正在改写…', 'The writer is revising…'))}</span><span className="nv-spacer" /><Button size="sm" variant="ghost" icon="stop" onClick={() => { void controller.cancelJob(revising.id) }}>{t('停止', 'Stop')}</Button></div>
+                <div className="nv-row"><Spinner size={12} /><span>{jobPulse(revising, t) ?? (revising.title === 'amend chapter' ? mendBy === 'planner' ? t('策划在一处处改…', 'The planner is going through the chapter…') : t('写手在一处处改…', 'The writer is going through the chapter…') : rewriteBy === 'planner' ? t('编排模型正在改写…', 'The crew\'s model is revising…') : t('写手正在改写…', 'The writer is revising…'))}</span><span className="nv-spacer" /><Button size="sm" variant="ghost" icon="stop" onClick={() => { void controller.cancelJob(revising.id) }}>{t('停止', 'Stop')}</Button></div>
                 {reviseStream.length > 0 ? <div className="nv-prose nv-prose-small">{reviseStream.split('\n').filter(line => line.trim().length > 0).slice(-12).map((line, index) => <p key={index}>{line}</p>)}</div> : null}
               </div>
             ) : null}
@@ -731,10 +759,22 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
         {selection !== undefined && selected.trim().length > 0 && writing === undefined ? (
           <div className="nv-selection-bar">
             <span className="nv-selection-count">{t(`已选 ${countWords(selected)} 字`, `${countWords(selected)} words selected`)}</span>
-            {custom === undefined ? (
+            {flagging !== undefined ? (
               <>
+                <TextInput autoFocus className="nv-grow" value={flagging} placeholder={t('这一段哪里不对？回车：找出来并修', 'What is wrong here? Enter: find it and mend it')} onChange={(event) => { setFlagging(event.target.value) }} onKeyDown={(event) => {
+                  if (plainEnter(event) && flagging.trim().length > 0) void leadHere(flagging.trim(), selected.trim(), true)
+                  if (event.key === 'Escape') setFlagging(undefined)
+                }} />
+                <Button size="sm" variant="primary" icon="wand" disabled={flagging.trim().length === 0} onClick={() => { void leadHere(flagging.trim(), selected.trim(), true) }} title={t('策划从这一段查起，把这一章里露出这个问题的地方找出来、记成审校问题，再修；修改是小提案', 'The planner starts from this passage, finds where in the chapter it shows, files each place as an issue, and mends it by small proposals')}>{t('找出来并修', 'Find and mend')}</Button>
+                <Button size="sm" variant="outline" disabled={flagging.trim().length === 0} onClick={() => { void leadHere(flagging.trim(), selected.trim(), false) }} title={t('只记成审校问题，先不改', 'Filed as issues, nothing changed yet')}>{t('只记下', 'File only')}</Button>
+                <Button size="sm" variant="ghost" icon="x" onClick={() => { setFlagging(undefined) }} />
+              </>
+            ) : custom === undefined ? (
+              <>
+                <Button size="sm" variant="outline" icon="alert" onClick={() => { setFlagging('') }} title={t('照引导审校：说一句这一段哪里不对，策划找出来、记成问题、再修', 'A review by your lead: say what is wrong with this passage, and the planner finds it, files it, and mends it')}>{t('这里有问题…', 'Something is wrong here…')}</Button>
                 {PRESETS.map(preset => <Button key={preset.id} size="sm" onClick={() => { reviseSelection(t(...preset.instruction)) }}>{t(...preset.label)}</Button>)}
                 <Button size="sm" icon="pen" onClick={() => { setCustom('') }}>{t('按要求改…', 'Rewrite as…')}</Button>
+                <RewriteByMenu />
                 <Button size="sm" icon="image" onClick={illustrateSelection}>{t('配图', 'Illustrate')}</Button>
                 <Button size="sm" icon="layers" onClick={() => { setPicking(selected.trim()) }} title={t('从这本书已有的图里选一张，插到这段之后', 'Choose one of the book\'s pictures to go after this passage')}>{t('插入已有的图…', 'Place a picture…')}</Button>
                 {quote !== undefined ? <Button size="sm" icon="quote" onClick={quoteSelection}>{t('和总编讨论', 'Discuss')}</Button> : null}
@@ -746,21 +786,23 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
                   if (event.key === 'Escape') setCustom(undefined)
                 }} />
                 <Button size="sm" variant="primary" disabled={custom.trim().length === 0} onClick={() => { reviseSelection(custom.trim()) }}>{t('改写', 'Rewrite')}</Button>
+                <RewriteByMenu />
                 <Button size="sm" variant="ghost" icon="x" onClick={() => { setCustom(undefined) }} />
               </>
             )}
           </div>
         ) : (
           <div className="nv-brief-bar">
-            <TextInput className="nv-grow" value={brief} placeholder={empty ? t('给写手的要求', 'What to ask of the writer') : t('给写手的要求：续写的方向，或整章要怎么改', 'A brief: where to continue, or how the chapter should change')} onChange={(event) => { setBrief(event.target.value) }} onKeyDown={(event) => { if (plainEnter(event) && writing === undefined) write(empty ? 'draft' : 'continue') }} />
+            <TextInput className="nv-grow" value={brief} placeholder={empty ? t('给写手的要求', 'What to ask of the writer') : t('续写的方向、整章要怎么改，或你发现的问题', 'Where to continue, how the chapter should change — or something you noticed in it')} onChange={(event) => { setBrief(event.target.value) }} onKeyDown={(event) => { if (plainEnter(event) && writing === undefined) write(empty ? 'draft' : 'continue') }} />
             {writing !== undefined
               ? <Button variant="danger" icon="stop" onClick={() => { void controller.cancelJob(writing.id) }}>{t('停止', 'Stop')}</Button>
               : <Button variant="primary" icon="feather" onClick={() => { write(empty ? 'draft' : 'continue') }}>{empty ? t('写这一章', 'Write it') : t('续写', 'Continue')}</Button>}
             {writing === undefined ? <Button variant="outline" icon="layers" onClick={() => { void save().then(() => { setComparing(true) }) }} title={t('让几个模型各写一稿这一章，并排着看，采纳一稿——正文不动，采纳了才换', 'Have several models write this chapter, read the drafts side by side and take one — the chapter keeps its text until you do')}>{t('对比…', 'Compare…')}</Button> : null}
             {!empty && writing === undefined ? <Button variant="outline" icon="wand" busy={revising !== undefined && revising.title === 'amend chapter'} disabled={revising !== undefined} onClick={() => { reviseChapter() }} title={mendBy === 'planner' ? t('策划（编排模型）照左边的要求在这一章里一处处改，不重写整章；每一处是一条提案', 'The planner (the crew\'s model) changes this chapter place by place to the brief on the left, without writing it over; each place is a proposal') : t('写手照左边的要求在这一章里一处处改，不重写整章；每一处是一条提案', 'The writer changes this chapter place by place to the brief on the left, without writing it over; each place is a proposal')}>{t('改这一章', 'Revise')}</Button> : null}
+            {!empty && writing === undefined ? <Button variant="outline" icon="alert" onClick={leadFromBrief} title={t('照引导审校：把左边这句话当作你在这一章里发现的问题——策划找出来、记成审校问题，再修；修改是小提案，出现在各条问题下面', 'A review by your lead: the sentence on the left is taken as something you noticed in this chapter — the planner finds it, files it as issues, and mends it by small proposals beneath them')}>{t('有问题', 'It has a problem')}</Button> : null}
             {!empty && writing === undefined ? (
               <Menu icon="chevronDown" variant="outline" size="md" align="end" items={[
-                { label: t('整章重写（生成提案）', 'Write the chapter over (as a proposal)'), icon: 'refresh', onSelect: () => { reviseChapter(true) } },
+                { label: rewriteBy === 'planner' ? t('整章重写（编排模型写，生成提案）', 'Write the chapter over (the crew\'s model; as a proposal)') : t('整章重写（生成提案）', 'Write the chapter over (as a proposal)'), icon: 'refresh', onSelect: () => { reviseChapter(true) } },
                 { label: t('从头重新起草（旧稿存入版本）', 'Redraft from the top (old text is versioned)'), icon: 'refresh', onSelect: () => { confirm.ask(t('用新稿替换这一章现有的正文？旧稿会存入“版本”。', 'Replace this chapter\'s text with a new draft? The old one is kept under Versions.'), () => { write('draft') }) } },
                 'separator',
                 { label: t('审校这一章', 'Review this chapter'), icon: 'checkCircle', onSelect: () => { showPanel('issues'); void controller.guard(async () => { if (await settle()) { await controller.api.call('ai.review', { root, chapter: chapter.id }); await controller.refreshJobs() } }) } },
