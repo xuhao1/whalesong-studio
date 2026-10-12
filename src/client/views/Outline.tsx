@@ -8,7 +8,8 @@ import { formatCount, sameName } from '../../shared/text'
 import { chapterBudgetOf, MAIN_LINE, type Beat, type ChapterInfo, type DerivedChapter, type DerivedPlan, type JobInfo, type ChapterMemory, type ChapterPlan, type ChapterStatus, type CharacterCard, type PictureGuide, type PicturesRead, type PlotLine, type PlotThread, type ReferencesLooked, type ThreadKind, type ThreadStatus, type Volume } from '../../shared/types'
 import { byWeight, CharacterPicker, useCastFilter } from '../CharacterPicker'
 import { Icon } from '../icons'
-import { ChapterTree, useOutlineOps } from '../ChapterTree'
+import { useBookActions } from '../actions'
+import { ChapterTree, MemoryMark, useOutlineOps } from '../ChapterTree'
 import { MoveChapters } from '../MoveChapters'
 import { HistoryButton } from '../History'
 import { BeatAsk } from '../Beats'
@@ -267,6 +268,7 @@ function ChapterPlanEditor({ plan, index, plans }: { plan: ChapterPlan; index: n
   const apply = useOutlineOps()
   const { busy, run } = useAction()
   const confirm = useConfirm()
+  const actions = useBookActions()
   const [draft, setDraft] = useState<ChapterPlan>(plan)
   const [dirty, setDirty] = useState(false)
   // The planner is reading the references for this chapter.
@@ -358,7 +360,7 @@ function ChapterPlanEditor({ plan, index, plans }: { plan: ChapterPlan; index: n
   return (
     <div className="nv-editor-form">
       <header className="nv-detail-head">
-        <h2><span className="nv-muted">{onLine !== undefined ? `${onLine.title} · ` : ''}{t(`第 ${index} 章`, `Chapter ${index}`)}</span> {draft.title}</h2>
+        <h2><span className="nv-muted">{onLine !== undefined ? `${onLine.title} · ` : ''}{t(`第 ${index} 章`, `Chapter ${index}`)}</span> {draft.title} <MemoryMark chapter={chapter} /></h2>
         <div className="nv-row">
           {chapter?.hasText === true ? <Button size="sm" icon="refresh" busy={reading === 'plan'} pending={t('场记在读正文…', 'Reading the text…')} disabled={dirty || deriving || reading !== undefined} title={dirty ? t('先保存当前修改', 'Save your edits first') : t('梗概、这一章的作用、地点、时间、视角、出场人物和节拍，都照这一章现在的正文重新读出来；原来的在历史版本里', 'Synopsis, purpose, place, time, point of view, cast and beats read anew off the chapter as it now stands; what was there stays in the history')} onClick={() => { byText('plan') }}>{t('照正文更新章纲', 'Update from the text')}</Button> : null}
           <HistoryButton kind="plan" id={plan.id} name={t(`第 ${index} 章 ${plan.title} · 章纲`, `Chapter ${index}, ${plan.title} — the plan`)} onRestored={() => { setDirty(false) }} />
@@ -375,6 +377,8 @@ function ChapterPlanEditor({ plan, index, plans }: { plan: ChapterPlan; index: n
               { label: t('在后面插入一章', 'Insert a chapter after'), icon: 'plus', onSelect: () => { insert('after') } },
               { label: t('移到另一条线…', 'Move to another line…'), icon: 'branch', onSelect: () => { setMoving({ chapters: [plan.id] }) } },
               { label: t('把这一章及之后分成一条线…', 'Part this chapter and what follows into a line…'), icon: 'branch', onSelect: () => { setMoving({ chapters: fromHere(), fresh: true }) } },
+              // Its memory: what the digest read off it, and left on the threads and in the blanks of this plan.
+              ...(chapter?.memory !== undefined || chapter?.digested === true ? [{ label: t('清除这一章的记忆…', 'Clear this chapter\'s memory…'), icon: 'trash' as const, disabled: dirty, onSelect: () => { confirm.ask(actions.forgetAsk, () => { void run(async () => { await actions.forget(plan.id); written.reload() }) }) } }] : []),
               'separator',
               { label: t('删除章节', 'Delete chapter'), icon: 'trash', danger: true, onSelect: () => { confirm.ask(t(`删除第 ${index} 章「${plan.title}」？可以在这一页最下面恢复。`, `Delete chapter ${index}, "${plan.title}"? It can be restored at the bottom of this page.`), () => { void run(async () => { await apply([{ op: 'remove-chapter', chapter: plan.id }]) }) }) } },
             ]}

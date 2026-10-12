@@ -275,7 +275,7 @@ export function bookTools(runtime: ProjectRuntime, signal?: AbortSignal, line?: 
         if (query === undefined) throw new Error('`query` is required')
         const sources = argList(typeof args.sources === 'string' ? args.sources.split(/[,，\s]+/) : args.sources).filter((item): item is string => typeof item === 'string')
         try {
-          return (await searchBook(runtime, { query, ...(sources.length > 0 ? { sources } : {}), limit: argInt(args.limit), ...(whole ? { line: argText(args.line) } : {}) }, signal, kept)).text
+          return (await searchBook(runtime, { query, ...(sources.length > 0 ? { sources } : {}), limit: argInt(args.limit), ...(whole ? { line: argText(args.line) } : {}) }, signal, kept, texts)).text
         } catch (error) {
           if (error instanceof ProjectError) throw new Error(error.message)
           throw error

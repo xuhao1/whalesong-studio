@@ -28,6 +28,7 @@ import {
 } from './render'
 import { derivationRecords, intentTitle, lineIntentsTitle, renderIntent, renderLineIntents, type IntentChapter } from './derivations'
 import { foundJottings, renderJottings } from './jottings'
+import { chapterAsMeant } from './plans'
 import { tokenize, type RetrievalIndex } from './retrieval'
 
 export interface ArcSummary {
@@ -212,11 +213,16 @@ const JOTTING_SHARED = 3
 export async function packContext(project: Project, index: RetrievalIndex, options: PackOptions): Promise<ContextPack> {
   const manifest = await project.manifest()
   const lang = promptLanguage(manifest.language)
-  const current = options.chapter
+  // A chapter drafted — for the first time, or over what it has — is written by what was meant for it, not by what an
+  // earlier draft of it happened to be: its plan goes without the blanks that draft's digest filled in (where, when,
+  // who, which threads), and the threads without the marks that draft left on them. (Gone on with, revised or read,
+  // a chapter is taken as it stands.)
+  const current = options.purpose === 'draft' && options.chapter !== undefined ? await chapterAsMeant(project, options.chapter) : options.chapter
+  const anew = options.purpose === 'draft' ? current?.plan : undefined
   // A world may hold several stories. Whoever works on one line of the plot reads that line: its chapters as they are
   // read by whoever reaches this one, its people, its threads — and the world, which they share. Nothing of another
   // line comes in by itself; what does is named, by the chapter's plan or by whoever gave the task.
-  const scope = await project.lineScope(current !== undefined ? await project.lineOf(current.plan.id) : options.line)
+  const scope = await project.lineScope(current !== undefined ? await project.lineOf(current.plan.id) : options.line, anew)
   const path = scope.path
   const [everyone, everything] = await Promise.all([project.characters(), project.world()])
   const characters = everyone.filter(card => scope.has(card))
@@ -511,6 +517,7 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
   // Threads the reader is waiting on.
   // This line's own, as they stand at its end: one that was paid off on another line still waits here. The chapters
   // a thread names are this line's only.
+  // (For a chapter drafted anew the line's threads are without that chapter's own marks already: see `lineScope`.)
   const openThreads = scope.threads.filter(entry => entry.open).map(({ thread }) => ({
     ...thread,
     ...(thread.planted !== undefined ? { planted: thread.planted.filter(id => scope.reads(id)) } : {}),

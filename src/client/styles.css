@@ -13060,6 +13060,31 @@ div.nv-compare-picture {
   cursor: pointer;
 }
 
+/* Whether a chapter has a memory, said on its row: plainly where it has one, marked where the memory is of a text since changed. */
+.nv-memory-mark.is-stale {
+  color: var(--nv-warn);
+}
+
+.nv-memory-mark.is-none {
+  color: var(--nv-text-3);
+}
+
+h2 > .nv-memory-mark {
+  margin-left: 6px;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+/* In the panel beside a chapter: that it has a memory, and the way to clear it. */
+.nv-memory-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 8px;
+  margin-bottom: 8px;
+}
+
 /* Pictures to steer by: a few thumbnails in a row, each with a word said of it. */
 .nv-guides {
   display: grid;

@@ -8,11 +8,12 @@
 import type { ProjectRuntime } from './core'
 import { findJotting, foundJottings, jottingName } from './jottings'
 import { derivationLine, derivationsView, derivationWhole } from './derivations'
+import { chapterAsMeant, threadWithout } from './plans'
 import { ProjectError, type LineScope, type Project } from './project'
 import { L, promptLanguage, renderCharacter, renderPlan, renderStyle, renderThread, renderWorld, roleLabel } from './render'
 import { lifeLine } from '../shared/life'
 import { clip } from '../shared/text'
-import { MAIN_LINE, type SearchSource } from '../shared/types'
+import { MAIN_LINE, type PlotThread, type SearchSource } from '../shared/types'
 
 export const READ_KINDS = ['chapter', 'outline', 'character', 'world', 'style', 'memory', 'threads', 'review', 'versions', 'jottings', 'derivations'] as const
 export type ReadKind = typeof READ_KINDS[number]
@@ -53,8 +54,13 @@ function flat(text: string | undefined, max: number): string {
 }
 
 /** The line a reader reads along: the one it is kept to, else the one it asked for. */
-async function scopeOf(project: Project, asked: string | undefined, kept: ReadScope | undefined): Promise<LineScope | undefined> {
-  if (kept !== undefined) return await project.lineScope(kept.line)
+async function scopeOf(project: Project, asked: string | undefined, kept: ReadScope | undefined, texts?: ReadonlyMap<string, string>): Promise<LineScope | undefined> {
+  if (kept !== undefined) {
+    // A chapter this work drafts anew (given as empty): the line is read as it stands without that chapter's last draft.
+    const anew = [...(texts ?? [])].find(([, text]) => text.length === 0)?.[0]
+    const drafted = anew !== undefined ? await project.findChapter(anew) : undefined
+    return await project.lineScope(kept.line, drafted !== undefined ? (await chapterAsMeant(project, drafted)).plan : undefined)
+  }
   const wanted = asked?.trim()
   if (wanted === undefined || wanted.length === 0) return undefined
   if (wanted === MAIN_LINE || /^(main|主线)$/i.test(wanted)) return await project.lineScope()
@@ -70,13 +76,15 @@ const lineName = (scope: LineScope): string => scope.title !== undefined ? `the 
  * @param kept - the line of the plot this reader is kept to (a role at work on one line); the showrunner is kept to none.
  * @param texts - chapters to be read otherwise than the book has them, by id: the text a piece of work goes by where
  *   that is not the saved one (a mending that goes on from changes still waiting reads the chapter with them laid in).
+ *   A chapter given as empty is one being drafted anew: it is read as never written — no text, no memory, its plan as
+ *   it was meant and the threads without the marks its last draft left (see `plans.ts`).
  * @throws ProjectError `novel/not-found` or `novel/invalid`, in words the model can act on.
  */
 export async function readBook(runtime: ProjectRuntime, request: ReadRequest, tools: { read: string; digest?: string; review?: string } = { read: 'novel_read', digest: 'novel_digest', review: 'novel_review' }, kept?: ReadScope, texts?: ReadonlyMap<string, string>): Promise<Reading> {
   const { project } = runtime
   const manifest = await project.manifest()
   const lang = promptLanguage(manifest.language)
-  const scope = await scopeOf(project, request.line, kept)
+  const scope = await scopeOf(project, request.line, kept, texts)
   const everyone = await project.characters()
   const characters = scope !== undefined ? everyone.filter(card => scope.has(card)) : everyone
   const nameOf = (ref: string): string => everyone.find(card => card.id === ref)?.name ?? ref
@@ -85,6 +93,9 @@ export async function readBook(runtime: ProjectRuntime, request: ReadRequest, to
     if (given === undefined) throw new ProjectError('novel/invalid', `${tools.read} what=${request.what} needs \`ref\``)
     return given
   }
+  /** Chapters this work drafts anew: read as never written. */
+  const anew = new Set([...(texts ?? [])].filter(([, text]) => text.length === 0).map(([id]) => id))
+  const standing = (thread: PlotThread): PlotThread | undefined => [...anew].reduce<PlotThread | undefined>((seen, id) => (seen !== undefined ? threadWithout(seen, id) : undefined), thread)
   const chapterOf = async () => {
     const chapter = await project.findChapter(needRef(), scope?.line)
     if (chapter === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${request.ref}"${scope !== undefined ? ` on ${lineName(scope)}` : ''} — ${tools.read} what=outline lists the chapters`)
@@ -98,7 +109,7 @@ export async function readBook(runtime: ProjectRuntime, request: ReadRequest, to
       const chapter = await chapterOf()
       const other = texts?.get(chapter.plan.id)
       const text = other ?? await project.chapterText(chapter.plan.id)
-      if (text.length === 0) return { text: `Chapter ${chapter.index} "${chapter.plan.title}" (${chapter.plan.id}) has no text yet.` }
+      if (text.length === 0) return { text: `Chapter ${chapter.index} "${chapter.plan.title}" (${chapter.plan.id}) has no text yet${anew.has(chapter.plan.id) ? ' — it is the chapter being written now' : ''}.` }
       const offset = Math.max(0, request.offset ?? 0)
       const limit = Math.max(200, Math.min(40_000, request.limit ?? 6000))
       const slice = text.slice(offset, offset + limit)
@@ -110,7 +121,8 @@ export async function readBook(runtime: ProjectRuntime, request: ReadRequest, to
     }
     case 'outline': {
       if (given !== undefined) {
-        const chapter = await chapterOf()
+        const found = await chapterOf()
+        const chapter = anew.has(found.plan.id) ? await chapterAsMeant(project, found) : found
         return { text: `${renderPlan(chapter.plan, chapter.index, lang, nameOf)}\n\n[${chapter.plan.id}; status ${chapter.plan.status}; volume ${chapter.volume.title}]`, data: chapter.plan }
       }
       const outline = await project.outline()
@@ -194,6 +206,7 @@ export async function readBook(runtime: ProjectRuntime, request: ReadRequest, to
     }
     case 'memory': {
       const chapter = await chapterOf()
+      if (anew.has(chapter.plan.id)) return { text: `Chapter ${chapter.index} is the chapter being written now: it has no memory.` }
       const memory = await project.memory(chapter.plan.id)
       if (memory === undefined) return { text: `Chapter ${chapter.index} has no memory yet${tools.digest !== undefined ? ` — run ${tools.digest}` : ''}.` }
       const lines = [
@@ -211,13 +224,17 @@ export async function readBook(runtime: ProjectRuntime, request: ReadRequest, to
       if (scope !== undefined) {
         // The line's own threads, as they stand at its end; the chapters named are its own.
         const label = (id: string): string => `#${scope.path.find(candidate => candidate.plan.id === id)?.index ?? '?'}`
-        if (scope.threads.length === 0) return { text: `No plot threads on ${lineName(scope)} yet.`, data: [] }
+        const threads = scope.threads.flatMap((entry) => {
+          const thread = standing(entry.thread)
+          return thread !== undefined ? [{ thread, open: entry.open }] : []
+        })
+        if (threads.length === 0) return { text: `No plot threads on ${lineName(scope)} yet.`, data: [] }
         return {
-          text: scope.threads.map(({ thread, open }) => {
+          text: threads.map(({ thread, open }) => {
             const here = { ...thread, ...(thread.planted !== undefined ? { planted: thread.planted.filter(id => scope.reads(id)) } : {}), ...(thread.advanced !== undefined ? { advanced: thread.advanced.filter(id => scope.reads(id)) } : {}) }
             return `${renderThread(here, lang, label)} [${thread.id}; ${thread.status === 'dropped' ? 'dropped' : open ? 'open' : 'paid'}${thread.auto === true ? '; unconfirmed' : ''}]`
           }).join('\n'),
-          data: scope.threads.map(entry => entry.thread),
+          data: threads.map(entry => entry.thread),
         }
       }
       const located = await project.chapters()
@@ -225,8 +242,9 @@ export async function readBook(runtime: ProjectRuntime, request: ReadRequest, to
         const chapter = located.find(candidate => candidate.plan.id === id)
         return chapter === undefined ? id : `#${chapter.index}`
       }
-      if (outline.threads.length === 0) return { text: 'No plot threads recorded yet.' }
-      return { text: outline.threads.map(thread => `${renderThread(thread, lang, label)} [${thread.id}; ${thread.status}${thread.auto === true ? '; unconfirmed' : ''}]`).join('\n'), data: outline.threads }
+      const threads = outline.threads.flatMap((thread) => { const seen = standing(thread); return seen !== undefined ? [seen] : [] })
+      if (threads.length === 0) return { text: 'No plot threads recorded yet.' }
+      return { text: threads.map(thread => `${renderThread(thread, lang, label)} [${thread.id}; ${thread.status}${thread.auto === true ? '; unconfirmed' : ''}]`).join('\n'), data: threads }
     }
     case 'review': {
       const chapter = await chapterOf()
@@ -293,9 +311,10 @@ export interface SearchRequest {
 }
 
 /** @param kept - the line of the plot this reader is kept to: what is found is that line's — its chapters, its people — and the world. */
-export async function searchBook(runtime: ProjectRuntime, request: SearchRequest, signal?: AbortSignal, kept?: ReadScope): Promise<Reading> {
+/** @param texts - as for {@link readBook}: nothing of a chapter being drafted anew is found — not its last draft, not that draft's memory. */
+export async function searchBook(runtime: ProjectRuntime, request: SearchRequest, signal?: AbortSignal, kept?: ReadScope, texts?: ReadonlyMap<string, string>): Promise<Reading> {
   const sources = (request.sources ?? []).filter((source): source is SearchSource => (SEARCH_SOURCES as string[]).includes(source))
-  const scope = await scopeOf(runtime.project, request.line, kept)
+  const scope = await scopeOf(runtime.project, request.line, kept, texts)
   let within: ((source: SearchSource, ref: string) => boolean) | undefined
   if (scope !== undefined) {
     const [cards, world] = await Promise.all([runtime.project.characters(), runtime.project.world()])
@@ -303,6 +322,11 @@ export async function searchBook(runtime: ProjectRuntime, request: SearchRequest
     const known = new Set(world.filter(entry => scope.knows(entry)).map(entry => entry.id))
     // (A jotting is of the whole book: no line of the plot keeps it out.)
     within = (source, ref) => source === 'jotting' ? true : source === 'character' ? people.has(ref) : source === 'world' ? known.has(ref) : scope.reads(ref)
+  }
+  const anew = new Set([...(texts ?? [])].filter(([, text]) => text.length === 0).map(([id]) => id))
+  if (anew.size > 0) {
+    const inner = within
+    within = (source, ref) => !((source === 'manuscript' || source === 'memory' || source === 'outline') && anew.has(ref)) && (inner?.(source, ref) ?? true)
   }
   const hits = await runtime.index.search(request.query, {
     limit: Math.max(1, Math.min(30, request.limit ?? 8)),

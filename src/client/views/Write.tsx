@@ -13,6 +13,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import type { ChapterDocument } from '../../shared/rpc'
 import { countWords, formatCount, fuzzyFind, normalizeProse, proseOnly } from '../../shared/text'
 import { MAIN_LINE, type ChapterInfo, type JobInfo, type PictureGuide, type ReviewIssue, type TextStep, type Proposal } from '../../shared/types'
+import { useBookActions } from '../actions'
 import { BatchMatrix, chapterJob, TextBatchDialog, useBatchJob } from '../Batch'
 import { ProposalCard, SettledCard } from '../components/ProposalCard'
 import { ChapterTree } from '../ChapterTree'
@@ -218,6 +219,7 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
   const quote = useQuote()
   const { project, root } = useProject()
   const jobs = useSnapshot(snapshot => snapshot.jobs)
+  const actions = useBookActions()
   const jump = useSnapshot(snapshot => snapshot.jump)
   // Whether a chapter is digested by itself once it is written or changed: said where its memory is found stale.
   const autoDigest = useSnapshot(snapshot => snapshot.settings?.settings.autoDigest)
@@ -609,6 +611,11 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
             ) : null}
             {doc.data.memory !== undefined ? (
               <>
+                {/* That there is a memory, of which text — and the way to be rid of it: a chapter drafted anew is written without it either way. */}
+                <div className="nv-memory-bar">
+                  <span className="nv-muted nv-small">{chapter.digested ? t('这一章有记忆，照现在的正文收录的。', 'This chapter has a memory, of the text as it stands.') : t('这一章有记忆，是照改动之前的正文收录的。', 'This chapter has a memory, of the text before it was changed.')}</span>
+                  <Button size="sm" variant="ghost" icon="trash" disabled={running.some(job => job.kind === 'digest')} title={t('清除这一章的记忆：摘要、事实、人物状态，连同它在线索和章纲上留下的；正文不动', 'Clear this chapter\'s memory: summary, facts, where people stand — and what it left on the threads and the plan; the text is not touched')} onClick={() => { confirm.ask(actions.forgetAsk, () => { void controller.guard(async () => { await actions.forget(chapter.id); doc.reload() }) }) }}>{t('清除记忆', 'Clear memory')}</Button>
+                </div>
                 <p><strong>{doc.data.memory.brief}</strong></p>
                 <p>{doc.data.memory.summary}</p>
                 <p className="nv-muted nv-small">{[doc.data.memory.storyTime, ...(doc.data.memory.locations ?? [])].filter(Boolean).join(' · ')}</p>
@@ -799,7 +806,7 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
             ) : null}
             {!empty && writing === undefined ? (
               <Menu icon="more" variant="outline" size="md" align="end" items={[
-                { label: t('从头重新起草（旧稿存入版本）', 'Redraft from the top (old text is versioned)'), icon: 'refresh', onSelect: () => { confirm.ask(t('用新稿替换这一章现有的正文？旧稿会存入“版本”。', 'Replace this chapter\'s text with a new draft? The old one is kept under Versions.'), () => { write('draft') }) } },
+                { label: t('从头重新起草（旧稿存入版本）', 'Redraft from the top (old text is versioned)'), icon: 'refresh', onSelect: () => { confirm.ask(t('用新稿替换这一章现有的正文？旧稿会存入“版本”。新稿照章纲从头写：不看旧稿，也不带旧稿的记忆。', 'Replace this chapter\'s text with a new draft? The old one is kept under Versions. The new draft is written from the plan: it sees neither the old one nor the old one\'s memory.'), () => { write('draft') }) } },
                 'separator',
                 { label: t('审校这一章', 'Review this chapter'), icon: 'checkCircle', onSelect: () => { showPanel('issues'); void controller.guard(async () => { if (await settle()) { await controller.api.call('ai.review', { root, chapter: chapter.id }); await controller.refreshJobs() } }) } },
                 { label: t('收录记忆', 'Digest'), icon: 'layers', onSelect: () => { showPanel('memory'); void controller.guard(async () => { if (await settle()) { await controller.api.call('ai.digest', { root, chapters: [chapter.id], force: true }); await controller.refreshJobs() } }) } },

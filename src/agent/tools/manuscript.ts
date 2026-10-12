@@ -2,7 +2,7 @@
 /** Tools that produce and change prose: write, revise, digest, review, import. */
 import { readFile } from 'node:fs/promises'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
-import { digestPending } from '../../core/pipelines/digest'
+import { digestPending, forgetChapter } from '../../core/pipelines/digest'
 import { correctMemory, editChapter, type EditAction, type MemoryPatch } from '../../core/pipelines/edit'
 import { analyzeBook, importManuscript, readBookFile, importLine, rereadBook } from '../../core/pipelines/import'
 import { reviewChapter } from '../../core/pipelines/review'
@@ -31,7 +31,7 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
       description: [
         'Have the writer model draft prose for one chapter and save it. You do not write the prose yourself: you decide what the chapter must do and say so in `brief`; the writer receives the bible, the relevant characters with their current state, the story so far, retrieved earlier passages, the open threads, this chapter\'s outline and the active style.',
         '- `chapter`: id, number or title; omit (or "next") for the first outlined chapter without text — on the main line, or on the line of the plot named in `line` when the story has more than one way on (novel_status lists the lines). When several lines could be gone on with and the author has not said which, ask.',
-        '- `mode`: draft (default) writes the chapter from the top, replacing existing text after a snapshot; continue appends to what is there.',
+        '- `mode`: draft (default) writes the chapter from the top, replacing existing text after a snapshot; continue appends to what is there. A chapter drafted over what it has is written as one never written: the writer is shown the plan as it was meant — without the place, time, cast or threads an earlier digest filled into its blanks — no text and no memory of the old draft, and the threads without the marks that draft left. What the new draft should keep of the old one, say in `brief`.',
         '- `brief`: what this pass must achieve that the outline does not already say — emphasis, tone, what to hold back, how to end. Keep it short; do not restate the outline.',
         '- `words`: a length recommended for this pass. Leave it out unless the author named one: the chapter\'s own recommendation applies (novel_outline targetWords), else the book\'s (novel_settings action=book fields.chapterBudget), and where nobody set any the writer judges the length from what the chapter has to do.',
         'The writer reads the story so far in two layers: as many whole chapters up to this one as half its context window holds, word for word, and the chapters before those as an outline; a chapter that already has chapters after it (one written again) is given what follows too, and must lead into it.',
@@ -329,14 +329,27 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
 
     novelTool(service, {
       name: 'novel_digest',
-      description: 'Bring the project\'s memory up to date: for every chapter whose text changed since it was last digested, extract the summary, hard facts, each character\'s state at chapter end, new names worth a bible entry and thread movements. Keeps the cast lifecycle (first/last appearance) and the story-so-far current. Runs automatically after novel_write when auto-digest is on; call it after manual edits or imports, or with force=true to redo chapters.',
+      description: 'Bring the project\'s memory up to date: for every chapter whose text changed since it was last digested, extract the summary, hard facts, each character\'s state at chapter end, new names worth a bible entry and thread movements. Keeps the cast lifecycle (first/last appearance) and the story-so-far current. Runs automatically after novel_write when auto-digest is on; call it after manual edits or imports, or with force=true to redo chapters. `forget` clears a chapter\'s memory instead (`chapters` names which — it is never all of them by default): the digest goes, and with it what it left in the book — the blanks of the plan it filled, its marks on the threads (and the threads only it had proposed), what it suggested; the text is not touched and a digest brings the memory back. A chapter is drafted anew without its own memory in any case (novel_write mode=draft goes by the plan as it was meant): clear a memory when the author asks for it, or when it is of a text that no longer stands.',
+      mutating: args => args.forget === true,
       parameters: {
         chapters: listParameter('Only these chapters. Default: all stale ones.'),
         force: { type: 'boolean', description: 'Redo even when the text has not changed.' },
+        forget: { type: 'boolean', description: 'Clear the memory of the chapters named instead of digesting them.' },
       },
       async run(args, env) {
         const runtime = await env.project()
         const chapters = listOf(args.chapters) ?? []
+        if (args.forget === true) {
+          if (chapters.length === 0) throw new ProjectError('novel/invalid', 'forget: name the chapters in `chapters` — a memory is cleared chapter by chapter, never the whole book\'s at once')
+          const lines: string[] = []
+          for (const ref of chapters) {
+            const done = await forgetChapter(env.core, runtime, ref)
+            lines.push(done.forgot
+              ? `${done.chapterId}: memory cleared${done.fields.length > 0 ? `; plan fields that had been read off it emptied: ${done.fields.join(', ')}` : ''}${done.threads > 0 ? `; its marks taken off ${done.threads} thread(s)${done.gone > 0 ? ` (${done.gone} that only it had proposed are gone)` : ''}` : ''}${done.suggestions > 0 ? `; ${done.suggestions} suggestion(s) of its dropped` : ''}.`
+              : `${done.chapterId}: had no memory.`)
+          }
+          return { text: `${lines.join('\n')}\nThe text is as it was. novel_digest brings a memory back.`, record: { summary: ['清除了章节记忆', 'Cleared chapter memory'] } }
+        }
         const result = await env.job('digest', 'digest', chapters[0], async task => await digestPending(env.core, runtime, task, {
           ...(chapters.length > 0 ? { chapters } : {}),
           ...(args.force !== undefined ? { force: args.force } : {}),

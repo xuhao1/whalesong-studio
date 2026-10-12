@@ -76,6 +76,7 @@ Novel Studio finds books by looking for `novel.json` in a workspace directory an
           "guides": [{ "path": "assets/guides/1a2b….png", "note": "the last image of the chapter" }], // pictures to write it by
           "referenceNotes": "…",         // what the planner took from the book's references for this chapter (or the author wrote): handed to the writer
           "referencesRead": true,        // somebody looked in the references for it — nobody looks again by itself, whatever came of it
+          "fromText": ["location", "time"], // fields above that were blank and were filled from the chapter's digest (synopsis, location, time, characters, threads): what the chapter turned out to be, not what was meant — left out when the chapter is drafted anew, emptied when its memory is cleared; a field somebody sets is taken off the list
           "notes": "for the writer"
         }
       ]

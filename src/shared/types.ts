@@ -549,7 +549,16 @@ export interface ChapterPlan {
   /** The references were looked at for this chapter — by the planner, or the author took the notes in hand: nobody looks again by itself. */
   referencesRead?: boolean
   notes?: string
+  /**
+   * The fields above that the plan left blank and the chapter's digest filled: what the chapter turned out to be, not
+   * what was meant for it. One that anybody sets afterwards is theirs and off this list. Whoever drafts the chapter —
+   * anew, over what it has — is shown the plan without them, and they go when the chapter's memory is cleared.
+   */
+  fromText?: PlanBlank[]
 }
+
+/** A field of a chapter's plan that its digest fills where the plan leaves it blank. */
+export type PlanBlank = 'synopsis' | 'location' | 'time' | 'characters' | 'threads'
 
 /** What of a reference that is a book on the shelf may be consulted. */
 export type ReferenceAspect = 'world' | 'characters' | 'style' | 'plot' | 'text'
@@ -897,6 +906,11 @@ export interface ChapterInfo {
   updatedAt?: Timestamp
   /** True when the saved memory was extracted from the current text. */
   digested: boolean
+  /**
+   * The chapter has a memory — a digest: `current`, read off the text as it stands (`digested`); `stale`, read off a
+   * text that has been changed since. Absent: it has none.
+   */
+  memory?: 'current' | 'stale'
   /** Unresolved issues of the latest review; absent when the chapter was never reviewed. */
   openIssues?: number
   /** The issues counted were found by what the author had noticed, and the chapter itself was never reviewed. */

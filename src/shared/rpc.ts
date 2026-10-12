@@ -558,6 +558,12 @@ export interface NovelRpc {
   'chapter.versions': { params: { root: string; id: string }; result: { versions: VersionInfo[] } }
   /** Delete versions of a chapter for good: drafts nobody took, restore points no longer wanted. The original of a translated chapter stays (`kept` names what was asked for and was not deleted). */
   'chapter.dropVersions': { params: { root: string; id: string; versions: string[] }; result: { removed: number; kept: string[] } }
+  /**
+   * Clear a chapter's memory: its digest goes, with what the digest left in the book — the blanks of the plan it filled
+   * (`fields`), its marks on the threads (`threads`; `gone`: threads only it had proposed), what it suggested. The
+   * text is not touched. `forgot` false: the chapter had no memory.
+   */
+  'chapter.forget': { params: { root: string; id: string }; result: { chapterId: string; forgot: boolean; fields: string[]; threads: number; gone: number; suggestions: number } }
   'search': { params: { root: string; query: string; sources?: SearchSource[]; limit?: number }; result: { hits: SearchHit[]; embedded: number; indexed: number; embeddingError?: string } }
   'find': { params: { root: string; query: string; limit?: number }; result: { matches: FindMatch[]; total: number } }
 

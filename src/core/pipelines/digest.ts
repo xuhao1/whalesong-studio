@@ -7,7 +7,7 @@
  * ensemble-cast lifecycle (first/last appearance, who has been away too long).
  */
 import type {
-  ChapterMemory, ChapterPlan, CharacterCard, CharacterMoment, EntityCandidate, FactKind, MemoryFact, Outline, SceneNote, Suggestion, ThreadTouch,
+  ChapterMemory, CharacterCard, CharacterMoment, EntityCandidate, FactKind, MemoryFact, Outline, PlanBlank, SceneNote, Suggestion, ThreadTouch,
 } from '../../shared/types'
 import { MAIN_LINE } from '../../shared/types'
 import { clip, hashText, sameName } from '../../shared/text'
@@ -18,6 +18,7 @@ import { assign } from '../crew'
 import type { LocatedChapter, WhoseMoment } from '../project'
 import { ProjectError, selfNamed } from '../project'
 import { arcTask, digestSystem, digestTask } from '../prompts'
+import { planBlanks, planFromText } from '../plans'
 import { L, promptLanguage } from '../render'
 import { mapLimit } from '../util/async'
 import { scheduleSift } from './cast'
@@ -222,6 +223,13 @@ export async function digestChapter(core: NovelCore, runtime: ProjectRuntime, re
     threads,
     ...(openQuestions.length > 0 ? { openQuestions } : {}),
   }
+  // Read anew: what the reading before this one left in the book — its marks on the threads, the blanks of the plan it
+  // filled, what it suggested — is taken back first, so that nothing of a text that is gone stays behind. (A thread
+  // this reading speaks of stays, whoever proposed it.)
+  if (existing !== undefined) {
+    const spoken = new Set(threads.flatMap(touch => (touch.threadId !== undefined ? [touch.threadId] : [])))
+    await takeBack(runtime, (await project.findChapter(chapter.plan.id)) ?? chapter, existing, { keep: spoken }).catch((error: unknown) => { core.log(`could not take back the earlier digest of ${chapter.plan.id}`, error) })
+  }
   await project.saveMemory(memory)
   await applyMemory(runtime, chapter, memory, lang === 'zh')
   // Whoever has a moment noted here gets it among their signature scenes, where nobody has taken that list in hand.
@@ -240,43 +248,7 @@ export async function digestChapter(core: NovelCore, runtime: ProjectRuntime, re
 
 // ───────────────────────────── a plan's blanks ─────────────────────────────
 
-const blank = (value: string | undefined): boolean => value === undefined || value.trim().length === 0
-
-/**
- * What a chapter's plan leaves empty, as its digest knows it: a line of what
- * happens, where and when, who is in it, which threads it touches.
- *
- * A plan is what was meant for a chapter. A chapter that arrived written — an
- * imported one above all — has no plan beyond its title, and its page in the
- * outline said nothing of it and named nobody. What it turned out to be is in
- * its digest; the blanks are filled from there. Nothing that the author or
- * the planner wrote is replaced: a field with anything in it is left alone.
- * @returns the fields to set; empty when the plan has no blank the digest can fill.
- */
-export function planBlanks(plan: ChapterPlan, memory: ChapterMemory, characters: readonly CharacterCard[], outline: Pick<Outline, 'threads'>, zh: boolean, whose?: WhoseMoment): Partial<ChapterPlan> {
-  const patch: Partial<ChapterPlan> = {}
-  if (blank(plan.synopsis) && !blank(memory.brief)) patch.synopsis = memory.brief
-  if (blank(plan.location) && (memory.locations ?? []).length > 0) patch.location = memory.locations!.join(zh ? '、' : ', ')
-  if (blank(plan.time) && !blank(memory.storyTime)) patch.time = memory.storyTime!
-  if ((plan.characters ?? []).length === 0) {
-    // Those of the chapter who have a card: a name with none is a walk-on, or waits among the suggestions.
-    // (Whose a note is goes by the chapter's story, where the book is there to say: a namesake of another story is not cast here.)
-    const card = (moment: CharacterMoment): CharacterCard | undefined => (whose !== undefined
-      ? characters.find(candidate => candidate.id === whose(moment, plan.id))
-      : characters.find(candidate => candidate.id === moment.character)
-        ?? characters.find(candidate => sameName(candidate.name, moment.name) || candidate.aliases?.some(alias => sameName(alias, moment.name)) === true))
-    const ids = [...new Set(memory.characters.map(moment => card(moment)?.id).filter((id): id is string => id !== undefined))]
-    if (ids.length > 0) patch.characters = ids
-  }
-  if ((plan.threads ?? []).length === 0) {
-    // A thread that was put down after the chapter was digested is found by its title, as at digesting.
-    const thread = (touch: ThreadTouch): string | undefined => outline.threads.find(candidate => candidate.id === touch.threadId)?.id
-      ?? outline.threads.find(candidate => sameName(candidate.title, touch.title) || candidate.title.includes(touch.title) || touch.title.includes(candidate.title))?.id
-    const ids = [...new Set(memory.threads.map(thread).filter((id): id is string => id !== undefined))]
-    if (ids.length > 0) patch.threads = ids
-  }
-  return patch
-}
+export { planBlanks } from '../plans'
 
 /**
  * Fill the blanks of chapter plans from their digests (see {@link planBlanks}).
@@ -297,7 +269,8 @@ export async function fillPlans(runtime: ProjectRuntime, only?: readonly string[
     const patch = planBlanks(chapter.plan, memory, characters, outline, zh, whose)
     const count = Object.keys(patch).length
     if (count === 0) continue
-    if (!dry) await project.updateChapter(chapter.plan.id, patch)
+    // What is filled is marked as read off the chapter: it says what the text is, and is not what was meant for it.
+    if (!dry) await project.updateChapter(chapter.plan.id, { ...patch, fromText: [...new Set([...(chapter.plan.fromText ?? []), ...(Object.keys(patch) as PlanBlank[])])] })
     chapters += 1
     fields += count
   }
@@ -399,6 +372,114 @@ async function applyMemory(runtime: ProjectRuntime, chapter: LocatedChapter, mem
     })
   }
   await project.addSuggestions(suggestions)
+}
+
+// ───────────────────────────── a digest taken back ─────────────────────────────
+
+export interface TakenBack {
+  /** The fields of the chapter's plan that were read off it, emptied again. */
+  fields: PlanBlank[]
+  /** Threads the chapter's marks were taken off; `gone`: those among them that only this chapter's digest had proposed. */
+  threads: number
+  gone: number
+  /** Suggestions that waited on this chapter's word, dropped. */
+  suggestions: number
+}
+
+/**
+ * Take back what a chapter's digest left in the book beside the digest itself: the blanks of the plan it filled, its
+ * marks on the threads (planted, advanced, paid off here) with the threads that only it proposed and nobody confirmed,
+ * the suggestions that still wait, and where its people were first and last seen.
+ * @param how.keep - threads that stay whatever proposed them (the reading that follows speaks of them).
+ */
+async function takeBack(runtime: ProjectRuntime, chapter: LocatedChapter, memory: ChapterMemory, how: { keep?: ReadonlySet<string> } = {}): Promise<TakenBack> {
+  const { project } = runtime
+  const id = chapter.plan.id
+  const zh = promptLanguage((await project.manifest()).language) === 'zh'
+  const [characters, outline] = await Promise.all([project.characters(), project.outline()])
+  const { whose } = await project.castResolver()
+
+  const fields = planFromText(chapter.plan, memory, characters, outline, zh, whose)
+  if (fields.length > 0) await project.updateChapter(id, { ...Object.fromEntries(fields.map(field => [field, null])), fromText: null } as unknown as Partial<LocatedChapter['plan']>)
+
+  let threads = 0
+  const gone = new Set<string>()
+  const marks = { plant: 'planted', advance: 'advanced', payoff: 'paid' } as const
+  if (memory.threads.length > 0) {
+    await project.updateOutline((draft) => {
+      const touched = new Set<string>()
+      for (const touch of memory.threads) {
+        const thread = draft.threads.find(candidate => candidate.id === touch.threadId) ?? (touch.threadId === undefined ? draft.threads.find(candidate => sameName(candidate.title, touch.title)) : undefined)
+        const mark = marks[touch.action]
+        if (thread === undefined || thread[mark]?.includes(id) !== true) continue
+        const left = thread[mark]!.filter(other => other !== id)
+        if (left.length > 0) thread[mark] = left
+        else delete thread[mark]
+        touched.add(thread.id)
+      }
+      threads = touched.size
+      // One that only this chapter's digest proposed, and nobody confirmed: without the chapter there is no such thread.
+      for (const thread of draft.threads) {
+        if (touched.has(thread.id) && thread.auto === true && how.keep?.has(thread.id) !== true && thread.planted === undefined && thread.advanced === undefined && thread.paid === undefined) gone.add(thread.id)
+      }
+      if (gone.size > 0) draft.threads = draft.threads.filter(thread => !gone.has(thread.id))
+    })
+  }
+
+  let suggestions = 0
+  if ((await project.suggestions()).some(item => item.chapterId === id)) {
+    await project.updateState<Suggestion[]>(['suggestions.json'], [], current => current.filter((item) => {
+      if (item.chapterId !== id) return true
+      suggestions += 1
+      return false
+    }))
+  }
+
+  // Where its people were first and last seen is read off the digests that are left.
+  const seenHere = characters.filter(card => card.firstAppearance === id || card.lastAppearance === id)
+  if (seenHere.length > 0) {
+    const others = (await project.memories()).filter(entry => entry.chapter.plan.id !== id)
+    for (const card of seenHere) {
+      const seen = others.filter(entry => entry.memory.characters.some(moment => moment.by !== undefined && moment.character === card.id)).map(entry => entry.chapter.plan.id)
+      await project.saveCharacter({
+        id: card.id,
+        ...(card.firstAppearance === id ? { firstAppearance: seen[0] ?? null } : {}),
+        ...(card.lastAppearance === id ? { lastAppearance: seen.at(-1) ?? null } : {}),
+      } as unknown as Parameters<typeof project.saveCharacter>[0])
+    }
+  }
+  return { fields, threads, gone: gone.size, suggestions }
+}
+
+export interface Forgotten extends TakenBack {
+  chapterId: string
+  /** False when the chapter had no memory: nothing was done. */
+  forgot: boolean
+}
+
+/**
+ * Clear a chapter's memory: its digest goes, and with it what the digest left in the book — the blanks of the plan it
+ * filled, its marks on the threads, what it suggested. The chapter stands as one never digested; its text is not
+ * touched, and a digest brings the memory back.
+ * @throws ProjectError `novel/busy` while the chapter is being digested.
+ */
+export async function forgetChapter(core: NovelCore, runtime: ProjectRuntime, ref: string): Promise<Forgotten> {
+  const { project } = runtime
+  const chapter = await project.findChapter(ref)
+  if (chapter === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${ref}"`)
+  const id = chapter.plan.id
+  if (core.jobs.list(project.root).some(job => job.status === 'running' && job.kind === 'digest' && job.target === id)) throw new ProjectError('novel/busy', `chapter ${chapter.index} is being digested right now — stop that first, or wait for it`)
+  const memory = await project.memory(id)
+  if (memory === undefined) return { chapterId: id, forgot: false, fields: [], threads: 0, gone: 0, suggestions: 0 }
+  const back = await takeBack(runtime, chapter, memory)
+  await project.removeState('memory', `${id}.json`)
+  // A stretch summed up with this chapter in it — or after it: the run of digested chapters ends before it now.
+  if (chapter.line === undefined) {
+    const arcs = (await project.readState<ArcSummary[]>('memory', 'arcs.json')) ?? []
+    const kept = arcs.filter(arc => arc.toIndex < chapter.index)
+    if (kept.length !== arcs.length) await project.writeState(['memory', 'arcs.json'], kept)
+  }
+  return { chapterId: id, forgot: true, ...back }
 }
 
 /**

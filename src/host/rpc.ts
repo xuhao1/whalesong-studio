@@ -22,7 +22,7 @@ import { CREW } from '../core/crew'
 import { contextBudgets } from '../core/context'
 import { resolveRoute } from '../core/llm'
 import { L, promptLanguage } from '../core/render'
-import { digestPending, fillPlans } from '../core/pipelines/digest'
+import { digestPending, fillPlans, forgetChapter } from '../core/pipelines/digest'
 import { exportBook, missingImages } from '../core/pipelines/export'
 import { findPicturePress, findSoundPress } from '../core/media/press'
 import { publishSite, siteChaptersUpTo, siteDefaults, siteFolder } from '../core/pipelines/site'
@@ -624,6 +624,7 @@ export function createHandlers(service: NovelService): Handlers {
     },
     'chapter.restore': async ({ root, id, version }) => ({ ok: await (await open(root)).project.restoreVersion(id, version) }),
     'chapter.versions': async ({ root, id }) => ({ versions: await (await open(root)).project.versions(requireString(id, 'id')) }),
+    'chapter.forget': async ({ root, id }) => await forgetChapter(core, await open(root), requireString(id, 'id')),
     'chapter.dropVersions': async ({ root, id, versions }) => {
       const { project } = await open(root)
       const done = await project.dropVersions(requireString(id, 'id'), Array.isArray(versions) ? versions.filter((version): version is string => typeof version === 'string') : [])

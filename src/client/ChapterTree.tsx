@@ -20,6 +20,28 @@ import { MoveChapters } from './MoveChapters'
 import { TranslateDialog } from './Translate'
 import { Button, Chip, cx, Field, Menu, Modal, Select, Spinner, TextArea, TextInput, useAction, useBookLine, useConfirm, useProject, useSnapshot, useStudio, useT } from './ui'
 
+/**
+ * Whether a chapter has a memory, in a word: one read off the text as it stands, one read off a text that has been
+ * changed since, or none. Nothing for a chapter with no text: there is nothing to remember yet.
+ */
+export function memoryWord(chapter: Pick<ChapterInfo, 'hasText' | 'digested' | 'memory'> | undefined, t: (zh: string, en: string) => string): { word: string; hint: string; state: 'current' | 'stale' | 'none' } | undefined {
+  if (chapter === undefined || !chapter.hasText) return undefined
+  if (chapter.memory === 'current' || (chapter.memory === undefined && chapter.digested)) return { state: 'current', word: t('有记忆', 'memory'), hint: t('这一章收录过，记忆是照现在的正文收的', 'Digested: its memory is of the text as it stands') }
+  if (chapter.memory === 'stale') return { state: 'stale', word: t('记忆过期', 'memory stale'), hint: t('这一章有记忆，但收录之后正文改过：再收录一次，或清除它', 'It has a memory, of a text that has been changed since: digest it again, or clear it') }
+  return { state: 'none', word: t('无记忆', 'no memory'), hint: t('这一章还没有收录，没有记忆', 'Not digested: it has no memory') }
+}
+
+/**
+ * Whether a chapter has a memory, said on its row.
+ * @param after - it follows other words on the same line (the chapter's length).
+ */
+export function MemoryMark({ chapter, after }: { chapter: Pick<ChapterInfo, 'hasText' | 'digested' | 'memory'> | undefined; after?: boolean }) {
+  const t = useT()
+  const remembered = memoryWord(chapter, t)
+  if (remembered === undefined) return null
+  return <span className={cx(after !== true && 'nv-list-meta', 'nv-memory-mark', `is-${remembered.state}`)} title={remembered.hint}>{after === true ? ` · ${remembered.word}` : remembered.word}</span>
+}
+
 /** Apply outline operations; the first failing one becomes the error. */
 export function useOutlineOps(): (ops: OutlineOpInput[]) => Promise<{ op: string; ok: boolean; id?: string; message: string }[]> {
   const { controller } = useStudio()
@@ -207,7 +229,7 @@ export function ChapterTree({ active, onOpen, onLine, tools, note, footer, compa
           <>
             <span className="nv-person-text">
               <span className="nv-list-title">{plan.title}</span>
-              <span className="nv-list-meta">{chapter?.hasText === true ? `${formatCount(chapter.words, locale)}${t(' 字', ' words')}` : t(...CHAPTER_STATUS[plan.status])}{chapter?.hasText === true && !chapter.digested ? t(' · 未收录', ' · undigested') : ''}</span>
+              <span className="nv-list-meta">{chapter?.hasText === true ? `${formatCount(chapter.words, locale)}${t(' 字', ' words')}` : t(...CHAPTER_STATUS[plan.status])}<MemoryMark chapter={chapter} after /></span>
             </span>
             {busyOn(plan.id) ? <Spinner size={12} /> : <span className={cx('nv-dot', `is-${plan.status}`)} />}
           </>
@@ -220,6 +242,7 @@ export function ChapterTree({ active, onOpen, onLine, tools, note, footer, compa
             <span className="nv-list-side">
               <Chip tone={CHAPTER_STATUS_TONE[plan.status]}>{t(...CHAPTER_STATUS[plan.status])}</Chip>
               {chapter !== undefined && chapter.words > 0 ? <span className="nv-list-meta">{formatCount(chapter.words, locale)}</span> : null}
+              <MemoryMark chapter={chapter} />
             </span>
           </>
         )}

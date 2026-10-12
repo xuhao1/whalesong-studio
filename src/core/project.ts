@@ -43,6 +43,7 @@ import { parseFrontMatter, renderFrontMatter } from './util/frontmatter'
 import { changedBy, changing } from './cause'
 import { getAt, isRecord, said, unversioned } from '../shared/history'
 import { PlainFiles, readStub, SealedFiles, type FileStore } from './util/vault'
+import { threadWithout } from './plans'
 
 export const MANIFEST_FILE = 'novel.json'
 const OUTLINE_FILE = 'outline.json'
@@ -1741,23 +1742,33 @@ export class Project {
    * What a line of the plot has of the book — what whoever works on it reads, and nothing of the other lines:
    * its chapters, its people, what it may know of the world, the threads that are its own.
    * @param line - the line's id; the main line when left out.
+   * @param anew - the plan, as it was meant, of a chapter that is being drafted (see `plans.ts`): the line is taken
+   *   as it stands without that chapter's last draft — it counts for whom its plan casts and the threads its plan
+   *   names, not for whom and what a digest found in it, and the threads go without its marks.
    * @throws ProjectError `novel/not-found` when no line has that id.
    */
-  async lineScope(line?: string): Promise<LineScope> {
+  async lineScope(line?: string, anew?: ChapterPlan): Promise<LineScope> {
     const outline = await this.outline()
     const home = lineOf(outline, line)
     const id = home?.id ?? MAIN_LINE
     const path = located(linePath(outline, home))
     const on = new Set(path.map(chapter => chapter.plan.id))
     const where = await this.whereabouts()
+    const castAnew = anew !== undefined ? new Set([anew.pov, ...(anew.characters ?? []), ...(anew.beats ?? []).flatMap(beat => beat.characters ?? [])]) : undefined
     const has = (card: Pick<CharacterCard, 'id' | 'lines'>): boolean => {
       if (card.lines !== undefined && card.lines.length > 0) return card.lines.includes(id)
-      const chapters = where.people.get(card.id)
+      const found = where.people.get(card.id)
+      const chapters = found !== undefined && anew !== undefined && found.has(anew.id) && !castAnew!.has(card.id) ? new Set([...found].filter(chapter => chapter !== anew.id)) : found
       return chapters === undefined || chapters.size === 0 || [...chapters].some(chapter => on.has(chapter))
     }
     const threads: LineScope['threads'] = []
-    for (const thread of outline.threads) {
-      const touches = where.threads.get(thread.id)
+    for (const held of outline.threads) {
+      const thread = anew !== undefined ? threadWithout(held, anew.id) : held
+      if (thread === undefined) continue
+      const all = where.threads.get(thread.id)
+      const touches = all !== undefined && anew !== undefined && all.has(anew.id)
+        ? new Map([...all].filter(([chapter]) => chapter !== anew.id).concat((anew.threads ?? []).includes(thread.id) ? [[anew.id, 'plan']] : []))
+        : all
       const here = path.filter(chapter => touches?.has(chapter.plan.id) === true)
       // A thread nothing has touched yet is a plan of the author's: every line may take it up.
       if (touches !== undefined && touches.size > 0 && here.length === 0) continue
@@ -1850,7 +1861,14 @@ export class Project {
       for (const holder of holders(draft)) {
         const index = holder.chapters.findIndex(chapter => chapter.id === located.plan.id)
         if (index < 0) continue
-        updated = mergeCard<ChapterPlan>(holder.chapters[index]!, { ...patch, id: located.plan.id })
+        const held = holder.chapters[index]!
+        updated = mergeCard<ChapterPlan>(held, { ...patch, id: located.plan.id })
+        // A field read off the chapter that somebody now sets otherwise is theirs from here on: it is what is meant.
+        if (!('fromText' in patch) && updated.fromText !== undefined) {
+          const still = updated.fromText.filter(field => JSON.stringify(updated[field]) === JSON.stringify(held[field]) && updated[field] !== undefined)
+          if (still.length > 0) updated.fromText = still
+          else delete updated.fromText
+        }
         holder.chapters[index] = updated
       }
     })
@@ -2328,6 +2346,7 @@ export class Project {
         hasText: text.length > 0,
         ...(mtime > 0 ? { updatedAt: new Date(mtime).toISOString() } : {}),
         digested: memory !== undefined && memory.textHash === hashText(text),
+        ...(memory !== undefined ? { memory: memory.textHash === hashText(text) ? 'current' as const : 'stale' as const } : {}),
         ...(review !== undefined ? { openIssues: review.issues.filter(issue => issue.resolved !== true).length } : {}),
         ...(review?.unread === true ? { unreviewed: true as const } : {}),
         ...(home !== undefined ? { line: home } : {}),
