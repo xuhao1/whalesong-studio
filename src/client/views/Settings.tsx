@@ -27,7 +27,7 @@ import {
   CREW_ROLES,
   type BookParallel, type CodexBridgeKind, type ContextSettings, type CrewRole, type CrewRoleSettings, type CrewSettings, type EmbeddingSettings, type GateKind, type ImageSettings, type ModelRoute, type NovelSettings, type SoundProviderKind, type SoundSettings, type TextModelRouting, type TextRole, type TtsProviderKind, type TtsSettings,
 } from '../../shared/types'
-import { CHAPTER_CONTEXT_DEFAULT, PARALLEL_DEFAULT, PARALLEL_MAX, PASSAGE_CONTEXT_DEFAULT, PLANNER_WHOLE_DEFAULT, PLAY_CONTEXT_DEFAULT, REFERENCES_DEFAULT, REFERENCES_MAX, TTS_SERVICE_KEYS, type SoundSettings as SoundDraft } from '../../shared/types'
+import { CHAPTER_CONTEXT_DEFAULT, PART_BEATS_DEFAULT, PARALLEL_DEFAULT, PARALLEL_MAX, PASSAGE_CONTEXT_DEFAULT, PLANNER_WHOLE_DEFAULT, PLAY_CONTEXT_DEFAULT, REFERENCES_DEFAULT, REFERENCES_MAX, TTS_SERVICE_KEYS, type SoundSettings as SoundDraft } from '../../shared/types'
 import { messageOf } from '../api'
 import { ImageModelField, ModelField, speechEndpoint, speechSuggestions, useKeyState, type KeyBag, type TypedKeys } from '../ModelField'
 import { Icon } from '../icons'
@@ -296,6 +296,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
       rewriteBy: draft.rewriteBy === 'planner' ? 'planner' : 'writer',
       mendReach: draft.mendReach === 'careful' ? 'careful' : 'bold',
       materialBy: draft.materialBy === 'rules' || draft.materialBy === 'agent' ? draft.materialBy : 'planner',
+      partBeats: draft.partBeats ?? null,
       settleSuggestions: draft.settleSuggestions !== false,
       reviewAgentRevisions: draft.reviewAgentRevisions,
       agentFiles: draft.agentFiles ?? 'guide',
@@ -527,6 +528,10 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
                 ]}
                 onChange={(value) => { update({ materialBy: value }) }}
               />
+            </Field>
+            {/* A chapter with beats is written in parts, beat by beat, where the writer writes in one request: how many beats a part holds. */}
+            <Field label={t('分节拍写：每次写几个节拍', 'Written by its beats: beats to a part')} hint={t('章纲有节拍的章，按节拍分几次写——每次带着同一份材料和已经写出来的正文（缓存照用），只写这几个节拍，最后一次才收尾；不管要多少字都这样。每个节拍都写得足，一章也会比一次写完的长。填 0：一次写完，只有要的字数一次写不下时才分。（“写手自己读、自己写”不用这一项。）', 'A chapter whose plan has beats is written in parts — each request with the same material and the text so far (the cache holds), told which beats are its own, and only the last closes the chapter — whatever length is asked for. Every beat gets its room, and the chapter comes out longer than one written in one go. 0: in one go, and in parts only where the length asked for is more than one request yields. (Not for the writer at work as an agent.)')}>
+              <TextInput inputMode="numeric" value={draft.partBeats !== undefined ? String(draft.partBeats) : ''} placeholder={String(PART_BEATS_DEFAULT)} onChange={(event) => { const text = event.target.value.replace(/\D/g, '').slice(0, 2); setDraft(({ partBeats: _old, ...rest }) => (text.length > 0 ? { ...rest, partBeats: Number(text) } : rest)); setDirty(true) }} />
             </Field>
             <Field label={t('按处修改由谁写', 'Who writes a change made by places')} hint={t('修审校问题、照引导审校（写作页的“修改一章”）、全书修订、照要求通篇改一章：每一处改好的文字由哪个模型写。', 'Mending issues, a review by a lead, a revision through the book, a chapter revised in place: whose model writes what each place is to read.')}>
               <Select<'writer' | 'planner'>

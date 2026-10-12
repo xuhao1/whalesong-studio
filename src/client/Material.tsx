@@ -14,7 +14,7 @@
 import { useState } from 'react'
 import type { MaterialKept, MaterialUsed } from '../shared/types'
 import { Icon } from './icons'
-import { Button, Menu, Modal, Spinner, useLoad, useProject, useSnapshot, useStudio, useT } from './ui'
+import { Button, Menu, Modal, Spinner, useLoad, useProject, useShared, useSnapshot, useStudio, useT } from './ui'
 
 type T = (zh: string, en: string) => string
 
@@ -24,30 +24,34 @@ export type MaterialBy = 'planner' | 'rules' | 'agent'
 /** A way of preparing, as it is said in a word beside a draft or on a button. */
 export const wayWord = (by: MaterialBy, t: T): string => (by === 'planner' ? t('策划备料', 'planner\'s material') : by === 'agent' ? t('写手自己读、自己写', 'the writer as an agent') : t('按规则拼', 'packed by rule'))
 
-/**
- * Who prepares the writer's material, as the Studio's settings have it (`materialBy`: the planner unless the author
- * has the Studio pack it by rule) — and the way to say otherwise from where the writing is asked for. It is a
- * setting, kept: every piece of writing asked for after goes by it.
- */
-export function useMaterialBy(): [MaterialBy, (by: MaterialBy) => void] {
-  const { controller } = useStudio()
+/** The way a chapter is written where nothing else is said: the Studio's setting (`materialBy`; the planner prepares unless the author has it otherwise). */
+export function useMaterialDefault(): MaterialBy {
   const set = useSnapshot(snapshot => snapshot.settings?.settings.materialBy)
-  const by: MaterialBy = set === 'rules' || set === 'agent' ? set : 'planner'
-  return [by, (next) => {
-    void controller.guard(async () => {
-      await controller.saveSettings({ materialBy: next })
-    })
-  }]
+  return set === 'rules' || set === 'agent' ? set : 'planner'
 }
 
-/** The two entries a menu beside a button that writes has for it. */
+/**
+ * The way in force where writing is asked for: the settings' default, unless the author picked another here. What is
+ * picked here is for the writing done from this page — kept while the page is open, said beside the menu it was
+ * picked from — and changes nothing in the settings.
+ * @returns the way in force; the way to pick one (`undefined`: as the settings have it again); and which of the two it is.
+ */
+export function useMaterialBy(): [MaterialBy, (by: MaterialBy | undefined) => void, { byDefault: MaterialBy; own: MaterialBy | undefined }] {
+  const byDefault = useMaterialDefault()
+  const [own, setOwn] = useShared<MaterialBy | undefined>('write.material', undefined)
+  return [own ?? byDefault, setOwn, { byDefault, own }]
+}
+
+/** The entries a menu beside a button that writes has for it: as the settings have it, or one of the three ways for here. */
 export function useMaterialItems(): { label: string; onSelect: () => void }[] {
   const t = useT()
-  const [by, setBy] = useMaterialBy()
+  const [, choose, { byDefault, own }] = useMaterialBy()
+  const mark = (way: MaterialBy | undefined): string => (own === way ? '✓ ' : '')
   return [
-    { label: t(`${by === 'planner' ? '✓ ' : ''}材料 · 策划先看这一次要什么，再备`, `${by === 'planner' ? '✓ ' : ''}Material · the planner looks at the piece first, then prepares it`), onSelect: () => { setBy('planner') } },
-    { label: t(`${by === 'rules' ? '✓ ' : ''}材料 · 工坊按规则拼（原来的做法）`, `${by === 'rules' ? '✓ ' : ''}Material · packed by the Studio's rules (as it was)`), onSelect: () => { setBy('rules') } },
-    { label: t(`${by === 'agent' ? '✓ ' : ''}不备料 · 写手作为 agent：自己读书、用工具交稿、可以反复改（写一章、续写）`, `${by === 'agent' ? '✓ ' : ''}No material · the writer as an agent: reads for itself, hands the text in with a tool, goes over it (a chapter written or gone on with)`), onSelect: () => { setBy('agent') } },
+    { label: t(`${mark(undefined)}照设置里的默认（现在是：${wayWord(byDefault, t)}）`, `${mark(undefined)}As the settings have it (now: ${wayWord(byDefault, t)})`), onSelect: () => { choose(undefined) } },
+    { label: t(`${mark('planner')}这里用 · 策划先看这一次要什么，再备料`, `${mark('planner')}Here · the planner looks at the piece first, then prepares it`), onSelect: () => { choose('planner') } },
+    { label: t(`${mark('rules')}这里用 · 工坊按规则拼（原来的做法）`, `${mark('rules')}Here · packed by the Studio's rules (as it was)`), onSelect: () => { choose('rules') } },
+    { label: t(`${mark('agent')}这里用 · 不备料，写手作为 agent：自己读书、用工具交稿、可以反复改（写一章、续写）`, `${mark('agent')}Here · no material, the writer as an agent: reads for itself, hands the text in with a tool, goes over it (a chapter written or gone on with)`), onSelect: () => { choose('agent') } },
   ]
 }
 
@@ -108,26 +112,37 @@ export function ChapterMaterial({ chapter, fresh, onCompare }: { chapter: string
   const { controller } = useStudio()
   const t = useT()
   const { root } = useProject()
-  const [by] = useMaterialBy()
+  const [by, , { byDefault, own }] = useMaterialBy()
   const items = useMaterialItems()
   // (A Host half older than this page keeps none: nothing is shown of it.)
   const kept = useLoad(async signal => (await controller.api.call('material.read', { root, chapter }, signal).catch(() => undefined))?.material, [root, chapter, fresh])
   const [open, setOpen] = useState(false)
   const last = kept.data
+  const way = by === 'planner' ? t('策划先备料', 'the planner prepares') : by === 'agent' ? t('写手自己读、自己写', 'the writer as an agent') : t('按规则拼', 'packed by rule')
+  // What went last time, in a few words: who put it together and how large it was. All of it is a press away.
+  const lastWord = last === undefined ? ''
+    : `${last.by === 'agent' ? t('写手自己读写', 'the writer as an agent') : last.by === 'rules' ? t('按规则拼的', 'packed by rule') : t('策划备的', 'the planner\'s')} · ${t(`约 ${last.tokens.toLocaleString()} token`, `about ${last.tokens.toLocaleString()} tokens`)}`
   return (
-    <div className="nv-muted nv-small nv-chapter-intent nv-material-line" title={t('写手只看得到交给它的材料：写得不对，先看它拿到了什么', 'A writer sees what it is handed and nothing else: when a piece comes out wrong, look at what it got first')}>
-      <Icon name="layers" size={13} />
-      <span>{t('交给写手的材料：', 'The writer\'s material: ')}</span>
-      <Menu icon="chevronDown" variant="ghost" size="sm" label={by === 'planner' ? t('策划先备', 'the planner prepares it') : by === 'agent' ? t('不备：写手自己读、自己写', 'none: the writer as an agent') : t('按规则拼', 'packed by rule')} items={[
-        ...items,
-        ...(onCompare !== undefined ? ['separator' as const, { label: t('两种各写一稿，并排看…', 'A draft each way, side by side…'), onSelect: onCompare }] : []),
-        'separator',
-        { label: t('在设置里看这一项…', 'This one in the settings…'), onSelect: () => { controller.openSettings('material') } },
-      ]} />
-      {last !== undefined ? <span title={materialWord(last, t)}>{t(`上一次（${t(...WORK[last.work])}）：${materialWord(last, t, true)}`, `Last time (${t(...WORK[last.work])}): ${materialWord(last, t, true)}`)}</span> : null}
-      {last !== undefined ? <button type="button" className="nv-link" onClick={() => { setOpen(true) }}>{t('看', 'Read')}</button> : null}
+    <>
+      <span className="nv-basis-item" title={t('这一章怎么写：默认在设置里定，这里可以为这一页选别的。写手只看得到交给它的材料：写得不对，先看它拿到了什么', 'How this chapter is written: the default is the settings\', and another can be picked here for this page. A writer sees what it is handed and nothing else: when a piece comes out wrong, look at what it got first')}>
+        <Icon name="layers" size={13} />
+        <span className="nv-basis-name">{t('写法', 'Written')}</span>
+        <Menu icon="chevronDown" variant="ghost" size="sm" label={`${way}${own !== undefined ? t(' · 这里选的', ' · picked here') : ''}`} items={[
+          ...items,
+          ...(onCompare !== undefined ? ['separator' as const, { label: t('几种各写一稿，并排看…', 'A draft each way, side by side…'), onSelect: onCompare }] : []),
+          'separator',
+          { label: t(`在设置里改默认（现在是：${wayWord(byDefault, t)}）…`, `Change the default in the settings (now: ${wayWord(byDefault, t)})…`), onSelect: () => { controller.openSettings('material') } },
+        ]} />
+      </span>
+      {last !== undefined ? (
+        <span className="nv-basis-item" title={`${t(`上一次（${t(...WORK[last.work])}）交给写手的：`, `Handed to the writer last time (${t(...WORK[last.work])}): `)}${materialWord(last, t)}`}>
+          <span className="nv-basis-name">{t('上次的材料', 'Last material')}</span>
+          <span>{lastWord}</span>
+          <button type="button" className="nv-link" onClick={() => { setOpen(true) }}>{t('看', 'Read')}</button>
+        </span>
+      ) : null}
       {open && last !== undefined ? <MaterialDialog material={last} onClose={() => { setOpen(false) }} /> : null}
-    </div>
+    </>
   )
 }
 

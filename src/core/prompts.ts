@@ -2614,21 +2614,28 @@ export function termsTask(base: { lang: PromptLanguage; settled: string; names?:
 }
 
 /**
- * What a writer is asked last when a chapter is written in parts (see `writerTask`'s `how`): a chapter asked to be
- * longer than a model writes in one go is written beat by beat over several requests — each with the same material
- * and the text so far, each told which beats are its own and where to stop.
+ * What a writer is asked last when a chapter is written in parts (see `writerTask`'s `how`): a chapter whose plan
+ * has beats is written beat by beat over several requests — each with the same material and the text so far, each
+ * told which beats are its own and where to stop.
  * @param base.at - which part this is, from 0; `of`: how many there are.
- * @param base.from - the first beat of this part, from 0; `beats`: the beats of this part, in a line each.
+ * @param base.from - the first beat of this part, from 0; `beats`: the beats of this part, in a line each; `all`: how many the chapter has.
+ * @param base.whole - the length asked for the chapter, where one is: the length said above is then this part's.
+ * @param base.usual - with no length asked for: how long the book's written chapters run, for the writer's sense of this part's share.
  */
-export function partHow(base: Base & { at: number; of: number; from: number; beats: string[]; whole: number }): string {
+export function partHow(base: Base & { at: number; of: number; from: number; beats: string[]; all: number; whole?: number; usual?: number }): string {
   const first = base.from + 1
   const last = base.from + base.beats.length
   const which = base.beats.length > 1 ? `${first}–${last}` : String(first)
   const list = base.beats.map((beat, index) => `${base.from + index + 1}. ${beat}`).join('\n')
   const final = base.at === base.of - 1
+  const length = base.whole !== undefined
+    ? L(base.lang, `整章要求约 ${base.whole} 字；上面的篇幅说的是这一次。`, `The chapter is asked to run to about ${base.whole} words; the length above is this part's.`)
+    : L(base.lang,
+        `上面说的篇幅是对整章说的：这一次只是其中 ${base.all} 个节拍里的 ${base.beats.length} 个${base.usual !== undefined ? `（本书已写的章节平均约 ${base.usual} 字，是整章的数）` : ''}，把这几个节拍写足就够，不要把别的节拍的篇幅也写进来。`,
+        `What is said of length above is said of the whole chapter: this part is ${base.beats.length} of its ${base.all} beats${base.usual !== undefined ? ` (the chapters written so far run to about ${base.usual} words each — the whole of one)` : ''}; give these beats their room, and no more than theirs.`)
   return L(base.lang,
-    `这一章要求约 ${base.whole} 字，一次写不下：分 ${base.of} 次写，这是第 ${base.at + 1} 次。上面的篇幅说的是这一次。\n${base.at > 0 ? '从“本章已有正文”的最后一个字之后接着写，不要重复已有内容，衔接处不能看出缝。' : '从本章第一句开始写。'}这一次只写章纲里的第 ${which} 个节拍：\n${list}\n${final ? '写完这几个节拍，这一章就到了结尾：照常收住。' : `写到第 ${last} 个节拍结束就停——后面的节拍留给下一次：不要提前写它们，也不要给这一章收尾。`}直接输出正文。`,
-    `This chapter is asked to run to about ${base.whole} words, more than one request holds: it is written in ${base.of} parts, and this is part ${base.at + 1}. The length above is this part's.\n${base.at > 0 ? 'Pick up right after the last word of "This chapter so far", repeat nothing, and leave no seam.' : 'Start from the first sentence of the chapter.'} Write beat${base.beats.length > 1 ? 's' : ''} ${which} of the outline, and no other:\n${list}\n${final ? 'With these beats the chapter comes to its end: close it as it should close.' : `Stop where beat ${last} ends — the beats after it are for the next part: do not write them ahead, and do not bring the chapter to a close.`} Output the prose only.`)
+    `这一章按章纲的节拍分 ${base.of} 次写，这是第 ${base.at + 1} 次。${length}\n${base.at > 0 ? '从“本章已有正文”的最后一个字之后接着写，不要重复已有内容，衔接处不能看出缝。' : '从本章第一句开始写。'}这一次只写章纲里的第 ${which} 个节拍：\n${list}\n${final ? '写完这几个节拍，这一章就到了结尾：照常收住。' : `写到第 ${last} 个节拍结束就停——后面的节拍留给下一次：不要提前写它们，也不要给这一章收尾。`}直接输出正文。`,
+    `This chapter is written in ${base.of} parts, by the beats of its outline, and this is part ${base.at + 1}. ${length}\n${base.at > 0 ? 'Pick up right after the last word of "This chapter so far", repeat nothing, and leave no seam.' : 'Start from the first sentence of the chapter.'} Write beat${base.beats.length > 1 ? 's' : ''} ${which} of the outline, and no other:\n${list}\n${final ? 'With these beats the chapter comes to its end: close it as it should close.' : `Stop where beat ${last} ends — the beats after it are for the next part: do not write them ahead, and do not bring the chapter to a close.`} Output the prose only.`)
 }
 
 // ───────────────────────────── a chapter written by the writer as an agent ─────────────────────────────

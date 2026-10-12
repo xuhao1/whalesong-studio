@@ -13549,6 +13549,67 @@ h2 > .nv-memory-mark {
   margin-left: 8px;
 }
 
+/* What a chapter is written by, under the brief box: one row of small blocks — the way it is written, what the writer
+   was handed last time, the thinking it was derived with, the reference notes, the pictures — each said in a few
+   words and opened where it is wanted. The pictures themselves, where there are some, follow the row. */
+.nv-write-basis {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px 2px;
+  font-size: 12px;
+  color: var(--nv-text-2);
+}
+
+.nv-basis-lead {
+  color: var(--nv-text-3);
+}
+
+.nv-basis-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--nv-border);
+  border-radius: 999px;
+  background: var(--nv-surface);
+  white-space: nowrap;
+}
+
+.nv-basis-item > svg {
+  flex: none;
+  opacity: 0.7;
+}
+
+.nv-basis-name {
+  color: var(--nv-text-3);
+}
+
+.nv-basis-item > span:not(.nv-basis-name) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* (The menu in a block is the block's own value: no button of its own around it.) */
+.nv-basis-item .nv-btn {
+  min-height: 0;
+  padding: 0 2px;
+  font-size: 12px;
+}
+
+.nv-write-basis > .nv-guides.is-brief {
+  display: contents;
+}
+
+.nv-write-basis > .nv-guides.is-brief > .nv-guides-list {
+  flex: 1 1 100%;
+  order: 9;
+}
+
 /* Who prepares the writer's material, switched in the line itself. */
 .nv-material-line {
   display: flex;

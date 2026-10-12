@@ -1845,6 +1845,14 @@ export interface NovelSettings {
    */
   materialBy?: 'planner' | 'rules' | 'agent'
   /**
+   * A chapter whose plan has beats is written in parts where the writer writes in one request (`materialBy` `planner`
+   * or `rules`): the beats in runs of at most this many, a request a run — the same material each time and the text
+   * so far, each told which beats are its own and where to stop — whatever length is asked for, or none. Unset:
+   * {@link PART_BEATS_DEFAULT}. 0: a chapter is written in one go, and in parts only where the length asked for is
+   * more than one request yields.
+   */
+  partBeats?: number
+  /**
    * How far a mending reaches — an issue mended, something the author noticed put right, a request carried through
    * the book, a chapter gone through to an instruction. `bold` (unset): mended through — every place it shows, what
    * has to change with each, a place taking in as much as has to move (a paragraph where a sentence will not do), a
@@ -2996,6 +3004,9 @@ export interface BookLock {
 }
 
 // ───────────── the record of calls ─────────────
+
+/** Beats a part of a chapter holds at most, where the author set no figure (`partBeats`). */
+export const PART_BEATS_DEFAULT = 3
 
 /** Megabytes of calls a book keeps where the author set no figure. */
 export const CALLS_MB_DEFAULT = 200

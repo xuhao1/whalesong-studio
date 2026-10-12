@@ -674,7 +674,7 @@ export function createHandlers(service: NovelService): Handlers {
     },
 
     // ── model work ──
-    'ai.write': async ({ root, chapter, brief, mode, words, style, line, guides }) => {
+    'ai.write': async ({ root, chapter, brief, mode, words, style, line, guides, material }) => {
       const runtime = await open(root)
       return job(runtime, 'write', 'write', chapter, async task => await writeChapter(core, runtime, {
         ...(chapter !== undefined ? { chapter } : {}),
@@ -684,6 +684,7 @@ export function createHandlers(service: NovelService): Handlers {
         ...(words !== undefined ? { words } : {}),
         ...(style !== undefined ? { style } : {}),
         ...(Array.isArray(guides) ? { guides: cleanGuides(guides) } : {}),
+        ...(material === 'planner' || material === 'rules' || material === 'agent' ? { material } : {}),
       }, task))
     },
     'guide.add': async ({ root, mediaType, data }) => {
@@ -806,20 +807,20 @@ export function createHandlers(service: NovelService): Handlers {
       const material = await keptMaterial(await open(root), requireString(chapter, 'chapter'), typeof version === 'string' && version.length > 0 ? version : undefined)
       return material !== undefined ? { material } : {}
     },
-    'ai.reviseSpan': async ({ root, chapter, start, end, quote, instruction, guides }) => {
+    'ai.reviseSpan': async ({ root, chapter, start, end, quote, instruction, guides, material }) => {
       const runtime = await open(root)
       return job(runtime, 'revise', 'revise passage', chapter, async (task) => {
-        const { before: _before, ...rest } = await reviseSpan(core, runtime, { chapter, start, end, ...(quote !== undefined ? { quote } : {}), instruction: requireString(instruction, 'instruction'), apply: false, ...(Array.isArray(guides) ? { guides: cleanGuides(guides) } : {}) }, task)
+        const { before: _before, ...rest } = await reviseSpan(core, runtime, { chapter, start, end, ...(quote !== undefined ? { quote } : {}), instruction: requireString(instruction, 'instruction'), apply: false, ...(Array.isArray(guides) ? { guides: cleanGuides(guides) } : {}), ...(material === 'planner' || material === 'rules' ? { material } : {}) }, task)
         return rest
       })
     },
-    'ai.reviseChapter': async ({ root, chapter, instruction, guides, whole }) => {
+    'ai.reviseChapter': async ({ root, chapter, instruction, guides, whole, material }) => {
       const runtime = await open(root)
       const asked = { chapter, instruction: requireString(instruction, 'instruction'), apply: false, ...(Array.isArray(guides) && guides.length > 0 ? { guides: cleanGuides(guides) } : {}) }
       // Gone through place by place unless the whole of it is asked for: only what changes is written again.
       if (whole !== true) return job(runtime, 'revise', 'amend chapter', chapter, async task => await amendChapter(core, runtime, asked, task))
       return job(runtime, 'revise', 'revise chapter', chapter, async (task) => {
-        const { before: _before, after: _after, ...rest } = await reviseChapter(core, runtime, asked, task)
+        const { before: _before, after: _after, ...rest } = await reviseChapter(core, runtime, { ...asked, ...(material === 'planner' || material === 'rules' ? { material } : {}) }, task)
         return rest
       })
     },

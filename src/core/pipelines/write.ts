@@ -5,7 +5,7 @@
  * written and passes a brief; this pipeline turns that into text on disk.
  */
 import { keptPictures } from '../../shared/embedded'
-import { chapterBudgetOf, MAIN_LINE, type Beat, type ChapterInfo, type FiguresKept, type MaterialUsed, type PictureGuide, type PicturesRead } from '../../shared/types'
+import { chapterBudgetOf, MAIN_LINE, PART_BEATS_DEFAULT, type Beat, type ChapterInfo, type FiguresKept, type MaterialUsed, type PictureGuide, type PicturesRead } from '../../shared/types'
 import { clip, clipTail, countWords, estimateTokens, normalizeProse, proseOnly } from '../../shared/text'
 import type { ContextPack } from '../context'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
@@ -20,7 +20,7 @@ import { consultReferences } from './consult'
 import { digestChapter, updateArcs } from './digest'
 import { guidePictures, picturesLabel, picturesRead } from './guides'
 import { composeChapter, type Composed } from './compose'
-import { keepMaterial, materialUsed, prepareMaterial, writingBy } from './material'
+import { beside, keepMaterial, materialUsed, prepareMaterial, writingBy } from './material'
 
 export interface WriteParams {
   /** Chapter reference; `next` (default) picks the first outlined chapter without text. */
@@ -138,18 +138,21 @@ export function cleanProse(reply: string, title?: string): string {
 const PART_WORDS = 3000
 
 /**
- * The parts a chapter is written in, where it is asked to be longer than one request yields: its beats in runs, each
- * with its share of the length. Undefined where it is written in one go — no length asked for, one short enough, or
- * a plan without beats to part it by.
+ * The parts a chapter is written in: its beats in runs, each with its share of the length where one is asked for.
+ * @param perPart - beats a part holds at most (`partBeats`): a chapter with beats is then written in parts whatever
+ *   length is asked for, or none. 0: in parts only where the length asked for is more than one request yields.
+ * @returns undefined where the chapter is written in one go — a plan without beats to part it by, or, with
+ *   `perPart` 0, no length asked for or one short enough.
  */
-export function partsOf(beats: readonly Beat[] | undefined, target: number | undefined): { from: number; to: number; words: number }[] | undefined {
-  if (target === undefined || beats === undefined || beats.length < 2 || target <= PART_WORDS * 1.4) return undefined
-  const count = Math.min(beats.length, Math.ceil(target / PART_WORDS))
-  const parts: { from: number; to: number; words: number }[] = []
+export function partsOf(beats: readonly Beat[] | undefined, target: number | undefined, perPart = 0): { from: number; to: number; words?: number }[] | undefined {
+  if (beats === undefined || beats.length < 2) return undefined
+  if (perPart <= 0 && (target === undefined || target <= PART_WORDS * 1.4)) return undefined
+  const count = Math.min(beats.length, Math.max(target !== undefined ? Math.ceil(target / PART_WORDS) : 1, perPart > 0 ? Math.ceil(beats.length / perPart) : 1, 2))
+  const parts: { from: number; to: number; words?: number }[] = []
   for (let part = 0; part < count; part++) {
     const from = Math.floor(part * beats.length / count)
     const to = Math.floor((part + 1) * beats.length / count) - 1
-    parts.push({ from, to, words: Math.max(300, Math.round(target * (to - from + 1) / beats.length / 50) * 50) })
+    parts.push({ from, to, ...(target !== undefined ? { words: Math.max(200, Math.round(target * (to - from + 1) / beats.length / 50) * 50) } : {}) })
   }
   return parts
 }
@@ -204,7 +207,7 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
     if (referenceNotes === undefined && chapter.plan.referencesRead !== true) {
       const restore = dry ? undefined : task.job?.note(lang === 'zh' ? '策划在为这一章查参考文献…' : 'The planner is reading the references for this chapter…')
       try {
-        referenceNotes = (await consultReferences(core, runtime, { chapter: chapter.plan.id }, task)).notes
+        referenceNotes = (await consultReferences(core, runtime, { chapter: chapter.plan.id }, beside(task))).notes
         referenced = { chars: referenceNotes.length, fresh: true, ...(referenceNotes.length === 0 ? { none: lang === 'zh' ? '策划查过，这一章用不上参考文献' : 'the planner looked: the references have nothing for this chapter' } : {}) }
       } catch (error) {
         if (isAbort(error) || task.signal?.aborted === true) throw error
@@ -228,6 +231,8 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
   // handed: the planner looks at the piece first — reads in the book as far as this chapter needs — and chooses it;
   // where the author has it otherwise, or the planner cannot be asked, the Studio packs it by rule.
   const way = writingBy(core, params.material)
+  const set = core.currentSettings().partBeats
+  const perPart = typeof set === 'number' && Number.isFinite(set) && set >= 0 ? Math.round(set) : PART_BEATS_DEFAULT
   const base = { lang, language: manifest.language, title: manifest.title }
   // The same for every chapter of the book: with the story so far behind it, the head of the request a provider can keep.
   const system = writerSystem({ ...base, style: renderStyle(style, lang) })
@@ -305,11 +310,12 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
     let response: LlmResponse | undefined
     // What the chapter was derived with went along: the key it sets is named again with what is asked last.
     const keyed = pack.included.intent !== undefined ? { keyed: true } : {}
-    // A chapter asked to be longer than a model writes in one go is written in parts, beat by beat: the same material
-    // and the text so far each time (so the head of every request is the one a provider has kept), each part told
-    // which beats are its own and where to stop. A model asked for ten thousand words in one request writes the
-    // chapter to its end in half of that, and nothing brings the other half.
-    const parts = mode === 'draft' ? partsOf(chapter.plan.beats, target) : undefined
+    // A chapter whose plan has beats is written in parts, beat by beat: the same material and the text so far each
+    // time (so the head of every request is the one a provider has kept), each part told which beats are its own
+    // and where to stop — whatever length is asked for, unless the author has it otherwise (`partBeats`). Each beat
+    // gets its room that way; and a model asked for ten thousand words in one request writes the chapter to its end
+    // in half of that, and nothing brings the other half.
+    const parts = mode === 'draft' ? partsOf(chapter.plan.beats, target, perPart) : undefined
     let at = 0
     for (let round = 0; round < (parts !== undefined ? parts.length + 3 : 4); round++) {
       const soFar = written
@@ -317,9 +323,13 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
       // What the parts before this one fell short of is made up over the parts still to come: this part's share of
       // what is left, by its beats (and never so much that one request could not hold it).
       const beatsLeft = part !== undefined ? chapter.plan.beats!.length - part.from : 0
-      const share = part !== undefined ? Math.round((target! - countWords(proseOnly(soFar))) * (part.to - part.from + 1) / beatsLeft / 50) * 50 : 0
+      const share = part?.words !== undefined ? Math.round((target! - countWords(proseOnly(soFar))) * (part.to - part.from + 1) / beatsLeft / 50) * 50 : 0
       const partly = part !== undefined
-        ? { words: Math.max(300, Math.min(Math.round(PART_WORDS * 1.6), Math.max(part.words, share))), how: partHow({ ...base, at, of: parts!.length, from: part.from, beats: chapter.plan.beats!.slice(part.from, part.to + 1).map(beat => beat.summary), whole: target! }) }
+        ? {
+            // (No length asked for: the part's own is left to the writer, who is told what the book's chapters run to.)
+            ...(part.words !== undefined ? { words: Math.max(200, Math.min(Math.round(PART_WORDS * 1.6), Math.max(part.words, share))) } : {}),
+            how: partHow({ ...base, at, of: parts!.length, from: part.from, beats: chapter.plan.beats!.slice(part.from, part.to + 1).map(beat => beat.summary), all: chapter.plan.beats!.length, ...(target !== undefined ? { whole: target } : usual !== undefined ? { usual } : {}) }),
+          }
         : undefined
       if (!dry && parts !== undefined) task.job?.progress(1, 3, `${lang === 'zh' ? `写作中（第 ${at + 1}/${parts.length} 段）` : `writing (part ${at + 1} of ${parts.length})`}${picturesLabel(guided, lang)}`)
       const prompt = round === 0
@@ -378,7 +388,7 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
     }
   }
 
-  const partsWritten = composed === undefined && mode === 'draft' ? partsOf(chapter.plan.beats, target)?.length : undefined
+  const partsWritten = composed === undefined && mode === 'draft' ? partsOf(chapter.plan.beats, target, perPart)?.length : undefined
   // The model wrote something, and all of it was a heading or a fence.
   if (written.trim().length === 0) throw new ProjectError('novel/empty', lang === 'zh' ? '写手模型的回复里没有正文（只有标题或空白）。请再试一次。' : 'the writer model\'s reply held no prose (only a heading or blank lines) — try again')
 
@@ -400,7 +410,7 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
     task.job?.progress(2, 3, lang === 'zh' ? '收录记忆' : 'digesting')
     // What the scribe says of the chapter is no part of the chapter: it does not go where the chapter was shown as
     // it was written (a digest streams its reply into its job's text, and this job's text is the chapter).
-    const apart: TaskContext = task.job !== undefined ? { ...task, job: { ...task.job, write: () => {}, rewrite: () => {} } } : task
+    const apart = beside(task)
     try {
       await digestChapter(core, runtime, chapter.plan.id, apart)
       await updateArcs(core, runtime, apart)

@@ -568,14 +568,14 @@ export interface NovelRpc {
   'find': { params: { root: string; query: string; limit?: number }; result: { matches: FindMatch[]; total: number } }
 
   // ── model work (jobs) ──
-  'ai.write': { params: { root: string; chapter?: string; brief?: string; mode?: 'draft' | 'continue'; words?: number; style?: string; /** With no chapter named: the line of the plot to go on with. */ line?: string; /** Pictures to write this pass by, instead of the ones kept on the chapter's plan. */ guides?: PictureGuide[] }; result: JobStarted }
-  'ai.reviseSpan': { params: { root: string; chapter: string; start: number; end: number; quote?: string; instruction: string; /** Pictures to rewrite the passage by. */ guides?: PictureGuide[] }; result: JobStarted }
+  'ai.write': { params: { root: string; chapter?: string; brief?: string; mode?: 'draft' | 'continue'; words?: number; style?: string; /** With no chapter named: the line of the plot to go on with. */ line?: string; /** Pictures to write this pass by, instead of the ones kept on the chapter's plan. */ guides?: PictureGuide[]; /** How it is written this once, where that is not as the settings have it (`materialBy`): the choice made where the writing is asked for. */ material?: 'planner' | 'rules' | 'agent' }; result: JobStarted }
+  'ai.reviseSpan': { params: { root: string; chapter: string; start: number; end: number; quote?: string; instruction: string; /** Pictures to rewrite the passage by. */ guides?: PictureGuide[]; /** Who prepares the writer's material this once, where that is not as the settings have it. */ material?: 'planner' | 'rules' }; result: JobStarted }
   /**
    * A chapter changed to one instruction. The writer goes through it and changes the places the instruction reaches —
    * each comes back as a proposal of its own, and nothing else of the chapter is output again. `whole`: the chapter is
    * written over instead, start to end (one proposal), for a change that is of all of it — its voice, its point of view.
    */
-  'ai.reviseChapter': { params: { root: string; chapter: string; instruction: string; /** Pictures to revise it by, in place of the ones kept on its plan. */ guides?: PictureGuide[]; whole?: boolean }; result: JobStarted }
+  'ai.reviseChapter': { params: { root: string; chapter: string; instruction: string; /** Pictures to revise it by, in place of the ones kept on its plan. */ guides?: PictureGuide[]; whole?: boolean; /** With `whole`: who prepares the writer's material this once, where that is not as the settings have it. */ material?: 'planner' | 'rules' }; result: JobStarted }
   /** Mend what a review found: at the place it quotes (`passage`), or wherever it reaches (`book` — the planner traces it through the chapters and the bible). `note` is what the author wants done about it. Changes come back as proposals. */
   /** `order` — `queue`: after the mendings already asked for, going on from what they leave waiting; `apart` (as before it could be said): at once, on the text as it stands. */
   /** `scope`: `passage` — the place the issue quotes (the planner's choice of place where it quotes none); `place` — the planner settles which place mends it, whatever it quotes; `book` — traced through the book; `chapter` — the chapter written over whole, asked for as such. */

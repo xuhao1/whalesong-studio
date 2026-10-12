@@ -188,7 +188,37 @@ describe('a chapter asked to be long', () => {
     expect(done.short).toMatchObject({ asked: 9000 })
   })
 
-  it('is written in one go where it is short enough, or has no beats to part it by', async () => {
+  it('is written in parts by its beats whatever length is asked for, where nothing is set otherwise', async () => {
+    // (The harness has chapters written in one request; with nothing set, a part holds three beats.)
+    await bed.cleanup()
+    bed = await createTestBed({ language: 'zh', title: '青冥', settings: { materialBy: 'rules', partBeats: undefined as never } })
+    const { core, runtime, llm } = bed
+    here = (await runtime.project.addChapter({ title: '二', synopsis: '陆沉来讨那支笔。', beats: ['【节拍一】陆沉到渡口', '【节拍二】沈璃不给', '【节拍三】账本被翻出来', '【节拍四】阿棠送信来', '【节拍五】陆沉让步', '【节拍六】船离岸'].map((summary, at) => ({ id: `b${at + 1}`, summary })) })).id
+    llm.responder = () => '他没有说话。'
+    const writers = (): typeof llm.requests => llm.requests.filter(request => request.route.for?.role === 'writer')
+    // No length asked for: two parts of three beats, and the writer left to judge each.
+    const free = await writeChapter(core, runtime, { chapter: here, digest: false }, task)
+    expect(free.parts).toBe(2)
+    expect(free.short).toBeUndefined()
+    const [one, two] = writers()
+    expect(one!.prompt).toContain('按章纲的节拍分 2 次写，这是第 1 次')
+    expect(one!.prompt).toContain('这一次只写章纲里的第 1–3 个节拍')
+    expect(one!.prompt).toContain('这一次只是其中 6 个节拍里的 3 个')
+    expect(one!.prompt).toContain('篇幅：没有规定字数')
+    expect(one!.prompt).not.toContain('篇幅：约')
+    expect(two!.prompt).toContain('第 4–6 个节拍')
+    expect(two!.prompt).toContain('照常收住')
+    // A short one asked for: in parts all the same, each with its share.
+    const before = writers().length
+    expect((await writeChapter(core, runtime, { chapter: here, words: 1800, digest: false }, task)).parts).toBe(2)
+    expect(writers()[before]!.prompt).toContain('篇幅：约 900 字')
+    expect(writers()[before]!.prompt).toContain('整章要求约 1800 字')
+    // Fewer beats to a part where the author has it so: a part a beat.
+    await core.settings.update({ partBeats: 1 })
+    expect((await writeChapter(core, runtime, { chapter: here, digest: false }, task)).parts).toBe(6)
+  })
+
+  it('is written in one go where the author has it so and it is short enough, or where it has no beats to part it by', async () => {
     const { core, runtime, llm } = bed
     llm.responder = () => '他没有说话。'
     expect((await writeChapter(core, runtime, { chapter: here, words: 3000, digest: false }, task)).parts).toBeUndefined()
@@ -215,6 +245,33 @@ describe('a chapter asked to be long', () => {
     expect(again.digested).toBe(false)
     expect(again.undigested).toContain('the scribe is away')
     expect(await runtime.project.chapterText(here)).toBe('她没有回头。')
+  })
+
+  it('keeps the planner\'s steps out of the chapter as it is shown: they are said where the job\'s progress is', async () => {
+    const { core, runtime, llm, roles } = bed
+    await core.settings.update({ materialBy: 'planner', context: { plannerWholeTokens: 0 } })
+    roles.enabled = true
+    roles.script = async (_task, call: Call) => {
+      expect(await call('book_read', { what: 'chapter', ref: '1' })).toContain('【第一章】')
+      const said = await call('writing_material', { result: { task: '写陆沉来讨笔。', chapters: [1] } })
+      if (said.startsWith('ERROR')) throw new Error(said)
+    }
+    llm.responder = () => '他没有说话。'
+    const shown: string[] = []
+    const notes: string[] = []
+    const done = await core.jobs.start({ kind: 'write', title: 'write', project: runtime.project.root, target: here, origin: 'user' }, async job => await writeChapter(core, runtime, { chapter: here, digest: false }, {
+      origin: 'user',
+      signal: job.signal,
+      job: { ...job, rewrite: (text) => { shown.push(text); job.rewrite(text) }, write: (delta) => { shown.push(delta); job.write(delta) }, note: (label) => { notes.push(label); return job.note(label) } },
+    })).done
+    expect(done.material).toMatchObject({ by: 'planner', how: 'agent' })
+    // Nothing but the chapter was ever written where the chapter is shown…
+    expect(shown.length).toBeGreaterThan(0)
+    for (const text of shown) expect(text).not.toContain('book_read')
+    expect(shown.at(-1)).toBe('他没有说话。')
+    // …and what the planner did was said on the progress line.
+    expect(notes.some(label => label.includes('book_read chapter 1'))).toBe(true)
+    expect(notes.some(label => label.includes('writing_material'))).toBe(true)
   })
 
   it('the writer as an agent is told where its text stands against the length asked for', async () => {

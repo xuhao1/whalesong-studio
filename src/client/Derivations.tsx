@@ -75,7 +75,7 @@ export function DerivationsButton({ size = 'sm' }: { size?: 'sm' | 'md' }) {
  * On a chapter's plan, and where it is written: which thinking goes along when its beats are laid out and it is
  * written — the stretch it was derived in — or that it has none, with the way to write some down.
  */
-export function ChapterIntent({ chapter }: { chapter: string }) {
+export function ChapterIntent({ chapter, brief }: { chapter: string; /** One of a row of small blocks (the writing page): said in a few words, the sentence in its tooltip. */ brief?: boolean }) {
   const t = useT()
   const view = useDerivations()
   const [open, setOpen] = useState(false)
@@ -92,6 +92,23 @@ export function ChapterIntent({ chapter }: { chapter: string }) {
         : mine.length > 0
           ? t(`${mine.length} 条推演记录，都没有给过方向：写作只照章纲`, `${mine.length} derivation record(s), none with a direction: written by its outline alone`)
           : t('没有推演记录：写作只照章纲', 'No derivation record: written by its outline alone')
+  if (brief === true) {
+    const short = stretch !== undefined
+      ? t(`带上${stretch.covers.length > 1 ? `（管${span(stretch.covers.map(cover => cover.index), t)}）` : ''}`, `goes along${stretch.covers.length > 1 ? ` (${span(stretch.covers.map(cover => cover.index), t)})` : ''}`)
+      : along.length > 0 ? t('带排节拍时的方向', 'the direction of its beats')
+        : mine.some(record => record.carry === false) ? t('设成了不带', 'kept back')
+          : mine.length > 0 ? t('没给过方向', 'none given')
+            : t('无', 'none')
+    return (
+      <span className="nv-basis-item" title={`${said}${stretch !== undefined ? t(`（${when(stretch.at)} 的那次推演：你给的方向、策划的说明）`, ` (the derivation of ${when(stretch.at)}: the direction you gave, what the planner said)`) : ''}`}>
+        <Icon name="history" size={13} />
+        <span className="nv-basis-name">{t('推演思路', 'Its thinking')}</span>
+        <span>{short}</span>
+        <button type="button" className="nv-link" onClick={() => { setOpen(true) }}>{mine.length > 0 ? t('看', 'Read') : t('补记…', 'Write it down…')}</button>
+        {open ? <DerivationsDialog chapter={chapter} onClose={() => { setOpen(false) }} /> : null}
+      </span>
+    )
+  }
   return (
     <p className="nv-muted nv-small nv-chapter-intent" title={stretch !== undefined ? t(`${when(stretch.at)} 的那次推演：你给的方向、策划的说明`, `The derivation of ${when(stretch.at)}: the direction you gave, what the planner said`) : undefined}>
       <Icon name="history" size={13} />

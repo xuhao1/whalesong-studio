@@ -65,6 +65,32 @@ export interface Prepared {
 }
 
 /**
+ * The task as those see it who work beside the writer, in a job whose text is the piece being written: the planner
+ * preparing its material or reading the references for it, the scribe digesting it afterwards. What they do and say
+ * is no part of that text — an agent's steps are written into its job's text, and a call's reply rewrites it, which
+ * put a planner's `book_read chapter …` lines, or a digest's JSON, where the chapter was being shown. A step of
+ * theirs is said where the job's progress is; nothing of it is written where the piece is.
+ */
+export function beside(task: TaskContext): TaskContext {
+  const job = task.job
+  if (job === undefined) return task
+  let restore: (() => void) | undefined
+  return {
+    ...task,
+    job: {
+      ...job,
+      rewrite: () => {},
+      write: (delta) => {
+        const said = delta.replace(/\s+/g, ' ').trim()
+        if (said.length === 0) return
+        restore?.()
+        restore = job.note(clip(said, 90))
+      },
+    },
+  }
+}
+
+/**
  * Who prepares the material of a piece of writing the author asks for: said outright, else as the settings say.
  * (Where the writer is to write as an agent — which it does for a chapter, see {@link writingBy} — the pieces that
  * are written in one request all the same have their material from the planner.)
@@ -359,7 +385,8 @@ async function prepare(core: NovelCore, runtime: ProjectRuntime, ask: MaterialAs
   const label = ask.work === 'passage' ? L(lang, `为改写第 ${current.index} 章的一段备料`, `Preparing a passage of chapter ${current.index} for rewriting`)
     : ask.work === 'chapter' ? L(lang, `为重写第 ${current.index} 章备料`, `Preparing chapter ${current.index} to be written over`)
       : L(lang, `为写第 ${current.index} 章备料`, `Preparing chapter ${current.index} for writing`)
-  const { value, run } = await assign<Settled>(core, runtime, task, {
+  // (Its steps are no part of the piece being written: see `beside`.)
+  const { value, run } = await assign<Settled>(core, runtime, beside(task), {
     role: 'architect',
     label,
     tool: 'writing_material',

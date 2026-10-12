@@ -13,7 +13,8 @@ import { useCallback, useRef, useState } from 'react'
 import type { FiguresKept, PictureGuide, PicturesRead, ReferencesLooked } from '../shared/types'
 import { encoded } from './ImportPicture'
 import { PickPicture } from './PlacePicture'
-import { Button, Chip, cx, Modal, plainEnter, ProjectImage, TextInput, useProject, useStudio, useT } from './ui'
+import { Icon } from './icons'
+import { Button, Chip, cx, Menu, Modal, plainEnter, ProjectImage, TextInput, useProject, useStudio, useT } from './ui'
 
 /** Somebody whose design sheet can be given to the drawing of another person's: one of their family is drawn by it. */
 export interface SheetLender {
@@ -62,7 +63,7 @@ export function useGiven(key: string): [PictureGuide[], (next: PictureGuide[]) =
  * @param first - the number the first of them has in the prompt, where another picture goes before them (the picture
  *   to change is 1, and these follow from 2).
  */
-export function GuidePictures({ value, onChange, disabled, chapter, hint, label, ask, people, first = 1 }: { value: readonly PictureGuide[]; onChange: (next: PictureGuide[]) => void; disabled?: boolean; chapter?: string | undefined; hint?: string; label?: string; ask?: string; people?: readonly SheetLender[]; first?: number }) {
+export function GuidePictures({ value, onChange, disabled, chapter, hint, label, ask, people, first = 1, brief }: { value: readonly PictureGuide[]; onChange: (next: PictureGuide[]) => void; disabled?: boolean; chapter?: string | undefined; hint?: string; label?: string; ask?: string; people?: readonly SheetLender[]; first?: number; /** One of a row of small blocks (the writing page): the two ways of adding one are under a menu, and the pictures follow the row. */ brief?: boolean }) {
   const { controller } = useStudio()
   const t = useT()
   const { root } = useProject()
@@ -91,7 +92,18 @@ export function GuidePictures({ value, onChange, disabled, chapter, hint, label,
     })
   }
   return (
-    <div className={cx('nv-guides', disabled === true && 'is-off')}>
+    <div className={cx('nv-guides', disabled === true && 'is-off', brief === true && 'is-brief')}>
+      {brief === true ? (
+        <span className="nv-basis-item" title={hint}>
+          <Icon name="image" size={13} />
+          <span className="nv-basis-name">{label ?? t('参考图', 'Pictures to go by')}</span>
+          <Menu icon="chevronDown" variant="ghost" size="sm" label={bringing ? t('正在带进来…', 'Bringing it in…') : value.length > 0 ? t(`${value.length} 张`, String(value.length)) : t('无', 'none')} items={[
+            { label: t('从本书的图里选…', 'From the book…'), icon: 'image', disabled: disabled === true || full, onSelect: () => { setPicking(true) } },
+            { label: t('从电脑选…', 'From this computer…'), icon: 'upload', disabled: disabled === true || full, onSelect: () => { input.current?.click() } },
+          ]} />
+          <input ref={input} type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden onChange={(event) => { bring(event.target.files) }} />
+        </span>
+      ) : (
       <div className="nv-guides-head">
         <span className="nv-guides-label">{label ?? t('参考图', 'Pictures to go by')}{value.length > 0 ? ` · ${value.length}` : ''}</span>
         {people !== undefined ? <Button size="sm" variant="ghost" icon="users" disabled={disabled === true || full || people.length === 0} title={people.length === 0 ? t('还没有别的人有人设图', 'Nobody else has a design sheet yet') : t('照另一个人的人设图画：相貌像一家人——画父母子女、兄弟姐妹', 'By another person\'s design sheet: the likeness of family — for a parent, a child, a sibling')} onClick={() => { setLending(true) }}>{t('照别人的人设图…', 'Somebody else\'s sheet…')}</Button> : null}
@@ -100,6 +112,7 @@ export function GuidePictures({ value, onChange, disabled, chapter, hint, label,
         <input ref={input} type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden onChange={(event) => { bring(event.target.files) }} />
         {hint !== undefined && value.length > 0 ? <span className="nv-muted nv-small">{hint}</span> : null}
       </div>
+      )}
       {value.length > 0 ? (
         <div className="nv-guides-list">
           {value.map((guide, at) => (

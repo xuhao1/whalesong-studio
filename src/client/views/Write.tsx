@@ -28,7 +28,7 @@ import { CHAPTER_STATUS, CHAPTER_STATUS_TONE, ISSUE_TYPE, languageLabel, SEVERIT
 import { MoveChapters } from '../MoveChapters'
 import { framedOf, framedWord, PassagePictureDialog } from '../PassagePicture'
 import { useSheetsAsk } from '../SheetsAsk'
-import { ChapterMaterial } from '../Material'
+import { ChapterMaterial, useMaterialBy } from '../Material'
 import { PickPicture } from '../PlacePicture'
 import { TextFigure, TextPictures } from '../TextPictures'
 import { ChapterText, type ChapterTextHandle } from '../ChapterText'
@@ -400,6 +400,10 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
   const [mendBy] = useMendBy()
   // Who rewrites a selected passage, or the chapter whole: the writer, or — where the author set that — the crew's model.
   const [rewriteBy] = useRewriteBy()
+  // How writing asked for from this page is done, where the author picked a way here other than the settings' (see `useMaterialBy`).
+  const [, , material] = useMaterialBy()
+  // (A passage rewritten, a chapter written over: written in one request whatever was picked — with the planner's material where the writer was to work as an agent.)
+  const rewriteMaterial = material.own !== undefined ? { material: material.own === 'rules' ? 'rules' as const : 'planner' as const } : {}
   const reaches = useReachItems()
   // The beats ticked in the plan panel, to be changed by a sentence (see `BeatAsk`).
   const [tickedBeats, setTickedBeats] = useState<string[]>([])
@@ -423,7 +427,7 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
   const write = (mode: 'draft' | 'continue'): Promise<unknown> => controller.guard(async () => {
     if (!(await settle())) return
     setAppending(mode === 'continue')
-    await controller.api.call('ai.write', { root, chapter: chapter.id, mode, ...(brief.trim().length > 0 ? { brief: brief.trim() } : {}) })
+    await controller.api.call('ai.write', { root, chapter: chapter.id, mode, ...(brief.trim().length > 0 ? { brief: brief.trim() } : {}), ...(material.own !== undefined ? { material: material.own } : {}) })
     await controller.refreshJobs()
     setBrief('')
   })
@@ -437,7 +441,7 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
     return controller.guard(async () => {
       if (!(await settle())) return undefined
       showPanel('proposals')
-      await controller.api.call('ai.reviseChapter', { root, chapter: chapter.id, instruction, ...(whole ? { whole: true } : {}) })
+      await controller.api.call('ai.reviseChapter', { root, chapter: chapter.id, instruction, ...(whole ? { whole: true, ...rewriteMaterial } : {}) })
       await controller.refreshJobs()
       setBrief('')
     })
@@ -453,7 +457,7 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
       if (!(await settle())) return undefined
       showPanel('proposals')
       setCustom(undefined)
-      await controller.api.call('ai.reviseSpan', { root, chapter: chapter.id, start: selection.start + raw.indexOf(quote), end: selection.start + raw.indexOf(quote) + quote.length, quote, instruction, ...(spanGuides.length > 0 ? { guides: spanGuides } : {}) })
+      await controller.api.call('ai.reviseSpan', { root, chapter: chapter.id, start: selection.start + raw.indexOf(quote), end: selection.start + raw.indexOf(quote) + quote.length, quote, instruction, ...(spanGuides.length > 0 ? { guides: spanGuides } : {}), ...rewriteMaterial })
       await controller.refreshJobs()
     })
   }
@@ -815,32 +819,39 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
           <GuidePictures value={spanGuides} onChange={setSpanGuides} chapter={chapter.id} hint={t('改写选中的这一段时给写手看（只这一次）', 'Shown to the writer for rewriting this selection (this once)')} />
         ) : null}
         {selected.length === 0 && plan !== undefined ? (
-          // Kept on the chapter's plan: every pass at this chapter — a draft, a continuation, a comparison, a batch — goes by them.
-          <GuidePictures value={plan.guides ?? []} chapter={chapter.id} disabled={writing !== undefined} hint={t('写这一章时给写手看', 'Shown to whoever writes this chapter')} onChange={(guides) => {
-            void controller.guard(async () => {
-              await controller.api.call('outline.apply', { root, ops: [{ op: 'update-chapter', chapter: chapter.id, guides }] })
-              doc.reload()
-            })
-          }} />
+          // What this chapter is written by, in one row of small blocks — each said in a few words and opened where it is
+          // wanted: the way it is written (and what the writer was handed last time), the pictures the author gave, the
+          // thinking it was derived with, the notes from the book's references.
+          <div className="nv-write-basis">
+            <span className="nv-basis-lead">{t('写这一章时', 'Written by')}</span>
+            {/* Who prepares what the writer is handed — picked here for this page — and what the latest piece of writing on this chapter got. */}
+            <ChapterMaterial chapter={chapter.id} fresh={`${project.revision}:${running.length}`} onCompare={() => { setComparing(true) }} />
+            {/* What the writer is handed of how this chapter came to be planned: the direction given then, what the planner said. */}
+            <ChapterIntent chapter={chapter.id} brief />
+            {(project.references ?? 0) > 0 || (plan.referenceNotes ?? '').length > 0 ? (
+              // The books this one goes by: what the writer is handed of them for this chapter is on its plan.
+              <span className="nv-basis-item" title={plan.referenceNotes !== undefined
+                ? t(`参考摘记 ${plan.referenceNotes.length} 字，写的时候交给写手`, `Reference notes of ${plan.referenceNotes.length} characters go to the writer`)
+                : plan.referencesRead === true
+                  ? t('参考摘记是空的：这一章不带参考', 'The reference notes are empty: this chapter goes by none')
+                  : t(`参考文献 ${project.references ?? 0} 本：写这一章之前，策划会先去查`, `${project.references ?? 0} reference(s): the planner reads them for this chapter before it is written`)}>
+                <Icon name="book" size={13} />
+                <span className="nv-basis-name">{t('参考摘记', 'Reference notes')}</span>
+                <span>{plan.referenceNotes !== undefined
+                  ? t(`${plan.referenceNotes.length} 字`, `${plan.referenceNotes.length} characters`)
+                  : plan.referencesRead === true ? t('空', 'none') : t('写之前策划先查', 'the planner reads first')}</span>
+                <button type="button" className="nv-link" onClick={() => { controller.setView('outline', chapter.id) }}>{t('看', 'See')}</button>
+              </span>
+            ) : null}
+            {/* Kept on the chapter's plan: every pass at this chapter — a draft, a continuation, a comparison, a batch — goes by them. */}
+            <GuidePictures brief value={plan.guides ?? []} chapter={chapter.id} disabled={writing !== undefined} hint={t('写这一章时给写手看的图', 'Pictures shown to whoever writes this chapter')} onChange={(guides) => {
+              void controller.guard(async () => {
+                await controller.api.call('outline.apply', { root, ops: [{ op: 'update-chapter', chapter: chapter.id, guides }] })
+                doc.reload()
+              })
+            }} />
+          </div>
         ) : null}
-
-        {selected.length === 0 && plan !== undefined && ((project.references ?? 0) > 0 || (plan.referenceNotes ?? '').length > 0) ? (
-          // The books this one goes by: what the writer is handed of them for this chapter is on its plan.
-          <p className="nv-muted nv-small nv-write-references">
-            <Icon name="book" size={13} />
-            <span>{plan.referenceNotes !== undefined
-              ? t(`参考摘记 ${plan.referenceNotes.length} 字，写的时候交给写手`, `Reference notes of ${plan.referenceNotes.length} characters go to the writer`)
-              : plan.referencesRead === true
-                ? t('参考摘记是空的：这一章不带参考', 'The reference notes are empty: this chapter goes by none')
-                : t(`参考文献 ${project.references ?? 0} 本：写这一章之前，策划会先去查`, `${project.references ?? 0} reference(s): the planner reads them for this chapter before it is written`)}</span>
-            <button type="button" className="nv-link" onClick={() => { controller.setView('outline', chapter.id) }}>{t('看摘记', 'See them')}</button>
-          </p>
-        ) : null}
-
-        {/* What the writer is handed of how this chapter came to be planned: the direction given then, what the planner said. */}
-        {selected.length === 0 && plan !== undefined ? <ChapterIntent chapter={chapter.id} /> : null}
-        {/* What the writer is handed: who prepares it, and what the latest piece of writing on this chapter got — all of it to read. */}
-        {plan !== undefined ? <ChapterMaterial chapter={chapter.id} fresh={`${project.revision}:${running.length}`} onCompare={() => { setComparing(true) }} /> : null}
 
         {!empty && writing === undefined ? <NextChapter chapter={chapter} path={path} lineId={lineId} onBranch={onBranch} onLine={onLine} onDerive={onDerive} /> : null}
 
