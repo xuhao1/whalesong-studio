@@ -10,7 +10,7 @@
  * becomes a proposal that waits for accept/reject in the review panel.
  */
 import { isPictureLine, keptPictures } from '../../shared/embedded'
-import { MAIN_LINE, type MendReach, type ChapterReview, type FiguresKept, type IssueSeverity, type IssueType, type PictureGuide, type PicturesRead, type Proposal, type ReviewIssue, type SettledProposal } from '../../shared/types'
+import { PASSAGE_CONTEXT_DEFAULT, MAIN_LINE, type MendReach, type ChapterReview, type FiguresKept, type IssueSeverity, type IssueType, type PictureGuide, type PicturesRead, type Proposal, type ReviewIssue, type SettledProposal } from '../../shared/types'
 import { changedCore, clip, clipTail, countWords, fuzzyFind, hashText, newId, occurrences } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { asArray, asRecord, asText } from '../llm'
@@ -311,11 +311,16 @@ export async function reviseSpan(core: NovelCore, runtime: ProjectRuntime, param
   } else {
     const route = await core.route(who === 'planner' ? 'architect' : 'writer', runtime, task)
     guided = await guidePictures(core, runtime, route, params.guides, 'passage', task)
+    // A passage is rewritten with what bears on it — the bible, the people, the story around its chapter, and the
+    // chapter itself around the passage — not with the book: handed every chapter before and after word for word (as
+    // a chapter's writing is), the one line that says what to change was a few words at the end of hundreds of
+    // thousands, and what came back was the passage hardly touched.
     const pack = await core.pack(runtime, route, {
       purpose: 'revise',
       chapter,
       brief: params.instruction,
       focus: text.slice(range.start, range.end),
+      limit: (await core.settingsOf(runtime)).context.passageTokens ?? PASSAGE_CONTEXT_DEFAULT,
       ...(task.signal !== undefined ? { signal: task.signal } : {}),
     })
     const base = { lang, language: manifest.language, title: manifest.title }
@@ -326,9 +331,9 @@ export async function reviseSpan(core: NovelCore, runtime: ProjectRuntime, param
       prompt: reviseSpanTask({
         ...base,
         context: `${pack.text}${guided !== undefined ? `\n\n${guided.text}` : ''}`,
-        before: clipTail(text.slice(0, range.start), 1800),
+        before: clipTail(text.slice(0, range.start), 4000),
         passage: text.slice(range.start, range.end),
-        after: clip(text.slice(range.end), 900),
+        after: clip(text.slice(range.end), 2000),
         instruction: params.instruction,
       }),
       ...(task.signal !== undefined ? { signal: task.signal } : {}),

@@ -141,8 +141,8 @@ export function reviseSpanSystem(base: Base & { style: string }): string {
 
 规则：
 1. 只输出修改后的那段文字，用来原样替换原文。不要解释，不要引号包裹，不要输出原文以外的上下文。
-2. 改动要服从修改要求；要求之外的内容尽量保留原意与信息量，前后必须与未改动的上下文严丝合缝（人称、时态、语气、衔接）。
-3. 不得违背设定与前文事实。
+2. 修改要求是这一次改稿要做到的事：照它改到位。它要变的——发生的事、人物的态度、语气、详略、写法——就真的变，该重写的句子重写，不是在原句上添几个词。它没有说到的信息留着；改完与这一段前后没动的文字接得上（人称、时态、语气、衔接）。
+3. 修改要求和设定、章纲、前后文不一致的地方，以修改要求为准——那是作者要改的。修改要求没有说到的地方，不违背设定与前文事实。
 4. ${picturesStay(base.lang, ['要改的这一段', 'the passage'])}
 5. ${outputRule(base)}
 
@@ -151,8 +151,8 @@ ${base.style}`, `You are the author of the novel "${bare(base.title)}", revising
 
 Rules:
 1. Output only the rewritten passage, ready to replace the original as is. No explanation, no surrounding quotes, nothing outside the passage.
-2. Follow the instruction; keep everything it does not ask to change, and make the result join the untouched text on both sides seamlessly (person, tense, voice).
-3. Never contradict the bible or earlier chapters.
+2. The instruction is what this revision is for: carry it through. What it wants different — what happens, how somebody bears themself, the tone, how much is told, the way it is written — is made different, sentences rewritten where they have to be, not a few words added to the ones there. What it does not speak of is kept; and the result joins the untouched text on both sides seamlessly (person, tense, voice).
+3. Where the instruction differs from the bible, the outline or the text around the passage, the instruction holds — that is what the author wants changed. Where it says nothing, do not contradict the bible or earlier chapters.
 4. ${picturesStay(base.lang, ['要改的这一段', 'the passage'])}
 5. ${outputRule(base)}
 
@@ -161,7 +161,10 @@ ${base.style}`)
 }
 
 export function reviseSpanTask(base: Base & { context: string; before: string; passage: string; after: string; instruction: string }): string {
-  return `${base.context}\n\n---\n${L(base.lang, '## 待修改段落之前的原文', '## Text before the passage')}\n\n${base.before || L(base.lang, '（本章开头）', '(start of chapter)')}\n\n${L(base.lang, '## 需要修改的段落', '## The passage to rewrite')}\n\n<<<\n${base.passage}\n>>>\n\n${L(base.lang, '## 待修改段落之后的原文', '## Text after the passage')}\n\n${base.after || L(base.lang, '（本章结尾）', '(end of chapter)')}\n\n${L(base.lang, '## 修改要求', '## Instruction')}\n\n${base.instruction}\n\n---\n${L(base.lang, '输出修改后的段落（只输出这一段）。', 'Output the rewritten passage only.')}`
+  // What is asked comes before the passage and once more after it: among everything the model has read by then, it is
+  // what the reply is for — said once at the far end of a long prompt, it was the part that got lost.
+  const ask = base.instruction.trim()
+  return `${base.context}\n\n---\n${L(base.lang, '## 修改要求（这次改稿要做到的）', '## The instruction (what this revision is for)')}\n\n${ask}\n\n${L(base.lang, '## 待修改段落之前的原文', '## Text before the passage')}\n\n${base.before || L(base.lang, '（本章开头）', '(start of chapter)')}\n\n${L(base.lang, '## 需要修改的段落', '## The passage to rewrite')}\n\n<<<\n${base.passage}\n>>>\n\n${L(base.lang, '## 待修改段落之后的原文', '## Text after the passage')}\n\n${base.after || L(base.lang, '（本章结尾）', '(end of chapter)')}\n\n---\n${L(base.lang, `照修改要求把 <<< >>> 里的那一段改好，只输出改好的这一段。\n修改要求：${ask}`, `Rewrite the passage between <<< and >>> to the instruction, and output the rewritten passage only.\nThe instruction: ${ask}`)}`
 }
 
 export function reviseChapterSystem(base: Base & { style: string }): string {

@@ -103,6 +103,8 @@ All notable changes to this project are recorded here. The format follows [Keep 
 
 ### Fixed
 
+- **A selected passage rewritten to an instruction is rewritten.** It was handed what a chapter is written with — half the model's window in the chapters before, the chapters after whole — so that in a long book the instruction was one line after hundreds of thousands of tokens (433K measured for a paragraph of 159 characters), under rules that said to keep what it did not ask to change; the passage came back copied with a few words added. It now gets a context of its own size (`context.passageTokens`, 24,000 by default: the bible, the people, the story around its chapter, and the chapter itself around the passage), the instruction before the passage and once more at the end, and rules that say the instruction is to be carried through and holds over outline and surrounding text. Same paragraph, instruction and model: 433K → 19K input tokens, 18 s → 4 s, and sentences rewritten rather than padded.
+
 - **Chapters derived onto the end of a line follow its last chapter, written or not.** With a chapter planned and not written at the end of the outline, the planner took "the next chapters" to start after the last one that was written, and planned that chapter a second time. The task now names the chapter the new ones follow and says that no chapter the outline has is planned again (`deriveChaptersTask` `follows`).
 
 - **A menu opens where it is not cut off, as wide as what it says.** A menu anchored to a small button near the Studio's edge ran out of the panel on the side it was asked to open, and its labels wrapped at the least width; it now takes the other side when the asked one does not hold it, and its labels' width.

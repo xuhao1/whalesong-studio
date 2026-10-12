@@ -1382,10 +1382,18 @@ export interface ContextSettings {
    * the player waits. Unset: {@link PLAY_CONTEXT_DEFAULT}.
    */
   playTokens?: number
+  /**
+   * Tokens of context a passage is rewritten with, beside the chapter it stands in: a paragraph changed to an
+   * instruction is not a chapter written — handed the whole book, the one line that says what to change is lost in
+   * it. Unset: {@link PASSAGE_CONTEXT_DEFAULT}.
+   */
+  passageTokens?: number
 }
 
 /** What a turn of an interlude carries when the author has set no figure of their own. */
 export const PLAY_CONTEXT_DEFAULT = 24_000
+/** What a passage is rewritten with — the bible, the people, the story around its chapter — when the author has set no figure of their own. */
+export const PASSAGE_CONTEXT_DEFAULT = 24_000
 
 /** How many requests of one kind run at once when the author has set no number of their own. */
 export const PARALLEL_DEFAULT = 8
