@@ -36,7 +36,7 @@ import { Icon } from '../icons'
 import { sheetsDrawn } from '../labels'
 import { framedOf, framedWord, PassagePictureDialog } from '../PassagePicture'
 import { useSheetsAsk } from '../SheetsAsk'
-import { IssueCard, IssueList, issueMarks } from '../Issues'
+import { IssueCard, IssueList, issueMarks, LeadBar } from '../Issues'
 import { AudioDesk, ScriptTable, type ScriptView } from '../stage/Audio'
 import {
   Button, cx, Empty, OverlayRootProvider, Select, Spinner, useBookLine, useLoad, useMediaUrl, useOverlayRoot, useProject, useQuote, useSnapshot, useStudio, useT, useLineView, waysOn,
@@ -217,6 +217,8 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
   const annotate = annotateKept && !full
   const [noted, setNoted] = useState<{ id: string; top: number; left: number } | undefined>()
   const [looseOpen, setLooseOpen] = useState(false)
+  // Reading with the notes on, the author sees something themselves: said here, it is found and mended (see `LeadBar`).
+  const [leading, setLeading] = useState(false)
   const [sharing, setSharing] = useState(false)
   // Listening is for listening: the production desk of the audio version comes when it is asked for, and is remembered.
   const [deskKept, setDeskState] = useState(() => {
@@ -495,6 +497,8 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
               <Button size="sm" variant="ghost" icon="checkCircle" busy={reviewing} pending={t('审校中…', 'Reviewing…')} onClick={() => controller.guard(async () => { await controller.api.call('ai.review', { root, chapter: chapter.id }); await controller.refreshJobs() })} title={t('正文改过之后重新审校一遍', 'Review again after the text has changed')}>{t('重新审校', 'Review again')}</Button>
             </>
           )}
+          <Button size="sm" variant="ghost" icon="pen" onClick={() => { setLeading(!leading) }} title={t('读的时候自己发现的问题：写一句，策划在这一章里找出来、记成问题，再修', 'Something you noticed while reading: say it in a sentence, and the planner finds it in this chapter, files it, and mends it')}>{t('我发现了问题…', 'I noticed something…')}</Button>
+          {leading ? <LeadBar className="nv-reader-notes-list" chapters={[chapter.id]} onStarted={() => { setLeading(false) }} /> : null}
           {looseOpen && openIssues > 0 ? (
             <IssueList className="nv-reader-notes-list" chapterId={chapter.id} issues={(review?.issues ?? []).filter(issue => issue.resolved !== true)} onChanged={() => { doc.reload() }} />
           ) : null}

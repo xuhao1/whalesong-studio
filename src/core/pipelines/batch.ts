@@ -521,7 +521,7 @@ export async function textPlan(core: NovelCore, runtime: ProjectRuntime, params:
   for (const chapter of all) {
     const located = await project.findChapter(chapter.id)
     const facts = (await project.chapterInfos(located?.line)).find(info => info.id === chapter.id)
-    infos.set(chapter.id, { hasText: facts?.hasText === true, digested: facts?.digested === true, beats: located?.plan.beats?.length ?? 0, reviewed: facts?.openIssues !== undefined })
+    infos.set(chapter.id, { hasText: facts?.hasText === true, digested: facts?.digested === true, beats: located?.plan.beats?.length ?? 0, reviewed: facts?.openIssues !== undefined && facts.unreviewed !== true })
   }
   let chapters = all
   if (params.chapters === undefined) {

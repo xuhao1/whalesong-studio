@@ -814,6 +814,8 @@ export interface ChapterInfo {
   digested: boolean
   /** Unresolved issues of the latest review; absent when the chapter was never reviewed. */
   openIssues?: number
+  /** The issues counted were found by what the author had noticed, and the chapter itself was never reviewed. */
+  unreviewed?: true
   /** The line the chapter belongs to, when it is not the main one. */
   line?: string
   /** The recommended length in force for the chapter — its own, else the book's — when there is one. */
@@ -1129,6 +1131,11 @@ export interface ReviewIssue {
   mending?: string
   /** Looked at again after the text changed: what was found — that the change settled it, or how it reads now. */
   checked?: { at: Timestamp; verdict: 'fixed' | 'stands' | 'changed'; why?: string }
+  /**
+   * What the author said that this was found by: a problem they had noticed themselves, in their words, located in
+   * the text by the planner — not something a review of the chapter turned up. It stays through a new review.
+   */
+  lead?: string
 }
 
 export interface ChapterReview {
@@ -1139,6 +1146,8 @@ export interface ChapterReview {
   issues: ReviewIssue[]
   /** Where the reviewer was to look in the book's references first: what it read there. */
   referenced?: ReferencesLooked
+  /** No review was made of this chapter: it holds only what was found in it by what the author had noticed (`ReviewIssue.lead`). */
+  unread?: true
 }
 
 // ───────────────────────────── retrieval ─────────────────────────────
@@ -1583,6 +1592,14 @@ export interface NovelSettings {
   autoDigest: boolean
   /** After a proposal is accepted, have the reviewer look again at the issues still open in what changed. Unset: yes. */
   recheckIssues?: boolean
+  /**
+   * Who writes the words of a change made by places — an issue mended, something the author noticed put right, a
+   * request carried through the book, a chapter gone through to an instruction. `writer` (unset): the planner settles
+   * the places and the writer's model rewrites each. `planner`: the crew's model writes what each place is to read
+   * itself, and that is the proposal — the writer's model is not asked. A chapter written over whole is the writer's
+   * either way.
+   */
+  mendBy?: 'writer' | 'planner'
   /**
    * Once a chapter's text is changed after it was digested — a revision accepted, the chapter written anew, a hand in
    * the file — have its plan (synopsis, place, time, point of view, cast and beats) read against the text and set by

@@ -2309,6 +2309,7 @@ export class Project {
         ...(mtime > 0 ? { updatedAt: new Date(mtime).toISOString() } : {}),
         digested: memory !== undefined && memory.textHash === hashText(text),
         ...(review !== undefined ? { openIssues: review.issues.filter(issue => issue.resolved !== true).length } : {}),
+        ...(review?.unread === true ? { unreviewed: true as const } : {}),
         ...(home !== undefined ? { line: home } : {}),
         ...(budget !== undefined ? { budget } : {}),
       })

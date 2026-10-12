@@ -2480,6 +2480,40 @@ button.nv-stat:hover {
   flex-wrap: wrap;
 }
 
+/* A review led by the author: what they noticed, in a sentence. */
+.nv-lead {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.nv-lead-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+
+.nv-lead-scope,
+.nv-lead-actions {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.nv-lead-scope > .nv-select {
+  flex: 0 1 auto;
+  width: auto;
+  min-width: 0;
+}
+
+.nv-lead > .nv-note {
+  margin: 0;
+}
+
+.nv-panel-section > .nv-lead {
+  padding: 10px;
+}
+
 .nv-issue-batch > .nv-input {
   flex: 1 1 140px;
   min-width: 140px;

@@ -8,8 +8,8 @@
  * rewriting the chapter, the director cutting it into panels, the planner
  * deriving what follows) goes by something the book no longer says. So a
  * chapter that was digested before and is digested again has its plan read
- * against its text ({@link planOfText}: synopsis, place, time, point of view,
- * cast and beats) — in the background, a moment later, several chapters in one
+ * against its text ({@link planOfText}: synopsis, purpose, place, time, point of
+ * view, cast and beats) — in the background, a moment later, several chapters in one
  * job. A plan that already stands by the text its chapter has is left alone,
  * and the plan as it was stays in its history.
  */
@@ -85,9 +85,9 @@ export async function plansOfText(core: NovelCore, runtime: ProjectRuntime, para
   }, task.signal)
   result.read.sort((a, b) => a.index - b.index)
   if (result.read.length > 0) {
-    const names: Record<PlanItem, [string, string]> = { synopsis: ['梗概', 'synopsis'], location: ['地点', 'place'], time: ['故事时间', 'story time'], pov: ['视角', 'point of view'], characters: ['出场人物', 'cast'] }
+    const names: Record<PlanItem, [string, string]> = { synopsis: ['梗概', 'synopsis'], purpose: ['作用', 'purpose'], location: ['地点', 'place'], time: ['故事时间', 'story time'], pov: ['视角', 'point of view'], characters: ['出场人物', 'cast'] }
     const said = result.read.map((read) => {
-      const items = [...read.changed.map(item => names[item][zh ? 0 : 1]), zh ? `节拍 ${read.beats} 个（${read.kept} 个没变）` : `${read.beats} beat(s), ${read.kept} as before`]
+      const items = [...read.changed.map(item => names[item][zh ? 0 : 1]), zh ? `节拍 ${read.beats} 个（原来 ${read.was} 个）` : `${read.beats} beat(s), ${read.was} before`]
       return zh ? `第 ${read.index} 章（${items.join('、')}）` : `chapter ${read.index} (${items.join(', ')})`
     })
     await project.addActivity({ by: 'crew', role: 'analyst', tool: 'outline', summary: L(lang, `章纲照正文更新了：${said.join('；')}。原来的在各章章纲的历史版本里`, `Plans set by their texts: ${said.join('; ')}. What was there is in each plan's history`) }).catch(() => {})

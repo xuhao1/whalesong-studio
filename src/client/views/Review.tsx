@@ -10,7 +10,7 @@ import { MAIN_LINE, type ChapterInfo, type IssueSeverity, type PictureGuide, typ
 import { GuidePictures, picturesReadWord } from '../Guides'
 import { ProposalCard, SettledCard } from '../components/ProposalCard'
 import { SEVERITY, SEVERITY_TONE, SUGGESTION_KIND } from '../labels'
-import { IssueBatchBar, IssueCard, MendOrderMenu, useMendOrder } from '../Issues'
+import { IssueBatchBar, IssueCard, LeadBar, MendOrderMenu, useLeadJobs, useMendBy, useMendOrder } from '../Issues'
 import { Icon } from '../icons'
 import { BatchMatrix, batchOf, useBatchJob } from '../Batch'
 import {
@@ -428,13 +428,23 @@ function Issues() {
   const board = useIssueBoard()
   // Which chapters are unfolded to show their issues: a book's issues are read chapter by chapter, not as one long page.
   const [unfolded, setUnfolded] = useKept<string[]>('review.unfolded', [])
+  // What a review led by the author found is shown: the chapters it was found in unfold when it ends (once for each such review).
+  const led = useLeadJobs().last
+  const [ledSeen, setLedSeen] = useKept('review.led', '')
+  useEffect(() => {
+    if (led === undefined || led.id === ledSeen) return
+    setLedSeen(led.id)
+    const found = ((led.result?.output as { found?: { chapterId: string }[] } | undefined)?.found ?? []).map(item => item.chapterId)
+    if (found.length > 0) setUnfolded([...new Set([...unfolded, ...found])])
+  }, [led?.id])
   // Line by line: the main one, then what each other line of the plot has of its own — every line counts its own chapters.
   const groups = [
     { id: MAIN_LINE, title: t('主线', 'Main line'), chapters: project.chapters.filter(chapter => chapter.hasText) },
     ...(project.lines ?? []).map(line => ({ id: line.id, title: project.outline.lines?.find(candidate => candidate.id === line.id)?.title ?? line.id, chapters: line.chapters.filter(chapter => chapter.hasText) })),
   ].filter(group => group.chapters.length > 0)
   const written = groups.flatMap(group => group.chapters)
-  const pending = written.filter(chapter => chapter.openIssues === undefined)
+  // (A chapter that only holds what the author's own leads found in it was never reviewed.)
+  const pending = written.filter(chapter => chapter.openIssues === undefined || chapter.unreviewed === true)
   const undigested = written.filter(chapter => !chapter.digested)
   // One batch: the chapters are reviewed side by side, as many at once as the settings allow.
   const batchJob = useBatchJob('text')
@@ -459,8 +469,9 @@ function Issues() {
           {board.pickedIn(chapter.id) > 0 ? <Chip tone="blue">{t(`已选 ${board.pickedIn(chapter.id)}`, `${board.pickedIn(chapter.id)} ticked`)}</Chip> : null}
         </button>
         <span className="nv-list-side">
-          {chapter.openIssues === undefined ? <Chip>{t('未审', 'Not reviewed')}</Chip> : chapter.openIssues === 0 ? <Chip tone="green">{t('无待办', 'Clear')}</Chip> : board.counts(chapter.id).length > 0 ? null : <Chip tone="amber">{t(`${chapter.openIssues} 个问题`, `${chapter.openIssues} open`)}</Chip>}
-          <Button size="sm" variant="ghost" busy={reviewing.has(chapter.id)} disabled={batch !== undefined} onClick={() => controller.guard(async () => { await controller.api.call('ai.review', { root, chapter: chapter.id }); await controller.refreshJobs() })}>{chapter.openIssues === undefined ? t('审校', 'Review') : t('重审', 'Again')}</Button>
+          {chapter.openIssues === undefined || chapter.unreviewed === true ? <Chip>{t('未审', 'Not reviewed')}</Chip> : null}
+          {chapter.openIssues === undefined ? null : chapter.openIssues === 0 ? (chapter.unreviewed === true ? null : <Chip tone="green">{t('无待办', 'Clear')}</Chip>) : board.counts(chapter.id).length > 0 ? null : <Chip tone="amber">{t(`${chapter.openIssues} 个问题`, `${chapter.openIssues} open`)}</Chip>}
+          <Button size="sm" variant="ghost" busy={reviewing.has(chapter.id)} disabled={batch !== undefined} onClick={() => controller.guard(async () => { await controller.api.call('ai.review', { root, chapter: chapter.id }); await controller.refreshJobs() })}>{chapter.openIssues === undefined || chapter.unreviewed === true ? t('审校', 'Review') : t('重审', 'Again')}</Button>
           <Button size="sm" variant="ghost" icon="arrowRight" onClick={() => { controller.setView('write', chapter.id) }} title={t('打开这一章', 'Open the chapter')} />
           <ViewButton
             bare
@@ -491,6 +502,7 @@ function Issues() {
         {batch === undefined && pending.length === 0 && written.length > 1 ? <Button size="sm" variant="ghost" icon="refresh" pending={t('正在开始…', 'Starting…')} onClick={() => controller.guard(async () => { await controller.api.call('batch.text', { root, steps: ['review'], chapters: written.map(chapter => chapter.id), redo: true }); await controller.refreshJobs() })}>{t('全部重审', 'Review all again')}</Button> : null}
       </div>
       {batchJob !== undefined && (batch !== undefined || batchJob.status !== 'done' || (batchOf(batchJob)?.failed ?? 0) > 0) ? <div className="nv-card"><BatchMatrix job={batchJob} compact /></div> : null}
+      <LeadBar />
       {board.toolbar}
       <ul className="nv-list nv-card">
         {groups.map(group => (
@@ -523,6 +535,7 @@ function BookRevision({ onStarted }: { onStarted: () => void }) {
   const written = path.filter(chapter => chapter.hasText)
   const underWay = jobs.filter(job => job.status === 'running' && job.kind === 'revise' && job.project === root && job.title === 'revise book')
   const [order] = useMendOrder()
+  const [mendBy] = useMendBy()
 
   const start = (): void => {
     setSummary(undefined)
@@ -557,7 +570,9 @@ function BookRevision({ onStarted }: { onStarted: () => void }) {
     <div className="nv-book-revision">
       <section className="nv-card">
         <SectionTitle>{t('对全书提一个修改要求', 'Ask for a change across the whole book')}</SectionTitle>
-        <p className="nv-muted nv-small">{t('策划定下改哪几处，写手只改这几处；每一处是一条提案，等你确认。', 'The planner settles which places change and the writer rewrites those only; each place waits as a proposal of its own.')}</p>
+        <p className="nv-muted nv-small">{mendBy === 'planner'
+          ? t('策划定下改哪几处，并把每一处改好的文字直接写出来（不经写手模型）；每一处是一条提案，等你确认。', 'The planner settles which places change and writes what each is to read itself (the writer\'s model is not asked); each place waits as a proposal of its own.')
+          : t('策划定下改哪几处，写手只改这几处；每一处是一条提案，等你确认。', 'The planner settles which places change and the writer rewrites those only; each place waits as a proposal of its own.')}</p>
         <div className="nv-form-grid">
           {project.world.length > 0 ? (
             <Field label={t('同步一条世界观变更', 'Carry a world change through')}>

@@ -9,14 +9,16 @@
  * them on with the problem.
  *
  *   IssueCard     one issue: what is wrong, the author's say (kept with the issue), mend here / mend everywhere / settled; ticked, it is one of a batch
+ *   LeadBar       a review led by the author: what they noticed, in a sentence — found in the book, filed as issues, mended
  *   issueMarks    where the issues of a chapter sit in its text, for a page that marks them
  */
-import type { ChapterReview, ReviewIssue } from '../shared/types'
-import { fuzzyFind } from '../shared/text'
+import { MAIN_LINE, type ChapterInfo, type ChapterReview, type JobInfo, type ReviewIssue } from '../shared/types'
+import { clip, fuzzyFind } from '../shared/text'
 import { ISSUE_TYPE, SEVERITY, SEVERITY_TONE } from './labels'
 import { ProposalCard } from './components/ProposalCard'
+import { JobBar } from './JobBar'
 import { useState, type ReactNode } from 'react'
-import { Button, Chip, cx, Menu, TextArea, TextInput, useAction, useKept, useProject, useRunningJob, useShared, useSnapshot, useStudio, useT } from './ui'
+import { Button, Chip, cx, Menu, Select, TextArea, TextInput, useAction, useBookLine, useKept, useProject, useRunningJob, useShared, useSnapshot, useStudio, useT } from './ui'
 
 export interface IssueMark {
   id: string
@@ -61,14 +63,35 @@ export function useMendOrder(): [MendOrder, (order: MendOrder) => void] {
   return useShared<MendOrder>('mend.order', 'queue')
 }
 
-/** The small triangle beside the buttons that mend: in line, or apart. */
+/** Who writes the words of a change made by places: the writer's model after the planner settled the places, or the planner's own. */
+export type MendBy = 'writer' | 'planner'
+
+/**
+ * Who writes them, as the Studio's settings have it (`mendBy`) — and the way to say otherwise from beside the buttons
+ * that mend: it is a setting, kept, since it says which of the author's models is fit for the work.
+ */
+export function useMendBy(): [MendBy, (by: MendBy) => void] {
+  const { controller } = useStudio()
+  const by: MendBy = useSnapshot(snapshot => snapshot.settings?.settings.mendBy) === 'planner' ? 'planner' : 'writer'
+  return [by, (next) => {
+    void controller.guard(async () => {
+      await controller.saveSettings({ mendBy: next })
+    })
+  }]
+}
+
+/** The small triangle beside the buttons that mend: in line or apart, and whose model writes the changed words. */
 export function MendOrderMenu() {
   const t = useT()
   const [order, setOrder] = useMendOrder()
+  const [by, setBy] = useMendBy()
   return (
-    <Menu icon="chevronDown" variant="ghost" size="sm" align="end" label={order === 'queue' ? t('排队', 'In line') : t('分别', 'Apart')} items={[
+    <Menu icon="chevronDown" variant="ghost" size="sm" align="end" label={`${order === 'queue' ? t('排队', 'In line') : t('分别', 'Apart')}${by === 'planner' ? t(' · 策划写', ' · planner writes') : ''}`} items={[
       { label: t(`${order === 'queue' ? '✓ ' : ''}排队：等前面的修复做完，接着它们改`, `${order === 'queue' ? '✓ ' : ''}In line: after the mendings under way, going on from them`), onSelect: () => { setOrder('queue') } },
       { label: t(`${order === 'apart' ? '✓ ' : ''}分别：马上开始，各改各的`, `${order === 'apart' ? '✓ ' : ''}Apart: at once, each by itself`), onSelect: () => { setOrder('apart') } },
+      'separator',
+      { label: t(`${by === 'writer' ? '✓ ' : ''}改的文字由写手模型写（策划只定在哪改）`, `${by === 'writer' ? '✓ ' : ''}The writer's model writes the changes (the planner settles where)`), onSelect: () => { setBy('writer') } },
+      { label: t(`${by === 'planner' ? '✓ ' : ''}改的文字由编排模型直接写（不经写手）`, `${by === 'planner' ? '✓ ' : ''}The crew's model writes the changes itself (no writer)`), onSelect: () => { setBy('planner') } },
     ]} />
   )
 }
@@ -114,7 +137,8 @@ export function IssueCard({ chapterId, issue, onLocate, onChanged, before, after
   const { project, root } = useProject()
   const [note, setNote] = useKept(issueNoteKey(chapterId, issue.id), issue.note ?? '')
   // What was made to mend this issue and waits to be accepted: shown beneath it, settled here.
-  const mends = project.proposals.filter(proposal => proposal.status === 'pending' && (proposal.issues?.includes(issue.id) === true || (issue.mending !== undefined && (proposal.batchId === issue.mending || proposal.batches?.includes(issue.mending) === true))))
+  // (Of the batch it was handed over with, a change to this very chapter that names other issues is theirs, and shown beneath them.)
+  const mends = project.proposals.filter(proposal => proposal.status === 'pending' && (proposal.issues?.includes(issue.id) === true || (issue.mending !== undefined && (proposal.batchId === issue.mending || proposal.batches?.includes(issue.mending) === true) && !(proposal.chapterId === chapterId && (proposal.issues?.length ?? 0) > 0))))
   const mendsHere = mends.filter(proposal => proposal.chapterId === chapterId)
   const mendsElsewhere = mends.filter(proposal => proposal.chapterId !== chapterId)
   const elsewhere = new Set(mendsElsewhere.map(proposal => proposal.chapterId)).size
@@ -155,6 +179,7 @@ export function IssueCard({ chapterId, issue, onLocate, onChanged, before, after
         {onSelect !== undefined && open ? <input type="checkbox" checked={selected === true} onChange={(event) => { onSelect(event.target.checked) }} aria-label={t('选中这个问题', 'Select this issue')} /> : null}
         <Chip tone={SEVERITY_TONE[issue.severity]}>{t(...SEVERITY[issue.severity])}</Chip>
         <Chip>{t(...ISSUE_TYPE[issue.type])}</Chip>
+        {issue.lead !== undefined ? <Chip tone="violet" title={t(`照你说的这句话找到的：${issue.lead}`, `Found by what you said: ${issue.lead}`)}>{t('你提的', 'Yours')}</Chip> : null}
         {issue.mending !== undefined && open ? <Chip tone="blue">{t('已交给修复', 'Handed over')}</Chip> : null}
       </header>
       {issue.quote !== undefined ? (
@@ -220,6 +245,106 @@ export function IssueCard({ chapterId, issue, onLocate, onChanged, before, after
         </details>
       ) : null}
     </article>
+  )
+}
+
+/** What a review led by the author came to (`ai.reviewLead`). */
+interface LeadOutput { found?: { chapterId: string; index: number }[]; chapters?: number; fix?: boolean; note?: string; book?: { results?: unknown[]; failed?: unknown[]; direct?: boolean } }
+
+/** …said in a line. */
+export function leadWord(output: LeadOutput | undefined, t: (zh: string, en: string) => string): string {
+  const found = output?.found?.length ?? 0
+  const note = output?.note !== undefined && output.note.trim().length > 0 ? clip(output.note.trim(), 220) : undefined
+  const said = note !== undefined ? t(` 策划：${note}`, ` The planner: ${note}`) : ''
+  if (found === 0) return t(`照你说的没有找到。${said}`, `Nothing was found for it.${said}`)
+  const chapters = [...new Set(output!.found!.map(item => item.index))].sort((left, right) => left - right)
+  const where = t(`照你说的找到了 ${found} 处（第 ${chapters.join('、')} 章），记成了审校问题`, `Found in ${found} place(s) (chapter ${chapters.join(', ')}), each filed as an issue`)
+  const made = output?.book?.results?.length ?? 0
+  const failed = output?.book?.failed?.length ?? 0
+  const changed = output?.fix === false
+    ? t('；这一次只找，没有改。', '; found only, nothing changed.')
+    : made === 0
+      ? t(`；没有出修改${failed > 0 ? `（${failed} 处没改成）` : ''}。`, `; no change was made${failed > 0 ? ` (${failed} failed)` : ''}.`)
+      : t(`；改了 ${made} 处${output?.book?.direct === true ? '（策划直接写的）' : ''}，在各条问题下面等你确认${failed > 0 ? `，${failed} 处没改成` : ''}。`, `; ${made} change(s)${output?.book?.direct === true ? ' (written by the planner itself)' : ''} wait beneath the issues${failed > 0 ? `, ${failed} failed` : ''}.`)
+  return `${where}${changed}${said}`
+}
+
+/** The reviews led by the author that are under way or over, for this book: the last one says what it came to. */
+export function useLeadJobs(): { running: JobInfo[]; last: JobInfo | undefined } {
+  const { root } = useProject()
+  const jobs = useSnapshot(snapshot => snapshot.jobs)
+  const mine = jobs.filter(job => job.kind === 'revise' && job.title === 'review by lead' && job.project === root)
+  return { running: mine.filter(job => job.status === 'running'), last: mine.filter(job => job.status === 'done').at(-1) }
+}
+
+/**
+ * A review led by the author. They have noticed something already — a pair of glasses that come and go, days that do
+ * not add up — and say it in a sentence: the planner goes into the book for it, files each place it shows as an issue
+ * of its chapter (marked as the author's own), and mends it, each change shown beneath its issue. "Find only" files
+ * and changes nothing.
+ * @param chapters - keep it to these chapters (the editor's panel: the one that is open); left out, the author picks — the whole line of the plot in hand, or chapters of it.
+ * @param before - asked before it is started (the editor saves what is being typed); a `false` calls it off.
+ */
+export function LeadBar({ chapters, before, onStarted, className }: { chapters?: string[]; before?: () => Promise<boolean>; onStarted?: () => void; className?: string }) {
+  const { controller } = useStudio()
+  const t = useT()
+  const { project, root } = useProject()
+  const fixed = chapters !== undefined
+  const [lead, setLead] = useKept(fixed ? `review.lead.${chapters.join(',')}` : 'review.lead', '')
+  const [scope, setScope] = useState<'line' | 'pick'>('line')
+  const [picked, setPicked] = useState<Set<string>>(new Set())
+  const [order] = useMendOrder()
+  const [by] = useMendBy()
+  const under = useMendings()
+  const { running, last } = useLeadJobs()
+  // The line of the plot in hand: its chapters as they are read on it.
+  const others = project.outline.lines ?? []
+  const [line, setLine] = useBookLine()
+  const known = new Map([...project.chapters, ...(project.lines ?? []).flatMap(candidate => candidate.chapters)].map(info => [info.id, info]))
+  const path = line === MAIN_LINE ? project.chapters : (project.lines?.find(candidate => candidate.id === line)?.path ?? []).map(id => known.get(id)).filter((info): info is ChapterInfo => info !== undefined)
+  const written = path.filter(chapter => chapter.hasText)
+  const within = fixed ? chapters : scope === 'pick' ? [...picked].filter(id => written.some(chapter => chapter.id === id)) : undefined
+  const ready = lead.trim().length > 0 && (fixed || (written.length > 0 && (scope === 'line' || (within?.length ?? 0) > 0)))
+  const start = (fix: boolean): Promise<unknown> => controller.guard(async () => {
+    if (before !== undefined && !(await before())) return
+    await controller.api.call('ai.reviewLead', { root, lead: lead.trim(), fix, order, ...(within !== undefined ? { chapters: within } : {}), ...(!fixed && line !== MAIN_LINE ? { line } : {}) })
+    await controller.refreshJobs()
+    controller.toast('info', fix
+      ? under > 0 && order === 'queue'
+        ? t(`排在前面 ${under} 个修复后面；找到的会记成审校问题，改动出现在各条问题下面。`, `In line behind ${under} mending(s); what is found is filed as issues, and the changes show beneath them.`)
+        : t(`策划照你说的去书里找；找到的记成审校问题，改动${by === 'planner' ? '由策划直接写，' : ''}出现在各条问题下面。`, `The planner is looking for it; what is found is filed as issues, and the changes${by === 'planner' ? ', written by the planner itself,' : ''} show beneath them.`)
+      : t('策划照你说的去书里找；找到的记成审校问题，这一次不改。', 'The planner is looking for it; what is found is filed as issues, and nothing is changed this time.'))
+    setLead('')
+    onStarted?.()
+  })
+  return (
+    <div className={cx('nv-card nv-lead', className)}>
+      <div className="nv-lead-head">
+        <strong>{t('照引导审校', 'Review by a lead')}</strong>
+        <span className="nv-muted nv-small">{fixed ? t('你在这一章里已经发现的问题，写一句：策划找出来、记成问题，再修。', 'What you noticed in this chapter already, in a sentence: the planner finds it, files it, and mends it.') : t('你已经发现的问题，写一句：策划去书里找出来、记成审校问题，再修。', 'What you noticed already, in a sentence: the planner finds it in the book, files it as issues, and mends it.')}</span>
+      </div>
+      <TextArea value={lead} minRows={fixed ? 1 : 2} maxRows={8} placeholder={t('例：柳先生的眼镜一会儿有一会儿没有', 'E.g. his glasses come and go')} onChange={(event) => { setLead(event.target.value) }} />
+      {!fixed ? (
+        <div className="nv-row nv-lead-scope">
+          {others.length > 0 ? <Select value={line} options={[{ value: MAIN_LINE, label: t('主线', 'Main line') }, ...others.map(item => ({ value: item.id, label: item.title }))]} onChange={(value) => { setLine(value); setPicked(new Set()) }} /> : null}
+          <Select value={scope} options={[{ value: 'line', label: t(`在这条线写了的 ${written.length} 章里找`, `Look through the ${written.length} written chapters of this line`) }, { value: 'pick', label: t('只在我选的章节里找', 'Only the chapters I pick') }]} onChange={setScope} />
+        </div>
+      ) : null}
+      {!fixed && scope === 'pick' ? (
+        <div className="nv-chips">
+          {written.map(chapter => <Chip key={chapter.id} tone={picked.has(chapter.id) ? 'blue' : 'neutral'} active={picked.has(chapter.id)} onClick={() => { setPicked((previous) => { const next = new Set(previous); if (next.has(chapter.id)) next.delete(chapter.id); else next.add(chapter.id); return next }) }}>{chapter.index}. {chapter.title}</Chip>)}
+        </div>
+      ) : null}
+      <div className="nv-row nv-lead-actions">
+        <div className="nv-split-btn">
+          <Button size="sm" variant="primary" icon="wand" disabled={!ready} pending={t('正在开始…', 'Starting…')} onClick={() => start(true)} title={t('找到的每一处记成这一章的审校问题；修改是提案，出现在各条问题下面', 'Each place found is filed as an issue of its chapter; the changes are proposals, shown beneath the issues')}>{t('找出来并修', 'Find and mend')}</Button>
+          <MendOrderMenu />
+        </div>
+        <Button size="sm" variant="outline" icon="search" disabled={!ready} pending={t('正在开始…', 'Starting…')} onClick={() => start(false)} title={t('只记成审校问题，先不改', 'Filed as issues, nothing changed yet')}>{t('只找出来', 'Find only')}</Button>
+      </div>
+      {running.map(job => <JobBar key={job.id} job={job} />)}
+      {running.length === 0 && last !== undefined ? <p className="nv-note nv-small">{t('上一次：', 'Last time: ')}{leadWord(last.result?.output as LeadOutput | undefined, t)}</p> : null}
+    </div>
   )
 }
 

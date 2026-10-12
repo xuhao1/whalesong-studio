@@ -26,6 +26,7 @@ import { CastView } from './views/Cast'
 import { HomeView, Onboarding, useRemoveBook } from './views/Home'
 import { LockScreen, SealDialog } from './views/Lock'
 import { OutlineView, planOfTextWord } from './views/Outline'
+import { leadWord } from './Issues'
 import { ReadView } from './views/Read'
 import { ReviewView } from './views/Review'
 import { SearchPanel } from './views/Search'
@@ -196,20 +197,27 @@ function JobNotice() {
     if (ended === undefined) return
     const output = (ended.job.result?.output ?? {}) as { rendered?: number; failed?: number; cached?: number; panels?: number; lines?: number }
     const batch = batchOf(ended.job)
-    if (ended.job.kind === 'revise' && ended.job.title === 'amend chapter') {
+    if (ended.job.kind === 'revise' && ended.job.title === 'review by lead') {
+      // What the author noticed, followed up: where it was found and what was changed for it — or that it was not found, and where the planner looked.
+      const output = ended.job.result?.output as Parameters<typeof leadWord>[0]
+      controller.toast((output?.found?.length ?? 0) > 0 ? 'success' : 'info', leadWord(output, t), 14000)
+    } else if (ended.job.kind === 'revise' && ended.job.title === 'amend chapter') {
       // A chapter the writer went through: the places that changed wait as proposals; none changed is said with its reason.
-      const found = (ended.job.result?.output ?? {}) as { places?: number; applied?: boolean; whole?: boolean; note?: string; refused?: string[]; figures?: FiguresKept }
+      const found = (ended.job.result?.output ?? {}) as { places?: number; applied?: boolean; whole?: boolean; note?: string; refused?: string[]; figures?: FiguresKept; who?: 'writer' | 'planner' }
+      // (Whose model did it: the writer's, or the planner's where the author set that.)
+      const zhWho = found.who === 'planner' ? '策划' : '写手'
+      const enWho = found.who === 'planner' ? 'planner' : 'writer'
       const places = found.places ?? 0
       const note = found.note !== undefined && found.note.length > 0 ? clip(found.note, 160) : undefined
       const kept = figuresKeptWord(found.figures, t, 'revised')
       if (places === 0) {
-        controller.toast('info', `${(found.refused?.length ?? 0) > 0 ? t(`写手列出的 ${found.refused!.length} 处改动都对不上正文，这一章没有动。`, `None of the ${found.refused!.length} change(s) the writer listed could be found in the text: the chapter is as it was.`) : t('这一章没有改动。', 'Nothing in the chapter was changed.')}${note !== undefined ? t(`写手：${note}`, ` The writer: ${note}`) : ''}`, 12000)
+        controller.toast('info', `${(found.refused?.length ?? 0) > 0 ? t(`${zhWho}列出的 ${found.refused!.length} 处改动都对不上正文，这一章没有动。`, `None of the ${found.refused!.length} change(s) the ${enWho} listed could be found in the text: the chapter is as it was.`) : t('这一章没有改动。', 'Nothing in the chapter was changed.')}${note !== undefined ? t(`${zhWho}：${note}`, ` The ${enWho}: ${note}`) : ''}`, 12000)
       } else {
         controller.toast('success', `${found.applied === true
           ? t(`改了 ${places} 处，已写进正文。`, `${places} place(s) changed and written into the text.`)
           : found.whole === true
             ? t(`改了 ${places} 处：接着还没采纳的修改改的，合成了这一章的一条提案。`, `${places} place(s) changed: made on top of changes still waiting, so they are one proposal for the chapter.`)
-            : t(`改了 ${places} 处，每处一条提案。`, `${places} place(s) changed — a proposal each.`)}${note !== undefined ? t(`写手：${note}`, ` The writer: ${note}`) : ''}${(found.refused?.length ?? 0) > 0 ? t(`（另有 ${found.refused!.length} 处对不上正文，没有改。）`, ` (${found.refused!.length} more could not be found in the text and were not made.)`) : ''}${kept !== undefined ? ` ${kept}` : ''}`, 9000)
+            : t(`改了 ${places} 处，每处一条提案。`, `${places} place(s) changed — a proposal each.`)}${note !== undefined ? t(`${zhWho}：${note}`, ` The ${enWho}: ${note}`) : ''}${(found.refused?.length ?? 0) > 0 ? t(`（另有 ${found.refused!.length} 处对不上正文，没有改。）`, ` (${found.refused!.length} more could not be found in the text and were not made.)`) : ''}${kept !== undefined ? ` ${kept}` : ''}`, 9000)
       }
     } else if (ended.job.kind === 'write' || ended.job.kind === 'revise') {
       const said = figuresKeptWord((ended.job.result?.output as { figures?: FiguresKept } | undefined)?.figures, t, ended.job.kind === 'write' ? 'drafted' : 'revised')

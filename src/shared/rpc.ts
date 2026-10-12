@@ -570,6 +570,12 @@ export interface NovelRpc {
   'ai.digest': { params: { root: string; chapters?: string[]; force?: boolean }; result: JobStarted }
   'ai.review': { params: { root: string; chapter: string; focus?: string }; result: JobStarted }
   /**
+   * A review led by the author: something they noticed in the book, in their words. The planner finds where it shows
+   * — each place filed as an issue of its chapter's review — and, unless `fix` is false, mends it by places, each
+   * change waiting beneath its issue.
+   */
+  'ai.reviewLead': { params: { root: string; lead: string; /** Only these chapters are looked at, and nothing outside them changes. */ chapters?: string[]; /** The line of the plot looked at, when it is not the main one. */ line?: string; fix?: boolean; order?: 'queue' | 'apart' }; result: JobStarted }
+  /**
    * Derive chapter outlines. `line` and `after` say where; `mode` what becomes of what is there already:
    * `append` adds, `replace` puts the new chapters in its place (written chapters are kept as a line put aside),
    * `branch` leaves it and opens a line of its own (`title`, `choice`). More than ten chapters are derived in rounds.

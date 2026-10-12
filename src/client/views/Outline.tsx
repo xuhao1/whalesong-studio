@@ -130,6 +130,8 @@ function PlanCast({ chosen, memory, onChange }: { chosen: string[]; memory: Chap
   const [filter, setFilter] = useCastFilter('plan-cast', project.characters)
   const cards = useMemo(() => new Map(project.characters.map(card => [card.id, card])), [project.characters])
   const mine = chosen.map(id => cards.get(id)).filter((card): card is CharacterCard => card !== undefined).sort(byWeight)
+  // Somebody the plan names who has no card (the text has them; nobody made a card yet): shown by the name, not left out.
+  const named = chosen.filter(id => !cards.has(id) && id.trim().length > 0)
   // Those the digest found in the chapter: by the card it points at, else by a name a card answers to.
   const found = useMemo(() => {
     const seen = new Map<string, CharacterCard>()
@@ -145,13 +147,16 @@ function PlanCast({ chosen, memory, onChange }: { chosen: string[]; memory: Chap
   return (
     <>
       <SectionTitle actions={project.characters.length > 0 ? <Button size="sm" icon="plus" variant="ghost" onClick={() => { setPicking(true) }}>{t('添加人物', 'Add people')}</Button> : undefined}>
-        {t(`出场人物${mine.length > 0 ? ` · ${mine.length}` : ''}`, `Cast of this chapter${mine.length > 0 ? ` · ${mine.length}` : ''}`)}
+        {t(`出场人物${mine.length + named.length > 0 ? ` · ${mine.length + named.length}` : ''}`, `Cast of this chapter${mine.length + named.length > 0 ? ` · ${mine.length + named.length}` : ''}`)}
       </SectionTitle>
       <div className="nv-chips">
         {mine.map(card => (
           <Chip key={card.id} tone="blue" active onClick={() => { onChange(chosen.filter(id => id !== card.id)) }} title={t('点一下从这一章拿掉', 'Click to take out of this chapter')}>{card.name} ×</Chip>
         ))}
-        {mine.length === 0 ? (
+        {named.map(name => (
+          <Chip key={name} active onClick={() => { onChange(chosen.filter(id => id !== name)) }} title={t('还没有人物卡；点一下从这一章拿掉', 'No card yet; click to take out of this chapter')}>{name} ×</Chip>
+        ))}
+        {mine.length + named.length === 0 ? (
           <span className="nv-muted nv-small">
             {project.characters.length === 0
               ? t('设定里还没有人物。', 'No characters in the bible yet.')
@@ -350,7 +355,7 @@ function ChapterPlanEditor({ plan, index, plans }: { plan: ChapterPlan; index: n
       <header className="nv-detail-head">
         <h2><span className="nv-muted">{onLine !== undefined ? `${onLine.title} · ` : ''}{t(`第 ${index} 章`, `Chapter ${index}`)}</span> {draft.title}</h2>
         <div className="nv-row">
-          {chapter?.hasText === true ? <Button size="sm" icon="refresh" busy={reading === 'plan'} pending={t('场记在读正文…', 'Reading the text…')} disabled={dirty || deriving || reading !== undefined} title={dirty ? t('先保存当前修改', 'Save your edits first') : t('梗概、地点、时间、视角、出场人物和节拍，照这一章现在的正文更新；原来的在历史版本里', 'Synopsis, place, time, point of view, cast and beats set by the chapter as it now reads; what was there stays in the history')} onClick={() => { byText('plan') }}>{t('照正文更新章纲', 'Update from the text')}</Button> : null}
+          {chapter?.hasText === true ? <Button size="sm" icon="refresh" busy={reading === 'plan'} pending={t('场记在读正文…', 'Reading the text…')} disabled={dirty || deriving || reading !== undefined} title={dirty ? t('先保存当前修改', 'Save your edits first') : t('梗概、这一章的作用、地点、时间、视角、出场人物和节拍，都照这一章现在的正文重新读出来；原来的在历史版本里', 'Synopsis, purpose, place, time, point of view, cast and beats read anew off the chapter as it now stands; what was there stays in the history')} onClick={() => { byText('plan') }}>{t('照正文更新章纲', 'Update from the text')}</Button> : null}
           <HistoryButton kind="plan" id={plan.id} name={t(`第 ${index} 章 ${plan.title} · 章纲`, `Chapter ${index}, ${plan.title} — the plan`)} onRestored={() => { setDirty(false) }} />
           <Menu
             icon="more"
@@ -401,7 +406,7 @@ function ChapterPlanEditor({ plan, index, plans }: { plan: ChapterPlan; index: n
       <div className="nv-assist">
         <TextInput value={direction} placeholder={t('想要的方向', 'A direction, if any')} onChange={(event) => { setDirection(event.target.value) }} />
         <Button icon="sparkles" busy={deriving} disabled={dirty || reading !== undefined} title={dirty ? t('先保存当前修改', 'Save your edits first') : chapter?.hasText === true ? t('照章纲重新排（不看正文）', 'Laid out anew from the plan, not from the text') : undefined} onClick={deriveBeats}>{t('推演节拍', 'Derive beats')}</Button>
-        {chapter?.hasText === true ? <Button icon="refresh" busy={reading === 'beats'} pending={t('场记在读正文…', 'Reading the text…')} disabled={dirty || deriving || reading !== undefined} title={dirty ? t('先保存当前修改', 'Save your edits first') : t('只把节拍照这一章现在的正文更新；原来的在历史版本里', 'Set the beats alone by the chapter as it now reads; the ones before stay in the history')} onClick={() => { byText('beats') }}>{t('照正文更新节拍', 'Beats from the text')}</Button> : null}
+        {chapter?.hasText === true ? <Button icon="refresh" busy={reading === 'beats'} pending={t('场记在读正文…', 'Reading the text…')} disabled={dirty || deriving || reading !== undefined} title={dirty ? t('先保存当前修改', 'Save your edits first') : t('只把节拍照这一章现在的正文重新读出来；原来的在历史版本里', 'The beats alone read anew off the chapter as it now stands; the ones before stay in the history')} onClick={() => { byText('beats') }}>{t('照正文更新节拍', 'Beats from the text')}</Button> : null}
       </div>
       <ol className="nv-beats">
         {beats.map((beat, at) => (
@@ -550,15 +555,16 @@ export function planOfTextWord(read: PlanRead | undefined, t: (zh: string, en: s
   const now = read?.beats?.length ?? 0
   const kept = read?.kept ?? 0
   const was = read?.was ?? 0
+  // (Beats are read off the text anew: how many there are now and were, and — where any came back word for word — how many of those.)
   const beats = was === 0
     ? t(`照正文列出了 ${now} 个节拍`, `${now} beat(s) read off the text`)
-    : t(`节拍现在 ${now} 个，其中 ${kept} 个没变`, `${now} beat(s) now, ${kept} of them as before`)
+    : t(`节拍照正文重排了：现在 ${now} 个，原来 ${was} 个${kept > 0 ? `（${kept} 个和原来一字不差）` : ''}`, `the beats were read off the text anew: ${now} now, ${was} before${kept > 0 ? ` (${kept} word for word as they were)` : ''}`)
   if (read?.what !== 'plan') return t(`${beats}。原来的在章纲的历史版本里。`, `${beats}. What was there is in the plan's history.`)
-  const names: Record<string, [string, string]> = { synopsis: ['梗概', 'synopsis'], location: ['地点', 'place'], time: ['故事时间', 'story time'], pov: ['视角', 'point of view'], characters: ['出场人物', 'cast'] }
+  const names: Record<string, [string, string]> = { synopsis: ['梗概', 'synopsis'], purpose: ['这一章的作用', 'purpose'], location: ['地点', 'place'], time: ['故事时间', 'story time'], pov: ['视角', 'point of view'], characters: ['出场人物', 'cast'] }
   const changed = (read.changed ?? []).map(item => names[item] ?? [item, item])
   return changed.length > 0
     ? t(`章纲照正文更新了：${changed.map(name => name[0]).join('、')}改了；${beats}。原来的在章纲的历史版本里。`, `The plan goes by the text now: ${changed.map(name => name[1]).join(', ')} changed; ${beats}. What was there is in the plan's history.`)
-    : t(`章纲和正文对得上，别的没改；${beats}。原来的在章纲的历史版本里。`, `The plan fits the text, nothing else changed; ${beats}. What was there is in the plan's history.`)
+    : t(`梗概、作用、地点、时间、视角、出场人物读出来和原来一样；${beats}。原来的在章纲的历史版本里。`, `Synopsis, purpose, place, time, point of view and cast read as they did; ${beats}. What was there is in the plan's history.`)
 }
 
 /** How many forms that derive chapters are open, by book: a derivation that comes back while none is says so in a notice. */

@@ -558,13 +558,13 @@ export async function deriveBeats(core: NovelCore, runtime: ProjectRuntime, para
 }
 
 /** The items of a chapter's plan that its text can set right, beside its beats. */
-export type PlanItem = 'synopsis' | 'location' | 'time' | 'pov' | 'characters'
+export type PlanItem = 'synopsis' | 'purpose' | 'location' | 'time' | 'pov' | 'characters'
 
 export interface PlanOfTextResult {
   chapterId: string
   title: string
   index: number
-  /** What was read off the text: the beats alone, or the plan — synopsis, where, when, whose eyes, who is in it — with them. */
+  /** What was read off the text: the beats alone, or the plan — synopsis, what the chapter is for, where, when, whose eyes, who is in it — with them. */
   what: 'beats' | 'plan'
   beats: Beat[]
   /** How many beats the plan had before. */
@@ -589,25 +589,17 @@ export async function planReadFrom(project: Project, chapterId: string): Promise
   return ((await project.readState<Record<string, string>>(...PLANS_READ)) ?? {})[chapterId]
 }
 
-/** A beat as one line of a list, for whoever is to compare it with a text. */
-function beatLine(beat: Beat, at: number, zh: boolean): string {
-  const more = [
-    beat.conflict !== undefined ? `${zh ? '阻碍：' : 'conflict: '}${beat.conflict}` : undefined,
-    beat.outcome !== undefined ? `${zh ? '结果：' : 'outcome: '}${beat.outcome}` : undefined,
-    beat.emotion !== undefined ? `${zh ? '情绪：' : 'emotion: '}${beat.emotion}` : undefined,
-  ].filter((part): part is string => part !== undefined)
-  return `${at + 1}. ${beat.summary}${more.length > 0 ? `${zh ? '（' : ' ('}${more.join(zh ? '；' : '; ')}${zh ? '）' : ')'}` : ''}`
-}
-
 /**
  * A chapter's plan set right by its text. What was planned before the chapter was written — or before the author,
  * or a revision, changed it — is read against what the chapter now says, by the continuity editor, in one request
  * (the text and the plan are all there is to it): whoever goes by the plan afterwards — a writer rewriting the
  * chapter, the director cutting it into panels, the planner deriving what follows — then goes by what was written.
- * `beats` changes the beats alone; `plan` the synopsis, the place, the time, the point of view and the cast with
- * them. A beat that still holds keeps its words and its id; what the text does not say of the place or the time
- * stays as planned; the chapter's purpose, its notes and its threads are nobody's to change here. The plan as it was
- * stays in its history.
+ * `beats` changes the beats alone; `plan` the synopsis, what the chapter is for, the place, the time, the point of
+ * view and the cast with them. The plan is read off the text anew: asked to keep the beats that "still fit", a model
+ * hands the old ones back and a scene the text has beyond them goes without a beat — so the beats there were are not
+ * shown to it at all. A beat that comes back in the same words is the same beat and keeps its id; what the text
+ * does not say of the place or the time stays as planned; the notes for the writer and the threads are nobody's to
+ * change here. The plan as it was stays in its history.
  */
 export async function planOfText(core: NovelCore, runtime: ProjectRuntime, params: { chapter: string; what?: 'beats' | 'plan'; apply?: boolean }, task: TaskContext): Promise<PlanOfTextResult> {
   const { project } = runtime
@@ -627,6 +619,17 @@ export async function planOfText(core: NovelCore, runtime: ProjectRuntime, param
   const plan = chapter.plan
   const before = plan.beats ?? []
   const label = zh ? `第 ${chapter.index} 章《${plan.title}》` : `Chapter ${chapter.index}, "${plan.title}"`
+  // What a chapter is for is said against the ones beside it: a line of each, along the chapter's own line of the plot.
+  let around: string | undefined
+  if (what === 'plan') {
+    const path = await project.chapters(chapter.line)
+    const at = path.findIndex(candidate => candidate.plan.id === plan.id)
+    const beside = (other: (typeof path)[number] | undefined, zhWord: string, enWord: string): string | undefined => other !== undefined && (other.plan.synopsis ?? '').trim().length > 0
+      ? `${zh ? `${zhWord}（第 ${other.index} 章《${other.plan.title}》）：` : `${enWord} (chapter ${other.index}, "${other.plan.title}"): `}${clip(other.plan.synopsis!.replace(/\s+/g, ' '), 260)}`
+      : undefined
+    const lines = at < 0 ? [] : [beside(path[at - 1], '上一章', 'The one before'), beside(path[at + 1], '下一章', 'The one after')].filter((line): line is string => line !== undefined)
+    if (lines.length > 0) around = lines.join('\n')
+  }
   const { value } = await assign(core, runtime, task, {
     role: 'analyst',
     label: what === 'plan' ? L(lang, `第${chapter.index}章 · 照正文更新章纲`, `Ch. ${chapter.index} · the plan by the text`) : L(lang, `第${chapter.index}章 · 照正文更新节拍`, `Ch. ${chapter.index} · beats of the text`),
@@ -643,12 +646,13 @@ export async function planOfText(core: NovelCore, runtime: ProjectRuntime, param
       what,
       chapterLabel: label,
       text,
-      beats: before.map((beat, at) => beatLine(beat, at, zh)).join('\n'),
       ...(plan.synopsis !== undefined ? { synopsis: plan.synopsis } : {}),
+      ...(plan.purpose !== undefined ? { purpose: plan.purpose } : {}),
       ...(plan.location !== undefined ? { location: plan.location } : {}),
       ...(plan.time !== undefined ? { time: plan.time } : {}),
       ...(plan.pov !== undefined ? { pov: nameOf(plan.pov) } : {}),
       ...((plan.characters ?? []).length > 0 ? { cast: plan.characters!.map(nameOf).join(zh ? '、' : ', ') } : {}),
+      ...(around !== undefined ? { around } : {}),
       knownCharacters: mine.map(card => `${card.name}${card.aliases !== undefined && card.aliases.length > 0 ? ` | ${card.aliases.join('/')}` : ''}`).join('\n'),
     }),
     temperature: 0.1,
@@ -674,6 +678,9 @@ export async function planOfText(core: NovelCore, runtime: ProjectRuntime, param
   if (what === 'plan') {
     const synopsis = asText(value.synopsis)
     if (synopsis !== undefined && synopsis !== plan.synopsis) { patch.synopsis = synopsis; changed.push('synopsis') }
+    // What the chapter does for the book, by what it turned out to do. (A reading that says nothing of it leaves it.)
+    const purpose = asText(value.purpose)
+    if (purpose !== undefined && purpose !== plan.purpose) { patch.purpose = purpose; changed.push('purpose') }
     // What the text does not say stays as planned.
     const location = asText(value.location)
     if (location !== undefined && location !== plan.location) { patch.location = location; changed.push('location') }

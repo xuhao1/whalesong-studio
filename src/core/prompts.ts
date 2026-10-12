@@ -285,69 +285,130 @@ export function amendCallTask(base: Base & { context: string; instruction: strin
 }
 
 /**
- * Where a change is made through the book — a problem mended, or something the author asks for: the places, each
- * quoted from the text with what is to change there, and, only where places will not do, the chapters to write over
- * whole. What is handed in is small: the writer rewrites the places named and nothing else, so the change comes back
- * as changes to look at one by one, not as chapters written again.
- * @param base.texts - chapters whole: what `find` is copied from.
+ * Where a change is made through the book — a problem mended, something the author asks for, or something the author
+ * noticed and wants found: the places, each quoted from the text with what is to change there, and, only where places
+ * will not do, the chapters to write over whole. What is handed in is small: the places named change and nothing else,
+ * so the change comes back as changes to look at one by one, not as chapters written again.
+ * @param base.texts - chapters whole: what `find` is copied from. `base.allGiven`: every chapter concerned is among them — nothing is left to read.
  * @param base.wide - trace what depends on the problem through the book; otherwise the problem itself and no more.
  * @param base.reads - whoever answers can read the book's other chapters with tools.
  * @param base.asked - what is asked is a change the author wants, in their words, not a problem a review found.
  * @param base.only - the chapters listed are the only ones that may change.
+ * @param base.lead - what is given is something the author noticed in the book: where it shows is said first, each
+ *   place quoted (`findings`) — and with `fix` the places that mend it are named after; with `find` nothing changes.
+ * @param base.direct - whoever answers writes what each place is to read (`replace`), and that is what is proposed:
+ *   nobody rewrites after it. `base.style`: how the book is written, for those words.
  */
-export function mendTask(base: Base & { instruction: string; chapters: string; texts?: string; wide: boolean; bible?: boolean; reads: boolean; asked?: boolean; only?: boolean }): string {
+export function mendTask(base: Base & { instruction: string; chapters: string; texts?: string; allGiven?: boolean; wide: boolean; bible?: boolean; reads: boolean; asked?: boolean; only?: boolean; lead?: 'fix' | 'find'; direct?: boolean; style?: string }): string {
   const asked = base.asked === true
-  const zhBible = base.bible === true
-    ? '\n5. 问题的根子在设定集——人物卡或设定条目写的和正文对不上，或者设定本身要调整——把要改的地方列在 bible 里：人物的 field 用 tagline、appearance、personality、background、motivation、flaw、arc、voice、age、gender 之一，设定条目用 summary 或 body。正文没问题、只是设定写错了的，只改设定，不动正文。'
-    : ''
-  const enBible = base.bible === true
-    ? '\n5. Where the root of the problem is in the bible — a character card or a world entry that says something else than the text, or canon that itself has to change — list it under `bible`: for a character `field` is one of tagline, appearance, personality, background, motivation, flaw, arc, voice, age, gender; for a world entry, summary or body. Where the text is right and the bible is wrong, change the bible and leave the text.'
-    : ''
-  const zhShape = `{"edits": [{"chapter": 章节序号, "find": "这一处能动的那一两句原文，逐字照抄", "how": "这一处改成什么样（具体到位）"}], "chapters": [{"index": 章节序号, "reason": "为什么非整章重写不可、怎么改"}], ${base.bible === true ? '"bible": [{"kind": "character|world", "name": "人物卡或设定条目的名字", "field": "要改的字段", "value": "改成什么", "reason": "为什么"}], ' : ''}"note": "给作者，两三句话：${asked ? '这条要求碰到了哪些地方、为什么是这几处' : '问题出在哪、为什么改这几处'}"}`
-  const enShape = `{"edits": [{"chapter": 1, "find": "the sentence or two that may change here, copied word for word", "how": "what this place is to say instead, specifically"}], "chapters": [{"index": 1, "reason": "why nothing short of writing it over will do, and how"}], ${base.bible === true ? '"bible": [{"kind": "character|world", "name": "the card or entry", "field": "the field to change", "value": "what it should say", "reason": "why"}], ' : ''}"note": "for the author, in two or three sentences: ${asked ? 'what the request reaches, and why these places' : 'where the problem lies, and why these places'}"}`
+  const lead = base.lead
+  const mends = lead !== 'find'
+  const direct = base.direct === true && mends
   const texts = base.texts !== undefined && base.texts.trim().length > 0
-  const zhElsewhere = base.reads ? '别的章节的正文用你的工具读，find 以读到的为准。' : '没有给出正文的章节引不了原文：那里要改，就列进 chapters，在 reason 里说清改什么。'
-  const enElsewhere = base.reads ? ' Read the other chapters with your tools; find goes by what you read there.' : ' A chapter whose text is not given here cannot be quoted from: where it has to change, list it under chapters and say in reason what changes.'
-  return L(base.lang, `你是长篇小说《${bare(base.title)}》的责任编辑。${asked ? '作者提出了一条针对全书的修改要求。' : '下面的问题要修。'}请定下改哪几处、各怎么改：写手只改你点到的那几处，不重写整章。
+  const style = direct && base.style !== undefined && base.style.trim().length > 0 ? base.style.trim() : undefined
 
-## ${asked ? '修改要求' : '要修的问题'}
+  // ── Chinese ──
+  const given = base.allGiven === true && base.texts !== undefined && base.texts.trim().length > 0
+  const zhElsewhere = given
+    ? '这几章的正文都在上面，find 从那里抄。'
+    : base.reads ? '别的章节的正文用你的工具读，find 以读到的为准。' : '没有给出正文的章节引不了原文：那里要改，就列进 chapters，在 reason 里说清改什么。'
+  // (What is given whole is not read again with a tool: every such call sends the whole of the task once more.)
+  const zhLook = given
+    ? '这几章的正文都在上面：照它找，不用再用工具把它们读一遍；要对照人物卡、设定条目里的说法时，只查那一条。'
+    : base.reads ? '正文已经在上面的章节不用再读；只有摘要的章节，用你的工具去读、去搜，不凭摘要下结论。' : ''
+  const zhFind = `先把它找出来：这个问题在书里的哪几处露出来，每一处记进 findings——chapter：第几章；quote：露出问题的那一两句原文，逐字照抄（作者靠它一眼看到问题在哪）；explanation：这一处是什么问题、和哪里对不上，一两句话；suggestion：可以怎么改，一句话；severity：high（读者会出戏、情节站不住）、medium 或 low；type：continuity、character、world、timeline、style、pacing、logic、language 之一。同一个问题在几处露出来，每一处各记一条；作者说的是一类毛病时，记最明显的那几处，不逐句罗列。只记有毛病的地方：两处对不上时，拿来对照、本身没有写错的那一头不记（在 explanation 里提到它就行）。作者没说到的别的毛病不记。${zhLook}书里其实没有这个问题：findings 给空数组，在 note 里说你查了哪里、为什么认为没有。`
+  const zhLess = asked
+    ? '改动越少越好：这条要求碰到哪几句就改哪几句，碰不到的章节不列。同一件事在几处都写到，每一处各列一条。'
+    : '改动越少越好。一个问题往往不止一处可以下手——矛盾的两头改哪一头都行，缺的一句交代补在哪一段都行：挑改得最少、最不牵动别处的那一处，它可以不在发现问题的那一章。一处能解决的，不改两处。'
+  const zhPlace = direct
+    ? `每一处写明：chapter——第几章；find——这一处要被换掉的原文，逐字照抄：只圈非改不可的那一两句，不整段整段地圈；它在这一章里要只对得上一处（重复出现的短句，连它前后的半句一起抄）；要补一句话，就圈它要接在后面的那一句；replace——这一处改好之后的全文，写成成稿：它原样替换 find，就是给作者看的提案，没有人再替你改写。${style !== undefined ? '照这本书的文风写（见上），' : ''}和前后文接得上；find 里用不着动的字句原样写回去，不顺手润色，不添这次要改的之外的内容；整句删掉就给空字符串；why——这一处为什么这样改，一句话。同一章的两处不重叠。正文里单独成行的 ![说明](路径) 是一张图，不圈进 find，replace 里也不添图。${zhElsewhere}`
+    : `每一处写明：chapter——第几章；find——这一处能动的全部范围，写手只能改它里面的字，出不了这个圈：圈非改不可的那一两句，逐字照抄，不整段整段地圈；它在这一章里要只对得上一处（重复出现的短句，连它前后的半句一起抄）；要补一句话，就圈它要接在后面的那一句；how——这一处改成什么样，一两句话，具体到写手照着就能改（补哪句交代、数字改成几、哪半句去掉），理由不写在这里。同一章的两处不重叠。正文里单独成行的 ![说明](路径) 是一张图，不圈进 find。${zhElsewhere}`
+  const zhReach = base.wide ? '把牵连查清：别的章节里写到同一件事、要跟着变才能前后一致的地方，各列一处；无关的不动。' : '只修这个问题本身：不顺手改别的，不借机添新的情节、伏笔或交代。'
+  const zhWhole = asked
+    ? '只有零碎改做不到——要求本身就是通篇的（文风、语气、视角、节奏），或者一章里要动的句子多到连成片——才把这一章列进 chapters，由写手整章重写；几处改能做到的不列。没有就给空数组。'
+    : '只有零碎改解决不了——这一章的节奏、视角、语气要通篇变——才把它列进 chapters，由写手整章重写；几处改能解决的不列。没有就给空数组。'
+  const zhBible = '问题的根子在设定集——人物卡或设定条目写的和正文对不上，或者设定本身要调整——把要改的地方列在 bible 里：人物的 field 用 tagline、appearance、personality、background、motivation、flaw、arc、voice、age、gender 之一，设定条目用 summary 或 body。正文没问题、只是设定写错了的，只改设定，不动正文。'
+  const zhRules = [
+    ...(lead !== undefined ? [zhFind] : []),
+    ...(mends ? [zhLess, zhPlace, zhReach, zhWhole, ...(base.bible === true ? [zhBible] : [])] : ['这一次只找不改：edits 和 chapters 都给空数组。']),
+  ].map((rule, at) => `${at + 1}. ${rule}`).join('\n')
+  const zhNote = lead !== undefined
+    ? `找到了几处、问题的根子在哪${mends ? '、为什么改这几处' : ''}；没找到就说查了哪里`
+    : asked ? '这条要求碰到了哪些地方、为什么是这几处' : '问题出在哪、为什么改这几处'
+  const zhEdit = direct
+    ? '{"chapter": 章节序号, "find": "要换掉的那一两句原文，逐字照抄", "replace": "这一处改好之后的全文", "why": "为什么这样改"}'
+    : '{"chapter": 章节序号, "find": "这一处能动的那一两句原文，逐字照抄", "how": "这一处改成什么样（具体到位）"}'
+  const zhShape = `{${lead !== undefined ? '"findings": [{"chapter": 章节序号, "quote": "露出问题的原文，逐字照抄", "type": "continuity|character|world|timeline|style|pacing|logic|language", "severity": "high|medium|low", "explanation": "这一处是什么问题", "suggestion": "可以怎么改"}], ' : ''}"edits": [${mends ? zhEdit : ''}], "chapters": [${mends ? '{"index": 章节序号, "reason": "为什么非整章重写不可、怎么改"}' : ''}], ${base.bible === true && mends ? '"bible": [{"kind": "character|world", "name": "人物卡或设定条目的名字", "field": "要改的字段", "value": "改成什么", "reason": "为什么"}], ' : ''}"note": "给作者，两三句话：${zhNote}"}`
+  const zhIntro = lead === 'find'
+    ? '作者读自己的书时发现了一个问题，要你到书里把它找出来：说清它在哪几处露出来。这一次只找，不改。'
+    : lead === 'fix'
+      ? `作者读自己的书时发现了一个问题，要你到书里把它找出来、再修掉：先说清它在哪几处露出来，再定下改哪几处${direct ? '，并把每一处改好的文字直接写出来——你写的就是提案，不重写整章。' : '、各怎么改——写手只改你点到的那几处，不重写整章。'}`
+      : `${asked ? '作者提出了一条针对全书的修改要求。' : '下面的问题要修。'}${direct ? '请定下改哪几处，并把每一处改好的文字直接写出来：你写的就是提案，没有人再替你改写；不重写整章。' : '请定下改哪几处、各怎么改：写手只改你点到的那几处，不重写整章。'}`
+  const zhHead = lead !== undefined ? '作者发现的问题' : asked ? '修改要求' : '要修的问题'
+
+  // ── English ──
+  const enElsewhere = given
+    ? ' The text of these chapters is above: copy find from there.'
+    : base.reads ? ' Read the other chapters with your tools; find goes by what you read there.' : ' A chapter whose text is not given here cannot be quoted from: where it has to change, list it under chapters and say in reason what changes.'
+  const enLook = given
+    ? ' The text of these chapters is above: look there, and do not read them again with a tool; where a card or an entry of the bible has to be held against it, look up that one.'
+    : base.reads ? ' A chapter whose text is above is not read again; one of which only a summary is given is read and searched with your tools — nothing is concluded from a summary.' : ''
+  const enFind = `Find it first: where in the book this shows, each place an entry of findings — chapter: its number; quote: the sentence or two where it shows, copied word for word (the author sees by it where the problem is); explanation: what is wrong at this place and what it does not agree with, in a sentence or two; suggestion: how it could be mended, in a sentence; severity: high (a reader is thrown, the plot does not hold), medium or low; type: one of continuity, character, world, timeline, style, pacing, logic, language. Where the same problem shows in several places, each is an entry; where the author names a kind of fault, the plainest instances and not every sentence. Only where something is wrong: of two places that do not agree, the one that is held against the other and is itself right is not recorded (name it in explanation). Other faults the author did not speak of are not recorded.${enLook} Where the book does not have the problem after all: an empty findings, and in note where you looked and why you think so.`
+  const enLess = asked
+    ? 'As little as will do: the sentences the request reaches change, and a chapter it does not reach is not listed. Where several places tell of the same thing, each is a place of its own.'
+    : 'As little as will do. A problem can usually be taken hold of in more than one place — either end of a contradiction, any paragraph a missing word of explanation could go in: choose the place that changes least and pulls least else with it; it need not be in the chapter the problem was found in. What one place mends is not mended in two.'
+  const enPlace = direct
+    ? `For each place: chapter — its number; find — the text that is replaced here, copied word for word: the sentence or two that have to change and no whole stretches; it has to be found once only in its chapter (for a short sentence that stands more than once, copy the half-sentence beside it too); where a sentence is to be added, take in the one it follows; replace — the whole of this place as it is to read, written as finished prose: it takes the place of find as it stands and is what the author is shown — nobody rewrites after you. ${style !== undefined ? 'In the way this book is written (above), joining ' : 'It joins '}what stands on both sides; the words of find that need not change go back as they stand — no polishing in passing, nothing added beyond what is being changed; an empty string where the sentence goes altogether; why — why this place changes so, in a sentence. Two places of one chapter do not overlap. A line of the text that reads ![caption](path) is a picture: keep it out of find, and add none in replace.${enElsewhere}`
+    : `For each place: chapter — its number; find — all that may change at this place: the writer can change the words inside it and none outside. Take in the sentence or two that have to change and no whole stretches, copied word for word; it has to be found once only in its chapter (for a short sentence that stands more than once, copy the half-sentence beside it too); where a sentence is to be added, take in the one it follows; how — what this place is to say instead, in a sentence or two, specific enough to write from (which word of explanation to add, what the number becomes, which half-sentence goes); the reasons do not go here. Two places of one chapter do not overlap. A line of the text that reads ![caption](path) is a picture: keep it out of find.${enElsewhere}`
+  const enReach = base.wide ? 'Trace what hangs on it: where other chapters tell of the same thing and have to change with it for the book to agree with itself, name a place in each; leave what has nothing to do with it.' : 'Mend this problem and nothing beside it: no other change made in passing, no new turn of the plot, hint or explanation brought in under cover of it.'
+  const enWhole = asked
+    ? 'Only where places will not do — the request is itself one for the whole of a chapter (its style, voice, point of view, pace), or so many of its sentences change that they run together — list the chapter under chapters, for the writer to write over whole; a chapter a few places will do for is not listed. An empty array when there is none.'
+    : "Only where places will not do — the chapter's pace, point of view or voice has to change throughout — list it under chapters, for the writer to write over whole; a chapter a few places mend is not listed. An empty array when there is none."
+  const enBible = 'Where the root of the problem is in the bible — a character card or a world entry that says something else than the text, or canon that itself has to change — list it under `bible`: for a character `field` is one of tagline, appearance, personality, background, motivation, flaw, arc, voice, age, gender; for a world entry, summary or body. Where the text is right and the bible is wrong, change the bible and leave the text.'
+  const enRules = [
+    ...(lead !== undefined ? [enFind] : []),
+    ...(mends ? [enLess, enPlace, enReach, enWhole, ...(base.bible === true ? [enBible] : [])] : ['This time it is found and not changed: edits and chapters are empty arrays.']),
+  ].map((rule, at) => `${at + 1}. ${rule}`).join('\n')
+  const enNote = lead !== undefined
+    ? `how many places it was found in and where its root lies${mends ? ', and why these places change' : ''}; where it was not found, where you looked`
+    : asked ? 'what the request reaches, and why these places' : 'where the problem lies, and why these places'
+  const enEdit = direct
+    ? '{"chapter": 1, "find": "the sentence or two replaced here, copied word for word", "replace": "the whole of this place as it is to read", "why": "why it changes so"}'
+    : '{"chapter": 1, "find": "the sentence or two that may change here, copied word for word", "how": "what this place is to say instead, specifically"}'
+  const enShape = `{${lead !== undefined ? '"findings": [{"chapter": 1, "quote": "the text it shows in, copied word for word", "type": "continuity|character|world|timeline|style|pacing|logic|language", "severity": "high|medium|low", "explanation": "what is wrong at this place", "suggestion": "how it could be mended"}], ' : ''}"edits": [${mends ? enEdit : ''}], "chapters": [${mends ? '{"index": 1, "reason": "why nothing short of writing it over will do, and how"}' : ''}], ${base.bible === true && mends ? '"bible": [{"kind": "character|world", "name": "the card or entry", "field": "the field to change", "value": "what it should say", "reason": "why"}], ' : ''}"note": "for the author, in two or three sentences: ${enNote}"}`
+  const enIntro = lead === 'find'
+    ? 'Reading their own book, the author noticed a problem, and wants it found: say where in the book it shows. This time it is found and not changed.'
+    : lead === 'fix'
+      ? `Reading their own book, the author noticed a problem, and wants it found and mended: say first where in the book it shows, then settle which places change${direct ? ' and write what each of them is to read — what you write is what is proposed, and no chapter is written over.' : ' and how each does — the writer rewrites the places you name and nothing else; no chapter is written over.'}`
+      : `${asked ? 'The author asks for a change through the book.' : 'The problems below are to be mended.'} ${direct ? 'Settle which places change and write what each of them is to read: what you write is what is proposed, nobody rewrites after you — and no chapter is written over.' : 'Settle which places change and how each does: the writer rewrites the places you name and nothing else — no chapter is written over.'}`
+  const enHead = lead !== undefined ? 'What the author noticed' : asked ? 'The requested change' : 'What is to be mended'
+
+  return L(base.lang, `你是长篇小说《${bare(base.title)}》的责任编辑。${zhIntro}
+
+## ${zhHead}
 
 ${base.instruction}
 
-## 各章摘要${base.only === true ? '（作者只让动这几章，别的章节不在范围里）' : ''}
+## 各章摘要${base.only === true ? `（作者只让${mends ? '动' : '查'}这几章，别的章节不在范围里）` : ''}
 
 ${base.chapters}
-${texts ? `\n## 章节正文（find 从这里逐字照抄）\n\n${base.texts!.trim()}\n` : ''}
+${texts ? `\n## 章节正文（${lead !== undefined ? 'quote 和 find' : 'find'} 从这里逐字照抄）\n\n${base.texts!.trim()}\n` : ''}${style !== undefined ? `\n## 这本书的文风（replace 照它写）\n\n${style}\n` : ''}
 怎么定：
-1. ${asked
-    ? '改动越少越好：这条要求碰到哪几句就改哪几句，碰不到的章节不列。同一件事在几处都写到，每一处各列一条。'
-    : '改动越少越好。一个问题往往不止一处可以下手——矛盾的两头改哪一头都行，缺的一句交代补在哪一段都行：挑改得最少、最不牵动别处的那一处，它可以不在发现问题的那一章。一处能解决的，不改两处。'}
-2. 每一处写明：chapter——第几章；find——这一处能动的全部范围，写手只能改它里面的字，出不了这个圈：圈非改不可的那一两句，逐字照抄，不整段整段地圈；它在这一章里要只对得上一处（重复出现的短句，连它前后的半句一起抄）；要补一句话，就圈它要接在后面的那一句；how——这一处改成什么样，一两句话，具体到写手照着就能改（补哪句交代、数字改成几、哪半句去掉），理由不写在这里。同一章的两处不重叠。正文里单独成行的 ![说明](路径) 是一张图，不圈进 find。${zhElsewhere}
-3. ${base.wide ? '把牵连查清：别的章节里写到同一件事、要跟着变才能前后一致的地方，各列一处；无关的不动。' : '只修这个问题本身：不顺手改别的，不借机添新的情节、伏笔或交代。'}
-4. ${asked
-    ? '只有零碎改做不到——要求本身就是通篇的（文风、语气、视角、节奏），或者一章里要动的句子多到连成片——才把这一章列进 chapters，由写手整章重写；几处改能做到的不列。没有就给空数组。'
-    : '只有零碎改解决不了——这一章的节奏、视角、语气要通篇变——才把它列进 chapters，由写手整章重写；几处改能解决的不列。没有就给空数组。'}${zhBible}
+${zhRules}
 
 只输出 JSON：
-${zhShape}`, `You are the editor of the novel "${bare(base.title)}". ${asked ? 'The author asks for a change through the book.' : 'The problems below are to be mended.'} Settle which places change and how each does: the writer rewrites the places you name and nothing else — no chapter is written over.
+${zhShape}`, `You are the editor of the novel "${bare(base.title)}". ${enIntro}
 
-## ${asked ? 'The requested change' : 'What is to be mended'}
+## ${enHead}
 
 ${base.instruction}
 
-## Chapter summaries${base.only === true ? ' (the author lets these chapters change and no other)' : ''}
+## Chapter summaries${base.only === true ? ` (the author lets these chapters ${mends ? 'change' : 'be looked at'} and no other)` : ''}
 
 ${base.chapters}
-${texts ? `\n## The chapters' text (copy \`find\` from here, word for word)\n\n${base.texts!.trim()}\n` : ''}
+${texts ? `\n## The chapters' text (copy ${lead !== undefined ? '`quote` and `find`' : '`find`'} from here, word for word)\n\n${base.texts!.trim()}\n` : ''}${style !== undefined ? `\n## How this book is written (replace is written so)\n\n${style}\n` : ''}
 How to settle it:
-1. ${asked
-    ? 'As little as will do: the sentences the request reaches change, and a chapter it does not reach is not listed. Where several places tell of the same thing, each is a place of its own.'
-    : 'As little as will do. A problem can usually be taken hold of in more than one place — either end of a contradiction, any paragraph a missing word of explanation could go in: choose the place that changes least and pulls least else with it; it need not be in the chapter the problem was found in. What one place mends is not mended in two.'}
-2. For each place: chapter — its number; find — all that may change at this place: the writer can change the words inside it and none outside. Take in the sentence or two that have to change and no whole stretches, copied word for word; it has to be found once only in its chapter (for a short sentence that stands more than once, copy the half-sentence beside it too); where a sentence is to be added, take in the one it follows; how — what this place is to say instead, in a sentence or two, specific enough to write from (which word of explanation to add, what the number becomes, which half-sentence goes); the reasons do not go here. Two places of one chapter do not overlap. A line of the text that reads ![caption](path) is a picture: keep it out of find.${enElsewhere}
-3. ${base.wide ? 'Trace what hangs on it: where other chapters tell of the same thing and have to change with it for the book to agree with itself, name a place in each; leave what has nothing to do with it.' : 'Mend this problem and nothing beside it: no other change made in passing, no new turn of the plot, hint or explanation brought in under cover of it.'}
-4. ${asked
-    ? 'Only where places will not do — the request is itself one for the whole of a chapter (its style, voice, point of view, pace), or so many of its sentences change that they run together — list the chapter under chapters, for the writer to write over whole; a chapter a few places will do for is not listed. An empty array when there is none.'
-    : "Only where places will not do — the chapter's pace, point of view or voice has to change throughout — list it under chapters, for the writer to write over whole; a chapter a few places mend is not listed. An empty array when there is none."}${enBible}
+${enRules}
 
 Output JSON only:
 ${enShape}`)
@@ -602,65 +663,68 @@ Adjust this plan by it and hand the whole of it in again (${input.tool}, in the 
 }
 
 /**
- * A chapter's plan read off its text — its beats alone, or its synopsis, place, time, point of view and cast with
- * them: what was planned before it was written, or before it was changed, set right by what it now says.
+ * A chapter's plan read off its text — its beats alone, or its synopsis, purpose, place, time, point of view and cast
+ * with them. The plan is written anew from what the chapter says: of the one there was, the items in words are shown
+ * beside the text to be held against it, not to be checked off, and the beats are not shown at all — a list of beats
+ * laid out before the chapter was written is handed back as it stands by a model that sees it, and a scene the text
+ * has beyond it goes without a beat.
+ * @param base.around - the chapters on either side, in a line each: what the chapter does for the book is said against them.
  */
-export function planOfTextTask(base: Base & { what: 'beats' | 'plan'; chapterLabel: string; text: string; beats: string; synopsis?: string; location?: string; time?: string; pov?: string; cast?: string; knownCharacters: string }): string {
+export function planOfTextTask(base: Base & { what: 'beats' | 'plan'; chapterLabel: string; text: string; synopsis?: string; purpose?: string; location?: string; time?: string; pov?: string; cast?: string; knownCharacters: string; around?: string }): string {
   const whole = base.what === 'plan'
   const has = (value: string | undefined): value is string => value !== undefined && value.trim().length > 0
-  const zhNow = base.beats.trim().length > 0 ? base.beats.trim() : '（还没有节拍）'
-  const enNow = base.beats.trim().length > 0 ? base.beats.trim() : '(none yet)'
   const zhItems = [
     `梗概：${has(base.synopsis) ? base.synopsis.trim() : '（没有）'}`,
-    ...(whole ? [`地点：${has(base.location) ? base.location.trim() : '（没写）'}`, `故事时间：${has(base.time) ? base.time.trim() : '（没写）'}`, `视角：${has(base.pov) ? base.pov.trim() : '（没写）'}`, `出场人物：${has(base.cast) ? base.cast.trim() : '（没写）'}`] : []),
+    ...(whole ? [`这一章的作用：${has(base.purpose) ? base.purpose.trim() : '（没写）'}`, `地点：${has(base.location) ? base.location.trim() : '（没写）'}`, `故事时间：${has(base.time) ? base.time.trim() : '（没写）'}`, `视角：${has(base.pov) ? base.pov.trim() : '（没写）'}`, `出场人物：${has(base.cast) ? base.cast.trim() : '（没写）'}`] : []),
   ].join('\n')
   const enItems = [
     `Synopsis: ${has(base.synopsis) ? base.synopsis.trim() : '(none)'}`,
-    ...(whole ? [`Place: ${has(base.location) ? base.location.trim() : '(not said)'}`, `Story time: ${has(base.time) ? base.time.trim() : '(not said)'}`, `Point of view: ${has(base.pov) ? base.pov.trim() : '(not said)'}`, `Cast: ${has(base.cast) ? base.cast.trim() : '(not said)'}`] : []),
+    ...(whole ? [`What the chapter is for: ${has(base.purpose) ? base.purpose.trim() : '(not said)'}`, `Place: ${has(base.location) ? base.location.trim() : '(not said)'}`, `Story time: ${has(base.time) ? base.time.trim() : '(not said)'}`, `Point of view: ${has(base.pov) ? base.pov.trim() : '(not said)'}`, `Cast: ${has(base.cast) ? base.cast.trim() : '(not said)'}`] : []),
   ].join('\n')
-  const zhBeats = `- beats：按正文的先后，一场一个节拍（一般 3-8 个，很短的一章可以更少）。只列正文里有的：章纲原来安排了、正文没有照着写的，以正文为准——去掉，或照正文改。现有节拍里和正文仍然对得上的，原样留着，一个字不改（长短也不管）；对不上的照正文改；正文里有、节拍里没有的补上。
+  const zhBeats = `- beats：把正文从头到尾走一遍，一场一个节拍，按先后排，一场都不漏——开头那一场和结尾那一场都要有（一般 3-8 个，很短的一章可以更少）。只列正文里有的，正文没有写的不列。
 - 每个节拍：summary——这一场是什么事，一句话（四十字以内），说事不复述细节；characters——在场的人，有档的用档上的名字；location——在哪；conflict——阻碍；outcome——怎么转、落在什么结果上；emotion——情绪。正文没有交代的项不写。`
-  const enBeats = `- beats: in the order of the text, a beat a scene (3-8 as a rule, fewer for a very short chapter). Only what the text has: where the plan arranged something the text did not follow, the text holds — drop it, or change it to what the text says. A beat of the plan that still fits the text stays as it stands, word for word (whatever its length); one that does not is changed to the text; what the text has and the beats lack is added.
+  const enBeats = `- beats: go through the text from its first line to its last, a beat a scene, in order, none left out — the opening scene and the closing one too (3-8 as a rule, fewer for a very short chapter). Only what the text has: nothing the text does not tell.
 - Each beat: summary — what the scene is, in one sentence (twenty-five words at most): the event, not its details retold; characters — who is there, by the names on file where they have one; location; conflict — what stands in the way; outcome — how it turns and where it lands; emotion. Leave out what the text does not say.`
   const zhAsk = whole
-    ? `请照这一章正文实际写的，把它的章纲重新写出来：之后照这份章纲干活的人——重写这一章的写手、给它排分镜的导演、往下推演的策划——读到的要和正文一致。
-- synopsis：这一章写了什么，150-250 字，照正文；原来的梗概里和正文对得上的说法照用。
+    ? `请把这一章的章纲从正文重新读出来——是照正文写一份，不是把原来那份核对一遍：原来的章纲多半是动笔之前排的，正文会比它多、比它细，也可能没有照它写。之后照这份章纲干活的人——重写这一章的写手、给它排分镜的导演、往下推演的策划——读到的要和正文一致。
+- synopsis：这一章写了什么，150-250 字，照正文，从开头说到结尾。
+- purpose：这一章在全书里起什么作用——推进了什么、兑现了什么、埋下了什么——一两句话，照正文实际做到的写：原来写的作用里正文没有做到的不留，正文多做到的补上。
 - location：这一章主要在哪；time：故事里的什么时候。正文没有交代的不写。
-- pov：视角人物；characters：这一章里出场的人——有言行的才算，只被提到的不算——有档的用档上的名字。
+- pov：视角人物；characters：这一章里出场的人——有言行的才算，只被提到的不算——有档的用档上的名字，没有档的照正文里的称呼。
 ${zhBeats}
 
 只输出 JSON：
-{"synopsis": "照正文写的本章梗概", "location": "地点", "time": "故事时间", "pov": "视角人物姓名", "characters": ["出场人物姓名"], "beats": [{"summary": "节拍内容", "characters": ["人物姓名"], "location": "地点", "conflict": "阻碍", "outcome": "结果", "emotion": "情绪"}]}`
-    : `请照这一章正文实际写的，把它的节拍列出来。
+{"synopsis": "照正文写的本章梗概", "purpose": "这一章的作用", "location": "地点", "time": "故事时间", "pov": "视角人物姓名", "characters": ["出场人物姓名"], "beats": [{"summary": "节拍内容", "characters": ["人物姓名"], "location": "地点", "conflict": "阻碍", "outcome": "结果", "emotion": "情绪"}]}`
+    : `请把这一章的节拍从正文重新读出来——是照正文列一份，不是把原来那份核对一遍。
 ${zhBeats}
 
 只输出 JSON：
 {"beats": [{"summary": "节拍内容", "characters": ["人物姓名"], "location": "地点", "conflict": "阻碍", "outcome": "结果", "emotion": "情绪"}]}`
   const enAsk = whole
-    ? `Write this chapter's plan anew as its text has it: whoever works from the plan afterwards — a writer rewriting the chapter, the director cutting it into panels, the planner deriving what follows — is to read what was written.
-- synopsis: what the chapter tells, in 100-160 words, by the text; where the synopsis there was still fits the text, use its wording.
+    ? `Read this chapter's plan off its text anew — written by the text, not the plan there was ticked off against it: that plan was most likely laid out before the chapter was written, and the text tells more than it, in more detail, and perhaps otherwise. Whoever works from the plan afterwards — a writer rewriting the chapter, the director cutting it into panels, the planner deriving what follows — is to read what was written.
+- synopsis: what the chapter tells, in 100-160 words, by the text, from its opening to its end.
+- purpose: what the chapter does for the book — what it moves, pays off or sets up — in a sentence or two, by what the text really does: nothing kept of the purpose there was that the text does not do, and what it does beyond that added.
 - location: where most of the chapter is; time: when in the story. Leave out what the text does not say.
-- pov: whose eyes it is told through; characters: who is in the chapter — acting or speaking, not merely mentioned — by the names on file where they have one.
+- pov: whose eyes it is told through; characters: who is in the chapter — acting or speaking, not merely mentioned — by the names on file where they have one, else as the text calls them.
 ${enBeats}
 
 Output JSON only:
-{"synopsis": "the chapter's synopsis by its text", "location": "place", "time": "story time", "pov": "viewpoint character name", "characters": ["every character appearing"], "beats": [{"summary": "what happens", "characters": ["names"], "location": "place", "conflict": "conflict", "outcome": "outcome", "emotion": "emotion"}]}`
-    : `List this chapter's beats as its text has them.
+{"synopsis": "the chapter's synopsis by its text", "purpose": "what the chapter is for", "location": "place", "time": "story time", "pov": "viewpoint character name", "characters": ["every character appearing"], "beats": [{"summary": "what happens", "characters": ["names"], "location": "place", "conflict": "conflict", "outcome": "outcome", "emotion": "emotion"}]}`
+    : `Read this chapter's beats off its text anew — listed by the text, not the beats there were ticked off against it.
 ${enBeats}
 
 Output JSON only:
 {"beats": [{"summary": "what happens", "characters": ["names"], "location": "place", "conflict": "conflict", "outcome": "outcome", "emotion": "emotion"}]}`
+  const zhAround = whole && has(base.around) ? `\n## 前后章（说这一章的作用时参照）\n\n${base.around.trim()}\n` : ''
+  const enAround = whole && has(base.around) ? `\n## The chapters on either side (what this one is for is said against them)\n\n${base.around.trim()}\n` : ''
   return L(base.lang, `## ${base.chapterLabel} 正文
 
 ${base.text}
 
-## 章纲现在写的（可能是动笔之前排的，正文也可能在那之后改过）
+## 原来的章纲（只供对照：可能是动笔之前排的，正文也可能在那之后改过）
 
 ${zhItems}
-
-节拍：
-${zhNow}
-
+${zhAround}
 ## 已建档的人物
 
 ${base.knownCharacters.trim().length > 0 ? base.knownCharacters : '（无）'}
@@ -670,13 +734,10 @@ ${zhAsk}`, `## ${base.chapterLabel} — the text
 
 ${base.text}
 
-## What its plan says now (it may have been laid out before the chapter was written; the text may have changed since)
+## The plan there was (for comparison only: it may have been laid out before the chapter was written, and the text may have changed since)
 
 ${enItems}
-
-Beats:
-${enNow}
-
+${enAround}
 ## Characters on file
 
 ${base.knownCharacters.trim().length > 0 ? base.knownCharacters : '(none)'}

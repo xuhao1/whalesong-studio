@@ -81,6 +81,10 @@ export async function reviewChapter(core: NovelCore, runtime: ProjectRuntime, pa
   }
   const order: Record<IssueSeverity, number> = { high: 0, medium: 1, low: 2 }
   issues.sort((left, right) => order[left.severity] - order[right.severity])
+  // What the author had noticed themselves, found in this chapter and still open, is theirs: a new review of the
+  // chapter does not take it away (it is left out only where the review now quotes the very same words).
+  const kept = ((await project.review(chapter.plan.id))?.issues ?? []).filter(issue => issue.lead !== undefined && issue.resolved !== true && !issues.some(fresh => fresh.quote !== undefined && fresh.quote === issue.quote))
+  issues.push(...kept)
   const review: ChapterReview = {
     chapterId: chapter.plan.id,
     textHash: hashText(text),

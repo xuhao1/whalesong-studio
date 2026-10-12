@@ -500,7 +500,7 @@ export function TextBatchDialog({ chapters, preset, line, onClose }: { chapters:
     setSteps(next)
   }
   // What the steps have something to do for, when the author does not pick chapters one by one.
-  const candidates = chapters.filter(chapter => writing ? (!chapter.hasText || redo) : steps.has('beats') ? !chapter.hasText || redo : steps.has('digest') ? chapter.hasText && (!chapter.digested || redo) : steps.has('review') ? chapter.hasText && (chapter.openIssues === undefined || redo) : false)
+  const candidates = chapters.filter(chapter => writing ? (!chapter.hasText || redo) : steps.has('beats') ? !chapter.hasText || redo : steps.has('digest') ? chapter.hasText && (!chapter.digested || redo) : steps.has('review') ? chapter.hasText && (chapter.openIssues === undefined || chapter.unreviewed === true || redo) : false)
   const amount = scope === 'pick' ? picked.size : writing ? Math.min(candidates.length, Math.max(1, Number(count) || 1)) : candidates.length
   const start = (): Promise<unknown> => run(async () => {
     const params = {

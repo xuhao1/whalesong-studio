@@ -10,8 +10,8 @@
  * becomes a proposal that waits for accept/reject in the review panel.
  */
 import { keptPictures } from '../../shared/embedded'
-import { MAIN_LINE, type FiguresKept, type IssueSeverity, type PictureGuide, type PicturesRead, type Proposal, type ReviewIssue, type SettledProposal } from '../../shared/types'
-import { changedCore, clip, clipTail, countWords, fuzzyFind, newId, occurrences } from '../../shared/text'
+import { MAIN_LINE, type ChapterReview, type FiguresKept, type IssueSeverity, type IssueType, type PictureGuide, type PicturesRead, type Proposal, type ReviewIssue, type SettledProposal } from '../../shared/types'
+import { changedCore, clip, clipTail, countWords, fuzzyFind, hashText, newId, occurrences } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { asArray, asRecord, asText } from '../llm'
 import { assign, crewPlan } from '../crew'
@@ -51,6 +51,20 @@ export interface ReviseSpanParams {
    * author selected is theirs, and stays as selected.
    */
   tight?: boolean
+  /**
+   * What the passage is to read, written by whoever settled the place: nobody is asked to rewrite it, and this is
+   * what is proposed (an empty text: the passage goes). How the crew's model mends a place itself (`mendBy`).
+   */
+  written?: string
+  /** Why it changes so, for the proposal to say (beside `written`). */
+  why?: string
+  /** Whose model rewrites the passage where nothing is `written`: the writer's (left out), or the planner's. */
+  by?: 'planner'
+}
+
+/** Whether the words of a change made by places are the planner's own — asked for outright, else as the settings say (`mendBy`). */
+export function mendsDirect(core: NovelCore, explicit?: boolean): boolean {
+  return explicit ?? core.currentSettings().mendBy === 'planner'
 }
 
 export interface ReviseChapterParams {
@@ -162,6 +176,16 @@ export async function settleTakenIn(runtime: ProjectRuntime, used: readonly Prop
   for (const proposal of used) await runtime.project.supersedeProposal(proposal.id, by)
 }
 
+/**
+ * A rewriting parted as its chapter parts paragraphs. Where the chapter keeps an empty line between paragraphs and
+ * never breaks a line otherwise, a single line break in what a model handed in is a paragraph break written the
+ * model's way: it is given the empty line.
+ */
+export function partedAs(text: string, after: string): string {
+  if (!text.includes('\n\n') || /[^\n]\n[^\n]/.test(text)) return after
+  return after.replace(/([^\n])\n(?=[^\n])/g, '$1\n\n')
+}
+
 /** Find a quoted passage; with a position hint, the occurrence nearest to it wins. */
 export function locateQuote(text: string, quote: string, near?: number): { start: number; end: number } | undefined {
   if (near !== undefined) {
@@ -195,42 +219,66 @@ export async function reviseSpan(core: NovelCore, runtime: ProjectRuntime, param
 
   const manifest = await project.manifest()
   const lang = promptLanguage(manifest.language)
+  let after: string
+  let guided: Awaited<ReturnType<typeof guidePictures>>
+  if (params.written !== undefined) {
+    // Whoever settled the place wrote what it is to read: nobody is asked.
+    after = cleanProse(params.written).trim()
+    if (after.length === 0) {
+      // Taken out. Where the whole line goes, the break it stood before goes with it — once.
+      const lineStart = text.lastIndexOf('\n', range.start - 1) + 1
+      const next = text.indexOf('\n', range.end)
+      const lineEnd = next < 0 ? text.length : next
+      if (text.slice(lineStart, range.start).trim().length === 0 && text.slice(range.end, lineEnd).trim().length === 0) {
+        let end = lineEnd
+        while (text[end] === '\n') end += 1
+        let start = lineStart
+        // (The last line of the chapter: the break before it goes instead.)
+        if (end >= text.length) while (start > 0 && text[start - 1] === '\n') start -= 1
+        range = { start, end }
+      }
+    }
+  } else {
+    const route = await core.route(params.by === 'planner' ? 'architect' : 'writer', runtime, task)
+    guided = await guidePictures(core, runtime, route, params.guides, 'passage', task)
+    const pack = await core.pack(runtime, route, {
+      purpose: 'revise',
+      chapter,
+      brief: params.instruction,
+      focus: text.slice(range.start, range.end),
+      ...(task.signal !== undefined ? { signal: task.signal } : {}),
+    })
+    const base = { lang, language: manifest.language, title: manifest.title }
+    const response = await core.llm.complete({
+      route,
+      system: reviseSpanSystem({ ...base, style: renderStyle(await project.activeStyle(), lang) }),
+      ...(guided !== undefined && guided.images.length > 0 ? { images: guided.images } : {}),
+      prompt: reviseSpanTask({
+        ...base,
+        context: `${pack.text}${guided !== undefined ? `\n\n${guided.text}` : ''}`,
+        before: clipTail(text.slice(0, range.start), 1800),
+        passage: text.slice(range.start, range.end),
+        after: clip(text.slice(range.end), 900),
+        instruction: params.instruction,
+      }),
+      ...(task.signal !== undefined ? { signal: task.signal } : {}),
+      onText: (_delta, total) => { task.job?.rewrite(total) },
+    })
+    after = cleanProse(response.text).replace(/^<<<\s*/, '').replace(/\s*>>>$/, '').trim()
+    if (after.length === 0) throw new ProjectError('novel/empty', 'the model returned an empty revision')
+  }
   const passage = text.slice(range.start, range.end)
-  const route = await core.route('writer', runtime, task)
-  const guided = await guidePictures(core, runtime, route, params.guides, 'passage', task)
-  const pack = await core.pack(runtime, route, {
-    purpose: 'revise',
-    chapter,
-    brief: params.instruction,
-    focus: passage,
-    ...(task.signal !== undefined ? { signal: task.signal } : {}),
-  })
-  const base = { lang, language: manifest.language, title: manifest.title }
-  const response = await core.llm.complete({
-    route,
-    system: reviseSpanSystem({ ...base, style: renderStyle(await project.activeStyle(), lang) }),
-    ...(guided !== undefined && guided.images.length > 0 ? { images: guided.images } : {}),
-    prompt: reviseSpanTask({
-      ...base,
-      context: `${pack.text}${guided !== undefined ? `\n\n${guided.text}` : ''}`,
-      before: clipTail(text.slice(0, range.start), 1800),
-      passage,
-      after: clip(text.slice(range.end), 900),
-      instruction: params.instruction,
-    }),
-    ...(task.signal !== undefined ? { signal: task.signal } : {}),
-    onText: (_delta, total) => { task.job?.rewrite(total) },
-  })
-  let after = cleanProse(response.text).replace(/^<<<\s*/, '').replace(/\s*>>>$/, '').trim()
-  if (after.length === 0) throw new ProjectError('novel/empty', 'the writer model returned an empty revision')
+  after = partedAs(found.text, after)
   // The passage's pictures are the text's, not the writer's: one left out goes back where it stood.
   const held = keptPictures(passage, after)
   after = held.text.trim()
   const figures = figuresOf(held)
   // Keep the passage's own framing: a selection inside a paragraph must not gain paragraph breaks at its edges.
+  // (A passage taken out leaves nothing, its framing neither.)
   const leading = /^\s*/.exec(passage)?.[0] ?? ''
   const trailing = /\s*$/.exec(passage)?.[0] ?? ''
-  after = `${leading}${after}${trailing}`
+  if (after.length > 0) after = `${leading}${after}${trailing}`
+  if (after === passage) throw new ProjectError('novel/invalid', 'what the passage is to read is what it reads already — there is nothing to change')
   // Held to what changed (see `tight`): the proposal is of the sentences that differ, where they stand once.
   const shown = params.tight === true ? changedCore(passage, after, stretch => occurrences(found.text, stretch) === 1) : { before: passage, after, start: 0 }
   const at = range.start + shown.start
@@ -255,7 +303,7 @@ export async function reviseSpan(core: NovelCore, runtime: ProjectRuntime, param
   } else if (based.used.length === 0 || (based.used.every(proposal => proposal.kind === 'span') && found.text.includes(shown.before))) {
     // A change of its own — also when it was written knowing the ones that wait: the passage is as the book has it,
     // and none of them rewrites the chapter, so each is accepted or turned down by itself.
-    const proposal = await project.addProposal({ chapterId: chapter.plan.id, kind: 'span', instruction: params.instruction, before: shown.before, after: shown.after, at, createdBy: task.origin, ...read, ...(params.batchId !== undefined ? { batchId: params.batchId } : {}), ...(params.issues !== undefined && params.issues.length > 0 ? { issues: params.issues } : {}) })
+    const proposal = await project.addProposal({ chapterId: chapter.plan.id, kind: 'span', instruction: params.instruction, before: shown.before, after: shown.after, at, createdBy: task.origin, ...read, ...(params.why !== undefined ? { rationale: params.why } : {}), ...(params.batchId !== undefined ? { batchId: params.batchId } : {}), ...(params.issues !== undefined && params.issues.length > 0 ? { issues: params.issues } : {}) })
     result.proposalId = proposal.id
   } else {
     // The passage is one a waiting change made, or stands in a chapter rewritten whole: one proposal for the chapter
@@ -383,10 +431,31 @@ export interface ReviseBookParams {
   texts?: string[]
   /** The issues every change of this mending is for, whichever chapter it lands in (in place of `issuesOf`). */
   mends?: string[]
+  /**
+   * The planner writes what each place is to read, and that is what is proposed: the writer's model is not asked for
+   * the places (a chapter written over whole is still the writer's). Left out: as the settings say (`mendBy`).
+   */
+  direct?: boolean
+  /**
+   * What is given in `instruction` is something the author noticed in the book and wants found: the planner says
+   * first where it shows — each place quoted, and filed as an issue of that chapter's review, marked as the author's
+   * own (`ReviewIssue.lead`) — and then, with `fix`, names the places that mend it, whose changes are shown beneath
+   * those issues. `find`: found and filed, nothing changed.
+   */
+  lead?: 'fix' | 'find'
 }
 
-/** A place the planner named: where it is in its chapter, and what is to change there. */
-interface Place { id: string; index: number; start: number; end: number; quote: string; how: string }
+/** A place the planner named: where it is in its chapter, and what is to change there — or, written by the planner itself, what it is to read (`written`). */
+interface Place { id: string; index: number; start: number; end: number; quote: string; how: string; written?: string }
+
+/** Where what the author noticed shows, as the planner found it: the chapter, the words quoted, and what is wrong there. */
+interface Finding { id: string; index: number; start: number; end: number; quote: string; type: IssueType; severity: IssueSeverity; explanation: string; suggestion?: string }
+
+/** One of them filed as an issue of its chapter's review. */
+export interface FiledFinding { chapterId: string; index: number; issue: string; quote?: string; explanation: string; severity: IssueSeverity; /** It was on file already (the same words quoted, still open) and was not added twice. */ known?: true }
+
+const ISSUE_TYPES: IssueType[] = ['continuity', 'character', 'world', 'timeline', 'style', 'pacing', 'logic', 'language']
+const ISSUE_SEVERITIES: IssueSeverity[] = ['high', 'medium', 'low']
 
 /** How much of the chapters concerned goes to the planner word for word, in characters; past this, it reads them with its tools. */
 const PLACES_TEXT = 36000
@@ -403,6 +472,10 @@ export interface ReviseBookResult {
   failed: { chapterId: string; error: string }[]
   /** Where pictures were given: how many, and who looked at them — the planner that scoped it, or the writer where the chapters were named. */
   pictures?: PicturesRead
+  /** Where the author's lead was followed (`ReviseBookParams.lead`): the places it shows, each now an issue of its chapter's review. */
+  found?: FiledFinding[]
+  /** The planner wrote the changed words itself (`ReviseBookParams.direct`). */
+  direct?: true
 }
 
 /**
@@ -436,17 +509,22 @@ export async function reviseBook(core: NovelCore, runtime: ProjectRuntime, param
   let bible: { name: string; field: string }[] = []
   let pictures: PicturesRead | undefined
   let places: Place[] = []
-  task.job?.progress(0, 1, L(lang, '定在哪几处改', 'settling which places change'))
+  let findings: Finding[] = []
+  const lead = params.lead
+  const direct = lead !== 'find' && mendsDirect(core, params.direct)
+  task.job?.progress(0, 1, lead === 'find' ? L(lang, '照你说的去找', 'looking for what you noticed') : lead === 'fix' ? L(lang, '照你说的去找，再定在哪几处改', 'looking for what you noticed, then settling which places change') : L(lang, '定在哪几处改', 'settling which places change'))
   const lines: string[] = []
   // Going on from what waits: the planner is told which chapters have a change waiting, and what it was for.
   const waiting = params.onto === true ? (await project.proposals()).filter(proposal => proposal.status === 'pending') : []
   // The planner quotes the text: each chapter as this revision finds it — with what waits laid in, where it goes on
-  // from that.
+  // from that. (Such a chapter is what its reading tool shows it too: what it copies is what it is checked against.)
   const stands = new Map<string, string>()
+  const laidIn = new Map<string, string>()
   for (const info of infos) {
     const memory = await project.memory(info.id)
     const own = await project.chapterText(info.id)
     stands.set(info.id, params.onto === true ? (await onPending(runtime, info.id, own)).text : own)
+    if (stands.get(info.id) !== own) laidIn.set(info.id, stands.get(info.id)!)
     const text = memory?.summary ?? clip(own, 300)
     const pending = waiting.filter(proposal => proposal.chapterId === info.id)
     lines.push(`${info.index}. ${info.title}\n${text}${pending.length > 0 ? `\n${L(lang, `（这一章已有 ${pending.length} 处还没采纳的修改，这次会接着它们改：${clip(pending.map(proposal => proposal.instruction.replace(/\s+/g, ' ')).join('；'), 240)}）`, `(${pending.length} change(s) to this chapter still wait, and this revision goes on from them: ${clip(pending.map(proposal => proposal.instruction.replace(/\s+/g, ' ')).join('; '), 300)})`)}` : ''}`)
@@ -471,28 +549,44 @@ export async function reviseBook(core: NovelCore, runtime: ProjectRuntime, param
   }
   const summaries = `${lines.join('\n\n')}${guided !== undefined ? `\n\n${guided.text}` : ''}`
   const asked = params.asked === true
+  // (Where the planner writes the changed words itself, it is told how the book is written.)
+  const style = direct ? renderStyle(await project.activeStyle(), lang) : undefined
   const { value } = await assign(core, runtime, task, {
     role: 'architect',
-    label: asked ? L(lang, '全书修订 · 定在哪几处改', 'Book-wide revision · which places change') : L(lang, '修问题 · 定在哪几处改', 'Mending · which places change'),
+    label: lead === 'find' ? L(lang, '照引导审校 · 找出来', 'Review by a lead · finding it')
+      : lead === 'fix' ? L(lang, '照引导审校 · 找出来并修', 'Review by a lead · finding and mending it')
+        : asked ? L(lang, '全书修订 · 定在哪几处改', 'Book-wide revision · which places change') : L(lang, '修问题 · 定在哪几处改', 'Mending · which places change'),
     line: along ?? MAIN_LINE,
-    tool: 'submit_places',
-    what: L(lang, '改哪几处、各怎么改', 'which places change, and how each of them does'),
+    tool: lead === 'find' ? 'submit_findings' : 'submit_places',
+    what: lead === 'find' ? L(lang, '它在哪几处露出来', 'where it shows')
+      : direct ? L(lang, '改哪几处、每一处改成什么', 'which places change, and what each of them is to read')
+        : L(lang, '改哪几处、各怎么改', 'which places change, and how each of them does'),
     system: architectSystem(lang),
+    ...(laidIn.size > 0 ? { texts: laidIn } : {}),
     ...(guided !== undefined && guided.images.length > 0 ? { images: guided.images } : {}),
-    prompt: mendTask({ lang, language: manifest.language, title: manifest.title, instruction: params.instruction, chapters: summaries, ...(shown.length > 0 ? { texts: shown.join('\n\n') } : {}), wide: params.narrow !== true, reads, ...(asked ? { asked: true } : {}), ...(named ? { only: true } : {}), ...(params.bible === true ? { bible: true } : {}) }),
+    prompt: mendTask({ lang, language: manifest.language, title: manifest.title, instruction: params.instruction, chapters: summaries, ...(shown.length > 0 ? { texts: shown.join('\n\n'), ...(shown.length === infos.length ? { allGiven: true } : {}) } : {}), wide: params.narrow !== true, reads, ...(asked ? { asked: true } : {}), ...(named ? { only: true } : {}), ...(params.bible === true ? { bible: true } : {}), ...(lead !== undefined ? { lead } : {}), ...(direct ? { direct: true, ...(style !== undefined ? { style } : {}) } : {}) }),
     temperature: 0.2,
     // What is quoted is looked for in the text at once: a place that is not there, or that is there twice, is sent
     // back to be quoted as it stands.
     validate: (raw) => {
       const record = asRecord(raw)
-      places = placesIn(record, infos, stands, lang)
+      const wrong: string[] = []
+      if (lead !== undefined) findings = findingsIn(record, infos, stands, lang, wrong)
+      places = lead === 'find' ? [] : placesIn(record, infos, stands, lang, direct, wrong)
+      if (wrong.length > 0) throw new Error(`${wrong.join('\n')}\n${L(lang, '改好这几条，把整个结果重新交一次。', 'Put these right and hand the whole result in again.')}`)
       return record
     },
   })
   note = asText(value.note)
-  if (params.bible === true) bible = await proposeBibleEdits(runtime, asArray(value.bible), lang)
+  if (params.bible === true && lead !== 'find') bible = await proposeBibleEdits(runtime, asArray(value.bible), lang)
+  // What was found is on file before anything is changed for it: each place an issue of its chapter, and the changes
+  // made below say which of them they are for.
+  const batchId = newId('batch')
+  // (Said to be handed over only where something is being changed for them.)
+  const filed = lead !== undefined ? await fileFindings(runtime, findings, params.instruction, lead === 'fix' && (places.length > 0 || asArray(value.chapters).length > 0) ? batchId : undefined) : []
+  const ofFinding = new Map(filed.map((item, at) => [findings[at]!, item.issue]))
   const targets: { id: string; reason: string }[] = []
-  for (const raw of asArray(value.chapters)) {
+  for (const raw of lead === 'find' ? [] : asArray(value.chapters)) {
     const item = asRecord(raw)
     const index = Number(item.index)
     const info = infos.find(candidate => candidate.index === index)
@@ -505,7 +599,6 @@ export async function reviseBook(core: NovelCore, runtime: ProjectRuntime, param
   }
   places = places.filter(place => !targets.some(target => target.id === place.id))
 
-  const batchId = newId('batch')
   const apply = params.apply === true
   const results: ReviseBookResult['results'] = []
   const failed: ReviseBookResult['failed'] = []
@@ -514,7 +607,18 @@ export async function reviseBook(core: NovelCore, runtime: ProjectRuntime, param
   task.job?.progress(0, total)
   // Per-chapter streams would interleave in one job buffer, so the batch reports progress only.
   const inner = (): TaskContext => ({ origin: task.origin, ...(task.signal !== undefined ? { signal: task.signal } : {}), ...(task.agentRoute !== undefined ? { agentRoute: task.agentRoute } : {}) })
-  const issuesFor = (chapterId: string): string[] | undefined => params.mends ?? params.issuesOf?.(chapterId)
+  /**
+   * The issues a change is for. Where the author's lead was followed: the findings the place takes in — else, the
+   * place being elsewhere in the chapter, all that were found in that chapter (a chapter nothing was found in changes
+   * for the batch as a whole, and says so through it).
+   */
+  const issuesFor = (chapterId: string, place?: Place): string[] | undefined => {
+    if (lead === undefined) return params.mends ?? params.issuesOf?.(chapterId)
+    const here = findings.filter(finding => finding.id === chapterId)
+    const taken = place !== undefined ? here.filter(finding => finding.start < place.end && place.start < finding.end) : []
+    const ids = (taken.length > 0 ? taken : here).map(finding => ofFinding.get(finding)).filter((id): id is string => id !== undefined)
+    return ids.length > 0 ? [...new Set(ids)] : undefined
+  }
   const colon = lang === 'zh' ? '：' : ': '
   const over = async (target: { id: string; reason: string }): Promise<void> => {
     try {
@@ -551,8 +655,9 @@ export async function reviseBook(core: NovelCore, runtime: ProjectRuntime, param
         const told = params.brief !== undefined ? params.brief(place.id, '', true) : params.instruction
         // The place is all that may change, and of it only what the planner said: the writer is told both.
         const instruction = `${told}\n\n${L(lang, '这一次只改下面这一处：能动的只有这一处里的字，它前后的正文不会变。策划定的改法', 'This time only the passage below changes: nothing outside it will, so it has to join what stands on both sides. What the planner settled for it')}${colon}${place.how}\n${L(lang, '改法没有提到的字句照原样交回，不顺手润色，不添改法之外的内容。', 'Hand back as they stand the words this does not speak of: no polishing in passing, nothing added beyond it.')}`
-        const issues = issuesFor(place.id)
-        const result = await reviseSpan(core, runtime, { chapter: place.id, quote: place.quote, start: place.start, instruction, apply, batchId, tight: true, ...(params.onto === true ? { onto: true } : {}), ...(issues !== undefined ? { issues } : {}), ...(params.guides !== undefined && params.guides.length > 0 ? { guides: params.guides } : {}) }, inner())
+        const issues = issuesFor(place.id, place)
+        // (Written by the planner: the place is what it handed in, and what the proposal says it is for is the mending itself.)
+        const result = await reviseSpan(core, runtime, { chapter: place.id, quote: place.quote, start: place.start, instruction: place.written !== undefined ? told : instruction, apply, batchId, tight: true, ...(place.written !== undefined ? { written: place.written, why: place.how } : {}), ...(params.onto === true ? { onto: true } : {}), ...(issues !== undefined ? { issues } : {}), ...(params.guides !== undefined && params.guides.length > 0 ? { guides: params.guides } : {}) }, inner())
         results.push({
           chapterId: result.chapterId,
           title: result.title,
@@ -579,9 +684,84 @@ export async function reviseBook(core: NovelCore, runtime: ProjectRuntime, param
   const work: (() => Promise<void>)[] = [...targets.map(target => async () => { await over(target) }), ...[...groups.values()].map(group => async () => { await here(group) })]
   await mapLimit(work, params.concurrency ?? await core.parallelFor('text', runtime), async (run) => { await run() }, task.signal)
   results.sort((left, right) => left.index - right.index)
-  task.job?.result({ batchId })
+  task.job?.result({ batchId, ...(lead !== undefined ? { found: filed.length } : {}) })
   const touched = new Set([...targets.map(target => target.id), ...places.map(place => place.id)])
-  return { batchId, ...(note !== undefined ? { note } : {}), untouched: infos.length - touched.size, ...(bible.length > 0 ? { bible } : {}), results, failed, ...(pictures !== undefined ? { pictures } : {}) }
+  return { batchId, ...(note !== undefined ? { note } : {}), untouched: infos.length - touched.size, ...(bible.length > 0 ? { bible } : {}), results, failed, ...(pictures !== undefined ? { pictures } : {}), ...(lead !== undefined ? { found: filed } : {}), ...(direct ? { direct: true as const } : {}) }
+}
+
+/**
+ * Where what the author noticed shows, as a planner handed it in, each place found in its chapter. What cannot be
+ * used is said into `wrong`, with the places' own faults, for the whole to be handed in again.
+ */
+function findingsIn(record: Record<string, unknown>, infos: readonly { id: string; index: number; title: string }[], stands: ReadonlyMap<string, string>, lang: 'zh' | 'en', wrong: string[]): Finding[] {
+  const found: Finding[] = []
+  asArray(record.findings).forEach((entry, at) => {
+    const item = asRecord(entry)
+    const nth = at + 1
+    const index = Number(item.chapter ?? item.index)
+    const info = infos.find(candidate => candidate.index === index)
+    const quote = asText(item.quote)
+    const explanation = asText(item.explanation)
+    if (info === undefined) {
+      wrong.push(L(lang, `findings 第 ${nth} 条：第 ${String(item.chapter ?? item.index)} 章不在这次能查的章节里（没有这一章，它还没有正文，或者作者没让查它）`, `findings[${nth}]: chapter ${String(item.chapter ?? item.index)} is not among the chapters this looks at (no such chapter, no text yet, or not one the author named)`))
+      return
+    }
+    if (quote === undefined || [...quote].length < 2 || explanation === undefined) {
+      wrong.push(L(lang, `findings 第 ${nth} 条：quote（露出问题的原文）和 explanation（这一处是什么问题）都要写`, `findings[${nth}]: both quote (the text it shows in) and explanation (what is wrong there) are needed`))
+      return
+    }
+    const text = stands.get(info.id) ?? ''
+    const range = fuzzyFind(text, quote)
+    if (range === undefined) {
+      wrong.push(L(lang, `findings 第 ${nth} 条：第 ${info.index} 章里找不到这段原文——quote 从正文里逐字照抄，不改写、不省略、不用省略号连接两处：“${clip(quote, 60)}”`, `findings[${nth}]: chapter ${info.index} does not have this text — copy quote word for word from the chapter, nothing reworded, nothing left out, no ellipsis joining two places: "${clip(quote, 80)}"`))
+      return
+    }
+    const type = asText(item.type) as IssueType | undefined
+    const severity = asText(item.severity) as IssueSeverity | undefined
+    const suggestion = asText(item.suggestion)
+    // (The same words named twice are one place.)
+    if (found.some(other => other.id === info.id && other.start === range.start && other.end === range.end)) return
+    found.push({ id: info.id, index: info.index, start: range.start, end: range.end, quote: text.slice(range.start, range.end), type: type !== undefined && ISSUE_TYPES.includes(type) ? type : 'continuity', severity: severity !== undefined && ISSUE_SEVERITIES.includes(severity) ? severity : 'medium', explanation, ...(suggestion !== undefined ? { suggestion } : {}) })
+  })
+  return found
+}
+
+/**
+ * File what was found by the author's lead as issues of the chapters it was found in — beside whatever a review of
+ * the chapter left there. A chapter that was never reviewed gets a review that says so (`unread`) and holds these
+ * alone; a place already on file, the same words quoted and still open, is not added twice.
+ * @param mending - the batch of changes being made for them, where there is one.
+ */
+async function fileFindings(runtime: ProjectRuntime, findings: readonly Finding[], lead: string, mending: string | undefined): Promise<FiledFinding[]> {
+  const { project } = runtime
+  const said = lead.trim()
+  const filed: FiledFinding[] = []
+  const byChapter = new Map<string, Finding[]>()
+  for (const finding of findings) byChapter.set(finding.id, [...(byChapter.get(finding.id) ?? []), finding])
+  const ids = new Map<Finding, FiledFinding>()
+  for (const [chapterId, mine] of byChapter) {
+    const text = await project.chapterText(chapterId)
+    const review: ChapterReview = (await project.review(chapterId)) ?? { chapterId, textHash: hashText(text), createdAt: new Date().toISOString(), verdict: '', issues: [], unread: true }
+    const issues = [...review.issues]
+    for (const finding of mine) {
+      // An issue is anchored to words the chapter has: found among changes that still wait, it is filed without them.
+      const anchored = fuzzyFind(text, finding.quote)
+      const quote = anchored !== undefined ? text.slice(anchored.start, anchored.end) : undefined
+      const at = quote !== undefined ? issues.findIndex(issue => issue.resolved !== true && issue.quote === quote) : -1
+      if (at >= 0) {
+        const known = issues[at]!
+        issues[at] = { ...known, lead: known.lead ?? said, ...(mending !== undefined ? { mending } : {}) }
+        ids.set(finding, { chapterId, index: finding.index, issue: known.id, quote, explanation: known.explanation, severity: known.severity, known: true })
+        continue
+      }
+      const issue: ReviewIssue = { id: newId('is'), severity: finding.severity, type: finding.type, ...(quote !== undefined ? { quote } : {}), explanation: finding.explanation, ...(finding.suggestion !== undefined ? { suggestion: finding.suggestion } : {}), lead: said, ...(mending !== undefined ? { mending } : {}) }
+      issues.push(issue)
+      ids.set(finding, { chapterId, index: finding.index, issue: issue.id, ...(quote !== undefined ? { quote } : {}), explanation: issue.explanation, severity: issue.severity })
+    }
+    await project.saveReview({ ...review, issues })
+  }
+  for (const finding of findings) filed.push(ids.get(finding)!)
+  return filed
 }
 
 /**
@@ -590,8 +770,8 @@ export async function reviseBook(core: NovelCore, runtime: ProjectRuntime, param
  * all at once, for the planner to hand the whole in again.
  * @throws Error naming every place that cannot be used, and why.
  */
-function placesIn(record: Record<string, unknown>, infos: readonly { id: string; index: number; title: string }[], stands: ReadonlyMap<string, string>, lang: 'zh' | 'en'): Place[] {
-  const wrong: string[] = []
+function placesIn(record: Record<string, unknown>, infos: readonly { id: string; index: number; title: string }[], stands: ReadonlyMap<string, string>, lang: 'zh' | 'en', direct = false, faults?: string[]): Place[] {
+  const wrong: string[] = faults ?? []
   const places: Place[] = []
   asArray(record.edits).forEach((entry, at) => {
     const item = asRecord(entry)
@@ -599,9 +779,15 @@ function placesIn(record: Record<string, unknown>, infos: readonly { id: string;
     const index = Number(item.chapter ?? item.index)
     const info = infos.find(candidate => candidate.index === index)
     const find = asText(item.find)
-    const how = asText(item.how)
+    // Written by the planner itself: what the place is to read (an empty text takes it out), and a word on why.
+    const written = direct && typeof item.replace === 'string' ? item.replace : undefined
+    const how = direct ? asText(item.why) ?? asText(item.how) ?? L(lang, '策划改的', 'changed by the planner') : asText(item.how)
     if (info === undefined) {
       wrong.push(L(lang, `edits 第 ${nth} 条：第 ${String(item.chapter ?? item.index)} 章不在这次能改的章节里（没有这一章，它还没有正文，或者作者没让动它）`, `edits[${nth}]: chapter ${String(item.chapter ?? item.index)} is not among the chapters this may change (no such chapter, no text yet, or not one the author named)`))
+      return
+    }
+    if (direct && (find === undefined || [...find].length < 2 || written === undefined)) {
+      wrong.push(L(lang, `edits 第 ${nth} 条：find（要换掉的原文）和 replace（这一处改好之后的全文；整句删掉给空字符串）都要写`, `edits[${nth}]: both find (the text replaced) and replace (the whole of the place as it is to read; an empty string where it goes) are needed`))
       return
     }
     if (find === undefined || [...find].length < 2 || how === undefined) {
@@ -629,9 +815,13 @@ function placesIn(record: Record<string, unknown>, infos: readonly { id: string;
       wrong.push(L(lang, `edits 第 ${nth} 条：和前面的一条在第 ${info.index} 章里重叠——并成一处`, `edits[${nth}]: overlaps an earlier place in chapter ${info.index} — make them one`))
       return
     }
-    places.push({ id: info.id, index: info.index, start: range.start, end: range.end, quote: text.slice(range.start, range.end), how })
+    if (written !== undefined && written.trim() === text.slice(range.start, range.end).trim()) {
+      wrong.push(L(lang, `edits 第 ${nth} 条：replace 和 find 一样，没有改动——这一处不用改就不列`, `edits[${nth}]: replace reads as find does, so nothing changes — a place that need not change is not listed`))
+      return
+    }
+    places.push({ id: info.id, index: info.index, start: range.start, end: range.end, quote: text.slice(range.start, range.end), how, ...(written !== undefined ? { written } : {}) })
   })
-  if (wrong.length > 0) throw new Error(`${wrong.join('\n')}\n${L(lang, '改好这几条，把整个结果重新交一次。', 'Put these right and hand the whole result in again.')}`)
+  if (faults === undefined && wrong.length > 0) throw new Error(`${wrong.join('\n')}\n${L(lang, '改好这几条，把整个结果重新交一次。', 'Put these right and hand the whole result in again.')}`)
   return places
 }
 
@@ -759,7 +949,62 @@ export async function fixIssue(core: NovelCore, runtime: ProjectRuntime, params:
     if (current !== undefined) await project.saveReview({ ...current, issues: current.issues.map(item => item.id === issue.id ? { ...item, mending: book.batchId } : item) })
     return { scope: 'places', book }
   }
-  return { scope: 'passage', passage: await reviseSpan(core, runtime, { chapter: chapter.plan.id, start: range.start, end: range.end, quote: text.slice(range.start, range.end), instruction, issues: [issue.id], tight: true, ...onto }, task) }
+  // (Where the author has the crew's model make such changes, the quoted place is rewritten by it.)
+  return { scope: 'passage', passage: await reviseSpan(core, runtime, { chapter: chapter.plan.id, start: range.start, end: range.end, quote: text.slice(range.start, range.end), instruction, issues: [issue.id], tight: true, ...onto, ...(mendsDirect(core) ? { by: 'planner' as const } : {}) }, task) }
+}
+
+export interface LeadReviewParams {
+  /** What the author noticed in the book, in their words — a problem, or a kind of problem to look for. */
+  lead: string
+  /** Only these chapters are looked at, and nothing outside them changes. */
+  chapters?: string[]
+  /** The line of the plot looked at, by id, when it is not the main one. */
+  line?: string
+  /** `false`: found and filed as issues, nothing changed. Default: found, filed, and mended — each change waits as a proposal beneath its issue. */
+  fix?: boolean
+  /** The planner writes the changed words itself. Left out: as the settings say (`mendBy`). */
+  direct?: boolean
+}
+
+export interface LeadReviewResult {
+  /** Where it shows: each place an issue of its chapter's review now. */
+  found: FiledFinding[]
+  /** In how many chapters. */
+  chapters: number
+  /** Whether it was to be mended too. */
+  fix: boolean
+  /** What the planner says of it: where the root lies — or, where nothing was found, where it looked. */
+  note?: string
+  /** The changes made for it (with `fix`). */
+  book: ReviseBookResult
+}
+
+/**
+ * A review led by the author. They have noticed something in their book already — a pair of glasses that come and go,
+ * a day that does not add up — and say it in a sentence; the planner goes into the book for it, says where it shows
+ * (each place quoted, and filed as an issue of that chapter's review, marked as the author's own), and mends it by
+ * places, each change shown beneath the issue it is for. One run of the planner finds and settles.
+ *
+ * It is looked for in the book as it stands: what the author noticed, they noticed in the text they have, and an
+ * issue quotes that text — so changes that still wait for a chapter are not laid in first, as they are for a mending
+ * that goes on from others (a place found in words only a waiting change has could be filed under no sentence).
+ */
+export async function reviewByLead(core: NovelCore, runtime: ProjectRuntime, params: LeadReviewParams, task: TaskContext): Promise<LeadReviewResult> {
+  const lead = params.lead.trim()
+  if (lead.length === 0) throw new ProjectError('novel/invalid', 'say what you noticed: the lead is empty')
+  const fix = params.fix !== false
+  const book = await reviseBook(core, runtime, {
+    instruction: lead,
+    lead: fix ? 'fix' : 'find',
+    bible: true,
+    ...(params.chapters !== undefined && params.chapters.length > 0 ? { chapters: params.chapters } : {}),
+    ...(params.line !== undefined ? { line: params.line } : {}),
+    ...(params.direct !== undefined ? { direct: params.direct } : {}),
+  }, task)
+  const found = book.found ?? []
+  const chapters = new Set(found.map(item => item.chapterId)).size
+  task.job?.result({ batchId: book.batchId, found: found.length, chapters, fix, places: book.results.length, failed: book.failed.length, ...(book.note !== undefined ? { note: book.note } : {}) })
+  return { found, chapters, fix, ...(book.note !== undefined ? { note: book.note } : {}), book }
 }
 
 export interface FixIssuesParams {

@@ -990,7 +990,7 @@ export class StudioController {
       if (job.status === 'done' && !this.awaited.has(job.id) && (job.kind === 'write' || job.kind === 'revise')) {
         // A chapter gone through place by place: how many places changed — or that none did, and why — is what the author asked.
         // A text written anew whose pictures had to be seen to: said, since the Studio did that by itself.
-        if ((job.kind === 'revise' && job.title === 'amend chapter') || (job.result?.output as { figures?: unknown } | undefined)?.figures !== undefined) this.set({ jobEnded: { job, nonce: Date.now() } })
+        if ((job.kind === 'revise' && (job.title === 'amend chapter' || job.title === 'review by lead')) || (job.result?.output as { figures?: unknown } | undefined)?.figures !== undefined) this.set({ jobEnded: { job, nonce: Date.now() } })
         continue
       }
       if (this.followed.has(job.id)) continue

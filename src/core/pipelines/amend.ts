@@ -23,7 +23,7 @@ import { errorMessage, isAbort } from '../util/async'
 import { scheduleDigest } from './digest'
 import { schedulePlanFollow } from './follow'
 import { guidePictures, picturesRead } from './guides'
-import { figuresOf, onPending, requireChapter, settleTakenIn, shouldApply, takenIn } from './revise'
+import { figuresOf, mendsDirect, onPending, partedAs, requireChapter, settleTakenIn, shouldApply, takenIn } from './revise'
 
 export interface AmendParams {
   chapter: string
@@ -39,6 +39,8 @@ export interface AmendParams {
   issues?: string[]
   /** Go on from the changes that still wait for this chapter (see `ReviseChapterParams.onto`). */
   onto?: boolean
+  /** Whose model goes through the chapter: the writer's, or the planner's. Left out: as the settings say (`mendBy`). */
+  by?: 'writer' | 'planner'
 }
 
 export interface AmendResult {
@@ -58,6 +60,8 @@ export interface AmendResult {
   note: string
   /** `agent`: the writer went through the chapter with tools. `call`: one request for a list of places. */
   by: 'agent' | 'call'
+  /** Whose model did it: the writer's, or — where the settings (or the caller) say so — the planner's. */
+  who: 'writer' | 'planner'
   /** Tool calls the agent made. */
   steps?: number
   /** Why it was done in one request, when it was. */
@@ -127,7 +131,8 @@ function amended(text: string, edit: Edit, lang: PromptLanguage): { text: string
       'This takes in most of the chapter: take in only the sentence or two that have to change, one place at a time. Where the instruction really needs the chapter written over, do not force it — say so when you hand in.'))
   }
   // The pictures that stood in the passage stay in it; one of the writer's own making comes out.
-  const held = keptPictures(matched, edit.replace)
+  // (Paragraphs parted as the chapter parts them, whatever way the model broke its lines.)
+  const held = keptPictures(matched, partedAs(text, edit.replace))
   const lead = /^\s*/.exec(matched)![0]
   const trail = /\s*$/.exec(matched.slice(lead.length))![0]
   const body = held.text.trim()
@@ -205,7 +210,12 @@ export async function amendChapter(core: NovelCore, runtime: ProjectRuntime, par
   task.job?.result({ chapterId: chapter.plan.id })
   const manifest = await project.manifest()
   const lang = promptLanguage(manifest.language)
-  const route = await core.route('writer', runtime, task)
+  // Who goes through the chapter: the writer — or the crew's model, where the author has the planner make such changes.
+  const who: 'writer' | 'planner' = params.by ?? (mendsDirect(core) ? 'planner' : 'writer')
+  const role = who === 'planner' ? 'architect' as const : 'writer' as const
+  const zhWho = who === 'planner' ? '策划' : '写手'
+  const enWho = who === 'planner' ? 'planner' : 'writer'
+  const route = await core.route(role, runtime, task)
   const guided = await guidePictures(core, runtime, route, params.guides ?? chapter.plan.guides, 'revise', task)
   const pack = await core.pack(runtime, route, {
     purpose: 'revise',
@@ -402,18 +412,18 @@ export async function amendChapter(core: NovelCore, runtime: ProjectRuntime, par
   const roles = core.roles
   if (roles === undefined || !roles.can(route)) {
     fellBack = L(lang,
-      `写手的模型 ${route.model} 是工坊直连的接口，当不了 agent：这次是一次请求，写手交回一份改动清单，由工坊照着改。`,
-      `The writer's model ${route.model} is an endpoint the Studio calls directly and cannot run as an agent: this was one request — the writer handed in a list of changes, and the Studio made them.`)
+      `${zhWho}的模型 ${route.model} 是工坊直连的接口，当不了 agent：这次是一次请求，${zhWho}交回一份改动清单，由工坊照着改。`,
+      `The ${enWho}'s model ${route.model} is an endpoint the Studio calls directly and cannot run as an agent: this was one request — the ${enWho} handed in a list of changes, and the Studio made them.`)
     note = await byCall()
-    task.job?.crew({ role: 'writer', label, by: 'call', note: fellBack })
+    task.job?.crew({ role, label, by: 'call', note: fellBack })
   } else {
     // One piece of work is one place at the gate, however many steps its agent takes.
     let outcome: RoleOutcome | undefined
     let broke: unknown
     try {
       outcome = await core.through('text', async () => await roles.run({
-        role: 'writer',
-        label: L(lang, `写手 · ${label}`, `Writer · ${label}`),
+        role,
+        label: L(lang, `${zhWho} · ${label}`, `${who === 'planner' ? 'Planner' : 'Writer'} · ${label}`),
         persona: amendPersona(base),
         rules: amendRules({ ...base, style, ...names }),
         prompt: amendTask({ ...base, context, instruction: params.instruction, index: chapter.index, chapter: chapter.plan.title, words, edit: names.edit, done: names.done }),
@@ -425,7 +435,7 @@ export async function amendChapter(core: NovelCore, runtime: ProjectRuntime, par
         ...(task.signal !== undefined ? { signal: task.signal } : {}),
         ...(task.caller !== undefined ? { parent: task.caller } : {}),
         cwd: project.root,
-        onStart: (ids) => { task.job?.crew({ role: 'writer', label, by: 'agent', running: true, session: ids.session, ...(ids.parent !== undefined ? { parent: ids.parent } : {}) }) },
+        onStart: (ids) => { task.job?.crew({ role, label, by: 'agent', running: true, session: ids.session, ...(ids.parent !== undefined ? { parent: ids.parent } : {}) }) },
         onStep: (step) => { task.job?.write(stepLine(step)) },
         budgetNote: budget => L(lang,
           `还剩 ${budget.left} 次工具调用：已经改的都算数。把手上这几处改完就调用 ${names.done}。`,
@@ -435,7 +445,7 @@ export async function amendChapter(core: NovelCore, runtime: ProjectRuntime, par
     } catch (error) {
       if (isAbort(error) || task.signal?.aborted === true) throw error
       broke = error
-      core.log(`the writer agent failed on "${label}"`, error)
+      core.log(`the ${enWho} agent failed on "${label}"`, error)
     }
     task.signal?.throwIfAborted()
     const ran = outcome !== undefined ? { steps: outcome.steps, ...(outcome.session !== undefined ? { session: outcome.session } : {}), ...(outcome.parent !== undefined ? { parent: outcome.parent } : {}) } : {}
@@ -445,18 +455,18 @@ export async function amendChapter(core: NovelCore, runtime: ProjectRuntime, par
       steps = outcome?.steps
       const cutOff = handed === undefined
         ? broke !== undefined
-          ? L(lang, `写手的 agent 中途断了（${clip(errorMessage(broke), 160)}）：已经改的 ${made.length} 处留着，可能没有改完。`, `The writer agent broke off (${clip(errorMessage(broke), 160)}): the ${made.length} change(s) it had made stand, and it may not have finished.`)
-          : L(lang, `写手没有交回就停了（${outcome?.stop ?? 'stopped'}）：已经改的 ${made.length} 处留着，可能没有改完。`, `The writer stopped without handing in (${outcome?.stop ?? 'stopped'}): the ${made.length} change(s) it had made stand, and it may not have finished.`)
+          ? L(lang, `${zhWho}的 agent 中途断了（${clip(errorMessage(broke), 160)}）：已经改的 ${made.length} 处留着，可能没有改完。`, `The ${enWho} agent broke off (${clip(errorMessage(broke), 160)}): the ${made.length} change(s) it had made stand, and it may not have finished.`)
+          : L(lang, `${zhWho}没有交回就停了（${outcome?.stop ?? 'stopped'}）：已经改的 ${made.length} 处留着，可能没有改完。`, `The ${enWho} stopped without handing in (${outcome?.stop ?? 'stopped'}): the ${made.length} change(s) it had made stand, and it may not have finished.`)
         : undefined
       note = handed !== undefined && handed.length > 0 ? handed : cutOff ?? ''
-      task.job?.crew({ role: 'writer', label, by: 'agent', ...ran, ...(cutOff !== undefined ? { note: cutOff } : {}) })
+      task.job?.crew({ role, label, by: 'agent', ...ran, ...(cutOff !== undefined ? { note: cutOff } : {}) })
     } else {
       // Nothing changed and nothing said: asked once, the plain way.
       const why = broke !== undefined ? clip(errorMessage(broke), 200) : `${outcome?.stop ?? 'stopped'}, ${outcome?.steps ?? 0}`
-      fellBack = L(lang, `写手的 agent 没能把这件活做下来（${why}）：改成一次请求，写手交回改动清单，由工坊照着改。`, `The writer agent did not get the work done (${why}): asked in one request instead — the writer handed in a list of changes, and the Studio made them.`)
+      fellBack = L(lang, `${zhWho}的 agent 没能把这件活做下来（${why}）：改成一次请求，${zhWho}交回改动清单，由工坊照着改。`, `The ${enWho} agent did not get the work done (${why}): asked in one request instead — the ${enWho} handed in a list of changes, and the Studio made them.`)
       task.job?.write(`\n${fellBack}\n`)
       note = await byCall()
-      task.job?.crew({ role: 'writer', label, by: 'call', ...ran, note: fellBack })
+      task.job?.crew({ role, label, by: 'call', ...ran, note: fellBack })
     }
   }
   task.signal?.throwIfAborted()
@@ -478,6 +488,7 @@ export async function amendChapter(core: NovelCore, runtime: ProjectRuntime, par
     wordsAfter: countWords(after),
     note,
     by,
+    who,
     ...(steps !== undefined ? { steps } : {}),
     ...(fellBack !== undefined ? { fellBack } : {}),
     ...(refused.length > 0 ? { refused: [...refused] } : {}),
@@ -485,7 +496,7 @@ export async function amendChapter(core: NovelCore, runtime: ProjectRuntime, par
     ...figures,
   }
   if (after === based.text) {
-    task.job?.result({ chapterId: chapter.plan.id, places: 0, proposalIds: [], note })
+    task.job?.result({ chapterId: chapter.plan.id, places: 0, proposalIds: [], note, who })
     return result
   }
   const parts = changedParts(based.text, after, stretch => occurrences(based.text, stretch) === 1)
@@ -521,6 +532,6 @@ export async function amendChapter(core: NovelCore, runtime: ProjectRuntime, par
     }
     result.batchId = batchId
   }
-  task.job?.result({ chapterId: chapter.plan.id, places: result.places, proposalIds: result.proposalIds, ...(result.batchId !== undefined ? { batchId: result.batchId } : {}), ...(result.proposalIds.length === 1 ? { proposalId: result.proposalIds[0] } : {}), note, ...(result.applied ? { applied: true } : {}) })
+  task.job?.result({ chapterId: chapter.plan.id, places: result.places, proposalIds: result.proposalIds, ...(result.batchId !== undefined ? { batchId: result.batchId } : {}), ...(result.proposalIds.length === 1 ? { proposalId: result.proposalIds[0] } : {}), note, who, ...(result.applied ? { applied: true } : {}) })
   return result
 }

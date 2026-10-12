@@ -17,8 +17,9 @@ const DIGEST = JSON.stringify({
 })
 
 /** What the continuity editor hands in for a chapter's plan, by what its text says. */
-// (The request carries the plan there was beside the text, so the later text's mark is asked for first.)
-const planFor = (asked: string): string => asked.includes('渡口')
+// (The request carries the plan there was, and a line of the chapters beside this one, after the text: only the text is looked at.)
+const textOf = (prompt: string): string => prompt.split('## 原来的章纲')[0]!
+const planFor = (prompt: string, asked = textOf(prompt)): string => asked.includes('渡口')
   ? JSON.stringify({ synopsis: '沈璃在渡口等船，船夫不肯渡她。', location: '渡口', beats: [{ summary: '在渡口等船' }, { summary: '船夫不肯渡她' }] })
   : asked.includes('卖伞的')
     ? JSON.stringify({ synopsis: '沈璃告别旧居；山门没有人拦她，她向卖伞的买了一把伞。', location: '旧居、山门', beats: [{ summary: '告别旧居' }, { summary: '山门无人，她向卖伞的买了一把伞' }] })
@@ -29,7 +30,7 @@ describe('a plan that follows its text', () => {
   const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
   const was = followTiming.delay
   /** The requests that asked for a plan to be read off a text. */
-  const plans = (): number => bed.llm.requests.filter(request => request.prompt.includes('把它的章纲重新写出来')).length
+  const plans = (): number => bed.llm.requests.filter(request => request.prompt.includes('章纲从正文重新读出来')).length
   const followed = (): number => bed.core.jobs.list(bed.runtime.project.root).filter(job => job.title === FOLLOW_JOB).length
   /** Until the jobs that follow have ended. */
   const settled = async (jobs: number): Promise<void> => {
@@ -44,7 +45,7 @@ describe('a plan that follows its text', () => {
   beforeEach(async () => {
     followTiming.delay = 5
     bed = await createTestBed({ settings: { planFollowsText: true } })
-    bed.llm.responder = request => request.prompt.includes('把它的章纲重新写出来') ? planFor(request.prompt) : DIGEST
+    bed.llm.responder = request => request.prompt.includes('章纲从正文重新读出来') ? planFor(request.prompt) : DIGEST
   })
   afterEach(async () => {
     followTiming.delay = was
@@ -79,7 +80,7 @@ describe('a plan that follows its text', () => {
     const job = bed.core.jobs.list(project.root).find(found => found.title === FOLLOW_JOB)!
     expect(job).toMatchObject({ kind: 'derive', origin: 'user', status: 'done', target: chapter.id })
     expect(job.result).toMatchObject({ followed: 1, same: 0, failed: 0, chapters: [{ index: 1, changed: ['synopsis', 'location'], beats: 2, was: 2, kept: 1 }] })
-    expect((await project.activity(5))[0]).toMatchObject({ by: 'crew', role: 'analyst', summary: expect.stringContaining('第 1 章（梗概、地点、节拍 2 个（1 个没变））') })
+    expect((await project.activity(5))[0]).toMatchObject({ by: 'crew', role: 'analyst', summary: expect.stringContaining('第 1 章（梗概、地点、节拍 2 个（原来 2 个））') })
     const versions = await project.history('plan', chapter.id)
     expect(((await project.historyOf('plan', chapter.id, versions[0]!.id)) as { synopsis: string }).synopsis).toBe('沈璃告别旧居，在山门被师兄拦下。')
 
@@ -142,7 +143,7 @@ describe('a plan that follows its text', () => {
     expect(plans()).toBe(4)
 
     // One that cannot be read does not stop the others.
-    bed.llm.responder = request => request.prompt.includes('渡口') ? '不是 JSON' : planFor(request.prompt)
+    bed.llm.responder = request => textOf(request.prompt).includes('渡口') ? '不是 JSON' : planFor(request.prompt)
     const partly = await plansOfText(bed.core, bed.runtime, { chapters: [one.id, two.id], force: true }, { origin: 'user' })
     expect(partly.read.map(read => read.index)).toEqual([1])
     expect(partly.failed).toHaveLength(1)

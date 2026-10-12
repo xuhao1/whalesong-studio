@@ -38,7 +38,7 @@ import {
 import { buildFoundation, derivedPlan, deriveBeats, deriveChapters, deriveToLook, keepDerivedPlan, planOfText, settleDerivedPlan, whatIf } from '../core/pipelines/plot'
 import { clearReview, listReviews, noteIssue, recheckIssues, resolveIssue, reviewChapter } from '../core/pipelines/review'
 import { plansOfText } from '../core/pipelines/follow'
-import { fixIssue, fixIssues, acceptProposal, rejectProposal, restoreProposal, reviseBook, reviseChapter, reviseSpan, mendInTurn, settledProposals } from '../core/pipelines/revise'
+import { fixIssue, fixIssues, acceptProposal, rejectProposal, restoreProposal, reviewByLead, reviseBook, reviseChapter, reviseSpan, mendInTurn, settledProposals } from '../core/pipelines/revise'
 import { amendChapter } from '../core/pipelines/amend'
 import { writeChapter } from '../core/pipelines/write'
 import { imageSetups, speechSetups, trialDerive, trialSpeak, trialWrite } from '../core/pipelines/trial'
@@ -784,6 +784,19 @@ export function createHandlers(service: NovelService): Handlers {
     'ai.digest': async ({ root, chapters, force }) => {
       const runtime = await open(root)
       return job(runtime, 'digest', 'digest', chapters?.[0], async task => await digestPending(core, runtime, task, { ...(chapters !== undefined ? { chapters } : {}), ...(force !== undefined ? { force } : {}) }))
+    },
+    'ai.reviewLead': async ({ root, lead, chapters, line, fix, order }) => {
+      const runtime = await open(root)
+      const asked = {
+        lead: requireString(lead, 'lead'),
+        fix: fix !== false,
+        ...(Array.isArray(chapters) && chapters.length > 0 ? { chapters: chapters.filter((item): item is string => typeof item === 'string') } : {}),
+        ...(typeof line === 'string' && line.length > 0 ? { line } : {}),
+      }
+      // Finding alone changes nothing and waits for nobody; a lead that is mended takes its turn among the mendings
+      // (and is then looked for in the book as it stands by then — see `reviewByLead`).
+      if (!asked.fix) return job(runtime, 'revise', 'review by lead', undefined, async task => await reviewByLead(core, runtime, asked, task))
+      return job(runtime, 'revise', 'review by lead', undefined, async task => await mendInTurn(runtime, order === 'queue' ? 'queue' : 'apart', task, async () => await reviewByLead(core, runtime, asked, task)))
     },
     'ai.review': async ({ root, chapter, focus }) => {
       const runtime = await open(root)

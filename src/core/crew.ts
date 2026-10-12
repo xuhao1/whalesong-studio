@@ -232,8 +232,9 @@ export function crewSkills(role: CrewRole): Promise<RoleSkill[]> {
  * @param line - the line of the plot the work is on (`main` for the main one): the tools read that line and nothing of
  *   the others — its chapters, numbered along it, its people, its threads — and the world. Left out for work that is
  *   about the whole book: then every line is there to read, each numbered along itself.
+ * @param texts - chapters this work reads otherwise than the book has them (see `readBook`).
  */
-export function bookTools(runtime: ProjectRuntime, signal?: AbortSignal, line?: string): RoleTool[] {
+export function bookTools(runtime: ProjectRuntime, signal?: AbortSignal, line?: string, texts?: ReadonlyMap<string, string>): RoleTool[] {
   const names = { read: 'book_read' }
   const kept = line !== undefined ? { line } : undefined
   const whole = kept === undefined
@@ -252,7 +253,7 @@ export function bookTools(runtime: ProjectRuntime, signal?: AbortSignal, line?: 
         const what = argText(args.what) as typeof READ_KINDS[number] | undefined
         if (what === undefined || !READ_KINDS.includes(what)) throw new Error(`\`what\` is one of ${READ_KINDS.join(', ')}`)
         try {
-          return (await readBook(runtime, { what, ref: argText(args.ref), offset: argInt(args.offset), limit: argInt(args.limit), ...(whole ? { line: argText(args.line) } : {}) }, names, kept)).text
+          return (await readBook(runtime, { what, ref: argText(args.ref), offset: argInt(args.offset), limit: argInt(args.limit), ...(whole ? { line: argText(args.line) } : {}) }, names, kept, texts)).text
         } catch (error) {
           if (error instanceof ProjectError) throw new Error(error.message)
           throw error
@@ -366,6 +367,11 @@ export interface Assignment<T> {
   validate?: (value: unknown) => T
   /** Tools of this piece of work alone, beside the ones every role reads the book with. */
   tools?: RoleTool[]
+  /**
+   * Chapters the role reads otherwise than the book has them, by id: what its reading tool shows is then the text
+   * the work goes by — and is checked against — and not the saved one.
+   */
+  texts?: ReadonlyMap<string, string>
   maxSteps?: number
   /**
    * Everything this piece of work goes by is in its task — a chapter to cut into lines, a prompt to shorten, notes to
@@ -509,7 +515,7 @@ async function assignNow<T>(core: NovelCore, runtime: ProjectRuntime, task: Task
       ...(resume !== undefined ? { resume: resume.key } : {}),
       ...(work.keep !== undefined ? { keep: work.keep } : {}),
       ...(work.images !== undefined && work.images.length > 0 ? { images: work.images } : {}),
-      tools: [...bookTools(runtime, task.signal, work.line), ...references.tools, ...(work.tools ?? []), deliver],
+      tools: [...bookTools(runtime, task.signal, work.line, work.texts), ...references.tools, ...(work.tools ?? []), deliver],
       ...(skills.length > 0 ? { skills } : {}),
       inherit: plan.inherit,
       route,

@@ -773,7 +773,7 @@ describe('pipelines', () => {
     expect(await main()).toEqual([...before, '下山', '渡口', '夜渡'])
   })
 
-  it('sets the plan of a written chapter right by its text: its beats alone, or the synopsis, place, time, eyes and cast with them', async () => {
+  it('reads the plan of a written chapter off its text anew: its beats alone, or the synopsis, purpose, place, time, eyes and cast with them', async () => {
     const { project } = bed.runtime
     const who = await project.saveCharacter({ name: '沈璃', aliases: ['阿璃'], role: 'protagonist' })
     const other = await project.saveCharacter({ name: '师兄', role: 'supporting' })
@@ -794,8 +794,9 @@ describe('pipelines', () => {
     // One plain request, to the continuity editor, with the text, the plan there is and who is on file.
     expect(bed.llm.requests).toHaveLength(1)
     const asked = bed.llm.requests[0]!
-    for (const part of ['第 1 章《下山》 正文', '山门没有人拦她。', '1. 告别旧居（情绪：不舍）', '2. 在山门被师兄拦下', '梗概：沈璃带着断剑下山，被师兄拦在山门。', '沈璃 | 阿璃', '原样留着，一个字不改', '以正文为准', '把它的节拍列出来']) expect(asked.prompt, part).toContain(part)
-    for (const part of ['"synopsis"', '故事时间：']) expect(asked.prompt, part).not.toContain(part)
+    for (const part of ['第 1 章《下山》 正文', '山门没有人拦她。', '梗概：沈璃带着断剑下山，被师兄拦在山门。', '沈璃 | 阿璃', '一场都不漏', '不是把原来那份核对一遍', '把这一章的节拍从正文重新读出来']) expect(asked.prompt, part).toContain(part)
+    // (The beats there were are not shown: a model that sees them hands them back.)
+    for (const part of ['"synopsis"', '故事时间：', '一个字不改', '前后章', '在山门被师兄拦下', '情绪：不舍']) expect(asked.prompt, part).not.toContain(part)
     expect(asked.system).toContain('场记')
     let plan = (await project.findChapter(chapter.id))!.plan
     // The beat that still holds is the same beat (its id); names on file are the cards'; the planned one that was not written is gone.
@@ -807,10 +808,12 @@ describe('pipelines', () => {
     expect(versions.length).toBeGreaterThan(0)
     expect(((await project.historyOf('plan', chapter.id, versions[0]!.id)) as { beats: { summary: string }[] }).beats.map(beat => beat.summary)).toEqual(['告别旧居', '在山门被师兄拦下'])
 
-    // The whole plan: what the text says differently is changed, what it does not say stays as planned.
+    // The whole plan: what the text says differently is changed — what the chapter is for among it — and what it does not say stays as planned.
+    await project.addChapter({ title: '渡口', synopsis: '她在渡口等船。' })
     bed.llm.requests.length = 0
     bed.llm.responder = () => JSON.stringify({
       synopsis: '沈璃告别旧居，冒雨下山；山门没有人拦她，她向卖伞的买了一把伞。',
+      purpose: '把她送出山：没有人拦，也没有人送。',
       location: '旧居、山门',
       pov: '阿璃',
       characters: ['阿璃', '卖伞的'],
@@ -818,13 +821,13 @@ describe('pipelines', () => {
     })
     const whole = await planOfText(bed.core, bed.runtime, { chapter: chapter.id }, { origin: 'user' })
     expect(whole).toMatchObject({ what: 'plan', was: 2, kept: 2, applied: true, synopsis: '沈璃告别旧居，冒雨下山；山门没有人拦她，她向卖伞的买了一把伞。' })
-    expect(whole.changed).toEqual(['synopsis', 'location', 'pov', 'characters'])
+    expect(whole.changed).toEqual(['synopsis', 'purpose', 'location', 'pov', 'characters'])
     const again = bed.llm.requests[0]!.prompt
-    for (const part of ['把它的章纲重新写出来', '重写这一章的写手、给它排分镜的导演、往下推演的策划', '地点：山门', '故事时间：清晨', '视角：（没写）', '出场人物：沈璃、师兄', '只被提到的不算', '"synopsis"']) expect(again, part).toContain(part)
+    for (const part of ['把这一章的章纲从正文重新读出来', '不是把原来那份核对一遍', '重写这一章的写手、给它排分镜的导演、往下推演的策划', '这一章的作用：把她送出山', '地点：山门', '故事时间：清晨', '视角：（没写）', '出场人物：沈璃、师兄', '只被提到的不算', '"synopsis"', '"purpose"', '## 前后章', '下一章（第 2 章《渡口》）：她在渡口等船。']) expect(again, part).toContain(part)
     plan = (await project.findChapter(chapter.id))!.plan
     expect(plan).toMatchObject({ synopsis: '沈璃告别旧居，冒雨下山；山门没有人拦她，她向卖伞的买了一把伞。', location: '旧居、山门', time: '清晨', pov: who.id, characters: [who.id, '卖伞的'] })
-    // What the chapter is for, and what the author told its writer, are not the text's to say.
-    expect(plan).toMatchObject({ purpose: '把她送出山', notes: '写慢一点' })
+    // What the chapter is for goes by what it turned out to do; what the author told its writer is not the text's to say.
+    expect(plan).toMatchObject({ purpose: '把她送出山：没有人拦，也没有人送。', notes: '写慢一点' })
     expect(plan.beats!.map(beat => beat.id)).toEqual(result.beats.map(beat => beat.id))
 
     // A plan without a synopsis is not one: sent back. Only looked at, where that is asked: the plan stays.
@@ -832,6 +835,7 @@ describe('pipelines', () => {
     bed.llm.responder = () => { tries += 1; return tries === 1 ? JSON.stringify({ beats: ['她在旧居门口站了一会儿'] }) : JSON.stringify({ synopsis: '只看不改。', beats: ['她在旧居门口站了一会儿'] }) }
     const looked = await planOfText(bed.core, bed.runtime, { chapter: chapter.id, apply: false }, { origin: 'agent' })
     expect(tries).toBe(2)
+    // (A reading that says nothing of the purpose leaves it as it is.)
     expect(looked).toMatchObject({ applied: false, kept: 0, changed: ['synopsis'] })
     expect((await project.findChapter(chapter.id))!.plan).toMatchObject({ synopsis: '沈璃告别旧居，冒雨下山；山门没有人拦她，她向卖伞的买了一把伞。' })
   })

@@ -66,9 +66,11 @@ const lineName = (scope: LineScope): string => scope.title !== undefined ? `the 
 /**
  * @param tools - what the reader should be pointed at where something is missing: the names differ between the showrunner and the crew.
  * @param kept - the line of the plot this reader is kept to (a role at work on one line); the showrunner is kept to none.
+ * @param texts - chapters to be read otherwise than the book has them, by id: the text a piece of work goes by where
+ *   that is not the saved one (a mending that goes on from changes still waiting reads the chapter with them laid in).
  * @throws ProjectError `novel/not-found` or `novel/invalid`, in words the model can act on.
  */
-export async function readBook(runtime: ProjectRuntime, request: ReadRequest, tools: { read: string; digest?: string; review?: string } = { read: 'novel_read', digest: 'novel_digest', review: 'novel_review' }, kept?: ReadScope): Promise<Reading> {
+export async function readBook(runtime: ProjectRuntime, request: ReadRequest, tools: { read: string; digest?: string; review?: string } = { read: 'novel_read', digest: 'novel_digest', review: 'novel_review' }, kept?: ReadScope, texts?: ReadonlyMap<string, string>): Promise<Reading> {
   const { project } = runtime
   const manifest = await project.manifest()
   const lang = promptLanguage(manifest.language)
@@ -92,14 +94,15 @@ export async function readBook(runtime: ProjectRuntime, request: ReadRequest, to
   switch (request.what) {
     case 'chapter': {
       const chapter = await chapterOf()
-      const text = await project.chapterText(chapter.plan.id)
+      const other = texts?.get(chapter.plan.id)
+      const text = other ?? await project.chapterText(chapter.plan.id)
       if (text.length === 0) return { text: `Chapter ${chapter.index} "${chapter.plan.title}" (${chapter.plan.id}) has no text yet.` }
       const offset = Math.max(0, request.offset ?? 0)
       const limit = Math.max(200, Math.min(40_000, request.limit ?? 6000))
       const slice = text.slice(offset, offset + limit)
       const more = offset + limit < text.length
       return {
-        text: `Chapter ${chapter.index} "${chapter.plan.title}" (${chapter.plan.id}), characters ${offset}–${offset + slice.length} of ${text.length}${more ? ` (continue with offset=${offset + slice.length})` : ''}:\n\n${slice}`,
+        text: `Chapter ${chapter.index} "${chapter.plan.title}" (${chapter.plan.id})${other !== undefined ? ', as this work goes by it — with the changes that still wait for it laid in' : ''}, characters ${offset}–${offset + slice.length} of ${text.length}${more ? ` (continue with offset=${offset + slice.length})` : ''}:\n\n${slice}`,
         data: { chapterId: chapter.plan.id, length: text.length, offset, more },
       }
     }

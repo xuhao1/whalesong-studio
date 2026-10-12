@@ -36,7 +36,7 @@ import {
   Button, Chip, cx, Empty, Menu, Modal, Progress, Select, Spinner, Tabs, TextInput, ThoughtButton, ThoughtPanel, useAction, useConfirm, useJobStream, useJobTail, useLoad, useProject,
   useLineView, useQuote, useSnapshot, useStudio, useT, useWidth, waysOn, type Translate, plainEnter, ViewButton,
 } from '../ui'
-import { IssueList } from '../Issues'
+import { IssueList, LeadBar, useMendBy } from '../Issues'
 import { JobBar } from '../JobBar'
 
 type PanelTab = 'plan' | 'memory' | 'issues' | 'versions' | 'proposals' | 'pictures'
@@ -405,6 +405,8 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
   const archive = useLoad(async () => (project.turnedDown ?? 0) > 0 ? await controller.api.call('proposal.archive', { root, chapter: chapter.id, limit: 60 }) : undefined, [root, chapter.id, project.revision, project.turnedDown])
   const turnedDown = archive.data?.items ?? []
   const openIssues = (doc.data?.review?.issues ?? []).filter(issue => issue.resolved !== true)
+  // Who goes through a chapter to an instruction: the writer, or — where the author set that — the planner.
+  const [mendBy] = useMendBy()
   const plan = doc.data?.plan
   const empty = (text ?? '').trim().length === 0
 
@@ -561,7 +563,7 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
             <div className="nv-row-wrap">
               <Button size="sm" variant={(plan.beats ?? []).length === 0 && !chapter.hasText ? 'primary' : 'outline'} icon="sparkles" busy={running.some(job => job.kind === 'derive' && job.title === 'derive beats')} pending={t('策划在推演…', 'The planner is deriving…')} onClick={() => controller.guard(async () => { await controller.api.call('ai.deriveBeats', { root, chapter: chapter.id, ...(brief.trim().length > 0 ? { direction: brief.trim() } : {}) }); await controller.refreshJobs() })} title={t('让策划排出这一章的节拍', 'Have the planner lay out this chapter\'s beats')}>{(plan.beats ?? []).length === 0 ? t('推演本章节拍', 'Derive this chapter\'s beats') : t('重新推演节拍', 'Derive the beats again')}</Button>
               {chapter.hasText ? (['plan', 'beats'] as const).map(what => (
-                <Button key={what} size="sm" variant={what === 'plan' && (plan.beats ?? []).length === 0 ? 'primary' : 'outline'} icon="refresh" busy={running.some(job => job.kind === 'derive' && job.title === (what === 'plan' ? 'plan of text' : 'beats of text'))} disabled={running.some(job => job.kind === 'derive' && (job.title === 'plan of text' || job.title === 'beats of text'))} pending={t('场记在读正文…', 'Reading the text…')} title={what === 'plan' ? t('梗概、地点、时间、视角、出场人物和节拍，照这一章现在的正文更新；原来的在章纲的历史版本里', 'Synopsis, place, time, point of view, cast and beats set by the chapter as it now reads; what was there stays in the plan\'s history') : t('只把节拍照现在的正文更新', 'The beats alone set by the text')} onClick={() => controller.guard(async () => { await save(); const info = await controller.run('ai.planOfText', { root, chapter: chapter.id, what }); controller.toast('success', planOfTextWord(info.result?.output as PlanRead | undefined, t)); await controller.refreshProject() })}>{what === 'plan' ? t('照正文更新章纲', 'Update the plan from the text') : t('只更新节拍', 'Beats only')}</Button>
+                <Button key={what} size="sm" variant={what === 'plan' && (plan.beats ?? []).length === 0 ? 'primary' : 'outline'} icon="refresh" busy={running.some(job => job.kind === 'derive' && job.title === (what === 'plan' ? 'plan of text' : 'beats of text'))} disabled={running.some(job => job.kind === 'derive' && (job.title === 'plan of text' || job.title === 'beats of text'))} pending={t('场记在读正文…', 'Reading the text…')} title={what === 'plan' ? t('梗概、这一章的作用、地点、时间、视角、出场人物和节拍，都照这一章现在的正文重新读出来；原来的在章纲的历史版本里', 'Synopsis, purpose, place, time, point of view, cast and beats read anew off the chapter as it now stands; what was there stays in the plan\'s history') : t('只把节拍照现在的正文重新读出来', 'The beats alone read anew off the text')} onClick={() => controller.guard(async () => { await save(); const info = await controller.run('ai.planOfText', { root, chapter: chapter.id, what }); controller.toast('success', planOfTextWord(info.result?.output as PlanRead | undefined, t)); await controller.refreshProject() })}>{what === 'plan' ? t('照正文更新章纲', 'Update the plan from the text') : t('只更新节拍', 'Beats only')}</Button>
               )) : null}
               <Button size="sm" icon="tree" onClick={() => { controller.setView('outline', chapter.id) }}>{t('编辑章纲', 'Edit the plan')}</Button>
             </div>
@@ -601,11 +603,16 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
         {panel === 'issues' ? (
           <div className="nv-panel-section">
             <div className="nv-row">
-              <Button size="sm" icon="checkCircle" busy={running.some(job => job.kind === 'review')} disabled={empty} onClick={() => controller.guard(async () => { if (await settle()) { await controller.api.call('ai.review', { root, chapter: chapter.id }); await controller.refreshJobs() } })}>{doc.data.review !== undefined ? t('重新审校', 'Review again') : t('审校这一章', 'Review this chapter')}</Button>
+              <Button size="sm" icon="checkCircle" busy={running.some(job => job.kind === 'review')} disabled={empty} onClick={() => controller.guard(async () => { if (await settle()) { await controller.api.call('ai.review', { root, chapter: chapter.id }); await controller.refreshJobs() } })}>{doc.data.review !== undefined && doc.data.review.unread !== true ? t('重新审校', 'Review again') : t('审校这一章', 'Review this chapter')}</Button>
               {doc.data.review !== undefined ? <Button size="sm" variant="ghost" icon="trash" onClick={() => { confirm.ask(t('清除这一章的审校意见？', 'Clear this chapter\'s review?'), () => { void controller.guard(async () => { await controller.api.call('review.clear', { root, chapter: chapter.id }); doc.reload() }) }) }} title={t('清除这一章的审校意见', 'Clear this chapter\'s review')} /> : null}
             </div>
-            {doc.data.review !== undefined ? <p className="nv-note">{doc.data.review.verdict}</p> : <p className="nv-muted">{t('审校对照设定、记忆与文风检查这一章。', 'A review checks the chapter against the bible, memory and style.')}</p>}
+            {doc.data.review !== undefined
+              ? doc.data.review.unread === true
+                ? <p className="nv-muted">{t('这一章还没有审校过：下面是照你说的找到的问题。', 'This chapter has not been reviewed: below is what was found by what you said.')}</p>
+                : <p className="nv-note">{doc.data.review.verdict}</p>
+              : <p className="nv-muted">{t('审校对照设定、记忆与文风检查这一章。', 'A review checks the chapter against the bible, memory and style.')}</p>}
             {doc.data.review?.referenced !== undefined ? <p className="nv-muted nv-small">{referencesLookedWord(doc.data.review.referenced, t)}</p> : null}
+            {!empty ? <LeadBar chapters={[chapter.id]} before={settle} /> : null}
             <IssueList chapterId={chapter.id} issues={doc.data.review?.issues ?? []} onLocate={locate} onChanged={() => { doc.reload() }} before={settle} after={() => { showPanel('proposals') }} />
           </div>
         ) : null}
@@ -614,7 +621,7 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
           <div className="nv-panel-section">
             {revising !== undefined ? (
               <div className="nv-live-proposal">
-                <div className="nv-row"><Spinner size={12} /><span>{jobPulse(revising, t) ?? (revising.title === 'amend chapter' ? t('写手在一处处改…', 'The writer is going through the chapter…') : t('写手正在改写…', 'The writer is revising…'))}</span><span className="nv-spacer" /><Button size="sm" variant="ghost" icon="stop" onClick={() => { void controller.cancelJob(revising.id) }}>{t('停止', 'Stop')}</Button></div>
+                <div className="nv-row"><Spinner size={12} /><span>{jobPulse(revising, t) ?? (revising.title === 'amend chapter' ? mendBy === 'planner' ? t('策划在一处处改…', 'The planner is going through the chapter…') : t('写手在一处处改…', 'The writer is going through the chapter…') : t('写手正在改写…', 'The writer is revising…'))}</span><span className="nv-spacer" /><Button size="sm" variant="ghost" icon="stop" onClick={() => { void controller.cancelJob(revising.id) }}>{t('停止', 'Stop')}</Button></div>
                 {reviseStream.length > 0 ? <div className="nv-prose nv-prose-small">{reviseStream.split('\n').filter(line => line.trim().length > 0).slice(-12).map((line, index) => <p key={index}>{line}</p>)}</div> : null}
               </div>
             ) : null}
@@ -750,7 +757,7 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
               ? <Button variant="danger" icon="stop" onClick={() => { void controller.cancelJob(writing.id) }}>{t('停止', 'Stop')}</Button>
               : <Button variant="primary" icon="feather" onClick={() => { write(empty ? 'draft' : 'continue') }}>{empty ? t('写这一章', 'Write it') : t('续写', 'Continue')}</Button>}
             {writing === undefined ? <Button variant="outline" icon="layers" onClick={() => { void save().then(() => { setComparing(true) }) }} title={t('让几个模型各写一稿这一章，并排着看，采纳一稿——正文不动，采纳了才换', 'Have several models write this chapter, read the drafts side by side and take one — the chapter keeps its text until you do')}>{t('对比…', 'Compare…')}</Button> : null}
-            {!empty && writing === undefined ? <Button variant="outline" icon="wand" busy={revising !== undefined && revising.title === 'amend chapter'} disabled={revising !== undefined} onClick={() => { reviseChapter() }} title={t('写手照左边的要求在这一章里一处处改，不重写整章；每一处是一条提案', 'The writer changes this chapter place by place to the brief on the left, without writing it over; each place is a proposal')}>{t('改这一章', 'Revise')}</Button> : null}
+            {!empty && writing === undefined ? <Button variant="outline" icon="wand" busy={revising !== undefined && revising.title === 'amend chapter'} disabled={revising !== undefined} onClick={() => { reviseChapter() }} title={mendBy === 'planner' ? t('策划（编排模型）照左边的要求在这一章里一处处改，不重写整章；每一处是一条提案', 'The planner (the crew\'s model) changes this chapter place by place to the brief on the left, without writing it over; each place is a proposal') : t('写手照左边的要求在这一章里一处处改，不重写整章；每一处是一条提案', 'The writer changes this chapter place by place to the brief on the left, without writing it over; each place is a proposal')}>{t('改这一章', 'Revise')}</Button> : null}
             {!empty && writing === undefined ? (
               <Menu icon="chevronDown" variant="outline" size="md" align="end" items={[
                 { label: t('整章重写（生成提案）', 'Write the chapter over (as a proposal)'), icon: 'refresh', onSelect: () => { reviseChapter(true) } },
