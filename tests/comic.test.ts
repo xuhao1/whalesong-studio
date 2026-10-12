@@ -357,8 +357,10 @@ describe('drawing the panels', () => {
     const done = await renderPanels(bed.core, bed.runtime, { chapter: chapter.id, concurrency: 1 }, { origin: 'user' })
     expect(done).toMatchObject({ rendered: 2, failed: 0 })
     const first = images.calls[0]!.prompt
-    // The brief every picture is laid out as: what it is for, then the director's words as the picture…
-    expect(first.startsWith('用途：有声漫的一格画面（分镜）\n画面：中景，沈璃蹲在船头')).toBe(true)
+    // The brief every picture is laid out as. It opens with the director's words as the picture — no line of what the
+    // picture is for ("one panel of a motion comic" draws nothing)…
+    expect(first.startsWith('画面：中景，沈璃蹲在船头')).toBe(true)
+    expect(first).not.toContain('用途')
     // …then her, pointed to in the sheet of what she wears there — it goes along, and her look is not written out beside it —
     expect(first).toContain('人物「沈璃（丧服）」：见图1\n')
     expect(first).toContain('地点「渡口」：青石阶伸进水里，一根系船的木桩，对岸是芦苇')
@@ -375,7 +377,7 @@ describe('drawing the panels', () => {
     const records = (await project.illustrations()).filter(item => item.kind === 'panel')
     expect(records.map(item => item.path)).toEqual(drawn.map(panel => panel.image))
     expect(records[0]).toMatchObject({ kind: 'panel', target: chapter.id })
-    expect(records[0]!.parts!.pieces!.map(piece => piece.of)).toEqual(['use', 'composed', 'look', 'place', 'thing'])
+    expect(records[0]!.parts!.pieces!.map(piece => piece.of)).toEqual(['composed', 'look', 'place', 'thing'])
     expect(records[0]!.parts!.references).toEqual([{ path: mourning, label: '沈璃（丧服）', sheet: true }, { path: placeArt, label: '场所「渡口」' }])
   })
 

@@ -456,6 +456,8 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
   // ── the pictures that went along ──
   const said = parts?.referenceNote
   const unsent = said !== undefined && references.length === 0
+  // A line that only says which picture is which says nothing the pictures listed above do not: it gets no row of its own.
+  const namesOnly = said !== undefined && /^(参考图：(图\d+ 是[^；。]*；?)+。|Reference pictures: (Image \d+ shows [^;.]*;? ?)+\.)$/u.test(said.trim())
 
   const statusOf = (path: string, given = false): { label: string; tone: 'green' | 'amber' | 'neutral' | 'blue' } => {
     // One the author gave this picture to go by is nobody's sheet and no design art: it is what it was given as.
@@ -575,7 +577,7 @@ export function PictureFacts({ image, pictures, natural, onOpen, onEditLook }: {
               </PieceRow>
             )) : <PieceRow label={t('画面内容', 'Subject')}>{parts.subject}</PieceRow>}
             {parts.clipped === true ? <PieceRow label={t('注意', 'Note')}><span className="nv-picture-warn">{t('画面内容太长，被截短了。', 'The subject was too long and was cut short.')}</span></PieceRow> : null}
-            {said !== undefined ? <PieceRow label={t('参考图怎么用', 'What the references are for')}>{said}</PieceRow> : null}
+            {said !== undefined && !namesOnly ? <PieceRow label={t('参考图怎么用', 'What the references are for')}>{said}</PieceRow> : null}
             {changed ? <PieceRow label={t('其余', 'The rest')}>{t('照原图：画面描述、画风都没有另发。', 'As the picture has it: no description and no art direction went with it.')}</PieceRow> : parts.style !== undefined ? (
               <PieceRow label={t('画风', 'Art direction')} chip={parts.styleSource !== undefined ? t(...SOURCE[parts.styleSource]) : undefined} tone={parts.styleSource === 'book' ? 'green' : 'amber'}>
                 {parts.style} <button type="button" className="nv-link nv-small" onClick={() => { controller.openArt() }}>{t('去改', 'Change it')}</button>

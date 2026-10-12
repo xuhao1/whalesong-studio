@@ -1142,13 +1142,21 @@ export interface RenderInput {
   pointers?: { n: number; words: string }[]
 }
 
-/** The pictures that go along, each by its number and what it shows — the way both makers of image models ask for them to be spoken of — and what they are for. */
+/**
+ * The pictures that go along, each by its number and what it shows — the way both makers of image models ask for them
+ * to be spoken of. That is all the line says of them by itself: the lines above point to a picture where one is to be
+ * followed ("见图1") and say in words what is not as the picture has it, and a sentence on which gives way to which
+ * ("faces follow the pictures, clothes follow the words where those say otherwise…") told a model nothing it draws —
+ * the author took it out (2026-10-12).
+ * @param note - what has to be said of these pictures in particular, where something does: a sheet drawn after a
+ *   portrait leaves the portrait's scene behind, a place at another time is not drawn whole, one picture of several
+ *   is the one to change.
+ */
 function referenceLineOf(held: readonly { label: string }[], lang: PromptLanguage, note?: string): string {
+  const said = note !== undefined && note.trim().length > 0 ? note.trim() : undefined
   return lang === 'zh'
-    // (What somebody wears in this picture is the picture's own words to say: a moment in other clothes is drawn in
-    // those, whatever the sheet shows them in.)
-    ? `参考图：${held.map((reference, index) => `图${index + 1} 是${reference.label}`).join('；')}。${note ?? '人物的脸和体型照各自的图；发型、衣着和随身的东西，上面另写了的照文字，没写的照图。场所和物件的结构与材质照图。不要重新设计；构图、动作、神情和光线照上面的文字。'}`
-    : `Reference pictures: ${held.map((reference, index) => `Image ${index + 1} shows ${reference.label}`).join('; ')}. ${note ?? 'Each person\'s face and build follow their picture; their hair, what they wear and what they carry follow the words above where those say otherwise, and their picture where they do not. A place or a thing follows its picture in structure and materials. Nothing is redesigned; composition, action, expression and light follow the words above.'}`
+    ? `参考图：${held.map((reference, index) => `图${index + 1} 是${reference.label}`).join('；')}。${said ?? ''}`
+    : `Reference pictures: ${held.map((reference, index) => `Image ${index + 1} shows ${reference.label}`).join('; ')}.${said !== undefined ? ` ${said}` : ''}`
 }
 
 /** A prompt speaks of the pictures that go along with it: by number, or as reference pictures at all. */
@@ -1225,11 +1233,16 @@ function entryPiece(of: 'place' | 'thing', entry: WorldEntry, most = 220): Illus
 export const promptLangOf = (image: { promptLang?: 'en' | undefined }, lang: PromptLanguage): PromptLanguage => (image.promptLang === 'en' ? 'en' : lang)
 
 /**
- * Where each part stands among the others, whatever kind of picture it is: what the picture is for; the picture
- * itself; how it is framed; who is in it — its subject first, with what they wear and show, then the others —; the
- * place; the things; what was asked of this one. (The art direction, the reference pictures and what to keep out
- * follow, said by {@link renderImage}.) One order for every picture: what both OpenAI's and Alibaba's guides to their
- * image models ask for — the use, the scene, the subject, the details, the constraints, a line each under its name.
+ * Where each part stands among the others, whatever kind of picture it is: the kind of picture, where that is a
+ * form it has to take; the picture itself; how it is framed; who is in it — its subject first, with what they wear
+ * and show, then the others —; the place; the things; what was asked of this one. (The art direction, the reference
+ * pictures and what to keep out follow, said by {@link renderImage}.) One order for every picture: what both OpenAI's
+ * and Alibaba's guides to their image models ask for — the scene, the subject, the details, the constraints, a line
+ * each under its name.
+ *
+ * The first line (`use`) is said only where it names a form the picture must have — a design sheet, design art, a
+ * cover. Of a portrait, a picture in the text, a panel it said nothing a model draws ("a character portrait for a
+ * novel: so-and-so in their signature scene") and is not written: a brief holds what is in the picture.
  */
 const partRank = (part: IllustrationPiece): number => ({ use: 0, picture: 1, scene: 1, composed: 1, setting: 1.5, frame: 2, look: part.secondary === true ? 6 : 3, outfit: 4, expression: 5, place: 7, thing: 8, ask: 9, change: 10 })[part.of]
 
@@ -1511,9 +1524,9 @@ export async function renderImage(core: NovelCore, runtime: ProjectRuntime, inpu
     // The author's whole prompt goes as it stands — less its lines on pictures, where none goes along after all.
     const unpointed = (text: string): string => (input.pointers ?? []).reduce((now, pointer) => now.replace(new RegExp(`(见图|see Image )\\s*${pointer.n}(?!\\d)`, 'g'), pointer.words), text)
     const full = input.verbatim === true ? (held.length === 0 ? unpointed(withoutPictureLines(whole)) : whole) : laid?.subject ?? whole
-    // The pictures that go along, each by its number and what it shows, and what they are for: who and what must come
-    // back as they are there, and what is the words' to say. A prompt of the author's own says that itself — the
-    // line is put after it only where it has no word of them.
+    // The pictures that go along, each by its number and what it shows — and what is to be said of these in
+    // particular, where something is. A prompt of the author's own says that itself — the line is put after it only
+    // where it has no word of them.
     const referenceLine = held.length === 0 || (input.verbatim === true && speaksOfPictures(full)) ? undefined : referenceLineOf(held, plang, input.referenceNote)
     // What is kept out is the prompt's last line where the service has no other place for it.
     const lastLine = avoidInPrompt && avoid.length > 0 ? avoidLine(avoid, plang) : undefined
@@ -1669,6 +1682,59 @@ export interface RedrawResult extends IllustrationInfo {
  * @param params.picture - the picture: the id of its record, or its path.
  * @throws ProjectError `novel/not-found` for a picture with no record — nothing says what it was drawn from.
  */
+/** The kinds of picture whose brief no longer opens with what the picture is for ({@link partRank}). */
+const USE_UNSAID: ReadonlySet<IllustrationInfo['kind']> = new Set<IllustrationInfo['kind']>(['portrait', 'scene', 'panel'])
+
+/** The first line of a brief as the Studio wrote it for those kinds: what the picture was for. */
+const USE_LINE = /^\s*(?:用途：(?:小说人物立绘|小说插图|小说章节插图|有声漫的一格画面)|Purpose: (?:a character portrait for a novel|an illustration for a (?:chapter of a )?novel|one panel of a motion comic))[^\n]*(?:\n|$)/u
+
+/**
+ * The sentence the Studio put after the list of the pictures that go along where nothing in particular was to be
+ * said of them — which gives way to which, pictures or words — in every wording it has had.
+ */
+const STOCK_REFERENCE_NOTES: readonly string[] = [
+  '人物的脸和体型照各自的图；发型、衣着和随身的东西，上面另写了的照文字，没写的照图。场所和物件的结构与材质照图。不要重新设计；构图、动作、神情和光线照上面的文字。',
+  '人物的脸、发型和体型照各自的图；衣着和随身的东西，上面另写了的照文字，没写的照图。场所和物件的结构与材质照图。不要重新设计；构图、动作、神情和光线照上面的文字。',
+  '画面里出现的这些人物和场所必须与各自的参考图一致（脸、发型、体型、服装、结构与材质）；构图、动作与光线以本描述为准。',
+  'Each person\'s face and build follow their picture; their hair, what they wear and what they carry follow the words above where those say otherwise, and their picture where they do not. A place or a thing follows its picture in structure and materials. Nothing is redesigned; composition, action, expression and light follow the words above.',
+  'Each person\'s face, hair and build follow their picture; what they wear and carry follows the words above where those say otherwise, and their picture where they do not. A place or a thing follows its picture in structure and materials. Nothing is redesigned; composition, action, expression and light follow the words above.',
+  'Whoever and whatever they show must match their reference (face, hair, build, clothing, structure and materials); composition, action and light follow this description.',
+]
+
+/**
+ * A record as a picture of its kind is briefed today. Two lines the Studio wrote into briefs are written no longer —
+ * the first line of a portrait, a picture in the text or a panel, which said what it was for, and the sentence after
+ * the list of reference pictures on which gives way to which — and the record of a picture drawn then keeps them, as
+ * they were sent. Drawn again — its prompt handed to the author to rewrite, tried with another service — it goes
+ * without them: what the author took out of every brief is not put back into the next picture by the last one.
+ * (Only the Studio's own wordings are taken out, each as it stood; a prompt the director wrote out in other words
+ * keeps its own.)
+ */
+function asBriefedNow(record: IllustrationInfo): IllustrationInfo {
+  const parts = record.parts
+  if (parts === undefined) return record
+  const unsaid = USE_UNSAID.has(record.kind)
+  const now = (text: string): string => {
+    const told = unsaid ? text.replace(USE_LINE, '') : text
+    return STOCK_REFERENCE_NOTES.reduce((left, note) => left.split(note).join(''), told).replace(/[ \t]+$/gmu, '')
+  }
+  const noted = parts.referenceNote !== undefined ? now(parts.referenceNote) : undefined
+  return {
+    ...record,
+    prompt: now(record.prompt),
+    ...(record.written !== undefined ? { written: now(record.written) } : {}),
+    ...(record.sent !== undefined ? { sent: { ...record.sent, prompt: now(record.sent.prompt) } } : {}),
+    parts: {
+      ...parts,
+      subject: now(parts.subject),
+      ...(noted !== undefined ? { referenceNote: noted } : {}),
+      ...(parts.pieces !== undefined ? { pieces: unsaid ? parts.pieces.filter(part => part.of !== 'use') : parts.pieces } : {}),
+      // (Of a picture that is another one changed, the words are those kept of the one it came from.)
+      ...(parts.base !== undefined ? { base: { ...parts.base, subject: now(parts.base.subject) } } : {}),
+    },
+  }
+}
+
 /** A prompt without a last line that lists what is kept out: that travels apart from it. */
 const withoutAvoidLine = (prompt: string): string => prompt.split('\n').filter(line => !/^\s*(不要出现|Must not appear|Avoid)\s*[:：]/.test(line)).join('\n').trim()
 
@@ -1722,8 +1788,9 @@ async function changedFrom(project: ProjectRuntime['project'], record: Illustrat
  */
 export async function pictureWhole(core: NovelCore, runtime: ProjectRuntime, picture: string, options: { /** Of a picture that is another one changed: the words that stand in for it, not the sentence that changed the other. */ fromWords?: boolean } = {}): Promise<PictureWhole & { /** As a record keeps them: the pictures, with what each is (a sheet goes as its front view). */ held: Held[] }> {
   const { project } = runtime
-  const record = (await project.pictures()).find(item => item.id === picture || item.path === picture)
-  if (record === undefined) throw new ProjectError('novel/not-found', `no picture on record matches "${picture}"`)
+  const found = (await project.pictures()).find(item => item.id === picture || item.path === picture)
+  if (found === undefined) throw new ProjectError('novel/not-found', `no picture on record matches "${picture}"`)
+  const record = asBriefedNow(found)
   const lang = promptLanguage((await project.manifest()).language)
   const plang = promptLangOf(await core.imageOf(runtime), lang)
   const again = options.fromWords === true ? undefined : await changedFrom(project, record)
@@ -1799,8 +1866,9 @@ export async function redrawPicture(core: NovelCore, runtime: ProjectRuntime, pa
   const { project } = runtime
   await requireImages(core, runtime)
   // Any picture of the book: one on record, or a panel drawn before panels were kept on record.
-  const record = (await project.pictures()).find(item => item.id === params.picture || item.path === params.picture)
-  if (record === undefined) throw new ProjectError('novel/not-found', `no picture on record matches "${params.picture}"`)
+  const found = (await project.pictures()).find(item => item.id === params.picture || item.path === params.picture)
+  if (found === undefined) throw new ProjectError('novel/not-found', `no picture on record matches "${params.picture}"`)
+  const record = asBriefedNow(found)
   const lang = promptLanguage((await project.manifest()).language)
   const comma = lang === 'zh' ? '，' : ', '
   const subject = params.subject?.trim() ?? ''
@@ -1815,7 +1883,7 @@ export async function redrawPicture(core: NovelCore, runtime: ProjectRuntime, pa
   const again = params.fromWords !== true && subject.length === 0 && asked.length === 0 ? await changedFrom(project, record) : undefined
   const change = again !== undefined ? (whole.length > 0 ? whole : again.sentence) : asked
   /** The picture the words are of: this one — or, changed again, the one it came from. */
-  const basis = again?.source ?? record
+  const basis = again !== undefined ? asBriefedNow(again.source) : record
   const was = await wordsOf(core, runtime, basis, lang)
   // The whole prompt, as the author has it now: what was kept out is what they say — or what it was.
   const taken = whole.length > 0 && again === undefined ? await pictureWhole(core, runtime, record.id, { fromWords: true }) : undefined
@@ -2241,7 +2309,7 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
     const people = raw ? [] : shown.map(card => personPiece(card, { look: worn(card) }))
     const input: RenderInput = {
       // As written, a prompt is sent as written; otherwise it is the picture, said in the author's words, in a brief like any other.
-      ...(raw ? { subject: params.prompt } : compose([use('小说插图', 'an illustration for a novel'), piece('picture', params.prompt), ...people], plang)),
+      ...(raw ? { subject: params.prompt } : compose([piece('picture', params.prompt), ...people], plang)),
       kind: 'scene',
       name: 'custom',
       art,
@@ -2469,7 +2537,6 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
       const wearsLook = shot?.look !== undefined ? lookOf(card, shot.look) : undefined
       const composed = scene !== undefined && scene.length > 0
         ? compose([
-            use(`小说人物立绘：「${card.name}」的名场面`, `a character portrait for a novel: ${card.name} in their signature scene`),
             // The moment: picked for this picture by what the author asked — which is in the scene as the director
             // wrote it, not sent a second time — or the one the card keeps. What is sent of it is its one frame — the
             // instant, who does what — where the director made one; the moment as told stays on the record beside it.
@@ -2488,10 +2555,9 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
               .filter(part => part !== undefined && (shot === undefined || [beside.place, ...beside.things].some(entry => entry !== undefined && entry.name === part.name && (entry.visualPrompt ?? '').trim().length > 0))),
           ], plang)
         : compose([
-            use(`小说人物立绘（定妆照）：只画「${card.name}」一个人`, `a character portrait for a novel (a plain likeness): ${card.name} alone`),
-            // Asked for nothing in particular, a likeness faces the viewer on a plain ground; a direction of its own — a
-            // snowy night, a look over the shoulder — takes the place of both.
-            piece('frame', direction !== undefined ? L(plang, '半身像', 'waist-up') : L(plang, '半身像，面向镜头，素净的浅色背景', 'waist-up, facing the viewer, on a plain light ground')),
+            // A likeness is of the one person. Asked for nothing in particular, it faces the viewer on a plain ground;
+            // a direction of its own — a snowy night, a look over the shoulder — takes the place of both.
+            piece('frame', L(plang, `只画「${card.name}」一个人，半身像${direction !== undefined ? '' : '，面向镜头，素净的浅色背景'}`, `${card.name} alone, waist-up${direction !== undefined ? '' : ', facing the viewer, on a plain light ground'}`)),
             // …and is the picture, in the author's words: said before who they are.
             piece('picture', direction),
             personPiece(card, { added: justNoted }),
@@ -2851,7 +2917,7 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
   const most = referencesOf(image.references)
   // Laid out as a panel of a storyboard is: the director's words for the frame, then — as the bible has them — how
   // everyone in it looks in what they wear there, its place, its things; and their pictures along.
-  const makings = panelMakings({ prompt: description, description: passage, characters: cast.map(card => card.id), ...(place !== undefined ? { location: place.name } : {}), ...(Object.keys(wearing).length > 0 ? { looks: wearing } : {}), ...(things.length > 0 ? { things } : {}) }, { characters: cast, world, most, lang: plang, use: L(plang, '小说章节插图', 'an illustration for a chapter of a novel') })
+  const makings = panelMakings({ prompt: description, description: passage, characters: cast.map(card => card.id), ...(place !== undefined ? { location: place.name } : {}), ...(Object.keys(wearing).length > 0 ? { looks: wearing } : {}), ...(things.length > 0 ? { things } : {}) }, { characters: cast, world, most, lang: plang })
   const why = asText(framed.why)
   const framing = {
     people: cast.map(card => card.name),
@@ -3262,7 +3328,7 @@ export function consistencyFor(cards: readonly CharacterCard[]): { references: H
  * @param has.most - how many pictures a prompt goes with at most (the author's setting).
  * @param has.lang - the language the prompt is written in ({@link promptLangOf}).
  */
-export function panelMakings(panel: Pick<ComicPanel, 'prompt' | 'description' | 'characters' | 'location' | 'looks' | 'things'>, has: { characters: readonly CharacterCard[]; world: readonly WorldEntry[]; most: number; lang: PromptLanguage; /** `false`: the art of the things it shows does not go along (`image.panelThings`). */ thingArt?: boolean; /** What the picture is for, where it is not a panel of a motion comic. */ use?: string }): Pick<RenderInput, 'subject' | 'pieces'> & { references: Held[]; avoid: string[] } {
+export function panelMakings(panel: Pick<ComicPanel, 'prompt' | 'description' | 'characters' | 'location' | 'looks' | 'things'>, has: { characters: readonly CharacterCard[]; world: readonly WorldEntry[]; most: number; lang: PromptLanguage; /** `false`: the art of the things it shows does not go along (`image.panelThings`). */ thingArt?: boolean }): Pick<RenderInput, 'subject' | 'pieces'> & { references: Held[]; avoid: string[] } {
   const { lang, world } = has
   const comma = lang === 'zh' ? '，' : ', '
   const shown = (panel.characters ?? []).map(id => has.characters.find(card => card.id === id)).filter((card): card is CharacterCard => card !== undefined)
@@ -3278,7 +3344,6 @@ export function panelMakings(panel: Pick<ComicPanel, 'prompt' | 'description' | 
   const things = world.filter(entry => entry.id !== place?.id && groupOf(entry.category) !== 'places'
     && (called(entry, panel.things ?? []) || (groupOf(entry.category) === 'items' && entry.visualImage !== undefined && called(entry, [told])))).slice(0, 4)
   const composed = compose([
-    { of: 'use', text: has.use ?? L(lang, '有声漫的一格画面（分镜）', 'one panel of a motion comic') },
     piece('composed', panel.prompt),
     ...shown.map(card => personPiece(card, { look: worn(card) })),
     place !== undefined && place.visualPrompt !== undefined && place.visualPrompt.trim().length > 0 ? entryPiece('place', place, 260) : undefined,

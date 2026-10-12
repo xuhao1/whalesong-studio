@@ -552,7 +552,7 @@ describe('an image server of the author\'s own', () => {
       expect(seen.at(-1)!.body).toEqual({ model: 'qwen-image-2.1-turbo-nf4', prompt: '风灯换成红色的', size: '768x768', n: '1', files: { image: 1 } })
       expect(asked).toHaveLength(1)
       expect(changed.sent).toEqual({ prompt: '风灯换成红色的', size: '768x768' })
-      expect(changed.parts).toMatchObject({ subject: '风灯换成红色的', references: [{ path: first.path, label: '要改的原图' }], base: { subject: '用途：小说插图\n画面：雨夜的码头，一盏风灯\n这一张的要求：风灯换成红色的', avoid: ['文字', '水印', '现代服饰与物件'] } })
+      expect(changed.parts).toMatchObject({ subject: '风灯换成红色的', references: [{ path: first.path, label: '要改的原图' }], base: { subject: '画面：雨夜的码头，一盏风灯\n这一张的要求：风灯换成红色的', avoid: ['文字', '水印', '现代服饰与物件'] } })
       expect(changed.parts?.left).toBeUndefined()
 
       // The same server before it took pictures: the picture is sent, it has nowhere to take it, and the new one is
@@ -562,11 +562,11 @@ describe('an image server of the author\'s own', () => {
       const said: Record<string, unknown>[] = []
       const worded = await redrawPicture(bed.core, bed.runtime, { picture: first.id, change: '风灯换成红色的' }, { origin: 'user', job: { ...quietJob(), result: (value) => { said.push(value) } } })
       expect(seen.at(-1)).toMatchObject({ path: '/v1/images/generations' })
-      expect(worded.prompt).toContain('用途：小说插图\n画面：雨夜的码头，一盏风灯\n这一张的要求：风灯换成红色的')
+      expect(worded.prompt.startsWith('画面：雨夜的码头，一盏风灯\n这一张的要求：风灯换成红色的')).toBe(true)
       expect(worded.prompt).toContain('画风：')
       expect(worded.prompt).not.toContain('参考图')
       expect(worded.parts?.base).toBeUndefined()
-      expect(worded.parts?.pieces).toEqual([{ of: 'composed', text: '用途：小说插图\n画面：雨夜的码头，一盏风灯', label: '' }, { of: 'ask', text: '风灯换成红色的', label: '这一张的要求：' }])
+      expect(worded.parts?.pieces).toEqual([{ of: 'composed', text: '画面：雨夜的码头，一盏风灯', label: '' }, { of: 'ask', text: '风灯换成红色的', label: '这一张的要求：' }])
       expect(worded.parts?.left).toEqual([{ path: first.path, label: '要改的原图' }])
       expect(worded.parts?.leftWhy).toContain('404')
       expect(said).toContainEqual({ left: { names: ['要改的原图'], taken: 0, why: worded.parts!.leftWhy } })
