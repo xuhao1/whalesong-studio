@@ -35,7 +35,7 @@ import { applyOutlineOps, type OutlineOp } from '../core/pipelines/outline'
 import {
   ensurePortrait, novelizePlay, paintPlayScene, playTurn, rewindPlay, setPlayOutcome, startPlay, voicePlayLine,
 } from '../core/pipelines/play'
-import { buildFoundation, derivedPlan, deriveBeats, deriveChapters, deriveToLook, keepDerivedPlan, planOfText, settleDerivedPlan, whatIf } from '../core/pipelines/plot'
+import { buildFoundation, derivedPlan, deriveBeats, deriveChapters, deriveToLook, keepDerivedPlan, planOfText, settleDerivedPlan, touchBeats, whatIf } from '../core/pipelines/plot'
 import { clearReview, listReviews, noteIssue, recheckIssues, resolveIssue, reviewChapter } from '../core/pipelines/review'
 import { plansOfText } from '../core/pipelines/follow'
 import { fixIssue, fixIssues, acceptProposal, rejectProposal, restoreProposal, reviewByLead, reviseBook, reviseChapter, reviseSpan, mendInTurn, settledProposals } from '../core/pipelines/revise'
@@ -45,6 +45,7 @@ import { imageSetups, speechSetups, trialDerive, trialSpeak, trialWrite } from '
 import { cleanGuides } from '../core/pipelines/guides'
 import { consultReferences } from '../core/pipelines/consult'
 import { addBookReference, addTextReference, referenceShelf, removeReference, setReferenceUse, updateReference } from '../core/references'
+import { jottingsView, removeJotting, restoreJotting, saveJotting, setJottingsSearch } from '../core/jottings'
 import { ProjectError } from '../core/project'
 import { cardWalkOns, siftCast } from '../core/pipelines/cast'
 import { overrule, settleSuggestions, settlesItself } from '../core/pipelines/settle'
@@ -687,6 +688,29 @@ export function createHandlers(service: NovelService): Handlers {
       // Named by what it is: the same picture brought in twice is one file.
       return { path: await project.writeAsset(`guides/${createHash('sha1').update(bytes).digest('hex').slice(0, 16)}.${real}`, bytes) }
     },
+    'jottings.list': async ({ root }) => await jottingsView((await open(root)).project),
+    'jottings.save': async ({ root, id, title, text, kind, hidden }) => await saveJotting((await open(root)).project, {
+      ...(id !== undefined ? { id } : {}),
+      ...(title !== undefined ? { title } : {}),
+      ...(text !== undefined ? { text } : {}),
+      ...(kind !== undefined ? { kind } : {}),
+      ...(hidden !== undefined ? { hidden } : {}),
+    }),
+    'jottings.remove': async ({ root, id }) => {
+      const { project } = await open(root)
+      await removeJotting(project, id)
+      return await jottingsView(project)
+    },
+    'jottings.restore': async ({ root, id }) => {
+      const { project } = await open(root)
+      await restoreJotting(project, id)
+      return await jottingsView(project)
+    },
+    'jottings.search': async ({ root, on }) => {
+      const { project } = await open(root)
+      await setJottingsSearch(project, on)
+      return await jottingsView(project)
+    },
     'references.list': async ({ root }) => await referenceShelf(core, await open(root)),
     'references.add': async ({ root, book, text, file, title, note, scope }) => {
       const runtime = await open(root)
@@ -851,6 +875,10 @@ export function createHandlers(service: NovelService): Handlers {
     'ai.deriveBeats': async ({ root, chapter, direction }) => {
       const runtime = await open(root)
       return job(runtime, 'derive', 'derive beats', chapter, async task => await deriveBeats(core, runtime, { chapter, ...(direction !== undefined ? { direction } : {}) }, task))
+    },
+    'ai.beat': async ({ root, chapter, ask, beats, after }) => {
+      const runtime = await open(root)
+      return job(runtime, 'derive', 'derive beat', chapter, async task => await touchBeats(core, runtime, { chapter, ask, ...(beats !== undefined && beats.length > 0 ? { beats } : {}), ...(after !== undefined ? { after } : {}) }, task))
     },
     'ai.planOfText': async ({ root, chapter, what }) => {
       const runtime = await open(root)

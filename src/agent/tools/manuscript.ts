@@ -90,11 +90,12 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
         '- scope=passage: rewrite one passage in place. Quote it exactly in `quote` (copy it from novel_read) and say what to change in `instruction`.',
         '- scope=chapter: change one chapter to `instruction`. The writer goes through the chapter as an agent and changes the places the instruction reaches, one at a time — the rest of the chapter is not written again, so it cannot drift, and each place that changed is a small proposal of its own (or is written in at once, see below). This is the way for anything short of a new chapter: "make her colder in the scene with her brother", "cut what repeats chapter 2", "the letter is blue, not white". Pass whole=true only where the change is of all of it — another voice or point of view throughout, the scenes in another order: then the chapter is written over start to end, as one proposal.',
         '- scope=book: carry one instruction through the book ("rename the city to …", "her watch is a wristwatch now"). A planner reads the book and names the places the instruction reaches — each quoted from its chapter, with what changes there — and the writer rewrites those places and nothing else: every place is a small proposal of its own for the author to review (unless apply=true). A chapter is written over whole only where the planner says places will not do (a change of voice or pace throughout). `chapters` keeps it to those chapters.',
-        '- scope=issues: mend what reviews found, together — also across chapters. Name them in `issues` as `<chapter>:<issue id>` (ids are in a chapter\'s review: novel_review, novel_read what=review), or pass `severity` (high | medium | low) to take every open issue that grave or graver, in `chapters` if given. `instruction` is what the author says of the whole batch (optional); what they said of single issues is kept with those and goes along. One planner reads them side by side and settles which places change and how — as few as mend them, also in chapters nobody named where they tell of the same facts — and the writer rewrites those places and nothing else, so one fact is mended one way throughout and nothing is written over that did not have to be (a chapter is rewritten whole only where the planner says places will not do). Every place comes back as a proposal of its own; changes to the bible wait as suggestions.',
+        '- scope=issues: mend what reviews found, together — also across chapters. Name them in `issues` as `<chapter>:<issue id>` (ids are in a chapter\'s review: novel_review, novel_read what=review), or pass `severity` (high | medium | low) to take every open issue that grave or graver, in `chapters` if given. `instruction` is what the author says of the whole batch (optional); what they said of single issues is kept with those and goes along. One planner reads them side by side and settles which places change and how — also in chapters nobody named where they tell of the same facts — and the writer rewrites those places and nothing else, so one fact is mended one way throughout and nothing is written over that did not have to be (a chapter is rewritten whole only where the planner says places will not do). Every place comes back as a proposal of its own; changes to the bible wait as suggestions.',
         '- scope=lead: follow up something the author noticed in their book — "his glasses come and go", "the days between chapters 3 and 5 do not add up", "her lines read too written" — given in their words in `instruction`. The planner goes into the book for it and says where it shows: each place is quoted and filed as an issue of that chapter\'s review, marked as the author\'s own; then it mends it by places, each change a small proposal shown beneath the issue it is for (changes to the bible wait as suggestions). `chapters` keeps the search — and the changes — to those chapters; find_only=true finds and files without changing anything. Use this, not a general review, when the author already knows what is wrong; tell them where it was found and what was changed.',
         '- scope=accept / scope=reject: settle a pending proposal by `proposal` id. Rejecting one that was made on top of earlier waiting changes brings those back to wait by themselves.',
         '- scope=turned_down: list the proposals the author turned down (kept in Review → Archive), the latest first, for `chapter` or the whole book — what each changed, and whether it could still be taken. scope=restore puts one of them back to wait, by `proposal` id: for a no the author says was a slip. Only on the author\'s word; then accept it if they say so.',
         'Whose model writes the changed words is the author\'s setting (novel_settings). Changes by places — chapter / book / issues / lead — `mendBy`: the crew\'s model itself, whose hand-in is the proposal (the default), or the writer model after the planner has settled the places. A passage rewritten (scope=passage) and a chapter written over whole (whole=true, or where a mending says places will not do) — `rewriteBy`: the writer model (the default), or the crew\'s. Results say which it was.',
+        'How far a change by places reaches — chapter / book / issues / lead — is the author\'s setting too (`mendReach`): `bold` (the default) mends through — every place a problem shows, what has to change with each (an echo, an answer, the same thing told again), a place taking in a whole paragraph where a sentence will not do, a short passage written new where it takes one; `careful` makes the least change that answers it. Pass `reach` only when the author says how far this one is to go ("keep it small", "go further this time"); otherwise leave it out. What nothing asked to change still stays as it is, and the course of the plot is never changed under cover of a mending.',
         'book / issues / lead, `order`: mendings do not lock each other out. `queue` (the default) waits for the mendings already under way and goes on from the changes they leave waiting — a chapter with a change waiting is rewritten as it would read with that accepted, and the new proposal stands for the earlier ones (one to accept); use it when what is mended hangs together. `apart` starts at once on the text as it stands — for mendings that have nothing to do with each other (another line of the plot, a far part of the story), which are quicker side by side.',
         'Every applied change snapshots the previous text first. Passage and chapter revisions apply directly unless the author turned on review of agent revisions; pass apply=false to always leave a proposal.',
       ].join('\n'),
@@ -111,12 +112,15 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
         proposal: { type: 'string', description: 'accept/reject/restore: the proposal id.' },
         apply: { type: 'boolean', description: 'Apply immediately (true) or leave a proposal (false).' },
         whole: { type: 'boolean', description: 'chapter: write the chapter over start to end instead of changing it place by place — only for a change that is of all of it.' },
+        reach: { type: 'string', enum: ['bold', 'careful'], description: 'chapter/book/issues/lead: how far the change goes, for this once — bold: mended through; careful: the least change. Left out: as the author set (novel_settings `mendReach`, bold unless they said otherwise).' },
         order: { type: 'string', enum: ['queue', 'apart'], description: 'book/issues: after the mendings under way and on top of their changes (queue, default), or at once by itself (apart).' },
         pictures: listParameter('passage/chapter/book: pictures of the book the author gave to revise by (project-relative paths) — the writer looks at them, or is told what they show (see novel_write). Only pictures the author pointed at. A chapter rewritten whole goes by the pictures kept on its plan without their being named.'),
       },
       async run(args, env) {
         const runtime = await env.project()
         const order = args.order === 'apart' ? 'apart' as const : 'queue' as const
+        // (Said for this once; otherwise the pipelines read the author's setting.)
+        const reach = args.reach === 'bold' || args.reach === 'careful' ? { reach: args.reach } : {}
         if (args.scope === 'accept' || args.scope === 'reject') {
           if (args.proposal === undefined) throw new ProjectError('novel/invalid', 'pass the proposal id in `proposal`')
           if (args.scope === 'accept') {
@@ -151,6 +155,7 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
             ...(named.length > 0 ? { issues: named } : { atLeast: severity, ...((listOf(args.chapters)?.length ?? 0) > 0 ? { chapters: listOf(args.chapters)! } : {}) }),
             ...(args.instruction !== undefined && args.instruction.trim().length > 0 ? { note: args.instruction.trim() } : {}),
             ...(onto ? { onto: true } : {}),
+            ...reach,
           }, task)))
           if (result.book === undefined) return { text: 'No open issue matches: nothing was handed over. Review the chapters first (novel_review), or name the issues.', record: false }
           const lines = result.book.results.map(item => `- ${item.kind === 'span' ? 'a place in ' : ''}chapter ${item.index} "${item.title}"${item.kind === 'chapter' ? ' (written over whole)' : ''}: ${item.wordsBefore} → ${item.wordsAfter} words, proposal ${item.proposalId ?? ''} — ${brief(item.reason, 120)}`)
@@ -161,7 +166,7 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
         }
         if (args.instruction === undefined || args.instruction.trim().length === 0) throw new ProjectError('novel/invalid', '`instruction` is required')
         if (args.scope === 'lead') {
-          const asked = { lead: args.instruction.trim(), fix: args.find_only !== true, ...((listOf(args.chapters)?.length ?? 0) > 0 ? { chapters: listOf(args.chapters)! } : {}) }
+          const asked = { lead: args.instruction.trim(), fix: args.find_only !== true, ...((listOf(args.chapters)?.length ?? 0) > 0 ? { chapters: listOf(args.chapters)! } : {}), ...reach }
           const result = await env.job('revise', 'review by lead', undefined, async task => asked.fix
             ? await mendInTurn(runtime, order, task, async () => await reviewByLead(env.core, runtime, asked, task))
             : await reviewByLead(env.core, runtime, asked, task))
@@ -185,6 +190,7 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
             ...(args.apply !== undefined ? { apply: args.apply } : {}),
             ...(onto ? { onto: true } : {}),
             ...(pictures !== undefined ? { guides: pictures } : {}),
+            ...reach,
           }, task)))
           const lines = result.results.map(item => `- ${item.kind === 'span' ? 'a place in ' : ''}chapter ${item.index} "${item.title}"${item.kind === 'chapter' ? ' (written over whole)' : ''}: ${item.wordsBefore} → ${item.wordsAfter} words${item.applied ? ', applied' : `, proposal ${item.proposalId ?? ''}`} — ${brief(item.reason, 120)}`)
           const spans = result.results.filter(item => item.kind === 'span').length
@@ -205,7 +211,7 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
           }
         }
         if (args.whole !== true) {
-          const result = await env.job('revise', 'amend chapter', chapter, async task => await amendChapter(env.core, runtime, { chapter, instruction, ...(pictures !== undefined ? { guides: pictures } : {}), ...(args.apply !== undefined ? { apply: args.apply } : {}) }, task))
+          const result = await env.job('revise', 'amend chapter', chapter, async task => await amendChapter(env.core, runtime, { chapter, instruction, ...(pictures !== undefined ? { guides: pictures } : {}), ...(args.apply !== undefined ? { apply: args.apply } : {}), ...reach }, task))
           const doer = result.who === 'planner' ? 'the planner (the author has the crew\'s model make such changes)' : 'the writer'
           const how = result.by === 'agent' ? `${doer} went through it as an agent${result.steps !== undefined ? ` (${result.steps} tool calls)` : ''}` : `${doer} listed the changes in one request`
           const settled = result.places === 0

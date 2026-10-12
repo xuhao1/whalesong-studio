@@ -3489,6 +3489,7 @@ export class Project {
       undigested: chapters.filter(chapter => chapter.hasText && !chapter.digested).length,
     }
     const references = await this.referenceCount()
+    const jottings = await this.jottingCount()
     // Pictures drawn to be compared that nobody has taken yet: said with the book, so that wherever the author is they can be found again.
     const waiting = (await this.illustrations()).filter(item => item.trial?.hang !== undefined).length
     const derived = await this.readState<DerivedPlan>('derived.json')
@@ -3519,8 +3520,19 @@ export class Project {
       ...(Object.keys(graph).length > 0 ? { graph } : {}),
       ...(Object.keys(translations).length > 0 ? { translations } : {}),
       ...(references > 0 ? { references } : {}),
+      ...(jottings > 0 ? { jottings } : {}),
       ...(waiting > 0 ? { waiting } : {}),
       ...(derived !== undefined && Array.isArray(derived.chapters) && derived.chapters.length > 0 ? { derived: { chapters: derived.chapters.length, at: derived.at } } : {}),
+    }
+  }
+
+  /** How many jottings the book keeps: counted off their file, which the engine keeps (`jottings/index.json`). */
+  private async jottingCount(): Promise<number> {
+    try {
+      const file = JSON.parse((await this.readFile('jottings/index.json')).toString('utf8')) as { items?: unknown[] }
+      return Array.isArray(file.items) ? file.items.length : 0
+    } catch {
+      return 0
     }
   }
 

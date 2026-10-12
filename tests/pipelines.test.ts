@@ -251,6 +251,8 @@ describe('pipelines', () => {
 
   it('mends what a review found where it was found, with the author\'s say', async () => {
     const { project } = bed.runtime
+    // (Held to the least change: what a mending does when it goes through is in reach.test.ts.)
+    await bed.core.settings.update({ mendReach: 'careful' })
     const plan = await project.addChapter({ title: '雨夜' })
     await project.saveChapterText(plan.id, '她推开门。屋里很黑。\n\n“有人吗？”她问。右手握着剑。')
     await project.saveReview({
@@ -494,6 +496,8 @@ describe('pipelines', () => {
 
   it('mends several things a review found together, across chapters, each chapter once', async () => {
     const { project } = bed.runtime
+    // (Held to the least change: what a mending does when it goes through is in reach.test.ts.)
+    await bed.core.settings.update({ mendReach: 'careful' })
     const one = await project.addChapter({ title: '雨夜' })
     const two = await project.addChapter({ title: '下山' })
     const three = await project.addChapter({ title: '渡口' })

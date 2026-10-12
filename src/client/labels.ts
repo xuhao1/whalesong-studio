@@ -249,6 +249,7 @@ const JOB_TITLES: [RegExp, Label][] = [
   [/^derive chapters( preview)?$/, ['推演后续章节', 'Deriving chapters']],
   [/^derive beats$/, ['推演情节点', 'Deriving beats']],
   [/^beats of text$/, ['照正文更新节拍', 'Reading the beats off the text']],
+  [/^derive beat$/, ['照一句话加 / 改节拍', 'A beat added or changed by a sentence']],
   [/^plan of text$/, ['照正文更新章纲', 'Setting the plan by the text']],
   [/^review by lead$/, ['照引导审校', 'Reviewing by a lead']],
   [/^plans follow text$/, ['章纲跟上正文', 'Plans catching up with their texts']],

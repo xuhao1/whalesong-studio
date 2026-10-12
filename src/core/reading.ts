@@ -6,16 +6,17 @@
  * account of the book for everyone who works on it.
  */
 import type { ProjectRuntime } from './core'
+import { findJotting, foundJottings, jottingName } from './jottings'
 import { ProjectError, type LineScope, type Project } from './project'
 import { L, promptLanguage, renderCharacter, renderPlan, renderStyle, renderThread, renderWorld, roleLabel } from './render'
 import { lifeLine } from '../shared/life'
 import { clip } from '../shared/text'
 import { MAIN_LINE, type SearchSource } from '../shared/types'
 
-export const READ_KINDS = ['chapter', 'outline', 'character', 'world', 'style', 'memory', 'threads', 'review', 'versions'] as const
+export const READ_KINDS = ['chapter', 'outline', 'character', 'world', 'style', 'memory', 'threads', 'review', 'versions', 'jottings'] as const
 export type ReadKind = typeof READ_KINDS[number]
 
-export const SEARCH_SOURCES: SearchSource[] = ['manuscript', 'character', 'world', 'memory', 'outline']
+export const SEARCH_SOURCES: SearchSource[] = ['manuscript', 'character', 'world', 'memory', 'outline', 'jotting']
 
 /**
  * The line of the plot a reader is kept to. A role whose work is on one line reads that line: its chapters, numbered
@@ -241,6 +242,20 @@ export async function readBook(runtime: ProjectRuntime, request: ReadRequest, to
       if (versions.length === 0) return { text: `Chapter ${chapter.index} has no earlier versions.` }
       return { text: versions.map(version => `- ${version.id} — ${version.reason}, ${version.words} words`).join('\n'), data: versions }
     }
+    case 'jottings': {
+      // The author's loose notes, as far as they let them be found: ideas, never canon — and said to be so.
+      const found = await foundJottings(project)
+      if (given !== undefined) {
+        const one = await findJotting(project, given)
+        if (one === undefined) throw new ProjectError('novel/not-found', `no jotting matches "${given}" — ${tools.read} what=jottings lists them`)
+        return { text: `Jotting "${jottingName(one)}" [${one.id}; ${one.kind}; ${one.updatedAt.slice(0, 10)}] — a loose note of the author's, an idea and not canon:\n\n${one.text}`, data: one }
+      }
+      if (found.length === 0) return { text: 'The book has no jottings an agent may read (none written, or the author keeps them from being found).', data: [] }
+      return {
+        text: `The author's jottings — loose notes: ideas not settled, never canon (the bible and the text hold where they differ). ${tools.read} what=jottings ref=<id> reads one whole.\n\n${found.map(item => `- [${item.id}; ${item.kind}; ${item.updatedAt.slice(0, 10)}] ${item.title !== undefined ? `${item.title} — ` : ''}${clip(item.text.replace(/\s+/g, ' '), 160)}`).join('\n')}`,
+        data: found,
+      }
+    }
     default:
       throw new ProjectError('novel/invalid', `unknown \`what\`: ${String(request.what)} — one of ${READ_KINDS.join(', ')}`)
   }
@@ -263,7 +278,8 @@ export async function searchBook(runtime: ProjectRuntime, request: SearchRequest
     const [cards, world] = await Promise.all([runtime.project.characters(), runtime.project.world()])
     const people = new Set(cards.filter(card => scope.has(card)).map(card => card.id))
     const known = new Set(world.filter(entry => scope.knows(entry)).map(entry => entry.id))
-    within = (source, ref) => source === 'character' ? people.has(ref) : source === 'world' ? known.has(ref) : scope.reads(ref)
+    // (A jotting is of the whole book: no line of the plot keeps it out.)
+    within = (source, ref) => source === 'jotting' ? true : source === 'character' ? people.has(ref) : source === 'world' ? known.has(ref) : scope.reads(ref)
   }
   const hits = await runtime.index.search(request.query, {
     limit: Math.max(1, Math.min(30, request.limit ?? 8)),

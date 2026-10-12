@@ -30,6 +30,7 @@ import { leadWord } from './Issues'
 import { ReadView } from './views/Read'
 import { ReviewView } from './views/Review'
 import { SearchPanel } from './views/Search'
+import { JotButton } from './views/Jottings'
 import { SettingsView } from './views/Settings'
 import { SetupView } from './views/Setup'
 import { StageView } from './views/Stage'
@@ -529,6 +530,7 @@ function Header({ onSearch }: { onSearch: () => void }) {
             <span>{project.waiting}</span>
           </button>
         ) : null}
+        <JotButton />
         <Button variant="ghost" size="sm" icon="search" onClick={onSearch} title={t('搜索与查找', 'Search and find')} />
         <Button variant="ghost" size="sm" icon="settings" className={cx((view === 'settings' || view === 'setup' || view === 'usage') && 'is-active')} onClick={() => { controller.setView('settings') }} title={t('设置', 'Settings')} />
         <RemoteButton />

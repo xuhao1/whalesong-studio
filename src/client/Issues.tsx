@@ -95,6 +95,33 @@ export function useRewriteBy(): [MendBy, (by: MendBy) => void] {
   }]
 }
 
+/** How far a mending reaches: through — every place, what changes with each, as much of a place as has to move — or the least change. */
+export type MendReach = 'bold' | 'careful'
+
+/**
+ * How far a mending reaches, as the Studio's settings have it (`mendReach`: through unless the author set the least
+ * change) — and the way to say otherwise from beside the buttons that mend.
+ */
+export function useMendReach(): [MendReach, (reach: MendReach) => void] {
+  const { controller } = useStudio()
+  const reach: MendReach = useSnapshot(snapshot => snapshot.settings?.settings.mendReach) === 'careful' ? 'careful' : 'bold'
+  return [reach, (next) => {
+    void controller.guard(async () => {
+      await controller.saveSettings({ mendReach: next })
+    })
+  }]
+}
+
+/** The two entries a menu beside a mending button has for it. */
+export function useReachItems(): { label: string; onSelect: () => void }[] {
+  const t = useT()
+  const [reach, setReach] = useMendReach()
+  return [
+    { label: t(`${reach === 'bold' ? '✓ ' : ''}改多少 · 主动：改到位，牵连到的一并改`, `${reach === 'bold' ? '✓ ' : ''}How far · bold: mended through, with what hangs on it`), onSelect: () => { setReach('bold') } },
+    { label: t(`${reach === 'careful' ? '✓ ' : ''}改多少 · 保守：能少改就少改`, `${reach === 'careful' ? '✓ ' : ''}How far · careful: the least change`), onSelect: () => { setReach('careful') } },
+  ]
+}
+
 /** The small triangle beside the buttons that rewrite a passage: whose model does it. */
 export function RewriteByMenu() {
   const t = useT()
@@ -107,16 +134,20 @@ export function RewriteByMenu() {
   )
 }
 
-/** The small triangle beside the buttons that mend: in line or apart, and whose model writes the changed words. */
+/** The small triangle beside the buttons that mend: in line or apart, how far a mending reaches, and whose model writes the changed words. */
 export function MendOrderMenu() {
   const t = useT()
   const [order, setOrder] = useMendOrder()
   const [by, setBy] = useMendBy()
   const [whole, setWhole] = useRewriteBy()
+  const [reach] = useMendReach()
+  const reaches = useReachItems()
   return (
-    <Menu icon="chevronDown" variant="ghost" size="sm" align="end" label={`${order === 'queue' ? t('排队', 'In line') : t('分别', 'Apart')} · ${by === 'planner' ? t('策划写', 'planner writes') : t('写手写', 'writer writes')}`} items={[
+    <Menu icon="chevronDown" variant="ghost" size="sm" align="end" label={`${order === 'queue' ? t('排队', 'In line') : t('分别', 'Apart')} · ${reach === 'bold' ? t('主动', 'bold') : t('保守', 'careful')} · ${by === 'planner' ? t('策划写', 'planner writes') : t('写手写', 'writer writes')}`} items={[
       { label: t(`${order === 'queue' ? '✓ ' : ''}排队：等前面的修复做完，接着它们改`, `${order === 'queue' ? '✓ ' : ''}In line: after the mendings under way, going on from them`), onSelect: () => { setOrder('queue') } },
       { label: t(`${order === 'apart' ? '✓ ' : ''}分别：马上开始，各改各的`, `${order === 'apart' ? '✓ ' : ''}Apart: at once, each by itself`), onSelect: () => { setOrder('apart') } },
+      'separator',
+      ...reaches,
       'separator',
       { label: t(`${by === 'planner' ? '✓ ' : ''}按处修改：由编排模型直接写（不经写手）`, `${by === 'planner' ? '✓ ' : ''}Changes by places: the crew's model writes them itself (no writer)`), onSelect: () => { setBy('planner') } },
       { label: t(`${by === 'writer' ? '✓ ' : ''}按处修改：策划定在哪改，写手模型写`, `${by === 'writer' ? '✓ ' : ''}Changes by places: the planner settles where, the writer's model writes`), onSelect: () => { setBy('writer') } },
@@ -177,6 +208,9 @@ export function IssueCard({ chapterId, issue, onLocate, onChanged, before, after
   const revising = useRunningJob(job => job.kind === 'revise') !== undefined
   const under = useMendings()
   const [order] = useMendOrder()
+  const [reach] = useMendReach()
+  const reaches = useReachItems()
+  const bold = reach === 'bold'
   // What the author says of an issue is kept with it: it goes along when the issue is mended in a batch, and to the showrunner.
   const keep = (): void => {
     if (note.trim() === (issue.note ?? '')) return
@@ -198,7 +232,9 @@ export function IssueCard({ chapterId, issue, onLocate, onChanged, before, after
       : scope === 'book'
         ? t('策划正在查这个问题牵涉到哪几处；改好之后，每一处的对比会出现在这条问题下面。', 'The planner is tracing which places this reaches; each change will show beneath this issue.')
         : scope === 'place' || (scope === 'passage' && issue.quote === undefined)
-          ? t('策划在定改哪一处；改好之后，对比会出现在这条问题下面。', 'The planner is settling which place to change; the change will show beneath this issue.')
+          ? bold
+            ? t('策划在定改哪几处；改好之后，每一处的对比会出现在这条问题下面。', 'The planner is settling which places change; each change will show beneath this issue.')
+            : t('策划在定改哪一处；改好之后，对比会出现在这条问题下面。', 'The planner is settling which place to change; the change will show beneath this issue.')
           : t('改好之后，对比会出现在这条问题下面。', 'The rewrite will show beneath this issue.'))
     setAsked(true)
     after?.(scope)
@@ -235,17 +271,21 @@ export function IssueCard({ chapterId, issue, onLocate, onChanged, before, after
       <footer>
         {open ? (
           <>
-            <Button size="sm" icon="wand" busy={here.busy} pending={t('正在开始…', 'Starting…')} onClick={() => here.run(fix(settled ? 'place' : 'passage'))} title={settled ? t('策划定改哪一处最省，写手只改那一处', 'The planner settles which place mends it with the least change; the writer rewrites that place only') : t('只改引文这一处', 'Rewrite the quoted place only')}>
-              {settled ? t('修一处', 'Mend one place') : t('修这一处', 'Mend it here')}
+            <Button size="sm" icon="wand" busy={here.busy} pending={t('正在开始…', 'Starting…')} onClick={() => here.run(fix(settled ? 'place' : 'passage'))} title={settled
+              ? bold ? t('策划定改哪几处，把它改到位——牵连到的呼应一并改', 'The planner settles which places change and mends it through — with what hangs on it') : t('策划定改哪一处最省，只改那一处', 'The planner settles which place mends it with the least change, and only that place changes')
+              : bold ? t('改引文所在的这一段', 'Rewrite the passage the quote stands in') : t('只改引文这一处', 'Rewrite the quoted place only')}>
+              {settled ? bold ? t('修这个问题', 'Mend it') : t('修一处', 'Mend one place') : t('修这一处', 'Mend it here')}
             </Button>
             <Button size="sm" icon="layers" busy={everywhere.busy} pending={t('正在开始…', 'Starting…')} onClick={() => everywhere.run(fix('book'))} title={t('策划查清牵涉到别的章节和设定的哪几处，一处处改', 'The planner traces the chapters and the bible it reaches, and mends them together')}>
               {t('全局修复', 'Mend it everywhere')}
             </Button>
             <Menu icon="more" variant="ghost" size="sm" align="end" items={[
               ...(issue.quote !== undefined ? [settled
-                ? { label: t('只改引文这一处', 'Rewrite the quoted place only'), icon: 'wand' as const, onSelect: () => { void whole.run(fix('passage')) } }
-                : { label: t('让策划定改哪一处', 'Let the planner settle the place'), icon: 'wand' as const, onSelect: () => { void whole.run(fix('place')) } }] : []),
+                ? { label: bold ? t('只改引文所在的这一段', 'Rewrite only the passage the quote stands in') : t('只改引文这一处', 'Rewrite the quoted place only'), icon: 'wand' as const, onSelect: () => { void whole.run(fix('passage')) } }
+                : { label: bold ? t('让策划定改哪几处', 'Let the planner settle the places') : t('让策划定改哪一处', 'Let the planner settle the place'), icon: 'wand' as const, onSelect: () => { void whole.run(fix('place')) } }] : []),
               { label: t('整章重写', 'Rewrite the whole chapter'), icon: 'refresh', onSelect: () => { void whole.run(fix('chapter')) } },
+              'separator' as const,
+              ...reaches,
             ]} />
             {under > 0 ? <MendOrderMenu /> : null}
           </>

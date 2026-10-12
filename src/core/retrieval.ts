@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * Retrieval over everything a project knows: manuscript passages, character
- * cards, world entries, chapter memories and the outline.
+ * cards, world entries, chapter memories, the outline — and the author's
+ * jottings, as far as they let them be found.
  *
  * Ranking is hybrid. The lexical half is BM25 over CJK bigrams and Latin
  * words, which needs no model and works offline. When an embedding endpoint is
@@ -11,6 +12,7 @@
  */
 import type { CharacterCard, SearchHit, SearchSource, WorldEntry } from '../shared/types'
 import { hashText, isCjk } from '../shared/text'
+import { foundJottings, jottingName } from './jottings'
 import type { LocatedChapter, Project } from './project'
 import { errorMessage } from './util/async'
 import { readJson, writeAtomic, writeJson } from './util/fs'
@@ -223,6 +225,12 @@ export class RetrievalIndex {
       const body = worldText(entry)
       if (body.length <= CHUNK_LATIN) add(`w:${entry.id}`, 'world', entry.id, entry.name, body)
       else for (const chunk of chunkProse(body)) add(`w:${entry.id}:${chunk.offset}`, 'world', entry.id, entry.name, chunk.text)
+    }
+    // The author's jottings, as far as they are let be found: one kept back — or all of them — is in no index.
+    for (const note of await foundJottings(this.project)) {
+      const name = jottingName(note)
+      if (note.text.length <= CHUNK_LATIN) add(`j:${note.id}`, 'jotting', note.id, name, note.text)
+      else for (const chunk of chunkProse(note.text)) add(`j:${note.id}:${chunk.offset}`, 'jotting', note.id, name, chunk.text)
     }
     this.docs = next
     this.builtAt = revision

@@ -1150,9 +1150,41 @@ export interface ChapterReview {
   unread?: true
 }
 
+// ───────────────────────────── jottings ─────────────────────────────
+
+/** What a jotting is about: where the story might go, something of the bible, or anything else. */
+export type JottingKind = 'plot' | 'setting' | 'other'
+export const JOTTING_KINDS: readonly JottingKind[] = ['plot', 'setting', 'other']
+
+/**
+ * A loose note of the author's, kept with the book: a turn of the plot not thought through, a rule of the world
+ * not settled, a line to use some day. Nothing of the book's canon — whoever works on the book finds it when
+ * searching and reads it knowing so, unless the author keeps it (or all of them) from being found.
+ */
+export interface Jotting {
+  id: string
+  /** A few words to know it by; where none is given, its first line stands for it. */
+  title?: string
+  text: string
+  kind: JottingKind
+  /** Kept from the agents: not found when they search, not listed when they read. Unset: found. */
+  hidden?: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+/** The jottings of a book as its page shows them. */
+export interface JottingsView {
+  items: Jotting[]
+  /** `false`: none of them is found by the agents, whatever each says. */
+  search: boolean
+  /** Taken away lately, each still to be put back (the latest first). */
+  removed: (Jotting & { removedAt: string })[]
+}
+
 // ───────────────────────────── retrieval ─────────────────────────────
 
-export type SearchSource = 'manuscript' | 'character' | 'world' | 'memory' | 'outline'
+export type SearchSource = 'manuscript' | 'character' | 'world' | 'memory' | 'outline' | 'jotting'
 
 export interface SearchHit {
   source: SearchSource
@@ -1565,6 +1597,9 @@ export interface EmbeddingSettings {
   dimensions?: number
 }
 
+/** How far a mending reaches ({@link NovelSettings.mendReach}). */
+export type MendReach = 'bold' | 'careful'
+
 export interface NovelSettings {
   schema: 1
   models: TextModelRouting
@@ -1605,6 +1640,14 @@ export interface NovelSettings {
    * crew's. (Writing a chapter, and going on with one, is always the writer's.)
    */
   rewriteBy?: 'writer' | 'planner'
+  /**
+   * How far a mending reaches — an issue mended, something the author noticed put right, a request carried through
+   * the book, a chapter gone through to an instruction. `bold` (unset): mended through — every place it shows, what
+   * has to change with each, a place taking in as much as has to move (a paragraph where a sentence will not do), a
+   * passage written new where it takes one. `careful`: the least change that answers it — one place where one will
+   * do, the sentence or two that have to change, nothing beside the problem.
+   */
+  mendReach?: MendReach
   /**
    * Once a chapter's text is changed after it was digested — a revision accepted, the chapter written anew, a hand in
    * the file — have its plan (synopsis, place, time, point of view, cast and beats) read against the text and set by
@@ -2624,6 +2667,8 @@ export interface ProjectState {
   stats: ProjectStats
   /** How many books this one goes by that are consulted now (its references); absent where it has none. */
   references?: number
+  /** How many jottings the book keeps; absent where it has none (and on a Host from before there were any). */
+  jottings?: number
   /** How many pictures drawn to be compared wait to be taken (or let go); absent where none does, and on a Host from before they were counted. */
   waiting?: number
   /** Chapters derived to be looked at wait to be added or discarded (`outline.derived`): how many, and since when. */

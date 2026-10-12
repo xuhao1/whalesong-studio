@@ -17,6 +17,7 @@ my-novel/
 │   ├── audio/           one WAV per script line and per generated sound cue (per chapter), joined chapter tracks
 │   └── video/           <chapter>.mp4 cut by post-production; work/<chapter>/ is its working directory (material lists, its scripts, intermediate files)
 ├── references/          the books this one goes by: index.json, and <id>.txt for a manuscript taken in as plain text
+├── jottings/            the author's loose notes: index.json
 ├── export/              <title>.md, .txt, .html, .epub
 └── .novel/              machine memory (see below)
 ```
@@ -203,6 +204,30 @@ A world entry's design pictures: `visualImage` is the main one — what pictures
 How a character looks is their `appearance` — one paragraph, in the book's language; pictures are drawn by it. `visual.prompt` is read from cards of an earlier version only (phrases written for image models, a "visual anchor"): while a card has it, pictures go by it; nothing writes it any more, and it goes when it is folded into the appearance. A signature scene (`visual.scenes[]`) may carry `shot` — the moment framed for a picture: `{action, outfit?, look?, setting?, people?, place?, things?, why?, of}`, `of` saying which words of the moment it was framed from (it is made again when they change). Looks are matched by name: one written by hand needs only `name` and `prompt`, and gets its `id` when the card is next read; a look that is saved again keeps the sheet drawn for it.
 
 **Style profile** (`bible/styles/<id>.md`): front matter `id`, `name`, `pov` (`first`, `third-limited`, `third-omniscient`, `second`, `multi`), `tense`, `register` (the kind of language it is written in — classical, the vernacular of the old chaptered novels, modern prose… — with what marks it), `tone`, `diction`, `rhythm`, `imagery`, `dialogue`, `pacing`, `rules`, `avoid`, `exemplars` (`[{ label, text }]`); the body holds further notes.
+
+## Jottings
+
+`jottings/index.json` holds the author's loose notes — a turn of the plot not thought through, a setting not settled, a line for some day. They are ideas and no part of the book's canon.
+
+```jsonc
+{
+  "schema": 1,
+  "search": false,                 // absent: the agents find them; false: none is found, whatever each says
+  "items": [
+    {
+      "id": "jt_ab12cd",
+      "title": "后院的井",          // optional: where none is given, the first line stands for it
+      "text": "断肠斋的后院也许该有一口井……",
+      "kind": "setting",           // plot | setting | other
+      "hidden": true,              // absent: found; true: kept from the agents
+      "createdAt": "…", "updatedAt": "…"
+    }
+  ],
+  "removed": [ { /* a jotting taken away, with "removedAt" — the last 60, to be put back */ } ]
+}
+```
+
+A jotting that is found is a source of the book's search (`jotting`), is listed by the crew's `book_read what=jottings` (the showrunner's `novel_read`, `novel_jot`), and — where it shares more than a stray word with what a chapter is about — goes along when that chapter is planned or written, named as an idea and not as canon. One that is `hidden`, and every one while `search` is `false`, is in no index and in no list an agent reads; the author sees them all on *Bible → Jottings*. A book taken as a reference does not open its jottings to the book that goes by it.
 
 ## References
 

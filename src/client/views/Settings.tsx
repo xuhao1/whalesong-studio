@@ -292,6 +292,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
       recheckIssues: draft.recheckIssues !== false,
       mendBy: draft.mendBy === 'writer' ? 'writer' : 'planner',
       rewriteBy: draft.rewriteBy === 'planner' ? 'planner' : 'writer',
+      mendReach: draft.mendReach === 'careful' ? 'careful' : 'bold',
       settleSuggestions: draft.settleSuggestions !== false,
       reviewAgentRevisions: draft.reviewAgentRevisions,
       agentFiles: draft.agentFiles ?? 'guide',
@@ -530,6 +531,16 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
                   { value: 'planner', label: t('编排模型', 'The crew\'s') },
                 ]}
                 onChange={(value) => { update({ rewriteBy: value }) }}
+              />
+            </Field>
+            <Field label={t('修改改多少', 'How far a change goes')} hint={t('修审校问题、“修改一章”、全书修订、照要求改一章时改到什么程度。修复按钮旁的小三角里也能切。', 'How far mending an issue, a review by a lead, a revision through the book and a chapter revised in place go. Also under the small triangle beside the mending buttons.')}>
+              <Select<'bold' | 'careful'>
+                value={draft.mendReach === 'careful' ? 'careful' : 'bold'}
+                options={[
+                  { value: 'bold', label: t('主动：改到位——露出来的每一处、牵连到的呼应一并改，该重写一段就重写一段（默认）', 'Bold: mended through — every place it shows and what hangs on it, a paragraph rewritten where it takes one (default)') },
+                  { value: 'careful', label: t('保守：能少改就少改，一处能解决的不改两处', 'Careful: the least change — one place where one will do') },
+                ]}
+                onChange={(value) => { update({ mendReach: value }) }}
               />
             </Field>
           </div>

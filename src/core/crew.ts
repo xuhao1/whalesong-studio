@@ -31,6 +31,7 @@ import type { NovelCore, ProjectRuntime, TaskContext } from './core'
 import { completeJson, extractJson, LlmCallError, type LlmImage } from './llm'
 import { ProjectError } from './project'
 import { READ_KINDS, readBook, searchBook, SEARCH_SOURCES } from './reading'
+import { jottingsBrief } from './jottings'
 import { looksFirst, referenceBrief, referenceTools } from './references'
 import { L, promptLanguage } from './render'
 import { argInt, argList, argText, type RoleInherit, type RoleOutcome, type RoleParameter, type RoleSkill, type RoleStep, type RoleTask, type RoleTool } from './roles'
@@ -241,7 +242,7 @@ export function bookTools(runtime: ProjectRuntime, signal?: AbortSignal, line?: 
   return [
     {
       name: 'book_read',
-      description: `Read one thing from the book in full: a chapter's text (paged), the outline (whole, or one chapter's plan), a character card, a world entry, a style profile, a chapter's memory (summary, facts, character states), the open threads, a chapter's review, or a chapter's version list. \`ref\` takes ids, names and chapter numbers ("3", "第3章", "latest"). Without \`ref\`, character and world list what is on file.${whole ? '' : ' This work is on one line of the plot: chapter numbers count along that line, and what is read is that line\'s — the book\'s other lines are no part of this work.'}`,
+      description: `Read one thing from the book in full: a chapter's text (paged), the outline (whole, or one chapter's plan), a character card, a world entry, a style profile, a chapter's memory (summary, facts, character states), the open threads, a chapter's review, a chapter's version list, or the author's jottings (loose notes: ideas not settled, never canon — listed, or one whole by \`ref\`). \`ref\` takes ids, names and chapter numbers ("3", "第3章", "latest"). Without \`ref\`, character and world list what is on file.${whole ? '' : ' This work is on one line of the plot: chapter numbers count along that line, and what is read is that line\'s — the book\'s other lines are no part of this work.'}`,
       parameters: {
         what: { type: 'string', required: true, enum: READ_KINDS },
         ref: { type: 'string', description: 'Which one. Not needed for threads; optional for style (the active one), outline (the whole outline), character and world (the list).' },
@@ -262,7 +263,7 @@ export function bookTools(runtime: ProjectRuntime, signal?: AbortSignal, line?: 
     },
     {
       name: 'book_search',
-      description: `Search everything the book knows — manuscript passages, character cards, world entries, chapter memories and outlines — by keywords or by meaning. The way to check what the book has already said before you decide anything.${whole ? '' : ' What is found is of the line this work is on, and of the world.'}`,
+      description: `Search everything the book knows — manuscript passages, character cards, world entries, chapter memories and outlines, and the author's jottings (source \`jotting\`: ideas, not canon) — by keywords or by meaning. The way to check what the book has already said before you decide anything.${whole ? '' : ' What is found is of the line this work is on, and of the world.'}`,
       parameters: {
         query: { type: 'string', required: true },
         sources: { type: 'array', items: { type: 'string', enum: SEARCH_SOURCES }, description: 'Restrict to some sources. Default: all.' },
@@ -299,6 +300,21 @@ async function referencesFor(core: NovelCore, runtime: ProjectRuntime, role: Cre
     // A list of references that cannot be read keeps nobody from working: the work goes on without them.
     core.log('could not read the book\'s references', error)
     return { tools: [], brief: '' }
+  }
+}
+
+/**
+ * What a role at work on the book as an agent is told of the author's jottings: that there are some, what they are,
+ * how they are read. Nothing where there is none it may find, and nothing for post-production.
+ */
+async function jottingsFor(core: NovelCore, runtime: ProjectRuntime, role: CrewRole, lang: PromptLanguage): Promise<string> {
+  if (role === 'producer') return ''
+  try {
+    const brief = await jottingsBrief(runtime.project, lang)
+    return brief.length > 0 ? `\n\n${brief}` : ''
+  } catch (error) {
+    core.log('could not read the book\'s jottings', error)
+    return ''
   }
 }
 
@@ -501,6 +517,7 @@ async function assignNow<T>(core: NovelCore, runtime: ProjectRuntime, task: Task
   let sentBack = going !== undefined ? 2 : 0
   const skills = await crewSkills(work.role)
   const references = await referencesFor(core, runtime, work.role, lang, task.signal, first ? { first: true, onLook: (what) => { calls += 1; looks.push(what) } } : {})
+  const jotted = await jottingsFor(core, runtime, work.role, lang)
   // Said in the task as well as among the rules: it is the first thing to do.
   const lookFirst = first && references.tools.length > 0
     ? L(lang, '\n\n---\n动手之前：这本书有参考文献（清单和作者的要求在你的规则里）。先用 reference_read / reference_search 查这件活用得上的，再做。', '\n\n---\nBefore you begin: this book has references (the list, and what the author asks of them, is among your rules). Look in them with reference_read / reference_search for what this work can use, then do it.')
@@ -510,7 +527,7 @@ async function assignNow<T>(core: NovelCore, runtime: ProjectRuntime, task: Task
       role: work.role,
       label: `${name} · ${work.label}`,
       persona: CREW[work.role].persona[lang === 'zh' ? 0 : 1],
-      rules: `${crewRules(work.role, lang, manifest)}${references.brief}`,
+      rules: `${crewRules(work.role, lang, manifest)}${references.brief}${jotted}`,
       prompt: resume !== undefined ? `${resume.prompt}${handIn(lang, work.tool, declared)}` : `${work.prompt}${lookFirst}${handIn(lang, work.tool, declared)}`,
       ...(resume !== undefined ? { resume: resume.key } : {}),
       ...(work.keep !== undefined ? { keep: work.keep } : {}),
@@ -609,13 +626,14 @@ export async function delegate(core: NovelCore, runtime: ProjectRuntime, task: T
   const label = work.label ?? clip(oneLine(work.task), 40)
   const skills = await crewSkills(work.role)
   const references = await referencesFor(core, runtime, work.role, lang, task.signal)
+  const jotted = await jottingsFor(core, runtime, work.role, lang)
   const outcome = await core.through('text', async () => await roles.run({
     role: work.role,
     label: `${name} · ${label}`,
     persona: CREW[work.role].persona[lang === 'zh' ? 0 : 1],
     rules: `${work.handIn !== undefined
-      ? crewRules(work.role, lang, manifest)
-      : `${crewRules(work.role, lang, manifest)}\n${L(lang, '- 这件活没有专门的交回工具：做完之后，把结果写成你的最后一段回答——结论在前，依据在后，用到的出处列在最后。', '- This task has no tool to hand in with: when you are done, write the result as your last reply — conclusions first, what they rest on after, sources at the end.')}`}${references.brief}`,
+      ? `${crewRules(work.role, lang, manifest)}${jotted}`
+      : `${crewRules(work.role, lang, manifest)}${jotted}\n${L(lang, '- 这件活没有专门的交回工具：做完之后，把结果写成你的最后一段回答——结论在前，依据在后，用到的出处列在最后。', '- This task has no tool to hand in with: when you are done, write the result as your last reply — conclusions first, what they rest on after, sources at the end.')}`}${references.brief}`,
     prompt: work.task,
     tools: [...bookTools(runtime, task.signal, work.line), ...references.tools, ...(work.tools ?? [])],
     ...(skills.length > 0 ? { skills } : {}),

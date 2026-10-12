@@ -11,6 +11,7 @@ import { Icon } from '../icons'
 import { ChapterTree, useOutlineOps } from '../ChapterTree'
 import { MoveChapters } from '../MoveChapters'
 import { HistoryButton } from '../History'
+import { BeatAsk } from '../Beats'
 import { PlotGraph } from './PlotGraph'
 import { CHAPTER_STATUS, CHAPTER_STATUS_TONE, THREAD_KIND, THREAD_STATUS, THREAD_STATUS_TONE } from '../labels'
 import {
@@ -273,6 +274,9 @@ function ChapterPlanEditor({ plan, index, plans }: { plan: ChapterPlan; index: n
   const [notesTouched, setNotesTouched] = useState(false)
   const [direction, setDirection] = useState('')
   const [deriving, setDeriving] = useState(false)
+  // The beats ticked to be changed by a sentence (see `BeatAsk`).
+  const [tickedBeats, setTickedBeats] = useState<string[]>([])
+  useEffect(() => { setTickedBeats([]) }, [plan.id])
   useEffect(() => { if (!dirty) setDraft(plan) }, [plan, dirty])
   const set = <K extends keyof ChapterPlan>(key: K, value: ChapterPlan[K]): void => {
     setDraft(previous => ({ ...previous, [key]: value }))
@@ -408,9 +412,15 @@ function ChapterPlanEditor({ plan, index, plans }: { plan: ChapterPlan; index: n
         <Button icon="sparkles" busy={deriving} disabled={dirty || reading !== undefined} title={dirty ? t('先保存当前修改', 'Save your edits first') : chapter?.hasText === true ? t('照章纲重新排（不看正文）', 'Laid out anew from the plan, not from the text') : undefined} onClick={deriveBeats}>{t('推演节拍', 'Derive beats')}</Button>
         {chapter?.hasText === true ? <Button icon="refresh" busy={reading === 'beats'} pending={t('场记在读正文…', 'Reading the text…')} disabled={dirty || deriving || reading !== undefined} title={dirty ? t('先保存当前修改', 'Save your edits first') : t('只把节拍照这一章现在的正文重新读出来；原来的在历史版本里', 'The beats alone read anew off the chapter as it now stands; the ones before stay in the history')} onClick={() => { byText('beats') }}>{t('照正文更新节拍', 'Beats from the text')}</Button> : null}
       </div>
+      {/* One beat more, or the ticked ones changed, by a sentence: nothing else of them is touched. */}
+      <BeatAsk chapter={plan.id} beats={plan.beats ?? []} chosen={tickedBeats} onDone={() => { setTickedBeats([]) }} disabled={dirty || deriving || reading !== undefined} why={dirty ? t('先保存当前修改', 'Save your edits first') : undefined} />
       <ol className="nv-beats">
         {beats.map((beat, at) => (
-          <li key={beat.id} className="nv-beat">
+          <li key={beat.id} className={cx('nv-beat', tickedBeats.includes(beat.id) && 'is-ticked')}>
+            {/* (A beat just typed in is not saved yet: there is nothing of it for the planner to change.) */}
+            {(plan.beats ?? []).some(saved => saved.id === beat.id)
+              ? <input type="checkbox" className="nv-beat-tick" checked={tickedBeats.includes(beat.id)} title={t('勾上：照上面那句话只改这一个（可以勾几个）', 'Tick it: the sentence above changes this beat only (several may be ticked)')} onChange={(event) => { const on = event.target.checked; setTickedBeats(previous => on ? [...previous, beat.id] : previous.filter(id => id !== beat.id)) }} />
+              : <span className="nv-beat-tick" />}
             <span className="nv-beat-no">{at + 1}</span>
             <div className="nv-beat-body">
               <TextArea value={beat.summary} minRows={1} placeholder={t('这一场发生什么', 'What happens in this beat')} onChange={(event) => { setBeat(at, { summary: event.target.value }) }} />

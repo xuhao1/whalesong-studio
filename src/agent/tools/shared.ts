@@ -60,6 +60,7 @@ const RECORD_LABELS: Record<string, [string, string]> = {
   novel_bible: ['改了设定', 'Changed the bible'],
   novel_outline: ['调整了大纲', 'Changed the outline'],
   novel_reference: ['动了参考文献', 'Changed the references'],
+  novel_jot: ['记了随笔', 'Kept a jotting'],
   novel_derive: ['让策划推演', 'Had the planner derive'],
   novel_write: ['让写手写作', 'Had the writer draft'],
   novel_revise: ['让写手修订', 'Had the writer revise'],

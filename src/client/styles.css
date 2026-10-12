@@ -13033,3 +13033,182 @@ button.nv-album-chapter:hover {
   border-radius: 0;
   object-fit: contain;
 }
+
+/* The author's jottings: a box to write one in, then the notes, the latest first. */
+.nv-jottings {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  max-width: 880px;
+}
+
+.nv-jot-new {
+  display: grid;
+  gap: 6px;
+}
+
+.nv-jot-new-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.nv-jot-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.nv-jot-find {
+  flex: 1 1 140px;
+  min-width: 120px;
+  max-width: 260px;
+}
+
+.nv-jot-list {
+  display: grid;
+  gap: 10px;
+}
+
+.nv-jot {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--nv-border);
+  border-radius: 10px;
+  background: var(--nv-surface);
+}
+
+.nv-jot.is-kept {
+  border-style: dashed;
+}
+
+.nv-jot.is-kept > textarea,
+.nv-jot.is-kept .nv-jot-title {
+  color: var(--nv-text-2);
+}
+
+.nv-jot.is-marked {
+  border-color: var(--nv-brand);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--nv-brand) 22%, transparent);
+}
+
+.nv-jot > header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.nv-jot-title {
+  flex: 1 1 160px;
+  min-width: 120px;
+  font-weight: 600;
+}
+
+.nv-jot-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.nv-jot-removed > summary {
+  cursor: pointer;
+  color: var(--nv-text-2);
+  font-size: 13px;
+}
+
+.nv-jot-removed ul {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.nv-jot-removed li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.nv-jot-removed-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--nv-text-2);
+}
+
+.nv-jot-quick {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+
+.nv-jot-quick > textarea {
+  width: 100%;
+}
+
+/* The bible has many pages: where they do not fit in a row they wrap — none of them is to be scrolled to. */
+.nv-bible > .nv-tabs {
+  flex-wrap: wrap;
+  overflow-x: visible;
+  row-gap: 4px;
+}
+
+/* (What a jotting is about is a word or two: its box is as wide as that, not as wide as the row.) */
+.nv-jot > header > .nv-select,
+.nv-jot-new-row > .nv-select,
+.nv-jot-quick > .nv-select {
+  width: auto;
+  flex: none;
+}
+
+/* One beat by a sentence: the box, where the beat goes, the button — and the ticks that say which beats it changes. */
+.nv-beat-ask {
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+.nv-beat-ask > .nv-input:first-child {
+  flex: 1 1 220px;
+  min-width: 160px;
+}
+
+.nv-beat-ask > .nv-select {
+  width: auto;
+  flex: none;
+}
+
+.nv-beat-tick {
+  flex: none;
+  width: 14px;
+  margin: 9px 0 0;
+}
+
+.nv-beat.is-ticked .nv-beat-no {
+  background: var(--nv-brand);
+  color: var(--nv-on-accent);
+}
+
+.nv-beats-pick > li > label {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.nv-beats-pick > li > label > input {
+  flex: none;
+  margin: 3px 0 0;
+}
+
+.nv-beats-pick > li.is-ticked {
+  color: var(--nv-text);
+}

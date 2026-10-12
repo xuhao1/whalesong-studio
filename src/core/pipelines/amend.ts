@@ -11,7 +11,7 @@
  * to read at a glance, taken or turned down one by one — or all of them at once.
  */
 import { isPictureLine, keptPictures } from '../../shared/embedded'
-import { MAIN_LINE, type FiguresKept, type PictureGuide, type PicturesRead, type PromptLanguage, type Proposal } from '../../shared/types'
+import { MAIN_LINE, type MendReach, type FiguresKept, type PictureGuide, type PicturesRead, type PromptLanguage, type Proposal } from '../../shared/types'
 import { changedParts, clip, countWords, fuzzyFind, newId, occurrences } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { asArray, asRecord, asText, completeJson } from '../llm'
@@ -23,7 +23,7 @@ import { errorMessage, isAbort } from '../util/async'
 import { scheduleDigest } from './digest'
 import { schedulePlanFollow } from './follow'
 import { guidePictures, picturesRead } from './guides'
-import { figuresOf, mendsDirect, onPending, partedAs, requireChapter, settleTakenIn, shouldApply, takenIn } from './revise'
+import { figuresOf, mendsBold, mendsDirect, onPending, partedAs, requireChapter, settleTakenIn, shouldApply, takenIn } from './revise'
 
 export interface AmendParams {
   chapter: string
@@ -41,6 +41,11 @@ export interface AmendParams {
   onto?: boolean
   /** Whose model goes through the chapter: the writer's, or the planner's. Left out: as the settings say (`mendBy`). */
   by?: 'writer' | 'planner'
+  /**
+   * How far the instruction is carried: through every place of the chapter it has a hold on, a place taking in what
+   * has to move with it — or the least that answers it. Left out: as the settings say (`mendReach`).
+   */
+  reach?: MendReach
 }
 
 export interface AmendResult {
@@ -127,8 +132,8 @@ function amended(text: string, edit: Edit, lang: PromptLanguage): { text: string
   const whole = countWords(text)
   if (whole > 400 && countWords(matched) > whole * PLACE_MOST) {
     throw new Error(L(lang,
-      '这一条圈了大半章：只圈非改不可的那一两句，一处一处地改。要求真的要整章重写时，不要硬改——交回时说明这一章得整章重写。',
-      'This takes in most of the chapter: take in only the sentence or two that have to change, one place at a time. Where the instruction really needs the chapter written over, do not force it — say so when you hand in.'))
+      '这一条圈了大半章：分成几处，一处一条地改。要求真的要整章重写时，不要硬改——交回时说明这一章得整章重写。',
+      'This takes in most of the chapter: make it several places, an entry each. Where the instruction really needs the chapter written over, do not force it — say so when you hand in.'))
   }
   // The pictures that stood in the passage stay in it; one of the writer's own making comes out.
   // (Paragraphs parted as the chapter parts them, whatever way the model broke its lines.)
@@ -212,6 +217,7 @@ export async function amendChapter(core: NovelCore, runtime: ProjectRuntime, par
   const lang = promptLanguage(manifest.language)
   // Who goes through the chapter: the writer — or the crew's model, where the author has the planner make such changes.
   const who: 'writer' | 'planner' = params.by ?? (mendsDirect(core) ? 'planner' : 'writer')
+  const bold = mendsBold(core, params.reach)
   const role = who === 'planner' ? 'architect' as const : 'writer' as const
   const zhWho = who === 'planner' ? '策划' : '写手'
   const enWho = who === 'planner' ? 'planner' : 'writer'
@@ -250,7 +256,7 @@ export async function amendChapter(core: NovelCore, runtime: ProjectRuntime, par
   const byCall = async (): Promise<string> => {
     const ask = async (more: string): Promise<{ edits: Edit[]; note: string }> => (await completeJson(core.llm, {
       route,
-      system: amendCallSystem({ ...base, style }),
+      system: amendCallSystem({ ...base, style, ...(bold ? { bold: true } : {}) }),
       prompt: `${amendCallTask({ ...base, context, instruction: params.instruction })}${more}`,
       ...(guided !== undefined && guided.images.length > 0 ? { images: guided.images } : {}),
       ...(task.signal !== undefined ? { signal: task.signal } : {}),
@@ -425,7 +431,7 @@ export async function amendChapter(core: NovelCore, runtime: ProjectRuntime, par
         role,
         label: L(lang, `${zhWho} · ${label}`, `${who === 'planner' ? 'Planner' : 'Writer'} · ${label}`),
         persona: amendPersona(base),
-        rules: amendRules({ ...base, style, ...names }),
+        rules: amendRules({ ...base, style, ...names, ...(bold ? { bold: true } : {}) }),
         prompt: amendTask({ ...base, context, instruction: params.instruction, index: chapter.index, chapter: chapter.plan.title, words, edit: names.edit, done: names.done }),
         ...(guided !== undefined && guided.images.length > 0 ? { images: guided.images } : {}),
         tools: [...bookTools(runtime, task.signal, chapter.line ?? MAIN_LINE), ...tools],

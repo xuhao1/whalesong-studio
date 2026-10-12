@@ -66,6 +66,7 @@ export function renderDigest(state: ProjectState, mode: WorkMode, relativeRoot: 
         leads.length > 0 ? `主要人物：${leads.join('、')}` : '',
         stats.pendingProposals + stats.pendingSuggestions > 0 ? `待处理：修订提案 ${stats.pendingProposals}，设定建议 ${stats.pendingSuggestions}` : '',
         (state.references ?? 0) > 0 ? `参考文献：${state.references} 本在用（novel_reference 看是哪几本、作者要怎么参考）` : '',
+        (state.jottings ?? 0) > 0 ? `随笔：作者记了 ${state.jottings} 条没想好的想法（novel_jot 列出能读的；是想法，不是设定）` : '',
         ...outside.map(entry => `【工坊之外的改动 ${entry.at.slice(0, 16).replace('T', ' ')} UTC】${entry.summary}`),
         nextStep(state, true, digests),
       ]
@@ -75,6 +76,7 @@ export function renderDigest(state: ProjectState, mode: WorkMode, relativeRoot: 
         leads.length > 0 ? `Main cast: ${leads.join(', ')}` : '',
         stats.pendingProposals + stats.pendingSuggestions > 0 ? `Waiting: ${stats.pendingProposals} revision proposals, ${stats.pendingSuggestions} bible suggestions` : '',
         (state.references ?? 0) > 0 ? `References: this book goes by ${state.references} other book(s) (novel_reference lists them and how the author wants each used)` : '',
+        (state.jottings ?? 0) > 0 ? `Jottings: the author keeps ${state.jottings} loose note(s) of ideas not settled (novel_jot lists the ones you may read; ideas, not canon)` : '',
         ...outside.map(entry => `[Changed outside the Studio, ${entry.at.slice(0, 16).replace('T', ' ')} UTC] ${entry.summary}`),
         nextStep(state, false, digests),
       ]

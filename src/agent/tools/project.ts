@@ -81,7 +81,7 @@ export function projectTools(service: NovelService): ToolDefinition[] {
 
     novelTool(service, {
       name: 'novel_read',
-      description: 'Read one thing from the project in full: a chapter\'s text (paged), a chapter\'s outline, a character card, a world entry, a style profile, a chapter\'s memory (summary, facts, character states), the open threads, a chapter\'s review, or a chapter\'s version list. `ref` accepts ids, names, and chapter numbers ("3", "第3章", "latest"). A book may hold several lines of the plot — stories of their own in one world, or ways one story parts: every line counts its own chapters. A chapter number counts along the main line unless `line` names another; the whole outline lists every line.',
+      description: 'Read one thing from the project in full: a chapter\'s text (paged), a chapter\'s outline, a character card, a world entry, a style profile, a chapter\'s memory (summary, facts, character states), the open threads, a chapter\'s review, a chapter\'s version list, or the author\'s jottings (what=jottings: loose notes — ideas, never canon — listed, or one whole by `ref`; one the author keeps from agents is not there). `ref` accepts ids, names, and chapter numbers ("3", "第3章", "latest"). A book may hold several lines of the plot — stories of their own in one world, or ways one story parts: every line counts its own chapters. A chapter number counts along the main line unless `line` names another; the whole outline lists every line.',
       parameters: {
         what: { type: 'string', required: true, enum: READ_KINDS },
         ref: { type: 'string', description: 'Which one. Not needed for threads; optional for style (default: the active style), outline (default: the whole outline), and character and world (default: the list of them).' },
@@ -97,7 +97,7 @@ export function projectTools(service: NovelService): ToolDefinition[] {
 
     novelTool(service, {
       name: 'novel_search',
-      description: 'Search everything the project knows — manuscript passages, character cards, world entries, chapter memories and outlines — by keywords or by meaning. Use it to check canon before deciding plot or giving the writer a brief ("where did she get the scar", "every scene in the tavern").',
+      description: 'Search everything the project knows — manuscript passages, character cards, world entries, chapter memories and outlines, and the author\'s jottings (source `jotting`: ideas, not canon) — by keywords or by meaning. Use it to check canon before deciding plot or giving the writer a brief ("where did she get the scar", "every scene in the tavern").',
       parameters: {
         query: { type: 'string', required: true },
         sources: listParameter('Restrict to some sources. Default: all.', { enum: SEARCH_SOURCES }),

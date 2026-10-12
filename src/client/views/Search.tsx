@@ -13,6 +13,7 @@ const SOURCE: Record<SearchSource, { icon: IconName; label: [string, string] }> 
   world: { icon: 'globe', label: ['世界观', 'World'] },
   memory: { icon: 'layers', label: ['章节记忆', 'Memory'] },
   outline: { icon: 'tree', label: ['大纲', 'Outline'] },
+  jotting: { icon: 'quote', label: ['随笔', 'Jotting'] },
 }
 
 export function SearchPanel({ onClose }: { onClose: () => void }) {
@@ -36,6 +37,7 @@ export function SearchPanel({ onClose }: { onClose: () => void }) {
     else if (source === 'outline') controller.setView('outline', chapters.has(ref) ? ref : undefined)
     else if (source === 'character') controller.openCharacter(ref)
     else if (source === 'world') controller.openWorld(ref)
+    else if (source === 'jotting') controller.openJottings(ref)
     else controller.setView('bible')
     onClose()
   }

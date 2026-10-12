@@ -200,18 +200,21 @@ export function amendPersona(base: Base): string {
 /**
  * How the writer goes through a chapter as an agent.
  * @param base.edit - the tool a place is changed with; `base.read` shows the chapter as changed so far; `base.done` hands the work in.
+ * @param base.bold - the instruction is carried through wherever the chapter gives it a hold, and a place takes in what
+ *   has to move with it; otherwise the least that answers it.
  */
-export function amendRules(base: Base & { style: string; edit: string; read: string; done: string }): string {
+export function amendRules(base: Base & { style: string; edit: string; read: string; done: string; bold?: boolean }): string {
+  const bold = base.bold === true
   return L(base.lang, `## 这件活
-这是一次委派：作者（或和作者对话的总编）把一章和一条修改要求交给了你，任务就是下面那条消息。这场对话里没有人会回答提问——不要问；拿不准的地方按最稳妥的理解做，并在交回时写明你是怎么取舍的。
+这是一次委派：作者（或和作者对话的总编）把一章和一条修改要求交给了你，任务就是下面那条消息。这场对话里没有人会回答提问——不要问；${bold ? '拿不准的地方照修改要求的方向做足' : '拿不准的地方按最稳妥的理解做'}，并在交回时写明你是怎么取舍的。
 
 ## 怎么改
 - 这一章只有一条路可以改：${base.edit}。find 是要改的那几句，从这一章现在的正文里逐字照抄；replace 是它改成的样子。改过的正文留在这一章里——不要把整章写出来交回，也不要用文件工具或命令行去动书里的文件。
-- 每一处只圈非改不可的那一两句：圈得越小，作者看到的改动越清楚。要动好几处，一处一条——想好了的几处放进 edits 一次交上来，省来回；拿不准的先改一处看看。
+- ${bold ? '一处圈够：要一起动才通顺、才站得住的几句，要重写的一整段，整个圈进来——不缩成其中一句；不相干的句子不圈。' : '每一处只圈非改不可的那一两句：圈得越小，作者看到的改动越清楚。'}要动好几处，一处一条——想好了的几处放进 edits 一次交上来，省来回；拿不准的先改一处看看。
 - find 在这一章里只能对得上一处；对得上不止一处时，连它前面或后面的半句一起抄。同一个词、同一个称呼要通篇换掉的，用 all=true。
 - 要加一句：find 圈它要接在后面（或前面）的那一句，replace 里把那一句原样写上，再接上新写的。要删一句：圈它，replace 留空。
 - 改过之后，后面的 find 要照改过的正文抄；${base.read} 随时给你看这一章现在的样子。
-- 修改要求说到哪里改到哪里：没说到的句子不动，不顺手润色，不借机添情节、伏笔或交代。改过的地方要和它前后没动的文字接得上——人称、时态、语气、衔接。
+- ${bold ? '把修改要求落实到这一章每一处用得上的地方，不只改最显眼的那一两句；一处改了之后因此要跟着变的句子——后面的呼应、别人的反应、衔接——一并改；要求需要新写一段交代、动作或对白时就写——只用设定和前文已经有的事实，原文交代过的信息不丢。要求管不到的句子不动，情节的走向不借机改。' : '修改要求说到哪里改到哪里：没说到的句子不动，不顺手润色，不借机添情节、伏笔或交代。'}改过的地方要和它前后没动的文字接得上——人称、时态、语气、衔接。
 - 设定集与前文已发生的事实是铁律。任务给的材料不够、要对照书里别处（前后章、人物卡、设定）时再去查：book_read、book_search。
 - 正文里单独成行的 ![说明](路径) 是插在那里的一张图，不是正文：不要圈进 find，replace 里也不要添图。
 - ${outputRule(base)}
@@ -219,15 +222,15 @@ export function amendRules(base: Base & { style: string; edit: string; read: str
 
 【文风】
 ${base.style}`, `## The work
-This is a delegation: the author (or the showrunner, who talks with the author) gave you a chapter and one instruction — the message below is the task. Nobody in this conversation answers questions — do not ask; where you are unsure, take the safest reading and say, when you hand in, how you decided.
+This is a delegation: the author (or the showrunner, who talks with the author) gave you a chapter and one instruction — the message below is the task. Nobody in this conversation answers questions — do not ask; where you are unsure, ${bold ? 'go the whole way in the direction the instruction points' : 'take the safest reading'} and say, when you hand in, how you decided.
 
 ## How to revise
 - There is one way to change this chapter: ${base.edit}. \`find\` is the sentences to change, copied word for word from the chapter as it reads now; \`replace\` is what they become. What you change stays in the chapter — do not write the chapter out to hand it back, and do not touch the book's files with file tools or the shell.
-- Each place takes in only the sentence or two that have to change: the smaller the place, the clearer the change the author is shown. Several places are an entry each — the ones you have settled go in \`edits\` together, to save round trips; where you are unsure, change one and look.
+- ${bold ? 'A place takes in enough: the sentences that have to move together for the change to read well and hold, a paragraph that has to be written again whole — not narrowed to one of its sentences; sentences that have no part in it stay out.' : 'Each place takes in only the sentence or two that have to change: the smaller the place, the clearer the change the author is shown.'} Several places are an entry each — the ones you have settled go in \`edits\` together, to save round trips; where you are unsure, change one and look.
 - \`find\` has to stand in one place of the chapter only; where it stands in more, copy the half sentence before or after it too. A word or a name to be changed throughout: all=true.
 - To add a sentence: \`find\` the sentence it goes after (or before), and write that sentence back in \`replace\`, with the new one beside it. To take a sentence out: \`find\` it, and leave \`replace\` empty.
 - Once something is changed, a later \`find\` is copied from the text as changed; ${base.read} shows the chapter as it reads now.
-- Change what the instruction speaks of and nothing else: sentences it does not touch stay, nothing is polished in passing, no event, hint or explanation is added on the side. What you change has to join the untouched text on both sides — person, tense, voice.
+- ${bold ? 'Carry the instruction through every place of the chapter it has a hold on, not only the plainest sentence or two; where one change leaves others not agreeing with it — an echo later on, how somebody answers, a join — those change too; and where it takes a passage written new — a word of explanation, a gesture, lines of talk — it is written, out of what the bible and the text so far already hold and with nothing the text told lost. Sentences the instruction has nothing to say of stay, and the course of the plot is not changed under cover of it.' : 'Change what the instruction speaks of and nothing else: sentences it does not touch stay, nothing is polished in passing, no event, hint or explanation is added on the side.'} What you change has to join the untouched text on both sides — person, tense, voice.
 - The story bible and everything already written are law. Where the task's material is not enough and the work has to be held against another part of the book (earlier and later chapters, a character's card, a rule of the world), look: book_read, book_search.
 - A line of the chapter that reads ![caption](path) is a picture placed there, not prose: do not take it into \`find\`, and add no picture in \`replace\`.
 - ${outputRule(base)}
@@ -248,15 +251,16 @@ export function amendTask(base: Base & { context: string; instruction: string; i
  * The same work asked in one request, of a writer whose model cannot run as an agent: the changes come back as a
  * list of places, and are made here.
  */
-export function amendCallSystem(base: Base & { style: string }): string {
+export function amendCallSystem(base: Base & { style: string; bold?: boolean }): string {
+  const bold = base.bold === true
   return L(base.lang, `你是长篇小说《${bare(base.title)}》的作者，正在按编辑的意见改自己写好的一章——在原稿上改，不是重写。你会看到设定、前情、本章现有正文与修改要求；你交回的是一份改动清单，不是改好的整章。
 
 规则：
 1. 只输出 JSON：{"edits": [{"find": "要改的那几句，从本章现有正文里逐字照抄", "replace": "它改成的样子", "why": "一句话：为什么改"}], "note": "一两句话：改了哪几处、怎么取舍的"}
-2. 一处一条，从前到后排；每条只圈非改不可的那一两句，不整段整段地圈，更不要把整章放进一条里。
+2. 一处一条，从前到后排；${bold ? '每条圈够——要一起动才通顺、才站得住的几句，要重写的一整段，整个圈进来；不相干的句子不圈，' : '每条只圈非改不可的那一两句，不整段整段地圈，'}更不要把整章放进一条里。
 3. find 在本章里只能对得上一处：对得上不止一处时，连它前面或后面的半句一起抄。清单是照着现有正文一条条依次改的：后一条的 find 不要落在前一条改过的句子里。同一个词、同一个称呼要通篇换掉的，那一条加 "all": true。
 4. 要加一句：find 圈它要接在后面的那一句，replace 里把那一句原样写上，再接上新写的。要删一句：圈它，replace 给空字符串。
-5. 修改要求说到哪里改到哪里：没说到的句子不动，不顺手润色，不添要求之外的内容。改过的地方要和前后没动的文字接得上。
+5. ${bold ? '把修改要求落实到这一章每一处用得上的地方，不只改最显眼的那一两句；一处改了之后因此要跟着变的句子（呼应、反应、衔接）一并改；要求需要新写一段交代、动作或对白时就写——只用设定和前文已经有的事实，原文交代过的信息不丢。要求管不到的句子不动，情节的走向不借机改。' : '修改要求说到哪里改到哪里：没说到的句子不动，不顺手润色，不添要求之外的内容。'}改过的地方要和前后没动的文字接得上。
 6. 不得违背设定与前文事实。
 7. 正文里单独成行的 ![说明](路径) 是一张图，不是正文：不要圈进 find，replace 里也不要添图。
 8. 这一章不需要改：edits 给空数组，在 note 里说明。修改要求是通篇的（整章换文风、换视角、重排结构）、一处处改办不到：edits 给空数组，在 note 里说这一章得整章重写。
@@ -267,10 +271,10 @@ ${base.style}`, `You are the author of the novel "${bare(base.title)}", revising
 
 Rules:
 1. Output JSON only: {"edits": [{"find": "the sentences to change, copied word for word from the chapter as it stands", "replace": "what they become", "why": "one sentence: why"}], "note": "a sentence or two: which places you changed and how you decided"}
-2. One entry a place, in the order they stand; each takes in only the sentence or two that have to change — not whole paragraphs, and never the chapter in one entry.
+2. One entry a place, in the order they stand; ${bold ? 'each takes in enough — the sentences that have to move together for the change to read well and hold, a paragraph that has to be written again whole; sentences that have no part in it stay out' : 'each takes in only the sentence or two that have to change — not whole paragraphs'}, and never the chapter in one entry.
 3. \`find\` has to stand in one place of the chapter only: where it stands in more, copy the half sentence before or after it too. The list is made one entry after another on the text as it stands: no \`find\` falls inside a sentence an earlier entry changed. A word or a name to be changed throughout: add "all": true to that entry.
 4. To add a sentence: \`find\` the sentence it goes after, and write that sentence back in \`replace\`, with the new one after it. To take a sentence out: \`find\` it, with \`replace\` an empty string.
-5. Change what the instruction speaks of and nothing else: sentences it does not touch stay, nothing is polished in passing, nothing is added beside what was asked. What you change has to join the untouched text on both sides.
+5. ${bold ? 'Carry the instruction through every place of the chapter it has a hold on, not only the plainest sentence or two; where one change leaves others not agreeing with it (an echo, an answer, a join), those change too; where it takes a passage written new, it is written — out of what the bible and the text so far already hold, with nothing the text told lost. Sentences the instruction has nothing to say of stay, and the course of the plot is not changed under cover of it.' : 'Change what the instruction speaks of and nothing else: sentences it does not touch stay, nothing is polished in passing, nothing is added beside what was asked.'} What you change has to join the untouched text on both sides.
 6. Never contradict the bible or earlier chapters.
 7. A line of the chapter that reads ![caption](path) is a picture, not prose: do not take it into \`find\`, and add no picture in \`replace\`.
 8. Where the chapter needs no change: \`edits\` is an empty list, and \`note\` says why. Where the instruction is of the whole chapter (another style throughout, another point of view, another order of scenes) and cannot be met place by place: \`edits\` is an empty list, and \`note\` says the chapter has to be written over whole.
@@ -296,11 +300,14 @@ export function amendCallTask(base: Base & { context: string; instruction: strin
  * @param base.only - the chapters listed are the only ones that may change.
  * @param base.lead - what is given is something the author noticed in the book: where it shows is said first, each
  *   place quoted (`findings`) — and with `fix` the places that mend it are named after; with `find` nothing changes.
+ * @param base.bold - the problem is mended through: every place it shows, what has to change with each, a place taking
+ *   in as much as has to move — a paragraph where a sentence will not do. Otherwise the least change that mends it.
  * @param base.direct - whoever answers writes what each place is to read (`replace`), and that is what is proposed:
  *   nobody rewrites after it. `base.style`: how the book is written, for those words.
  */
-export function mendTask(base: Base & { instruction: string; chapters: string; texts?: string; allGiven?: boolean; wide: boolean; bible?: boolean; reads: boolean; asked?: boolean; only?: boolean; lead?: 'fix' | 'find'; direct?: boolean; style?: string }): string {
+export function mendTask(base: Base & { instruction: string; chapters: string; texts?: string; allGiven?: boolean; wide: boolean; bible?: boolean; reads: boolean; asked?: boolean; only?: boolean; lead?: 'fix' | 'find'; direct?: boolean; style?: string; bold?: boolean }): string {
   const asked = base.asked === true
+  const bold = base.bold === true
   const lead = base.lead
   const mends = lead !== 'find'
   const direct = base.direct === true && mends
@@ -316,28 +323,42 @@ export function mendTask(base: Base & { instruction: string; chapters: string; t
   const zhLook = given
     ? '这几章的正文都在上面：照它找，不用再用工具把它们读一遍；要对照人物卡、设定条目里的说法时，只查那一条。'
     : base.reads ? '正文已经在上面的章节不用再读；只有摘要的章节，用你的工具去读、去搜，不凭摘要下结论。' : ''
-  const zhFind = `先把它找出来：这个问题在书里的哪几处露出来，每一处记进 findings——chapter：第几章；quote：露出问题的那一两句原文，逐字照抄（作者靠它一眼看到问题在哪）；explanation：这一处是什么问题、和哪里对不上，一两句话；suggestion：可以怎么改，一句话；severity：high（读者会出戏、情节站不住）、medium 或 low；type：continuity、character、world、timeline、style、pacing、logic、language 之一。同一个问题在几处露出来，每一处各记一条；作者说的是一类毛病时，记最明显的那几处，不逐句罗列。只记有毛病的地方：两处对不上时，拿来对照、本身没有写错的那一头不记（在 explanation 里提到它就行）。作者没说到的别的毛病不记。${zhLook}书里其实没有这个问题：findings 给空数组，在 note 里说你查了哪里、为什么认为没有。`
-  const zhLess = asked
-    ? '改动越少越好：这条要求碰到哪几句就改哪几句，碰不到的章节不列。同一件事在几处都写到，每一处各列一条。'
-    : '改动越少越好。一个问题往往不止一处可以下手——矛盾的两头改哪一头都行，缺的一句交代补在哪一段都行：挑改得最少、最不牵动别处的那一处，它可以不在发现问题的那一章。一处能解决的，不改两处。'
+  const zhFind = `先把它找出来：这个问题在书里的哪几处露出来，每一处记进 findings——chapter：第几章；quote：露出问题的那一两句原文，逐字照抄（作者靠它一眼看到问题在哪）；explanation：这一处是什么问题、和哪里对不上，一两句话；suggestion：可以怎么改，一句话；severity：high（读者会出戏、情节站不住）、medium 或 low；type：continuity、character、world、timeline、style、pacing、logic、language 之一。同一个问题在几处露出来，每一处各记一条；${bold ? '作者说的是一类毛病时，它露出来的地方都记——挨在一起的几句记成一条，不逐句罗列。' : '作者说的是一类毛病时，记最明显的那几处，不逐句罗列。'}只记有毛病的地方：两处对不上时，拿来对照、本身没有写错的那一头不记（在 explanation 里提到它就行）。作者没说到的别的毛病不记。${zhLook}书里其实没有这个问题：findings 给空数组，在 note 里说你查了哪里、为什么认为没有。`
+  const zhLess = bold
+    ? asked
+      ? '把这条要求落实到位：它碰到的每一处都改，不只改最显眼的那几句；一处改了之后因此要跟着变的句子——后面的呼应、别人的反应、同一件事的再次提起——也各列一处。同一件事在几处都写到，每一处各列一条；碰不到的章节不列。'
+      : '把问题改到位，不只在一处打个补丁。它露出来的每一处都改；矛盾的两头，站不住的那一头改，两头都别扭就两头都改；缺的交代补在读者需要它的地方，一句不够就写够。一处改了之后因此接不上、说法要跟着变的句子——后面的呼应、别人的反应、同一件事的再次提起——也各列一处。改在哪里由问题的根子定，可以不在发现它的那一章。'
+    : asked
+      ? '改动越少越好：这条要求碰到哪几句就改哪几句，碰不到的章节不列。同一件事在几处都写到，每一处各列一条。'
+      : '改动越少越好。一个问题往往不止一处可以下手——矛盾的两头改哪一头都行，缺的一句交代补在哪一段都行：挑改得最少、最不牵动别处的那一处，它可以不在发现问题的那一章。一处能解决的，不改两处。'
+  // How much a place takes in, and how far what is written there may go from what stood.
+  const zhTake = bold
+    ? '圈够——为了改得通顺、站得住而要一起动的句子都圈进来，几句、一整段都可以；一段话要重写就圈一整段，不缩成其中一句'
+    : '只圈非改不可的那一两句，不整段整段地圈'
   const zhPlace = direct
-    ? `每一处写明：chapter——第几章；find——这一处要被换掉的原文，逐字照抄：只圈非改不可的那一两句，不整段整段地圈；它在这一章里要只对得上一处（重复出现的短句，连它前后的半句一起抄）；要补一句话，就圈它要接在后面的那一句；replace——这一处改好之后的全文，写成成稿：它原样替换 find，就是给作者看的提案，没有人再替你改写。${style !== undefined ? '照这本书的文风写（见上），' : ''}和前后文接得上；find 里用不着动的字句原样写回去，不顺手润色，不添这次要改的之外的内容；整句删掉就给空字符串；why——这一处为什么这样改，一句话。同一章的两处不重叠。正文里单独成行的 ![说明](路径) 是一张图，不圈进 find，replace 里也不添图。${zhElsewhere}`
-    : `每一处写明：chapter——第几章；find——这一处能动的全部范围，写手只能改它里面的字，出不了这个圈：圈非改不可的那一两句，逐字照抄，不整段整段地圈；它在这一章里要只对得上一处（重复出现的短句，连它前后的半句一起抄）；要补一句话，就圈它要接在后面的那一句；how——这一处改成什么样，一两句话，具体到写手照着就能改（补哪句交代、数字改成几、哪半句去掉），理由不写在这里。同一章的两处不重叠。正文里单独成行的 ![说明](路径) 是一张图，不圈进 find。${zhElsewhere}`
-  const zhReach = base.wide ? '把牵连查清：别的章节里写到同一件事、要跟着变才能前后一致的地方，各列一处；无关的不动。' : '只修这个问题本身：不顺手改别的，不借机添新的情节、伏笔或交代。'
+    ? `每一处写明：chapter——第几章；find——这一处要被换掉的原文，逐字照抄：${zhTake}；它在这一章里要只对得上一处（重复出现的短句，连它前后的半句一起抄）；要补一句话，就圈它要接在后面的那一句；replace——这一处改好之后的全文，写成成稿：它原样替换 find，就是给作者看的提案，没有人再替你改写。${style !== undefined ? '照这本书的文风写（见上），' : ''}和前后文接得上；${bold ? '圈进来的句子该重写的重写、该补的补够，不必拘在原句的字面上，用不着动的照原样写回去；和这次要改的事无关的不借机改' : 'find 里用不着动的字句原样写回去，不顺手润色，不添这次要改的之外的内容'}；整句删掉就给空字符串；why——这一处为什么这样改，一句话。同一章的两处不重叠。正文里单独成行的 ![说明](路径) 是一张图，不圈进 find，replace 里也不添图。${zhElsewhere}`
+    : `每一处写明：chapter——第几章；find——这一处能动的全部范围，写手只能改它里面的字，出不了这个圈：${bold ? `所以${zhTake}` : zhTake}，逐字照抄；它在这一章里要只对得上一处（重复出现的短句，连它前后的半句一起抄）；要补一句话，就圈它要接在后面的那一句；how——${bold ? '这一处改成什么样，具体到写手照着就能写：补哪些交代、哪几句怎么变、这一段落在哪里，要新写一小段时说清写什么' : '这一处改成什么样，一两句话，具体到写手照着就能改（补哪句交代、数字改成几、哪半句去掉）'}，理由不写在这里。同一章的两处不重叠。正文里单独成行的 ![说明](路径) 是一张图，不圈进 find。${zhElsewhere}`
+  const zhReach = base.wide
+    ? `把牵连查清：别的章节里写到同一件事、要跟着变才能前后一致的地方，各列一处${bold ? '——宁可多查一章，不漏一处' : ''}；无关的不动。`
+    : bold
+      ? '顺着这个问题改到底：同一章里别处同样站不住的说法、同一个漏掉的交代，一并改；修它要新写一小段交代、一个动作、两三句对白时就写。和它无关的毛病不动，情节的走向不借机改。'
+      : '只修这个问题本身：不顺手改别的，不借机添新的情节、伏笔或交代。'
+  // (Mended through, a place is rewritten more freely: what may not go with that is said by itself.)
+  const zhKeep = '改得再多，两样不变。圈进来的原文交代过的事——谁、做了什么、结果怎样、哪条规矩、哪个数——改完一条都还在：可以换个说法、挪个位置、拆进对话里，不能没了；交回之前拿原文逐条对一遍。新写的句子不另起人物卡、设定和前文里没有的名字、年份、来历、死因——要用到这类事实，就用已经写下的。'
   const zhWhole = asked
     ? '只有零碎改做不到——要求本身就是通篇的（文风、语气、视角、节奏），或者一章里要动的句子多到连成片——才把这一章列进 chapters，由写手整章重写；几处改能做到的不列。没有就给空数组。'
     : '只有零碎改解决不了——这一章的节奏、视角、语气要通篇变——才把它列进 chapters，由写手整章重写；几处改能解决的不列。没有就给空数组。'
   const zhBible = '问题的根子在设定集——人物卡或设定条目写的和正文对不上，或者设定本身要调整——把要改的地方列在 bible 里：人物的 field 用 tagline、appearance、personality、background、motivation、flaw、arc、voice、age、gender 之一，设定条目用 summary 或 body。正文没问题、只是设定写错了的，只改设定，不动正文。'
   const zhRules = [
     ...(lead !== undefined ? [zhFind] : []),
-    ...(mends ? [zhLess, zhPlace, zhReach, zhWhole, ...(base.bible === true ? [zhBible] : [])] : ['这一次只找不改：edits 和 chapters 都给空数组。']),
+    ...(mends ? [zhLess, zhPlace, zhReach, ...(bold ? [zhKeep] : []), zhWhole, ...(base.bible === true ? [zhBible] : [])] : ['这一次只找不改：edits 和 chapters 都给空数组。']),
   ].map((rule, at) => `${at + 1}. ${rule}`).join('\n')
   const zhNote = lead !== undefined
     ? `找到了几处、问题的根子在哪${mends ? '、为什么改这几处' : ''}；没找到就说查了哪里`
     : asked ? '这条要求碰到了哪些地方、为什么是这几处' : '问题出在哪、为什么改这几处'
   const zhEdit = direct
-    ? '{"chapter": 章节序号, "find": "要换掉的那一两句原文，逐字照抄", "replace": "这一处改好之后的全文", "why": "为什么这样改"}'
-    : '{"chapter": 章节序号, "find": "这一处能动的那一两句原文，逐字照抄", "how": "这一处改成什么样（具体到位）"}'
+    ? `{"chapter": 章节序号, "find": "${bold ? '要换掉的原文' : '要换掉的那一两句原文'}，逐字照抄", "replace": "这一处改好之后的全文", "why": "为什么这样改"}`
+    : `{"chapter": 章节序号, "find": "${bold ? '这一处能动的原文' : '这一处能动的那一两句原文'}，逐字照抄", "how": "这一处改成什么样（具体到位）"}`
   const zhShape = `{${lead !== undefined ? '"findings": [{"chapter": 章节序号, "quote": "露出问题的原文，逐字照抄", "type": "continuity|character|world|timeline|style|pacing|logic|language", "severity": "high|medium|low", "explanation": "这一处是什么问题", "suggestion": "可以怎么改"}], ' : ''}"edits": [${mends ? zhEdit : ''}], "chapters": [${mends ? '{"index": 章节序号, "reason": "为什么非整章重写不可、怎么改"}' : ''}], ${base.bible === true && mends ? '"bible": [{"kind": "character|world", "name": "人物卡或设定条目的名字", "field": "要改的字段", "value": "改成什么", "reason": "为什么"}], ' : ''}"note": "给作者，两三句话：${zhNote}"}`
   const zhIntro = lead === 'find'
     ? '作者读自己的书时发现了一个问题，要你到书里把它找出来：说清它在哪几处露出来。这一次只找，不改。'
@@ -353,28 +374,40 @@ export function mendTask(base: Base & { instruction: string; chapters: string; t
   const enLook = given
     ? ' The text of these chapters is above: look there, and do not read them again with a tool; where a card or an entry of the bible has to be held against it, look up that one.'
     : base.reads ? ' A chapter whose text is above is not read again; one of which only a summary is given is read and searched with your tools — nothing is concluded from a summary.' : ''
-  const enFind = `Find it first: where in the book this shows, each place an entry of findings — chapter: its number; quote: the sentence or two where it shows, copied word for word (the author sees by it where the problem is); explanation: what is wrong at this place and what it does not agree with, in a sentence or two; suggestion: how it could be mended, in a sentence; severity: high (a reader is thrown, the plot does not hold), medium or low; type: one of continuity, character, world, timeline, style, pacing, logic, language. Where the same problem shows in several places, each is an entry; where the author names a kind of fault, the plainest instances and not every sentence. Only where something is wrong: of two places that do not agree, the one that is held against the other and is itself right is not recorded (name it in explanation). Other faults the author did not speak of are not recorded.${enLook} Where the book does not have the problem after all: an empty findings, and in note where you looked and why you think so.`
-  const enLess = asked
-    ? 'As little as will do: the sentences the request reaches change, and a chapter it does not reach is not listed. Where several places tell of the same thing, each is a place of its own.'
-    : 'As little as will do. A problem can usually be taken hold of in more than one place — either end of a contradiction, any paragraph a missing word of explanation could go in: choose the place that changes least and pulls least else with it; it need not be in the chapter the problem was found in. What one place mends is not mended in two.'
+  const enFind = `Find it first: where in the book this shows, each place an entry of findings — chapter: its number; quote: the sentence or two where it shows, copied word for word (the author sees by it where the problem is); explanation: what is wrong at this place and what it does not agree with, in a sentence or two; suggestion: how it could be mended, in a sentence; severity: high (a reader is thrown, the plot does not hold), medium or low; type: one of continuity, character, world, timeline, style, pacing, logic, language. Where the same problem shows in several places, each is an entry; ${bold ? 'where the author names a kind of fault, every place it shows — sentences that stand together as one entry, not one a sentence.' : 'where the author names a kind of fault, the plainest instances and not every sentence.'} Only where something is wrong: of two places that do not agree, the one that is held against the other and is itself right is not recorded (name it in explanation). Other faults the author did not speak of are not recorded.${enLook} Where the book does not have the problem after all: an empty findings, and in note where you looked and why you think so.`
+  const enLess = bold
+    ? asked
+      ? 'Carry the request through: every place it reaches changes, not only the plainest sentences; and where one change leaves others not agreeing with it — an echo later on, how somebody answers, the same thing told again — each of those is a place too. Where several places tell of the same thing, each is a place of its own; a chapter the request does not reach is not listed.'
+      : 'Mend it through, not with a patch at one spot. Every place it shows changes; of the two ends of a contradiction the one that does not hold changes, and both where both sit ill; a missing word of explanation goes where the reader needs it, and as much of it as it takes. Where one change leaves other sentences not agreeing with it — an echo later on, how somebody answers, the same thing told again — each of those is a place too. Where it changes is settled by where the root lies, which need not be the chapter it was found in.'
+    : asked
+      ? 'As little as will do: the sentences the request reaches change, and a chapter it does not reach is not listed. Where several places tell of the same thing, each is a place of its own.'
+      : 'As little as will do. A problem can usually be taken hold of in more than one place — either end of a contradiction, any paragraph a missing word of explanation could go in: choose the place that changes least and pulls least else with it; it need not be in the chapter the problem was found in. What one place mends is not mended in two.'
+  const enTake = bold
+    ? 'take in enough — every sentence that has to move with it for the change to read well and hold, several sentences or a whole paragraph; a paragraph that has to be written again is taken in whole, not narrowed to one of its sentences'
+    : 'the sentence or two that have to change and no whole stretches'
   const enPlace = direct
-    ? `For each place: chapter — its number; find — the text that is replaced here, copied word for word: the sentence or two that have to change and no whole stretches; it has to be found once only in its chapter (for a short sentence that stands more than once, copy the half-sentence beside it too); where a sentence is to be added, take in the one it follows; replace — the whole of this place as it is to read, written as finished prose: it takes the place of find as it stands and is what the author is shown — nobody rewrites after you. ${style !== undefined ? 'In the way this book is written (above), joining ' : 'It joins '}what stands on both sides; the words of find that need not change go back as they stand — no polishing in passing, nothing added beyond what is being changed; an empty string where the sentence goes altogether; why — why this place changes so, in a sentence. Two places of one chapter do not overlap. A line of the text that reads ![caption](path) is a picture: keep it out of find, and add none in replace.${enElsewhere}`
-    : `For each place: chapter — its number; find — all that may change at this place: the writer can change the words inside it and none outside. Take in the sentence or two that have to change and no whole stretches, copied word for word; it has to be found once only in its chapter (for a short sentence that stands more than once, copy the half-sentence beside it too); where a sentence is to be added, take in the one it follows; how — what this place is to say instead, in a sentence or two, specific enough to write from (which word of explanation to add, what the number becomes, which half-sentence goes); the reasons do not go here. Two places of one chapter do not overlap. A line of the text that reads ![caption](path) is a picture: keep it out of find.${enElsewhere}`
-  const enReach = base.wide ? 'Trace what hangs on it: where other chapters tell of the same thing and have to change with it for the book to agree with itself, name a place in each; leave what has nothing to do with it.' : 'Mend this problem and nothing beside it: no other change made in passing, no new turn of the plot, hint or explanation brought in under cover of it.'
+    ? `For each place: chapter — its number; find — the text that is replaced here, copied word for word: ${enTake}; it has to be found once only in its chapter (for a short sentence that stands more than once, copy the half-sentence beside it too); where a sentence is to be added, take in the one it follows; replace — the whole of this place as it is to read, written as finished prose: it takes the place of find as it stands and is what the author is shown — nobody rewrites after you. ${style !== undefined ? 'In the way this book is written (above), joining ' : 'It joins '}what stands on both sides; ${bold ? 'the sentences taken in are rewritten where they need it and added to as far as it takes, not held to the wording there was, and those that need no change go back as they stand; nothing that has no part in this mending is changed under cover of it' : 'the words of find that need not change go back as they stand — no polishing in passing, nothing added beyond what is being changed'}; an empty string where the sentence goes altogether; why — why this place changes so, in a sentence. Two places of one chapter do not overlap. A line of the text that reads ![caption](path) is a picture: keep it out of find, and add none in replace.${enElsewhere}`
+    : `For each place: chapter — its number; find — all that may change at this place: the writer can change the words inside it and none outside${bold ? `, so ${enTake}` : '. Take in the sentence or two that have to change and no whole stretches'}, copied word for word; it has to be found once only in its chapter (for a short sentence that stands more than once, copy the half-sentence beside it too); where a sentence is to be added, take in the one it follows; how — ${bold ? 'what this place is to say instead, specific enough to write from: which explanation comes in, how which sentences change, what the passage comes to rest on, and what is to be written where something new is needed' : 'what this place is to say instead, in a sentence or two, specific enough to write from (which word of explanation to add, what the number becomes, which half-sentence goes)'}; the reasons do not go here. Two places of one chapter do not overlap. A line of the text that reads ![caption](path) is a picture: keep it out of find.${enElsewhere}`
+  const enReach = base.wide
+    ? `Trace what hangs on it: where other chapters tell of the same thing and have to change with it for the book to agree with itself, name a place in each${bold ? ' — sooner one chapter too many looked at than one place missed' : ''}; leave what has nothing to do with it.`
+    : bold
+      ? 'Follow the problem to its end: where the same chapter has the same thing wrong elsewhere — the same statement that does not hold, the same explanation missing — those change too; and where mending it takes a short passage written new — a word of explanation, a gesture, two or three lines of talk — it is written. Faults that have nothing to do with it stay, and the course of the plot is not changed under cover of it.'
+      : 'Mend this problem and nothing beside it: no other change made in passing, no new turn of the plot, hint or explanation brought in under cover of it.'
+  const enKeep = 'However much changes, two things do not. What the text taken in told — who, what was done, how it ended, which rule, which number — is all still told afterwards: in other words, at another spot, broken up into talk, never gone; before handing in, hold it against the original item by item. And what is written new makes up no name, year, origin or cause of death that the cards, the bible and the text so far do not hold — where such a fact is needed, the one already written is used.'
   const enWhole = asked
     ? 'Only where places will not do — the request is itself one for the whole of a chapter (its style, voice, point of view, pace), or so many of its sentences change that they run together — list the chapter under chapters, for the writer to write over whole; a chapter a few places will do for is not listed. An empty array when there is none.'
     : "Only where places will not do — the chapter's pace, point of view or voice has to change throughout — list it under chapters, for the writer to write over whole; a chapter a few places mend is not listed. An empty array when there is none."
   const enBible = 'Where the root of the problem is in the bible — a character card or a world entry that says something else than the text, or canon that itself has to change — list it under `bible`: for a character `field` is one of tagline, appearance, personality, background, motivation, flaw, arc, voice, age, gender; for a world entry, summary or body. Where the text is right and the bible is wrong, change the bible and leave the text.'
   const enRules = [
     ...(lead !== undefined ? [enFind] : []),
-    ...(mends ? [enLess, enPlace, enReach, enWhole, ...(base.bible === true ? [enBible] : [])] : ['This time it is found and not changed: edits and chapters are empty arrays.']),
+    ...(mends ? [enLess, enPlace, enReach, ...(bold ? [enKeep] : []), enWhole, ...(base.bible === true ? [enBible] : [])] : ['This time it is found and not changed: edits and chapters are empty arrays.']),
   ].map((rule, at) => `${at + 1}. ${rule}`).join('\n')
   const enNote = lead !== undefined
     ? `how many places it was found in and where its root lies${mends ? ', and why these places change' : ''}; where it was not found, where you looked`
     : asked ? 'what the request reaches, and why these places' : 'where the problem lies, and why these places'
   const enEdit = direct
-    ? '{"chapter": 1, "find": "the sentence or two replaced here, copied word for word", "replace": "the whole of this place as it is to read", "why": "why it changes so"}'
-    : '{"chapter": 1, "find": "the sentence or two that may change here, copied word for word", "how": "what this place is to say instead, specifically"}'
+    ? `{"chapter": 1, "find": "${bold ? 'the text replaced here' : 'the sentence or two replaced here'}, copied word for word", "replace": "the whole of this place as it is to read", "why": "why it changes so"}`
+    : `{"chapter": 1, "find": "${bold ? 'the text that may change here' : 'the sentence or two that may change here'}, copied word for word", "how": "what this place is to say instead, specifically"}`
   const enShape = `{${lead !== undefined ? '"findings": [{"chapter": 1, "quote": "the text it shows in, copied word for word", "type": "continuity|character|world|timeline|style|pacing|logic|language", "severity": "high|medium|low", "explanation": "what is wrong at this place", "suggestion": "how it could be mended"}], ' : ''}"edits": [${mends ? enEdit : ''}], "chapters": [${mends ? '{"index": 1, "reason": "why nothing short of writing it over will do, and how"}' : ''}], ${base.bible === true && mends ? '"bible": [{"kind": "character|world", "name": "the card or entry", "field": "the field to change", "value": "what it should say", "reason": "why"}], ' : ''}"note": "for the author, in two or three sentences: ${enNote}"}`
   const enIntro = lead === 'find'
     ? 'Reading their own book, the author noticed a problem, and wants it found: say where in the book it shows. This time it is found and not changed.'
@@ -620,6 +653,38 @@ export function deriveBeatsTask(base: Base & { context: string; direction?: stri
 
 Output JSON only:
 {"synopsis": "refined chapter synopsis (100-160 words)", "beats": [{"summary": "what happens", "characters": ["names"], "location": "place", "conflict": "conflict", "outcome": "outcome", "emotion": "emotion"}], "characters": ["every character appearing"], "pov": "viewpoint character name"}`)}`
+}
+
+/**
+ * One beat made from a sentence of the author's, or some of a chapter's beats changed by one: the rest of the beats
+ * are shown to be gone by, and are nobody's to touch.
+ * @param base.beats - the chapter's beats as they stand, numbered from 1.
+ * @param base.chosen - the numbers of the beats that are to change; left out: a beat is added.
+ * @param base.after - where the author wants the new beat: after this number (0: first). Left out: where it belongs.
+ */
+export function beatTask(base: Base & { context: string; ask: string; beats: string; chosen?: number[]; after?: number }): string {
+  const changing = base.chosen !== undefined && base.chosen.length > 0
+  const head = `${base.context}\n\n---\n${L(base.lang, '## 这一章现有的节拍', '## The beats of this chapter as they stand')}\n\n${base.beats.trim().length > 0 ? base.beats.trim() : L(base.lang, '（还没有节拍）', '(none yet)')}\n\n${L(base.lang, '## 作者的一句话', '## What the author says')}\n\n${base.ask.trim()}\n\n---\n`
+  if (changing) {
+    const which = base.chosen!.join(L(base.lang, '、', ', '))
+    return `${head}${L(base.lang, `作者要改这一章的第 ${which} 个节拍，别的节拍不动。照这句话把${base.chosen!.length > 1 ? '这几个' : '这一个'}节拍改好：改完仍是可以直接照着写的场景节拍——谁想要什么、遇到什么阻碍、怎么转折——并且和它前后没动的节拍接得上。这句话没有说到的内容（在场的人、地点）照原样留着。没被点到的节拍只是给你对照的：不要改，也不要交回。照这句话，点到的某一个该并进另一个或者去掉时，给它 "remove": true。
+
+只输出 JSON：
+{"beats": [{"no": 节拍序号, "summary": "节拍内容", "characters": ["人物姓名"], "location": "地点", "conflict": "阻碍", "outcome": "转折 / 结果", "emotion": "情绪"}], "why": "一句话：改了什么"}`, `The author wants beat${base.chosen!.length > 1 ? 's' : ''} ${which} of this chapter changed, and no other. Change ${base.chosen!.length > 1 ? 'them' : 'it'} as said: each is still a scene beat a writer can follow — who wants what, what stands in the way, how it turns — and joins the beats before and after it that stay. What the sentence does not speak of (who is there, where) stays as it was. The beats that were not named are shown to go by: do not change them and do not hand them back. Where, by what is said, one of the named beats goes into another or goes altogether, give it "remove": true.
+
+Output JSON only:
+{"beats": [{"no": the beat's number, "summary": "what happens", "characters": ["names"], "location": "place", "conflict": "what stands in the way", "outcome": "how it turns", "emotion": "emotion"}], "why": "one sentence: what changed"}`)}`
+  }
+  const where = base.after !== undefined
+    ? L(base.lang, base.after <= 0 ? '作者要它放在最前（after 填 0）。' : `作者要它接在第 ${base.after} 个节拍之后（after 填 ${base.after}）。`, base.after <= 0 ? 'The author wants it first (after: 0).' : `The author wants it after beat ${base.after} (after: ${base.after}).`)
+    : L(base.lang, '它放在哪由你定：照这一章里事情的先后，after 填它接在第几个节拍之后（0 = 最前）。', 'Where it goes is yours to settle, by the order things happen in this chapter: `after` is the number of the beat it follows (0: first).')
+  return `${head}${L(base.lang, `作者要给这一章加一个节拍。照这句话把它写成一个可以直接照着写的场景节拍：谁想要什么、遇到什么阻碍、怎么转折；和章纲、和它前后的节拍接得上。只写这一个——现有的节拍一个都不动，也不要交回。${where}
+
+只输出 JSON：
+{"beat": {"summary": "节拍内容（一两句）", "characters": ["人物姓名"], "location": "地点", "conflict": "阻碍", "outcome": "转折 / 结果", "emotion": "情绪"}, "after": 0, "why": "一句话：为什么放在这里"}`, `The author wants one beat added to this chapter. Make of the sentence a scene beat a writer can follow: who wants what, what stands in the way, how it turns — joining the chapter's plan and the beats before and after it. This one only: the beats there are stay untouched, and are not handed back. ${where}
+
+Output JSON only:
+{"beat": {"summary": "what happens (a sentence or two)", "characters": ["names"], "location": "place", "conflict": "what stands in the way", "outcome": "how it turns", "emotion": "emotion"}, "after": 0, "why": "one sentence: why here"}`)}`
 }
 
 /**

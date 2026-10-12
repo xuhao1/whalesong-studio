@@ -23,7 +23,7 @@ import type {
   AnalyzeStep, ComfyCatalog,
   PriceEntry,
   UsageSummary,
-  TtsProviderKind, TtsSettings, SpeechTrial, PictureGuide, ReferenceAspect, ReferenceShelf,
+  TtsProviderKind, TtsSettings, SpeechTrial, PictureGuide, ReferenceAspect, ReferenceShelf, Jotting, JottingKind, JottingsView,
   AmbiencePreset, AudioCue, AudioLine, AudioScript, BookLock, ChapterMemory, ChapterPlan, ChapterReview, IssueSeverity, CharacterCard, CharacterRole, ComicBoard, ComicPanel, LifeMark, SheetsAsk,
   ChapterVideo, CrewRole, DerivedChapter, DerivedPlan, GateKind, GateState, IllustrationInfo, ImageTrial, JobInfo, SettledSuggestion, ModelRoute, NovelSettings, PictureEdit, PictureWhole, PlaySession, PlayTurn, ProjectManifest, ProjectRef, ProjectState, RecommendedState,
   Proposal, SearchHit, SearchSource, SettledProposal, SoundKind, StageStatus, StageStep, StoryboardDensity, StyleProfile, TextRole, TextStep, VersionInfo, WalkOn, WorkMode, WorldEntry, HistoryKind, HistoryVersion, GlossaryTerm, ChapterTranslation,
@@ -592,6 +592,18 @@ export interface NovelRpc {
    * same picture brought twice is one file. `data` is the picture's bytes in base64.
    */
   'guide.add': { params: { root: string; mediaType: string; data: string }; result: { path: string } }
+  // ── jottings: the author's loose notes, kept with the book ──
+  /** Every jotting of the book, found by the agents or not; whether they are found at all; the ones taken away lately. */
+  'jottings.list': { params: { root: string }; result: JottingsView }
+  /** Write one down (no `id`), or change one: only what is given changes. `hidden`: kept from the agents (true), found again (false). */
+  'jottings.save': { params: { root: string; id?: string; title?: string; text?: string; kind?: JottingKind; hidden?: boolean }; result: Jotting }
+  /** Take one away; it stays among the ones taken away lately. */
+  'jottings.remove': { params: { root: string; id: string }; result: JottingsView }
+  /** Put one back that was taken away. */
+  'jottings.restore': { params: { root: string; id: string }; result: JottingsView }
+  /** Let the agents find the book's jottings (`on`), or keep all of them from being found. */
+  'jottings.search': { params: { root: string; on: boolean }; result: JottingsView }
+
   // ── references: the books this one goes by ──
   /** The references of a book, each as it is found now, and how they are used. */
   'references.list': { params: { root: string }; result: ReferenceShelf }
@@ -625,6 +637,12 @@ export interface NovelRpc {
    * point of view, cast and beats; `beats` the beats alone. The plan as it was stays in its history.
    */
   'ai.planOfText': { params: { root: string; chapter: string; what?: 'beats' | 'plan' }; result: JobStarted }
+  /**
+   * One beat added to a chapter from a sentence of the author's (`ask`) — `after`: a beat's id or number, `start` or
+   * `end`; left out: where the planner sees it belongs — or, with `beats` (ids or numbers), those beats changed by the
+   * sentence. No other beat is touched.
+   */
+  'ai.beat': { params: { root: string; chapter: string; ask: string; beats?: string[]; after?: string }; result: JobStarted }
   /** Several chapters' plans set by their texts in one job. A plan already read from the text its chapter has is left alone unless `force`. */
   'ai.plansOfText': { params: { root: string; chapters: string[]; force?: boolean }; result: JobStarted }
   'ai.whatIf': { params: { root: string; question: string; branches?: number; /** Pictures the ways on are weighed with. */ guides?: PictureGuide[] }; result: JobStarted }

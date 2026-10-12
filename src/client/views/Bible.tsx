@@ -11,6 +11,7 @@ import { MAIN_LINE, type NarrativePov, type StyleProfile, type WorldCategory, ty
 import { pathOfLine } from '../../shared/lines'
 import { ArtPage } from '../ArtPage'
 import { References } from './References'
+import { Jottings } from './Jottings'
 import { lines, options, useAssist } from '../forms'
 import { GROUP_CATEGORY, groupOf, WORLD_GROUPS, WORLD_WEIGHTS, worldOrder, worldWeight, type WorldGroup, type WorldWeight } from '../../shared/world'
 import { Icon, type IconName } from '../icons'
@@ -58,7 +59,7 @@ const WEIGHT_LABELS: Record<WorldWeight, [string, string]> = {
   once: ['只出现一次', 'Passed once'],
 }
 
-type BibleTab = WorldGroup | 'style' | 'art' | 'references'
+type BibleTab = WorldGroup | 'style' | 'art' | 'references' | 'jottings'
 
 export function BibleView() {
   const t = useT()
@@ -69,6 +70,8 @@ export function BibleView() {
   useEffect(() => {
     // …or the look of the book's pictures, from where a picture's art direction is read.
     if (entity?.kind === 'art') setTab('art')
+    // …or the author's jottings, from a search hit or the header's quick note.
+    if (entity?.kind === 'jotting') setTab('jottings')
     if (entity?.kind !== 'world') return
     const entry = project.world.find(candidate => candidate.id === entity.id)
     if (entry !== undefined) setTab(groupOf(entry.category))
@@ -85,9 +88,10 @@ export function BibleView() {
           { value: 'style' as BibleTab, label: t('文风', 'Style'), icon: 'feather' as IconName, badge: project.styles.length },
           { value: 'art' as BibleTab, label: t('画风', 'Art'), icon: 'image' as IconName },
           { value: 'references' as BibleTab, label: t('参考文献', 'References'), icon: 'book' as IconName },
+          { value: 'jottings' as BibleTab, label: t('随笔', 'Jottings'), icon: 'quote' as IconName, badge: project.jottings },
         ]}
       />
-      {tab === 'style' ? <Styles /> : tab === 'art' ? <ArtPage /> : tab === 'references' ? <References /> : <World key={tab} group={tab} />}
+      {tab === 'style' ? <Styles /> : tab === 'art' ? <ArtPage /> : tab === 'references' ? <References /> : tab === 'jottings' ? <Jottings /> : <World key={tab} group={tab} />}
     </div>
   )
 }

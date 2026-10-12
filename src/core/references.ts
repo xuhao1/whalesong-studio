@@ -289,7 +289,8 @@ export const setConsultBeforeWriting = async (runtime: ProjectRuntime, on: boole
 
 /** What of a book each kind of reading belongs to. */
 const ASPECT_OF: Partial<Record<ReadKind, ReferenceAspect>> = { chapter: 'text', outline: 'plot', memory: 'plot', threads: 'plot', character: 'characters', world: 'world', style: 'style' }
-const SOURCE_ASPECT: Record<SearchSource, ReferenceAspect> = { manuscript: 'text', character: 'characters', world: 'world', memory: 'plot', outline: 'plot' }
+// (A book's jottings are its author's loose notes: no part of what a reference opens, so never searched from another book.)
+const SOURCE_ASPECT: Record<Exclude<SearchSource, 'jotting'>, ReferenceAspect> = { manuscript: 'text', character: 'characters', world: 'world', memory: 'plot', outline: 'plot' }
 /** What each kind of reading is called, for a line of what somebody read. */
 const READ_WORD: Record<string, [string, string]> = { outline: ['大纲', 'outline'], chapter: ['正文', 'text'], memory: ['章节记载', 'chapter digest'], threads: ['线索', 'threads'], character: ['人物', 'people'], world: ['设定', 'world'], style: ['文风', 'style'], review: ['审校', 'review'], versions: ['版本', 'versions'] }
 const ASPECT_WORD: Record<ReferenceAspect, [string, string]> = { world: ['世界观与设定', 'its world and settings'], characters: ['人物', 'its people'], style: ['文风', 'its style'], plot: ['剧情（大纲、各章摘要、线索）', 'its plot (outline, chapter digests, threads)'], text: ['正文', 'its text'] }
@@ -515,7 +516,7 @@ export async function referenceTools(core: NovelCore, runtime: ProjectRuntime, s
           }
           const book = await shelfBook(core, reference)
           if (!('runtime' in book)) continue
-          const sources = (Object.keys(SOURCE_ASPECT) as SearchSource[]).filter(source => openTo(reference, SOURCE_ASPECT[source]))
+          const sources = (Object.keys(SOURCE_ASPECT) as (keyof typeof SOURCE_ASPECT)[]).filter(source => openTo(reference, SOURCE_ASPECT[source]))
           if (sources.length === 0) continue
           const hits = await searchBook(book.runtime, { query, sources, limit }, signal)
           found.push(`[${reference.name}]\n${hits.text}`)

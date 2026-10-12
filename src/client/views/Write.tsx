@@ -36,7 +36,8 @@ import {
   Button, Chip, cx, Empty, Menu, Modal, Progress, Select, Spinner, Tabs, TextInput, ThoughtButton, ThoughtPanel, useAction, useConfirm, useJobStream, useJobTail, useLoad, useProject,
   useLineView, useQuote, useSnapshot, useStudio, useT, useWidth, waysOn, type Translate, plainEnter, ViewButton,
 } from '../ui'
-import { IssueList, LeadBar, RewriteByMenu, useMendBy, useMendOrder, useRewriteBy } from '../Issues'
+import { IssueList, LeadBar, RewriteByMenu, useMendBy, useMendOrder, useReachItems, useRewriteBy } from '../Issues'
+import { BeatAsk } from '../Beats'
 import { JobBar } from '../JobBar'
 
 type PanelTab = 'plan' | 'memory' | 'issues' | 'versions' | 'proposals' | 'pictures'
@@ -411,6 +412,9 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
   const [mendBy] = useMendBy()
   // Who rewrites a selected passage, or the chapter whole: the writer, or — where the author set that — the crew's model.
   const [rewriteBy] = useRewriteBy()
+  const reaches = useReachItems()
+  // The beats ticked in the plan panel, to be changed by a sentence (see `BeatAsk`).
+  const [tickedBeats, setTickedBeats] = useState<string[]>([])
   const plan = doc.data?.plan
   const empty = (text ?? '').trim().length === 0
 
@@ -582,7 +586,20 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
             {plan.synopsis !== undefined ? <p>{plan.synopsis}</p> : <p className="nv-muted">{t('这一章还没有梗概。', 'No synopsis for this chapter yet.')}</p>}
             {plan.purpose !== undefined ? <p className="nv-muted nv-small">{t('作用：', 'Purpose: ')}{plan.purpose}</p> : null}
             <p className="nv-muted nv-small">{[plan.pov !== undefined ? `${t('视角', 'POV')} ${project.characters.find(card => card.id === plan.pov)?.name ?? plan.pov}` : undefined, plan.location, plan.time].filter(Boolean).join(' · ')}</p>
-            {(plan.beats ?? []).length > 0 ? <ol className="nv-derived-beats">{plan.beats!.map(beat => <li key={beat.id}>{beat.summary}{beat.outcome !== undefined ? <span className="nv-muted"> → {beat.outcome}</span> : null}</li>)}</ol> : null}
+            {(plan.beats ?? []).length > 0 ? (
+              <ol className="nv-derived-beats nv-beats-pick">
+                {plan.beats!.map(beat => (
+                  <li key={beat.id} className={cx(tickedBeats.includes(beat.id) && 'is-ticked')}>
+                    <label title={t('勾上：照下面那句话只改这一个（可以勾几个）', 'Tick it: the sentence below changes this beat only (several may be ticked)')}>
+                      <input type="checkbox" checked={tickedBeats.includes(beat.id)} onChange={(event) => { const on = event.target.checked; setTickedBeats(previous => on ? [...previous, beat.id] : previous.filter(id => id !== beat.id)) }} />
+                      <span>{beat.summary}{beat.outcome !== undefined ? <span className="nv-muted"> → {beat.outcome}</span> : null}</span>
+                    </label>
+                  </li>
+                ))}
+              </ol>
+            ) : null}
+            {/* One beat more, or the ticked ones changed, by a sentence: the others are not touched. */}
+            <BeatAsk chapter={chapter.id} beats={plan.beats ?? []} chosen={tickedBeats} onDone={() => { setTickedBeats([]) }} />
             <div className="nv-chips">
               {(plan.characters ?? []).map(ref => <Chip key={ref} tone="blue">{project.characters.find(card => card.id === ref)?.name ?? ref}</Chip>)}
               {(plan.threads ?? []).map(ref => <Chip key={ref} tone="amber">{project.outline.threads.find(thread => thread.id === ref)?.title ?? ref}</Chip>)}
@@ -806,6 +823,8 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
                 <Menu icon="chevronDown" variant="outline" size="md" align="end" items={[
                   { label: mendBy === 'planner' ? t('改这一章：策划照要求一处处改', 'Revise: the planner goes through it to the brief') : t('改这一章：写手照要求一处处改', 'Revise: the writer goes through it to the brief'), icon: 'wand', disabled: revising !== undefined, onSelect: () => { reviseChapter() } },
                   { label: t('只找出问题，先不改', 'Find and file it only'), icon: 'alert', onSelect: () => { leadFromBrief(false) } },
+                  'separator',
+                  ...reaches,
                   'separator',
                   { label: rewriteBy === 'planner' ? t('整章重写（编排模型写，生成提案）', 'Write the chapter over (the crew\'s model; as a proposal)') : t('整章重写（生成提案）', 'Write the chapter over (as a proposal)'), icon: 'refresh', onSelect: () => { reviseChapter(true) } },
                 ]} />

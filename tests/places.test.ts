@@ -16,7 +16,11 @@ const THREE = '渡口没有人。\n\n她用右手解开缆绳。'
 
 describe('mending by places', () => {
   let bed: TestBed
-  beforeEach(async () => { bed = await createTestBed({ language: 'zh', title: '青冥' }) })
+  // (The careful reach — the least change — is what these hold to; the bolder one, which is the default, is in reach.test.ts.)
+  beforeEach(async () => {
+    bed = await createTestBed({ language: 'zh', title: '青冥' })
+    await bed.core.settings.update({ mendReach: 'careful' })
+  })
   afterEach(async () => { await bed.cleanup() })
 
   const book = async (): Promise<{ one: string; two: string; three: string }> => {

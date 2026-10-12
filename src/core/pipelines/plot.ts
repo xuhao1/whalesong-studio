@@ -14,7 +14,7 @@ import { asArray, asList, asRecord, asText } from '../llm'
 import { assign } from '../crew'
 import type { Project } from '../project'
 import { ProjectError } from '../project'
-import { architectSystem, planOfTextTask, deriveBeatsTask, deriveChaptersTask, digestSystem, foundationTask, reviseChaptersFollowUp, whatIfTask } from '../prompts'
+import { architectSystem, beatTask, planOfTextTask, deriveBeatsTask, deriveChaptersTask, digestSystem, foundationTask, reviseChaptersFollowUp, whatIfTask } from '../prompts'
 import { deriveArtDirection } from './illustrate'
 import { guidePictures, picturesRead } from './guides'
 import { L, promptLanguage } from '../render'
@@ -555,6 +555,139 @@ export async function deriveBeats(core: NovelCore, runtime: ProjectRuntime, para
     })
   }
   return { chapterId: chapter.plan.id, title: chapter.plan.title, index: chapter.index, ...(synopsis !== undefined ? { synopsis } : {}), beats, applied, ...(referenced !== undefined ? { referenced } : {}) }
+}
+
+export interface TouchBeatsParams {
+  chapter: string
+  /** What the author says: of the beat to add, or of how the chosen beats are to change. */
+  ask: string
+  /** The beats to change, each by its id or by its number in the chapter. Left out (or empty): a beat is added. */
+  beats?: string[]
+  /** Where the beat to add goes: after this beat (id or number), `start` or `end`. Left out: where the planner sees it belongs. */
+  after?: string
+}
+
+export interface TouchBeatsResult {
+  chapterId: string
+  title: string
+  index: number
+  /** The beat that was added, and where it stands now (from 1). */
+  added?: Beat
+  at?: number
+  /** The beats that were changed, as they read now; `removed`: the ids of those that went. */
+  changed?: Beat[]
+  removed?: string[]
+  /** How many beats the chapter has now. */
+  beats: number
+  /** What the planner says of it, in a sentence. */
+  why?: string
+}
+
+/**
+ * One beat added to a chapter from a sentence of the author's, or some of its beats changed by one — and no other
+ * beat touched: the planner is shown them all, hands in the one it made (or the ones it was to change), and those go
+ * in where they belong. (Laying a chapter's beats out anew is `deriveBeats`; reading them off its text, `planOfText`.)
+ * One request: everything it goes by is in the task. What the plan was stays in its history.
+ * @throws ProjectError `novel/invalid` where nothing is said, or a beat named is not the chapter's.
+ */
+export async function touchBeats(core: NovelCore, runtime: ProjectRuntime, params: TouchBeatsParams, task: TaskContext): Promise<TouchBeatsResult> {
+  const { project } = runtime
+  const ask = params.ask.trim()
+  if (ask.length === 0) throw new ProjectError('novel/invalid', 'say what the beat is to be, or how the chosen beats are to change')
+  const chapter = await project.findChapter(params.chapter)
+  if (chapter === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${params.chapter}"`)
+  const manifest = await project.manifest()
+  const lang = promptLanguage(manifest.language)
+  const beats = chapter.plan.beats ?? []
+  /** A beat named by its id, or by its number in the chapter (from 1; "第 3 个", "#3", "3"). */
+  const numberOf = (ref: string): number | undefined => {
+    const at = beats.findIndex(beat => beat.id === ref.trim())
+    if (at >= 0) return at + 1
+    const digits = /\d+/.exec(ref)
+    const no = digits !== null ? Number(digits[0]) : Number.NaN
+    return Number.isInteger(no) && no >= 1 && no <= beats.length ? no : undefined
+  }
+  const chosen = [...new Set((params.beats ?? []).map((ref) => {
+    const no = numberOf(ref)
+    if (no === undefined) throw new ProjectError('novel/invalid', `chapter ${chapter.index} has no beat "${ref}" — it has ${beats.length}, numbered from 1`)
+    return no
+  }))].sort((left, right) => left - right)
+  const changing = chosen.length > 0
+  let after: number | undefined
+  if (!changing && params.after !== undefined && params.after.trim().length > 0) {
+    const where = params.after.trim()
+    after = where === 'start' ? 0 : where === 'end' ? beats.length : numberOf(where)
+    if (after === undefined) throw new ProjectError('novel/invalid', `chapter ${chapter.index} has no beat "${where}" to put the new one after — it has ${beats.length}; or pass start / end`)
+  }
+  const characters = await project.characters()
+  const nameOf = (ref: string): string => characters.find(card => card.id === ref)?.name ?? ref
+  const resolve = (name: string): string => characters.find(card => sameName(card.name, name) || card.aliases?.some(alias => sameName(alias, name)) === true)?.id ?? name
+  const listed = beats.map((beat, at) => {
+    const extra = [
+      beat.characters !== undefined && beat.characters.length > 0 ? L(lang, `在场：${beat.characters.map(nameOf).join('、')}`, `there: ${beat.characters.map(nameOf).join(', ')}`) : '',
+      beat.location !== undefined ? L(lang, `地点：${beat.location}`, `place: ${beat.location}`) : '',
+      beat.conflict !== undefined ? L(lang, `阻碍：${beat.conflict}`, `in the way: ${beat.conflict}`) : '',
+      beat.outcome !== undefined ? L(lang, `结果：${beat.outcome}`, `turn: ${beat.outcome}`) : '',
+      beat.emotion !== undefined ? L(lang, `情绪：${beat.emotion}`, `emotion: ${beat.emotion}`) : '',
+    ].filter(part => part.length > 0).join(L(lang, '；', '; '))
+    return `${at + 1}. ${changing && chosen.includes(at + 1) ? L(lang, '【要改】', '[to change] ') : ''}${beat.summary}${extra.length > 0 ? L(lang, `（${extra}）`, ` (${extra})`) : ''}`
+  }).join('\n')
+  const route = await core.route('architect', runtime, task)
+  const pack = await core.pack(runtime, route, { purpose: 'derive', chapter, brief: ask, ...(task.signal !== undefined ? { signal: task.signal } : {}) })
+  type Handed = { beats: Map<number, Beat | 'remove'>; beat?: Beat; after?: number; why?: string }
+  const { value } = await assign<Handed>(core, runtime, task, {
+    role: 'architect',
+    label: changing ? L(lang, `第${chapter.index}章 · 改 ${chosen.length} 个节拍`, `Ch. ${chapter.index} · ${chosen.length} beat(s) changed`) : L(lang, `第${chapter.index}章 · 加一个节拍`, `Ch. ${chapter.index} · a beat added`),
+    line: chapter.line ?? MAIN_LINE,
+    // The chapter's plan, the beats there are, what the author says: all of it is in the task.
+    plain: true,
+    tool: 'submit_beat',
+    what: changing ? L(lang, '改好的那几个节拍', 'the beats, changed') : L(lang, '新加的那一个节拍', 'the beat to add'),
+    system: architectSystem(lang),
+    prompt: beatTask({ lang, language: manifest.language, title: manifest.title, context: pack.text, ask, beats: listed, ...(changing ? { chosen } : {}), ...(after !== undefined ? { after } : {}) }),
+    temperature: 0.4,
+    validate: (raw) => {
+      const record = asRecord(raw)
+      const why = asText(record.why)
+      const handed: Handed = { beats: new Map(), ...(why !== undefined ? { why } : {}) }
+      if (!changing) {
+        const [made] = toBeats([record.beat], resolve)
+        if (made === undefined) throw new Error(L(lang, '"beat" 里要有 summary：新加的那一个节拍', '"beat" needs a summary: the one beat to add'))
+        const said = typeof record.after === 'number' ? record.after : Number(asText(record.after) ?? Number.NaN)
+        return { ...handed, beat: made, after: after ?? (Number.isInteger(said) ? Math.max(0, Math.min(beats.length, said)) : beats.length) }
+      }
+      for (const entry of asArray(record.beats)) {
+        const item = asRecord(entry)
+        const no = typeof item.no === 'number' ? item.no : Number(asText(item.no) ?? Number.NaN)
+        // (A beat nobody chose is nobody's to change: what is handed in for it is not taken.)
+        if (!chosen.includes(no)) continue
+        if (item.remove === true) { handed.beats.set(no, 'remove'); continue }
+        const [made] = toBeats([item], resolve)
+        if (made !== undefined) handed.beats.set(no, { ...made, id: beats[no - 1]!.id })
+      }
+      if (handed.beats.size === 0) throw new Error(L(lang, `"beats" 里要有作者点到的节拍（第 ${chosen.join('、')} 个），每个写上 no 和改好的 summary`, `"beats" needs the beats the author named (${chosen.join(', ')}), each with its no and its summary as changed`))
+      return handed
+    },
+  })
+  // What is written goes into the plan as it stands now: the beats nobody named are the ones there are.
+  const current = (await project.findChapter(chapter.plan.id))?.plan.beats ?? beats
+  if (!changing) {
+    const made = value.beat!
+    // (Counted against the beats as they were shown; one taken away meanwhile only moves it up.)
+    const at = Math.min(current.length, value.after ?? current.length)
+    await project.updateChapter(chapter.plan.id, { beats: [...current.slice(0, at), made, ...current.slice(at)], ...(chapter.plan.status === 'idea' ? { status: 'outlined' as const } : {}) })
+    return { chapterId: chapter.plan.id, title: chapter.plan.title, index: chapter.index, added: made, at: at + 1, beats: current.length + 1, ...(value.why !== undefined ? { why: value.why } : {}) }
+  }
+  const byId = new Map<string, Beat | 'remove'>()
+  for (const [no, beat] of value.beats) byId.set(beats[no - 1]!.id, beat)
+  const next = current.flatMap((beat) => {
+    const to = byId.get(beat.id)
+    return to === undefined ? [beat] : to === 'remove' ? [] : [to]
+  })
+  await project.updateChapter(chapter.plan.id, { beats: next })
+  const changed = [...byId.values()].filter((beat): beat is Beat => beat !== 'remove')
+  const removed = [...byId.entries()].filter(([, beat]) => beat === 'remove').map(([id]) => id)
+  return { chapterId: chapter.plan.id, title: chapter.plan.title, index: chapter.index, changed, ...(removed.length > 0 ? { removed } : {}), beats: next.length, ...(value.why !== undefined ? { why: value.why } : {}) }
 }
 
 /** The items of a chapter's plan that its text can set right, beside its beats. */

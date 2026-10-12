@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-/** The showrunner's way with the books a book goes by: its list of references, reading in them, notes for a chapter. */
+/** The showrunner's way with the books a book goes by — its list of references, reading in them, notes for a chapter — and with the author's jottings. */
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { consultReferences } from '../../core/pipelines/consult'
 import { ProjectError } from '../../core/project'
 import { addBookReference, aspectsOf, referenceShelf, referenceTools, referenceWord, removeReference, setReferenceUse, updateReference } from '../../core/references'
 import type { NovelService } from '../../host/service'
-import type { ReferenceInfo } from '../../shared/types'
+import { foundJottings, jottingsView, removeJotting, saveJotting } from '../../core/jottings'
+import type { Jotting, ReferenceInfo } from '../../shared/types'
 import { brief, novelTool, toJson } from './shared'
 
 /** One reference, as the showrunner reads it in a list. */
@@ -17,8 +18,70 @@ function line(reference: ReferenceInfo): string {
   return `- "${reference.name}" [${reference.id}] — ${what}${reference.state !== 'ready' ? ` — ${reference.state.toUpperCase()}: it cannot be read now` : ''}${reference.off === true ? ' — set aside: not consulted' : ''}\n  open: ${open}\n  how the author wants it used: ${reference.note ?? '(nothing said)'}`
 }
 
+/** One jotting, as the showrunner reads it in a list. */
+const jottingLine = (item: Jotting): string => `- [${item.id}; ${item.kind}; ${item.updatedAt.slice(0, 10)}] ${item.title !== undefined ? `${item.title} — ` : ''}${brief(item.text.replace(/\s+/g, ' '), 200)}`
+
+/** The showrunner's way with the author's jottings: to write one down when asked, to read what may be read. */
+function jottingTool(service: NovelService): ToolDefinition {
+  return novelTool(service, {
+    name: 'novel_jot',
+    description: [
+      'The author\'s jottings: loose notes kept with the book — a turn of the plot not thought through, a setting not settled, a line for some day. They are ideas, never canon: the crew finds them when searching and is told so, and the ones that bear on a chapter go along when it is planned or written. The author keeps them on Bible → Jottings (and jots from the header of any page).',
+      '- action=list (default): the jottings an agent may read. One the author keeps from being found — or all of them, where they switched that off — is not listed and cannot be read; say so if they ask for one you cannot see.',
+      '- action=add: write one down — `text` in the author\'s words (do not tidy an unfinished thought into a decision), `kind` = plot | setting | other, `title` optional. When the author says "note that down", "keep that idea for later", or thinks aloud about something they are not ready to settle — this, not the outline and not the bible.',
+      '- action=update: change one by `id` — any of `text`, `title`, `kind`.',
+      '- action=remove: take one away by `id` (the author can put it back from the page).',
+      'Whether jottings are found by agents — one of them, or all — is the author\'s to set on the page: there is no action for it here. When an idea is settled it stops being a jotting: put it where it belongs (novel_outline, novel_bible) and ask whether the note should go.',
+    ].join('\n'),
+    mutating: args => ['add', 'update', 'remove'].includes(String(args.action)),
+    parameters: {
+      action: { type: 'string', enum: ['list', 'add', 'update', 'remove'], description: 'Default: list.' },
+      id: { type: 'string', description: 'update, remove: which jotting (ids are in the list).' },
+      text: { type: 'string', description: 'add, update: the note, in the author\'s words.' },
+      title: { type: 'string', description: 'add, update: a few words to know it by (optional).' },
+      kind: { type: 'string', enum: ['plot', 'setting', 'other'], description: 'add, update: what it is about. Default for a new one: other.' },
+    },
+    async run(args, env) {
+      const { project } = await env.project()
+      const action = args.action ?? 'list'
+      const kind = args.kind === 'plot' || args.kind === 'setting' || args.kind === 'other' ? args.kind : undefined
+      if (action === 'list') {
+        const found = await foundJottings(project)
+        const all = (await jottingsView(project)).items.length
+        const kept = all - found.length
+        return {
+          text: found.length === 0
+            ? `No jotting can be read${kept > 0 ? `: the author keeps ${kept} from being found` : ' — none is written yet'}.`
+            : `The author's jottings — ideas, not canon (${found.length}${kept > 0 ? `; ${kept} more are kept from agents` : ''}):\n${found.map(jottingLine).join('\n')}\nnovel_read what=jottings ref=<id> reads one whole.`,
+          data: toJson(found),
+          record: false,
+        }
+      }
+      if (action === 'add') {
+        if (args.text === undefined || args.text.trim().length === 0) throw new ProjectError('novel/invalid', 'action=add needs `text`: the note itself')
+        const made = await saveJotting(project, { text: args.text, ...(args.title !== undefined ? { title: args.title } : {}), ...(kind !== undefined ? { kind } : {}) })
+        return { text: `Jotted down [${made.id}; ${made.kind}]: ${brief(made.text.replace(/\s+/g, ' '), 160)}\nIt is on Bible → Jottings; the crew finds it when searching, as an idea and not as canon.`, data: toJson(made), record: { summary: ['记了一条随笔', 'Jotted a note down'] } }
+      }
+      if (args.id === undefined || args.id.trim().length === 0) throw new ProjectError('novel/invalid', `action=${action} needs \`id\` (action=list shows them)`)
+      // (Only what an agent may read may an agent change: one kept back is the author's alone.)
+      const known = (await foundJottings(project)).find(item => item.id === args.id!.trim())
+      if (known === undefined) throw new ProjectError('novel/not-found', `no jotting "${args.id}" that an agent may read — action=list shows the ones there are; one the author keeps from agents is changed on the page`)
+      if (action === 'update') {
+        const changed = await saveJotting(project, { id: known.id, ...(args.text !== undefined ? { text: args.text } : {}), ...(args.title !== undefined ? { title: args.title } : {}), ...(kind !== undefined ? { kind } : {}) })
+        return { text: `Changed the jotting [${changed.id}]: ${brief(changed.text.replace(/\s+/g, ' '), 160)}`, data: toJson(changed), record: { summary: ['改了一条随笔', 'Changed a jotting'] } }
+      }
+      if (action === 'remove') {
+        await removeJotting(project, known.id)
+        return { text: `Took the jotting [${known.id}] away. The author can put it back from Bible → Jottings (Taken away lately).`, record: { summary: ['删了一条随笔', 'Took a jotting away'] } }
+      }
+      throw new ProjectError('novel/invalid', `unknown action "${String(action)}" — list, add, update or remove`)
+    },
+  })
+}
+
 export function referenceTools_(service: NovelService): ToolDefinition[] {
   return [
+    jottingTool(service),
     novelTool(service, {
       name: 'novel_reference',
       description: [

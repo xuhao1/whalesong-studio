@@ -26,7 +26,8 @@ import { livesFrom, type LocatedChapter, type Project } from './project'
 import {
   L, promptLanguage, renderCharacter, renderManifest, renderMoment, renderPlan, renderThread, renderWorld,
 } from './render'
-import type { RetrievalIndex } from './retrieval'
+import { foundJottings, renderJottings } from './jottings'
+import { tokenize, type RetrievalIndex } from './retrieval'
 
 export interface ArcSummary {
   /** First and last chapter ids covered. */
@@ -100,6 +101,8 @@ export interface ContextPack {
     summaries: number
     passages: number
     worldEntries: number
+    /** The author's jottings that bear on the chapter and went along; absent where none did. */
+    jottings?: number
     /** Chapters after the one in hand that travel word for word. */
     following: number
   }
@@ -190,6 +193,10 @@ function tokensOf(project: Project, id: string, text: string): number {
   known.set(id, { text, tokens })
   return tokens
 }
+
+/** How many jottings go along with a chapter at most, and how many of the chapter's own terms one has to share to be one of them. */
+const JOTTINGS_ALONG = 3
+const JOTTING_SHARED = 3
 
 export async function packContext(project: Project, index: RetrievalIndex, options: PackOptions): Promise<ContextPack> {
   const manifest = await project.manifest()
@@ -488,6 +495,7 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
   const query = [options.brief, options.focus, current?.plan.synopsis, current?.plan.beats?.map(beat => beat.summary).join(' '), castList.map(card => card.name).join(' ')].filter(Boolean).join('\n').slice(0, 1500)
   let worldEntries = core.length > 0 && coreTokens > 0 ? core.length : 0
   let passages = 0
+  let jotted = 0
   if (query.trim().length > 0) {
     const named = world.filter(entry => entry.importance !== 1 && [entry.name, ...(entry.aliases ?? [])].some(name => name.length > 1 && query.includes(name)))
     const hits = await index.search(query, { sources: ['world'], limit: 6, within: (_source, ref) => world.some(entry => entry.id === ref), ...(options.signal !== undefined ? { signal: options.signal } : {}) })
@@ -521,6 +529,25 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
     }
   }
 
+  // The author's jottings that bear on this chapter — a turn not thought through, a setting not settled — go along
+  // where it is planned or written: found by the same search, among the ones the author lets be found, and only those
+  // that share more than a stray word with what the chapter is about. Named for what they are: ideas, not canon.
+  if (query.trim().length > 0 && (options.purpose === 'draft' || options.purpose === 'continue' || options.purpose === 'derive')) {
+    const noted = await index.search(query, { sources: ['jotting'], limit: 6, ...(options.signal !== undefined ? { signal: options.signal } : {}) })
+    if (noted.length > 0) {
+      const about = new Set(tokenize(query).filter(term => term.length > 1))
+      const found = await foundJottings(project)
+      const picked = [...new Set(noted.map(hit => hit.ref))]
+        .map(id => found.find(item => item.id === id))
+        .filter((item): item is NonNullable<typeof item> => item !== undefined && new Set(tokenize(`${item.title ?? ''}\n${item.text}`).filter(term => about.has(term))).size >= JOTTING_SHARED)
+        .slice(0, JOTTINGS_ALONG)
+      if (picked.length > 0) {
+        jotted = picked.length
+        take('jottings', L(lang, '作者的随笔里和这一章沾边的（没想好的想法：用得上就用；不是设定，也不是已经发生的事，和设定、正文对不上时以设定和正文为准）', "The author's jottings that touch this chapter (ideas not settled: use what serves; neither canon nor anything that has happened — where they differ, the bible and the text hold)"), renderJottings(picked, lang), share(0.06))
+      }
+    }
+  }
+
   // Where the story goes next, so the writer does not pre-empt it — unless the text that follows already says so.
   if (current !== undefined && followingWhole.length === 0 && (options.purpose === 'draft' || options.purpose === 'continue')) {
     const next = path.find(chapter => chapter.index === current.index + 1)
@@ -542,7 +569,7 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
 
   const render = (keys: string[]): string => keys.map(key => sections[key]).filter((section): section is Section => section !== undefined).map(section => `## ${section.title}\n\n${section.body}`).join('\n\n')
   const stable = render(stableKeys)
-  const rest = render(['gap', 'following', 'followingOutline', 'cast', 'gone', 'threads', 'lore', 'passages', 'next', 'tail', 'current', 'plan'])
+  const rest = render(['gap', 'following', 'followingOutline', 'cast', 'gone', 'threads', 'lore', 'passages', 'jottings', 'next', 'tail', 'current', 'plan'])
   const text = [stable, rest].filter(part => part.length > 0).join('\n\n')
   const stableTokens = estimateTokens(stable)
   return {
@@ -555,7 +582,7 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
     strategy: written.length === 0 ? 'full' : inWindow.length === 0 ? 'retrieval' : outside.length === 0 ? 'full' : 'window',
     language: lang,
     cast: castList,
-    included: { fullChapters: inWindow.length, summaries, passages, worldEntries, following: followingWhole.length },
+    included: { fullChapters: inWindow.length, summaries, passages, worldEntries, following: followingWhole.length, ...(jotted > 0 ? { jottings: jotted } : {}) },
     ...(inWindow.length > 0 ? { window: { from: inWindow[0]!.index, to: inWindow.at(-1)!.index } } : {}),
   }
 }
