@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" width="1200" height="300" font-family="system-ui, -apple-system, &quot;PingFang SC&quot;, &quot;Microsoft YaHei&quot;, &quot;Segoe UI&quot;, sans-serif" role="img" aria-label="一章的工作流">
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8a94a6"/></marker></defs>
+<rect x="1" y="1" width="1198" height="298" rx="14" fill="#f7f9fc" stroke="#dde3ee"/>
+<text x="30" y="38" font-size="18" font-weight="700" fill="#1f2a3d">一章的工作流</text>
+<text x="30" y="60" font-size="13" fill="#66728a">每一步：做什么 · 谁干活 · 在工坊的哪一页</text>
+<rect x="30" y="78" width="146" height="96" rx="12" fill="#efeafe" stroke="#8b6ee8" stroke-width="1.5"/>
+<text x="42" y="100" font-size="12" font-weight="700" fill="#8b6ee8">1</text>
+<text x="103.0" y="116" font-size="17" font-weight="700" text-anchor="middle" fill="#1f2a3d">推演</text>
+<text x="103.0" y="138" font-size="12" text-anchor="middle" fill="#4b566b">策划</text>
+<text x="103.0" y="158" font-size="12" text-anchor="middle" fill="#8b6ee8">大纲</text>
+<line x1="178" y1="126.0" x2="193" y2="126.0" stroke="#8a94a6" stroke-width="1.6" marker-end="url(#a)"/>
+<rect x="196" y="78" width="146" height="96" rx="12" fill="#efeafe" stroke="#8b6ee8" stroke-width="1.5"/>
+<text x="208" y="100" font-size="12" font-weight="700" fill="#8b6ee8">2</text>
+<text x="269.0" y="116" font-size="17" font-weight="700" text-anchor="middle" fill="#1f2a3d">改节拍</text>
+<text x="269.0" y="138" font-size="12" text-anchor="middle" fill="#4b566b">策划 + 你</text>
+<text x="269.0" y="158" font-size="12" text-anchor="middle" fill="#8b6ee8">大纲 / 写作</text>
+<line x1="344" y1="126.0" x2="359" y2="126.0" stroke="#8a94a6" stroke-width="1.6" marker-end="url(#a)"/>
+<rect x="362" y="78" width="146" height="96" rx="12" fill="#e6f0ff" stroke="#3b74e8" stroke-width="1.5"/>
+<text x="374" y="100" font-size="12" font-weight="700" fill="#3b74e8">3</text>
+<text x="435.0" y="116" font-size="17" font-weight="700" text-anchor="middle" fill="#1f2a3d">写</text>
+<text x="435.0" y="138" font-size="12" text-anchor="middle" fill="#4b566b">写手</text>
+<text x="435.0" y="158" font-size="12" text-anchor="middle" fill="#3b74e8">写作</text>
+<line x1="510" y1="126.0" x2="525" y2="126.0" stroke="#8a94a6" stroke-width="1.6" marker-end="url(#a)"/>
+<rect x="528" y="78" width="146" height="96" rx="12" fill="#e5f6ee" stroke="#2f9e6b" stroke-width="1.5"/>
+<text x="540" y="100" font-size="12" font-weight="700" fill="#2f9e6b">4</text>
+<text x="601.0" y="116" font-size="17" font-weight="700" text-anchor="middle" fill="#1f2a3d">收录</text>
+<text x="601.0" y="138" font-size="12" text-anchor="middle" fill="#4b566b">场记</text>
+<text x="601.0" y="158" font-size="12" text-anchor="middle" fill="#2f9e6b">写完自动</text>
+<line x1="676" y1="126.0" x2="691" y2="126.0" stroke="#8a94a6" stroke-width="1.6" marker-end="url(#a)"/>
+<rect x="694" y="78" width="146" height="96" rx="12" fill="#e5f6ee" stroke="#2f9e6b" stroke-width="1.5"/>
+<text x="706" y="100" font-size="12" font-weight="700" fill="#2f9e6b">5</text>
+<text x="767.0" y="116" font-size="17" font-weight="700" text-anchor="middle" fill="#1f2a3d">审校与修改</text>
+<text x="767.0" y="138" font-size="12" text-anchor="middle" fill="#4b566b">场记找 · 策划改</text>
+<text x="767.0" y="158" font-size="12" text-anchor="middle" fill="#2f9e6b">审校</text>
+<line x1="842" y1="126.0" x2="857" y2="126.0" stroke="#8a94a6" stroke-width="1.6" marker-end="url(#a)"/>
+<rect x="860" y="78" width="146" height="96" rx="12" fill="#efeafe" stroke="#8b6ee8" stroke-width="1.5"/>
+<text x="872" y="100" font-size="12" font-weight="700" fill="#8b6ee8">6</text>
+<text x="933.0" y="116" font-size="17" font-weight="700" text-anchor="middle" fill="#1f2a3d">更新卡片</text>
+<text x="933.0" y="138" font-size="12" text-anchor="middle" fill="#4b566b">策划审定 · 你过目</text>
+<text x="933.0" y="158" font-size="12" text-anchor="middle" fill="#8b6ee8">人物 / 设定</text>
+<line x1="1008" y1="126.0" x2="1023" y2="126.0" stroke="#8a94a6" stroke-width="1.6" marker-end="url(#a)"/>
+<rect x="1026" y="78" width="146" height="96" rx="12" fill="#fff1df" stroke="#e0902a" stroke-width="1.5"/>
+<text x="1038" y="100" font-size="12" font-weight="700" fill="#e0902a">7</text>
+<text x="1099.0" y="116" font-size="17" font-weight="700" text-anchor="middle" fill="#1f2a3d">画人设与插图</text>
+<text x="1099.0" y="138" font-size="12" text-anchor="middle" fill="#4b566b">导演 + 绘图模型</text>
+<text x="1099.0" y="158" font-size="12" text-anchor="middle" fill="#e0902a">人物 / 演出</text>
+<path d="M1099.0 177 V208 H103.0 V180" fill="none" stroke="#8a94a6" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#a)"/>
+<rect x="450.0" y="196" width="300" height="24" rx="12" fill="#f7f9fc"/>
+<text x="600.0" y="213" font-size="13" text-anchor="middle" fill="#4b566b">下一批章节：带着更新过的记忆和卡片再来一轮</text>
+<rect x="30" y="265" width="14" height="14" rx="4" fill="#efeafe" stroke="#8b6ee8" stroke-width="1.5"/>
+<text x="50" y="277" font-size="12" fill="#4b566b">策划：规划、定位、审定</text>
+<rect x="201.5" y="265" width="14" height="14" rx="4" fill="#e6f0ff" stroke="#3b74e8" stroke-width="1.5"/>
+<text x="221.5" y="277" font-size="12" fill="#4b566b">写手：正文</text>
+<rect x="298.0" y="265" width="14" height="14" rx="4" fill="#e5f6ee" stroke="#2f9e6b" stroke-width="1.5"/>
+<text x="318.0" y="277" font-size="12" fill="#4b566b">场记：记忆与审校</text>
+<rect x="432.0" y="265" width="14" height="14" rx="4" fill="#fff1df" stroke="#e0902a" stroke-width="1.5"/>
+<text x="452.0" y="277" font-size="12" fill="#4b566b">导演：画面</text>
+<text x="1170" y="277" font-size="12" text-anchor="end" fill="#66728a">总编（你对话的那个 agent）可以替你发起其中任何一步</text>
+</svg>

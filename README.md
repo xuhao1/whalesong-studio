@@ -8,6 +8,8 @@
 
 ![Novel Studio beside the conversation: the showrunner reports, the writer's chapter is open in the editor](./docs/images/studio-session.jpg)
 
+> **New here?** The [tutorial](./docs/tutorial.md) walks it through with screenshots: install → connect the models → bring in a finished book → derive, beats, write, digest, review, cards, portraits → the gallery and the album.
+
 ## The idea: a crew, not a model
 
 Models that are excellent at planning, tool use and keeping a large project straight are often mediocre prose stylists, and the best prose models are often poor project managers. Novel Studio hands the work to a small company:
@@ -158,6 +160,8 @@ npm pack        # writes dsh-novel-writer-<version>.tgz
 ```
 
 ## Quick start
+
+For the same with screenshots, step by step, see the [tutorial](./docs/tutorial.md); what follows is the shortest version.
 
 1. Open **Novel Studio** in the left sidebar. The first time, it opens on **"Connect the models first"**: pick a service, paste one API key, click **Set up** — writing models, images, speech and semantic retrieval are configured as recommended. If the Harness already has a chat model you can skip this and come back any time.
 2. **Start a new book**: a sentence or a paragraph about the story is enough. With "draft the foundation" ticked, the architect proposes a premise, the main cast, the world, volumes and the opening chapters — all editable.
