@@ -450,7 +450,8 @@ export function SpeechTrialDialog({ of, onClose, onChanged }: { of: { character?
   // What was asked for with this round, by place: a take answers the row it was made for.
   const [asked, setAsked] = useState<VoiceRow[]>([])
   const [taken, setTaken] = useState<string | undefined>()
-  const chosen = (rows ?? []).filter(row => row.on)
+  // A model typed into a row, not picked from its list, is spoken to the way that model is all the same: the protocol follows the model.
+  const chosen = (rows ?? []).filter(row => row.on).map(row => (row.tts.model !== undefined && row.tts.model.trim().length > 0 ? { ...row, tts: withSpeechModel(row.tts, { id: row.tts.model.trim() }) } : row))
   const edit = (key: string, patch: Partial<VoiceRow>): void => { setRows(previous => previous?.map(row => (row.key === key ? { ...row, ...patch } : row))) }
   const again = (row: VoiceRow): void => { setRows(previous => (previous === undefined ? previous : [...previous.slice(0, previous.indexOf(row) + 1), { ...row, key: `${row.key}+${addedRows += 1}`, current: false, added: true, on: true, voice: '' }, ...previous.slice(previous.indexOf(row) + 1)])) }
   const leave = (key: string): void => { setRows(previous => previous?.filter(row => row.key !== key)) }
