@@ -46,6 +46,7 @@ Novel Studio finds books by looking for `novel.json` in a workspace directory an
 | | With a `provider`, `image` is the book's whole image service — `provider`, `baseURL`, `model`, `sizes`, `local`, `workflow`… as in the Studio's settings — and nothing of the Studio's service is mixed in; `kept` remembers the services the book was moved away from. Keys are never here: the one saved for the address is used. |
 | `tts` | this book's own speech setup, whole (`provider`, `baseURL`, `model`, `narratorVoice`, `defaultVoices`, `speechTags`…), where it has one; absent, the Studio's speaks for it. |
 | `sound` | this book's own way with effects, music and beds (`provider`, `model`, `effects`, `music`, `beds`), where it has one. |
+| `materialBy` | this book's own way of writing, where it has one: `rules`, `planner` or `agent` (see `materialBy` in the Studio's settings). Absent: as the Studio has it |
 | `vision` | this book's own model for looking at pictures (`{ "provider", "model" }` of DSH's), where it has one: it says in words what a picture given to steer a plan or a chapter shows, for a working model that takes no pictures. |
 | `embedding` | this book's own semantic retrieval, whole (`provider`, `baseURL`, `model`, `dimensions`), where it has one; absent, the Studio's is used. Its key is the one saved for the address. |
 | `context` | this book's own context budgets — any of `strategy`, `budgetTokens`, `tailChars`, `sideTokens`, `playTokens`; what is not named follows the Studio's. |

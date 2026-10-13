@@ -24,10 +24,20 @@ export type MaterialBy = 'planner' | 'rules' | 'agent'
 /** A way of preparing, as it is said in a word beside a draft or on a button. */
 export const wayWord = (by: MaterialBy, t: T): string => (by === 'planner' ? t('策划备料', 'planner\'s material') : by === 'agent' ? t('写手自己读、自己写', 'the writer as an agent') : t('按规则拼', 'packed by rule'))
 
-/** The way a chapter is written where nothing else is said: the Studio's setting (`materialBy`; the planner prepares unless the author has it otherwise). */
+/**
+ * The way a chapter is written where nothing else is said: the book's own where it has one, else the Studio's setting
+ * (`materialBy`) — packed by rule unless the author has it otherwise.
+ * @returns the way, and whether it is the book's own.
+ */
+export function useMaterialSet(): { way: MaterialBy; ofBook: boolean } {
+  const studio = useSnapshot(snapshot => snapshot.settings?.settings.materialBy)
+  const book = useSnapshot(snapshot => snapshot.project?.manifest.materialBy)
+  const set = book ?? studio
+  return { way: set === 'planner' || set === 'agent' ? set : 'rules', ofBook: book !== undefined }
+}
+
 export function useMaterialDefault(): MaterialBy {
-  const set = useSnapshot(snapshot => snapshot.settings?.settings.materialBy)
-  return set === 'rules' || set === 'agent' ? set : 'planner'
+  return useMaterialSet().way
 }
 
 /**
@@ -46,11 +56,14 @@ export function useMaterialBy(): [MaterialBy, (by: MaterialBy | undefined) => vo
 export function useMaterialItems(): { label: string; onSelect: () => void }[] {
   const t = useT()
   const [, choose, { byDefault, own }] = useMaterialBy()
+  const { ofBook } = useMaterialSet()
   const mark = (way: MaterialBy | undefined): string => (own === way ? '✓ ' : '')
   return [
-    { label: t(`${mark(undefined)}照设置里的默认（现在是：${wayWord(byDefault, t)}）`, `${mark(undefined)}As the settings have it (now: ${wayWord(byDefault, t)})`), onSelect: () => { choose(undefined) } },
+    { label: ofBook
+      ? t(`${mark(undefined)}照这本书的设置（现在是：${wayWord(byDefault, t)}）`, `${mark(undefined)}As this book has it (now: ${wayWord(byDefault, t)})`)
+      : t(`${mark(undefined)}照设置里的默认（现在是：${wayWord(byDefault, t)}）`, `${mark(undefined)}As the settings have it (now: ${wayWord(byDefault, t)})`), onSelect: () => { choose(undefined) } },
+    { label: t(`${mark('rules')}这里用 · 工坊按规则拼`, `${mark('rules')}Here · packed by the Studio's rules`), onSelect: () => { choose('rules') } },
     { label: t(`${mark('planner')}这里用 · 策划先看这一次要什么，再备料`, `${mark('planner')}Here · the planner looks at the piece first, then prepares it`), onSelect: () => { choose('planner') } },
-    { label: t(`${mark('rules')}这里用 · 工坊按规则拼（原来的做法）`, `${mark('rules')}Here · packed by the Studio's rules (as it was)`), onSelect: () => { choose('rules') } },
     { label: t(`${mark('agent')}这里用 · 不备料，写手作为 agent：自己读书、用工具交稿、可以反复改（写一章、续写）`, `${mark('agent')}Here · no material, the writer as an agent: reads for itself, hands the text in with a tool, goes over it (a chapter written or gone on with)`), onSelect: () => { choose('agent') } },
   ]
 }
@@ -113,6 +126,7 @@ export function ChapterMaterial({ chapter, fresh, onCompare }: { chapter: string
   const t = useT()
   const { root } = useProject()
   const [by, , { byDefault, own }] = useMaterialBy()
+  const { ofBook } = useMaterialSet()
   const items = useMaterialItems()
   // (A Host half older than this page keeps none: nothing is shown of it.)
   const kept = useLoad(async signal => (await controller.api.call('material.read', { root, chapter }, signal).catch(() => undefined))?.material, [root, chapter, fresh])
@@ -131,7 +145,7 @@ export function ChapterMaterial({ chapter, fresh, onCompare }: { chapter: string
           ...items,
           ...(onCompare !== undefined ? ['separator' as const, { label: t('几种各写一稿，并排看…', 'A draft each way, side by side…'), onSelect: onCompare }] : []),
           'separator',
-          { label: t(`在设置里改默认（现在是：${wayWord(byDefault, t)}）…`, `Change the default in the settings (now: ${wayWord(byDefault, t)})…`), onSelect: () => { controller.openSettings('material') } },
+          { label: ofBook ? t(`在设置里改这本书的写法（现在是：${wayWord(byDefault, t)}）…`, `Change this book's own way in the settings (now: ${wayWord(byDefault, t)})…`) : t(`在设置里改默认（现在是：${wayWord(byDefault, t)}）…`, `Change the default in the settings (now: ${wayWord(byDefault, t)})…`), onSelect: () => { controller.openSettings('material') } },
         ]} />
       </span>
       {last !== undefined ? (

@@ -6,7 +6,7 @@
  * the work done is the chapter.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { keptMaterial } from '../src/core/pipelines/material'
+import { keptMaterial, materialBy, writingBy } from '../src/core/pipelines/material'
 import { trialWrite } from '../src/core/pipelines/trial'
 import { writeChapter } from '../src/core/pipelines/write'
 import type { RoleTask } from '../src/core/roles'
@@ -150,6 +150,49 @@ describe('a chapter written by the writer as an agent', () => {
   })
 })
 
+describe('the way a chapter is written', () => {
+  let bed: TestBed
+  beforeEach(async () => { bed = await createTestBed({ language: 'zh', title: '青冥', settings: { materialBy: undefined as never } }) })
+  afterEach(async () => { await bed.cleanup() })
+
+  it('is packed by rule where nobody said; the Studio\'s setting, the book\'s own and what is said for the piece each come before what is behind them', async () => {
+    const { core, runtime } = bed
+    // Nothing set anywhere: packed by rule.
+    expect(writingBy(core)).toBe('rules')
+    expect(materialBy(core)).toBe('rules')
+    // The Studio's setting.
+    await core.settings.update({ materialBy: 'planner' })
+    expect(writingBy(core, undefined, await runtime.project.manifest())).toBe('planner')
+    // The book's own holds for the book in place of it…
+    await runtime.project.updateManifest({ materialBy: 'agent' })
+    const book = await runtime.project.manifest()
+    expect(book.materialBy).toBe('agent')
+    expect(writingBy(core, undefined, book)).toBe('agent')
+    // (a chapter is the writer's own work then; what is written in one request all the same has the planner's material)
+    expect(materialBy(core, undefined, book)).toBe('planner')
+    // …and what is said for the piece comes before both.
+    expect(writingBy(core, 'rules', book)).toBe('rules')
+    // Named as nothing, the book has none of its own again: the Studio's holds.
+    await runtime.project.updateManifest({ materialBy: null as never })
+    const plain = await runtime.project.manifest()
+    expect('materialBy' in plain).toBe(false)
+    expect(writingBy(core, undefined, plain)).toBe('planner')
+  })
+
+  it('writes a chapter of a book that has its own way that way, whatever the Studio has', async () => {
+    const { core, runtime, llm } = bed
+    const chapter = await runtime.project.addChapter({ title: '一', synopsis: '开头。' })
+    // The Studio has the planner prepare; this book is packed by rule: nobody is asked to prepare anything.
+    await core.settings.update({ materialBy: 'planner' })
+    await runtime.project.updateManifest({ materialBy: 'rules' })
+    llm.responder = () => '雨落在青石板上。'
+    const done = await writeChapter(core, runtime, { chapter: chapter.id, digest: false }, task)
+    expect(done.material?.by).toBe('rules')
+    expect(llm.requests.filter(request => request.route.for?.role === 'architect')).toHaveLength(0)
+    expect(llm.requests.filter(request => request.route.for?.role === 'writer')).toHaveLength(1)
+  })
+})
+
 describe('a chapter asked to be long', () => {
   let bed: TestBed
   let here: string
@@ -164,6 +207,8 @@ describe('a chapter asked to be long', () => {
 
   it('is written in parts by its beats: the same material each time, the text so far, and where to stop', async () => {
     const { core, runtime, llm } = bed
+    // (Parts of as many beats as there are: how many parts there are is then by the length asked for alone.)
+    await core.settings.update({ partBeats: 99 })
     llm.responder = request => `【第 ${llm.requests.filter(one => one.route.for?.role === 'writer').length} 次写的】${request.prompt.includes('照常收住') ? '船离了岸。' : '他没有说话。'}`
     const done = await writeChapter(core, runtime, { chapter: here, words: 9000, digest: false }, task)
     const asked = llm.requests.filter(request => request.route.for?.role === 'writer')
@@ -186,6 +231,22 @@ describe('a chapter asked to be long', () => {
     expect(await runtime.project.chapterText(here)).toBe('【第 1 次写的】他没有说话。\n\n【第 2 次写的】他没有说话。\n\n【第 3 次写的】船离了岸。')
     // What came out is far short of nine thousand words: said.
     expect(done.short).toMatchObject({ asked: 9000 })
+    expect(done.partsOff).toBeUndefined()
+  })
+
+  it('is written in one go where the author has parts switched off, whatever length is asked for — and says that is why', async () => {
+    const { core, runtime, llm } = bed
+    await core.settings.update({ partBeats: 0 })
+    llm.responder = () => '船离了岸。'
+    const done = await writeChapter(core, runtime, { chapter: here, words: 9000, digest: false }, task)
+    const asked = llm.requests.filter(request => request.route.for?.role === 'writer')
+    // One request for the whole chapter: all six beats, nothing about parts.
+    expect(asked).toHaveLength(1)
+    expect(asked[0]!.prompt).not.toContain('次写')
+    expect(asked[0]!.prompt).toContain('【节拍六】')
+    expect(done.parts).toBeUndefined()
+    // It came out short, and the reason parts were not used is on the result: the page says it, in place of "the plan has no beats".
+    expect(done).toMatchObject({ short: { asked: 9000 }, partsOff: true })
   })
 
   it('is written in parts by its beats whatever length is asked for, where nothing is set otherwise', async () => {

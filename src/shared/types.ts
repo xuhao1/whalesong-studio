@@ -86,6 +86,11 @@ export interface ProjectManifest {
   /** This book's own context budgets: what is named here holds for it, the Studio's for the rest. */
   context?: Partial<ContextSettings>
   /**
+   * This book's own way of writing (see `NovelSettings.materialBy`): who prepares what its writer is handed, or the
+   * writer as an agent. Absent: as the Studio has it. What is picked on the writing page for that page comes before both.
+   */
+  materialBy?: 'planner' | 'rules' | 'agent'
+  /**
    * How many requests of a kind go out at once for this book, where it has a number of its own: counted for this
    * book alone, beside whatever the Studio is doing for the others.
    */
@@ -1842,21 +1847,21 @@ export interface NovelSettings {
   /**
    * Who prepares what a writer is handed for a piece of writing the author asks for — a chapter written or gone on
    * with, a passage rewritten (polished, widened, tightened, changed to a word of theirs), a chapter written over.
-   * `planner` (unset): the planner looks at the work first — reads in the book as far as the piece needs — and hands
-   * the writer its material: what is asked, where the story stands, what must hold, whose cards, which of the world,
-   * the text to hold it against, the form, the voice. `rules`: the Studio packs it by its standing rules — the
-   * nearest chapters word for word, whoever is named nearby, what a search turns up — and nobody looks first.
+   * `rules` (unset): the Studio packs it by its standing rules — the nearest chapters word for word, whoever is
+   * named nearby, what a search turns up — and nobody looks first. `planner`: the planner looks at the work first —
+   * reads in the book as far as the piece needs — and hands the writer its material: what is asked, where the story
+   * stands, what must hold, whose cards, which of the world, the text to hold it against, the form, the voice.
    * `agent`: for a chapter written or gone on with, nobody prepares anything — the writer works as an agent: it reads
    * in the book for itself, hands the text in with a tool, and goes over what it handed in as often as it sees fit
    * before it calls the work done (a passage rewritten, a chapter written over go as with `planner`).
+   * A book may have its own (`ProjectManifest.materialBy`), which holds for it in place of this.
    */
   materialBy?: 'planner' | 'rules' | 'agent'
   /**
    * A chapter whose plan has beats is written in parts where the writer writes in one request (`materialBy` `planner`
    * or `rules`): the beats in runs of at most this many, a request a run — the same material each time and the text
    * so far, each told which beats are its own and where to stop — whatever length is asked for, or none. Unset:
-   * {@link PART_BEATS_DEFAULT}. 0: a chapter is written in one go, and in parts only where the length asked for is
-   * more than one request yields.
+   * {@link PART_BEATS_DEFAULT}. 0: never in parts — a chapter is written in one go, whatever length is asked for.
    */
   partBeats?: number
   /**

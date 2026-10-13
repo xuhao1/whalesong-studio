@@ -86,6 +86,8 @@ export interface WriteResult {
   parts?: number
   /** A length was asked for and what was written is well short of it (by more than the 15% the writer is allowed): said, not hidden. */
   short?: { asked: number; words: number }
+  /** The chapter's plan has beats to write it in parts by, and it was written in one go because the author has parts switched off (`partBeats` 0). */
+  partsOff?: true
   /** Memory was to be digested after the writing and was not: why. The text is saved all the same. */
   undigested?: string
   /** The opening and the closing of what was written, for the orchestrator to judge without rereading. */
@@ -139,15 +141,14 @@ const PART_WORDS = 3000
 
 /**
  * The parts a chapter is written in: its beats in runs, each with its share of the length where one is asked for.
- * @param perPart - beats a part holds at most (`partBeats`): a chapter with beats is then written in parts whatever
- *   length is asked for, or none. 0: in parts only where the length asked for is more than one request yields.
- * @returns undefined where the chapter is written in one go — a plan without beats to part it by, or, with
- *   `perPart` 0, no length asked for or one short enough.
+ * @param perPart - beats a part holds at most (`partBeats`): a chapter with beats is written in parts whatever
+ *   length is asked for, or none. 0: never — the chapter is written in one go.
+ * @returns undefined where the chapter is written in one go: a plan without beats to part it by, or `perPart` 0.
  */
 export function partsOf(beats: readonly Beat[] | undefined, target: number | undefined, perPart = 0): { from: number; to: number; words?: number }[] | undefined {
   if (beats === undefined || beats.length < 2) return undefined
-  if (perPart <= 0 && (target === undefined || target <= PART_WORDS * 1.4)) return undefined
-  const count = Math.min(beats.length, Math.max(target !== undefined ? Math.ceil(target / PART_WORDS) : 1, perPart > 0 ? Math.ceil(beats.length / perPart) : 1, 2))
+  if (perPart <= 0) return undefined
+  const count = Math.min(beats.length, Math.max(target !== undefined ? Math.ceil(target / PART_WORDS) : 1, Math.ceil(beats.length / perPart), 2))
   const parts: { from: number; to: number; words?: number }[] = []
   for (let part = 0; part < count; part++) {
     const from = Math.floor(part * beats.length / count)
@@ -230,7 +231,7 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
   // reads in the book for itself, hands the text in and goes over it. Otherwise in one request, from what it is
   // handed: the planner looks at the piece first — reads in the book as far as this chapter needs — and chooses it;
   // where the author has it otherwise, or the planner cannot be asked, the Studio packs it by rule.
-  const way = writingBy(core, params.material)
+  const way = writingBy(core, params.material, manifest)
   const set = core.currentSettings().partBeats
   const perPart = typeof set === 'number' && Number.isFinite(set) && set >= 0 ? Math.round(set) : PART_BEATS_DEFAULT
   const base = { lang, language: manifest.language, title: manifest.title }
@@ -447,6 +448,7 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
     digested,
     continued,
     ...(partsWritten !== undefined ? { parts: partsWritten } : {}),
+    ...(partsWritten === undefined && perPart <= 0 && way !== 'agent' && mode === 'draft' && (chapter.plan.beats?.length ?? 0) >= 2 ? { partsOff: true as const } : {}),
     // (The writer is allowed fifteen in the hundred either way; a chapter gone on with is asked for what is added.)
     ...(target !== undefined && countWords(proseOnly(written)) < target * 0.85 ? { short: { asked: target, words: countWords(proseOnly(written)) } } : {}),
     ...(undigested !== undefined ? { undigested } : {}),

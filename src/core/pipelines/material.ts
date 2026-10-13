@@ -90,22 +90,28 @@ export function beside(task: TaskContext): TaskContext {
   }
 }
 
+/** A book as far as it says how it is written. */
+type OwnWay = { materialBy?: 'planner' | 'rules' | 'agent' | undefined }
+
 /**
- * Who prepares the material of a piece of writing the author asks for: said outright, else as the settings say.
- * (Where the writer is to write as an agent — which it does for a chapter, see {@link writingBy} — the pieces that
- * are written in one request all the same have their material from the planner.)
+ * How a chapter is written or gone on with: by the writer in one request, from what the Studio packed by rule
+ * (`rules`) or the planner prepared (`planner`) — or by the writer as an agent, reading for itself (`agent`). Said
+ * outright for the piece; else as the book has it; else as the Studio's settings say; and where nobody said, packed
+ * by rule.
+ * @param book - the book the piece is of, for its own way (`ProjectManifest.materialBy`).
  */
-export function materialBy(core: NovelCore, explicit?: 'planner' | 'rules' | 'agent'): 'planner' | 'rules' {
-  return (explicit ?? core.currentSettings().materialBy) === 'rules' ? 'rules' : 'planner'
+export function writingBy(core: NovelCore, explicit?: 'planner' | 'rules' | 'agent', book?: OwnWay): 'planner' | 'rules' | 'agent' {
+  const way = explicit ?? book?.materialBy ?? core.currentSettings().materialBy
+  return way === 'planner' || way === 'agent' ? way : 'rules'
 }
 
 /**
- * How a chapter is written or gone on with: by the writer as an agent, reading for itself (`agent`) — or by the
- * writer in one request, from what the planner prepared (`planner`) or the Studio packed by rule (`rules`).
+ * Who prepares the material of a piece of writing the author asks for ({@link writingBy}). (Where the writer is to
+ * write as an agent — which it does for a chapter — the pieces that are written in one request all the same have
+ * their material from the planner.)
  */
-export function writingBy(core: NovelCore, explicit?: 'planner' | 'rules' | 'agent'): 'planner' | 'rules' | 'agent' {
-  const way = explicit ?? core.currentSettings().materialBy
-  return way === 'rules' || way === 'agent' ? way : 'planner'
+export function materialBy(core: NovelCore, explicit?: 'planner' | 'rules' | 'agent', book?: OwnWay): 'planner' | 'rules' {
+  return writingBy(core, explicit, book) === 'rules' ? 'rules' : 'planner'
 }
 
 const ROLE_RANK: Record<CharacterCard['role'], number> = { protagonist: 0, deuteragonist: 1, antagonist: 2, supporting: 3, minor: 4, cameo: 5 }
@@ -146,7 +152,7 @@ function namesOf(raw: unknown): string[] {
  *   (`used.why` says which).
  */
 export async function prepareMaterial(core: NovelCore, runtime: ProjectRuntime, ask: MaterialAsk, task: TaskContext): Promise<Prepared> {
-  if (materialBy(core, ask.by) === 'rules') return { used: { by: 'rules' } }
+  if (materialBy(core, ask.by, await runtime.project.manifest()) === 'rules') return { used: { by: 'rules' } }
   const key = [runtime.project.root, ask.chapter.plan.id, ask.work, hashText(`${ask.instruction ?? ''}\n${ask.range?.start ?? ''}:${ask.range?.end ?? ''}\n${ask.text ?? ''}`)].join('\n')
   const running = underway.get(key)
   if (running !== undefined) return await running

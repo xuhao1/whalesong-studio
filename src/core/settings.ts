@@ -16,7 +16,7 @@ import { readJson, writeJson } from './util/fs'
  * before a round is migrated when it is read, and says so once it is saved —
  * so a value the author sets afterwards is never taken for an old default.
  */
-export const SETTINGS_REVISION = 2
+export const SETTINGS_REVISION = 3
 
 export const DEFAULT_SETTINGS: NovelSettings = {
   schema: 1,
@@ -90,6 +90,13 @@ function migrate(saved: DeepPartial<NovelSettings>): DeepPartial<NovelSettings> 
   if (tts !== undefined && tts !== null && typeof tts.concurrency === 'number' && LEGACY_SPEECH.includes(tts.concurrency)) {
     const { concurrency: _old, ...rest } = tts
     next = { ...next, tts: rest }
+  }
+  // While the planner preparing was what held where nothing was set, every save of the settings page wrote it out:
+  // a file that says so says nothing the author chose, and follows what holds now (packed by rule). The writer as an
+  // agent was only ever there because somebody picked it, and stays.
+  if (saved.materialBy === 'planner') {
+    const { materialBy: _old, ...rest } = next
+    next = rest
   }
   return next
 }

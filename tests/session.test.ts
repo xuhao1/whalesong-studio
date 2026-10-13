@@ -147,6 +147,24 @@ describe('context budget', () => {
     expect((await new SettingsStore(DEFAULT_SETTINGS, file).get()).tts.concurrency).toBe(3)
   })
 
+  it('takes a way of writing that every save of the page wrote out for one nobody chose, once', async () => {
+    const file = join(await scratch(), 'settings.json')
+    // While the planner preparing held where nothing was set, the settings page wrote it into the file with every save:
+    // such a file follows what holds now — nothing set, which is packed by rule.
+    await writeFile(file, JSON.stringify({ revision: 2, materialBy: 'planner', partBeats: 0 }))
+    const migrated = await new SettingsStore(DEFAULT_SETTINGS, file).get()
+    expect(migrated.materialBy).toBeUndefined()
+    // (What else the file says is as it says it: a nought is a nought.)
+    expect(migrated.partBeats).toBe(0)
+    // The writer as an agent was only ever there because somebody picked it.
+    await writeFile(file, JSON.stringify({ revision: 2, materialBy: 'agent' }))
+    expect((await new SettingsStore(DEFAULT_SETTINGS, file).get()).materialBy).toBe('agent')
+    // Picked after this — the file carries the revision by then — the planner preparing is the author's choice, and stays.
+    const store = new SettingsStore(DEFAULT_SETTINGS, file)
+    await store.update({ materialBy: 'planner' })
+    expect((await new SettingsStore(DEFAULT_SETTINGS, file).get()).materialBy).toBe('planner')
+  })
+
   it('gives the text half of the model\'s window, and never more than the window holds', () => {
     // A million-token model: half of it for the manuscript's own text.
     expect(contextBudgets('auto', undefined, 1_000_000).textBudget).toBe(500_000)
