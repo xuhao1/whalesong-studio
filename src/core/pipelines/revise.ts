@@ -10,7 +10,7 @@
  * becomes a proposal that waits for accept/reject in the review panel.
  */
 import { isPictureLine, keptPictures } from '../../shared/embedded'
-import { CHAPTER_CONTEXT_DEFAULT, PASSAGE_CONTEXT_DEFAULT, MAIN_LINE, type MaterialUsed, type MendReach, type ChapterReview, type FiguresKept, type IssueSeverity, type IssueType, type PictureGuide, type PicturesRead, type Proposal, type ReviewIssue, type SettledProposal } from '../../shared/types'
+import { CHAPTER_CONTEXT_DEFAULT, PASSAGE_CONTEXT_DEFAULT, MAIN_LINE, writingOf, type MaterialUsed, type MendReach, type ChapterReview, type FiguresKept, type IssueSeverity, type IssueType, type PictureGuide, type PicturesRead, type Proposal, type ReviewIssue, type SettledProposal, type WritingSaid } from '../../shared/types'
 import { changedCore, clip, clipTail, countWords, fuzzyFind, hashText, newId, occurrences } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { asArray, asRecord, asText } from '../llm'
@@ -18,7 +18,7 @@ import { assign, crewPlan } from '../crew'
 import type { LocatedChapter } from '../project'
 import { ProjectError } from '../project'
 import { architectSystem, mendTask, reviseChapterSystem, reviseChapterTask, reviseSpanSystem, reviseSpanTask } from '../prompts'
-import { L, promptLanguage, renderStyle } from '../render'
+import { L, promptLanguage, renderStyle, styleExtra, withStyleExtra } from '../render'
 import { mapLimit } from '../util/async'
 import { scheduleDigest } from './digest'
 import { schedulePlanFollow } from './follow'
@@ -74,11 +74,12 @@ export interface ReviseSpanParams {
 
 /**
  * Whether a mending goes through — every place, what changes with each, as much of a place as has to move — or keeps
- * to the least change: asked for outright, else as the settings say (`mendReach`: through unless the author set
- * `careful`).
+ * to the least change: asked for outright, else as the book has it, else as the settings say (`mendReach`: through
+ * unless the author set `careful`).
+ * @param book - the book that is mended, for what it has of its own (`ProjectManifest.mendReach`).
  */
-export function mendsBold(core: NovelCore, explicit?: MendReach): boolean {
-  return (explicit ?? core.currentSettings().mendReach) !== 'careful'
+export function mendsBold(core: NovelCore, explicit?: MendReach, book?: WritingSaid): boolean {
+  return (explicit ?? writingOf(core.currentSettings(), book).mendReach) !== 'careful'
 }
 
 /** Above this share of a chapter a place widened around a quote is no place any more: the quote stays as it was. */
@@ -123,19 +124,21 @@ export function widenedPlace(text: string, range: { start: number; end: number }
 }
 
 /**
- * Whether the words of a change made by places are the planner's own — asked for outright, else as the settings say
- * (`mendBy`: the planner's unless the author set the writer's).
+ * Whether the words of a change made by places are the planner's own — asked for outright, else as the book has it,
+ * else as the settings say (`mendBy`: the planner's unless the author set the writer's).
+ * @param book - the book that is mended, for what it has of its own (`ProjectManifest.mendBy`).
  */
-export function mendsDirect(core: NovelCore, explicit?: boolean): boolean {
-  return explicit ?? core.currentSettings().mendBy !== 'writer'
+export function mendsDirect(core: NovelCore, explicit?: boolean, book?: WritingSaid): boolean {
+  return explicit ?? writingOf(core.currentSettings(), book).mendBy !== 'writer'
 }
 
 /**
  * Whose model rewrites a passage the author selected, or a chapter written over whole — said outright, else as the
- * settings say (`rewriteBy`: the writer's unless the author set the planner's).
+ * book has it, else as the settings say (`rewriteBy`: the writer's unless the author set the planner's).
+ * @param book - the book it is of, for what it has of its own (`ProjectManifest.rewriteBy`).
  */
-export function rewritesBy(core: NovelCore, explicit?: 'writer' | 'planner'): 'writer' | 'planner' {
-  return explicit ?? (core.currentSettings().rewriteBy === 'planner' ? 'planner' : 'writer')
+export function rewritesBy(core: NovelCore, explicit?: 'writer' | 'planner', book?: WritingSaid): 'writer' | 'planner' {
+  return explicit ?? writingOf(core.currentSettings(), book).rewriteBy
 }
 
 export interface ReviseChapterParams {
@@ -302,7 +305,7 @@ export async function reviseSpan(core: NovelCore, runtime: ProjectRuntime, param
   let guided: Awaited<ReturnType<typeof guidePictures>>
   let material: MaterialUsed | undefined
   // Whose words they are: whoever settled the place wrote them, else the model the settings (or the caller) name.
-  const who: 'writer' | 'planner' = params.written !== undefined ? 'planner' : rewritesBy(core, params.by)
+  const who: 'writer' | 'planner' = params.written !== undefined ? 'planner' : rewritesBy(core, params.by, manifest)
   if (params.written !== undefined) {
     // Whoever settled the place wrote what it is to read: nobody is asked.
     after = cleanProse(params.written).trim()
@@ -355,7 +358,7 @@ export async function reviseSpan(core: NovelCore, runtime: ProjectRuntime, param
     if (params.batchId === undefined) await keepMaterial(runtime, { ...material, chapter: chapter.plan.id, work: 'passage', instruction: params.instruction, text: prompt }).catch((error: unknown) => { core.log(`could not keep the material of ${chapter.plan.id}`, error) })
     const response = await core.llm.complete({
       route,
-      system: reviseSpanSystem({ ...base, style: renderStyle(await project.activeStyle(), lang) }),
+      system: await (async () => { const style = await project.activeStyle(); return withStyleExtra(reviseSpanSystem({ ...base, style: renderStyle(style, lang) }), style, lang) })(),
       ...(guided !== undefined && guided.images.length > 0 ? { images: guided.images } : {}),
       prompt,
       ...(task.signal !== undefined ? { signal: task.signal } : {}),
@@ -431,7 +434,7 @@ export async function reviseChapter(core: NovelCore, runtime: ProjectRuntime, pa
   const manifest = await project.manifest()
   const lang = promptLanguage(manifest.language)
   // Whose model writes it over: the writer's, unless the author has the crew's do such rewriting (or the caller says).
-  const who = rewritesBy(core, params.by)
+  const who = rewritesBy(core, params.by, manifest)
   const route = await core.route(who === 'planner' ? 'architect' : 'writer', runtime, task)
   // Rewritten whole, the chapter still goes by the pictures the author gave it — or by the ones given to this revision.
   const guided = await guidePictures(core, runtime, route, params.guides ?? chapter.plan.guides, 'revise', task)
@@ -458,7 +461,7 @@ export async function reviseChapter(core: NovelCore, runtime: ProjectRuntime, pa
   if (params.batchId === undefined) await keepMaterial(runtime, { ...material, chapter: chapter.plan.id, work: 'chapter', instruction: params.instruction, text: prompt }).catch((error: unknown) => { core.log(`could not keep the material of ${chapter.plan.id}`, error) })
   const response = await core.llm.complete({
     route,
-    system: reviseChapterSystem({ ...base, style: renderStyle(await project.activeStyle(), lang) }),
+    system: await (async () => { const style = await project.activeStyle(); return withStyleExtra(reviseChapterSystem({ ...base, style: renderStyle(style, lang) }), style, lang) })(),
     ...(guided !== undefined && guided.images.length > 0 ? { images: guided.images } : {}),
     prompt,
     ...(task.signal !== undefined ? { signal: task.signal } : {}),
@@ -640,8 +643,9 @@ export async function reviseBook(core: NovelCore, runtime: ProjectRuntime, param
   let places: Place[] = []
   let findings: Finding[] = []
   const lead = params.lead
-  const direct = lead !== 'find' && mendsDirect(core, params.direct)
-  const bold = mendsBold(core, params.reach)
+  const own = await project.manifest()
+  const direct = lead !== 'find' && mendsDirect(core, params.direct, own)
+  const bold = mendsBold(core, params.reach, own)
   task.job?.progress(0, 1, lead === 'find' ? L(lang, '照你说的去查', 'looking into what you said') : lead === 'fix' ? L(lang, '照你说的去查，再定在哪几处改', 'looking into what you said, then settling which places change') : L(lang, '定在哪几处改', 'settling which places change'))
   const lines: string[] = []
   // Going on from what waits: the planner is told which chapters have a change waiting, and what it was for.
@@ -679,8 +683,9 @@ export async function reviseBook(core: NovelCore, runtime: ProjectRuntime, param
   }
   const summaries = `${lines.join('\n\n')}${guided !== undefined ? `\n\n${guided.text}` : ''}`
   const asked = params.asked === true
-  // (Where the planner writes the changed words itself, it is told how the book is written.)
-  const style = direct ? renderStyle(await project.activeStyle(), lang) : undefined
+  // (Where the planner writes the changed words itself, it is told how the book is written — and what the author added for whoever writes it.)
+  const active = direct ? await project.activeStyle() : undefined
+  const style = direct ? [renderStyle(active, lang), styleExtra(active, lang, true)].filter(part => part !== undefined).join('\n\n') : undefined
   const { value } = await assign(core, runtime, task, {
     role: 'architect',
     label: lead === 'find' ? L(lang, '审校和修订 · 只找出来', 'Review and revision · finding only')
@@ -1059,9 +1064,10 @@ export async function fixIssue(core: NovelCore, runtime: ProjectRuntime, params:
   const review = await project.review(chapter.plan.id)
   const issue = review?.issues.find(candidate => candidate.id === params.issue)
   if (issue === undefined) throw new ProjectError('novel/not-found', `chapter ${chapter.index} has no review issue "${params.issue}" — run the review again, or pass the instruction itself to a revision`)
-  const lang = promptLanguage((await project.manifest()).language)
+  const manifest = await project.manifest()
+  const lang = promptLanguage(manifest.language)
   const where = { index: chapter.index, title: chapter.plan.title }
-  const bold = mendsBold(core, params.reach)
+  const bold = mendsBold(core, params.reach, manifest)
   const reach = { reach: bold ? 'bold' as const : 'careful' as const }
   if (params.scope === 'book') {
     const book = await reviseBook(core, runtime, { instruction: issueInstruction(lang, where, issue, params.note, true), bible: true, ...reach, texts: [chapter.plan.id], ...(chapter.line !== undefined ? { line: chapter.line } : {}), ...(params.onto === true ? { onto: true } : {}), issuesOf: chapterId => (chapterId === chapter.plan.id ? [issue.id] : []) }, task)
@@ -1260,10 +1266,11 @@ type Found = { chapter: { id: string; index: number; title: string }; line: stri
 /** The issues of one line of the plot, mended together. */
 async function fixOnLine(core: NovelCore, runtime: ProjectRuntime, params: FixIssuesParams, found: Found[], line: string, task: TaskContext): Promise<FixIssuesResult> {
   const { project } = runtime
-  const lang = promptLanguage((await project.manifest()).language)
+  const manifest = await project.manifest()
+  const lang = promptLanguage(manifest.language)
   found.sort((left, right) => left.chapter.index - right.chapter.index)
   const said = params.note?.trim() ?? ''
-  const bold = mendsBold(core, params.reach)
+  const bold = mendsBold(core, params.reach, manifest)
   /** One issue, as whoever mends it reads it. */
   const told = (item: Found, at: number): string => lang === 'zh'
     ? [

@@ -14,7 +14,7 @@ import { settleWalkOn } from '../walkons'
 import { characterLifeTask, expandCharacterTask, expandWorldTask, styleExtractTask, styleSampleTask, tiesTask, worldTidyTask } from '../prompts'
 import { TIE_ENDS, TIE_KINDS, type Tie, type TieKind } from '../../shared/ties'
 import { groupOf } from '../../shared/world'
-import { L, promptLanguage, renderCharacter, renderStyle, renderWorld } from '../render'
+import { L, promptLanguage, renderCharacter, renderStyle, renderWorld, styleExtra } from '../render'
 import { pickText } from './plot'
 
 const POVS: NonNullable<StyleProfile['pov']>[] = ['first', 'third-limited', 'third-omniscient', 'second', 'multi']
@@ -479,8 +479,11 @@ export async function styleSample(core: NovelCore, runtime: ProjectRuntime, para
   const lang = promptLanguage(manifest.language)
   const style = params.draft ?? (params.style !== undefined ? await project.findStyle(params.style) : await project.activeStyle())
   const route = await core.route('writer', runtime, task)
+  // (What the author added to the system prompt for this style is heard in the sample too: it is what a chapter will be written with.)
+  const extra = styleExtra(style, lang)
   const response = await core.llm.complete({
     route,
+    ...(extra !== undefined ? { system: extra } : {}),
     prompt: styleSampleTask({ lang, language: manifest.language, title: manifest.title, style: renderStyle(style, lang), ...(params.scene !== undefined ? { scene: params.scene } : {}) }),
     ...(task.signal !== undefined ? { signal: task.signal } : {}),
     onText: (_delta, total) => { task.job?.rewrite(total) },

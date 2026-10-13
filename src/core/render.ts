@@ -136,6 +136,28 @@ function fitting<T>(items: readonly T[], size: (item: T) => number, room: number
   return out
 }
 
+/**
+ * What the author added to the system prompt for a style (`StyleProfile.system`), as it is sent: their words as they
+ * wrote them, under a heading that sets them apart from the style before them.
+ * @param handsIn - for whoever hands its work in as something other than the prose itself (a list of changes, a
+ * turn of an interlude): said to hold for the words it writes into the book, how it hands them in staying as it was told.
+ * @returns `undefined` where the style has none.
+ */
+export function styleExtra(style: StyleProfile | undefined, lang: PromptLanguage, handsIn = false): string | undefined {
+  const extra = style?.system?.trim()
+  if (extra === undefined || extra.length === 0) return undefined
+  const head = handsIn
+    ? L(lang, '【作者给写手的额外要求】（你写进书里的文字同样照办；怎么交稿仍照上面说的）', 'FROM THE AUTHOR, FOR WHOEVER WRITES THE BOOK (it holds for the words you write into it too; how you hand your work in stays as said above)')
+    : L(lang, '【作者的额外要求】', 'FROM THE AUTHOR')
+  return `${head}\n${extra}`
+}
+
+/** A system prompt with what the author added for the style ({@link styleExtra}) at its end. */
+export function withStyleExtra(system: string, style: StyleProfile | undefined, lang: PromptLanguage, handsIn = false): string {
+  const extra = styleExtra(style, lang, handsIn)
+  return extra !== undefined ? `${system}\n\n${extra}` : system
+}
+
 /** A style profile as instructions to the writer. */
 export function renderStyle(style: StyleProfile | undefined, lang: PromptLanguage): string {
   if (style === undefined) return L(lang, '（未设定文风：使用克制、具体、有画面感的现代小说笔法。）', '(No style set: write restrained, concrete, sensory modern prose.)')

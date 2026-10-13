@@ -10,7 +10,7 @@ import { findJotting, foundJottings, jottingName } from './jottings'
 import { derivationLine, derivationsView, derivationWhole } from './derivations'
 import { chapterAsMeant, threadWithout } from './plans'
 import { ProjectError, type LineScope, type Project } from './project'
-import { L, promptLanguage, renderCharacter, renderPlan, renderStyle, renderThread, renderWorld, roleLabel } from './render'
+import { L, promptLanguage, renderCharacter, renderPlan, renderStyle, renderThread, renderWorld, roleLabel, styleExtra } from './render'
 import { lifeLine } from '../shared/life'
 import { clip } from '../shared/text'
 import { MAIN_LINE, type PlotThread, type SearchSource } from '../shared/types'
@@ -202,7 +202,8 @@ export async function readBook(runtime: ProjectRuntime, request: ReadRequest, to
       const style = given !== undefined ? await project.findStyle(given) : await project.activeStyle()
       if (style === undefined) throw new ProjectError('novel/not-found', `no style matches "${request.ref ?? ''}"`)
       const all = await project.styles()
-      return { text: `${renderStyle(style, lang)}\n\n[id ${style.id}${style.id === manifest.activeStyle ? '; active' : ''}; all styles: ${all.map(item => item.id).join(', ')}]`, data: style }
+      const extra = styleExtra(style, lang)
+      return { text: `${renderStyle(style, lang)}${extra !== undefined ? `\n\n${extra}` : ''}\n\n[id ${style.id}${style.id === manifest.activeStyle ? '; active' : ''}; all styles: ${all.map(item => item.id).join(', ')}]`, data: style }
     }
     case 'memory': {
       const chapter = await chapterOf()

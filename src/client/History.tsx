@@ -83,6 +83,7 @@ const FIELDS: Record<HistoryKind, Record<string, Label>> = {
     avoid: ['必须避免', 'To avoid'],
     exemplars: ['范文', 'Exemplars'],
     body: ['补充说明', 'Notes'],
+    system: ['额外的系统提示词', 'Extra system prompt'],
   },
   plan: {
     title: ['标题', 'Title'],

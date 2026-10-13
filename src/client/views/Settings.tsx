@@ -27,7 +27,7 @@ import {
   CREW_ROLES,
   type BookParallel, type CodexBridgeKind, type ContextSettings, type CrewRole, type CrewRoleSettings, type CrewSettings, type EmbeddingSettings, type GateKind, type ImageSettings, type ModelRoute, type NovelSettings, type SoundProviderKind, type SoundSettings, type TextModelRouting, type TextRole, type TtsProviderKind, type TtsSettings,
 } from '../../shared/types'
-import { CHAPTER_CONTEXT_DEFAULT, PART_BEATS_DEFAULT, PARALLEL_DEFAULT, PARALLEL_MAX, PASSAGE_CONTEXT_DEFAULT, PLANNER_WHOLE_DEFAULT, PLAY_CONTEXT_DEFAULT, REFERENCES_DEFAULT, REFERENCES_MAX, TTS_SERVICE_KEYS, type SoundSettings as SoundDraft } from '../../shared/types'
+import { CHAPTER_CONTEXT_DEFAULT, PART_BEATS_DEFAULT, WRITING_KEYS, writingOf, writingSaid, PARALLEL_DEFAULT, PARALLEL_MAX, PASSAGE_CONTEXT_DEFAULT, PLANNER_WHOLE_DEFAULT, PLAY_CONTEXT_DEFAULT, REFERENCES_DEFAULT, REFERENCES_MAX, TTS_SERVICE_KEYS, type MendReach, type SoundSettings as SoundDraft, type WritingSet } from '../../shared/types'
 import { messageOf } from '../api'
 import { ImageModelField, ModelField, speechEndpoint, speechSuggestions, useKeyState, type KeyBag, type TypedKeys } from '../ModelField'
 import { Icon } from '../icons'
@@ -181,7 +181,7 @@ const STRATEGY_WORD: Record<ContextSettings['strategy'], [string, string]> = {
 }
 
 /** What a book has of its own, as the page holds it until it is saved into the book. */
-interface BookOwn { models: Partial<TextModelRouting>; crew: CrewSettings; image: BookImageSettings; tts?: TtsSettings | undefined; sound?: SoundSettings | undefined; embedding?: EmbeddingSettings | undefined; vision?: ModelRoute | undefined; context: Partial<ContextSettings>; parallel: BookParallel; materialBy?: 'planner' | 'rules' | 'agent' | undefined }
+interface BookOwn { models: Partial<TextModelRouting>; crew: CrewSettings; image: BookImageSettings; tts?: TtsSettings | undefined; sound?: SoundSettings | undefined; embedding?: EmbeddingSettings | undefined; vision?: ModelRoute | undefined; context: Partial<ContextSettings>; parallel: BookParallel; materialBy?: WritingSet['materialBy'] | undefined; partBeats?: number | undefined; mendBy?: WritingSet['mendBy'] | undefined; rewriteBy?: WritingSet['rewriteBy'] | undefined; mendReach?: MendReach | undefined }
 
 function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
   const { controller } = useStudio()
@@ -196,9 +196,9 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
   // Where the text models and the crew's ways are saved: for every book, or with the book that is open.
   const book = useSnapshot(snapshot => snapshot.project?.manifest)
   const bookRoot = useSnapshot(snapshot => snapshot.root)
-  const [own, setOwn] = useState<BookOwn>(() => ({ models: book?.models ?? {}, ...(book?.materialBy !== undefined ? { materialBy: book.materialBy } : {}), crew: book?.crew ?? {}, image: book?.image ?? {}, context: book?.context ?? {}, parallel: book?.parallel ?? {}, ...(book?.tts !== undefined ? { tts: book.tts } : {}), ...(book?.sound !== undefined ? { sound: book.sound } : {}), ...(book?.embedding !== undefined ? { embedding: book.embedding } : {}), ...(book?.vision !== undefined ? { vision: book.vision } : {}) }))
+  const [own, setOwn] = useState<BookOwn>(() => ({ models: book?.models ?? {}, ...writingSaid(book), crew: book?.crew ?? {}, image: book?.image ?? {}, context: book?.context ?? {}, parallel: book?.parallel ?? {}, ...(book?.tts !== undefined ? { tts: book.tts } : {}), ...(book?.sound !== undefined ? { sound: book.sound } : {}), ...(book?.embedding !== undefined ? { embedding: book.embedding } : {}), ...(book?.vision !== undefined ? { vision: book.vision } : {}) }))
   const [ownDirty, setOwnDirty] = useState(false)
-  const bookHasOwn = book !== undefined && (book.materialBy !== undefined || Object.keys(book.models ?? {}).length > 0 || Object.values(book.crew ?? {}).some(value => value !== undefined && Object.keys(value).length > 0) || Object.keys(book.image ?? {}).length > 0 || book.tts !== undefined || book.sound !== undefined || book.embedding !== undefined || book.vision !== undefined || Object.keys(book.context ?? {}).length > 0 || Object.keys(book.parallel ?? {}).length > 0)
+  const bookHasOwn = book !== undefined && (Object.keys(writingSaid(book)).length > 0 || Object.keys(book.models ?? {}).length > 0 || Object.values(book.crew ?? {}).some(value => value !== undefined && Object.keys(value).length > 0) || Object.keys(book.image ?? {}).length > 0 || book.tts !== undefined || book.sound !== undefined || book.embedding !== undefined || book.vision !== undefined || Object.keys(book.context ?? {}).length > 0 || Object.keys(book.parallel ?? {}).length > 0)
   // A book that has settings of its own is what the page opens on: they are what holds for the book in hand.
   const [wanted, setWanted] = useState<'global' | 'book'>((bookRoot !== undefined ? scopeShown.get(bookRoot) : undefined) ?? (bookHasOwn ? 'book' : 'global'))
   const setScope = (next: 'global' | 'book'): void => {
@@ -214,7 +214,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
       if ('sound' in patch && patch.sound === undefined) delete next.sound
       if ('embedding' in patch && patch.embedding === undefined) delete next.embedding
       if ('vision' in patch && patch.vision === undefined) delete next.vision
-      if ('materialBy' in patch && patch.materialBy === undefined) delete next.materialBy
+      for (const key of WRITING_KEYS) if (key in patch && patch[key] === undefined) delete next[key]
       return next
     })
     setOwnDirty(true)
@@ -233,7 +233,10 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
     const part: string = focus
     if (part === 'crew' || part === 'parallel' || part === 'context') setAdvanced(true)
     // What the Studio does by itself is set for every book: shown under that view, whichever was open.
-    if (part === 'auto' || part === 'material') setScope('global')
+    if (part === 'auto') setScope('global')
+    // Who prepares the writer's material — what the writing page's link is about — is set for every book and by a
+    // book: where this one has its own, that is what holds, and what is shown; else the one for every book.
+    if (part === 'material') setScope(own.materialBy !== undefined ? 'book' : 'global')
     if (part === 'image' || part === 'tts' || part === 'sound' || part === 'embedding') setUnfolded(previous => ({ ...previous, [part]: true }))
     // Not taken back when this effect is cleaned up: taking the request off the store (below) renders the page again at
     // once, and that very cleanup used to cancel the scroll it had just asked for. A page that is gone has nothing to find.
@@ -270,7 +273,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
     if (ownDirty && bookRoot !== undefined) {
       const crew = Object.fromEntries(Object.entries(own.crew).filter(([, value]) => value !== undefined && Object.keys(value).length > 0))
       // Named as nothing (`null`), speech and sound of its own are taken off the book: the Studio's hold for it again.
-      await controller.api.call('project.update', { root: bookRoot, patch: { models: own.models, crew, image: own.image, tts: own.tts ?? null, sound: own.sound ?? null, embedding: own.embedding ?? null, vision: own.vision ?? null, materialBy: own.materialBy ?? null, context: Object.keys(own.context).length > 0 ? own.context : null, parallel: Object.keys(own.parallel).length > 0 ? own.parallel : null } as never })
+      await controller.api.call('project.update', { root: bookRoot, patch: { models: own.models, crew, image: own.image, tts: own.tts ?? null, sound: own.sound ?? null, embedding: own.embedding ?? null, vision: own.vision ?? null, ...Object.fromEntries(WRITING_KEYS.map(key => [key, own[key] ?? null])), context: Object.keys(own.context).length > 0 ? own.context : null, parallel: Object.keys(own.parallel).length > 0 ? own.parallel : null } as never })
       setOwnDirty(false)
       await controller.refreshProject()
       if (!dirty) {
@@ -314,11 +317,21 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
   const portraitWord = (plan: PortraitPlan): string => portraitPlanWord(plan, t)
   // What this book says of its own about what a portrait comes to: as it says it now, or as an older switch said it.
   const ownPortraits: PortraitPlan | undefined = own.image.portraits ?? (own.image.portraitScene === false ? 'plain' : undefined)
+  // How books are written and revised, as the page has it for every book — and each value in a word: for "as for every book: …" and the list above.
+  const everyWriting = writingOf(draft)
+  const beatsWord = (beats: number): string => (beats === 0 ? t('不分，一次写完', 'never in parts') : t(`每次 ${beats} 个节拍`, `${beats} beats a part`))
+  const modelWord = (by: 'writer' | 'planner'): string => (by === 'planner' ? t('编排模型', 'the crew\'s model') : t('写手模型', 'the writer\'s model'))
+  const reachWord = (reach: MendReach): string => (reach === 'careful' ? t('保守', 'careful') : t('主动', 'bold'))
+  const asEvery = (word: string): string => t(`沿用全局：${word}`, `As for every book: ${word}`)
   const differing: { key: string; label: string; reset: () => void }[] = [
     ...Object.entries(own.models).filter(([, route]) => route !== undefined).map(([role, route]) => ({ key: `model:${role}`, label: t(`${roleWord(role)}的模型：${route!.model}`, `${roleWord(role)}'s model: ${route!.model}`), reset: () => { const { [role as TextRole]: _old, ...rest } = own.models; updateOwn({ models: rest }) } })),
     ...Object.entries(own.crew).filter(([, value]) => value !== undefined && Object.keys(value).length > 0).map(([role]) => ({ key: `crew:${role}`, label: t(`${roleWord(role)}怎么干活`, `how ${roleWord(role)} works`), reset: () => { const { [role as CrewRole]: _old, ...rest } = own.crew; updateOwn({ crew: rest }) } })),
     ...(own.image.provider !== undefined ? [{ key: 'image:service', label: t(`绘图服务：${own.image.provider === 'none' ? '不画图' : imageSetupName(own.image as ImageSettings)}`, `image service: ${own.image.provider === 'none' ? 'none' : imageSetupName(own.image as ImageSettings)}`), reset: () => { updateOwn({ image: imageWays(own.image) }) } }] : []),
-    ...(own.materialBy !== undefined ? [{ key: 'materialBy', label: t(`写法：${wayWord(own.materialBy, t)}`, `the way of writing: ${wayWord(own.materialBy, t)}`), reset: () => { updateOwn({ materialBy: undefined }) } }] : []),
+    ...(own.materialBy !== undefined ? [{ key: 'materialBy', label: t(`备料：${wayWord(own.materialBy, t)}`, `material: ${wayWord(own.materialBy, t)}`), reset: () => { updateOwn({ materialBy: undefined }) } }] : []),
+    ...(own.partBeats !== undefined ? [{ key: 'partBeats', label: t(`分节拍写：${beatsWord(own.partBeats)}`, `written by its beats: ${beatsWord(own.partBeats)}`), reset: () => { updateOwn({ partBeats: undefined }) } }] : []),
+    ...(own.mendBy !== undefined ? [{ key: 'mendBy', label: t(`修订由${modelWord(own.mendBy)}写`, `revisions by ${modelWord(own.mendBy)}`), reset: () => { updateOwn({ mendBy: undefined }) } }] : []),
+    ...(own.rewriteBy !== undefined ? [{ key: 'rewriteBy', label: t(`改写由${modelWord(own.rewriteBy)}写`, `rewrites by ${modelWord(own.rewriteBy)}`), reset: () => { updateOwn({ rewriteBy: undefined }) } }] : []),
+    ...(own.mendReach !== undefined ? [{ key: 'mendReach', label: t(`修订改多少：${reachWord(own.mendReach)}`, `how far a revision goes: ${reachWord(own.mendReach)}`), reset: () => { updateOwn({ mendReach: undefined }) } }] : []),
     ...(own.tts !== undefined ? [{ key: 'tts', label: t(`配音服务：${own.tts.provider === 'none' ? '不配音' : own.tts.model ?? own.tts.provider}`, `speech: ${own.tts.provider === 'none' ? 'none' : own.tts.model ?? own.tts.provider}`), reset: () => { updateOwn({ tts: undefined }) } }] : []),
     ...(own.sound !== undefined ? [{ key: 'sound', label: t('声音设计', 'sound design'), reset: () => { updateOwn({ sound: undefined }) } }] : []),
     ...(own.vision !== undefined ? [{ key: 'vision', label: t(`看图的模型：${own.vision.model}`, `looks at pictures: ${own.vision.model}`), reset: () => { updateOwn({ vision: undefined }) } }] : []),
@@ -519,76 +532,6 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
             />
           </>
         )}
-        {/* Whose model writes the words of a change made by places: a model fit to write chapters is not always fit for a pinned, small change. */}
-        {scope === 'book' ? (
-          <div className="nv-form-grid" data-section="material">
-            {/* This book's own way of writing, in place of the Studio's: what the writing page starts from for it. */}
-            <OwnMark own={own.materialBy !== undefined} scope={scope} t={t}>
-              <Field label={t('这本书写作、改写前谁来备料', 'Who prepares what this book\'s writer is handed')} hint={t('只管这本书：写一章、续写、改写一段、整章重写之前，交给写手的材料从哪来。存在书里，跟着书走；写作页的“写法”还可以为那一页另选。', 'For this book alone: where the material comes from before a chapter is written or gone on with, a passage rewritten, a chapter written over. Kept in the book and travels with it; the writing page can still pick another for itself.')}>
-                <Select<'' | 'planner' | 'rules' | 'agent'>
-                  value={own.materialBy ?? ''}
-                  options={[
-                    { value: '', label: t(`沿用全局：${wayWord(draft.materialBy === 'planner' || draft.materialBy === 'agent' ? draft.materialBy : 'rules', t)}`, `As for every book: ${wayWord(draft.materialBy === 'planner' || draft.materialBy === 'agent' ? draft.materialBy : 'rules', t)}`) },
-                    { value: 'rules', label: t('这本书：工坊按规则拼', 'This book: packed by the Studio\'s rules') },
-                    { value: 'planner', label: t('这本书：策划先看，再备料', 'This book: the planner looks first, then prepares it') },
-                    { value: 'agent', label: t('这本书：不备料，写手作为 agent 自己读、自己写', 'This book: no material, the writer as an agent') },
-                  ]}
-                  onChange={(value) => { updateOwn({ materialBy: value === '' ? undefined : value }) }}
-                />
-              </Field>
-            </OwnMark>
-          </div>
-        ) : null}
-        {scope !== 'book' ? (
-          <div className="nv-form-grid" data-section="material">
-            {/* What a writer is handed for a piece of writing: packed by rule — or prepared for that piece by the planner, who looks first. */}
-            <Field label={t('写作、改写前谁来备料', 'Who prepares what the writer is handed')} hint={t('写一章、续写、改写一段（润色 / 扩写 / 精简 / 按要求改）、整章重写之前，交给写手的材料从哪来。备好的材料在写作页要求框下面能看。', 'Where the material comes from before a chapter is written or gone on with, a passage rewritten, a chapter written over. What was prepared can be read under the brief box on the writing page.')}>
-              <Select<'planner' | 'rules' | 'agent'>
-                value={draft.materialBy === 'planner' || draft.materialBy === 'agent' ? draft.materialBy : 'rules'}
-                options={[
-                  { value: 'rules', label: t('工坊按规则拼：最近的章节原文 + 检索到的片段，不经策划（默认，快）', 'The Studio by its rules: the nearest chapters and what a search turns up, nobody looking first (default, quicker)') },
-                  { value: 'planner', label: t('策划先看：读书、挑出这一次用得上的，连同任务要求、格式、文风交给写手', 'The planner looks first: reads in the book, chooses what this piece needs, and hands it over with the task, the form and the voice') },
-                  { value: 'agent', label: t('不备料——写手作为 agent：自己读书，用工具把正文交上来，交上来之后还能反复改，满意了才交稿（写一章、续写；改写仍由策划备料）', 'Nobody — the writer as an agent: reads in the book for itself, hands the text in with a tool, goes over it as often as it sees fit (a chapter written or gone on with; rewrites still have the planner\'s material)') },
-                ]}
-                onChange={(value) => { update({ materialBy: value }) }}
-              />
-            </Field>
-            {/* A chapter with beats is written in parts, beat by beat, where the writer writes in one request: how many beats a part holds. */}
-            <Field label={t('分节拍写：每次写几个节拍', 'Written by its beats: beats to a part')} hint={t('章纲有节拍的章，按节拍分几次写——每次带着同一份材料和已经写出来的正文（缓存照用），只写这几个节拍，最后一次才收尾；不管要多少字都这样。每个节拍都写得足，一章也会比一次写完的长。填 0：不分，一律一次写完——要的字数很多时，模型可能写不够，那时会提示。（“写手自己读、自己写”不用这一项。）', 'A chapter whose plan has beats is written in parts — each request with the same material and the text so far (the cache holds), told which beats are its own, and only the last closes the chapter — whatever length is asked for. Every beat gets its room, and the chapter comes out longer than one written in one go. 0: never in parts — always in one go; where a great length is asked for the model may fall short of it, and that is said. (The writer as an agent does not go by this.)')}>
-              <TextInput inputMode="numeric" value={draft.partBeats !== undefined ? String(draft.partBeats) : ''} placeholder={String(PART_BEATS_DEFAULT)} onChange={(event) => { const text = event.target.value.replace(/\D/g, '').slice(0, 2); setDraft(({ partBeats: _old, ...rest }) => (text.length > 0 ? { ...rest, partBeats: Number(text) } : rest)); setDirty(true) }} />
-            </Field>
-            <Field label={t('修订由谁写', 'Who writes a revision')} hint={t('“审校和修订”里的每一种修订——修订审校问题、照你说的一句话修订（审校页、写作页、选中一段）：每一处改好的文字由哪个模型写。', 'Every revision under Review and revision — an issue mended, a sentence of yours carried out (the review page, the writing page, a selected passage): whose model writes what each place is to read.')}>
-              <Select<'writer' | 'planner'>
-                value={draft.mendBy === 'writer' ? 'writer' : 'planner'}
-                options={[
-                  { value: 'planner', label: t('编排模型：策划直接写出改好的文字（默认）', 'The crew\'s: the planner writes the changed words itself (default)') },
-                  { value: 'writer', label: t('写手模型：策划定在哪改，写手改写', 'The writer\'s: the planner settles where, the writer rewrites') },
-                ]}
-                onChange={(value) => { update({ mendBy: value }) }}
-              />
-            </Field>
-            <Field label={t('改写一段、整章重写由谁写', 'Who rewrites a passage or a whole chapter')} hint={t('写作页选中一段的“润色 / 扩写 / 按要求改”，整章重写，以及修订里策划说“得整章重写”的章节。写一章、续写始终是写手。', 'A selected passage polished, expanded or rewritten on the writing page; a chapter written over whole — asked for, or because a mending says places will not do. Writing a chapter and going on with one is always the writer\'s.')}>
-              <Select<'writer' | 'planner'>
-                value={draft.rewriteBy === 'planner' ? 'planner' : 'writer'}
-                options={[
-                  { value: 'writer', label: t('写手模型（默认）', 'The writer\'s (default)') },
-                  { value: 'planner', label: t('编排模型', 'The crew\'s') },
-                ]}
-                onChange={(value) => { update({ rewriteBy: value }) }}
-              />
-            </Field>
-            <Field label={t('修订改多少', 'How far a revision goes')} hint={t('修订审校问题、照你说的一句话修订时改到什么程度。修订按钮旁的小三角里也能切。', 'How far mending an issue and carrying out a sentence of yours go. Also under the small triangle beside the buttons that revise.')}>
-              <Select<'bold' | 'careful'>
-                value={draft.mendReach === 'careful' ? 'careful' : 'bold'}
-                options={[
-                  { value: 'bold', label: t('主动：改到位——露出来的每一处、牵连到的呼应一并改，该重写一段就重写一段（默认）', 'Bold: mended through — every place it shows and what hangs on it, a paragraph rewritten where it takes one (default)') },
-                  { value: 'careful', label: t('保守：能少改就少改，一处能解决的不改两处', 'Careful: the least change — one place where one will do') },
-                ]}
-                onChange={(value) => { update({ mendReach: value }) }}
-              />
-            </Field>
-          </div>
-        ) : null}
         <VisionRow
           route={scope === 'book' ? own.vision : draft.vision}
           models={view.models}
@@ -676,6 +619,94 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
             {!view.crew.ffmpeg ? <p className="nv-note is-warn">{t(`剪视频和验收都要用 ffmpeg / ffprobe，这台电脑上没有找到。${FFMPEG_INSTALL[0]}。`, `Cutting and checking a video needs ffmpeg / ffprobe, and they were not found on this computer. ${FFMPEG_INSTALL[1]}.`)}</p> : null}
           </div>
         ) : null}
+      </section>
+
+      {/* How a book is written and revised — who prepares, beats to a part, whose model revises and rewrites, how far a revision goes: for every book, and any of it a book's own. */}
+      <section className="nv-card" data-section="material">
+        <SectionTitle>{inBook ? t('写作与修订的做法：这本书自己的', 'Writing and revising: this book\'s own') : t('写作与修订的做法', 'Writing and revising')}</SectionTitle>
+        <p className="nv-muted nv-small">
+          {inBook
+            ? t(`只管《${bookTitle}》：存在书里，跟着书走；没设的那几项沿用全局。写作页“写法”为那一页另选的、修订按钮旁这一次另选的，排在它前面。`, `For "${bookTitle}" alone: kept in the book and travelling with it; what is not set here is as for every book. What the writing page picks for itself, and what is picked for one revision beside its button, comes before these.`)
+            : t('对所有的书生效。哪一项都可以给一本书另设。', 'For every book. A book can have its own of any of them.')}
+          {!inBook && book !== undefined ? <>{' '}<button type="button" className="nv-link" onClick={() => { setScope('book') }}>{t(`给《${bookTitle}》另设…`, `Set them for "${bookTitle}"…`)}</button></> : null}
+        </p>
+        <div className="nv-form-grid">
+          {/* What a writer is handed for a piece of writing: packed by rule — or prepared for that piece by the planner, who looks first. */}
+          <OwnMark own={own.materialBy !== undefined} scope={scope} t={t} elsewhere={own.materialBy !== undefined ? t(`《${bookTitle}》另设：${wayWord(own.materialBy, t)}`, `"${bookTitle}" has its own: ${wayWord(own.materialBy, t)}`) : undefined}>
+            <Field label={t('写作、改写前谁来备料', 'Who prepares what the writer is handed')} hint={t('写一章、续写、改写一段（润色 / 扩写 / 精简 / 按要求改）、整章重写之前，交给写手的材料从哪来。备好的材料在写作页要求框下面能看。', 'Where the material comes from before a chapter is written or gone on with, a passage rewritten, a chapter written over. What was prepared can be read under the brief box on the writing page.')}>
+              <Select<'' | 'planner' | 'rules' | 'agent'>
+                value={inBook ? own.materialBy ?? '' : everyWriting.materialBy}
+                options={[
+                  ...(inBook ? [{ value: '' as const, label: asEvery(wayWord(everyWriting.materialBy, t)) }] : []),
+                  { value: 'rules', label: t(`工坊按规则拼：最近的章节原文 + 检索到的片段，不经策划${inBook ? '' : '（默认，快）'}`, `The Studio by its rules: the nearest chapters and what a search turns up, nobody looking first${inBook ? '' : ' (default, quicker)'}`) },
+                  { value: 'planner', label: t('策划先看：读书、挑出这一次用得上的，连同任务要求、格式、文风交给写手', 'The planner looks first: reads in the book, chooses what this piece needs, and hands it over with the task, the form and the voice') },
+                  { value: 'agent', label: t('不备料——写手作为 agent：自己读书，用工具把正文交上来，交上来之后还能反复改，满意了才交稿（写一章、续写；改写仍由策划备料）', 'Nobody — the writer as an agent: reads in the book for itself, hands the text in with a tool, goes over it as often as it sees fit (a chapter written or gone on with; rewrites still have the planner\'s material)') },
+                ]}
+                onChange={(value) => {
+                  if (inBook) updateOwn({ materialBy: value === '' ? undefined : value })
+                  else if (value !== '') update({ materialBy: value })
+                }}
+              />
+            </Field>
+          </OwnMark>
+          {/* A chapter with beats is written in parts, beat by beat, where the writer writes in one request: how many beats a part holds. */}
+          <OwnMark own={own.partBeats !== undefined} scope={scope} t={t} elsewhere={own.partBeats !== undefined ? t(`《${bookTitle}》另设：${beatsWord(own.partBeats)}`, `"${bookTitle}" has its own: ${beatsWord(own.partBeats)}`) : undefined}>
+            <Field label={t('分节拍写：每次写几个节拍', 'Written by its beats: beats to a part')} hint={t('章纲有节拍的章，按节拍分几次写——每次带着同一份材料和已经写出来的正文（缓存照用），只写这几个节拍，最后一次才收尾；不管要多少字都这样。每个节拍都写得足，一章也会比一次写完的长。填 0：不分，一律一次写完——要的字数很多时，模型可能写不够，那时会提示。（“写手自己读、自己写”不用这一项。）', 'A chapter whose plan has beats is written in parts — each request with the same material and the text so far (the cache holds), told which beats are its own, and only the last closes the chapter — whatever length is asked for. Every beat gets its room, and the chapter comes out longer than one written in one go. 0: never in parts — always in one go; where a great length is asked for the model may fall short of it, and that is said. (The writer as an agent does not go by this.)')}>
+              {inBook
+                ? <TextInput inputMode="numeric" value={own.partBeats !== undefined ? String(own.partBeats) : ''} placeholder={asEvery(String(everyWriting.partBeats))} onChange={(event) => { const text = event.target.value.replace(/\D/g, '').slice(0, 2); updateOwn({ partBeats: text.length > 0 ? Number(text) : undefined }) }} />
+                : <TextInput inputMode="numeric" value={draft.partBeats !== undefined ? String(draft.partBeats) : ''} placeholder={String(PART_BEATS_DEFAULT)} onChange={(event) => { const text = event.target.value.replace(/\D/g, '').slice(0, 2); setDraft(({ partBeats: _old, ...rest }) => (text.length > 0 ? { ...rest, partBeats: Number(text) } : rest)); setDirty(true) }} />}
+            </Field>
+          </OwnMark>
+          {/* Whose model writes the words of a change made by places: a model fit to write chapters is not always fit for a pinned, small change. */}
+          <OwnMark own={own.mendBy !== undefined} scope={scope} t={t} elsewhere={own.mendBy !== undefined ? t(`《${bookTitle}》另设：${modelWord(own.mendBy)}`, `"${bookTitle}" has its own: ${modelWord(own.mendBy)}`) : undefined}>
+            <Field label={t('修订由谁写', 'Who writes a revision')} hint={t('“审校和修订”里的每一种修订——修订审校问题、照你说的一句话修订（审校页、写作页、选中一段）：每一处改好的文字由哪个模型写。', 'Every revision under Review and revision — an issue mended, a sentence of yours carried out (the review page, the writing page, a selected passage): whose model writes what each place is to read.')}>
+              <Select<'' | 'writer' | 'planner'>
+                value={inBook ? own.mendBy ?? '' : everyWriting.mendBy}
+                options={[
+                  ...(inBook ? [{ value: '' as const, label: asEvery(modelWord(everyWriting.mendBy)) }] : []),
+                  { value: 'planner', label: t(`编排模型：策划直接写出改好的文字${inBook ? '' : '（默认）'}`, `The crew's: the planner writes the changed words itself${inBook ? '' : ' (default)'}`) },
+                  { value: 'writer', label: t('写手模型：策划定在哪改，写手改写', 'The writer\'s: the planner settles where, the writer rewrites') },
+                ]}
+                onChange={(value) => {
+                  if (inBook) updateOwn({ mendBy: value === '' ? undefined : value })
+                  else if (value !== '') update({ mendBy: value })
+                }}
+              />
+            </Field>
+          </OwnMark>
+          <OwnMark own={own.rewriteBy !== undefined} scope={scope} t={t} elsewhere={own.rewriteBy !== undefined ? t(`《${bookTitle}》另设：${modelWord(own.rewriteBy)}`, `"${bookTitle}" has its own: ${modelWord(own.rewriteBy)}`) : undefined}>
+            <Field label={t('改写一段、整章重写由谁写', 'Who rewrites a passage or a whole chapter')} hint={t('写作页选中一段的“润色 / 扩写 / 按要求改”，整章重写，以及修订里策划说“得整章重写”的章节。写一章、续写始终是写手。', 'A selected passage polished, expanded or rewritten on the writing page; a chapter written over whole — asked for, or because a mending says places will not do. Writing a chapter and going on with one is always the writer\'s.')}>
+              <Select<'' | 'writer' | 'planner'>
+                value={inBook ? own.rewriteBy ?? '' : everyWriting.rewriteBy}
+                options={[
+                  ...(inBook ? [{ value: '' as const, label: asEvery(modelWord(everyWriting.rewriteBy)) }] : []),
+                  { value: 'writer', label: t(`写手模型${inBook ? '' : '（默认）'}`, `The writer's${inBook ? '' : ' (default)'}`) },
+                  { value: 'planner', label: t('编排模型', 'The crew\'s') },
+                ]}
+                onChange={(value) => {
+                  if (inBook) updateOwn({ rewriteBy: value === '' ? undefined : value })
+                  else if (value !== '') update({ rewriteBy: value })
+                }}
+              />
+            </Field>
+          </OwnMark>
+          <OwnMark own={own.mendReach !== undefined} scope={scope} t={t} elsewhere={own.mendReach !== undefined ? t(`《${bookTitle}》另设：${reachWord(own.mendReach)}`, `"${bookTitle}" has its own: ${reachWord(own.mendReach)}`) : undefined}>
+            <Field label={t('修订改多少', 'How far a revision goes')} hint={t('修订审校问题、照你说的一句话修订时改到什么程度。修订按钮旁的小三角里也能切。', 'How far mending an issue and carrying out a sentence of yours go. Also under the small triangle beside the buttons that revise.')}>
+              <Select<'' | 'bold' | 'careful'>
+                value={inBook ? own.mendReach ?? '' : everyWriting.mendReach}
+                options={[
+                  ...(inBook ? [{ value: '' as const, label: asEvery(reachWord(everyWriting.mendReach)) }] : []),
+                  { value: 'bold', label: t(`主动：改到位——露出来的每一处、牵连到的呼应一并改，该重写一段就重写一段${inBook ? '' : '（默认）'}`, `Bold: mended through — every place it shows and what hangs on it, a paragraph rewritten where it takes one${inBook ? '' : ' (default)'}`) },
+                  { value: 'careful', label: t('保守：能少改就少改，一处能解决的不改两处', 'Careful: the least change — one place where one will do') },
+                ]}
+                onChange={(value) => {
+                  if (inBook) updateOwn({ mendReach: value === '' ? undefined : value })
+                  else if (value !== '') update({ mendReach: value })
+                }}
+              />
+            </Field>
+          </OwnMark>
+        </div>
       </section>
 
       {/* What the Studio does by itself once text is written or changed: each a switch, on the first page — every one of them is model calls nobody pressed a button for. */}

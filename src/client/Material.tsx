@@ -12,7 +12,7 @@
  * compared: what that draft was written from.
  */
 import { useState } from 'react'
-import type { MaterialKept, MaterialUsed } from '../shared/types'
+import { writingOf, writingSaid, type MaterialKept, type MaterialUsed, type WritingKey, type WritingSet } from '../shared/types'
 import { Icon } from './icons'
 import { Button, Menu, Modal, Spinner, useLoad, useProject, useShared, useSnapshot, useStudio, useT } from './ui'
 
@@ -30,10 +30,39 @@ export const wayWord = (by: MaterialBy, t: T): string => (by === 'planner' ? t('
  * @returns the way, and whether it is the book's own.
  */
 export function useMaterialSet(): { way: MaterialBy; ofBook: boolean } {
-  const studio = useSnapshot(snapshot => snapshot.settings?.settings.materialBy)
-  const book = useSnapshot(snapshot => snapshot.project?.manifest.materialBy)
-  const set = book ?? studio
-  return { way: set === 'planner' || set === 'agent' ? set : 'rules', ofBook: book !== undefined }
+  const { set, own } = useWriting()
+  return { way: set.materialBy, ofBook: own.materialBy !== undefined }
+}
+
+/**
+ * How the book in hand is written and revised, as it holds for it: its own where it has one, else the Studio's — who
+ * prepares the writer's material, beats to a part, whose model writes a revision and whose a rewrite, how far a
+ * revision goes.
+ * @returns what holds (`set`), and what of it is the book's own (`own`).
+ */
+export function useWriting(): { set: WritingSet; own: Partial<WritingSet> } {
+  const studio = useSnapshot(snapshot => snapshot.settings?.settings)
+  const book = useSnapshot(snapshot => snapshot.project?.manifest)
+  return { set: writingOf(studio, book), own: writingSaid(book) }
+}
+
+/**
+ * The way to change one of them from beside a button. It is saved where what holds now is kept: in the book, where
+ * the book has its own of it — else the change would show nowhere, the book's own still holding — and in the
+ * Studio's settings otherwise.
+ */
+export function useWritingSave(): <Key extends WritingKey>(key: Key, value: WritingSet[Key]) => void {
+  const { controller } = useStudio()
+  const root = useSnapshot(snapshot => snapshot.root)
+  const { own } = useWriting()
+  return (key, value) => {
+    void controller.guard(async () => {
+      if (own[key] !== undefined && root !== undefined) {
+        await controller.api.call('project.update', { root, patch: { [key]: value } as never })
+        await controller.refreshProject()
+      } else await controller.saveSettings({ [key]: value })
+    })
+  }
 }
 
 export function useMaterialDefault(): MaterialBy {

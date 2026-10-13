@@ -22,7 +22,7 @@ import { useBookActions } from './actions'
 import { useBatchJob } from './Batch'
 import { GuidePictures } from './Guides'
 import { JobBar } from './JobBar'
-import { useMaterialBy, useMaterialItems } from './Material'
+import { useMaterialBy, useMaterialItems, useWriting, useWritingSave } from './Material'
 import { useState, type ReactNode } from 'react'
 import { Button, Chip, cx, Menu, Select, TextArea, TextInput, useAction, useBookLine, useConfirm, useKept, useProject, useRunningJob, useShared, useSnapshot, useStudio, useT } from './ui'
 
@@ -73,58 +73,52 @@ export function useMendOrder(): [MendOrder, (order: MendOrder) => void] {
 export type MendBy = 'writer' | 'planner'
 
 /**
- * Who writes them, as the Studio's settings have it (`mendBy`) — and the way to say otherwise from beside the buttons
- * that mend: it is a setting, kept, since it says which of the author's models is fit for the work.
+ * Who writes them, as it holds for the book in hand (`mendBy`: the book's own, else the Studio's) — and the way to
+ * say otherwise from beside the buttons that mend: it is a setting, kept, since it says which of the author's models
+ * is fit for the work.
+ * @returns who; the way to set it (saved where what holds is kept); and whether it is the book's own.
  */
-export function useMendBy(): [MendBy, (by: MendBy) => void] {
-  const { controller } = useStudio()
+export function useMendBy(): [MendBy, (by: MendBy) => void, boolean] {
   // (The crew's model unless the author set the writer's: a change pinned to a sentence or two is its kind of work.)
-  const by: MendBy = useSnapshot(snapshot => snapshot.settings?.settings.mendBy) === 'writer' ? 'writer' : 'planner'
-  return [by, (next) => {
-    void controller.guard(async () => {
-      await controller.saveSettings({ mendBy: next })
-    })
-  }]
+  const { set, own } = useWriting()
+  const save = useWritingSave()
+  return [set.mendBy, (next) => { save('mendBy', next) }, own.mendBy !== undefined]
 }
 
 /**
  * Whose model rewrites a passage the author selected, and writes a chapter over whole (`rewriteBy`): the writer's
  * unless the author set the crew's — and the way to say so from beside the buttons that rewrite.
  */
-export function useRewriteBy(): [MendBy, (by: MendBy) => void] {
-  const { controller } = useStudio()
-  const by: MendBy = useSnapshot(snapshot => snapshot.settings?.settings.rewriteBy) === 'planner' ? 'planner' : 'writer'
-  return [by, (next) => {
-    void controller.guard(async () => {
-      await controller.saveSettings({ rewriteBy: next })
-    })
-  }]
+export function useRewriteBy(): [MendBy, (by: MendBy) => void, boolean] {
+  const { set, own } = useWriting()
+  const save = useWritingSave()
+  return [set.rewriteBy, (next) => { save('rewriteBy', next) }, own.rewriteBy !== undefined]
 }
 
 /** How far a mending reaches: through — every place, what changes with each, as much of a place as has to move — or the least change. */
 export type MendReach = 'bold' | 'careful'
 
 /**
- * How far a mending reaches, as the Studio's settings have it (`mendReach`: through unless the author set the least
- * change) — and the way to say otherwise from beside the buttons that mend.
+ * How far a mending reaches, as it holds for the book in hand (`mendReach`: the book's own, else the Studio's;
+ * through unless the author set the least change) — and the way to say otherwise from beside the buttons that mend.
  */
-export function useMendReach(): [MendReach, (reach: MendReach) => void] {
-  const { controller } = useStudio()
-  const reach: MendReach = useSnapshot(snapshot => snapshot.settings?.settings.mendReach) === 'careful' ? 'careful' : 'bold'
-  return [reach, (next) => {
-    void controller.guard(async () => {
-      await controller.saveSettings({ mendReach: next })
-    })
-  }]
+export function useMendReach(): [MendReach, (reach: MendReach) => void, boolean] {
+  const { set, own } = useWriting()
+  const save = useWritingSave()
+  return [set.mendReach, (next) => { save('mendReach', next) }, own.mendReach !== undefined]
 }
+
+/** Said after an entry of a menu that changes a setting the book has its own of: the pick is saved in the book. */
+export const ownWord = (ofBook: boolean, t: (zh: string, en: string) => string): string => (ofBook ? t('（这本书自己的设置）', ' (this book\'s own)') : '')
 
 /** The two entries a menu beside a mending button has for it. */
 export function useReachItems(): { label: string; onSelect: () => void }[] {
   const t = useT()
-  const [reach, setReach] = useMendReach()
+  const [reach, setReach, ofBook] = useMendReach()
+  const mine = ownWord(ofBook, t)
   return [
-    { label: t(`${reach === 'bold' ? '✓ ' : ''}改多少 · 主动：改到位，牵连到的一并改`, `${reach === 'bold' ? '✓ ' : ''}How far · bold: mended through, with what hangs on it`), onSelect: () => { setReach('bold') } },
-    { label: t(`${reach === 'careful' ? '✓ ' : ''}改多少 · 保守：能少改就少改`, `${reach === 'careful' ? '✓ ' : ''}How far · careful: the least change`), onSelect: () => { setReach('careful') } },
+    { label: t(`${reach === 'bold' ? '✓ ' : ''}改多少 · 主动：改到位，牵连到的一并改${mine}`, `${reach === 'bold' ? '✓ ' : ''}How far · bold: mended through, with what hangs on it${mine}`), onSelect: () => { setReach('bold') } },
+    { label: t(`${reach === 'careful' ? '✓ ' : ''}改多少 · 保守：能少改就少改${mine}`, `${reach === 'careful' ? '✓ ' : ''}How far · careful: the least change${mine}`), onSelect: () => { setReach('careful') } },
   ]
 }
 
@@ -168,13 +162,14 @@ export function mendsOf(proposals: readonly Proposal[], chapterId: string, issue
 /** The small triangle beside the buttons that rewrite a passage: whose model does it. */
 export function RewriteByMenu() {
   const t = useT()
-  const [by, setBy] = useRewriteBy()
+  const [by, setBy, ofBook] = useRewriteBy()
+  const mine = ownWord(ofBook, t)
   const [material] = useMaterialBy()
   const materials = useMaterialItems()
   return (
     <Menu icon="chevronDown" variant="ghost" size="sm" align="end" label={`${by === 'planner' ? t('编排模型改', 'By the crew\'s model') : t('写手改', 'By the writer')} · ${material === 'rules' ? t('按规则拼', 'packed by rule') : t('策划备料', 'planner\'s material')}`} items={[
-      { label: t(`${by === 'writer' ? '✓ ' : ''}改写一段、整章重写：由写手模型写`, `${by === 'writer' ? '✓ ' : ''}A passage rewritten, a chapter written over: the writer's model`), onSelect: () => { setBy('writer') } },
-      { label: t(`${by === 'planner' ? '✓ ' : ''}改写一段、整章重写：由编排模型写`, `${by === 'planner' ? '✓ ' : ''}A passage rewritten, a chapter written over: the crew's model`), onSelect: () => { setBy('planner') } },
+      { label: t(`${by === 'writer' ? '✓ ' : ''}改写一段、整章重写：由写手模型写${mine}`, `${by === 'writer' ? '✓ ' : ''}A passage rewritten, a chapter written over: the writer's model${mine}`), onSelect: () => { setBy('writer') } },
+      { label: t(`${by === 'planner' ? '✓ ' : ''}改写一段、整章重写：由编排模型写${mine}`, `${by === 'planner' ? '✓ ' : ''}A passage rewritten, a chapter written over: the crew's model${mine}`), onSelect: () => { setBy('planner') } },
       'separator',
       ...materials,
     ]} />
@@ -185,10 +180,12 @@ export function RewriteByMenu() {
 export function MendOrderMenu() {
   const t = useT()
   const [order, setOrder] = useMendOrder()
-  const [by, setBy] = useMendBy()
-  const [whole, setWhole] = useRewriteBy()
+  const [by, setBy, byBook] = useMendBy()
+  const [whole, setWhole, wholeBook] = useRewriteBy()
   const [reach] = useMendReach()
   const reaches = useReachItems()
+  const mine = ownWord(byBook, t)
+  const mineWhole = ownWord(wholeBook, t)
   return (
     <Menu icon="chevronDown" variant="ghost" size="sm" align="end" label={`${order === 'queue' ? t('排队', 'In line') : t('分别', 'Apart')} · ${reach === 'bold' ? t('主动', 'bold') : t('保守', 'careful')} · ${by === 'planner' ? t('策划写', 'planner writes') : t('写手写', 'writer writes')}`} items={[
       { label: t(`${order === 'queue' ? '✓ ' : ''}排队：等前面的修订做完，接着它们改`, `${order === 'queue' ? '✓ ' : ''}In line: after the mendings under way, going on from them`), onSelect: () => { setOrder('queue') } },
@@ -196,11 +193,11 @@ export function MendOrderMenu() {
       'separator',
       ...reaches,
       'separator',
-      { label: t(`${by === 'planner' ? '✓ ' : ''}按处修订：由编排模型直接写（不经写手）`, `${by === 'planner' ? '✓ ' : ''}Changes by places: the crew's model writes them itself (no writer)`), onSelect: () => { setBy('planner') } },
-      { label: t(`${by === 'writer' ? '✓ ' : ''}按处修订：策划定在哪改，写手模型写`, `${by === 'writer' ? '✓ ' : ''}Changes by places: the planner settles where, the writer's model writes`), onSelect: () => { setBy('writer') } },
+      { label: t(`${by === 'planner' ? '✓ ' : ''}按处修订：由编排模型直接写（不经写手）${mine}`, `${by === 'planner' ? '✓ ' : ''}Changes by places: the crew's model writes them itself (no writer)${mine}`), onSelect: () => { setBy('planner') } },
+      { label: t(`${by === 'writer' ? '✓ ' : ''}按处修订：策划定在哪改，写手模型写${mine}`, `${by === 'writer' ? '✓ ' : ''}Changes by places: the planner settles where, the writer's model writes${mine}`), onSelect: () => { setBy('writer') } },
       'separator',
-      { label: t(`${whole === 'writer' ? '✓ ' : ''}整章重写：由写手模型写`, `${whole === 'writer' ? '✓ ' : ''}A chapter written over: the writer's model`), onSelect: () => { setWhole('writer') } },
-      { label: t(`${whole === 'planner' ? '✓ ' : ''}整章重写：由编排模型写`, `${whole === 'planner' ? '✓ ' : ''}A chapter written over: the crew's model`), onSelect: () => { setWhole('planner') } },
+      { label: t(`${whole === 'writer' ? '✓ ' : ''}整章重写：由写手模型写${mineWhole}`, `${whole === 'writer' ? '✓ ' : ''}A chapter written over: the writer's model${mineWhole}`), onSelect: () => { setWhole('writer') } },
+      { label: t(`${whole === 'planner' ? '✓ ' : ''}整章重写：由编排模型写${mineWhole}`, `${whole === 'planner' ? '✓ ' : ''}A chapter written over: the crew's model${mineWhole}`), onSelect: () => { setWhole('planner') } },
     ]} />
   )
 }

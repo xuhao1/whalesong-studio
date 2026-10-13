@@ -17,7 +17,7 @@ import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { asArray, asRecord, asText, completeJson } from '../llm'
 import { bookTools, stepLine } from '../crew'
 import { amendCallSystem, amendCallTask, amendPersona, amendRules, amendTask } from '../prompts'
-import { L, promptLanguage, renderStyle } from '../render'
+import { L, promptLanguage, renderStyle, withStyleExtra } from '../render'
 import { argInt, argText, type RoleOutcome, type RoleTool } from '../roles'
 import { errorMessage, isAbort } from '../util/async'
 import { scheduleDigest } from './digest'
@@ -216,8 +216,8 @@ export async function amendChapter(core: NovelCore, runtime: ProjectRuntime, par
   const manifest = await project.manifest()
   const lang = promptLanguage(manifest.language)
   // Who goes through the chapter: the writer — or the crew's model, where the author has the planner make such changes.
-  const who: 'writer' | 'planner' = params.by ?? (mendsDirect(core) ? 'planner' : 'writer')
-  const bold = mendsBold(core, params.reach)
+  const who: 'writer' | 'planner' = params.by ?? (mendsDirect(core, undefined, manifest) ? 'planner' : 'writer')
+  const bold = mendsBold(core, params.reach, manifest)
   const role = who === 'planner' ? 'architect' as const : 'writer' as const
   const zhWho = who === 'planner' ? '策划' : '写手'
   const enWho = who === 'planner' ? 'planner' : 'writer'
@@ -234,7 +234,8 @@ export async function amendChapter(core: NovelCore, runtime: ProjectRuntime, par
     ...(task.signal !== undefined ? { signal: task.signal } : {}),
   })
   const base = { lang, language: manifest.language, title: manifest.title }
-  const style = renderStyle(await project.activeStyle(), lang)
+  const active = await project.activeStyle()
+  const style = renderStyle(active, lang)
   const context = `${pack.text}${guided !== undefined ? `\n\n${guided.text}` : ''}`
   const words = countWords(based.text)
   const label = L(lang, `改第 ${chapter.index} 章`, `revising chapter ${chapter.index}`)
@@ -258,7 +259,7 @@ export async function amendChapter(core: NovelCore, runtime: ProjectRuntime, par
   const byCall = async (): Promise<string> => {
     const ask = async (more: string): Promise<{ edits: Edit[]; note: string }> => (await completeJson(core.llm, {
       route,
-      system: amendCallSystem({ ...base, style, ...(bold ? { bold: true } : {}) }),
+      system: withStyleExtra(amendCallSystem({ ...base, style, ...(bold ? { bold: true } : {}) }), active, lang, true),
       prompt: `${amendCallTask({ ...base, context, instruction: params.instruction })}${more}`,
       ...(guided !== undefined && guided.images.length > 0 ? { images: guided.images } : {}),
       ...(task.signal !== undefined ? { signal: task.signal } : {}),
@@ -433,7 +434,7 @@ export async function amendChapter(core: NovelCore, runtime: ProjectRuntime, par
         role,
         label: L(lang, `${zhWho} · ${label}`, `${who === 'planner' ? 'Planner' : 'Writer'} · ${label}`),
         persona: amendPersona(base),
-        rules: amendRules({ ...base, style, ...names, ...(bold ? { bold: true } : {}) }),
+        rules: withStyleExtra(amendRules({ ...base, style, ...names, ...(bold ? { bold: true } : {}) }), active, lang, true),
         prompt: amendTask({ ...base, context, instruction: params.instruction, index: chapter.index, chapter: chapter.plan.title, words, edit: names.edit, done: names.done }),
         ...(guided !== undefined && guided.images.length > 0 ? { images: guided.images } : {}),
         tools: [...bookTools(runtime, task.signal, chapter.line ?? MAIN_LINE), ...tools],

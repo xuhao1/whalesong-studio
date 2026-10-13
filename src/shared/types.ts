@@ -91,6 +91,17 @@ export interface ProjectManifest {
    */
   materialBy?: 'planner' | 'rules' | 'agent'
   /**
+   * This book's own number of beats to a part (see `NovelSettings.partBeats`; 0: never in parts). Absent: as the
+   * Studio has it.
+   */
+  partBeats?: number
+  /** Whose model writes this book's revisions made by places (see `NovelSettings.mendBy`). Absent: as the Studio has it. */
+  mendBy?: 'writer' | 'planner'
+  /** Whose model rewrites a passage or a whole chapter of this book (see `NovelSettings.rewriteBy`). Absent: as the Studio has it. */
+  rewriteBy?: 'writer' | 'planner'
+  /** How far a revision of this book goes (see `NovelSettings.mendReach`). Absent: as the Studio has it. */
+  mendReach?: MendReach
+  /**
    * How many requests of a kind go out at once for this book, where it has a number of its own: counted for this
    * book alone, beside whatever the Studio is doing for the others.
    */
@@ -505,6 +516,13 @@ export interface StyleProfile {
   exemplars?: StyleExemplar[]
   /** Free-form Markdown description. */
   body?: string
+  /**
+   * Words of the author's own for the system prompt: sent as they are, under a heading of their own after the style,
+   * to whoever writes the words of the book in this style — a chapter written or gone on with, a passage or a
+   * chapter rewritten, the words of a revision, an interlude. Nothing of the Studio's writes it: not a style derived
+   * from a sample, not a role. Absent or empty: nothing is added.
+   */
+  system?: string
   updatedAt?: Timestamp
 }
 
@@ -3019,6 +3037,49 @@ export interface BookLock {
 
 /** Beats a part of a chapter holds at most, where the author set no figure (`partBeats`). */
 export const PART_BEATS_DEFAULT = 3
+
+/**
+ * The settings of how a book is written and revised: who prepares what its writer is handed, how many beats a part
+ * holds, whose model writes a revision and whose a rewrite, how far a revision goes. Each is the Studio's for every
+ * book, and a book may have its own of any of them (the same names in its `novel.json`).
+ */
+export const WRITING_KEYS = ['materialBy', 'partBeats', 'mendBy', 'rewriteBy', 'mendReach'] as const
+export type WritingKey = typeof WRITING_KEYS[number]
+
+/** What a book — or the Studio — says of them, as it was saved: any of it may be missing, or no value at all. */
+export type WritingSaid = { [Key in WritingKey]?: NovelSettings[Key] | undefined }
+
+/** Them as they hold: every one settled. */
+export interface WritingSet {
+  materialBy: 'planner' | 'rules' | 'agent'
+  partBeats: number
+  mendBy: 'writer' | 'planner'
+  rewriteBy: 'writer' | 'planner'
+  mendReach: MendReach
+}
+
+/** What `said` holds of them that is a value of its kind: the rest is as good as not said. */
+export function writingSaid(said: WritingSaid | undefined): Partial<WritingSet> {
+  const next: Partial<WritingSet> = {}
+  if (said === undefined) return next
+  if (said.materialBy === 'planner' || said.materialBy === 'rules' || said.materialBy === 'agent') next.materialBy = said.materialBy
+  if (typeof said.partBeats === 'number' && Number.isFinite(said.partBeats) && said.partBeats >= 0) next.partBeats = Math.round(said.partBeats)
+  if (said.mendBy === 'writer' || said.mendBy === 'planner') next.mendBy = said.mendBy
+  if (said.rewriteBy === 'writer' || said.rewriteBy === 'planner') next.rewriteBy = said.rewriteBy
+  if (said.mendReach === 'bold' || said.mendReach === 'careful') next.mendReach = said.mendReach
+  return next
+}
+
+/**
+ * How a book is written and revised, as it holds for it: its own where it has one, else the Studio's, else what
+ * holds where nobody set anything — packed by rule, {@link PART_BEATS_DEFAULT} beats to a part, revisions by the
+ * crew's model, rewrites by the writer's, mended through.
+ * @param studio - the Studio's settings.
+ * @param book - the book's manifest, for what it has of its own.
+ */
+export function writingOf(studio: WritingSaid | undefined, book?: WritingSaid): WritingSet {
+  return { materialBy: 'rules', partBeats: PART_BEATS_DEFAULT, mendBy: 'planner', rewriteBy: 'writer', mendReach: 'bold', ...writingSaid(studio), ...writingSaid(book) }
+}
 
 /** Megabytes of calls a book keeps where the author set no figure. */
 export const CALLS_MB_DEFAULT = 200

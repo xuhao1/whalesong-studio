@@ -18,7 +18,7 @@ import { encodeWav } from '../media/wav'
 import type { Project } from '../project'
 import { ProjectError } from '../project'
 import { directorSystem, directorTask, novelizeSystem } from '../prompts'
-import { L, promptLanguage, renderStyle } from '../render'
+import { L, promptLanguage, renderStyle, withStyleExtra } from '../render'
 import { AMBIENCE, openCast, requireSpeech, retakesOf, speakChecked, speechRequest, voiceBank, voiceFor } from './audio'
 import { scheduleDigest } from './digest'
 import { artDirectionOf, illustrate, renderImage } from './illustrate'
@@ -94,7 +94,7 @@ async function runTurn(core: NovelCore, runtime: ProjectRuntime, session: PlaySe
   const state = session.state !== undefined ? Object.entries(session.state).map(([key, value]) => `${key}: ${value}`).join('\n') : undefined
   const { value } = await completeJson(core.llm, {
     route,
-    system: directorSystem({ ...base, style: renderStyle(await project.activeStyle(), lang), ...(player !== undefined ? { player: player.name } : {}) }),
+    system: await (async () => { const style = await project.activeStyle(); return withStyleExtra(directorSystem({ ...base, style: renderStyle(style, lang), ...(player !== undefined ? { player: player.name } : {}) }), style, lang, true) })(),
     prompt: directorTask({
       ...base,
       context: pack.text,
@@ -352,7 +352,7 @@ export async function novelizePlay(core: NovelCore, runtime: ProjectRuntime, par
   const base = { lang, language: manifest.language, title: manifest.title }
   const response = await core.llm.complete({
     route,
-    system: novelizeSystem({ ...base, style: renderStyle(await project.activeStyle(), lang) }),
+    system: await (async () => { const style = await project.activeStyle(); return withStyleExtra(novelizeSystem({ ...base, style: renderStyle(style, lang) }), style, lang) })(),
     ...(pack.stable.length > 0 ? { stable: pack.stable } : {}),
     prompt: `${pack.rest}\n\n---\n## ${L(lang, '幕间情境', 'The interlude\'s situation')}\n\n${session.situation}\n\n## ${L(lang, '演出记录', 'The log')}\n\n${transcript}\n\n---\n${L(lang, '把这段演出改写成一章小说正文。', 'Rewrite this scene as one chapter of prose.')}`,
     ...(task.signal !== undefined ? { signal: task.signal } : {}),

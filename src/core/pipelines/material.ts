@@ -23,7 +23,7 @@
  * Where the planner cannot be asked, or what it hands in will not do, the
  * material is packed by rule as it always was — and the result says so.
  */
-import { MAIN_LINE, PLANNER_WHOLE_DEFAULT, type CharacterCard, type MaterialKept, type MaterialUsed, type PlotThread, type WorldEntry } from '../../shared/types'
+import { MAIN_LINE, PLANNER_WHOLE_DEFAULT, writingOf, type CharacterCard, type MaterialKept, type MaterialUsed, type PlotThread, type WorldEntry, type WritingSaid } from '../../shared/types'
 import { clip, countWords, estimateTokens, fuzzyFind, hashText, proseOnly, sameName } from '../../shared/text'
 import { groupOf } from '../../shared/world'
 import type { ChosenMaterial, ContextPack } from '../context'
@@ -91,7 +91,7 @@ export function beside(task: TaskContext): TaskContext {
 }
 
 /** A book as far as it says how it is written. */
-type OwnWay = { materialBy?: 'planner' | 'rules' | 'agent' | undefined }
+type OwnWay = WritingSaid
 
 /**
  * How a chapter is written or gone on with: by the writer in one request, from what the Studio packed by rule
@@ -101,8 +101,7 @@ type OwnWay = { materialBy?: 'planner' | 'rules' | 'agent' | undefined }
  * @param book - the book the piece is of, for its own way (`ProjectManifest.materialBy`).
  */
 export function writingBy(core: NovelCore, explicit?: 'planner' | 'rules' | 'agent', book?: OwnWay): 'planner' | 'rules' | 'agent' {
-  const way = explicit ?? book?.materialBy ?? core.currentSettings().materialBy
-  return way === 'planner' || way === 'agent' ? way : 'rules'
+  return explicit ?? writingOf(core.currentSettings(), book).materialBy
 }
 
 /**

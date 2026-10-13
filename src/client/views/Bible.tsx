@@ -759,8 +759,8 @@ function StyleEditor({ style, active, onDeleted }: { style: StyleProfile; active
     setDraft(previous => ({ ...previous, [key]: value }))
     setDirty(true)
   }
-  const text = (key: 'register' | 'tone' | 'diction' | 'rhythm' | 'imagery' | 'dialogue' | 'pacing' | 'body') => ({ value: draft[key] ?? '', onChange: (event: { target: { value: string } }) => { set(key, event.target.value) } })
-  const payload = useMemo(() => ({ ...draft, register: draft.register ?? '', tone: draft.tone ?? '', diction: draft.diction ?? '', rhythm: draft.rhythm ?? '', imagery: draft.imagery ?? '', dialogue: draft.dialogue ?? '', pacing: draft.pacing ?? '', body: draft.body ?? '', rules: draft.rules ?? [], avoid: draft.avoid ?? [], exemplars: draft.exemplars ?? [] }), [draft])
+  const text = (key: 'register' | 'tone' | 'diction' | 'rhythm' | 'imagery' | 'dialogue' | 'pacing' | 'body' | 'system') => ({ value: draft[key] ?? '', onChange: (event: { target: { value: string } }) => { set(key, event.target.value) } })
+  const payload = useMemo(() => ({ ...draft, register: draft.register ?? '', tone: draft.tone ?? '', diction: draft.diction ?? '', rhythm: draft.rhythm ?? '', imagery: draft.imagery ?? '', dialogue: draft.dialogue ?? '', pacing: draft.pacing ?? '', body: draft.body ?? '', system: draft.system ?? '', rules: draft.rules ?? [], avoid: draft.avoid ?? [], exemplars: draft.exemplars ?? [] }), [draft])
   const save = (activate = false): Promise<unknown> => run(async () => {
     await controller.api.call('style.save', { root, style: payload, activate })
     setDirty(false)
@@ -803,6 +803,10 @@ function StyleEditor({ style, active, onDeleted }: { style: StyleProfile; active
         <TextArea value={(draft.exemplars ?? []).map(item => item.text).join('\n\n')} minRows={4} maxRows={18} onChange={(event) => { set('exemplars', event.target.value.split(/\n\s*\n/).map(item => item.trim()).filter(Boolean).map(item => ({ text: item }))) }} />
       </Field>
       <Field label={t('补充说明', 'Further notes')}><TextArea {...text('body')} /></Field>
+      {/* The author's own words for the system prompt: nothing of the Studio's writes them, and they are sent as they are. */}
+      <Field label={t('额外的系统提示词', 'Extra system prompt')} hint={t('你自己的话，原样放进系统提示词——排在文风后面，标题是【作者的额外要求】。用这套文风写这本书正文的每一次调用都带上：写一章、续写、改写一段、整章重写、修订里改好的文字、幕间，下面的“试写”也是。留空就不加。发出去的样子在“任务”里那次任务的“请求”能看到。', 'Your own words, put into the system prompt as they are — after the style, under the heading FROM THE AUTHOR. Every call that writes the words of this book in this style carries them: a chapter written or gone on with, a passage or a chapter rewritten, the words of a revision, an interlude, and the sample below. Empty: nothing is added. What was sent can be read under Requests on that job, among the jobs.')}>
+        <TextArea {...text('system')} minRows={3} maxRows={24} />
+      </Field>
 
       <SectionTitle>{t('试写', 'Try it')}</SectionTitle>
       <div className="nv-assist">

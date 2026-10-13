@@ -137,7 +137,7 @@ Retrieval is hybrid: BM25 over CJK bigrams and Latin words, optional embeddings,
 
 Context packed by rule has one fault that cannot be tuned away: it does not know what is being written. The nearest chapters go whole, whoever is named nearby goes, what a search turns up goes — most of it nothing to do with the piece, and the one line the piece turns on not always among it. The writer writes in one request and has no tools: of the book it knows what it was handed.
 
-So where the author asks for a piece of writing — a chapter, a chapter gone on with, a selected passage rewritten, a chapter written over — **the planner looks first** (`materialBy`, `planner` unless set):
+So where the author asks for a piece of writing — a chapter, a chapter gone on with, a selected passage rewritten, a chapter written over — **the planner looks first** (`materialBy: planner` — for every book or for one; where nothing is set a piece is packed by rule, the quicker way):
 
 - It is told the work (the author's words, the chapter's outline, the thinking it was derived with, the passage or the chapter as it stands) and shown what the book has by name and size: every chapter's number, length and one-line summary, the names of the people, of the bible's entries, of the threads.
 - As an agent it reads for itself (`book_read` / `book_search`), as far as the piece needs, and hands in the **material**: in its own words, what is asked of the writer, where the story stands, what must not come out wrong, the form, what of the voice matters this time; and by name — whose cards go whole, which entries, which threads, which chapters word for word, which in outline, which stretches of text (opening and closing copied from the chapter).

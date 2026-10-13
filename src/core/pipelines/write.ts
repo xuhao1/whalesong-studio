@@ -5,7 +5,7 @@
  * written and passes a brief; this pipeline turns that into text on disk.
  */
 import { keptPictures } from '../../shared/embedded'
-import { chapterBudgetOf, MAIN_LINE, PART_BEATS_DEFAULT, type Beat, type ChapterInfo, type FiguresKept, type MaterialUsed, type PictureGuide, type PicturesRead } from '../../shared/types'
+import { chapterBudgetOf, MAIN_LINE, writingOf, type Beat, type ChapterInfo, type FiguresKept, type MaterialUsed, type PictureGuide, type PicturesRead } from '../../shared/types'
 import { clip, clipTail, countWords, estimateTokens, normalizeProse, proseOnly } from '../../shared/text'
 import type { ContextPack } from '../context'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
@@ -13,7 +13,7 @@ import { LlmCallError, type LlmResponse } from '../llm'
 import type { LocatedChapter } from '../project'
 import { ProjectError } from '../project'
 import { partHow, writerSystem, writerTask } from '../prompts'
-import { promptLanguage, renderStyle } from '../render'
+import { promptLanguage, renderStyle, withStyleExtra } from '../render'
 import { activeReferences, consultsBeforeWriting, referenceGuide } from '../references'
 import { errorMessage, isAbort } from '../util/async'
 import { consultReferences } from './consult'
@@ -232,11 +232,11 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
   // handed: the planner looks at the piece first — reads in the book as far as this chapter needs — and chooses it;
   // where the author has it otherwise, or the planner cannot be asked, the Studio packs it by rule.
   const way = writingBy(core, params.material, manifest)
-  const set = core.currentSettings().partBeats
-  const perPart = typeof set === 'number' && Number.isFinite(set) && set >= 0 ? Math.round(set) : PART_BEATS_DEFAULT
+  // (Beats to a part: the book's own where it has a number, else the Studio's.)
+  const perPart = writingOf(core.currentSettings(), manifest).partBeats
   const base = { lang, language: manifest.language, title: manifest.title }
   // The same for every chapter of the book: with the story so far behind it, the head of the request a provider can keep.
-  const system = writerSystem({ ...base, style: renderStyle(style, lang) })
+  const system = withStyleExtra(writerSystem({ ...base, style: renderStyle(style, lang) }), style, lang)
   const length = (written: number): { words?: number; usual?: number } => target !== undefined ? { words: Math.max(300, target - written) } : usual !== undefined ? { usual } : {}
 
   const work = mode === 'continue' ? 'continue' as const : 'draft' as const
