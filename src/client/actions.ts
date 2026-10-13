@@ -11,10 +11,13 @@
  * button it is under: kept here, so that it is changed in one place.
  */
 import type { Proposal } from '../shared/types'
-import { useProject, useStudio, useT } from './ui'
+import { useProject, useShared, useStudio, useT } from './ui'
 
 export interface BookActions {
-  /** Have a chapter reviewed. */
+  /**
+   * Have a chapter reviewed. What the review finds goes on to be mended by itself — each change a proposal beneath its
+   * issue — unless the author has that switched off (`reviewMends`, see `useReviewMends`).
+   */
   review: (chapter: string) => Promise<void>
   /** Digest chapters: the ones named — again, where they were digested before — or, with none named, every one that is not. */
   digest: (chapters?: readonly string[]) => Promise<void>
@@ -37,9 +40,11 @@ export function useBookActions(): BookActions {
   const { controller } = useStudio()
   const t = useT()
   const { root } = useProject()
+  const [order] = useShared<'queue' | 'apart'>('mend.order', 'queue')
   return {
     review: async (chapter) => {
-      await controller.api.call('ai.review', { root, chapter })
+      // (The mending that follows takes its turn among the mendings as the author has them ordered.)
+      await controller.api.call('ai.review', { root, chapter, order })
       await controller.refreshJobs()
     },
     digest: async (chapters) => {

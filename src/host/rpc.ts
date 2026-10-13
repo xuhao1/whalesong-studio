@@ -38,7 +38,7 @@ import {
 import { buildFoundation, derivedPlan, deriveBeats, deriveChapters, deriveToLook, planOfText, settleDerivedPlan, takeDerivedPlan, touchBeats, whatIf } from '../core/pipelines/plot'
 import { clearReview, listReviews, noteIssue, recheckIssues, resolveIssue, reviewChapter } from '../core/pipelines/review'
 import { plansOfText } from '../core/pipelines/follow'
-import { fixIssue, fixIssues, acceptProposal, rejectProposal, restoreProposal, reviewByLead, reviseBook, reviseChapter, reviseSpan, mendInTurn, settledProposals } from '../core/pipelines/revise'
+import { fixIssue, fixIssues, acceptProposal, rejectProposal, restoreProposal, reviewByLead, reviseBook, reviseChapter, reviseSpan, mendInTurn, mendReviewed, reviewMends, settledProposals } from '../core/pipelines/revise'
 import { amendChapter } from '../core/pipelines/amend'
 import { writeChapter } from '../core/pipelines/write'
 import { keptMaterial } from '../core/pipelines/material'
@@ -857,7 +857,7 @@ export function createHandlers(service: NovelService): Handlers {
       const runtime = await open(root)
       return job(runtime, 'digest', 'digest', chapters?.[0], async task => await digestPending(core, runtime, task, { ...(chapters !== undefined ? { chapters } : {}), ...(force !== undefined ? { force } : {}) }))
     },
-    'ai.reviewLead': async ({ root, lead, chapters, line, fix, order, passage }) => {
+    'ai.reviewLead': async ({ root, lead, chapters, line, fix, order, passage, guides }) => {
       const runtime = await open(root)
       const asked = {
         lead: requireString(lead, 'lead'),
@@ -865,17 +865,23 @@ export function createHandlers(service: NovelService): Handlers {
         ...(Array.isArray(chapters) && chapters.length > 0 ? { chapters: chapters.filter((item): item is string => typeof item === 'string') } : {}),
         ...(typeof line === 'string' && line.length > 0 ? { line } : {}),
         ...(typeof passage === 'string' && passage.trim().length > 0 ? { passage: passage.trim() } : {}),
+        ...(Array.isArray(guides) && guides.length > 0 ? { guides: cleanGuides(guides) } : {}),
       }
       // Finding alone changes nothing and waits for nobody; a lead that is mended takes its turn among the mendings
       // (and is then looked for in the book as it stands by then — see `reviewByLead`).
       if (!asked.fix) return job(runtime, 'revise', 'review by lead', undefined, async task => await reviewByLead(core, runtime, asked, task))
       return job(runtime, 'revise', 'review by lead', undefined, async task => await mendInTurn(runtime, order === 'queue' ? 'queue' : 'apart', task, async () => await reviewByLead(core, runtime, asked, task)))
     },
-    'ai.review': async ({ root, chapter, focus }) => {
+    'ai.review': async ({ root, chapter, focus, mend, order }) => {
       const runtime = await open(root)
       return job(runtime, 'review', 'review', chapter, async (task) => {
         const review = await reviewChapter(core, runtime, { chapter, ...(focus !== undefined ? { focus } : {}) }, task)
-        return { chapterId: review.chapterId, issues: review.issues.length, verdict: review.verdict }
+        // What it found goes on to be mended, where the author has it so: a job of its own, as this one ends.
+        // (A mending that cannot be started does not undo the review.)
+        const mending = reviewMends(core, typeof mend === 'boolean' ? mend : undefined)
+          ? await mendReviewed(core, runtime, [review.chapterId], task, { order: order === 'apart' ? 'apart' : 'queue' }).catch((error: unknown) => { core.log('could not hand what the review found on to be mended', error); return undefined })
+          : undefined
+        return { chapterId: review.chapterId, issues: review.issues.length, verdict: review.verdict, ...(mending !== undefined ? { mending } : {}) }
       })
     },
     'ai.deriveChapters': async ({ root, count, direction, volume, apply, line, after, mode, title, choice, guides, revise }) => {
@@ -1089,7 +1095,7 @@ export function createHandlers(service: NovelService): Handlers {
         ...(Array.isArray(trials) && trials.length > 0 ? { trials, ...(typeof trialBatch === 'string' && trialBatch.length > 0 ? { trialBatch } : {}) } : {}),
       }, task))
     },
-    'batch.text': async ({ root, chapters, count, line, steps, brief, words, redo, focus, order, rounds, atLeast }) => {
+    'batch.text': async ({ root, chapters, count, line, steps, brief, words, redo, focus, order, rounds, atLeast, mend }) => {
       const runtime = await open(root)
       const wanted = (Array.isArray(steps) ? steps : []).filter((step): step is TextStep => TEXT_STEPS.includes(step))
       return await batch(runtime, 'text batch', async () => await textPlan(core, runtime, {
@@ -1103,6 +1109,8 @@ export function createHandlers(service: NovelService): Handlers {
         ...(typeof words === 'number' && words > 0 ? { words } : {}),
         ...(redo === true ? { redo: true } : {}),
         ...(typeof focus === 'string' && focus.trim().length > 0 ? { focus: focus.trim() } : {}),
+        // Reviewed in a batch as one by one: what is found goes on to be mended, unless the author has it otherwise.
+        ...(reviewMends(core, typeof mend === 'boolean' ? mend : undefined) ? { mend: true } : {}),
       }))
     },
     'batch.art': async ({ root, sheets, portraits, voices, places, items, scenes, cover, insert, force, sheetFirst, trials, trialBatch }) => {
@@ -1728,11 +1736,11 @@ export function createHandlers(service: NovelService): Handlers {
       const begun = await core.usage.begun()
       return { summary: summarize(events, prices, { since }), prices, ...(begun !== undefined ? { begun } : {}) }
     },
-    'calls.list': async ({ root, chapter, limit }) => {
+    'calls.list': async ({ root, chapter, job, limit }) => {
       const { project } = await open(root)
       // Asked for by chapter however the page names it: the record files a call under the chapter's id.
       const of = typeof chapter === 'string' && chapter.length > 0 ? (await project.findChapter(chapter))?.plan.id ?? chapter : undefined
-      const listed = await core.calls.list(project, { ...(of !== undefined ? { chapter: of } : {}), ...(typeof limit === 'number' && limit > 0 ? { limit } : {}) })
+      const listed = await core.calls.list(project, { ...(of !== undefined ? { chapter: of } : {}), ...(typeof job === 'string' && job.length > 0 ? { job } : {}), ...(typeof limit === 'number' && limit > 0 ? { limit } : {}) })
       return { ...listed, megabytes: core.calls.megabytes() }
     },
     'calls.read': async ({ root, id }) => {

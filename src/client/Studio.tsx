@@ -36,7 +36,7 @@ import { SetupView } from './views/Setup'
 import { StageView } from './views/Stage'
 import { UsageView } from './views/Usage'
 import { WriteView } from './views/Write'
-import { CallsDialog } from './Calls'
+import { CallsDialog, useJobCalls } from './Calls'
 
 export interface StudioProps {
   api: NovelApi
@@ -203,6 +203,17 @@ function JobNotice() {
       // What the author noticed, followed up: where it was found and what was changed for it — or that it was not found, and where the planner looked.
       const output = ended.job.result?.output as Parameters<typeof leadWord>[0]
       controller.toast((output?.found?.length ?? 0) > 0 ? 'success' : 'info', leadWord(output, t), 14000)
+    } else if (ended.job.kind === 'revise' && ended.job.title === 'mend review') {
+      // What a review found was mended by itself: said, since nobody pressed a button for it — how many changes wait, and where.
+      const found = (ended.job.result?.output ?? {}) as { issues?: number; chapters?: number; places?: number; failed?: number; direct?: boolean; note?: string }
+      const places = found.places ?? 0
+      const failed = (found.failed ?? 0) > 0 ? t(`，${found.failed} 处没改成`, `, ${found.failed} failed`) : ''
+      const note = found.note !== undefined && found.note.trim().length > 0 ? t(` 策划：${clip(found.note.trim(), 160)}`, ` The planner: ${clip(found.note.trim(), 160)}`) : ''
+      if ((found.issues ?? 0) > 0) {
+        controller.toast(places > 0 ? 'success' : 'info', places > 0
+          ? t(`审校找到的 ${found.issues} 个问题修订好了：${places} 处修订${found.direct === true ? '（策划直接写的）' : ''}在各条问题下面等你确认${failed}。${note}`, `The ${found.issues} issue(s) the review found are mended: ${places} change(s)${found.direct === true ? ' (written by the planner itself)' : ''} wait beneath them${failed}.${note}`)
+          : t(`审校找到的 ${found.issues} 个问题交给策划看过了，没有出修订${failed}。${note}`, `The planner read the ${found.issues} issue(s) the review found and made no change${failed}.${note}`), 12000)
+      }
     } else if (ended.job.kind === 'revise' && ended.job.title === 'amend chapter') {
       // A chapter the writer went through: the places that changed wait as proposals; none changed is said with its reason.
       const found = (ended.job.result?.output ?? {}) as { places?: number; applied?: boolean; whole?: boolean; note?: string; refused?: string[]; figures?: FiguresKept; who?: 'writer' | 'planner' }
@@ -705,6 +716,9 @@ function JobsButton() {
   const project = useSnapshot(snapshot => snapshot.project)
   const [open, setOpen] = useState(false)
   const [calls, setCalls] = useState(false)
+  // What one job sent to a model and got back: opened from its row — every kind of job has the button, and says how many requests are on record.
+  const [asked, setAsked] = useState<{ id: string; name: string } | undefined>()
+  const requests = useJobCalls(open)
   const running = jobs.filter(job => job.status === 'running')
   if (jobs.length === 0) return null
   return (
@@ -730,6 +744,11 @@ function JobsButton() {
                   <CrewRuns job={job} />
                 </div>
                 <ThoughtButton job={job} label />
+                {project !== undefined && job.project === project.root ? (
+                  <Button size="sm" variant="ghost" icon="list" title={t('这件任务发给模型的请求：每一个发了什么、回了什么（角色作为 agent 干活时一步一个）', 'The requests this job sent to a model: what each sent and got back (a role working as an agent makes one a step)')} onClick={() => { setAsked({ id: job.id, name: jobLabel(job, t, project) }) }}>
+                    {(requests.get(job.id) ?? 0) > 0 ? t(`请求 ${requests.get(job.id)}`, `Requests ${requests.get(job.id)}`) : t('请求', 'Requests')}
+                  </Button>
+                ) : null}
                 {job.status === 'running'
                   ? <Button size="sm" variant="ghost" icon="stop" onClick={() => { void controller.cancelJob(job.id) }}>{t('停止', 'Stop')}</Button>
                   : <span className="nv-job-status">{job.status === 'done' ? t('完成', 'done') : job.status === 'failed' ? t('失败', 'failed') : t('已取消', 'cancelled')}</span>}
@@ -737,10 +756,11 @@ function JobsButton() {
             ))}
           </ul>
           {/* What each of these sent to a model and got back is on record, where a book is open. */}
-          {project !== undefined ? <p className="nv-muted nv-small nv-jobs-calls">{t('每次模型调用发了什么、回了什么：', 'What every call to a model sent and got back: ')}<button type="button" className="nv-link" onClick={() => { setCalls(true) }}>{t('调用记录…', 'the record of calls…')}</button></p> : null}
+          {project !== undefined ? <p className="nv-muted nv-small nv-jobs-calls">{t('每一行的“请求”是那件任务发给模型的；整本书的：', 'Requests on a row are what that job sent to a model; the whole book\'s: ')}<button type="button" className="nv-link" onClick={() => { setCalls(true) }}>{t('调用记录…', 'the record of calls…')}</button></p> : null}
         </Modal>
       ) : null}
       {calls && project !== undefined ? <CallsDialog onClose={() => { setCalls(false) }} /> : null}
+      {asked !== undefined && project !== undefined ? <CallsDialog job={asked} onClose={() => { setAsked(undefined) }} /> : null}
     </>
   )
 }

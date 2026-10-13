@@ -291,6 +291,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
       autoDigest: draft.autoDigest,
       siftCast: draft.siftCast !== false,
       plansFollow: draft.plansFollow === true,
+      reviewMends: draft.reviewMends !== false,
       recheckIssues: draft.recheckIssues !== false,
       mendBy: draft.mendBy === 'writer' ? 'writer' : 'planner',
       rewriteBy: draft.rewriteBy === 'planner' ? 'planner' : 'writer',
@@ -533,7 +534,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
             <Field label={t('分节拍写：每次写几个节拍', 'Written by its beats: beats to a part')} hint={t('章纲有节拍的章，按节拍分几次写——每次带着同一份材料和已经写出来的正文（缓存照用），只写这几个节拍，最后一次才收尾；不管要多少字都这样。每个节拍都写得足，一章也会比一次写完的长。填 0：一次写完，只有要的字数一次写不下时才分。（“写手自己读、自己写”不用这一项。）', 'A chapter whose plan has beats is written in parts — each request with the same material and the text so far (the cache holds), told which beats are its own, and only the last closes the chapter — whatever length is asked for. Every beat gets its room, and the chapter comes out longer than one written in one go. 0: in one go, and in parts only where the length asked for is more than one request yields. (Not for the writer at work as an agent.)')}>
               <TextInput inputMode="numeric" value={draft.partBeats !== undefined ? String(draft.partBeats) : ''} placeholder={String(PART_BEATS_DEFAULT)} onChange={(event) => { const text = event.target.value.replace(/\D/g, '').slice(0, 2); setDraft(({ partBeats: _old, ...rest }) => (text.length > 0 ? { ...rest, partBeats: Number(text) } : rest)); setDirty(true) }} />
             </Field>
-            <Field label={t('按处修改由谁写', 'Who writes a change made by places')} hint={t('修审校问题、照引导审校（写作页的“修改一章”）、全书修订、照要求通篇改一章：每一处改好的文字由哪个模型写。', 'Mending issues, a review by a lead, a revision through the book, a chapter revised in place: whose model writes what each place is to read.')}>
+            <Field label={t('修订由谁写', 'Who writes a revision')} hint={t('“审校和修订”里的每一种修订——修订审校问题、照你说的一句话修订（审校页、写作页、选中一段）：每一处改好的文字由哪个模型写。', 'Every revision under Review and revision — an issue mended, a sentence of yours carried out (the review page, the writing page, a selected passage): whose model writes what each place is to read.')}>
               <Select<'writer' | 'planner'>
                 value={draft.mendBy === 'writer' ? 'writer' : 'planner'}
                 options={[
@@ -543,7 +544,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
                 onChange={(value) => { update({ mendBy: value }) }}
               />
             </Field>
-            <Field label={t('改写一段、整章重写由谁写', 'Who rewrites a passage or a whole chapter')} hint={t('写作页选中一段的“润色 / 扩写 / 按要求改”，整章重写，以及修复里策划说“得整章重写”的章节。写一章、续写始终是写手。', 'A selected passage polished, expanded or rewritten on the writing page; a chapter written over whole — asked for, or because a mending says places will not do. Writing a chapter and going on with one is always the writer\'s.')}>
+            <Field label={t('改写一段、整章重写由谁写', 'Who rewrites a passage or a whole chapter')} hint={t('写作页选中一段的“润色 / 扩写 / 按要求改”，整章重写，以及修订里策划说“得整章重写”的章节。写一章、续写始终是写手。', 'A selected passage polished, expanded or rewritten on the writing page; a chapter written over whole — asked for, or because a mending says places will not do. Writing a chapter and going on with one is always the writer\'s.')}>
               <Select<'writer' | 'planner'>
                 value={draft.rewriteBy === 'planner' ? 'planner' : 'writer'}
                 options={[
@@ -553,7 +554,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
                 onChange={(value) => { update({ rewriteBy: value }) }}
               />
             </Field>
-            <Field label={t('修改改多少', 'How far a change goes')} hint={t('修审校问题、“修改一章”、全书修订、照要求改一章时改到什么程度。修复按钮旁的小三角里也能切。', 'How far mending an issue, a review by a lead, a revision through the book and a chapter revised in place go. Also under the small triangle beside the mending buttons.')}>
+            <Field label={t('修订改多少', 'How far a revision goes')} hint={t('修订审校问题、照你说的一句话修订时改到什么程度。修订按钮旁的小三角里也能切。', 'How far mending an issue and carrying out a sentence of yours go. Also under the small triangle beside the buttons that revise.')}>
               <Select<'bold' | 'careful'>
                 value={draft.mendReach === 'careful' ? 'careful' : 'bold'}
                 options={[
@@ -679,6 +680,11 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
           <span>{t('正文改了之后，自动照正文改章纲和节拍', 'Once a chapter\'s text is changed, its plan and beats are set by the text by themselves')}</span>
         </label>
         <p className="nv-muted nv-small nv-check-note">{t('默认不勾：章纲是你定的，写出来的正文不自己变成章纲。要更新，在那一章的章纲上点“照正文更新章纲”。', 'Off unless you tick it: the plan is your design, and text that was written does not become it by itself. To set a plan by its text, press Update the plan from the text on that chapter\'s plan.')}</p>
+        <label className="nv-check">
+          <input type="checkbox" checked={draft.reviewMends !== false} onChange={(event) => { update({ reviewMends: event.target.checked }) }} />
+          <span>{t('审校之后，把找到的问题交给策划修订，出修订提案（不勾：只列问题）', 'After a review, hand what it found to the planner to mend, as proposals (off: the issues are listed and nothing changes)')}</span>
+        </label>
+        <p className="nv-muted nv-small nv-check-note">{t('审校一章、批量审校都算：策划把找到的问题放在一起看，每一处改动是一条提案，出现在那条问题下面，采纳了才进正文。每次审校多一趟修订的花费；审校按钮旁的小三角里也能切。', 'A chapter reviewed and a batch of them alike: the planner reads what was found side by side, and every change is a proposal beneath its issue — nothing enters the text until you accept it. Each review costs one mending more; the small triangle beside the review buttons switches it too.')}</p>
         <label className="nv-check">
           <input type="checkbox" checked={draft.recheckIssues !== false} onChange={(event) => { update({ recheckIssues: event.target.checked }) }} />
           <span>{t('采纳修订之后，自动核对这一章还开着的审校意见', 'After a revision is accepted, have the issues still open in that chapter checked against the new text')}</span>

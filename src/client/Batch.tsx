@@ -537,7 +537,7 @@ export function TextBatchDialog({ chapters, preset, line, onClose }: { chapters:
             <Menu icon="chevronDown" variant="primary" size="md" align="end" items={[
               { label: t(`${order === 'sequence' ? '✓ ' : ''}顺序：一章接一章，前后更一致`, `${order === 'sequence' ? '✓ ' : ''}In order: chapter after chapter, more of a piece`), onSelect: () => { setOrder('sequence') } },
               { label: t(`${order === 'together' ? '✓ ' : ''}并发：同时写，更快`, `${order === 'together' ? '✓ ' : ''}Side by side: at once, faster`), onSelect: () => { setOrder('together') } },
-              { label: t(`${order === 'iterate' ? '✓ ' : ''}多轮迭代：写完再审校、统一修、重审`, `${order === 'iterate' ? '✓ ' : ''}In rounds: written, then reviewed, mended together, reviewed again`), onSelect: () => { setOrder('iterate') } },
+              { label: t(`${order === 'iterate' ? '✓ ' : ''}多轮迭代：写完再审校、统一修订、重审`, `${order === 'iterate' ? '✓ ' : ''}In rounds: written, then reviewed, mended together, reviewed again`), onSelect: () => { setOrder('iterate') } },
             ]} />
           ) : null}
         </div>
@@ -561,7 +561,7 @@ export function TextBatchDialog({ chapters, preset, line, onClose }: { chapters:
               <p><strong>{t('多轮迭代', 'Writing in rounds')}</strong>{steps.has('digest')
                 ? t('：各章照顺序写完、收录、审校之后，策划把审校出来的问题放在一起看，统一定下改哪几处、各怎么改（可以跨章），写手只改那几处；改过的章节重新收录、重新审校，再来一轮——直到没有这一级的问题，或轮数用完。', ': once the chapters are written in order, digested and reviewed, the planner reads what the reviews found side by side and settles which places change and how (across chapters where need be); the writer rewrites those places, and the chapters changed are digested and reviewed again — and so on, until nothing of this gravity is left or the rounds are used up.')
                 : t('：各章照顺序写完、审校之后，策划把审校出来的问题放在一起看，统一定下改哪几处、各怎么改（可以跨章），写手只改那几处；改过的章节重新审校，再来一轮——直到没有这一级的问题，或轮数用完。', ': once the chapters are written in order and reviewed, the planner reads what the reviews found side by side and settles which places change and how (across chapters where need be); the writer rewrites those places, and the chapters changed are reviewed again — and so on, until nothing of this gravity is left or the rounds are used up.')}</p>
-              <p className="nv-muted nv-small">{t('每一轮的修改直接写进正文（下一轮要接着它改），被换掉的每一稿都留在这一章的“版本”里。比只写一遍慢得多、花得多：一轮 = 策划一趟 + 每个改到的章节各一次重写、审校（勾了“收录”的再加一次收录）。', 'What a round changes goes into the text (the next round goes on from it); every draft it replaces stays among the chapter\'s versions. Much slower and dearer than writing once: a round is one run of the planner, and a rewrite and a review for each chapter it changes (and a digest, where that step is ticked).')}</p>
+              <p className="nv-muted nv-small">{t('每一轮的修订直接写进正文（下一轮要接着它改），被换掉的每一稿都留在这一章的“版本”里。比只写一遍慢得多、花得多：一轮 = 策划一趟 + 每个改到的章节各一次重写、审校（勾了“收录”的再加一次收录）。', 'What a round changes goes into the text (the next round goes on from it); every draft it replaces stays among the chapter\'s versions. Much slower and dearer than writing once: a round is one run of the planner, and a rewrite and a review for each chapter it changes (and a digest, where that step is ticked).')}</p>
               <div className="nv-form-grid">
                 <Field label={t('最多几轮', 'Rounds at most')}>
                   <Select<string> value={String(rounds)} options={[1, 2, 3, 4, 5].map(count => ({ value: String(count), label: t(`${count} 轮`, `${count}`) }))} onChange={(value) => { setRounds(Number(value)) }} />

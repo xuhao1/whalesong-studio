@@ -46,7 +46,7 @@ The showrunner never writes manuscript prose itself: it calls `novel_write` with
 | derive what happens next | Outline → Derive (next chapters, beats, what-if branches); from after any chapter, appending, **replacing** what followed, or **opening a plot line** beside it | `novel_derive` |
 | fix a passage | select it in Write → polish / expand / tighten / your instruction | `novel_revise scope=passage` |
 | rework a chapter | Write → revise the whole chapter | `novel_revise scope=chapter` |
-| change something across the book | Review → Book-wide revision | `novel_revise scope=book` |
+| change something across the book | Review → Review and revision: say it in a sentence and press Revise | `novel_revise scope=lead` (or `scope=book`) |
 | change the world or a character, and carry it through | Review → "carry a world / character change through" | `novel_bible` + `novel_revise scope=book` |
 
 Revisions arrive as **proposals** with a diff; you accept or reject. Every applied change snapshots the previous text, and any version can be compared and restored.

@@ -6,14 +6,14 @@ import type { NovelService } from '../../host/service'
 import type { CallRow } from '../../shared/types'
 import { novelTool, toJson } from './shared'
 
-const PARTS = ['system', 'stable', 'prompt', 'reply'] as const
+const PARTS = ['system', 'tools', 'stable', 'prompt', 'reply'] as const
 
 /** One call, as the showrunner reads it in a list. */
 function line(call: CallRow): string {
   const work = [call.kind === 'batch' ? 'batch' : call.title, call.step].filter((part, at, all) => part !== undefined && all.indexOf(part) === at).join(' / ') || 'outside any job'
   const used = call.input !== undefined ? `${call.input} tokens in${call.cached !== undefined && call.cached > 0 ? ` (${call.cached} cached)` : ''}, ${call.output ?? 0} out` : `${call.sent} characters sent, ${call.got} back`
   const ended = call.stopped === true ? 'STOPPED' : call.error !== undefined ? `FAILED: ${call.error}` : call.finish ?? ''
-  return `- [${call.id}] ${call.at} — ${work}${call.chapter !== undefined ? ` — chapter ${call.chapter}` : call.target !== undefined ? ` — ${call.target}` : ''} — ${call.role}: ${call.provider}/${call.model}${call.effort !== undefined ? `, reasoning ${call.effort}` : ''}${call.temperature !== undefined ? `, temperature ${call.temperature}` : ''} — ${used}, ${(call.ms / 1000).toFixed(1)} s — ${ended}`
+  return `- [${call.id}] ${call.at} — ${work}${call.chapter !== undefined ? ` — chapter ${call.chapter}` : call.target !== undefined ? ` — ${call.target}` : ''} — ${call.role}${call.agent !== undefined ? ` (agent step ${call.agent.step})` : ''}: ${call.provider}/${call.model}${call.effort !== undefined ? `, reasoning ${call.effort}` : ''}${call.temperature !== undefined ? `, temperature ${call.temperature}` : ''} — ${used}, ${(call.ms / 1000).toFixed(1)} s — ${ended}`
 }
 
 export function callTools(service: NovelService): ToolDefinition[] {
@@ -23,12 +23,13 @@ export function callTools(service: NovelService): ToolDefinition[] {
       'The record of calls: every call the Studio made to a text model for the book — a chapter written, continued or rewritten by the writer, a digest, a review, a plan — kept with the model and how it was set (reasoning level, temperature, output limit), how much it used, how it ended, and all that was sent and said. Read it when the author asks what a piece was written from, why it came out as it did, or why two drafts of one chapter are unlike each other: compare what each call was sent and how each was set before guessing. (The same request answered twice at the writer\'s temperature is two different texts: where two calls were sent the same thing, say that.)',
       '- action=list (default): the calls on record, the latest first — `chapter` for one chapter\'s only, `limit` for how many (default 20).',
       '- action=read: one call by `id` — `part` = prompt (default: this call\'s own material and what was asked last) | stable (what opened the request and stays the same over a run of calls: the book and the story so far) | system (the rules of the role, and for the writer the book\'s style) | reply (what the model said, before the Studio touched it). A part can be long: it comes `max` characters at a time (default 8000) from `from`.',
-      'What a role of the crew works out step by step as an agent is not in this record — that run is a conversation of its own (the author opens it from Jobs). The author reads the record on the writing page under Calls, and for the whole book from Jobs and Usage; how much of it a book keeps is their setting (callsMb).',
+      'What a role of the crew works out step by step as an agent is in this record too, a call a request of its run (the list says "agent step N"): for such a call `system` is its system prompt, `tools` the tools it was offered, `stable` what the earlier requests of the run had already sent (the task, what it said and asked of its tools, what they answered), `prompt` what is new with this request, `reply` what it said and the tools it asked for next. `job` lists the calls of one job (its id, as novel_status and the job list give it). The author reads the record on the writing page under Calls, for one job from its row in Jobs (Requests), and for the whole book from Jobs and Usage; how much of it a book keeps is their setting (callsMb).',
     ].join('\n'),
     mutating: false,
     parameters: {
       action: { type: 'string', enum: ['list', 'read'], description: 'Default: list.' },
       chapter: { type: 'string', description: 'list: only the calls made for this chapter — its id, number or title.' },
+      job: { type: 'string', description: 'list: only the calls made in this job — its id.' },
       limit: { type: 'integer', description: 'list: how many, the latest first. Default 20.' },
       id: { type: 'string', description: 'read: which call (ids are in the list).' },
       part: { type: 'string', enum: PARTS, description: 'read: which part of the call. Default: prompt.' },
@@ -41,7 +42,7 @@ export function callTools(service: NovelService): ToolDefinition[] {
       if ((args.action ?? 'list') === 'list') {
         const of = args.chapter !== undefined && args.chapter.trim().length > 0 ? await project.findChapter(args.chapter.trim()) : undefined
         if (args.chapter !== undefined && args.chapter.trim().length > 0 && of === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${args.chapter}"`)
-        const listed = await calls.list(project, { ...(of !== undefined ? { chapter: of.plan.id } : {}), limit: args.limit !== undefined && args.limit > 0 ? args.limit : 20 })
+        const listed = await calls.list(project, { ...(of !== undefined ? { chapter: of.plan.id } : {}), ...(args.job !== undefined && args.job.trim().length > 0 ? { job: args.job.trim() } : {}), limit: args.limit !== undefined && args.limit > 0 ? args.limit : 20 })
         const kept = calls.megabytes()
         return {
           text: listed.calls.length === 0

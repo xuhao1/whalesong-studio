@@ -3580,6 +3580,9 @@ export class Project {
   }
 
   async state(): Promise<ProjectState> {
+    // Stamped with the revision it was begun at: what is written while it is being read — a proposal added a moment
+    // after the others — makes the book newer than this says, and whoever holds it asks again.
+    const revision = this.revision
     const [manifest, outline, chapters, characters, world, styles, suggestions, proposals, cast, cover, activity, pending, removed] = await Promise.all([
       this.manifest(), this.outline(), this.chapterInfos(), this.characters(), this.world(), this.styles(),
       this.suggestions(), this.proposals(), this.castFacts(), this.cover(), this.activity(20), this.analysisPending(), this.removedChapters(),
@@ -3611,7 +3614,7 @@ export class Project {
     const derived = await this.readState<DerivedPlan>('derived.json')
     return {
       root: this.root,
-      revision: this.revision,
+      revision,
       manifest,
       outline,
       chapters,

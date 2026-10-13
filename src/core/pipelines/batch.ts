@@ -36,6 +36,7 @@ import { illustrate, lackingPortraits } from './illustrate'
 import { deriveBeats } from './plot'
 import { iterateChapters } from './iterate'
 import { reviewChapter } from './review'
+import { mendReviewed } from './revise'
 import { renderSound } from './sound'
 import { chapterVideo, produceVideo } from './video'
 import { writeChapter } from './write'
@@ -506,6 +507,12 @@ export interface TextBatchParams {
   rounds?: number
   /** With `iterate`: issues this grave or graver are worth a round (default `medium`). */
   atLeast?: IssueSeverity
+  /**
+   * What the batch's reviews found goes on to be mended once the batch is over: one mending for all of it, a job of
+   * its own, every change a proposal beneath its issue ({@link mendReviewed}). Left out: no — whoever starts the batch
+   * says (the Studio's page: as the settings have it, `reviewMends`). Chapters written in rounds are mended by their rounds.
+   */
+  mend?: boolean
 }
 
 export async function textPlan(core: NovelCore, runtime: ProjectRuntime, params: TextBatchParams): Promise<BatchPlan> {
@@ -543,6 +550,9 @@ export async function textPlan(core: NovelCore, runtime: ProjectRuntime, params:
   // Side by side on the author's word; otherwise a run of chapters is written in order.
   const together = writing && params.order === 'together'
   const steps: BatchStep[] = []
+  // The chapters this batch reviewed, and whether what was found in them goes on to be mended when it is over.
+  const reviewed: string[] = []
+  const mending = params.mend === true && wanted.has('review') && !rounds
   let previous: string | undefined
   for (const chapter of chapters) {
     const id = chapter.id
@@ -600,6 +610,7 @@ export async function textPlan(core: NovelCore, runtime: ProjectRuntime, params:
         skip: () => !facts.hasText ? L(lang, '还没有正文', 'no text yet') : facts.reviewed && !redo && !writing ? L(lang, '已审校过', 'reviewed already') : undefined,
         async run(sub) {
           const review = await reviewChapter(core, runtime, { chapter: id, ...(params.focus !== undefined ? { focus: params.focus } : {}) }, sub)
+          reviewed.push(review.chapterId)
           return L(lang, `${review.issues.length} 条问题`, `${review.issues.length} issues`)
         },
       })
@@ -620,7 +631,13 @@ export async function textPlan(core: NovelCore, runtime: ProjectRuntime, params:
         await iterateChapters(core, runtime, { chapters: chapters.map(chapter => chapter.id), ...(params.rounds !== undefined ? { rounds: params.rounds } : {}), ...(params.atLeast !== undefined ? { atLeast: params.atLeast } : {}), ...(params.focus !== undefined ? { focus: params.focus } : {}), digest: wanted.has('digest') }, sub)
         if (wanted.has('digest')) await updateArcs(core, runtime, sub).catch((error: unknown) => { if (sub.signal?.aborted === true) throw error })
       },
-    } : wanted.has('digest') && (!writing || together) ? { finish: async (sub: TaskContext) => { await updateArcs(core, runtime, sub) } } : {}),
+    } : (wanted.has('digest') && (!writing || together)) || mending ? {
+      finish: async (sub: TaskContext) => {
+        if (wanted.has('digest') && (!writing || together)) await updateArcs(core, runtime, sub).catch((error: unknown) => { if (sub.signal?.aborted === true || !mending) throw error })
+        // What the reviews of this batch found goes on to be mended: one job for all of it, started as the batch ends.
+        if (mending) await mendReviewed(core, runtime, reviewed, sub)
+      },
+    } : {}),
   }
 }
 

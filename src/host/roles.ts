@@ -29,6 +29,7 @@ import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-user-approval'
 import { createUserMessage, type ContextFormed } from '@deepseek-ai/dsh-llm'
 import { defineTool, type ParameterSchemaSpec } from '@deepseek-ai/dsh-tools'
+import { callScope, type AgentStep } from '../core/calls'
 import { currentJob, type JobContext } from '../core/jobs'
 import { LlmCallError } from '../core/llm'
 import { PROJECT_CONTEXT, SHOWRUNNER_SECTION, type RoleOutcome, type RoleRunner, type RoleTask } from '../core/roles'
@@ -87,6 +88,53 @@ interface Staged {
   /** The task's pictures, as DSH carries them in a message. */
   pictures: ImageBlock[]
   child?: Agent
+  /** What the work was said to be for when the run was asked for (a step of a batch, a chapter): the record of its requests is filed under it. */
+  scope: ReturnType<typeof callScope>
+  /** Requests made so far, and the messages they have sent — by id: what a later request carries beyond them is what is new with it. */
+  requests: number
+  sent: Set<string>
+  /** The request under way: what it sent, and what has come back so far. */
+  asking?: Asking
+}
+
+/** One request of a run, from the moment it goes out. */
+interface Asking {
+  at: number
+  ids: string[]
+  system: string
+  tools?: string
+  toolCount: number
+  fresh: string
+  chars: number
+  thought: number
+  text: string
+  calls: Map<number, { name: string; args: string }>
+  usage?: { inputTokens: number; outputTokens: number; cachedTokens?: number }
+  finish?: string
+}
+
+/** A message as the model is sent it, for a reader: who speaks, and what — a tool asked for by its name and what it was given, a tool's answer under the tool's name. */
+function rendered(message: { role: string; content: readonly unknown[]; toolCallId?: unknown; isError?: boolean }, names: Map<string, string>): string {
+  const said: string[] = []
+  for (const raw of message.content) {
+    const block = raw as { type?: string; text?: string; id?: unknown; name?: string; arguments?: string; toolName?: string }
+    if (block.type === 'text') said.push(block.text ?? '')
+    else if (block.type === 'tool-call') {
+      if (typeof block.id === 'string' && block.name !== undefined) names.set(block.id, block.name)
+      said.push(`→ ${block.name ?? 'tool'} ${block.arguments ?? ''}`.trimEnd())
+    } else if (block.type === 'image') said.push('[image]')
+    else if (block.type === 'reasoning') continue
+    else if (block.type === 'tool-addition' || block.type === 'tool-removal') said.push(`[${block.type}: ${block.toolName ?? ''}]`)
+    else said.push(`[${block.type ?? 'block'}]`)
+  }
+  const tool = message.role === 'tool' ? names.get(typeof message.toolCallId === 'string' ? message.toolCallId : '') : undefined
+  const who = message.role === 'tool' ? `[tool result${tool !== undefined ? `: ${tool}` : ''}${message.isError === true ? ' — failed' : ''}]` : `[${message.role}]`
+  return `${who}\n${said.join('\n').trim()}`
+}
+
+/** The tools a request offers, for a reader: each by its name, what it is for, and what it takes. */
+function toolsSaid(tools: readonly { name: string; description: string; parameters: Record<string, unknown> }[]): string {
+  return tools.map(tool => `## ${tool.name}\n${tool.description.trim()}\n${JSON.stringify(tool.parameters)}`).join('\n\n')
 }
 
 function textOf(content: readonly unknown[]): string {
@@ -105,6 +153,8 @@ export function createRoleRunner(ctx: Context, options: {
   onUsage?: (usage: RoleUsage) => void
   /** A role's run got a session of its own: which one, for which book, and under which conversation. */
   onRun?: (run: { session: string; book?: string; parent?: string }) => void
+  /** One request of a role's run went out and came back: what it sent, and what was said — for the book's record of calls. */
+  onStep?: (step: AgentStep) => void
 }): CrewRunner {
   const can = (route: ModelRoute): boolean => route.baseURL === undefined && route.provider.length > 0 && route.model.length > 0 && ctx.get('agents') !== undefined
   /** Runs being started, by the signal each start was given: how a task reaches the provider through the Harness's own request. */
@@ -241,26 +291,105 @@ export function createRoleRunner(ctx: Context, options: {
       return undefined
     })
 
+    // Tool calls the model asked for, by their ids: a tool's answer is said under the tool's name.
+    const called = new Map<string, string>()
+    /** What the request going out carries, as the session has it at this moment — nothing of it is the model's answer yet. */
+    const asked = (): Asking | undefined => {
+      const book = run.task.route.for?.book
+      if (options.onStep === undefined || book === undefined) return undefined
+      try {
+        const messages = child.session.deriveMessages() as unknown as { id: string; role: string; content: readonly unknown[]; toolCallId?: unknown; isError?: boolean }[]
+        const header = child.session.requestHeader()
+        const system: string[] = []
+        const fresh: string[] = []
+        let chars = 0
+        for (const message of messages) {
+          const text = rendered(message, called)
+          chars += text.length
+          if (message.role === 'system') system.push(textOf(message.content))
+          else if (!run.sent.has(message.id)) fresh.push(text)
+        }
+        const tools = header?.tools ?? []
+        const said = tools.length > 0 ? toolsSaid(tools) : undefined
+        return { at: Date.now(), ids: messages.map(message => message.id), system: system.join('\n\n'), ...(said !== undefined ? { tools: said } : {}), toolCount: tools.length, fresh: fresh.join('\n\n'), chars: chars + (said?.length ?? 0), thought: 0, text: '', calls: new Map() }
+      } catch (error) {
+        options.log(`could not read what the ${task.role} agent is sending`, error)
+        return undefined
+      }
+    }
+    /** The request is over: it goes on the record with what came back. */
+    const answered = (asking: Asking, committed: boolean): void => {
+      const book = run.task.route.for?.book
+      if (options.onStep === undefined || book === undefined) return
+      run.requests += 1
+      for (const id of asking.ids) run.sent.add(id)
+      const tools = [...asking.calls.values()].map(call => `→ ${call.name} ${call.args}`.trimEnd())
+      const reply = [asking.text.trim(), ...tools].filter(part => part.length > 0).join('\n')
+      try {
+        options.onStep({
+          book,
+          ...(run.job !== undefined ? { job: { id: run.job.id, kind: run.job.kind } } : {}),
+          ...(run.scope !== undefined ? { scope: run.scope } : {}),
+          role: (run.task.route.for?.role ?? run.task.role) as AgentStep['role'],
+          route: run.task.route,
+          session: child.id,
+          label: run.task.label,
+          step: run.requests,
+          startedAt: asking.at,
+          system: asking.system,
+          ...(asking.tools !== undefined ? { tools: asking.tools, toolCount: asking.toolCount } : {}),
+          fresh: asking.fresh,
+          sent: asking.chars,
+          reply,
+          ...(asking.usage !== undefined ? { usage: asking.usage } : {}),
+          ...(asking.thought > 0 ? { thought: asking.thought } : {}),
+          ...(asking.finish !== undefined ? { finish: asking.finish } : {}),
+          ...(committed ? {} : run.cancelled ? { error: 'stopped', stopped: true } : { error: 'the request did not come back' }),
+          ...(run.requests === 1 && run.pictures.length > 0 ? { images: run.pictures.map((_picture, at) => `#${at + 1}`) } : {}),
+        })
+      } catch (error) {
+        options.log(`could not put a request of the ${task.role} agent on record`, error)
+      }
+    }
     scope.on('agent/assistant-stream', ({ frame }) => {
       if (frame.type === 'start') {
         run.said = ''
+        const asking = asked()
+        if (asking !== undefined) run.asking = asking
+        else delete run.asking
       } else if (frame.type === 'chunk') {
         const chunk = frame.chunk
         if (chunk.type === 'text-delta') {
           run.said += chunk.text
+          if (run.asking !== undefined) run.asking.text += chunk.text
           run.task.onText?.(chunk.text)
         } else if (chunk.type === 'reasoning-delta') {
+          if (run.asking !== undefined) run.asking.thought += chunk.text.length
           run.job?.think(chunk.text)
+        } else if (chunk.type === 'tool-call-delta') {
+          if (run.asking !== undefined) {
+            const call = run.asking.calls.get(chunk.index) ?? { name: '', args: '' }
+            if (chunk.name !== undefined) call.name = chunk.name
+            call.args += chunk.argumentsDelta
+            run.asking.calls.set(chunk.index, call)
+          }
+        } else if (chunk.type === 'finish') {
+          if (run.asking !== undefined) run.asking.finish = (chunk as { reason?: { kind?: string } }).reason?.kind ?? run.asking.finish
         } else if (chunk.type === 'usage') {
-          options.onUsage?.({
-            route: run.task.route,
+          const usage = {
             inputTokens: chunk.usage.inputTokens + (chunk.usage.cacheReadTokens ?? 0) + (chunk.usage.cacheWriteTokens ?? 0),
             outputTokens: chunk.usage.outputTokens,
             ...(chunk.usage.cacheReadTokens !== undefined && chunk.usage.cacheReadTokens > 0 ? { cachedTokens: chunk.usage.cacheReadTokens } : {}),
-          })
+          }
+          if (run.asking !== undefined) run.asking.usage = usage
+          options.onUsage?.({ route: run.task.route, ...usage })
         }
-      } else if (run.said.trim().length > 0) {
-        run.last = run.said
+      } else {
+        if (run.said.trim().length > 0) run.last = run.said
+        // (An attempt that was abandoned is on record too, as what was sent and how far the answer got.)
+        const asking = run.asking
+        delete run.asking
+        if (asking !== undefined) answered(asking, frame.outcome.kind === 'committed')
       }
     })
   }
@@ -336,6 +465,7 @@ export function createRoleRunner(ctx: Context, options: {
     if (entry.timer !== undefined) clearTimeout(entry.timer)
     run.task = task
     run.job = currentJob()
+    run.scope = callScope()
     run.limit = Math.max(4, task.maxSteps ?? DEFAULT_STEPS)
     run.steps = 0
     run.said = ''
@@ -506,7 +636,7 @@ export function createRoleRunner(ctx: Context, options: {
         return await more(entry, task)
       }
       if (!can(route)) throw new LlmCallError(`the "${task.role}" role works as an agent and needs a model from Settings → Models to run on; ${route.model} is an endpoint the Studio calls directly`, 'NO_AGENT_LOOP')
-      const run: Staged = { task, job: currentJob(), limit: Math.max(4, task.maxSteps ?? DEFAULT_STEPS), steps: 0, said: '', last: '', cancelled: false, pictures: await imageBlocks(ctx, task.images, true) }
+      const run: Staged = { task, job: currentJob(), scope: callScope(), requests: 0, sent: new Set(), limit: Math.max(4, task.maxSteps ?? DEFAULT_STEPS), steps: 0, said: '', last: '', cancelled: false, pictures: await imageBlocks(ctx, task.images, true) }
       const parent = task.parent as Agent | undefined
       const subagents = ctx.get('subagents')
       // A parent that is gone cannot take a child; the work is still done.

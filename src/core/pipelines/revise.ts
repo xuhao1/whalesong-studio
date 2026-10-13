@@ -564,10 +564,12 @@ export interface ReviseBookParams {
    */
   said?: string
   /**
-   * What is given in `instruction` is something the author noticed in the book and wants found: the planner says
-   * first where it shows — each place quoted, and filed as an issue of that chapter's review, marked as the author's
-   * own (`ReviewIssue.lead`) — and then, with `fix`, names the places that mend it, whose changes are shown beneath
-   * those issues. `find`: found and filed, nothing changed.
+   * What is given in `instruction` is what the author said of the book, in a sentence, and the planner tells which of
+   * two things it is. Something they noticed that is wrong: the planner says first where it shows — each place
+   * quoted, and filed as an issue of that chapter's review, marked as the author's own (`ReviewIssue.lead`) — and
+   * then, with `fix`, names the places that mend it, whose changes are shown beneath those issues. A change they
+   * want made: nothing is filed, and the places it reaches are named — the changes wait as a round of proposals.
+   * `find`: nothing changed either way — what is wrong, or what the change would reach, is filed.
    */
   lead?: 'fix' | 'find'
 }
@@ -640,7 +642,7 @@ export async function reviseBook(core: NovelCore, runtime: ProjectRuntime, param
   const lead = params.lead
   const direct = lead !== 'find' && mendsDirect(core, params.direct)
   const bold = mendsBold(core, params.reach)
-  task.job?.progress(0, 1, lead === 'find' ? L(lang, '照你说的去找', 'looking for what you noticed') : lead === 'fix' ? L(lang, '照你说的去找，再定在哪几处改', 'looking for what you noticed, then settling which places change') : L(lang, '定在哪几处改', 'settling which places change'))
+  task.job?.progress(0, 1, lead === 'find' ? L(lang, '照你说的去查', 'looking into what you said') : lead === 'fix' ? L(lang, '照你说的去查，再定在哪几处改', 'looking into what you said, then settling which places change') : L(lang, '定在哪几处改', 'settling which places change'))
   const lines: string[] = []
   // Going on from what waits: the planner is told which chapters have a change waiting, and what it was for.
   const waiting = params.onto === true ? (await project.proposals()).filter(proposal => proposal.status === 'pending') : []
@@ -681,8 +683,8 @@ export async function reviseBook(core: NovelCore, runtime: ProjectRuntime, param
   const style = direct ? renderStyle(await project.activeStyle(), lang) : undefined
   const { value } = await assign(core, runtime, task, {
     role: 'architect',
-    label: lead === 'find' ? L(lang, '照引导审校 · 找出来', 'Review by a lead · finding it')
-      : lead === 'fix' ? L(lang, '照引导审校 · 找出来并修', 'Review by a lead · finding and mending it')
+    label: lead === 'find' ? L(lang, '审校和修订 · 只找出来', 'Review and revision · finding only')
+      : lead === 'fix' ? L(lang, '审校和修订 · 照作者说的', 'Review and revision · by what the author said')
         : asked ? L(lang, '全书修订 · 定在哪几处改', 'Book-wide revision · which places change') : L(lang, '修问题 · 定在哪几处改', 'Mending · which places change'),
     line: along ?? MAIN_LINE,
     tool: lead === 'find' ? 'submit_findings' : 'submit_places',
@@ -1099,13 +1101,15 @@ export async function fixIssue(core: NovelCore, runtime: ProjectRuntime, params:
 }
 
 export interface LeadReviewParams {
-  /** What the author noticed in the book, in their words — a problem, or a kind of problem to look for. */
+  /** What the author says of the book, in their words: something they noticed that is wrong, or a change they want made — the planner tells which. */
   lead: string
+  /** Pictures it goes by: the planner looks into it with them, and each place is changed by them. */
+  guides?: PictureGuide[]
   /** Only these chapters are looked at, and nothing outside them changes. */
   chapters?: string[]
   /** The line of the plot looked at, by id, when it is not the main one. */
   line?: string
-  /** `false`: found and filed as issues, nothing changed. Default: found, filed, and mended — each change waits as a proposal beneath its issue. */
+  /** `false`: found and filed as issues, nothing changed. Default: carried out — a fault found, filed and mended, each change a proposal beneath its issue; a request made through the places it reaches, the changes a round of proposals. */
   fix?: boolean
   /**
    * The passage the author pointed at when they said it, quoted from the (one) chapter named in `chapters` — "this
@@ -1132,10 +1136,13 @@ export interface LeadReviewResult {
 }
 
 /**
- * A review led by the author. They have noticed something in their book already — a pair of glasses that come and go,
- * a day that does not add up — and say it in a sentence; the planner goes into the book for it, says where it shows
- * (each place quoted, and filed as an issue of that chapter's review, marked as the author's own), and mends it by
- * places, each change shown beneath the issue it is for. One run of the planner finds and settles.
+ * What the author says of their book, in a sentence, carried out — the one way a word of theirs becomes changes,
+ * wherever it is said (the review page, beside a chapter, of a passage). The planner tells what it is. Something
+ * they noticed — a pair of glasses that come and go, a day that does not add up: the planner goes into the book for
+ * it, says where it shows (each place quoted, and filed as an issue of that chapter's review, marked as the author's
+ * own), and mends it by places, each change shown beneath the issue it is for. A change they want — a thing called
+ * otherwise, a card that changed and has to show: the places it reaches are named and changed, and wait as a round
+ * of proposals; nothing is filed. One run of the planner tells, finds and settles.
  *
  * It is looked for in the book as it stands: what the author noticed, they noticed in the text they have, and an
  * issue quotes that text — so changes that still wait for a chapter are not laid in first, as they are for a mending
@@ -1165,6 +1172,7 @@ export async function reviewByLead(core: NovelCore, runtime: ProjectRuntime, par
     ...(params.line !== undefined ? { line: params.line } : {}),
     ...(params.direct !== undefined ? { direct: params.direct } : {}),
     ...(params.reach !== undefined ? { reach: params.reach } : {}),
+    ...(params.guides !== undefined && params.guides.length > 0 ? { guides: params.guides } : {}),
   }, task)
   const found = book.found ?? []
   const chapters = new Set(found.map(item => item.chapterId)).size
@@ -1353,6 +1361,57 @@ export async function mendInTurn<T>(runtime: ProjectRuntime, order: 'queue' | 'a
     asked.delete(mine)
     if (asked.size === 0) mendings.delete(root)
   }
+}
+
+/** The title of the job that mends what reviews just found; the Studio's page tells it by this, and says its ending. */
+export const MEND_REVIEW_JOB = 'mend review'
+
+/**
+ * Whether a review hands what it found on to be mended (`reviewMends`). Unset: yes — a review that only lists what is
+ * wrong leaves the author to hand every issue over by hand, where saying one sentence about a chapter already comes
+ * back with the changes beneath what was found. Whoever asks for one review may say otherwise for it.
+ */
+export function reviewMends(core: NovelCore, explicit?: boolean): boolean {
+  return explicit ?? core.currentSettings().reviewMends !== false
+}
+
+/** What the reviews of these chapters hold that is open and was handed to nobody yet. */
+export async function unmended(runtime: ProjectRuntime, chapters: readonly string[]): Promise<{ chapter: string; issue: string }[]> {
+  const found: { chapter: string; issue: string }[] = []
+  for (const id of [...new Set(chapters)]) {
+    for (const issue of (await runtime.project.review(id))?.issues ?? []) {
+      if (issue.resolved !== true && issue.mending === undefined) found.push({ chapter: id, issue: issue.id })
+    }
+  }
+  return found
+}
+
+/**
+ * What reviews just found, handed on to be mended: the mending a list of issues gets when the author ticks them and
+ * hands them over ({@link fixIssues}) — one planner reads them side by side, every change waits as a proposal beneath
+ * the issue it is for, a change to the bible as a suggestion. It is a job of its own, started when the reviews are
+ * over: the issues can be read while it works, it is stopped by itself, and it takes its turn among the mendings.
+ * @param chapters - the chapters reviewed; of their issues, the open ones that were handed to nobody yet.
+ * @returns the job started and how many issues it was handed — nothing where none waits.
+ */
+export async function mendReviewed(core: NovelCore, runtime: ProjectRuntime, chapters: readonly string[], task: Pick<TaskContext, 'origin' | 'agentRoute' | 'caller'>, options: { order?: 'queue' | 'apart' } = {}): Promise<{ jobId: string; issues: number } | undefined> {
+  const issues = await unmended(runtime, chapters)
+  if (issues.length === 0) return undefined
+  const within = [...new Set(issues.map(item => item.chapter))]
+  const order = options.order === 'apart' ? 'apart' : 'queue'
+  const started = core.jobs.start({ kind: 'revise', title: MEND_REVIEW_JOB, project: runtime.project.root, origin: task.origin, ...(within.length === 1 ? { target: within[0]! } : {}) }, async (job) => {
+    const sub: TaskContext = { origin: task.origin, signal: job.signal, job, ...(task.agentRoute !== undefined ? { agentRoute: task.agentRoute } : {}), ...(task.caller !== undefined ? { caller: task.caller } : {}) }
+    // (Asked again when its turn comes: what the author settled or handed over meanwhile is not mended twice.)
+    const result = await mendInTurn(runtime, order, sub, async (onto) => {
+      const due = await unmended(runtime, within)
+      return due.length > 0 ? await fixIssues(core, runtime, { issues: due, ...(onto ? { onto: true } : {}) }, sub) : { issues: 0, chapters: 0 }
+    })
+    job.result({ output: { issues: result.issues, chapters: result.chapters, places: result.book?.results.length ?? 0, failed: result.book?.failed.length ?? 0, ...(result.book?.direct === true ? { direct: true } : {}), ...(result.book?.note !== undefined ? { note: result.book.note } : {}) } })
+    return result
+  })
+  // (Recorded on the job where it fails: nobody waits for it here.)
+  started.done.catch(() => {})
+  return { jobId: started.id, issues: issues.length }
 }
 
 /** Apply a pending proposal to the manuscript. */

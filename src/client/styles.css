@@ -2450,8 +2450,14 @@ button.nv-stat:hover {
   padding: 4px 10px 12px 30px;
 }
 
-.nv-issue-chapter > .nv-issue-grid {
+.nv-issue-chapter > .nv-issue-grid,
+.nv-issue-chapter > .nv-mends-all {
   align-self: stretch;
+}
+
+/* The changes that wait beneath a set of issues, settled at once: a line above the issues, its buttons at the far end. */
+.nv-mends-all {
+  flex-wrap: wrap;
 }
 
 /* A chapter's row in the review: the part that unfolds its issues. */

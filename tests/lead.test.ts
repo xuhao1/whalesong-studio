@@ -52,7 +52,7 @@ describe('a review led by what the author noticed', () => {
     // One run of the planner: told that the author noticed it, to find it first, and how a finding is written.
     const asked = bed.llm.requests.filter(planner)
     expect(asked).toHaveLength(1)
-    for (const part of ['作者读自己的书时发现了一个问题', '## 作者发现的问题', LEAD, '先把它找出来', '"findings"', '"quote"', '逐字照抄', '"edits"', '"how"', '书里其实没有这个问题', '把牵连查清', '"bible"', '### 第 2 章《旧账》']) expect(asked[0]!.prompt, part).toContain(part)
+    for (const part of ['作者对这本书说了一句话', '是哪一种由你判断', '## 作者说的', LEAD, '先判断作者说的是哪一种', '先把它找出来', '它是一条要照着改的要求', 'findings 给空数组，直接照下面几条定改哪几处', '是毛病：', '是修改要求：', '"findings"', '"quote"', '逐字照抄', '"edits"', '"how"', '书里其实没有这个问题', '把牵连查清', '"bible"', '### 第 2 章《旧账》']) expect(asked[0]!.prompt, part).toContain(part)
     expect(asked[0]!.prompt).not.toContain('"replace"')
 
     // Found twice in chapter 2: two issues of that chapter — the author's own, handed over with this batch.
@@ -85,6 +85,33 @@ describe('a review led by what the author noticed', () => {
     expect(read.issues.map(issue => [issue.explanation, issue.lead])).toEqual([['收得太快。', undefined], ['这里说没戴眼镜。', LEAD], ['两句之后却推了推眼镜：前面刚说没戴。', LEAD]])
     expect((await project.chapterInfos())[1]).toMatchObject({ openIssues: 3 })
     expect((await project.chapterInfos())[1]!.unreviewed).toBeUndefined()
+  })
+
+  it('carries out what the planner tells to be a request: nothing is filed, and the places it reaches wait as a round of proposals', async () => {
+    const { project } = bed.runtime
+    const ids = await book()
+    const SAID = '把“柳先生”都改称“柳掌柜”'
+    bed.llm.responder = (request) => {
+      // The planner took it as a request: no findings, and a place for each sentence the name stands in (two of the four, here).
+      if (planner(request)) return JSON.stringify({ findings: [], edits: [{ chapter: 1, find: '柳先生摘下眼镜，放在柜台上。', how: '称呼改成柳掌柜' }, { chapter: 2, find: '柳先生没戴眼镜，眯着眼看账。', how: '称呼改成柳掌柜' }], chapters: [], note: '当作修改要求办：称呼出现的地方各改一处。' })
+      return passage(request).replace('柳先生', '柳掌柜')
+    }
+    const result = await reviewByLead(bed.core, bed.runtime, { lead: SAID }, task)
+
+    // Nothing was found wrong, so nothing is on file — and no chapter has a review for it.
+    expect(result).toMatchObject({ found: [], chapters: 0, fix: true, note: expect.stringContaining('当作修改要求办') })
+    expect(await project.review(ids.one)).toBeUndefined()
+    expect(await project.review(ids.two)).toBeUndefined()
+    // The places changed wait as proposals of one round, said to be for what the author said, and for no issue.
+    expect(result.book.results.map(item => [item.index, item.kind])).toEqual([[1, 'span'], [2, 'span']])
+    // (The chapters are changed side by side: which proposal is made first is not said.)
+    const waiting = (await project.proposals()).filter(item => item.status === 'pending').sort((left, right) => left.chapterId.localeCompare(right.chapterId))
+    expect(waiting.map(item => [item.chapterId, item.after, item.batchId === result.book.batchId, item.issues])).toEqual([
+      [ids.one, '柳掌柜摘下眼镜，放在柜台上。', true, undefined],
+      [ids.two, '柳掌柜没戴眼镜，眯着眼看账。', true, undefined],
+    ])
+    expect(waiting.every(item => item.instruction.includes(SAID))).toBe(true)
+    expect(await project.chapterText(ids.one)).toBe(ONE)
   })
 
   it('only finds where that is asked, sends back a quote the chapter does not have, and does not file twice what is on file', async () => {
@@ -152,7 +179,7 @@ describe('a review led by what the author noticed', () => {
     expect(tries).toBe(2)
     // Asked for the words themselves, and told how the book is written.
     const first = bed.llm.requests[0]!.prompt
-    for (const part of ['把每一处改好的文字直接写出来', '"replace"', '"why"', '整句删掉就给空字符串', '没有人再替你改写']) expect(first, part).toContain(part)
+    for (const part of ['每一处改好的文字由你直接写出来', '"replace"', '"why"', '整句删掉就给空字符串', '没有人再替你改写']) expect(first, part).toContain(part)
     expect(first).not.toContain('"how"')
     const back = bed.llm.requests[1]!.prompt
     for (const part of ['edits 第 1 条：replace 和 find 一样，没有改动', 'edits 第 2 条：find（要换掉的原文）和 replace']) expect(back, part).toContain(part)
@@ -268,7 +295,7 @@ describe('a review led by what the author noticed', () => {
     // Said from the editor, of the sentence selected there.
     await reviewByLead(bed.core, bed.runtime, { lead: '他刚才不是没戴眼镜吗', chapters: [ids.two], passage: '  过了一会儿，柳先生推了推眼镜。 ' }, task)
     const asked = bed.llm.requests.find(planner)!.prompt
-    for (const part of ['## 作者发现的问题', '他刚才不是没戴眼镜吗', '作者是指着第 2 章的这一段说的', '「过了一会儿，柳先生推了推眼镜。」', '它牵连到的别处也要找', '作者只让动这几章']) expect(asked, part).toContain(part)
+    for (const part of ['## 作者说的', '他刚才不是没戴眼镜吗', '作者是指着第 2 章的这一段说的', '「过了一会儿，柳先生推了推眼镜。」', '它牵连到的别处也要找', '作者只让动这几章']) expect(asked, part).toContain(part)
     // What is kept is what they said — on the issue, and on the change made for it.
     expect((await project.review(ids.two))!.issues.map(issue => issue.lead)).toEqual(['他刚才不是没戴眼镜吗'])
     const waiting = (await project.proposals()).filter(item => item.status === 'pending')

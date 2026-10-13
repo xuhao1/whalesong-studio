@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 /**
- * The record of calls, where it is read: every call the Studio made to a
- * text model for the book — what work it was, which model and how it was
- * set — and, opened, everything that was sent and said.
+ * The record of calls, where it is read: every call made to a text model
+ * for the book — the Studio's own, and each request of a role working as an
+ * agent — what work it was, which model and how it was set — and, opened,
+ * everything that was sent and said. A job's own calls are opened from the
+ * job, where jobs are listed.
  *
  * A model answers from what it is sent and from nothing else. Two pieces
  * that came out unlike each other are told apart here: their calls ticked
@@ -27,15 +29,28 @@ const ROLE: Record<string, [string, string]> = {
   vision: ['看图的模型', 'The model that looks at pictures'],
 }
 
-type Part = 'prompt' | 'stable' | 'system' | 'reply'
+type Part = 'prompt' | 'stable' | 'system' | 'tools' | 'reply'
+
+interface PartName { part: Part; label: [string, string]; hint: [string, string] }
 
 /** The parts of a call, in the order they were sent, in the author's words. */
-const PARTS: { part: Part; label: [string, string]; hint: [string, string] }[] = [
+const PARTS: PartName[] = [
   { part: 'system', label: ['规则和文风', 'Rules and style'], hint: ['这个角色的守则，写手还带着这本书的文风：每次调用都一样', 'The standing rules of the role — and, for the writer, the book\'s style: the same call after call'] },
   { part: 'stable', label: ['打头的部分', 'What opens the request'], hint: ['排在最前面、一连串调用里不变的那一段：这本书，和到这里为止的前文', 'Sent ahead of the rest and the same over a run of calls: the book, and the story so far'] },
   { part: 'prompt', label: ['这一次的材料和要求', 'This call\'s material and what was asked'], hint: ['只属于这一次的：这一章的章纲、人物、设定、要守的事实，最后是对它的要求', 'This call\'s own: the chapter\'s plan, the people, the world, what must hold — and last, what was asked'] },
   { part: 'reply', label: ['模型的回复', 'What the model said'], hint: ['它交回来的原文，工坊还没有动过', 'What it handed back, before the Studio touched it'] },
 ]
+
+/** …and of one request of a role working as an agent: the same request grows step by step, so what is new with a step is told apart from what the steps before it had sent. */
+const STEP_PARTS: PartName[] = [
+  { part: 'system', label: ['系统提示', 'The system prompt'], hint: ['这位角色的身份和守则，每一步都一样', 'Who the role is and the rules it works by: the same at every step'] },
+  { part: 'tools', label: ['给它的工具', 'The tools it was given'], hint: ['每个工具的名字、说明和参数，每一步都随请求发过去', 'Each tool by its name, what it is for and what it takes: sent with every step'] },
+  { part: 'stable', label: ['前面各步已经发过的', 'What the earlier steps had already sent'], hint: ['这一趟到上一步为止的全部往来：任务、它说过的话和调过的工具、工具的回答。这一步原样再发一遍', 'All that went back and forth in this run up to the step before: the task, what it said and asked of its tools, what they answered. This step sends it again as it stands'] },
+  { part: 'prompt', label: ['这一步新发的', 'What is new with this step'], hint: ['第一步是交给它的任务；之后是它上一步说的话、调的工具，和工具的回答', 'On the first step, the task it was given; after that, what it last said and asked of its tools, and what they answered'] },
+  { part: 'reply', label: ['模型的回复', 'What the model said'], hint: ['它这一步说的话，和它接着要调的工具（→ 工具名 参数）', 'What it said at this step, and the tools it asked for next (→ tool arguments)'] },
+]
+
+const partsOf = (call: Pick<CallRow, 'agent'>): PartName[] => (call.agent !== undefined ? STEP_PARTS : PARTS)
 
 /** What work a call was for, in the author's words. */
 export function callWork(call: Pick<CallRow, 'step' | 'title' | 'kind'>, t: Translate): string {
@@ -44,6 +59,11 @@ export function callWork(call: Pick<CallRow, 'step' | 'title' | 'kind'>, t: Tran
   const step = call.step !== undefined && call.kind !== 'digest' ? t(...(BATCH_STEP[call.step] ?? [call.step, call.step])) : undefined
   const named = [job, step].filter((part, at, all): part is string => part !== undefined && all.indexOf(part) === at)
   return named.length > 0 ? named.join(' · ') : t('任务之外的调用', 'A call outside any job')
+}
+
+/** Which request of an agent's run a call is, where it is one: "step 3 of the agent". */
+function stepWord(call: Pick<CallRow, 'agent'>, t: Translate): string | undefined {
+  return call.agent !== undefined ? t(`agent 第 ${call.agent.step} 步`, `agent, step ${call.agent.step}`) : undefined
 }
 
 const when = (call: Pick<CallRow, 'at'>): string => {
@@ -112,7 +132,7 @@ function CallFacts({ call }: { call: CallRow }) {
   const rows: [string, ReactNode][] = [
     [t('什么时候', 'When'), new Date(call.at).toLocaleString()],
     [t('哪件活', 'The work'), [callWork(call, t), chapterName(project, call.chapter, t) ?? call.target].filter(Boolean).join(' · ')],
-    [t('谁', 'Who'), t(...(ROLE[call.role] ?? [call.role, call.role]))],
+    [t('谁', 'Who'), `${t(...(ROLE[call.role] ?? [call.role, call.role]))}${call.agent !== undefined ? t(`，作为 agent 一步步干：这是它这一趟的第 ${call.agent.step} 个请求${call.agent.label !== undefined ? `（${call.agent.label}）` : ''}${call.agent.tools !== undefined ? `，带着 ${call.agent.tools} 个工具` : ''}`, `, working as an agent: request ${call.agent.step} of this run${call.agent.label !== undefined ? ` (${call.agent.label})` : ''}${call.agent.tools !== undefined ? `, with ${call.agent.tools} tool(s) offered` : ''}`) : ''}`],
     [t('模型', 'Model'), `${call.provider} / ${call.model}`],
     [t('思考档位', 'Reasoning'), call.effort ?? t('模型默认', 'the model\'s default')],
     [t('温度', 'Temperature'), call.temperature !== undefined ? String(call.temperature) : t('没有指定（模型默认）', 'not set (the model\'s default)')],
@@ -137,7 +157,7 @@ function CallBody({ call, lean }: { call: CallRecord; lean?: boolean }) {
   return (
     <div className="nv-call">
       {lean === true ? null : <CallFacts call={call} />}
-      {PARTS.map(({ part, label, hint }) => {
+      {partsOf(call).map(({ part, label, hint }) => {
         const text = call[part] ?? ''
         return (
           <details key={part} className="nv-call-part" open={part === 'prompt' || part === 'reply'}>
@@ -161,9 +181,9 @@ export function CallModal({ row, onClose }: { row: CallRow; onClose: () => void 
   const { root } = useProject()
   const read = useLoad(signal => controller.api.call('calls.read', { root, id: row.id }, signal), [root, row.id])
   const call = read.data?.call
-  const whole = call !== undefined ? PARTS.map(({ part, label }) => `# ${t(...label)}\n\n${call[part] ?? ''}`).join('\n\n\n') : ''
+  const whole = call !== undefined ? partsOf(call).map(({ part, label }) => `# ${t(...label)}\n\n${call[part] ?? ''}`).join('\n\n\n') : ''
   return (
-    <Modal wide roomy="call" title={`${callWork(row, t)} · ${when(row)}`} onClose={onClose} footer={(
+    <Modal wide roomy="call" title={[callWork(row, t), stepWord(row, t), when(row)].filter(Boolean).join(' · ')} onClose={onClose} footer={(
       <>
         <span className="nv-muted nv-small">{t('模型看到的就是这些，按发送的顺序排；除此之外它什么都不知道。', 'This is all the model saw, in the order it was sent; it knew nothing else.')}</span>
         <span className="nv-spacer" />
@@ -184,7 +204,7 @@ function CallsCompare({ rows, onClose }: { rows: readonly CallRow[]; onClose: ()
     const got = read[row.id]
     return {
       key: row.id,
-      title: `${callWork(row, t)} · ${when(row)}`,
+      title: [callWork(row, t), stepWord(row, t), when(row)].filter(Boolean).join(' · '),
       sub: setting(row, t),
       ...(got?.error !== undefined ? { error: got.error } : got?.call !== undefined ? { body: <CallBody call={got.call} /> } : { loading: true }),
     }
@@ -235,7 +255,7 @@ function CallsDiff({ rows, onClose }: { rows: readonly [CallRow, CallRow]; onClo
         <thead><tr><th /><th>{t('前一次', 'The earlier')} · {when(first)}</th><th>{t('后一次', 'The later')} · {when(second)}</th></tr></thead>
         <tbody>{facts.map(([name, left, right, set]) => <tr key={name} className={set === true && left !== right ? 'is-unlike' : undefined}><th>{name}</th><td>{left}</td><td>{right}</td></tr>)}</tbody>
       </table>
-      <Tabs<Part> value={part} onChange={setPart} tabs={[PARTS[2]!, PARTS[1]!, PARTS[0]!, PARTS[3]!].map(item => ({ value: item.part, label: `${t(...item.label)}${before !== undefined && after !== undefined ? (same(item.part) ? t(' · 一样', ' · same') : t(' · 不一样', ' · differs')) : ''}` }))} />
+      <Tabs<Part> value={part} onChange={setPart} tabs={(['prompt', 'stable', 'system', 'tools', 'reply'] as const).map(name => partsOf(first.agent !== undefined || second.agent !== undefined ? first.agent !== undefined ? first : second : first).find(item => item.part === name)).filter((item): item is PartName => item !== undefined).map(item => ({ value: item.part, label: `${t(...item.label)}${before !== undefined && after !== undefined ? (same(item.part) ? t(' · 一样', ' · same') : t(' · 不一样', ' · differs')) : ''}` }))} />
       {failed !== undefined ? <p className="nv-note is-warn">{failed}</p>
         : before === undefined || after === undefined ? <div className="nv-center"><Spinner /></div>
           : same(part) ? <p className="nv-note">{(before[part] ?? '').length === 0 ? t('两次都没有这一部分。', 'Neither call had this part.') : t(`这一部分两次一字不差（${formatCount((before[part] ?? '').length, locale)} 字）。`, `This part is the same in both, to the letter (${formatCount((before[part] ?? '').length, locale)} characters).`)}</p>
@@ -248,9 +268,10 @@ function CallsDiff({ rows, onClose }: { rows: readonly [CallRow, CallRow]; onClo
  * The calls on record, a row a call: pressed, a call is read whole; ticked, calls are laid side by side, two of them
  * read against each other, or taken off the record.
  * @param chapter - only this chapter's calls; left out, the whole book's.
- * @param onWhole - where the list is one chapter's: the way to the whole book's.
+ * @param job - only the calls made in this job (its id).
+ * @param onWhole - where the list is one chapter's or one job's: the way to the whole book's.
  */
-export function CallsBrowser({ chapter, onWhole }: { chapter?: string | undefined; onWhole?: (() => void) | undefined }) {
+export function CallsBrowser({ chapter, job, onWhole }: { chapter?: string | undefined; job?: string | undefined; onWhole?: (() => void) | undefined }) {
   const { controller, locale } = useStudio()
   const t = useT()
   const { project, root } = useProject()
@@ -259,12 +280,15 @@ export function CallsBrowser({ chapter, onWhole }: { chapter?: string | undefine
   // A job that ended has left its calls: the list is read again.
   const jobs = useSnapshot(snapshot => snapshot.jobs)
   const ended = jobs.filter(job => job.status !== 'running').length
-  const listed = useLoad(signal => controller.api.call('calls.list', { root, ...(chapter !== undefined ? { chapter } : {}) }, signal), [root, chapter, ended, project.revision])
+  // (A job under way makes calls as it goes: its list is read again as it moves.)
+  const moving = job !== undefined ? jobs.find(item => item.id === job)?.crew?.length ?? 0 : 0
+  const listed = useLoad(signal => controller.api.call('calls.list', { root, ...(chapter !== undefined ? { chapter } : {}), ...(job !== undefined ? { job } : {}) }, signal), [root, chapter, job, ended, moving, project.revision])
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set())
   const [viewing, setViewing] = useState<CallRow | undefined>()
   const [comparing, setComparing] = useState<CallRow[] | undefined>()
   const [differing, setDiffering] = useState<[CallRow, CallRow] | undefined>()
-  const calls = listed.data?.calls ?? []
+  // (A Host half from before a job's calls could be asked for answers with the whole book's: the job's are picked here.)
+  const calls = (listed.data?.calls ?? []).filter(call => job === undefined || call.job === job)
   const chosen = calls.filter(call => picked.has(call.id))
   const pick = (id: string): void => { setPicked((previous) => { const next = new Set(previous); if (!next.delete(id)) next.add(id); return next }) }
   const remove = (ids: string[] | undefined, ask: string): void => {
@@ -284,7 +308,7 @@ export function CallsBrowser({ chapter, onWhole }: { chapter?: string | undefine
   return (
     <div className="nv-calls">
       <div className="nv-versions-bar">
-        {chosen.length === 0 ? <span className="nv-muted nv-small">{calls.length > 0 ? t('点一行看那次调用的全文；勾两条看它们差在哪，勾几条并排看。', 'Press a row to read that call whole; tick two to see what differs, or several to lay them side by side.') : ''}</span> : (
+        {chosen.length === 0 ? <span className="nv-muted nv-small">{calls.length > 0 ? job !== undefined ? t(`这件任务发出的 ${calls.length} 个请求，新的在上。点一行看发了什么、回了什么；勾两条看差在哪。`, `The ${calls.length} request(s) this job made, the latest first. Press a row to read what was sent and said; tick two to see what differs.`) : t('点一行看那次调用的全文；勾两条看它们差在哪，勾几条并排看。', 'Press a row to read that call whole; tick two to see what differs, or several to lay them side by side.') : ''}</span> : (
           <>
             <span className="nv-small">{t(`已选 ${chosen.length} 条`, `${chosen.length} picked`)}</span>
             <button type="button" className="nv-link nv-small" onClick={() => { setPicked(new Set()) }}>{t('清空', 'None')}</button>
@@ -297,9 +321,11 @@ export function CallsBrowser({ chapter, onWhole }: { chapter?: string | undefine
       </div>
       {off ? <p className="nv-note">{t('调用记录现在关着（设置里“调用记录留多少”是 0）：新的调用不会记下来。', 'The record of calls is off (the settings keep 0 MB of it): new calls are not kept.')}</p> : null}
       {calls.length === 0 ? (
-        <p className="nv-muted nv-small">{chapter !== undefined
-          ? t('这一章还没有调用记录。工坊每调一次文字模型——写作、续写、改写、收录、审校、推演——都会在这里留一条：交给它的全文、它的回复、用的模型和温度。策划、场记这些角色自己一步步干的活不在这里，在“任务”里点开它那场对话看。', 'No call is on record for this chapter yet. Every call the Studio makes to a text model — writing, continuing, rewriting, memory, reviews, plans — leaves one here: all that was sent, the reply, the model and its temperature. What a role works out step by step as an agent is not here: open its conversation from Jobs.')
-          : t('这本书还没有调用记录。工坊每调一次文字模型都会在这里留一条：交给它的全文、它的回复、用的模型和温度。', 'No call is on record for this book yet. Every call the Studio makes to a text model leaves one here: all that was sent, the reply, the model and its temperature.')}</p>
+        <p className="nv-muted nv-small">{job !== undefined
+          ? t('这件任务没有留下文字模型的调用记录。可能是：它还没发出第一个请求；它是画图、配音这类不调文字模型的活（图的提示词在那张图的“记录”里）；它是在开始记录之前跑的；或者记录满了，最早的已经让出去了。', 'This job left no call to a text model on record. It may not have made its first request yet; it may be drawing or voicing, which call no text model (a picture\'s prompt is in that picture\'s record); it may have run before calls were kept; or the record was full and its calls, the oldest, went first.')
+          : chapter !== undefined
+            ? t('这一章还没有调用记录。每调一次文字模型——写作、续写、改写、收录、审校、推演——都会在这里留一条：交给它的全文、它的回复、用的模型和温度。策划、场记这些角色作为 agent 一步步干的活也在这里，一步一条。', 'No call is on record for this chapter yet. Every call to a text model — writing, continuing, rewriting, memory, reviews, plans — leaves one here: all that was sent, the reply, the model and its temperature. What a role works out step by step as an agent is here as well, a step a call.')
+            : t('这本书还没有调用记录。每调一次文字模型都会在这里留一条：交给它的全文、它的回复、用的模型和温度；角色作为 agent 干活时一步一条。', 'No call is on record for this book yet. Every call to a text model leaves one here: all that was sent, the reply, the model and its temperature; a role working as an agent leaves one a step.')}</p>
       ) : (
         <ul className="nv-list nv-versions nv-call-list">
           {calls.map(call => (
@@ -309,8 +335,8 @@ export function CallsBrowser({ chapter, onWhole }: { chapter?: string | undefine
               </label>
               <button type="button" className="nv-list-row" onClick={() => { setViewing(call) }}>
                 <span className="nv-person-text">
-                  <span className="nv-list-title">{callWork(call, t)}{chapter === undefined && (chapterName(project, call.chapter, t) ?? call.target) !== undefined ? ` · ${chapterName(project, call.chapter, t) ?? call.target}` : ''} {ending(call, t)}</span>
-                  <span className="nv-list-meta">{when(call)} · {t(...(ROLE[call.role] ?? [call.role, call.role]))} · {setting(call, t)}</span>
+                  <span className="nv-list-title">{job === undefined ? callWork(call, t) : call.agent?.label ?? callWork(call, t)}{stepWord(call, t) !== undefined ? ` · ${stepWord(call, t)!}` : ''}{chapter === undefined && (chapterName(project, call.chapter, t) ?? call.target) !== undefined ? ` · ${chapterName(project, call.chapter, t) ?? call.target}` : ''} {ending(call, t)}</span>
+                  <span className="nv-list-meta">{when(call)} · {t(...(ROLE[call.role] ?? [call.role, call.role]))} · {setting(call, t)}{call.agent?.tools !== undefined ? t(` · ${call.agent.tools} 个工具`, ` · ${call.agent.tools} tool(s)`) : ''}</span>
                   <span className="nv-list-meta">{amounts(call, locale, t)} · {took(call.ms, t)}</span>
                 </span>
                 <Icon name="chevronRight" size={14} />
@@ -324,7 +350,7 @@ export function CallsBrowser({ chapter, onWhole }: { chapter?: string | undefine
         <button type="button" className="nv-link" onClick={() => { listed.reload() }}>{t('刷新', 'Refresh')}</button>
         {onWhole !== undefined ? <button type="button" className="nv-link" onClick={onWhole}>{t('全书的调用记录…', 'The whole book\'s calls…')}</button> : null}
         <button type="button" className="nv-link" onClick={() => { controller.openSettings('auto') }}>{t('留多少…', 'How much is kept…')}</button>
-        {listed.data.total > 0 && chapter === undefined ? <button type="button" className="nv-link" onClick={() => { remove(undefined, t(`清空这本书全部 ${listed.data!.total} 条调用记录？删了找不回来。`, `Take all ${listed.data!.total} calls of this book off the record? They cannot be brought back.`)) }}>{t('清空…', 'Clear all…')}</button> : null}
+        {listed.data.total > 0 && chapter === undefined && job === undefined ? <button type="button" className="nv-link" onClick={() => { remove(undefined, t(`清空这本书全部 ${listed.data!.total} 条调用记录？删了找不回来。`, `Take all ${listed.data!.total} calls of this book off the record? They cannot be brought back.`)) }}>{t('清空…', 'Clear all…')}</button> : null}
       </div>
       {viewing !== undefined ? <CallModal row={viewing} onClose={() => { setViewing(undefined) }} /> : null}
       {comparing !== undefined ? <CallsCompare rows={comparing} onClose={() => { setComparing(undefined) }} /> : null}
@@ -334,20 +360,40 @@ export function CallsBrowser({ chapter, onWhole }: { chapter?: string | undefine
   )
 }
 
-/** The whole book's record of calls, in a dialog. */
-export function CallsDialog({ onClose }: { onClose: () => void }) {
+/**
+ * The record of calls in a dialog: the whole book's — or, opened from a job, what that job sent to a model and got back.
+ * @param job - the job whose calls are shown, with what it is called.
+ */
+export function CallsDialog({ onClose, job }: { onClose: () => void; job?: { id: string; name: string } }) {
   const t = useT()
+  const [whole, setWhole] = useState(false)
   return (
-    <Modal wide title={t('调用记录 · 这本书', 'The record of calls · this book')} onClose={onClose} footer={(
+    <Modal wide title={job !== undefined && !whole ? t(`发出去的请求 · ${job.name}`, `The requests sent · ${job.name}`) : t('调用记录 · 这本书', 'The record of calls · this book')} onClose={onClose} footer={(
       <>
         <span className="nv-muted nv-small">{t('记在书自己的目录里（.novel/calls）；加密的书，记录跟着一起加密。', 'Kept in the book\'s own folder (.novel/calls); a sealed book\'s record is sealed with it.')}</span>
         <span className="nv-spacer" />
         <Button variant="primary" onClick={onClose}>{t('关闭', 'Close')}</Button>
       </>
     )}>
-      <CallsBrowser />
+      {job !== undefined && !whole ? <CallsBrowser job={job.id} onWhole={() => { setWhole(true) }} /> : <CallsBrowser />}
     </Modal>
   )
+}
+
+/**
+ * How many calls each job of the book has on record, by the job's id — for where jobs are listed, so that each says
+ * whether there is anything to open. Read when it is first asked for, and again as jobs end.
+ */
+export function useJobCalls(on: boolean): ReadonlyMap<string, number> {
+  const { controller } = useStudio()
+  const root = useSnapshot(snapshot => snapshot.project?.root)
+  const jobs = useSnapshot(snapshot => snapshot.jobs)
+  const ended = jobs.filter(job => job.status !== 'running').length
+  const moving = jobs.reduce((sum, job) => sum + (job.status === 'running' ? job.crew?.length ?? 0 : 0), 0)
+  const listed = useLoad(async signal => (on && root !== undefined ? await controller.api.call('calls.list', { root }, signal).catch(() => undefined) : undefined), [on, root, ended, moving])
+  const counts = new Map<string, number>()
+  for (const call of listed.data?.calls ?? []) if (call.job !== undefined) counts.set(call.job, (counts.get(call.job) ?? 0) + 1)
+  return counts
 }
 
 /** The calls made for the chapter in hand, in the panel beside its text. */

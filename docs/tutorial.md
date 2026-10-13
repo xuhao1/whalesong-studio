@@ -283,7 +283,7 @@ To change what is written:
 |---|---|
 | to say what is wrong with a passage | select it → **Something is wrong here…** → say what, press Enter. The planner finds the same fault wherever it shows in the chapter and mends it |
 | another wording | select → **Polish / Expand / Tighten / Rewrite as…** |
-| to say what is wrong with the chapter | write it into the brief box and press **Mend the chapter** (the small triangle beside it holds *Revise* and *Rewrite the whole chapter*) |
+| to say what is wrong with the chapter, or what should change | write it into the brief box and press **Revise** — the planner tells whether it is a fault or a request (the small triangle beside it holds *Find only* and *Write the chapter over*). With the box empty the button is **Review** |
 
 None of these goes straight into the text. Each comes as a **proposal** (see [5.5](#55-review-and-mend)).
 
@@ -309,9 +309,9 @@ Everything later reads it: what the next chapter is told of the story so far, a 
 
 ### 5.5 Review and mend
 
-On **Review → Issues**: press **Review N unreviewed chapters**, or **Review** on one chapter's row. Continuity reads the chapter against what came before, the bible and its plan, and lists what it finds.
+On **Review → Review and revision**: with nothing written in the bar at the top, press **Review N unreviewed** (or **Review** on one chapter's row). Continuity reads the chapter against what came before, the bible and its plan, and lists what it finds; by default what it finds goes on to the planner, and a proposal appears beneath each issue (the small triangle beside the button makes a review list the issues only).
 
-![Issues: a row a chapter; opened, a card an issue](./images/tutorial/en/18-review-issues.webp)
+![Review and revision: a row a chapter; opened, a card an issue (shot while the tab was still called Issues)](./images/tutorial/en/18-review-issues.webp)
 
 A card an issue: how grave (high / medium / low), of what kind (timeline, continuity, character, style…), the words quoted, what is wrong, a suggestion.
 
@@ -324,7 +324,7 @@ A card an issue: how grave (high / medium / low), of what kind (timeline, contin
 | the serious ones only | **Mend the grave ones** |
 | to say it is wrong about this | **Mark as settled** |
 
-The bar at the very top is **Review by a lead**: when you have already seen the fault, write it down ("his glasses come and go") and press **Find and mend** — the planner finds every place it shows, files each as an issue, and mends them.
+Write a sentence into the same bar and press **Revise**: a fault you have already seen ("his glasses come and go"), or a change you want made ("call it X everywhere, not Y") — the planner tells which. A fault: it finds every place it shows, files each as an issue, and mends them, the changes beneath the issues. A request: it is carried out, and the changes wait as one round under **Proposals**. **Find only** looks and changes nothing. The brief box of the writing page, its Issues panel and *Review and revise…* on a selected passage are the same thing, kept to that chapter or passage.
 
 **Every change is a proposal**, with what goes in red and what comes in green:
 
@@ -332,7 +332,6 @@ The bar at the very top is **Review by a lead**: when you have already seen the 
 
 - **Accept**: it is written into the text; the old text is kept as a version. The Studio then checks the issues still open in that chapter against the new text and settles the ones that are gone.
 - **Reject**: not this one. A slip of the hand is undone under **Archive**.
-- **Book-wide revision**: one sentence that runs through the book ("call it X everywhere, not Y"); the planner names every place it touches.
 
 ### 5.6 Keep the cards up: characters, bible, plans
 

@@ -34,6 +34,22 @@ describe('project store', () => {
     }
   })
 
+  it('stamps a state with the revision it was begun at: what is written while it is read makes the book newer than the state says', async () => {
+    const { project } = bed.runtime
+    const chapter = await project.addChapter({ title: '雨夜' })
+    await project.saveChapterText(chapter.id, '天亮的时候，雨停了。')
+    for (let turn = 0; turn < 12; turn++) {
+      // A proposal is added while the state is being put together — sooner or later after its proposals were read.
+      const reading = project.state()
+      for (let wait = 0; wait < turn; wait++) await Promise.resolve()
+      const added = await project.addProposal({ chapterId: chapter.id, kind: 'span', instruction: `改 ${turn}`, before: '雨停了', after: '雨小了', createdBy: 'user' })
+      const state = await reading
+      // A state that has it may say so; one that misses it is older than the book, and is asked for again.
+      if (!state.proposals.some(item => item.id === added.id)) expect(state.revision).toBeLessThan(project.revision)
+      expect((await project.state()).proposals.some(item => item.id === added.id)).toBe(true)
+    }
+  })
+
   it('creates the directory layout with a manifest, an outline and a default style', async () => {
     const { project } = bed.runtime
     const manifest = await project.manifest()

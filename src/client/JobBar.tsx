@@ -93,7 +93,7 @@ export function JobBar({ job, now, dense, className }: { job: JobInfo; now?: num
       ? t(`看${crewLabel(agent.role, t)}正在做什么`, `See what the ${crewLabel(agent.role, t)} is doing`)
       : t(`打开${crewLabel(agent.role, t)}这次运行的记录`, `Open the record of the ${crewLabel(agent.role, t)}'s run`)
     : (job.crew ?? []).some(run => run.running === true && run.session !== undefined && run.parent === undefined)
-      ? t('展开看它写出来的东西。这本书还没有对话，agent 的过程看不到', 'Unfold what it has written. This book has no conversation yet, so the agent\'s steps cannot be shown')
+      ? t('展开看它写出来的东西。这本书还没有对话，agent 那场对话打不开；它每一步发了什么、回了什么，在“任务”里这一行的“请求”里', 'Unfold what it has written. This book has no conversation yet, so the agent\'s own cannot be opened; what each of its steps sent and got back is under Requests on its row in Jobs')
       : t('展开看它写出来的东西', 'Unfold what it has written')
   return (
     <div className={cx('nv-jobbar', dense === true && 'is-dense', !running && `is-${job.status}`, className)}>

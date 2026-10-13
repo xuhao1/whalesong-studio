@@ -160,6 +160,65 @@ describe('the record of calls', () => {
     expect(calls.every(call => call.kind === 'write' && call.step === 'digest' && call.chapter === plan.id)).toBe(true)
   })
 
+  it('keeps the requests of a role working as an agent, a step a call: each holds what is new with it, and what the earlier ones had sent is read off them', async () => {
+    const { core, runtime } = bed
+    const { project } = runtime
+    const chapter = await project.addChapter({ title: '雨夜' })
+    const route = { provider: 'fake', model: 'fake-model', for: { role: 'architect' as const, book: project.root } }
+    const rules = `你是这本书的策划。${'守则。'.repeat(700)}`
+    const tools = `## book_read\n读书里的一处。\n{"type":"object"}${' '.repeat(1600)}`
+    const said = ['[user]\n照这句话去查：柳先生的眼镜一会儿有一会儿没有', '[assistant]\n→ book_read {"what":"chapter","chapter":2}\n\n[tool result: book_read]\n柳先生没戴眼镜，眯着眼看账。', '[assistant]\n→ book_search {"query":"眼镜"}\n\n[tool result: book_search]\n第 2 章 2 处']
+    // A job of the kind the page starts, with the chapter named for the run: the steps are filed under both.
+    const started = core.jobs.start({ kind: 'revise', title: 'review by lead', project: project.root, origin: 'user' }, async (job) => {
+      for (let step = 1; step <= 3; step++) {
+        await core.calls.keepStep({
+          book: project.root, job: { id: job.id, kind: job.kind }, scope: { target: chapter.id }, role: 'architect', route, session: 'run-1', label: '审校和修订 · 照作者说的', step,
+          startedAt: Date.now(), system: rules, tools, toolCount: 1, fresh: said[step - 1]!, sent: rules.length + tools.length + said.slice(0, step).join('\n\n').length,
+          reply: step < 3 ? `→ book_read {"step":${step}}` : '{"findings":[]}', usage: { inputTokens: 1000 * step, outputTokens: 20, cachedTokens: 900 * (step - 1) }, thought: 40, finish: step < 3 ? 'tool-calls' : 'stop',
+        })
+      }
+      return job.id
+    })
+    const jobId = await started.done
+    // Another run beside it, of another job: not this job's.
+    await core.calls.keepStep({ book: project.root, role: 'analyst', route: { ...route, for: { role: 'analyst' as const, book: project.root } }, session: 'run-2', step: 1, startedAt: Date.now(), system: rules, fresh: '[user]\n审校这一章', sent: 10, reply: 'ok' })
+
+    const listed = await core.calls.list(project)
+    expect(listed.total).toBe(4)
+    const mine = await core.calls.list(project, { job: jobId })
+    expect(mine.calls.map(row => [row.agent?.step, row.agent?.session, row.agent?.tools, row.kind, row.title, row.chapter, row.role, row.finish, row.input]).reverse()).toEqual([
+      [1, 'run-1', 1, 'revise', 'review by lead', chapter.id, 'architect', 'tool-calls', 1000],
+      [2, 'run-1', 1, 'revise', 'review by lead', chapter.id, 'architect', 'tool-calls', 2000],
+      [3, 'run-1', 1, 'revise', 'review by lead', chapter.id, 'architect', 'stop', 3000],
+    ])
+    expect(mine.calls[0]!.agent?.label).toBe('审校和修订 · 照作者说的')
+    const [third, second, first] = mine.calls as [typeof mine.calls[0], typeof mine.calls[0], typeof mine.calls[0]]
+
+    // The first request: the rules, the tools, the task — and nothing sent before it.
+    const one = (await core.calls.read(project, first.id))!
+    expect(one).toMatchObject({ system: rules, tools, prompt: said[0], reply: '→ book_read {"step":1}' })
+    expect(one.stable).toBeUndefined()
+    // The third: what is new with it, and — in the order they went — what the two before it had sent.
+    const three = (await core.calls.read(project, third.id))!
+    expect(three.prompt).toBe(said[2])
+    expect(three.stable).toBe(`${said[0]}\n\n${said[1]}`)
+    expect(three.system).toBe(rules)
+    expect(three.tools).toBe(tools)
+    // The rules and the tools are kept once for the run, and a step keeps no more than its own.
+    const parts = await readdir(join(project.root, '.novel', 'calls', 'parts'))
+    expect(parts).toHaveLength(2)
+    expect(third.bytes).toBeLessThan(1500)
+    expect(await readFile(join(project.root, '.novel', 'calls', `${third.id}.json`), 'utf8')).not.toContain('柳先生没戴眼镜')
+
+    // An earlier step taken off the record: the later one says so, and still has what the steps left hold.
+    await core.calls.remove(project, [first.id])
+    const after = (await core.calls.read(project, third.id))!
+    expect(after.stable).toContain('no longer on record')
+    expect(after.stable).toContain(said[1])
+    expect(after.stable).not.toContain(said[0])
+    expect((await core.calls.read(project, second.id))!.stable).toContain('no longer on record')
+  })
+
   it('is sealed with a sealed book', async () => {
     const { core, runtime } = bed
     const root = runtime.project.root

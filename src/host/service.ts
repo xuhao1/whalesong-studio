@@ -115,6 +115,8 @@ export class NovelService extends Service {
         if (book === undefined) return
         for (const id of [session, parent]) if (id !== undefined) void this.sessionBooks.touch(id, resolve(book)).catch((error: unknown) => { this.log('could not note which book a conversation holds', error) })
       },
+      // What each request of a role's run sent and got back goes on the book's record of calls, a step a call.
+      onStep: (step) => { void this.core.calls.keepStep(step).catch((error: unknown) => { this.log('could not keep a step of a role\'s run on record', error) }) },
       // The Harness meters these calls itself; the Studio's ledger, which the author reads by book and by role, counts them too.
       onUsage: ({ route, inputTokens, outputTokens, cachedTokens }) => {
         const tag = route.for

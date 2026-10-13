@@ -1001,7 +1001,7 @@ export class StudioController {
         // was to write as an agent and could not: said too — none of them is a failure of the job, and none may pass in silence.
         const wrote = job.kind === 'write' ? job.result?.output as { short?: unknown; undigested?: unknown; material?: { instead?: unknown } } | undefined : undefined
         const toSay = wrote !== undefined && (wrote.short !== undefined || wrote.undigested !== undefined || wrote.material?.instead !== undefined)
-        if ((job.kind === 'revise' && (job.title === 'amend chapter' || job.title === 'review by lead')) || (job.result?.output as { figures?: unknown } | undefined)?.figures !== undefined || toSay) this.set({ jobEnded: { job, nonce: Date.now() } })
+        if ((job.kind === 'revise' && (job.title === 'amend chapter' || job.title === 'review by lead' || job.title === 'mend review')) || (job.result?.output as { figures?: unknown } | undefined)?.figures !== undefined || toSay) this.set({ jobEnded: { job, nonce: Date.now() } })
         continue
       }
       if (this.followed.has(job.id)) continue

@@ -17,12 +17,16 @@
  * shared. A book keeps as many megabytes of it as the author says
  * (`callsMb`), the oldest going first.
  *
- * Calls made by a role working as an agent are the Harness's own loop and are
- * not here: such a run is a conversation of its own, opened from its job.
+ * A role working as an agent makes its requests on the Harness's own loop, a
+ * request a step: each is kept here too ({@link CallLog.keepStep}), told by
+ * whoever runs the role — the rules, the tools it was offered, what is new
+ * with this request, the reply. A step holds only what is new with it and
+ * names the step before; what the earlier steps had already sent is read off
+ * them, so a run of forty steps is kept once and not forty times over.
  */
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { createHash } from 'node:crypto'
-import { CALLS_MB_DEFAULT, type CallRecord, type CallRow, type NovelSettings } from '../shared/types'
+import { CALLS_MB_DEFAULT, type CallRecord, type CallRow, type JobKind, type ModelRoute, type NovelSettings } from '../shared/types'
 import { currentJob, type JobManager } from './jobs'
 import type { LlmBackend, LlmRequest, LlmResponse } from './llm'
 import type { Project } from './project'
@@ -43,8 +47,14 @@ interface Index {
   parts: Record<string, number>
 }
 
-/** A call as its document holds it: a shared part is named, not repeated. */
-type Kept = Omit<CallRecord, 'bytes'> & { systemPart?: string; stablePart?: string }
+/**
+ * A call as its document holds it: a shared part is named, not repeated — and a step of an agent's run names the
+ * step before it (`prev`) in place of repeating what that one and the ones before it sent.
+ */
+type Kept = Omit<CallRecord, 'bytes'> & { systemPart?: string; stablePart?: string; toolsPart?: string; prev?: string }
+
+/** Said where a step's earlier steps are no longer on record (the oldest calls go first, and calls can be deleted). */
+const GONE = '[… the earlier requests of this run are no longer on record: what they had already sent is missing here …]'
 
 interface Scope {
   /** What the work is for: a chapter, or whatever else the step works on. */
@@ -54,6 +64,43 @@ interface Scope {
 }
 
 const scopes = new AsyncLocalStorage<Scope>()
+
+/** What the work under way is for, as it was said ({@link callsFor}): taken along by whoever calls back from outside it. */
+export function callScope(): Scope | undefined {
+  return scopes.getStore()
+}
+
+/** One request a role working as an agent made, as whoever runs the role saw it go and come back. */
+export interface AgentStep {
+  /** The book's root. */
+  book: string
+  /** The job the run belongs to, and what its work was said to be for when the run began. */
+  job?: { id: string; kind: JobKind }
+  scope?: Scope
+  role: CallRow['role']
+  route: ModelRoute
+  /** The run: the session it is recorded in, what it is called, and the how-manieth request of it this is (from 1). */
+  session: string
+  label?: string
+  step: number
+  startedAt: number
+  /** The standing rules it works by, as the model was sent them. */
+  system: string
+  /** The tools it was offered, said for a reader, and how many there are. */
+  tools?: string
+  toolCount?: number
+  /** What is new with this request, rendered message by message. */
+  fresh: string
+  /** Characters of everything the request carried, the earlier messages too. */
+  sent: number
+  reply: string
+  usage?: LlmResponse['usage']
+  thought?: number
+  finish?: string
+  error?: string
+  stopped?: boolean
+  images?: string[]
+}
 
 /**
  * Say what a stretch of work is for, where its job alone does not: a step of a batch, one chapter of a run of them.
@@ -133,6 +180,36 @@ export class CallLog {
     }
   }
 
+  /** The step last kept of each agent's run under way, by its session: what the next step of the run goes on from. */
+  private readonly lastOf = new Map<string, string>()
+
+  /**
+   * Keep one request of a role working as an agent. Keeping never fails the run; the steps of a run are kept in the
+   * order they were made.
+   */
+  async keepStep(step: AgentStep): Promise<void> {
+    if (this.megabytes() <= 0) return
+    const info = step.job !== undefined ? this.host.jobs.get(step.job.id) : undefined
+    const named = info?.result?.chapterId
+    const ref = step.scope?.target ?? (typeof named === 'string' && named.length > 0 ? named : info?.target)
+    const about: About = {
+      ...(step.job !== undefined ? { kind: step.job.kind, job: step.job.id } : {}),
+      ...(info !== undefined ? { title: info.title } : {}),
+      ...(step.scope?.step !== undefined ? { step: step.scope.step } : {}),
+      ...(ref !== undefined && ref.length > 0 ? { ref } : {}),
+    }
+    await this.put(step.book, about, step.startedAt, {
+      route: step.route,
+      role: step.role,
+      system: step.system,
+      prompt: step.fresh,
+      sent: step.sent,
+      ...(step.tools !== undefined && step.tools.length > 0 ? { tools: step.tools } : {}),
+      ...(step.images !== undefined && step.images.length > 0 ? { images: step.images } : {}),
+      agent: { session: step.session, step: step.step, ...(step.label !== undefined ? { label: step.label } : {}), ...(step.toolCount !== undefined ? { tools: step.toolCount } : {}) },
+    }, { reply: step.reply, ...(step.finish !== undefined ? { finish: step.finish } : {}), ...(step.usage !== undefined ? { usage: step.usage } : {}), ...(step.thought !== undefined ? { thought: step.thought } : {}), ...(step.error !== undefined ? { error: step.error } : {}), ...(step.stopped === true ? { stopped: true } : {}) })
+  }
+
   private queue<T>(root: string, work: () => Promise<T>): Promise<T> {
     const next = (this.queues.get(root) ?? Promise.resolve()).then(work, work)
     this.queues.set(root, next.catch(() => {}))
@@ -146,12 +223,42 @@ export class CallLog {
   }
 
   private async keep(root: string, request: LlmRequest, about: About, started: number, outcome: Outcome): Promise<void> {
+    const temperature = request.temperature ?? request.route.temperature
+    const maxTokens = request.maxTokens ?? request.route.maxTokens
+    await this.put(root, about, started, {
+      route: request.route,
+      role: request.route.for?.role ?? 'writer',
+      ...(request.system !== undefined ? { system: request.system } : {}),
+      ...(request.stable !== undefined ? { stable: request.stable } : {}),
+      prompt: request.prompt,
+      sent: (request.system?.length ?? 0) + (request.stable?.length ?? 0) + request.prompt.length,
+      ...(temperature !== undefined ? { temperature } : {}),
+      ...(maxTokens !== undefined ? { maxTokens } : {}),
+      images: (request.images ?? []).map((image, at) => image.name ?? `#${at + 1}`),
+    }, outcome)
+  }
+
+  /** Put one call on a book's record: what was sent, part by part, and how it went. */
+  private async put(root: string, about: About, started: number, sent: {
+    route: ModelRoute
+    role: CallRow['role']
+    system?: string
+    stable?: string
+    tools?: string
+    prompt: string
+    /** Characters of all that was sent. */
+    sent: number
+    temperature?: number
+    maxTokens?: number
+    images?: string[]
+    agent?: NonNullable<CallRow['agent']>
+  }, outcome: Outcome): Promise<void> {
     try {
       await this.queue(root, async () => {
         const megabytes = this.megabytes()
         const project = await this.host.book(root)
         if (project === undefined || megabytes <= 0) return
-        const { route } = request
+        const { route } = sent
         const at = new Date(started).toISOString()
         const id = `${at.replace(/\D/g, '').slice(0, 17)}-${Math.random().toString(36).slice(2, 6).padEnd(4, '0')}`
         const index = await this.index(project)
@@ -164,13 +271,17 @@ export class CallLog {
           if (!parts.includes(name)) parts.push(name)
           return name
         }
-        const systemPart = await share(request.system)
-        const stablePart = await share(request.stable)
+        const systemPart = await share(sent.system)
+        const stablePart = await share(sent.stable)
+        const toolsPart = await share(sent.tools)
         // Which chapter it was for is kept as the chapter's id, however the job named it.
         const chapter = about.ref !== undefined ? (await project.findChapter(about.ref).catch(() => undefined))?.plan.id : undefined
-        const temperature = request.temperature ?? route.temperature
-        const maxTokens = request.maxTokens ?? route.maxTokens
-        const pictures = (request.images ?? []).map((image, at) => image.name ?? `#${at + 1}`)
+        const temperature = sent.temperature
+        const maxTokens = sent.maxTokens ?? route.maxTokens
+        const pictures = sent.images ?? []
+        // A step of an agent's run goes on from the step kept before it, where that one is still on record.
+        const before = sent.agent !== undefined && sent.agent.step > 1 ? this.lastOf.get(sent.agent.session) : undefined
+        const prev = before !== undefined && index.calls.some(call => call.id === before) ? before : undefined
         const row: CallRow = {
           id,
           at,
@@ -179,13 +290,13 @@ export class CallLog {
           ...(about.job !== undefined ? { job: about.job } : {}),
           ...(about.step !== undefined ? { step: about.step } : {}),
           ...(chapter !== undefined ? { chapter } : about.ref !== undefined ? { target: about.ref } : {}),
-          role: route.for?.role ?? 'writer',
+          role: sent.role,
           provider: route.provider,
           model: route.model,
           ...(route.reasoningEffort !== undefined && route.reasoningEffort.length > 0 ? { effort: route.reasoningEffort } : {}),
           ...(temperature !== undefined ? { temperature } : {}),
           ...(maxTokens !== undefined ? { maxTokens } : {}),
-          sent: (request.system?.length ?? 0) + (request.stable?.length ?? 0) + request.prompt.length,
+          sent: sent.sent,
           got: outcome.reply.length,
           ...(outcome.usage !== undefined ? { input: outcome.usage.inputTokens, output: outcome.usage.outputTokens, ...(outcome.usage.cachedTokens !== undefined ? { cached: outcome.usage.cachedTokens } : {}) } : {}),
           ...(outcome.thought !== undefined && outcome.thought > 0 ? { thought: outcome.thought } : {}),
@@ -196,17 +307,25 @@ export class CallLog {
           ...(pictures.length > 0 ? { images: pictures } : {}),
           bytes: 0,
           ...(parts.length > 0 ? { parts } : {}),
+          ...(sent.agent !== undefined ? { agent: sent.agent } : {}),
         }
         const { bytes: _bytes, ...head } = row
         const kept: Kept = {
           ...head,
-          ...(systemPart !== undefined ? { systemPart } : request.system !== undefined && request.system.length > 0 ? { system: request.system } : {}),
-          ...(stablePart !== undefined ? { stablePart } : request.stable !== undefined && request.stable.length > 0 ? { stable: request.stable } : {}),
-          prompt: request.prompt,
+          ...(systemPart !== undefined ? { systemPart } : sent.system !== undefined && sent.system.length > 0 ? { system: sent.system } : {}),
+          ...(stablePart !== undefined ? { stablePart } : sent.stable !== undefined && sent.stable.length > 0 ? { stable: sent.stable } : {}),
+          ...(toolsPart !== undefined ? { toolsPart } : sent.tools !== undefined && sent.tools.length > 0 ? { tools: sent.tools } : {}),
+          ...(prev !== undefined ? { prev } : {}),
+          prompt: sent.prompt,
           reply: outcome.reply,
         }
         row.bytes = await project.writeRecord([DIR, `${id}.json`], kept)
         index.calls.push(row)
+        if (sent.agent !== undefined) {
+          this.lastOf.set(sent.agent.session, id)
+          // (A run's last step is forgotten with the oldest of them: the map holds the runs under way, not every run there ever was.)
+          if (this.lastOf.size > 400) this.lastOf.delete(this.lastOf.keys().next().value as string)
+        }
         await this.trim(project, index, megabytes * 1024 * 1024)
         await project.writeRecord([DIR, INDEX], index)
       })
@@ -245,14 +364,16 @@ export class CallLog {
   /**
    * The calls on record for a book, the latest first.
    * @param filter.chapter - only the calls made for this chapter (its id).
+   * @param filter.job - only the calls made in this job (its id).
    * @returns `total` and `bytes` are of the whole record, whatever was asked for.
    */
-  async list(project: Project, filter: { chapter?: string; limit?: number } = {}): Promise<{ calls: CallRow[]; total: number; bytes: number }> {
+  async list(project: Project, filter: { chapter?: string; job?: string; limit?: number } = {}): Promise<{ calls: CallRow[]; total: number; bytes: number }> {
     const index = await this.queue(project.root, async () => await this.index(project))
     const named = new Set(index.calls.flatMap(call => call.parts ?? []))
     const bytes = index.calls.reduce((sum, call) => sum + call.bytes, 0) + [...named].reduce((sum, part) => sum + (index.parts[part] ?? 0), 0)
     let calls = [...index.calls].reverse()
     if (filter.chapter !== undefined) calls = calls.filter(call => call.chapter === filter.chapter)
+    if (filter.job !== undefined) calls = calls.filter(call => call.job === filter.job)
     if (filter.limit !== undefined && filter.limit > 0) calls = calls.slice(0, Math.round(filter.limit))
     return { calls, total: index.calls.length, bytes }
   }
@@ -263,11 +384,27 @@ export class CallLog {
     const kept = await project.readRecord<Kept>(DIR, `${id}.json`)
     if (kept === undefined || kept === null || typeof kept.prompt !== 'string') return undefined
     const part = async (name: string | undefined): Promise<string | undefined> => (name !== undefined ? (await project.readRecord<{ text?: string }>(DIR, PARTS, `${name}.json`))?.text : undefined)
-    const { systemPart, stablePart, ...call } = kept
+    const { systemPart, stablePart, toolsPart, prev, ...call } = kept
     const system = call.system ?? await part(systemPart)
-    const stable = call.stable ?? await part(stablePart)
+    const tools = call.tools ?? await part(toolsPart)
+    let stable = call.stable ?? await part(stablePart)
+    // A step of an agent's run: what its earlier steps had already sent, read off them in the order they went.
+    if (call.agent !== undefined && call.agent.step > 1) {
+      const earlier: string[] = []
+      let at = prev
+      for (let left = call.agent.step - 1; left > 0; left--) {
+        const before = at !== undefined && /^[\w-]+$/.test(at) ? await project.readRecord<Kept>(DIR, `${at}.json`).catch(() => undefined) : undefined
+        if (before === undefined || before === null || typeof before.prompt !== 'string') {
+          earlier.unshift(GONE)
+          break
+        }
+        earlier.unshift(before.prompt)
+        at = before.prev
+      }
+      stable = earlier.join('\n\n')
+    }
     const row = (await this.index(project)).calls.find(known => known.id === id)
-    return { ...call, ...(system !== undefined ? { system } : {}), ...(stable !== undefined ? { stable } : {}), bytes: row?.bytes ?? 0 }
+    return { ...call, ...(system !== undefined ? { system } : {}), ...(tools !== undefined ? { tools } : {}), ...(stable !== undefined && stable.length > 0 ? { stable } : {}), bytes: row?.bytes ?? 0 }
   }
 
   /**

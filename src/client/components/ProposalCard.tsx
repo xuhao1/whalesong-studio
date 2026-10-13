@@ -5,7 +5,8 @@ import { countWords } from '../../shared/text'
 import type { Proposal, SettledProposal } from '../../shared/types'
 import { figuresKeptWord, picturesReadWord } from '../Guides'
 import { compactDiff, diffInline, diffText } from '../diff'
-import { Button, Chip, cx, useAction, useProject, useStudio, useT } from '../ui'
+import { useBookActions } from '../actions'
+import { Button, Chip, cx, useAction, useConfirm, useProject, useStudio, useT } from '../ui'
 
 export function DiffView({ before, after, whole }: { before: string; after: string; whole?: boolean }) {
   const parts = useMemo(() => {
@@ -18,6 +19,39 @@ export function DiffView({ before, after, whole }: { before: string; after: stri
         ? <span key={index} className="nv-diff-gap">⋯</span>
         : <span key={index} className={cx(part.kind === 'add' && 'nv-diff-add', part.kind === 'del' && 'nv-diff-del')}>{part.text}</span>)}
     </div>
+  )
+}
+
+/**
+ * Every proposal of a set taken or turned down in one go — the same two buttons wherever proposals are listed: in a
+ * chapter's panel, beneath the issues they mend, on the page of them all. They are settled in the order they stand in
+ * the text; what could not be is said, and the rest are settled all the same.
+ * @param ask - the author is asked before they are taken, too (a set that is not all in view); turning down is always
+ *   asked, and so is taking a set that reaches into more than one chapter — part of it is not on the page in hand.
+ */
+export function SettleAll({ proposals, ask, onSettled }: { proposals: readonly Proposal[]; ask?: boolean; onSettled?: (accepted: boolean) => void }) {
+  const t = useT()
+  const actions = useBookActions()
+  const confirm = useConfirm()
+  const { busy, run } = useAction()
+  const count = proposals.length
+  const chapters = new Set(proposals.map(proposal => proposal.chapterId)).size
+  const within = chapters > 1 ? t(`（${chapters} 章）`, ` (in ${chapters} chapters)`) : ''
+  const settle = (accept: boolean): void => {
+    void run(async () => {
+      await actions.settleProposals(proposals, accept)
+      onSettled?.(accept)
+    })
+  }
+  return (
+    <>
+      <Button size="sm" variant="ghost" busy={busy} disabled={count === 0} onClick={() => { confirm.ask(t(`放弃这 ${count} 处修订${within}？放弃的留在“归档”里，可以放回。`, `Turn down these ${count} change(s)${within}? They are kept in the archive and can be put back.`), () => { settle(false) }) }}>{t('全部放弃', 'Reject all')}</Button>
+      <Button size="sm" variant="primary" icon="check" busy={busy} disabled={count === 0} onClick={() => {
+        if (ask === true || chapters > 1) confirm.ask(t(`采纳这 ${count} 处修订${within}？采纳前的正文会存入各章的“版本”。`, `Accept these ${count} change(s)${within}? The text before each is kept under Versions.`), () => { settle(true) })
+        else settle(true)
+      }}>{t('全部采纳', 'Accept all')}</Button>
+      {confirm.element}
+    </>
   )
 }
 

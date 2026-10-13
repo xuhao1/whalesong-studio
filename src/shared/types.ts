@@ -1820,6 +1820,13 @@ export interface NovelSettings {
   /** After a proposal is accepted, have the reviewer look again at the issues still open in what changed. Unset: yes. */
   recheckIssues?: boolean
   /**
+   * A review hands what it found on to be mended, by itself: once a chapter — or a batch of them — is reviewed, the
+   * open issues go to the planner together, as when the author ticks them and hands them over, and every change
+   * waits as a proposal beneath the issue it is for. Unset: yes. `false`: a review lists what it found and nothing
+   * is changed until the author asks. (Chapters written in rounds are mended by their rounds either way.)
+   */
+  reviewMends?: boolean
+  /**
    * Who writes the words of a change made by places — an issue mended, something the author noticed put right, a
    * request carried through the book, a chapter gone through to an instruction. `planner` (unset): the crew's model
    * writes what each place is to read itself, and that is the proposal — the writer's model is not asked. `writer`:
@@ -3057,15 +3064,30 @@ export interface CallRow {
   bytes: number
   /** The parts it shares with other calls (the same rules, the same story so far), by their names on disk. */
   parts?: string[]
+  /**
+   * It is one request of a role working as an agent — the Harness's own loop asking the model once more, with what
+   * its tools answered since: which run (the session it was recorded in), the how-manieth request of that run, and
+   * what the run was called. How many tools it was offered is `tools`.
+   */
+  agent?: { session: string; step: number; label?: string; tools?: number }
 }
 
 /** A call with everything that was sent and said. */
 export interface CallRecord extends CallRow {
   /** The standing rules of the role, and the book's style where the role writes. */
   system?: string
-  /** What opened the request and is the same over a run of calls: the book and the story so far. */
+  /**
+   * What opened the request and is the same over a run of calls: the book and the story so far. For a request of an
+   * agent's run: everything its earlier requests had already sent — the task, what the model said and asked of its
+   * tools, what they answered — in the order it went.
+   */
   stable?: string
-  /** The request itself: the material of this piece and what was asked last. */
+  /** For a request of an agent's run: the tools it was offered — each with what it is for and what it takes. */
+  tools?: string
+  /**
+   * The request itself: the material of this piece and what was asked last. For a request of an agent's run: what is
+   * new with it — the task on the first, and after that what the model last said and what its tools answered.
+   */
   prompt: string
   /** What the model said — as far as it got, where the call failed or was stopped. */
   reply: string

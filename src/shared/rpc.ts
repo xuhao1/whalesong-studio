@@ -582,13 +582,13 @@ export interface NovelRpc {
   'ai.fixIssue': { params: { root: string; chapter: string; issue: string; note?: string; scope: 'passage' | 'place' | 'book' | 'chapter'; order?: 'queue' | 'apart' }; result: JobStarted }
   'ai.reviseBook': { params: { root: string; instruction: string; chapters?: string[]; /** The line of the plot the revision is of, when it is not the main one. */ line?: string; order?: 'queue' | 'apart'; /** Pictures the revision goes by. */ guides?: PictureGuide[] }; result: JobStarted }
   'ai.digest': { params: { root: string; chapters?: string[]; force?: boolean }; result: JobStarted }
-  'ai.review': { params: { root: string; chapter: string; focus?: string }; result: JobStarted }
+  'ai.review': { params: { root: string; chapter: string; focus?: string; /** Hand what it finds on to be mended (a job of its own, once the review is over). Left out: as the settings say (`reviewMends`). */ mend?: boolean; /** With the mending: after the mendings under way (default), or at once. */ order?: 'queue' | 'apart' }; result: JobStarted }
   /**
    * A review led by the author: something they noticed in the book, in their words. The planner finds where it shows
    * — each place filed as an issue of its chapter's review — and, unless `fix` is false, mends it by places, each
    * change waiting beneath its issue.
    */
-  'ai.reviewLead': { params: { root: string; lead: string; /** Only these chapters are looked at, and nothing outside them changes. */ chapters?: string[]; /** The line of the plot looked at, when it is not the main one. */ line?: string; fix?: boolean; order?: 'queue' | 'apart'; /** The passage the author pointed at, quoted from the one chapter named. */ passage?: string }; result: JobStarted }
+  'ai.reviewLead': { params: { root: string; /** What the author says: something wrong they noticed, or a change they want — the planner tells which. */ lead: string; /** Pictures it goes by. */ guides?: PictureGuide[]; /** Only these chapters are looked at, and nothing outside them changes. */ chapters?: string[]; /** The line of the plot looked at, when it is not the main one. */ line?: string; fix?: boolean; order?: 'queue' | 'apart'; /** The passage the author pointed at, quoted from the one chapter named. */ passage?: string }; result: JobStarted }
   /**
    * Derive chapter outlines. `line` and `after` say where; `mode` what becomes of what is there already:
    * `append` adds, `replace` puts the new chapters in its place (written chapters are kept as a line put aside),
@@ -730,7 +730,7 @@ export interface NovelRpc {
   /** Script, voices, sound, storyboard, panels, video — whichever are named — for the chapters named (all written ones when left out). */
   'batch.stage': { params: { root: string; chapters?: string[]; line?: string; steps?: StageStep[]; force?: boolean; density?: StoryboardDensity; maxPanels?: number; direction?: string; subtitles?: boolean; sheetFirst?: boolean; /** The panels are drawn once with each of these services, to compare them: nothing is a panel's picture until taken. */ trials?: ImageTrial[]; /** With `trials`: a name for this round of pictures, the caller's — they can be taken together by it (`trial.adoptRound`). */ trialBatch?: string }; result: JobStarted }
   /** Beats, writing, memory, review for a run of chapters. Writing goes chapter after chapter; the rest side by side. */
-  'batch.text': { params: { root: string; chapters?: string[]; count?: number; line?: string; steps: TextStep[]; brief?: string; words?: number; redo?: boolean; focus?: string; /** Writing: one chapter after the other (default), or side by side. */ order?: 'sequence' | 'together' | 'iterate'; /** With `iterate`: rounds of review and mending at most, and how grave an issue is worth one. */ rounds?: number; atLeast?: 'high' | 'medium' | 'low' }; result: JobStarted }
+  'batch.text': { params: { root: string; chapters?: string[]; count?: number; line?: string; steps: TextStep[]; /** The batch's reviews hand what they find on to be mended once it is over. Left out: as the settings say (`reviewMends`). */ mend?: boolean; brief?: string; words?: number; redo?: boolean; focus?: string; /** Writing: one chapter after the other (default), or side by side. */ order?: 'sequence' | 'together' | 'iterate'; /** With `iterate`: rounds of review and mending at most, and how grave an issue is worth one. */ rounds?: number; atLeast?: 'high' | 'medium' | 'low' }; result: JobStarted }
   /** Design sheets, portraits and voices for characters, reference art for places, design art for things, an illustration per chapter, a cover. */
   'batch.art': { params: { root: string; sheets?: string[]; portraits?: string[]; voices?: string[]; places?: string[]; items?: string[]; scenes?: string[]; cover?: boolean; insert?: boolean; force?: boolean; sheetFirst?: boolean; /** Every picture of the round is drawn once with each of these services, to compare them: nothing hangs until taken. */ trials?: ImageTrial[]; /** With `trials`: a name for this round of pictures, the caller's — they can be taken together by it (`trial.adoptRound`). */ trialBatch?: string }; result: JobStarted }
 
@@ -955,7 +955,7 @@ export interface NovelRpc {
    * The record of calls for a book ({@link CallRow}): every call the Studio made to a text model for it, the latest
    * first. `total` and `bytes` are of the whole record; `megabytes` is how much of it the book keeps (0: none is kept).
    */
-  'calls.list': { params: { root: string; /** Only the calls made for this chapter. */ chapter?: string; limit?: number }; result: { calls: import('./types').CallRow[]; total: number; bytes: number; megabytes: number } }
+  'calls.list': { params: { root: string; /** Only the calls made for this chapter. */ chapter?: string; /** Only the calls made in this job. */ job?: string; limit?: number }; result: { calls: import('./types').CallRow[]; total: number; bytes: number; megabytes: number } }
   /** One call with everything that was sent and said. */
   'calls.read': { params: { root: string; id: string }; result: { call: import('./types').CallRecord } }
   /** Take calls off the record for good: the ones named, or — `ids` left out — every one. */

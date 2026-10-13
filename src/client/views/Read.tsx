@@ -36,7 +36,7 @@ import { Icon } from '../icons'
 import { sheetsDrawn } from '../labels'
 import { framedOf, framedWord, PassagePictureDialog } from '../PassagePicture'
 import { useSheetsAsk } from '../SheetsAsk'
-import { IssueCard, IssueList, issueMarks, LeadBar } from '../Issues'
+import { IssueCard, IssueList, issueMarks, ReviseBar } from '../Issues'
 import { AudioDesk, ScriptTable, type ScriptView } from '../stage/Audio'
 import {
   Button, cx, Empty, OverlayRootProvider, Select, Spinner, useBookLine, useLoad, useMediaUrl, useOverlayRoot, useProject, useQuote, useSnapshot, useStudio, useT, useLineView, waysOn,
@@ -45,7 +45,6 @@ import { FullButton, FullFrame, useFull } from '../reader/full'
 import type { ViewerAt } from '../store'
 import { ShareDialog } from './Share'
 import { DERIVE_TIES_HINT, TiesReport, useDeriveTies } from '../Ties'
-import { useBookActions } from '../actions'
 
 /**
  * The viewer, in the frame that can take the whole screen: whichever half is shown — the text, the people, the world,
@@ -182,7 +181,6 @@ function AlbumPage({ at, back, counts, sides }: { at: AlbumAt; /** The place in 
 function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }) {
   const { controller } = useStudio()
   const t = useT()
-  const actions = useBookActions()
   const quote = useQuote()
   const { project, root } = useProject()
   const chapterId = useSnapshot(snapshot => snapshot.chapterId)
@@ -219,7 +217,7 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
   const annotate = annotateKept && !full
   const [noted, setNoted] = useState<{ id: string; top: number; left: number } | undefined>()
   const [looseOpen, setLooseOpen] = useState(false)
-  // Reading with the notes on, the author sees something themselves: said here, it is found and mended (see `LeadBar`).
+  // Reading with the notes on: the chapter is reviewed, or what the author sees themselves is said and carried out, from the one bar (see `ReviseBar`).
   const [leading, setLeading] = useState(false)
   const [sharing, setSharing] = useState(false)
   // Listening is for listening: the production desk of the audio version comes when it is asked for, and is remembered.
@@ -485,7 +483,6 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
           {review === undefined ? (
             <>
               <span>{t('这一章还没有审校过，所以没有批注。', 'This chapter has not been reviewed, so there are no notes.')}</span>
-              <Button size="sm" icon="checkCircle" busy={reviewing} pending={t('审校中…', 'Reviewing…')} onClick={() => controller.guard(async () => { await actions.review(chapter.id) })}>{t('审校这一章', 'Review this chapter')}</Button>
             </>
           ) : openIssues === 0 ? (
             <span>{t('这一章的审校意见都处理完了。', 'Every note of this chapter\'s review is settled.')} <span className="nv-muted">{review.verdict}</span></span>
@@ -496,11 +493,10 @@ function ChapterReader({ counts, sides }: { counts: AlbumCounts; sides: number }
                 {notes.loose.length > 0 ? t(`，${notes.loose.length} 条没有对应的句子。`, `, ${notes.loose.length} have no sentence of their own.`) : t('。', '.')}
               </span>
               <Button size="sm" variant="ghost" icon={looseOpen ? 'chevronUp' : 'chevronDown'} onClick={() => { setLooseOpen(!looseOpen) }}>{looseOpen ? t('收起', 'Fold') : t('列出来选', 'List them')}</Button>
-              <Button size="sm" variant="ghost" icon="checkCircle" busy={reviewing} pending={t('审校中…', 'Reviewing…')} onClick={() => controller.guard(async () => { await actions.review(chapter.id) })} title={t('正文改过之后重新审校一遍', 'Review again after the text has changed')}>{t('重新审校', 'Review again')}</Button>
             </>
           )}
-          <Button size="sm" variant="ghost" icon="pen" onClick={() => { setLeading(!leading) }} title={t('读的时候自己发现的问题：写一句，策划在这一章里找出来、记成问题，再修', 'Something you noticed while reading: say it in a sentence, and the planner finds it in this chapter, files it, and mends it')}>{t('我发现了问题…', 'I noticed something…')}</Button>
-          {leading ? <LeadBar className="nv-reader-notes-list" chapters={[chapter.id]} onStarted={() => { setLeading(false) }} /> : null}
+          <Button size="sm" variant={review === undefined ? 'outline' : 'ghost'} icon="checkCircle" busy={reviewing} className={cx(leading && 'is-active')} onClick={() => { setLeading(!leading) }} title={t('审校和修订：不写要求就是审校这一章；读的时候自己发现的毛病、想改的地方，写一句，策划判断是什么、照着办', 'Review and revision: nothing said, the chapter is reviewed; what you noticed while reading, or want changed, in a sentence — the planner tells what it is and carries it out')}>{t('审校和修订…', 'Review and revise…')}</Button>
+          {leading ? <ReviseBar className="nv-reader-notes-list" chapters={[chapter.id]} onStarted={() => { setLeading(false) }} onProposals={() => { controller.setView('write', chapter.id) }} /> : null}
           {looseOpen && openIssues > 0 ? (
             <IssueList className="nv-reader-notes-list" chapterId={chapter.id} issues={(review?.issues ?? []).filter(issue => issue.resolved !== true)} onChanged={() => { doc.reload() }} />
           ) : null}
