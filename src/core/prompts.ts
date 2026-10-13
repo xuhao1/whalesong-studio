@@ -417,14 +417,15 @@ export function amendCallTask(base: Base & { context: string; instruction: strin
  * @param base.direct - whoever answers writes what each place is to read (`replace`), and that is what is proposed:
  *   nobody rewrites after it. `base.style`: how the book is written, for those words.
  */
-export function mendTask(base: Base & { instruction: string; chapters: string; texts?: string; allGiven?: boolean; wide: boolean; bible?: boolean; reads: boolean; asked?: boolean; only?: boolean; lead?: 'fix' | 'find'; direct?: boolean; style?: string; bold?: boolean }): string {
+export function mendTask(base: Base & { instruction: string; chapters: string; texts?: string; allGiven?: boolean; wide: boolean; bible?: boolean; reads: boolean; asked?: boolean; only?: boolean; lead?: 'fix' | 'find'; direct?: boolean; /** Each place is the planner's to write where little changes, the writer's where a passage is to be written. */ mixed?: boolean; style?: string; bold?: boolean }): string {
   const asked = base.asked === true
   const bold = base.bold === true
   const lead = base.lead
   const mends = lead !== 'find'
   const direct = base.direct === true && mends
+  const mixed = base.mixed === true && mends && !direct
   const texts = base.texts !== undefined && base.texts.trim().length > 0
-  const style = direct && base.style !== undefined && base.style.trim().length > 0 ? base.style.trim() : undefined
+  const style = (direct || mixed) && base.style !== undefined && base.style.trim().length > 0 ? base.style.trim() : undefined
 
   // ── Chinese ──
   const given = base.allGiven === true && base.texts !== undefined && base.texts.trim().length > 0
@@ -448,7 +449,12 @@ export function mendTask(base: Base & { instruction: string; chapters: string; t
   const zhTake = bold
     ? '圈够——为了改得通顺、站得住而要一起动的句子都圈进来，几句、一整段都可以；一段话要重写就圈一整段，不缩成其中一句'
     : '只圈非改不可的那一两句，不整段整段地圈'
-  const zhPlace = direct
+  // What the planner writes itself is said the same way whether it writes every place or only the small ones.
+  const zhOwn = `replace——这一处改好之后的全文，写成成稿：它原样替换 find，就是给作者看的提案，没有人再替你改写。${style !== undefined ? '照这本书的文风写（见上），' : ''}和前后文接得上；${bold ? '圈进来的句子该重写的重写、该补的补够，不必拘在原句的字面上，用不着动的照原样写回去；和这次要改的事无关的不借机改' : 'find 里用不着动的字句原样写回去，不顺手润色，不添这次要改的之外的内容'}；整句删掉就给空字符串；why——这一处为什么这样改，一句话`
+  const zhHow = bold ? '这一处改成什么样，具体到写手照着就能写：补哪些交代、哪几句怎么变、这一段落在哪里，要新写一小段时说清写什么' : '这一处改成什么样，一两句话，具体到写手照着就能改（补哪句交代、数字改成几、哪半句去掉）'
+  const zhPlace = mixed
+    ? `每一处写明：chapter——第几章；find——这一处能动的全部范围，逐字照抄：${zhTake}；它在这一章里要只对得上一处（重复出现的短句，连它前后的半句一起抄）；要补一句话，就圈它要接在后面的那一句。然后看这一处要落多少笔，两种里给一种：小改动——换一个词、改一个名字或数字、删半句、调一下语序、补一两句交代——你直接写：${zhOwn}。要成段新写或重写的——一段叙述、一场对白、一个场面——交给写手的模型，你不写 replace：how——${zhHow}，理由不写在这里；写手只能改 find 里面的字，出不了这个圈。分界在要新落多少笔：改完之后新写的不过一两句、几十个字，你直接写；要新写一整段、一场对白，上百字的，交给写手。写手的模型是写成段文字用的，每叫它一次都要把这一处的前后文再发一遍：改几个字就能了结的不交给它。一处只给 replace 和 how 当中的一个。同一章的两处不重叠。正文里单独成行的 ![说明](路径) 是一张图，不圈进 find，replace 里也不添图。${zhElsewhere}`
+    : direct
     ? `每一处写明：chapter——第几章；find——这一处要被换掉的原文，逐字照抄：${zhTake}；它在这一章里要只对得上一处（重复出现的短句，连它前后的半句一起抄）；要补一句话，就圈它要接在后面的那一句；replace——这一处改好之后的全文，写成成稿：它原样替换 find，就是给作者看的提案，没有人再替你改写。${style !== undefined ? '照这本书的文风写（见上），' : ''}和前后文接得上；${bold ? '圈进来的句子该重写的重写、该补的补够，不必拘在原句的字面上，用不着动的照原样写回去；和这次要改的事无关的不借机改' : 'find 里用不着动的字句原样写回去，不顺手润色，不添这次要改的之外的内容'}；整句删掉就给空字符串；why——这一处为什么这样改，一句话。同一章的两处不重叠。正文里单独成行的 ![说明](路径) 是一张图，不圈进 find，replace 里也不添图。${zhElsewhere}`
     : `每一处写明：chapter——第几章；find——这一处能动的全部范围，写手只能改它里面的字，出不了这个圈：${bold ? `所以${zhTake}` : zhTake}，逐字照抄；它在这一章里要只对得上一处（重复出现的短句，连它前后的半句一起抄）；要补一句话，就圈它要接在后面的那一句；how——${bold ? '这一处改成什么样，具体到写手照着就能写：补哪些交代、哪几句怎么变、这一段落在哪里，要新写一小段时说清写什么' : '这一处改成什么样，一两句话，具体到写手照着就能改（补哪句交代、数字改成几、哪半句去掉）'}，理由不写在这里。同一章的两处不重叠。正文里单独成行的 ![说明](路径) 是一张图，不圈进 find。${zhElsewhere}`
   const zhReach = base.wide
@@ -469,15 +475,17 @@ export function mendTask(base: Base & { instruction: string; chapters: string; t
   const zhNote = lead !== undefined
     ? `你把它当作毛病还是修改要求；找到了几处、问题的根子在哪${mends ? '、为什么改这几处' : ''}；没找到就说查了哪里`
     : asked ? '这条要求碰到了哪些地方、为什么是这几处' : '问题出在哪、为什么改这几处'
-  const zhEdit = direct
+  const zhEdit = mixed
+    ? `{"chapter": 章节序号, "find": "这一处能动的原文，逐字照抄", "replace": "小改动：这一处改好之后的全文", "why": "为什么这样改"}, {"chapter": 章节序号, "find": "这一处能动的原文，逐字照抄", "how": "要成段新写的：这一处改成什么样（具体到位），交给写手"}`
+    : direct
     ? `{"chapter": 章节序号, "find": "${bold ? '要换掉的原文' : '要换掉的那一两句原文'}，逐字照抄", "replace": "这一处改好之后的全文", "why": "为什么这样改"}`
     : `{"chapter": 章节序号, "find": "${bold ? '这一处能动的原文' : '这一处能动的那一两句原文'}，逐字照抄", "how": "这一处改成什么样（具体到位）"}`
   const zhShape = `{${lead !== undefined ? '"findings": [{"chapter": 章节序号, "quote": "露出问题的原文，逐字照抄", "type": "continuity|character|world|timeline|style|pacing|logic|language", "severity": "high|medium|low", "explanation": "这一处是什么问题", "suggestion": "可以怎么改"}], ' : ''}"edits": [${mends ? zhEdit : ''}], "chapters": [${mends ? '{"index": 章节序号, "reason": "为什么非整章重写不可、怎么改"}' : ''}], ${base.bible === true && mends ? '"bible": [{"kind": "character|world", "name": "人物卡或设定条目的名字", "field": "要改的字段", "value": "改成什么", "reason": "为什么"}], ' : ''}"note": "给作者，两三句话：${zhNote}"}`
   const zhIntro = lead === 'find'
     ? '作者对这本书说了一句话（见“作者说的”）。它可能是他读书时发现的一个毛病，也可能是一条要照着改的要求——是哪一种由你判断。这一次只找，不改：是毛病，说清它在哪几处露出来；是修改要求，说清它要碰到哪几处。'
     : lead === 'fix'
-      ? `作者对这本书说了一句话（见“作者说的”）。它可能是他读书时发现的一个毛病，也可能是一条要照着改的要求——是哪一种由你判断。是毛病：到书里把它找出来、再修掉——先说清它在哪几处露出来，再定下改哪几处；是修改要求：直接定下它碰到的每一处。${direct ? '每一处改好的文字由你直接写出来——你写的就是提案，不重写整章。' : '各处怎么改由你定——写手只改你点到的那几处，不重写整章。'}`
-      : `${asked ? '作者提出了一条针对全书的修改要求。' : '下面的问题要修。'}${direct ? '请定下改哪几处，并把每一处改好的文字直接写出来：你写的就是提案，没有人再替你改写；不重写整章。' : '请定下改哪几处、各怎么改：写手只改你点到的那几处，不重写整章。'}`
+      ? `作者对这本书说了一句话（见“作者说的”）。它可能是他读书时发现的一个毛病，也可能是一条要照着改的要求——是哪一种由你判断。是毛病：到书里把它找出来、再修掉——先说清它在哪几处露出来，再定下改哪几处；是修改要求：直接定下它碰到的每一处。${mixed ? '小改动由你直接把改好的文字写出来——你写的就是提案；要成段新写的那几处由你定怎么改，交给写手。不重写整章。' : direct ? '每一处改好的文字由你直接写出来——你写的就是提案，不重写整章。' : '各处怎么改由你定——写手只改你点到的那几处，不重写整章。'}`
+      : `${asked ? '作者提出了一条针对全书的修改要求。' : '下面的问题要修。'}${mixed ? '请定下改哪几处：小改动你直接把改好的文字写出来（你写的就是提案），要成段新写的说清怎么改、交给写手；不重写整章。' : direct ? '请定下改哪几处，并把每一处改好的文字直接写出来：你写的就是提案，没有人再替你改写；不重写整章。' : '请定下改哪几处、各怎么改：写手只改你点到的那几处，不重写整章。'}`
   const zhHead = lead !== undefined ? '作者说的' : asked ? '修改要求' : '要修的问题'
 
   // ── English ──
@@ -498,7 +506,11 @@ export function mendTask(base: Base & { instruction: string; chapters: string; t
   const enTake = bold
     ? 'take in enough — every sentence that has to move with it for the change to read well and hold, several sentences or a whole paragraph; a paragraph that has to be written again is taken in whole, not narrowed to one of its sentences'
     : 'the sentence or two that have to change and no whole stretches'
-  const enPlace = direct
+  const enOwn = `replace — the whole of this place as it is to read, written as finished prose: it takes the place of find as it stands and is what the author is shown — nobody rewrites after you. ${style !== undefined ? 'In the way this book is written (above), joining ' : 'It joins '}what stands on both sides; ${bold ? 'the sentences taken in are rewritten where they need it and added to as far as it takes, not held to the wording there was, and those that need no change go back as they stand; nothing that has no part in this mending is changed under cover of it' : 'the words of find that need not change go back as they stand — no polishing in passing, nothing added beyond what is being changed'}; an empty string where the sentence goes altogether; why — why this place changes so, in a sentence`
+  const enHow = bold ? 'what this place is to say instead, specific enough to write from: which explanation comes in, how which sentences change, what the passage comes to rest on, and what is to be written where something new is needed' : 'what this place is to say instead, in a sentence or two, specific enough to write from (which word of explanation to add, what the number becomes, which half-sentence goes)'
+  const enPlace = mixed
+    ? `For each place: chapter — its number; find — all that may change at this place, copied word for word: ${enTake}; it has to be found once only in its chapter (for a short sentence that stands more than once, copy the half-sentence beside it too); where a sentence is to be added, take in the one it follows. Then, by how much there is to write at it, one of two. A small change — a word put for another, a name or a number put right, half a sentence gone, an order changed, a sentence or two of explanation added — you write yourself: ${enOwn}. A passage to be written new or over — a stretch of telling, an exchange of talk, a scene — goes to the writer's model, and you write no replace: how — ${enHow}; the reasons do not go here; the writer can change the words inside find and none outside. The line between the two is how much is newly written: a sentence or two, a few dozen words, you write; a whole paragraph or an exchange of talk, a hundred words and more, goes to the writer. The writer's model is there for prose by the passage, and every call of it sends what stands around the place once more: what a few words settle is not handed to it. A place has one of replace and how, never both. Two places of one chapter do not overlap. A line of the text that reads ![caption](path) is a picture: keep it out of find, and add none in replace.${enElsewhere}`
+    : direct
     ? `For each place: chapter — its number; find — the text that is replaced here, copied word for word: ${enTake}; it has to be found once only in its chapter (for a short sentence that stands more than once, copy the half-sentence beside it too); where a sentence is to be added, take in the one it follows; replace — the whole of this place as it is to read, written as finished prose: it takes the place of find as it stands and is what the author is shown — nobody rewrites after you. ${style !== undefined ? 'In the way this book is written (above), joining ' : 'It joins '}what stands on both sides; ${bold ? 'the sentences taken in are rewritten where they need it and added to as far as it takes, not held to the wording there was, and those that need no change go back as they stand; nothing that has no part in this mending is changed under cover of it' : 'the words of find that need not change go back as they stand — no polishing in passing, nothing added beyond what is being changed'}; an empty string where the sentence goes altogether; why — why this place changes so, in a sentence. Two places of one chapter do not overlap. A line of the text that reads ![caption](path) is a picture: keep it out of find, and add none in replace.${enElsewhere}`
     : `For each place: chapter — its number; find — all that may change at this place: the writer can change the words inside it and none outside${bold ? `, so ${enTake}` : '. Take in the sentence or two that have to change and no whole stretches'}, copied word for word; it has to be found once only in its chapter (for a short sentence that stands more than once, copy the half-sentence beside it too); where a sentence is to be added, take in the one it follows; how — ${bold ? 'what this place is to say instead, specific enough to write from: which explanation comes in, how which sentences change, what the passage comes to rest on, and what is to be written where something new is needed' : 'what this place is to say instead, in a sentence or two, specific enough to write from (which word of explanation to add, what the number becomes, which half-sentence goes)'}; the reasons do not go here. Two places of one chapter do not overlap. A line of the text that reads ![caption](path) is a picture: keep it out of find.${enElsewhere}`
   const enReach = base.wide
@@ -518,15 +530,17 @@ export function mendTask(base: Base & { instruction: string; chapters: string; t
   const enNote = lead !== undefined
     ? `whether you took it as a fault or as a request; how many places it was found in and where its root lies${mends ? ', and why these places change' : ''}; where it was not found, where you looked`
     : asked ? 'what the request reaches, and why these places' : 'where the problem lies, and why these places'
-  const enEdit = direct
+  const enEdit = mixed
+    ? `{"chapter": 1, "find": "the text that may change here, copied word for word", "replace": "a small change: the whole of this place as it is to read", "why": "why it changes so"}, {"chapter": 1, "find": "the text that may change here, copied word for word", "how": "a passage to be written: what this place is to say instead, specifically — for the writer"}`
+    : direct
     ? `{"chapter": 1, "find": "${bold ? 'the text replaced here' : 'the sentence or two replaced here'}, copied word for word", "replace": "the whole of this place as it is to read", "why": "why it changes so"}`
     : `{"chapter": 1, "find": "${bold ? 'the text that may change here' : 'the sentence or two that may change here'}, copied word for word", "how": "what this place is to say instead, specifically"}`
   const enShape = `{${lead !== undefined ? '"findings": [{"chapter": 1, "quote": "the text it shows in, copied word for word", "type": "continuity|character|world|timeline|style|pacing|logic|language", "severity": "high|medium|low", "explanation": "what is wrong at this place", "suggestion": "how it could be mended"}], ' : ''}"edits": [${mends ? enEdit : ''}], "chapters": [${mends ? '{"index": 1, "reason": "why nothing short of writing it over will do, and how"}' : ''}], ${base.bible === true && mends ? '"bible": [{"kind": "character|world", "name": "the card or entry", "field": "the field to change", "value": "what it should say", "reason": "why"}], ' : ''}"note": "for the author, in two or three sentences: ${enNote}"}`
   const enIntro = lead === 'find'
     ? 'The author said something of this book, in a sentence (under "What the author said"). It may be something they noticed that is wrong, or a change they want made — which of the two is yours to tell. This time it is found and not changed: where it is a fault, say where in the book it shows; where it is a request, say which places it would reach.'
     : lead === 'fix'
-      ? `The author said something of this book, in a sentence (under "What the author said"). It may be something they noticed that is wrong, or a change they want made — which of the two is yours to tell. A fault is found and mended: say first where in the book it shows, then settle which places change. A request is carried out: settle every place it reaches. ${direct ? 'What each place is to read you write yourself — what you write is what is proposed, and no chapter is written over.' : 'How each place changes is yours to settle — the writer rewrites the places you name and nothing else; no chapter is written over.'}`
-      : `${asked ? 'The author asks for a change through the book.' : 'The problems below are to be mended.'} ${direct ? 'Settle which places change and write what each of them is to read: what you write is what is proposed, nobody rewrites after you — and no chapter is written over.' : 'Settle which places change and how each does: the writer rewrites the places you name and nothing else — no chapter is written over.'}`
+      ? `The author said something of this book, in a sentence (under "What the author said"). It may be something they noticed that is wrong, or a change they want made — which of the two is yours to tell. A fault is found and mended: say first where in the book it shows, then settle which places change. A request is carried out: settle every place it reaches. ${mixed ? 'A small change you write yourself — what you write is what is proposed; a place where a passage is to be written you settle, and it goes to the writer. No chapter is written over.' : direct ? 'What each place is to read you write yourself — what you write is what is proposed, and no chapter is written over.' : 'How each place changes is yours to settle — the writer rewrites the places you name and nothing else; no chapter is written over.'}`
+      : `${asked ? 'The author asks for a change through the book.' : 'The problems below are to be mended.'} ${mixed ? 'Settle which places change: a small change you write yourself (what you write is what is proposed), and of a place where a passage is to be written you say how it changes, for the writer — no chapter is written over.' : direct ? 'Settle which places change and write what each of them is to read: what you write is what is proposed, nobody rewrites after you — and no chapter is written over.' : 'Settle which places change and how each does: the writer rewrites the places you name and nothing else — no chapter is written over.'}`
   const enHead = lead !== undefined ? 'What the author said' : asked ? 'The requested change' : 'What is to be mended'
 
   return L(base.lang, `你是长篇小说《${bare(base.title)}》的责任编辑。${zhIntro}

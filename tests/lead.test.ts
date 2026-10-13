@@ -235,10 +235,10 @@ describe('a review led by what the author noticed', () => {
     expect(await amendChapter(bed.core, bed.runtime, { chapter: ids.three, instruction: '开头换个说法', by: 'writer' }, task)).toMatchObject({ who: 'writer' })
   })
 
-  it('has the crew\'s model write changes by places where nothing is set, and the writer\'s rewrite a passage or a chapter — each the author\'s to set', async () => {
-    // (The bed sets the writer for changes by places; here nothing is set, as in a Studio just installed.)
+  it('has the crew\'s model write changes by places where the author has it so, and the writer\'s rewrite a passage or a chapter — each the author\'s to set', async () => {
+    // (The bed sets the writer for changes by places; here the author has the crew's model write every place.)
     await bed.cleanup()
-    bed = await createTestBed({ language: 'zh', title: '七日未寄', settings: { mendBy: undefined } })
+    bed = await createTestBed({ language: 'zh', title: '七日未寄', settings: { mendBy: 'planner' } })
     const { project } = bed.runtime
     const ids = await book()
     const writer = { provider: 'p', model: 'writer-model' }

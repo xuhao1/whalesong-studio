@@ -105,6 +105,7 @@ describe('a style\'s extra system prompt', () => {
     await runtime.project.saveStyle({ id: style.id, system: EXTRA })
     const planner = (request: LlmRequest): boolean => request.route.for?.role === 'architect' && request.prompt.includes('"edits"')
     // The planner writes the changed words itself: told with the style, in what it is asked — its own system prompt is its own.
+    await core.settings.update({ mendBy: 'planner' })
     llm.responder = request => planner(request) ? JSON.stringify({ edits: [{ chapter: 1, find: '她等了一夜。', replace: '她等了两夜。', why: '照要求' }], chapters: [], note: '一处。' }) : '不该问到写手'
     const direct = await reviseBook(core, runtime, { instruction: '等的是两夜', asked: true }, task)
     expect(direct.direct).toBe(true)

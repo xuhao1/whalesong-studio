@@ -96,7 +96,7 @@ export interface ProjectManifest {
    */
   partBeats?: number
   /** Whose model writes this book's revisions made by places (see `NovelSettings.mendBy`). Absent: as the Studio has it. */
-  mendBy?: 'writer' | 'planner'
+  mendBy?: MendBy
   /** Whose model rewrites a passage or a whole chapter of this book (see `NovelSettings.rewriteBy`). Absent: as the Studio has it. */
   rewriteBy?: 'writer' | 'planner'
   /** How far a revision of this book goes (see `NovelSettings.mendReach`). Absent: as the Studio has it. */
@@ -1230,6 +1230,8 @@ export interface Proposal {
   pictures?: PicturesRead
   /** Where the rewriting had not handed back the text's own pictures as they stood: what was done about it. */
   figures?: FiguresKept
+  /** Whose model wrote the changed words: the crew's (the planner) or the writer's. Absent on proposals made before this was kept. */
+  wroteBy?: 'planner' | 'writer'
   createdBy: 'agent' | 'user'
   createdAt: Timestamp
   /** When it was accepted or turned down; absent while it waits, and on one settled before this was kept. */
@@ -1766,6 +1768,9 @@ export interface EmbeddingSettings {
 /** How far a mending reaches ({@link NovelSettings.mendReach}). */
 export type MendReach = 'bold' | 'careful'
 
+/** Who writes the words of a change made by places ({@link NovelSettings.mendBy}): the planner tells place by place, the planner always, or the writer always. */
+export type MendBy = 'auto' | 'planner' | 'writer'
+
 /**
  * What a writer was handed for one piece of writing, and who put it together ({@link NovelSettings.materialBy}).
  */
@@ -1851,11 +1856,14 @@ export interface NovelSettings {
   reviewMends?: boolean
   /**
    * Who writes the words of a change made by places — an issue mended, something the author noticed put right, a
-   * request carried through the book, a chapter gone through to an instruction. `planner` (unset): the crew's model
-   * writes what each place is to read itself, and that is the proposal — the writer's model is not asked. `writer`:
-   * the planner settles the places and the writer's model rewrites each.
+   * request carried through the book, a chapter gone through to an instruction. `auto` (unset): the planner tells
+   * place by place — a small change (a word, a name, a number, a sentence or two) it writes itself, and that is the
+   * proposal; a place where a passage is to be written new or over it hands to the writer's model, saying how. So
+   * the writer's model — as a rule the dearer one — is called only where prose is to be written. `planner`: the
+   * crew's model writes what every place is to read itself; the writer's model is not asked. `writer`: the planner
+   * settles the places and the writer's model rewrites each, however little changes.
    */
-  mendBy?: 'writer' | 'planner'
+  mendBy?: MendBy
   /**
    * Whose model rewrites a passage the author selected, and writes a chapter over whole to an instruction — asked for
    * by name, or because a mending says places will not do for it. `writer` (unset): the writer's. `planner`: the
@@ -3053,7 +3061,7 @@ export type WritingSaid = { [Key in WritingKey]?: NovelSettings[Key] | undefined
 export interface WritingSet {
   materialBy: 'planner' | 'rules' | 'agent'
   partBeats: number
-  mendBy: 'writer' | 'planner'
+  mendBy: MendBy
   rewriteBy: 'writer' | 'planner'
   mendReach: MendReach
 }
@@ -3064,7 +3072,7 @@ export function writingSaid(said: WritingSaid | undefined): Partial<WritingSet> 
   if (said === undefined) return next
   if (said.materialBy === 'planner' || said.materialBy === 'rules' || said.materialBy === 'agent') next.materialBy = said.materialBy
   if (typeof said.partBeats === 'number' && Number.isFinite(said.partBeats) && said.partBeats >= 0) next.partBeats = Math.round(said.partBeats)
-  if (said.mendBy === 'writer' || said.mendBy === 'planner') next.mendBy = said.mendBy
+  if (said.mendBy === 'writer' || said.mendBy === 'planner' || said.mendBy === 'auto') next.mendBy = said.mendBy
   if (said.rewriteBy === 'writer' || said.rewriteBy === 'planner') next.rewriteBy = said.rewriteBy
   if (said.mendReach === 'bold' || said.mendReach === 'careful') next.mendReach = said.mendReach
   return next
@@ -3072,13 +3080,13 @@ export function writingSaid(said: WritingSaid | undefined): Partial<WritingSet> 
 
 /**
  * How a book is written and revised, as it holds for it: its own where it has one, else the Studio's, else what
- * holds where nobody set anything — packed by rule, {@link PART_BEATS_DEFAULT} beats to a part, revisions by the
- * crew's model, rewrites by the writer's, mended through.
+ * holds where nobody set anything — packed by rule, {@link PART_BEATS_DEFAULT} beats to a part, a revision's words
+ * the planner's or the writer's as the planner tells place by place, rewrites by the writer's, mended through.
  * @param studio - the Studio's settings.
  * @param book - the book's manifest, for what it has of its own.
  */
 export function writingOf(studio: WritingSaid | undefined, book?: WritingSaid): WritingSet {
-  return { materialBy: 'rules', partBeats: PART_BEATS_DEFAULT, mendBy: 'planner', rewriteBy: 'writer', mendReach: 'bold', ...writingSaid(studio), ...writingSaid(book) }
+  return { materialBy: 'rules', partBeats: PART_BEATS_DEFAULT, mendBy: 'auto', rewriteBy: 'writer', mendReach: 'bold', ...writingSaid(studio), ...writingSaid(book) }
 }
 
 /** Megabytes of calls a book keeps where the author set no figure. */

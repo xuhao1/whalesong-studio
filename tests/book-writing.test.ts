@@ -6,7 +6,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { writeChapter } from '../src/core/pipelines/write'
-import { mendsBold, mendsDirect, reviseBook, reviseChapter, reviseSpan, rewritesBy } from '../src/core/pipelines/revise'
+import { mendsBold, mendsBy, reviseBook, reviseChapter, reviseSpan, rewritesBy } from '../src/core/pipelines/revise'
 import { withBook } from '../src/shared/images'
 import { PART_BEATS_DEFAULT, WRITING_KEYS, writingOf, writingSaid } from '../src/shared/types'
 import type { LlmRequest } from '../src/core/llm'
@@ -17,7 +17,7 @@ const BEATS = ['【节拍一】陆沉到渡口', '【节拍二】沈璃不给', 
 
 describe('what holds for a book of how it is written and revised', () => {
   it('is the book\'s own where it has one, else the Studio\'s, else what holds where nobody set anything', () => {
-    expect(writingOf(undefined)).toEqual({ materialBy: 'rules', partBeats: PART_BEATS_DEFAULT, mendBy: 'planner', rewriteBy: 'writer', mendReach: 'bold' })
+    expect(writingOf(undefined)).toEqual({ materialBy: 'rules', partBeats: PART_BEATS_DEFAULT, mendBy: 'auto', rewriteBy: 'writer', mendReach: 'bold' })
     const studio = { materialBy: 'planner' as const, partBeats: 2, mendBy: 'writer' as const, rewriteBy: 'planner' as const, mendReach: 'careful' as const }
     expect(writingOf(studio)).toEqual(studio)
     // Each of the book's own holds in place of the Studio's; the rest is the Studio's still. (0 beats to a part is a value: never in parts.)
@@ -100,18 +100,19 @@ describe('a book\'s own ways of writing and revising', () => {
     const planner = (request: LlmRequest): boolean => request.route.for?.role === 'architect' && request.prompt.includes('"edits"')
 
     // Nothing set anywhere.
-    expect(mendsDirect(core, undefined, await project.manifest())).toBe(true)
+    expect(mendsBy(core, undefined, await project.manifest())).toBe('auto')
     expect(rewritesBy(core, undefined, await project.manifest())).toBe('writer')
     expect(mendsBold(core, undefined, await project.manifest())).toBe(true)
     // The book's own, against the Studio's: the book's hold.
     await core.settings.update({ mendBy: 'planner', rewriteBy: 'writer', mendReach: 'bold' })
     await project.updateManifest({ mendBy: 'writer', rewriteBy: 'planner', mendReach: 'careful' })
     const book = await project.manifest()
-    expect(mendsDirect(core, undefined, book)).toBe(false)
+    expect(mendsBy(core, undefined, book)).toBe('writer')
     expect(rewritesBy(core, undefined, book)).toBe('planner')
     expect(mendsBold(core, undefined, book)).toBe(false)
     // …and what is said for one piece of work comes before both.
-    expect(mendsDirect(core, true, book)).toBe(true)
+    expect(mendsBy(core, true, book)).toBe('planner')
+    expect(mendsBy(core, 'auto', book)).toBe('auto')
     expect(rewritesBy(core, 'writer', book)).toBe('writer')
     expect(mendsBold(core, 'bold', book)).toBe(true)
 

@@ -165,6 +165,30 @@ describe('context budget', () => {
     expect((await new SettingsStore(DEFAULT_SETTINGS, file).get()).materialBy).toBe('planner')
   })
 
+  it('reads a stored choice of who writes a revision as saying nothing, once — and puts no file through a step it has been through', async () => {
+    const file = join(await scratch(), 'settings.json')
+    // Every save of the settings page wrote one of the two there were: neither tells a choice from the default. Since
+    // the planner judges place by place where nothing is set, what was stored follows that.
+    for (const stored of ['planner', 'writer'] as const) {
+      await writeFile(file, JSON.stringify({ revision: 3, mendBy: stored, rewriteBy: 'planner', mendReach: 'careful' }))
+      const migrated = await new SettingsStore(DEFAULT_SETTINGS, file).get()
+      expect(migrated.mendBy).toBeUndefined()
+      // (What else the file says of revising is as it says it.)
+      expect(migrated).toMatchObject({ rewriteBy: 'planner', mendReach: 'careful', revision: SETTINGS_REVISION })
+    }
+    // Picked after this — the file carries the revision by then — one model or the other is the author's choice, and stays.
+    const store = new SettingsStore(DEFAULT_SETTINGS, file)
+    await store.update({ mendBy: 'writer' })
+    expect((await new SettingsStore(DEFAULT_SETTINGS, file).get()).mendBy).toBe('writer')
+    // A file that has been through an earlier round's step is not put through it again: the planner preparing, picked
+    // after that round, is still the author's choice — and so is a budget set since.
+    await writeFile(file, JSON.stringify({ revision: 3, materialBy: 'planner', context: { budgetTokens: 500_000 }, tts: { provider: 'qwen-audiogen', concurrency: 3 } }))
+    const later = await new SettingsStore(DEFAULT_SETTINGS, file).get()
+    expect(later.materialBy).toBe('planner')
+    expect(later.context.budgetTokens).toBe(500_000)
+    expect(later.tts.concurrency).toBe(3)
+  })
+
   it('gives the text half of the model\'s window, and never more than the window holds', () => {
     // A million-token model: half of it for the manuscript's own text.
     expect(contextBudgets('auto', undefined, 1_000_000).textBudget).toBe(500_000)

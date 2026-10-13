@@ -27,7 +27,7 @@ import {
   CREW_ROLES,
   type BookParallel, type CodexBridgeKind, type ContextSettings, type CrewRole, type CrewRoleSettings, type CrewSettings, type EmbeddingSettings, type GateKind, type ImageSettings, type ModelRoute, type NovelSettings, type SoundProviderKind, type SoundSettings, type TextModelRouting, type TextRole, type TtsProviderKind, type TtsSettings,
 } from '../../shared/types'
-import { CHAPTER_CONTEXT_DEFAULT, PART_BEATS_DEFAULT, WRITING_KEYS, writingOf, writingSaid, PARALLEL_DEFAULT, PARALLEL_MAX, PASSAGE_CONTEXT_DEFAULT, PLANNER_WHOLE_DEFAULT, PLAY_CONTEXT_DEFAULT, REFERENCES_DEFAULT, REFERENCES_MAX, TTS_SERVICE_KEYS, type MendReach, type SoundSettings as SoundDraft, type WritingSet } from '../../shared/types'
+import { CHAPTER_CONTEXT_DEFAULT, PART_BEATS_DEFAULT, WRITING_KEYS, writingOf, writingSaid, PARALLEL_DEFAULT, PARALLEL_MAX, PASSAGE_CONTEXT_DEFAULT, PLANNER_WHOLE_DEFAULT, PLAY_CONTEXT_DEFAULT, REFERENCES_DEFAULT, REFERENCES_MAX, TTS_SERVICE_KEYS, type MendBy, type MendReach, type SoundSettings as SoundDraft, type WritingSet } from '../../shared/types'
 import { messageOf } from '../api'
 import { ImageModelField, ModelField, speechEndpoint, speechSuggestions, useKeyState, type KeyBag, type TypedKeys } from '../ModelField'
 import { Icon } from '../icons'
@@ -298,10 +298,11 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
       plansFollow: draft.plansFollow === true,
       reviewMends: draft.reviewMends !== false,
       recheckIssues: draft.recheckIssues !== false,
-      mendBy: draft.mendBy === 'writer' ? 'writer' : 'planner',
-      rewriteBy: draft.rewriteBy === 'planner' ? 'planner' : 'writer',
-      mendReach: draft.mendReach === 'careful' ? 'careful' : 'bold',
-      // (Written out only where one was picked: what holds where nothing is set is then free to be otherwise one day.)
+      // (Each of the five written out only where one was picked: what holds where nothing is set is then free to be
+      // otherwise one day — a page that writes the default on every save freezes it in the file.)
+      mendBy: draft.mendBy === 'writer' || draft.mendBy === 'planner' || draft.mendBy === 'auto' ? draft.mendBy : null,
+      rewriteBy: draft.rewriteBy === 'planner' || draft.rewriteBy === 'writer' ? draft.rewriteBy : null,
+      mendReach: draft.mendReach === 'careful' || draft.mendReach === 'bold' ? draft.mendReach : null,
       materialBy: draft.materialBy === 'planner' || draft.materialBy === 'agent' || draft.materialBy === 'rules' ? draft.materialBy : null,
       partBeats: draft.partBeats ?? null,
       settleSuggestions: draft.settleSuggestions !== false,
@@ -321,6 +322,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
   const everyWriting = writingOf(draft)
   const beatsWord = (beats: number): string => (beats === 0 ? t('不分，一次写完', 'never in parts') : t(`每次 ${beats} 个节拍`, `${beats} beats a part`))
   const modelWord = (by: 'writer' | 'planner'): string => (by === 'planner' ? t('编排模型', 'the crew\'s model') : t('写手模型', 'the writer\'s model'))
+  const mendWord = (by: MendBy): string => (by === 'auto' ? t('策划判断', 'as the planner tells') : modelWord(by))
   const reachWord = (reach: MendReach): string => (reach === 'careful' ? t('保守', 'careful') : t('主动', 'bold'))
   const asEvery = (word: string): string => t(`沿用全局：${word}`, `As for every book: ${word}`)
   const differing: { key: string; label: string; reset: () => void }[] = [
@@ -329,7 +331,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
     ...(own.image.provider !== undefined ? [{ key: 'image:service', label: t(`绘图服务：${own.image.provider === 'none' ? '不画图' : imageSetupName(own.image as ImageSettings)}`, `image service: ${own.image.provider === 'none' ? 'none' : imageSetupName(own.image as ImageSettings)}`), reset: () => { updateOwn({ image: imageWays(own.image) }) } }] : []),
     ...(own.materialBy !== undefined ? [{ key: 'materialBy', label: t(`备料：${wayWord(own.materialBy, t)}`, `material: ${wayWord(own.materialBy, t)}`), reset: () => { updateOwn({ materialBy: undefined }) } }] : []),
     ...(own.partBeats !== undefined ? [{ key: 'partBeats', label: t(`分节拍写：${beatsWord(own.partBeats)}`, `written by its beats: ${beatsWord(own.partBeats)}`), reset: () => { updateOwn({ partBeats: undefined }) } }] : []),
-    ...(own.mendBy !== undefined ? [{ key: 'mendBy', label: t(`修订由${modelWord(own.mendBy)}写`, `revisions by ${modelWord(own.mendBy)}`), reset: () => { updateOwn({ mendBy: undefined }) } }] : []),
+    ...(own.mendBy !== undefined ? [{ key: 'mendBy', label: t(`修订由谁写：${mendWord(own.mendBy)}`, `who writes a revision: ${mendWord(own.mendBy)}`), reset: () => { updateOwn({ mendBy: undefined }) } }] : []),
     ...(own.rewriteBy !== undefined ? [{ key: 'rewriteBy', label: t(`改写由${modelWord(own.rewriteBy)}写`, `rewrites by ${modelWord(own.rewriteBy)}`), reset: () => { updateOwn({ rewriteBy: undefined }) } }] : []),
     ...(own.mendReach !== undefined ? [{ key: 'mendReach', label: t(`修订改多少：${reachWord(own.mendReach)}`, `how far a revision goes: ${reachWord(own.mendReach)}`), reset: () => { updateOwn({ mendReach: undefined }) } }] : []),
     ...(own.tts !== undefined ? [{ key: 'tts', label: t(`配音服务：${own.tts.provider === 'none' ? '不配音' : own.tts.model ?? own.tts.provider}`, `speech: ${own.tts.provider === 'none' ? 'none' : own.tts.model ?? own.tts.provider}`), reset: () => { updateOwn({ tts: undefined }) } }] : []),
@@ -658,14 +660,15 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
             </Field>
           </OwnMark>
           {/* Whose model writes the words of a change made by places: a model fit to write chapters is not always fit for a pinned, small change. */}
-          <OwnMark own={own.mendBy !== undefined} scope={scope} t={t} elsewhere={own.mendBy !== undefined ? t(`《${bookTitle}》另设：${modelWord(own.mendBy)}`, `"${bookTitle}" has its own: ${modelWord(own.mendBy)}`) : undefined}>
-            <Field label={t('修订由谁写', 'Who writes a revision')} hint={t('“审校和修订”里的每一种修订——修订审校问题、照你说的一句话修订（审校页、写作页、选中一段）：每一处改好的文字由哪个模型写。', 'Every revision under Review and revision — an issue mended, a sentence of yours carried out (the review page, the writing page, a selected passage): whose model writes what each place is to read.')}>
-              <Select<'' | 'writer' | 'planner'>
+          <OwnMark own={own.mendBy !== undefined} scope={scope} t={t} elsewhere={own.mendBy !== undefined ? t(`《${bookTitle}》另设：${mendWord(own.mendBy)}`, `"${bookTitle}" has its own: ${mendWord(own.mendBy)}`) : undefined}>
+            <Field label={t('修订由谁写', 'Who writes a revision')} hint={t('“审校和修订”里的每一种修订——修订审校问题、照你说的一句话修订（审校页、写作页、选中一段）：每一处改好的文字由哪个模型写。没另选时由策划一处处判断：改几个字的它顺手改，要成段新写的才交给写手模型——写手模型通常更贵，用不着它的地方不叫它。修订完会说几处是谁写的。', 'Every revision under Review and revision — an issue mended, a sentence of yours carried out (the review page, the writing page, a selected passage): whose model writes what each place is to read. Where nothing else is picked the planner tells place by place: a small change it writes itself, and only a passage to be written goes to the writer\'s model — as a rule the dearer one, and not called where it is not needed. A revision says afterwards how many places were whose.')}>
+              <Select<'' | MendBy>
                 value={inBook ? own.mendBy ?? '' : everyWriting.mendBy}
                 options={[
-                  ...(inBook ? [{ value: '' as const, label: asEvery(modelWord(everyWriting.mendBy)) }] : []),
-                  { value: 'planner', label: t(`编排模型：策划直接写出改好的文字${inBook ? '' : '（默认）'}`, `The crew's: the planner writes the changed words itself${inBook ? '' : ' (default)'}`) },
-                  { value: 'writer', label: t('写手模型：策划定在哪改，写手改写', 'The writer\'s: the planner settles where, the writer rewrites') },
+                  ...(inBook ? [{ value: '' as const, label: asEvery(mendWord(everyWriting.mendBy)) }] : []),
+                  { value: 'auto', label: t(`策划判断：改几个字的小改动它直接写，要成段新写的才交给写手模型${inBook ? '' : '（默认，省写手模型的调用）'}`, `As the planner tells: a small change it writes itself, and only a passage to be written goes to the writer's model${inBook ? '' : ' (default: spares calls of the writer\'s model)'}`) },
+                  { value: 'planner', label: t('编排模型：每一处都由策划直接写出改好的文字，不叫写手', 'The crew\'s: the planner writes every place itself, the writer is not called') },
+                  { value: 'writer', label: t('写手模型：策划只定在哪改，每一处都由写手改写（改一两个字也是）', 'The writer\'s: the planner settles where, the writer rewrites every place (a word or two as well)') },
                 ]}
                 onChange={(value) => {
                   if (inBook) updateOwn({ mendBy: value === '' ? undefined : value })

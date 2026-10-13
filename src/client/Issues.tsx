@@ -71,6 +71,11 @@ export function useMendOrder(): [MendOrder, (order: MendOrder) => void] {
 
 /** Whose model writes: the writer's, or the crew's (the planner). */
 export type MendBy = 'writer' | 'planner'
+/** Who writes the words of a revision made by places: the planner telling place by place, the planner always, the writer always. */
+export type MendWay = MendBy | 'auto'
+
+/** One of them in a word: for the label of a menu, a list of what a book has its own of. */
+export const mendWayWord = (by: MendWay, t: (zh: string, en: string) => string): string => (by === 'auto' ? t('策划判断', 'the planner tells') : by === 'planner' ? t('策划写', 'planner writes') : t('写手写', 'writer writes'))
 
 /**
  * Who writes them, as it holds for the book in hand (`mendBy`: the book's own, else the Studio's) — and the way to
@@ -78,8 +83,9 @@ export type MendBy = 'writer' | 'planner'
  * is fit for the work.
  * @returns who; the way to set it (saved where what holds is kept); and whether it is the book's own.
  */
-export function useMendBy(): [MendBy, (by: MendBy) => void, boolean] {
-  // (The crew's model unless the author set the writer's: a change pinned to a sentence or two is its kind of work.)
+export function useMendBy(): [MendWay, (by: MendWay) => void, boolean] {
+  // (Told place by place by the planner unless the author set one of the two: a change pinned to a word or two is
+  // the planner's kind of work, a passage to be written the writer's.)
   const { set, own } = useWriting()
   const save = useWritingSave()
   return [set.mendBy, (next) => { save('mendBy', next) }, own.mendBy !== undefined]
@@ -187,14 +193,15 @@ export function MendOrderMenu() {
   const mine = ownWord(byBook, t)
   const mineWhole = ownWord(wholeBook, t)
   return (
-    <Menu icon="chevronDown" variant="ghost" size="sm" align="end" label={`${order === 'queue' ? t('排队', 'In line') : t('分别', 'Apart')} · ${reach === 'bold' ? t('主动', 'bold') : t('保守', 'careful')} · ${by === 'planner' ? t('策划写', 'planner writes') : t('写手写', 'writer writes')}`} items={[
+    <Menu icon="chevronDown" variant="ghost" size="sm" align="end" label={`${order === 'queue' ? t('排队', 'In line') : t('分别', 'Apart')} · ${reach === 'bold' ? t('主动', 'bold') : t('保守', 'careful')} · ${mendWayWord(by, t)}`} items={[
       { label: t(`${order === 'queue' ? '✓ ' : ''}排队：等前面的修订做完，接着它们改`, `${order === 'queue' ? '✓ ' : ''}In line: after the mendings under way, going on from them`), onSelect: () => { setOrder('queue') } },
       { label: t(`${order === 'apart' ? '✓ ' : ''}分别：马上开始，各改各的`, `${order === 'apart' ? '✓ ' : ''}Apart: at once, each by itself`), onSelect: () => { setOrder('apart') } },
       'separator',
       ...reaches,
       'separator',
+      { label: t(`${by === 'auto' ? '✓ ' : ''}按处修订：策划判断——小改动它直接写，要成段写的交给写手模型${mine}`, `${by === 'auto' ? '✓ ' : ''}Changes by places: the planner tells — a small change it writes itself, a passage goes to the writer's model${mine}`), onSelect: () => { setBy('auto') } },
       { label: t(`${by === 'planner' ? '✓ ' : ''}按处修订：由编排模型直接写（不经写手）${mine}`, `${by === 'planner' ? '✓ ' : ''}Changes by places: the crew's model writes them itself (no writer)${mine}`), onSelect: () => { setBy('planner') } },
-      { label: t(`${by === 'writer' ? '✓ ' : ''}按处修订：策划定在哪改，写手模型写${mine}`, `${by === 'writer' ? '✓ ' : ''}Changes by places: the planner settles where, the writer's model writes${mine}`), onSelect: () => { setBy('writer') } },
+      { label: t(`${by === 'writer' ? '✓ ' : ''}按处修订：策划定在哪改，每一处都由写手模型写${mine}`, `${by === 'writer' ? '✓ ' : ''}Changes by places: the planner settles where, the writer's model writes every one${mine}`), onSelect: () => { setBy('writer') } },
       'separator',
       { label: t(`${whole === 'writer' ? '✓ ' : ''}整章重写：由写手模型写${mineWhole}`, `${whole === 'writer' ? '✓ ' : ''}A chapter written over: the writer's model${mineWhole}`), onSelect: () => { setWhole('writer') } },
       { label: t(`${whole === 'planner' ? '✓ ' : ''}整章重写：由编排模型写${mineWhole}`, `${whole === 'planner' ? '✓ ' : ''}A chapter written over: the crew's model${mineWhole}`), onSelect: () => { setWhole('planner') } },
@@ -366,7 +373,21 @@ export function IssueCard({ chapterId, issue, onLocate, onChanged, before, after
 }
 
 /** What the author's sentence came to (`ai.reviewLead`). */
-interface LeadOutput { found?: { chapterId: string; index: number }[]; chapters?: number; fix?: boolean; note?: string; book?: { results?: { index?: number }[]; failed?: unknown[]; direct?: boolean } }
+interface LeadOutput { found?: { chapterId: string; index: number }[]; chapters?: number; fix?: boolean; note?: string; book?: { results?: { index?: number }[]; failed?: unknown[]; direct?: boolean; wrote?: { planner?: number; writer?: number } } }
+
+/**
+ * Whose words the changes of a revision are, in a few words: the planner's own, the writer's model's, or so many of
+ * each — said with what the revision came to, since the two are not the same price.
+ * @param direct - what a Host half older than this page says in place of the counts.
+ */
+export function wroteWord(wrote: { planner?: number; writer?: number } | undefined, direct: boolean, t: (zh: string, en: string) => string): string {
+  const own = wrote?.planner ?? 0
+  const handed = wrote?.writer ?? 0
+  if (own > 0 && handed > 0) return t(`${own} 处策划直接改，${handed} 处交给写手写`, `${own} written by the planner itself, ${handed} by the writer`)
+  if (own > 0 || (wrote === undefined && direct)) return t('策划直接写的', 'written by the planner itself')
+  if (handed > 0) return t('写手写的', 'written by the writer')
+  return ''
+}
 
 /** …said in a line. */
 export function leadWord(output: LeadOutput | undefined, t: (zh: string, en: string) => string): string {
@@ -375,14 +396,14 @@ export function leadWord(output: LeadOutput | undefined, t: (zh: string, en: str
   const said = note !== undefined ? t(` 策划：${note}`, ` The planner: ${note}`) : ''
   const made = output?.book?.results?.length ?? 0
   const failed = output?.book?.failed?.length ?? 0
-  const direct = output?.book?.direct === true
+  const who = wroteWord(output?.book?.wrote, output?.book?.direct === true, t)
   if (found === 0) {
     // Taken as a request: nothing was filed, and the places it reaches wait as a round of proposals.
     if (made > 0) {
       const at = [...new Set((output?.book?.results ?? []).map(item => item.index).filter((index): index is number => typeof index === 'number'))].sort((left, right) => left - right)
       return t(
-        `当作修改要求办的：改了 ${made} 处${at.length > 0 ? `（第 ${at.join('、')} 章）` : ''}${direct ? '，策划直接写的' : ''}，在“修订提案”里等你确认${failed > 0 ? `；${failed} 处没改成` : ''}。${said}`,
-        `Taken as a request: ${made} change(s)${at.length > 0 ? ` (chapter ${at.join(', ')})` : ''}${direct ? ', written by the planner itself,' : ''} wait under Proposals${failed > 0 ? `; ${failed} failed` : ''}.${said}`,
+        `当作修改要求办的：改了 ${made} 处${at.length > 0 ? `（第 ${at.join('、')} 章）` : ''}${who.length > 0 ? `，${who}` : ''}，在“修订提案”里等你确认${failed > 0 ? `；${failed} 处没改成` : ''}。${said}`,
+        `Taken as a request: ${made} change(s)${at.length > 0 ? ` (chapter ${at.join(', ')})` : ''}${who.length > 0 ? `, ${who},` : ''} wait under Proposals${failed > 0 ? `; ${failed} failed` : ''}.${said}`,
       )
     }
     return t(`照你说的没有找到要改的地方。${said}`, `Nothing was found for it.${said}`)
@@ -393,7 +414,7 @@ export function leadWord(output: LeadOutput | undefined, t: (zh: string, en: str
     ? t('；这一次只找，没有改。', '; found only, nothing changed.')
     : made === 0
       ? t(`；没有出修订${failed > 0 ? `（${failed} 处没改成）` : ''}。`, `; no change was made${failed > 0 ? ` (${failed} failed)` : ''}.`)
-      : t(`；修订了 ${made} 处${direct ? '（策划直接写的）' : ''}，在各条问题下面等你确认${failed > 0 ? `，${failed} 处没改成` : ''}。`, `; ${made} change(s)${direct ? ' (written by the planner itself)' : ''} wait beneath the issues${failed > 0 ? `, ${failed} failed` : ''}.`)
+      : t(`；修订了 ${made} 处${who.length > 0 ? `（${who}）` : ''}，在各条问题下面等你确认${failed > 0 ? `，${failed} 处没改成` : ''}。`, `; ${made} change(s)${who.length > 0 ? ` (${who})` : ''} wait beneath the issues${failed > 0 ? `, ${failed} failed` : ''}.`)
   return `${where}${changed}${said}`
 }
 
@@ -489,7 +510,7 @@ export function ReviseBar({ chapters, before, onStarted, onProposals, className,
     controller.toast('info', fix
       ? under > 0 && order === 'queue'
         ? t(`排在前面 ${under} 个修订后面，接着它们改；改动出现在各条问题下面，或“修订提案”里。`, `In line behind ${under} revision(s), going on from them; the changes show beneath the issues, or under Proposals.`)
-        : t(`策划在看你说的：是毛病，找到的记成审校问题，改动${by === 'planner' ? '由策划直接写，' : ''}出现在各条问题下面；是修改要求，改动在“修订提案”里等你确认。`, `The planner is looking into it: a fault is filed as issues and the changes${by === 'planner' ? ', written by the planner itself,' : ''} show beneath them; a request is carried out and its changes wait under Proposals.`)
+        : t(`策划在看你说的：是毛病，找到的记成审校问题，改动${by === 'planner' ? '由策划直接写，' : by === 'auto' ? '（小的策划直接写，要成段写的交给写手）' : ''}出现在各条问题下面；是修改要求，改动在“修订提案”里等你确认。`, `The planner is looking into it: a fault is filed as issues and the changes${by === 'planner' ? ', written by the planner itself,' : by === 'auto' ? ' (small ones written by the planner, passages by the writer)' : ''} show beneath them; a request is carried out and its changes wait under Proposals.`)
       : t('策划照你说的去查；找到的记成审校问题，这一次不改。', 'The planner is looking into it; what is found is filed as issues, and nothing is changed this time.'))
     setSay('')
     setGuides([])

@@ -23,7 +23,7 @@ import { errorMessage, isAbort } from '../util/async'
 import { scheduleDigest } from './digest'
 import { schedulePlanFollow } from './follow'
 import { guidePictures, picturesRead } from './guides'
-import { chapterContext, figuresOf, mendsBold, mendsDirect, onPending, partedAs, requireChapter, settleTakenIn, shouldApply, takenIn } from './revise'
+import { chapterContext, figuresOf, mendsBold, mendsBy, onPending, partedAs, requireChapter, settleTakenIn, shouldApply, takenIn } from './revise'
 
 export interface AmendParams {
   chapter: string
@@ -216,7 +216,8 @@ export async function amendChapter(core: NovelCore, runtime: ProjectRuntime, par
   const manifest = await project.manifest()
   const lang = promptLanguage(manifest.language)
   // Who goes through the chapter: the writer — or the crew's model, where the author has the planner make such changes.
-  const who: 'writer' | 'planner' = params.by ?? (mendsDirect(core, undefined, manifest) ? 'planner' : 'writer')
+  // (Where the planner tells place by place who writes, a chapter gone through is its own work: it makes each change itself.)
+  const who: 'writer' | 'planner' = params.by ?? (mendsBy(core, undefined, manifest) === 'writer' ? 'writer' : 'planner')
   const bold = mendsBold(core, params.reach, manifest)
   const role = who === 'planner' ? 'architect' as const : 'writer' as const
   const zhWho = who === 'planner' ? '策划' : '写手'
@@ -518,7 +519,7 @@ export async function amendChapter(core: NovelCore, runtime: ProjectRuntime, par
     result.applied = true
   } else {
     const batchId = params.batchId ?? newId('batch')
-    const common = { chapterId: chapter.plan.id, instruction: params.instruction, createdBy: task.origin, batchId, ...read, ...figures }
+    const common = { chapterId: chapter.plan.id, instruction: params.instruction, createdBy: task.origin, wroteBy: who, batchId, ...read, ...figures }
     // A place stands by itself where it is a place of the book's own text — not of something a waiting change wrote.
     const places = parts.map((part) => {
       const at = based.used.length === 0 ? part.start : found.text.indexOf(part.before)

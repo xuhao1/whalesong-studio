@@ -16,7 +16,7 @@ import { readJson, writeJson } from './util/fs'
  * before a round is migrated when it is read, and says so once it is saved —
  * so a value the author sets afterwards is never taken for an old default.
  */
-export const SETTINGS_REVISION = 3
+export const SETTINGS_REVISION = 4
 
 export const DEFAULT_SETTINGS: NovelSettings = {
   schema: 1,
@@ -79,23 +79,36 @@ const LEGACY_SPEECH = [2, 3]
  * at its word.
  */
 function migrate(saved: DeepPartial<NovelSettings>): DeepPartial<NovelSettings> {
-  if (typeof saved.revision === 'number' && saved.revision >= SETTINGS_REVISION) return saved
+  // Each step is for files saved before the round that brought it: a file that has been through a step is not put
+  // through it again, or what the author set afterwards would be taken for the old default a second time.
+  const from = typeof saved.revision === 'number' ? saved.revision : 0
+  if (from >= SETTINGS_REVISION) return saved
   let next: DeepPartial<NovelSettings> = { ...saved, revision: SETTINGS_REVISION }
-  const context = saved.context
-  if (context !== undefined && context !== null && typeof context.budgetTokens === 'number' && LEGACY_BUDGETS.includes(context.budgetTokens)) {
-    const { budgetTokens: _old, ...rest } = context
-    next = { ...next, context: rest }
-  }
-  const tts = saved.tts
-  if (tts !== undefined && tts !== null && typeof tts.concurrency === 'number' && LEGACY_SPEECH.includes(tts.concurrency)) {
-    const { concurrency: _old, ...rest } = tts
-    next = { ...next, tts: rest }
+  if (from < 2) {
+    const context = saved.context
+    if (context !== undefined && context !== null && typeof context.budgetTokens === 'number' && LEGACY_BUDGETS.includes(context.budgetTokens)) {
+      const { budgetTokens: _old, ...rest } = context
+      next = { ...next, context: rest }
+    }
+    const tts = saved.tts
+    if (tts !== undefined && tts !== null && typeof tts.concurrency === 'number' && LEGACY_SPEECH.includes(tts.concurrency)) {
+      const { concurrency: _old, ...rest } = tts
+      next = { ...next, tts: rest }
+    }
   }
   // While the planner preparing was what held where nothing was set, every save of the settings page wrote it out:
   // a file that says so says nothing the author chose, and follows what holds now (packed by rule). The writer as an
   // agent was only ever there because somebody picked it, and stays.
-  if (saved.materialBy === 'planner') {
+  if (from < 3 && saved.materialBy === 'planner') {
     const { materialBy: _old, ...rest } = next
+    next = rest
+  }
+  // Who writes the words of a revision: every save of the settings page wrote one of the two there were (`planner`
+  // where nothing was picked), so a file that says either says nothing that tells a choice from the default. Since
+  // the planner tells place by place where nothing is set — which is what the author asked for in place of both —
+  // what was stored is read once as saying nothing. (A book's own, in its `novel.json`, was picked for that book, and stays.)
+  if (from < 4 && (saved.mendBy === 'planner' || saved.mendBy === 'writer')) {
+    const { mendBy: _old, ...rest } = next
     next = rest
   }
   return next
