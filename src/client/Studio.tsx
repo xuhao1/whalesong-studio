@@ -205,11 +205,11 @@ function JobNotice() {
       controller.toast((output?.found?.length ?? 0) > 0 ? 'success' : 'info', leadWord(output, t), 14000)
     } else if (ended.job.kind === 'revise' && ended.job.title === 'mend review') {
       // What a review found was mended by itself: said, since nobody pressed a button for it — how many changes wait, and where.
-      const found = (ended.job.result?.output ?? {}) as { issues?: number; chapters?: number; places?: number; failed?: number; direct?: boolean; wrote?: { planner?: number; writer?: number }; note?: string }
+      const found = (ended.job.result?.output ?? {}) as { issues?: number; chapters?: number; places?: number; failed?: number; direct?: boolean; wrote?: { analyst?: number; planner?: number; writer?: number }; note?: string; untraced?: string }
       const who = wroteWord(found.wrote, found.direct === true, t)
       const places = found.places ?? 0
       const failed = (found.failed ?? 0) > 0 ? t(`，${found.failed} 处没改成`, `, ${found.failed} failed`) : ''
-      const note = found.note !== undefined && found.note.trim().length > 0 ? t(` 策划：${clip(found.note.trim(), 160)}`, ` The planner: ${clip(found.note.trim(), 160)}`) : ''
+      const note = `${found.note !== undefined && found.note.trim().length > 0 ? t(` 策划：${clip(found.note.trim(), 160)}`, ` The planner: ${clip(found.note.trim(), 160)}`) : ''}${found.untraced !== undefined ? t(` 牵连别章的那几条策划没定下来（${clip(found.untraced, 100)}）：在问题上点“修订”再试。`, ` The planner could not settle the ones that reach another chapter (${clip(found.untraced, 120)}): press Revise on them to try again.`) : ''}`
       if ((found.issues ?? 0) > 0) {
         controller.toast(places > 0 ? 'success' : 'info', places > 0
           ? t(`审校找到的 ${found.issues} 个问题修订好了：${places} 处修订${who.length > 0 ? `（${who}）` : ''}在各条问题下面等你确认${failed}。${note}`, `The ${found.issues} issue(s) the review found are mended: ${places} change(s)${who.length > 0 ? ` (${who})` : ''} wait beneath them${failed}.${note}`)
@@ -262,7 +262,10 @@ function JobNotice() {
       if ((found.failed ?? 0) > 0) controller.toast('error', t(`${found.failed} 章的章纲没能照正文更新，原因见“任务”`, `${found.failed} plan(s) could not be set by their text — see Tasks`))
     } else if (ended.job.kind === 'review') {
       // The open issues were looked at again after a revision: said, since it changes what the author still has to do.
-      const found = (ended.job.result ?? {}) as { looked?: number; fixed?: number; changed?: number }
+      const found = (ended.job.result ?? {}) as { looked?: number; fixed?: number; changed?: number; unfounded?: number; read?: { capped?: boolean } }
+      // A review that quoted words not where it said they stand: what rested on them was not filed — said, since the review lists fewer than it found.
+      if ((found.unfounded ?? 0) > 0) controller.toast('info', t(`审校有 ${found.unfounded} 条说这一章和别处对不上，可它引的原话在那里找不到——这几条没有收。`, `${found.unfounded} of what the review said were at odds with something quoted words that are not there — those were not filed.`), 12000)
+      if (found.read?.capped === true) controller.toast('info', t('审校读满了“最多读多少”的上限，照已经查到的交了稿；要它多查，在设置的上下文里调高。', 'The review read as much as it may and handed in from what it had found; to have it read more, raise the cap under Context in the settings.'), 12000)
       if ((found.looked ?? 0) > 0) controller.toast((found.fixed ?? 0) > 0 ? 'success' : 'info', t(`核对了 ${found.looked} 条审校意见：${found.fixed ?? 0} 条已修好，${found.changed ?? 0} 条按新正文更新`, `Looked again at ${found.looked} issue(s): ${found.fixed ?? 0} mended, ${found.changed ?? 0} brought up to the text`))
     } else if (ended.job.kind === 'bible') {
       // The planner looked through the names without a card: said, since it puts suggestions where the author settles them.

@@ -18,7 +18,7 @@ import type { IssueSeverity } from '../../shared/types'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { L, promptLanguage } from '../render'
 import { digestChapter } from './digest'
-import { reviewChapter } from './review'
+import { reviewChapter, settleIssues } from './review'
 import { fixIssues } from './revise'
 
 export interface IterateParams {
@@ -120,6 +120,13 @@ export async function iterateChapters(core: NovelCore, runtime: ProjectRuntime, 
         await project.saveChapterText(proposal.chapterId, next, { reason: 'before-revise' })
         await project.setProposalStatus(proposal.id, 'accepted')
         if (!rewritten.includes(proposal.chapterId)) rewritten.push(proposal.chapterId)
+      }
+      // What the round was handed is settled by what it applied, as by a change accepted: the review that follows
+      // reads the chapters again, and files anew what still stands — it is not told to look for those as on file.
+      if (mended.book !== undefined && rewritten.length > 0) {
+        const handed: string[] = []
+        for (const id of found.keys()) for (const issue of (await project.review(id))?.issues ?? []) if (issue.resolved !== true && issue.mending === mended.book.batchId) handed.push(issue.id)
+        await settleIssues(runtime, handed, L(lang, `第 ${round} 轮修订改了`, `mended in round ${round}`))
       }
     } finally {
       said?.()

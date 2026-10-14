@@ -214,8 +214,8 @@ export async function editChapter(core: NovelCore, runtime: ProjectRuntime, para
   const version = text.length > 0 ? await project.snapshot(id, task.origin === 'agent' ? 'agent-edit' : 'edit', text) : undefined
   await project.saveChapterText(id, next, { snapshot: false })
   if (version !== undefined) result.version = version
-  result.memory = core.currentSettings().autoDigest ? 'digesting' : 'stale'
-  scheduleDigest(core, runtime, id, task)
+  result.memory = (await core.autoFor(runtime)).autoDigest ? 'digesting' : 'stale'
+  await scheduleDigest(core, runtime, id, task)
   task.job?.result({ chapterId: id })
   return result
 }

@@ -76,7 +76,7 @@ export function ProposalCard({ proposal, showChapter, onSettled, bare }: { propo
         {showChapter === true && chapter !== undefined ? (
           <button type="button" className="nv-link" onClick={() => { controller.setView('write', chapter.id) }}>{t(`第 ${chapter.index} 章 ${chapter.title}`, `Ch. ${chapter.index} ${chapter.title}`)}</button>
         ) : null}
-        <span className="nv-muted nv-small">{proposal.createdBy === 'agent' ? t('总编提出', 'by the agent') : t('你发起', 'yours')}{proposal.wroteBy !== undefined ? ` · ${proposal.wroteBy === 'planner' ? t('策划写的', 'written by the planner') : t('写手写的', 'written by the writer')}` : ''} · {delta >= 0 ? '+' : ''}{delta}{t(' 字', ' words')}</span>
+        <span className="nv-muted nv-small">{proposal.createdBy === 'agent' ? t('总编提出', 'by the agent') : t('你发起', 'yours')}{proposal.wroteBy !== undefined ? ` · ${proposal.wroteBy === 'planner' ? t('策划写的', 'written by the planner') : proposal.wroteBy === 'analyst' ? t('场记审校时写的', 'written by the reviewer') : t('写手写的', 'written by the writer')}` : ''} · {delta >= 0 ? '+' : ''}{delta}{t(' 字', ' words')}</span>
       </header>
       {bare === true ? null : <p className="nv-proposal-instruction">{proposal.instruction}</p>}
       {proposal.rationale !== undefined ? <p className="nv-muted nv-small">{proposal.rationale}</p> : null}

@@ -607,15 +607,23 @@ export async function updateArcs(core: NovelCore, runtime: ProjectRuntime, task:
   if (changed) await project.writeState(['memory', 'arcs.json'], next)
 }
 
-/** Start a background digest for one chapter when auto-digest is on and none is already running. */
-export function scheduleDigest(core: NovelCore, runtime: ProjectRuntime, chapterId: string, task: Pick<TaskContext, 'origin' | 'agentRoute'>): void {
-  if (!core.currentSettings().autoDigest) return
-  const root = runtime.project.root
-  const busy = core.jobs.list(root).some(job => job.kind === 'digest' && job.status === 'running' && job.target === chapterId)
-  if (busy) return
-  core.jobs.start({ kind: 'digest', title: `digest ${chapterId}`, project: root, target: chapterId, origin: task.origin }, async (job) => {
-    const inner: TaskContext = { origin: task.origin, signal: job.signal, job, ...(task.agentRoute !== undefined ? { agentRoute: task.agentRoute } : {}) }
-    await digestChapter(core, runtime, chapterId, inner)
-    await updateArcs(core, runtime, inner)
-  })
+/**
+ * Start a background digest for one chapter when auto-digest is on — for this book: its own switch where it has one,
+ * else the Studio's — and none is already running. Waited for only as far as the start: the digest itself runs on.
+ */
+export async function scheduleDigest(core: NovelCore, runtime: ProjectRuntime, chapterId: string, task: Pick<TaskContext, 'origin' | 'agentRoute'>): Promise<void> {
+  try {
+    if (!(await core.autoFor(runtime)).autoDigest) return
+    const root = runtime.project.root
+    const busy = core.jobs.list(root).some(job => job.kind === 'digest' && job.status === 'running' && job.target === chapterId)
+    if (busy) return
+    core.jobs.start({ kind: 'digest', title: `digest ${chapterId}`, project: root, target: chapterId, origin: task.origin }, async (job) => {
+      const inner: TaskContext = { origin: task.origin, signal: job.signal, job, ...(task.agentRoute !== undefined ? { agentRoute: task.agentRoute } : {}) }
+      await digestChapter(core, runtime, chapterId, inner)
+      await updateArcs(core, runtime, inner)
+    })
+  } catch (error) {
+    // (Not starting a digest is no reason for what changed the text to fail.)
+    core.log('could not start digesting a chapter', error)
+  }
 }

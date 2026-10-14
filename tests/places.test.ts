@@ -219,7 +219,7 @@ describe('mending by places', () => {
     const named = await reviseBook(bed.core, bed.runtime, { instruction: '她是左撇子', asked: true, chapters: [ids.three] }, task)
     const plans = bed.llm.requests.slice(before).filter(planner)
     expect(plans).toHaveLength(2)
-    for (const part of ['各章摘要（作者只让动这几章，别的章节不在范围里）', '### 第 3 章《渡口》']) expect(plans[0]!.prompt, part).toContain(part)
+    for (const part of ['（作者只让动这几章：第 3 章；别的章节不在范围里。）', '### 第 3 章《渡口》']) expect(plans[0]!.prompt, part).toContain(part)
     for (const part of ['### 第 2 章《下山》', '### 第 1 章《雨夜》']) expect(plans[0]!.prompt, part).not.toContain(part)
     expect(plans[1]!.prompt).toContain('edits 第 1 条：第 2 章不在这次能改的章节里')
     expect(named.results.map(item => [item.index, item.kind])).toEqual([[3, 'span']])

@@ -36,7 +36,7 @@ import { illustrate, lackingPortraits } from './illustrate'
 import { deriveBeats } from './plot'
 import { iterateChapters } from './iterate'
 import { reviewChapter } from './review'
-import { mendReviewed } from './revise'
+import { mendReviewed, mendsBy } from './revise'
 import { renderSound } from './sound'
 import { chapterVideo, produceVideo } from './video'
 import { writeChapter } from './write'
@@ -609,7 +609,8 @@ export async function textPlan(core: NovelCore, runtime: ProjectRuntime, params:
         after: wanted.has('digest') ? [key(id, 'digest')] : writing ? [key(id, 'write')] : [],
         skip: () => !facts.hasText ? L(lang, '还没有正文', 'no text yet') : facts.reviewed && !redo && !writing ? L(lang, '已审校过', 'reviewed already') : undefined,
         async run(sub) {
-          const review = await reviewChapter(core, runtime, { chapter: id, ...(params.focus !== undefined ? { focus: params.focus } : {}) }, sub)
+          // (Where the batch's reviews hand their findings on, each reviewer closes what it can of its own chapter.)
+          const review = await reviewChapter(core, runtime, { chapter: id, ...(params.focus !== undefined ? { focus: params.focus } : {}), ...(mending ? { mends: mendsBy(core, undefined, await project.manifest()) } : {}) }, sub)
           reviewed.push(review.chapterId)
           return L(lang, `${review.issues.length} 条问题`, `${review.issues.length} issues`)
         },

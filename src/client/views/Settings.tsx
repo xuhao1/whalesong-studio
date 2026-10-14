@@ -27,7 +27,7 @@ import {
   CREW_ROLES,
   type BookParallel, type CodexBridgeKind, type ContextSettings, type CrewRole, type CrewRoleSettings, type CrewSettings, type EmbeddingSettings, type GateKind, type ImageSettings, type ModelRoute, type NovelSettings, type SoundProviderKind, type SoundSettings, type TextModelRouting, type TextRole, type TtsProviderKind, type TtsSettings,
 } from '../../shared/types'
-import { CHAPTER_CONTEXT_DEFAULT, PART_BEATS_DEFAULT, WRITING_KEYS, writingOf, writingSaid, PARALLEL_DEFAULT, PARALLEL_MAX, PASSAGE_CONTEXT_DEFAULT, PLANNER_WHOLE_DEFAULT, PLAY_CONTEXT_DEFAULT, REFERENCES_DEFAULT, REFERENCES_MAX, TTS_SERVICE_KEYS, type MendBy, type MendReach, type SoundSettings as SoundDraft, type WritingSet } from '../../shared/types'
+import { AUTO_KEYS, autoOf, autoSaid, CHAPTER_CONTEXT_DEFAULT, READ_DEFAULT, PART_BEATS_DEFAULT, WRITING_KEYS, writingOf, writingSaid, PARALLEL_DEFAULT, PARALLEL_MAX, PASSAGE_CONTEXT_DEFAULT, PLANNER_WHOLE_DEFAULT, PLAY_CONTEXT_DEFAULT, REFERENCES_DEFAULT, REFERENCES_MAX, TTS_SERVICE_KEYS, type AutoKey, type MendBy, type MendReach, type SoundSettings as SoundDraft, type WritingSet } from '../../shared/types'
 import { messageOf } from '../api'
 import { ImageModelField, ModelField, speechEndpoint, speechSuggestions, useKeyState, type KeyBag, type TypedKeys } from '../ModelField'
 import { Icon } from '../icons'
@@ -181,7 +181,7 @@ const STRATEGY_WORD: Record<ContextSettings['strategy'], [string, string]> = {
 }
 
 /** What a book has of its own, as the page holds it until it is saved into the book. */
-interface BookOwn { models: Partial<TextModelRouting>; crew: CrewSettings; image: BookImageSettings; tts?: TtsSettings | undefined; sound?: SoundSettings | undefined; embedding?: EmbeddingSettings | undefined; vision?: ModelRoute | undefined; context: Partial<ContextSettings>; parallel: BookParallel; materialBy?: WritingSet['materialBy'] | undefined; partBeats?: number | undefined; mendBy?: WritingSet['mendBy'] | undefined; rewriteBy?: WritingSet['rewriteBy'] | undefined; mendReach?: MendReach | undefined }
+interface BookOwn { models: Partial<TextModelRouting>; crew: CrewSettings; image: BookImageSettings; tts?: TtsSettings | undefined; sound?: SoundSettings | undefined; embedding?: EmbeddingSettings | undefined; vision?: ModelRoute | undefined; context: Partial<ContextSettings>; parallel: BookParallel; materialBy?: WritingSet['materialBy'] | undefined; partBeats?: number | undefined; mendBy?: WritingSet['mendBy'] | undefined; rewriteBy?: WritingSet['rewriteBy'] | undefined; mendReach?: MendReach | undefined; autoDigest?: boolean | undefined; siftCast?: boolean | undefined; settleSuggestions?: boolean | undefined; plansFollow?: boolean | undefined; reviewMends?: boolean | undefined; recheckIssues?: boolean | undefined }
 
 function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
   const { controller } = useStudio()
@@ -196,9 +196,9 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
   // Where the text models and the crew's ways are saved: for every book, or with the book that is open.
   const book = useSnapshot(snapshot => snapshot.project?.manifest)
   const bookRoot = useSnapshot(snapshot => snapshot.root)
-  const [own, setOwn] = useState<BookOwn>(() => ({ models: book?.models ?? {}, ...writingSaid(book), crew: book?.crew ?? {}, image: book?.image ?? {}, context: book?.context ?? {}, parallel: book?.parallel ?? {}, ...(book?.tts !== undefined ? { tts: book.tts } : {}), ...(book?.sound !== undefined ? { sound: book.sound } : {}), ...(book?.embedding !== undefined ? { embedding: book.embedding } : {}), ...(book?.vision !== undefined ? { vision: book.vision } : {}) }))
+  const [own, setOwn] = useState<BookOwn>(() => ({ models: book?.models ?? {}, ...writingSaid(book), ...autoSaid(book), crew: book?.crew ?? {}, image: book?.image ?? {}, context: book?.context ?? {}, parallel: book?.parallel ?? {}, ...(book?.tts !== undefined ? { tts: book.tts } : {}), ...(book?.sound !== undefined ? { sound: book.sound } : {}), ...(book?.embedding !== undefined ? { embedding: book.embedding } : {}), ...(book?.vision !== undefined ? { vision: book.vision } : {}) }))
   const [ownDirty, setOwnDirty] = useState(false)
-  const bookHasOwn = book !== undefined && (Object.keys(writingSaid(book)).length > 0 || Object.keys(book.models ?? {}).length > 0 || Object.values(book.crew ?? {}).some(value => value !== undefined && Object.keys(value).length > 0) || Object.keys(book.image ?? {}).length > 0 || book.tts !== undefined || book.sound !== undefined || book.embedding !== undefined || book.vision !== undefined || Object.keys(book.context ?? {}).length > 0 || Object.keys(book.parallel ?? {}).length > 0)
+  const bookHasOwn = book !== undefined && (Object.keys(writingSaid(book)).length > 0 || Object.keys(autoSaid(book)).length > 0 || Object.keys(book.models ?? {}).length > 0 || Object.values(book.crew ?? {}).some(value => value !== undefined && Object.keys(value).length > 0) || Object.keys(book.image ?? {}).length > 0 || book.tts !== undefined || book.sound !== undefined || book.embedding !== undefined || book.vision !== undefined || Object.keys(book.context ?? {}).length > 0 || Object.keys(book.parallel ?? {}).length > 0)
   // A book that has settings of its own is what the page opens on: they are what holds for the book in hand.
   const [wanted, setWanted] = useState<'global' | 'book'>((bookRoot !== undefined ? scopeShown.get(bookRoot) : undefined) ?? (bookHasOwn ? 'book' : 'global'))
   const setScope = (next: 'global' | 'book'): void => {
@@ -215,6 +215,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
       if ('embedding' in patch && patch.embedding === undefined) delete next.embedding
       if ('vision' in patch && patch.vision === undefined) delete next.vision
       for (const key of WRITING_KEYS) if (key in patch && patch[key] === undefined) delete next[key]
+      for (const key of AUTO_KEYS) if (key in patch && patch[key] === undefined) delete next[key]
       return next
     })
     setOwnDirty(true)
@@ -232,8 +233,8 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
     // What a link points at may be folded away or among the advanced options: opened first, found after.
     const part: string = focus
     if (part === 'crew' || part === 'parallel' || part === 'context') setAdvanced(true)
-    // What the Studio does by itself is set for every book: shown under that view, whichever was open.
-    if (part === 'auto') setScope('global')
+    // What follows by itself is set for every book and by a book: where this one has its own, that is what holds — and what is shown.
+    if (part === 'auto') setScope(Object.keys(autoSaid(own)).length > 0 ? 'book' : 'global')
     // Who prepares the writer's material — what the writing page's link is about — is set for every book and by a
     // book: where this one has its own, that is what holds, and what is shown; else the one for every book.
     if (part === 'material') setScope(own.materialBy !== undefined ? 'book' : 'global')
@@ -273,7 +274,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
     if (ownDirty && bookRoot !== undefined) {
       const crew = Object.fromEntries(Object.entries(own.crew).filter(([, value]) => value !== undefined && Object.keys(value).length > 0))
       // Named as nothing (`null`), speech and sound of its own are taken off the book: the Studio's hold for it again.
-      await controller.api.call('project.update', { root: bookRoot, patch: { models: own.models, crew, image: own.image, tts: own.tts ?? null, sound: own.sound ?? null, embedding: own.embedding ?? null, vision: own.vision ?? null, ...Object.fromEntries(WRITING_KEYS.map(key => [key, own[key] ?? null])), context: Object.keys(own.context).length > 0 ? own.context : null, parallel: Object.keys(own.parallel).length > 0 ? own.parallel : null } as never })
+      await controller.api.call('project.update', { root: bookRoot, patch: { models: own.models, crew, image: own.image, tts: own.tts ?? null, sound: own.sound ?? null, embedding: own.embedding ?? null, vision: own.vision ?? null, ...Object.fromEntries(WRITING_KEYS.map(key => [key, own[key] ?? null])), ...Object.fromEntries(AUTO_KEYS.map(key => [key, own[key] ?? null])), context: Object.keys(own.context).length > 0 ? own.context : null, parallel: Object.keys(own.parallel).length > 0 ? own.parallel : null } as never })
       setOwnDirty(false)
       await controller.refreshProject()
       if (!dirty) {
@@ -294,10 +295,11 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
       textConcurrency: draft.textConcurrency ?? null,
       callsMb: draft.callsMb ?? null,
       autoDigest: draft.autoDigest,
-      siftCast: draft.siftCast !== false,
-      plansFollow: draft.plansFollow === true,
-      reviewMends: draft.reviewMends !== false,
-      recheckIssues: draft.recheckIssues !== false,
+      // (The switches that have no word in the file are left without one: what holds where nothing is set stays free to change.)
+      siftCast: draft.siftCast ?? null,
+      plansFollow: draft.plansFollow ?? null,
+      reviewMends: draft.reviewMends ?? null,
+      recheckIssues: draft.recheckIssues ?? null,
       // (Each of the five written out only where one was picked: what holds where nothing is set is then free to be
       // otherwise one day — a page that writes the default on every save freezes it in the file.)
       mendBy: draft.mendBy === 'writer' || draft.mendBy === 'planner' || draft.mendBy === 'auto' ? draft.mendBy : null,
@@ -305,7 +307,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
       mendReach: draft.mendReach === 'careful' || draft.mendReach === 'bold' ? draft.mendReach : null,
       materialBy: draft.materialBy === 'planner' || draft.materialBy === 'agent' || draft.materialBy === 'rules' ? draft.materialBy : null,
       partBeats: draft.partBeats ?? null,
-      settleSuggestions: draft.settleSuggestions !== false,
+      settleSuggestions: draft.settleSuggestions ?? null,
       reviewAgentRevisions: draft.reviewAgentRevisions,
       agentFiles: draft.agentFiles ?? 'guide',
     }, Object.fromEntries(Object.values(typed).map(entry => [entry.url, entry.value.trim()])))
@@ -325,6 +327,19 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
   const mendWord = (by: MendBy): string => (by === 'auto' ? t('策划判断', 'as the planner tells') : modelWord(by))
   const reachWord = (reach: MendReach): string => (reach === 'careful' ? t('保守', 'careful') : t('主动', 'bold'))
   const asEvery = (word: string): string => t(`沿用全局：${word}`, `As for every book: ${word}`)
+  // What follows by itself, as the page has it for every book — and each switch by a short name and in a sentence.
+  const everyAuto = autoOf(draft)
+  const onWord = (on: boolean): string => (on ? t('开', 'on') : t('关', 'off'))
+  const autoRows: { key: AutoKey; short: string; label: string; note?: (on: boolean) => string }[] = [
+    { key: 'autoDigest', short: t('自动收录', 'digests'), label: t('写完或改完一章后自动收录', 'Digest a chapter once it is written or changed'), note: on => (on
+      ? t('每章一次场记调用：整章正文，加人物和设定的名单。', 'One call of the scribe a chapter: its whole text, and the lists of people and entries.')
+      : t('关着：记忆、人物履历、线索、龙套名单不再自己更新；没收录的章，后面的写作照它的章纲和带得上的正文。要收录：总览页或写作页的“收录”。', 'Off: memory, lives, threads and the list of walk-ons are no longer kept up by themselves; a chapter not digested is known to later writing by its outline and by what of its text fits. To digest: "Digest" on the overview or the writing page.')) },
+    { key: 'siftCast', short: t('筛新名字', 'names looked through'), label: t('收录之后，让策划筛一遍没立卡的新名字', 'After digests, have the planner look through the new names without a card'), note: () => t('策划是 agent，会去书里查：有新名字时，这一趟比收录本身贵得多。', 'The planner is an agent and looks things up in the book: where there are new names, this costs far more than the digest itself.') },
+    { key: 'settleSuggestions', short: t('设定建议自动收进', 'suggestions settled'), label: t('设定建议由策划审定后自动收进（不勾：逐条等我采纳）', 'Suggestions for the bible are settled by the planner and entered (off: each waits for me)') },
+    { key: 'plansFollow', short: t('自动改章纲', 'plans follow'), label: t('正文改了之后，自动照正文改章纲和节拍', 'Once a chapter\'s text is changed, its plan and beats are set by the text by themselves'), note: () => t('默认不勾：章纲是你定的，写出来的正文不自己变成章纲。要更新，在那一章的章纲上点“照正文更新章纲”。', 'Off unless you tick it: the plan is your design, and text that was written does not become it by itself. To set a plan by its text, press Update the plan from the text on that chapter\'s plan.') },
+    { key: 'reviewMends', short: t('审校后出修订提案', 'reviews mended'), label: t('审校之后，把找到的问题交给策划修订，出修订提案（不勾：只列问题）', 'After a review, hand what it found to the planner to mend, as proposals (off: the issues are listed and nothing changes)'), note: () => t('审校一章、批量审校都算：策划把找到的问题放在一起看，每一处改动是一条提案，出现在那条问题下面，采纳了才进正文。每次审校多一趟修订的花费；审校按钮旁的小三角里也能切。', 'A chapter reviewed and a batch of them alike: the planner reads what was found side by side, and every change is a proposal beneath its issue — nothing enters the text until you accept it. Each review costs one mending more; the small triangle beside the review buttons switches it too.') },
+    { key: 'recheckIssues', short: t('采纳后自动核对', 'issues read again'), label: t('采纳修订之后，自动核对这一章还开着的审校意见', 'After a revision is accepted, have the issues still open in that chapter checked against the new text') },
+  ]
   const differing: { key: string; label: string; reset: () => void }[] = [
     ...Object.entries(own.models).filter(([, route]) => route !== undefined).map(([role, route]) => ({ key: `model:${role}`, label: t(`${roleWord(role)}的模型：${route!.model}`, `${roleWord(role)}'s model: ${route!.model}`), reset: () => { const { [role as TextRole]: _old, ...rest } = own.models; updateOwn({ models: rest }) } })),
     ...Object.entries(own.crew).filter(([, value]) => value !== undefined && Object.keys(value).length > 0).map(([role]) => ({ key: `crew:${role}`, label: t(`${roleWord(role)}怎么干活`, `how ${roleWord(role)} works`), reset: () => { const { [role as CrewRole]: _old, ...rest } = own.crew; updateOwn({ crew: rest }) } })),
@@ -334,6 +349,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
     ...(own.mendBy !== undefined ? [{ key: 'mendBy', label: t(`修订由谁写：${mendWord(own.mendBy)}`, `who writes a revision: ${mendWord(own.mendBy)}`), reset: () => { updateOwn({ mendBy: undefined }) } }] : []),
     ...(own.rewriteBy !== undefined ? [{ key: 'rewriteBy', label: t(`改写由${modelWord(own.rewriteBy)}写`, `rewrites by ${modelWord(own.rewriteBy)}`), reset: () => { updateOwn({ rewriteBy: undefined }) } }] : []),
     ...(own.mendReach !== undefined ? [{ key: 'mendReach', label: t(`修订改多少：${reachWord(own.mendReach)}`, `how far a revision goes: ${reachWord(own.mendReach)}`), reset: () => { updateOwn({ mendReach: undefined }) } }] : []),
+    ...autoRows.filter(row => own[row.key] !== undefined).map(row => ({ key: row.key, label: `${row.short}${t('：', ': ')}${onWord(own[row.key] === true)}`, reset: () => { updateOwn({ [row.key]: undefined }) } })),
     ...(own.tts !== undefined ? [{ key: 'tts', label: t(`配音服务：${own.tts.provider === 'none' ? '不配音' : own.tts.model ?? own.tts.provider}`, `speech: ${own.tts.provider === 'none' ? 'none' : own.tts.model ?? own.tts.provider}`), reset: () => { updateOwn({ tts: undefined }) } }] : []),
     ...(own.sound !== undefined ? [{ key: 'sound', label: t('声音设计', 'sound design'), reset: () => { updateOwn({ sound: undefined }) } }] : []),
     ...(own.vision !== undefined ? [{ key: 'vision', label: t(`看图的模型：${own.vision.model}`, `looks at pictures: ${own.vision.model}`), reset: () => { updateOwn({ vision: undefined }) } }] : []),
@@ -713,39 +729,44 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
       </section>
 
       {/* What the Studio does by itself once text is written or changed: each a switch, on the first page — every one of them is model calls nobody pressed a button for. */}
-      <section className="nv-card" data-section="auto" data-global="">
-        <SectionTitle>{t('自动做的事', 'Done by itself')}</SectionTitle>
-        <p className="nv-muted nv-small">{t('正文写了、改了之后，工坊自己接着做的。每一项都是模型调用；关掉的，要用时自己点。', 'What follows by itself once text is written or changed. Each is model calls; what is off waits for your press.')}</p>
-        <label className="nv-check">
-          <input type="checkbox" checked={draft.autoDigest} onChange={(event) => { update({ autoDigest: event.target.checked }) }} />
-          <span>{t('写完或改完一章后自动收录', 'Digest a chapter once it is written or changed')}</span>
-        </label>
-        <p className="nv-muted nv-small nv-check-note">{draft.autoDigest
-          ? t('每章一次场记调用：整章正文，加人物和设定的名单。', 'One call of the scribe a chapter: its whole text, and the lists of people and entries.')
-          : t('关着：记忆、人物履历、线索、龙套名单不再自己更新；没收录的章，后面的写作照它的章纲和带得上的正文。要收录：总览页或写作页的“收录”。', 'Off: memory, lives, threads and the list of walk-ons are no longer kept up by themselves; a chapter not digested is known to later writing by its outline and by what of its text fits. To digest: "Digest" on the overview or the writing page.')}</p>
-        <label className="nv-check">
-          <input type="checkbox" checked={draft.siftCast !== false} onChange={(event) => { update({ siftCast: event.target.checked }) }} />
-          <span>{t('收录之后，让策划筛一遍没立卡的新名字', 'After digests, have the planner look through the new names without a card')}</span>
-        </label>
-        <p className="nv-muted nv-small nv-check-note">{t('策划是 agent，会去书里查：有新名字时，这一趟比收录本身贵得多。', 'The planner is an agent and looks things up in the book: where there are new names, this costs far more than the digest itself.')}</p>
-        <label className="nv-check">
-          <input type="checkbox" checked={draft.settleSuggestions !== false} onChange={(event) => { update({ settleSuggestions: event.target.checked }) }} />
-          <span>{t('设定建议由策划审定后自动收进（不勾：逐条等我采纳）', 'Suggestions for the bible are settled by the planner and entered (off: each waits for me)')}</span>
-        </label>
-        <label className="nv-check">
-          <input type="checkbox" checked={draft.plansFollow === true} onChange={(event) => { update({ plansFollow: event.target.checked }) }} />
-          <span>{t('正文改了之后，自动照正文改章纲和节拍', 'Once a chapter\'s text is changed, its plan and beats are set by the text by themselves')}</span>
-        </label>
-        <p className="nv-muted nv-small nv-check-note">{t('默认不勾：章纲是你定的，写出来的正文不自己变成章纲。要更新，在那一章的章纲上点“照正文更新章纲”。', 'Off unless you tick it: the plan is your design, and text that was written does not become it by itself. To set a plan by its text, press Update the plan from the text on that chapter\'s plan.')}</p>
-        <label className="nv-check">
-          <input type="checkbox" checked={draft.reviewMends !== false} onChange={(event) => { update({ reviewMends: event.target.checked }) }} />
-          <span>{t('审校之后，把找到的问题交给策划修订，出修订提案（不勾：只列问题）', 'After a review, hand what it found to the planner to mend, as proposals (off: the issues are listed and nothing changes)')}</span>
-        </label>
-        <p className="nv-muted nv-small nv-check-note">{t('审校一章、批量审校都算：策划把找到的问题放在一起看，每一处改动是一条提案，出现在那条问题下面，采纳了才进正文。每次审校多一趟修订的花费；审校按钮旁的小三角里也能切。', 'A chapter reviewed and a batch of them alike: the planner reads what was found side by side, and every change is a proposal beneath its issue — nothing enters the text until you accept it. Each review costs one mending more; the small triangle beside the review buttons switches it too.')}</p>
-        <label className="nv-check">
-          <input type="checkbox" checked={draft.recheckIssues !== false} onChange={(event) => { update({ recheckIssues: event.target.checked }) }} />
-          <span>{t('采纳修订之后，自动核对这一章还开着的审校意见', 'After a revision is accepted, have the issues still open in that chapter checked against the new text')}</span>
-        </label>
+      <section className="nv-card" data-section="auto">
+        <SectionTitle>{inBook ? t('自动做的事：这本书自己的', 'Done by itself: this book\'s own') : t('自动做的事', 'Done by itself')}</SectionTitle>
+        <p className="nv-muted nv-small">
+          {t('正文写了、改了之后，工坊自己接着做的。每一项都是模型调用；关掉的，要用时自己点。', 'What follows by itself once text is written or changed. Each is model calls; what is off waits for your press.')}{' '}
+          {inBook
+            ? t(`这里只管《${bookTitle}》：存在书里，没另设的那几项沿用全局。`, `Here for "${bookTitle}" alone: kept in the book; what is not set here is as for every book.`)
+            : t('对所有的书生效；哪一项都可以给一本书另设。', 'For every book; a book can have its own of any of them.')}
+          {!inBook && book !== undefined ? <>{' '}<button type="button" className="nv-link" onClick={() => { setScope('book') }}>{t(`给《${bookTitle}》另设…`, `Set them for "${bookTitle}"…`)}</button></> : null}
+        </p>
+        {inBook ? (
+          // A book's own: each switch as the Studio has it, or on, or off, for this book.
+          <div className="nv-form-grid">
+            {autoRows.map(row => (
+              <OwnMark key={row.key} own={own[row.key] !== undefined} scope={scope} t={t}>
+                <Field label={row.label} hint={row.note?.(own[row.key] ?? everyAuto[row.key])}>
+                  <Select<'' | 'on' | 'off'>
+                    value={own[row.key] === undefined ? '' : own[row.key] === true ? 'on' : 'off'}
+                    options={[
+                      { value: '', label: asEvery(onWord(everyAuto[row.key])) },
+                      { value: 'on', label: t('这本书：开', 'This book: on') },
+                      { value: 'off', label: t('这本书：关', 'This book: off') },
+                    ]}
+                    onChange={(value) => { updateOwn({ [row.key]: value === '' ? undefined : value === 'on' }) }}
+                  />
+                </Field>
+              </OwnMark>
+            ))}
+          </div>
+        ) : autoRows.map(row => (
+          <OwnMark key={row.key} own={false} scope={scope} t={t} elsewhere={own[row.key] !== undefined ? t(`《${bookTitle}》另设：${onWord(own[row.key] === true)}`, `"${bookTitle}" has its own: ${onWord(own[row.key] === true)}`) : undefined}>
+            <label className="nv-check">
+              <input type="checkbox" checked={everyAuto[row.key]} onChange={(event) => { update({ [row.key]: event.target.checked }) }} />
+              <span>{row.label}</span>
+            </label>
+            {row.note !== undefined ? <p className="nv-muted nv-small nv-check-note">{row.note(everyAuto[row.key])}</p> : null}
+          </OwnMark>
+        ))}
+        {inBook ? <p className="nv-muted nv-small">{t('下面这一项不随书：它对所有的书一起设。', 'The one below is not a book\'s own: it is set for every book together.')}</p> : null}
         {/* Not model calls, but done by itself all the same: every call is put on record. */}
         <CallsKept value={draft.callsMb} onChange={(value) => { setDraft(({ callsMb: _old, ...rest }) => (value !== undefined ? { ...rest, callsMb: value } : rest)); setDirty(true) }} />
       </section>
@@ -914,6 +935,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
               ['passageTokens', t('改写选中的一段带多少上下文（tokens）', 'Context a selected passage is rewritten with (tokens)'), String(draft.context.passageTokens ?? PASSAGE_CONTEXT_DEFAULT), 1],
               ['chapterTokens', t('改一章、整章重写带多少上下文（tokens）', 'Context a chapter is revised with (tokens)'), String(draft.context.chapterTokens ?? CHAPTER_CONTEXT_DEFAULT), 1],
               ['plannerWholeTokens', t('多小的书整本摆给备料的策划（tokens；0：总是让它自己去读）', 'How small a book lies whole before the planner preparing material (tokens; 0: it always reads for itself)'), String(draft.context.plannerWholeTokens ?? PLANNER_WHOLE_DEFAULT), 0],
+              ['readTokens', t('审校、修订时最多读多少（tokens；0：不设上限）', 'How much a review or a revision may read (tokens; 0: no cap)'), String(draft.context.readTokens ?? READ_DEFAULT), 0],
             ] as const).map(([key, label, everywhere, least]) => (
               <OwnMark key={key} own={own.context[key] !== undefined} scope={scope} t={t}>
                 <Field label={label}>
@@ -992,6 +1014,9 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
           </Field>
           <Field label={t('多小的书整本摆给备料的策划（tokens）', 'How small a book lies whole before the planner preparing material (tokens)')} hint={t(`“写作、改写前谁来备料”选了策划时用：一条线的正文、人物卡、设定加起来不超过这个数，策划一次请求备完；更大的书它自己去读。0：总是让它自己去读。留空：${PLANNER_WHOLE_DEFAULT.toLocaleString()}`, `Where the planner prepares the writer's material: a line whose text, cards and world come to no more than this is put before it whole, and it prepares in one request; a larger one it reads in for itself. 0: it always reads for itself. Empty: ${PLANNER_WHOLE_DEFAULT.toLocaleString()}`)}>
             <TextInput inputMode="numeric" value={draft.context.plannerWholeTokens !== undefined ? String(draft.context.plannerWholeTokens) : ''} placeholder={String(PLANNER_WHOLE_DEFAULT)} onChange={(event) => { const value = number(event.target.value); const { plannerWholeTokens: _old, ...rest } = draft.context; update({ context: value !== undefined && value >= 0 ? { ...rest, plannerWholeTokens: Math.round(value) } : rest }) }} />
+          </Field>
+          <Field label={t('审校、修订时最多读多少（tokens）', 'How much a review or a revision may read (tokens)')} hint={t(`审校一章、策划定在哪改，开头只拿到书的底本（文风、人物和设定的名单、章纲）、各章梗概和手上这一章；别的——哪一章的原文、哪张人物卡——它自己用工具去读。这里是它一趟最多读多少：读满了，工具就告诉它“照已经查到的交稿”。0：不设上限。留空：${READ_DEFAULT.toLocaleString()}`, `A review of a chapter, and the planner settling what changes, start from the book's base (the style, everybody and everything by name, the outline), an outline of each chapter and the chapter in hand; the rest — the text of some chapter, a card — they read with their tools. This is how much one of them may read in one piece of work: past it, the tools say to hand the work in from what was found. 0: no cap. Empty: ${READ_DEFAULT.toLocaleString()}`)}>
+            <TextInput inputMode="numeric" value={draft.context.readTokens !== undefined ? String(draft.context.readTokens) : ''} placeholder={String(READ_DEFAULT)} onChange={(event) => { const value = number(event.target.value); const { readTokens: _old, ...rest } = draft.context; update({ context: value !== undefined && value >= 0 ? { ...rest, readTokens: Math.round(value) } : rest }) }} />
           </Field>
         </div>
         {view.context !== undefined && view.context.length > 0 ? (

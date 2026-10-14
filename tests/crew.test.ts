@@ -69,7 +69,7 @@ describe('the crew', () => {
       expect(task.rules).toContain('这是一次委派')
       // The task says how to hand in, after whatever it said about the answer's shape.
       expect(task.prompt).toMatch(/只输出 JSON。\n\n---\n交回方式：.*调用 submit_note/s)
-      expect(task.tools.map(tool => tool.name)).toEqual(['book_read', 'book_search', 'submit_note'])
+      expect(task.tools.map(tool => tool.name)).toEqual(['book_read', 'book_search', 'book_find', 'submit_note'])
       expect(task.inherit).toEqual({ mode: 'named', names: [] })
       seen.push(await call('book_read', { what: 'character' }))
       seen.push(await call('book_read', { what: 'chapter', ref: '1', limit: 400 }))
@@ -174,7 +174,7 @@ describe('the crew', () => {
       expect(task.inherit).toEqual({ mode: 'named', names: ['web_search', 'web_fetch', 'skill'] })
       // A task in words has no tool to hand in with: the report is the last reply.
       expect(task.rules).toContain('把结果写成你的最后一段回答')
-      expect(task.tools.map(tool => tool.name)).toEqual(['book_read', 'book_search'])
+      expect(task.tools.map(tool => tool.name)).toEqual(['book_read', 'book_search', 'book_find'])
       // The role's skill travels with it, and is its alone.
       expect(task.skills?.map(skill => skill.name)).toEqual(['novel-trend-research'])
       await call('book_read', { what: 'outline' })

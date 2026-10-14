@@ -641,13 +641,14 @@ const pendingSifts = new Map<string, ReturnType<typeof setTimeout>>()
  * where no name is new and nobody has been seen in more chapters since they were looked at.
  */
 export function scheduleSift(core: NovelCore, runtime: ProjectRuntime, task: Pick<TaskContext, 'origin' | 'agentRoute'>, wait = 4000): void {
-  if (core.currentSettings().siftCast === false) return
   const root = runtime.project.root
   const before = pendingSifts.get(root)
   if (before !== undefined) clearTimeout(before)
   const timer = setTimeout(() => {
     pendingSifts.delete(root)
     void (async () => {
+      // (Asked when its turn comes, of this book: its own switch where it has one, else the Studio's.)
+      if (!(await core.autoFor(runtime)).siftCast) return
       const running = core.jobs.list(root).filter(job => job.status === 'running')
       // Its own pass is on its way already; and while chapters are still being digested, or a book taken in, the list is not yet what it will be.
       if (running.some(job => job.kind === 'bible' && job.title === 'sift cast')) return

@@ -26,7 +26,7 @@ import { readFile, readdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { CrewRole, CrewRun, ProjectManifest, PromptLanguage, ReferencesLooked } from '../shared/types'
-import { clip } from '../shared/text'
+import { clip, estimateTokens } from '../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from './core'
 import { completeJson, extractJson, LlmCallError, type LlmImage } from './llm'
 import { ProjectError } from './project'
@@ -282,6 +282,43 @@ export function bookTools(runtime: ProjectRuntime, signal?: AbortSignal, line?: 
         }
       },
     },
+    {
+      name: 'book_find',
+      description: `Find every place in the manuscript where some exact words stand — a name, a term, a number, a phrase: one call lists all of them, by chapter, each with the sentence it stands in. The way to learn where a thing is said (and that it is said nowhere else) without reading chapter after chapter; \`book_search\` is for meaning, this is for the very words.${whole ? '' : ' Within this line of the plot.'}`,
+      parameters: {
+        text: { type: 'string', required: true, description: 'The words, exactly as they stand in the text (two characters or more).' },
+        chapters: { type: 'string', description: 'Only these chapters: a number, or a range like 3-12. Left out: all of them.' },
+        limit: { type: 'integer', description: 'Most places listed (default 60).' },
+      },
+      async run(args) {
+        const wanted = argText(args.text)
+        if (wanted === undefined || [...wanted].length < 2) throw new Error('`text` is the exact words to find, two characters or more')
+        const range = /^\s*(\d+)\s*(?:[-–~至到]\s*(\d+))?\s*$/.exec(argText(args.chapters) ?? '')
+        const from = range !== null ? Number(range[1]) : 1
+        const to = range !== null ? Number(range[2] ?? range[1]) : Number.MAX_SAFE_INTEGER
+        const most = Math.max(1, Math.min(200, argInt(args.limit) ?? 60))
+        const path = await runtime.project.chapters(kept?.line)
+        const lines: string[] = []
+        let total = 0
+        const inChapters = new Set<number>()
+        for (const chapter of path) {
+          if (chapter.index < from || chapter.index > to) continue
+          const text = texts?.get(chapter.plan.id) ?? await runtime.project.chapterText(chapter.plan.id)
+          for (let at = text.indexOf(wanted); at >= 0; at = text.indexOf(wanted, at + wanted.length)) {
+            total += 1
+            inChapters.add(chapter.index)
+            if (lines.length >= most) continue
+            // The sentence it stands in: back to the last full stop or line break, on to the next.
+            const before = Math.max(text.lastIndexOf('\n', at - 1), text.lastIndexOf('。', at - 1), text.lastIndexOf('.', at - 1)) + 1
+            const ends = [text.indexOf('\n', at), text.indexOf('。', at), text.indexOf('. ', at)].filter(end => end >= 0)
+            const after = ends.length > 0 ? Math.min(...ends) + 1 : text.length
+            lines.push(`#${chapter.index} ${chapter.plan.title}: ${text.slice(Math.max(before, at - 80), Math.min(after, at + wanted.length + 80)).trim()}`)
+          }
+        }
+        if (total === 0) return `"${wanted}" stands nowhere in ${range !== null ? `chapters ${from}–${to === Number.MAX_SAFE_INTEGER ? 'end' : to}` : 'the manuscript'} — word for word. (Other spellings, or the same thing said otherwise, are not found by this: try book_search.)`
+        return `"${wanted}" stands ${total} time(s), in ${inChapters.size} chapter(s) (${[...inChapters].sort((left, right) => left - right).map(index => `#${index}`).join(' ')}):\n${lines.join('\n')}${total > lines.length ? `\n… ${total - lines.length} more not listed: narrow it with \`chapters\`, or raise \`limit\`.` : ''}`
+      },
+    },
   ]
 }
 
@@ -417,6 +454,19 @@ export interface Assignment<T> {
    * them, and what it read comes back with the result (`Assigned.referenced`).
    */
   lookUp?: 'derive' | 'review'
+  /**
+   * Looked at once `validate` has taken the result's shape: a check that has to read — what was quoted, held against
+   * where it is said to stand. Throws with what is wrong; the role reads that and hands in again (an agent as often
+   * as it has steps for, a plain call once).
+   * @param last - nobody will be asked again after this: what can be let go of is let go, not thrown for.
+   */
+  check?: (value: T, last?: boolean) => Promise<void>
+  /**
+   * How much the role may read with its tools in this piece of work, in tokens of what the tools return: past
+   * it, a reading tool says the reading is spent and the work is to be handed in from what was found. The work
+   * starts from a map of the book and fetches what it needs — this keeps the fetching from becoming the book.
+   */
+  readCap?: number
 }
 
 export interface Assigned<T> {
@@ -426,6 +476,8 @@ export interface Assigned<T> {
   referenced?: ReferencesLooked
   /** The work was done by the agent kept from an earlier piece of work, going on from all it had read (`Assignment.resume`). */
   resumed?: true
+  /** How much the role read with its tools, in tokens of what they returned — and whether it ran into the cap (`Assignment.readCap`). */
+  read?: { tokens: number; calls: number; capped?: true }
 }
 
 /** What an agent is told about handing in, after a task that was written for a plain reply. */
@@ -471,16 +523,27 @@ async function assignNow<T>(core: NovelCore, runtime: ProjectRuntime, task: Task
   }
 
   const byCall = async (note?: string): Promise<Assigned<T>> => {
-    const { value } = await completeJson(core.llm, {
+    const ask = async (prompt: string): Promise<T> => (await completeJson(core.llm, {
       route,
       ...(work.system !== undefined ? { system: work.system } : {}),
-      prompt: work.prompt,
+      prompt,
       ...(work.images !== undefined && work.images.length > 0 ? { images: work.images } : {}),
       ...(work.temperature !== undefined ? { temperature: work.temperature } : {}),
       ...(task.signal !== undefined ? { signal: task.signal } : {}),
       onText: (_delta, total) => { task.job?.rewrite(total) },
       validate,
-    })
+    })).value
+    let value = await ask(work.prompt)
+    if (work.check !== undefined) {
+      try {
+        await work.check(value)
+      } catch (error) {
+        if (isAbort(error) || task.signal?.aborted === true) throw error
+        // Asked once more, told what did not hold: what it hands in then is checked by the same rule (which gives way where it must).
+        value = await ask(`${work.prompt}\n\n---\n${L(lang, '上一次交回的有地方不能用：', 'Part of what was handed in could not be used: ')}${errorMessage(error)}\n${L(lang, '改好，把整个结果重新交一次。', 'Put it right and hand the whole result in again.')}`)
+        await work.check(value, true)
+      }
+    }
     // Asked in one request, with no tools: nothing of the references could be read, and that is said.
     return { value, run: record({ role: work.role, label: work.label, by: 'call', ...(note !== undefined ? { note } : {}) }), ...looked(L(lang, `${name}这次是一问一答、没有工具，查不了参考文献。`, `${name} worked in one plain call this time, with no tools: the references could not be read.`)) }
   }
@@ -499,7 +562,7 @@ async function assignNow<T>(core: NovelCore, runtime: ProjectRuntime, task: Task
     parameters: work.parameters ?? { result: { type: 'json', required: true, description: L(lang, '任务要求的那个 JSON，整个交上来。', 'The JSON the task asks for, whole.') } },
     closing: true,
     final: true,
-    run(args) {
+    async run(args) {
       // The author has this kind of work look in the references first: it is sent back to them — twice at most, so
       // that a role that will not look still hands its work in, and is told on.
       if (first && references.tools.length > 0 && calls === 0 && sentBack < 2) {
@@ -507,6 +570,7 @@ async function assignNow<T>(core: NovelCore, runtime: ProjectRuntime, task: Task
         throw new Error(L(lang, `还没有查参考文献：作者要这件活先查再做。先用 reference_read（读某一本的大纲、设定、人物、文风、正文）或 reference_search（搜）查这件活用得上的，照查到的把结果改好，再交回。`, `The references have not been looked at: the author has this piece of work look in them first. Read with reference_read (a reference's outline, world, people, style, text) or find with reference_search what the work can use, mend the result by what you find, then hand it in.`))
       }
       const value = validate(declared ? args : args.result)
+      if (work.check !== undefined) await work.check(value)
       delivered = { value }
       return L(lang, '收到，已通过检查。', 'Received and checked.')
     },
@@ -522,6 +586,24 @@ async function assignNow<T>(core: NovelCore, runtime: ProjectRuntime, task: Task
   const lookFirst = first && references.tools.length > 0
     ? L(lang, '\n\n---\n动手之前：这本书有参考文献（清单和作者的要求在你的规则里）。先用 reference_read / reference_search 查这件活用得上的，再做。', '\n\n---\nBefore you begin: this book has references (the list, and what the author asks of them, is among your rules). Look in them with reference_read / reference_search for what this work can use, then do it.')
     : ''
+  // What the role reads with its tools is counted — and, where the work has a cap, stops being handed out past it.
+  const reading = { tokens: 0, calls: 0, capped: false }
+  const counted = (tools: RoleTool[]): RoleTool[] => tools.map(tool => ({
+    ...tool,
+    run: async (args: Parameters<RoleTool['run']>[0]) => {
+      if (work.readCap !== undefined && work.readCap > 0 && reading.tokens >= work.readCap) {
+        reading.capped = true
+        return L(lang,
+          `这一趟能读的已经读满了（约 ${work.readCap} token）。照已经查到的把活交回；没来得及查的地方，在交回的说明里写一句“没查到哪里”。`,
+          `What this piece of work may read is spent (about ${work.readCap} tokens). Hand the work in from what was found; where something was not looked up, say so in what you hand in.`)
+      }
+      const out = await tool.run(args)
+      reading.calls += 1
+      reading.tokens += typeof out === 'string' ? estimateTokens(out) : 0
+      return out
+    },
+  }))
+  const readSaid = (): { read?: { tokens: number; calls: number; capped?: true } } => (reading.calls > 0 || reading.capped ? { read: { tokens: reading.tokens, calls: reading.calls, ...(reading.capped ? { capped: true as const } : {}) } } : {})
   let outcome: RoleOutcome
   const asked = (resume: Assignment<T>['resume']): RoleTask => ({
       role: work.role,
@@ -532,7 +614,7 @@ async function assignNow<T>(core: NovelCore, runtime: ProjectRuntime, task: Task
       ...(resume !== undefined ? { resume: resume.key } : {}),
       ...(work.keep !== undefined ? { keep: work.keep } : {}),
       ...(work.images !== undefined && work.images.length > 0 ? { images: work.images } : {}),
-      tools: [...bookTools(runtime, task.signal, work.line, work.texts), ...references.tools, ...(work.tools ?? []), deliver],
+      tools: [...counted([...bookTools(runtime, task.signal, work.line, work.texts), ...references.tools]), ...(work.tools ?? []), deliver],
       ...(skills.length > 0 ? { skills } : {}),
       inherit: plan.inherit,
       route,
@@ -559,7 +641,7 @@ async function assignNow<T>(core: NovelCore, runtime: ProjectRuntime, task: Task
     if (isAbort(error) || task.signal?.aborted === true) throw error
     // What was handed in before the run broke is still the result.
     const kept = delivered as { value: T } | undefined
-    if (kept !== undefined) return { value: kept.value, run: record({ role: work.role, label: work.label, by: 'agent' }), ...looked() }
+    if (kept !== undefined) return { value: kept.value, run: record({ role: work.role, label: work.label, by: 'agent' }), ...looked(), ...readSaid() }
     core.log(`the ${work.role} agent failed on "${work.label}"`, error)
     const why = clip(errorMessage(error), 200)
     task.job?.write(L(lang, `\n${name}的 agent 没能运行（${why}）；改用一次普通调用。\n`, `\nThe ${name} agent could not run (${why}); asking in one plain call instead.\n`))
@@ -568,7 +650,7 @@ async function assignNow<T>(core: NovelCore, runtime: ProjectRuntime, task: Task
   task.signal?.throwIfAborted()
   const ran = { role: work.role, label: work.label, by: 'agent' as const, steps: outcome.steps, ...(outcome.session !== undefined ? { session: outcome.session } : {}), ...(outcome.parent !== undefined ? { parent: outcome.parent } : {}) }
   const handed = delivered as { value: T } | undefined
-  if (handed !== undefined) return { value: handed.value, run: record(ran), ...looked(), ...(outcome.resumed === true ? { resumed: true as const } : {}) }
+  if (handed !== undefined) return { value: handed.value, run: record(ran), ...looked(), ...readSaid(), ...(outcome.resumed === true ? { resumed: true as const } : {}) }
   // A model that answered in its reply what it was to hand in through the tool has still done the work.
   if (outcome.text.length > 0) {
     try {

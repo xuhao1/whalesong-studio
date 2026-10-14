@@ -244,7 +244,7 @@ describe('material for a video', () => {
       expect(task.prompt).toContain('字幕（必须有）')
       expect(task.prompt).toContain('用什么办法由你定')
       expect(task.prompt).not.toMatch(/-c:s|mov_text|-map/)
-      expect(task.tools.map(tool => tool.name)).toEqual(['book_read', 'book_search', 'video_check', 'video_submit'])
+      expect(task.tools.map(tool => tool.name)).toEqual(['book_read', 'book_search', 'book_find', 'video_check', 'video_submit'])
       expect(task.skills?.map(skill => skill.name)).toEqual(['novel-video-editing'])
       // Post-production's own work is done with the conversation's tools, where it has them.
       expect(task.inherit).toMatchObject({ mode: 'named' })

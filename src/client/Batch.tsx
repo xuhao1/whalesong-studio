@@ -33,6 +33,7 @@ import {
 import { CharacterPicker, defaultCastFilter, matchesCast, useCastFilter } from './CharacterPicker'
 import { useSheetsAsk } from './SheetsAsk'
 import { ManyModels } from './Trial'
+import { useAuto } from './Material'
 
 /** The batch a job carries, when it is one. */
 export function batchOf(job: JobInfo | undefined): BatchView | undefined {
@@ -476,7 +477,7 @@ export function TextBatchDialog({ chapters, preset, line, onClose }: { chapters:
   const job = useBatchJob('text')
   const running = job?.status === 'running'
   // Whether written chapters are digested is the author's setting: a run that writes begins without that step where it is off.
-  const autoDigest = useSnapshot(snapshot => snapshot.settings?.settings.autoDigest)
+  const autoDigest = useAuto().set.autoDigest
   const [steps, setSteps] = useState<Set<TextStep>>(() => new Set(preset.filter(step => step !== 'digest' || !preset.includes('write') || autoDigest !== false)))
   const writing = steps.has('write')
   const unwritten = chapters.filter(chapter => !chapter.hasText)

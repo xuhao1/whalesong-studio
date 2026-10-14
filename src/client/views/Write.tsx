@@ -28,7 +28,7 @@ import { CHAPTER_STATUS, CHAPTER_STATUS_TONE, ISSUE_TYPE, languageLabel, SEVERIT
 import { MoveChapters } from '../MoveChapters'
 import { framedOf, framedWord, PassagePictureDialog } from '../PassagePicture'
 import { useSheetsAsk } from '../SheetsAsk'
-import { ChapterMaterial, useMaterialBy } from '../Material'
+import { ChapterMaterial, useAuto, useMaterialBy } from '../Material'
 import { PickPicture } from '../PlacePicture'
 import { TextFigure, TextPictures } from '../TextPictures'
 import { ChapterText, type ChapterTextHandle } from '../ChapterText'
@@ -224,7 +224,8 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
   const jobs = useSnapshot(snapshot => snapshot.jobs)
   const jump = useSnapshot(snapshot => snapshot.jump)
   // Whether a chapter is digested by itself once it is written or changed: said where its memory is found stale.
-  const autoDigest = useSnapshot(snapshot => snapshot.settings?.settings.autoDigest)
+  // (For this book: its own switch where it has one, else the Studio's.)
+  const autoDigest = useAuto().set.autoDigest
   const revision = project.revision
   const doc = useLoad<ChapterDocument>(signal => controller.api.call('chapter.read', { root, id: chapter.id }, signal), [root, chapter.id, revision])
   // Moving this chapter to another place in the plot, while the author says where.

@@ -378,7 +378,7 @@ export async function novelizePlay(core: NovelCore, runtime: ProjectRuntime, par
   }, line !== undefined ? { line: line.id } : after !== undefined ? { after: after.plan.id } : {})
   const saved = await project.saveChapterText(plan.id, text, { snapshot: false, status: 'drafted' })
   await project.savePlaySession({ ...(await requireSession(project, session.id)), outcome: 'novelized', novelizedChapter: plan.id, ...(line !== undefined ? { novelizedLine: line.id } : {}) })
-  scheduleDigest(core, runtime, plan.id, task)
+  await scheduleDigest(core, runtime, plan.id, task)
   task.job?.result({ chapterId: plan.id })
   return { chapterId: plan.id, title, words: saved.words, ...(line !== undefined ? { line: { id: line.id, title: line.title } } : {}) }
 }

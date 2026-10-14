@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 /**
- * A review hands what it found on to be mended (`reviewMends`): the open issues nobody was handed yet go to the
- * planner together, in a job of its own, and every change waits as a proposal for the issues it mends — after one
- * chapter's review, and once for all of a batch's.
+ * A review hands what it found on to be mended (`reviewMends`). The reviewer closes what it can of its own chapter —
+ * a small change it writes out is the proposal as it stands, a passage it describes goes to the writer; what takes a
+ * change in another chapter goes to the planner; what is the author's to decide waits for the author. A job of its
+ * own, after one chapter's review and once for all of a batch's — and every change waits beneath the issue it mends.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { runBatch, textPlan } from '../src/core/pipelines/batch'
@@ -31,16 +32,28 @@ describe('what a review finds goes on to be mended', () => {
     await project.saveChapterText(two.id, TWO)
     return { one: one.id, two: two.id }
   }
-  /** A reviewer that finds the wrong hand in chapter 2 and nothing in chapter 1; a planner that has chapter 2 rewritten. */
+  // (Both are told they read as an editor: the reviewer is the one asked for a verdict.)
+  const writerAsked = (request: LlmRequest): boolean => request.route.for?.role === 'writer'
+  /**
+   * A reviewer that finds four things in chapter 2 and nothing in chapter 1: the wrong hand (a word to put right — it
+   * writes the change itself), a bare sentence (a passage — it says how, for the writer), a season that does not
+   * agree with chapter 1 (another chapter's to change — the planner's), and an ending that is the author's to decide.
+   * A planner that changes the other end; a writer that writes the passage.
+   */
   const crew = (): void => {
     bed.llm.responder = (request) => {
       if (reviewer(request)) {
-        return request.prompt.includes(TWO)
-          ? JSON.stringify({ verdict: '惯用手写反了。', issues: [{ severity: 'high', type: 'continuity', quote: '右手握着剑', explanation: '第一章写她是左撇子。', suggestion: '改成左手' }, { severity: 'low', type: 'language', quote: '那是盛夏', explanation: '这句突兀。' }] })
+        return request.prompt.includes(`### 本章正文\n${TWO}`)
+          ? JSON.stringify({ verdict: '惯用手写反了。', issues: [
+            { severity: 'high', type: 'continuity', quote: '右手握着剑', explanation: '第一章写她是左撇子。', suggestion: '改成左手', against: { kind: 'chapter', ref: '1', quote: '她生来是左撇子' }, find: '她右手握着剑下了山。', replace: '她左手握着剑下了山。' },
+            { severity: 'low', type: 'style', quote: '那是盛夏。', explanation: '这句突兀', find: '那是盛夏。', how: '写成一小段山下的暑气，蝉声、热浪' },
+            { severity: 'medium', type: 'timeline', explanation: '第一章没交代季节，这里忽然是盛夏。', against: { kind: 'chapter', ref: '1', quote: '从小如此' }, wider: true },
+            { severity: 'low', type: 'pacing', explanation: '结尾要不要留一个钩子，看作者的打算。' },
+          ] })
           : JSON.stringify({ verdict: '没有问题。', issues: [] })
       }
-      if (planner(request)) return JSON.stringify({ chapters: [{ index: 2, reason: '右手改左手' }], note: '惯用手前后一致。' })
-      return '她左手握着剑下了山。时值盛夏。'
+      if (planner(request)) return JSON.stringify({ edits: [{ chapter: 1, find: '从小如此。', replace: '从小如此。那年夏天来得早。', why: '先把季节交代了' }], chapters: [], note: '季节在第一章补一句。' })
+      return '山下是盛夏，蝉叫得人心烦，热浪贴着石阶往上涌。'
     }
   }
   const mendJobs = () => bed.core.jobs.list(bed.runtime.project.root).filter(job => job.kind === 'revise' && job.title === MEND_REVIEW_JOB)
@@ -57,38 +70,83 @@ describe('what a review finds goes on to be mended', () => {
     expect(reviewMends(bed.core, true)).toBe(true)
   })
 
-  it('hands the open issues of the chapter reviewed to one mending — a job of its own — and each change waits for the issues it mends', async () => {
+  it('has the reviewer close what it can: its own small change is the proposal as it stands, a passage goes to the writer, what reaches another chapter to the planner — and what is the author\'s waits', async () => {
     const { project } = bed.runtime
     const ids = await book()
     crew()
-    const review = await reviewChapter(bed.core, bed.runtime, { chapter: ids.two }, task)
-    expect(review.issues).toHaveLength(2)
-    // Nothing was handed over by the review itself: the text and the issues are as the review left them.
-    expect(bed.llm.requests.filter(planner)).toHaveLength(0)
-    expect(await unmended(bed.runtime, [ids.two])).toEqual(review.issues.map(issue => ({ chapter: ids.two, issue: issue.id })))
+    await bed.core.settings.update({ mendBy: 'auto', models: { writer: { provider: 'p', model: 'writer-model' }, analyst: { provider: 'p', model: 'crew-model' }, architect: { provider: 'p', model: 'crew-model' } } as never })
+    const review = await reviewChapter(bed.core, bed.runtime, { chapter: ids.two, mends: 'auto' }, task)
+    expect(review.issues).toHaveLength(4)
+    const [hand, season, bare, ending] = [review.issues.find(issue => issue.quote === '右手握着剑')!, review.issues.find(issue => issue.type === 'timeline')!, review.issues.find(issue => issue.quote === '那是盛夏。')!, review.issues.find(issue => issue.type === 'pacing')!]
+    // What each says of how it is closed is kept on it; what it rests on, too — looked for in chapter 1 when it was filed.
+    expect(hand).toMatchObject({ fix: { find: '她右手握着剑下了山。', replace: '她左手握着剑下了山。' }, against: { kind: 'chapter', ref: '1', quote: '她生来是左撇子' } })
+    expect(bare.fix).toEqual({ find: '那是盛夏。', how: '写成一小段山下的暑气，蝉声、热浪' })
+    expect(season).toMatchObject({ wider: true })
+    expect(season.fix).toBeUndefined()
+    expect([ending.fix, ending.wider]).toEqual([undefined, undefined])
+    // The review itself changed nothing and proposed nothing: one request, the reviewer's.
+    expect(bed.llm.requests).toHaveLength(1)
+    expect(await project.proposals()).toEqual([])
+    expect((await unmended(bed.runtime, [ids.two], 'closing')).map(item => item.issue).sort()).toEqual([hand.id, bare.id].sort())
+    expect((await unmended(bed.runtime, [ids.two], 'wider')).map(item => item.issue)).toEqual([season.id])
+    // What the reviewer was asked: how an issue is closed, three ways, and to say what it is at odds with.
+    for (const part of ['了结：每条问题三种里给一种', '你直接写：find 是这一章里要被换掉的原文', '交给写手，不写 replace', '加 "wider": true：策划会接着去查该改哪一头', '该由作者拿主意的', '取证：拿这一章和别处对照得出的问题']) expect(bed.llm.requests[0]!.prompt, part).toContain(part)
 
     const started = await mendReviewed(bed.core, bed.runtime, [ids.two], task)
-    expect(started).toMatchObject({ issues: 2 })
+    // Three issues are handed on: the two the reviewer closes, and the one the planner traces. The fourth is the author's.
+    expect(started).toMatchObject({ issues: 3 })
     expect(mendJobs().map(job => [job.id, job.target, job.origin])).toEqual([[started!.jobId, ids.two, 'user']])
     await settled()
-    expect(mendJobs()[0]).toMatchObject({ status: 'done', result: { output: { issues: 2, chapters: 1, places: 1, failed: 0, note: '惯用手前后一致。' } } })
+    expect(mendJobs()[0]).toMatchObject({ status: 'done', result: { output: { issues: 3, places: 3, failed: 0, wrote: { analyst: 1, planner: 1, writer: 1 }, note: '季节在第一章补一句。' } } })
 
-    // One run of the planner, told of both issues side by side.
-    const asked = bed.llm.requests.filter(planner)
-    expect(asked).toHaveLength(1)
-    for (const part of ['发现了下面 2 个问题', '第一章写她是左撇子', '审校的建议：改成左手', '这句突兀']) expect(asked[0]!.prompt, part).toContain(part)
-    // The change waits as a proposal for both issues; the text is as it was, and the issues say they were handed over.
+    // Who was asked: the writer once, for the passage — handed the place, what stands around it and what the reviewer
+    // said of it, nothing of the book gathered again — and the planner once, for the one issue that reaches chapter 1.
+    const after = bed.llm.requests.slice(1)
+    expect(after.filter(writerAsked)).toHaveLength(1)
+    expect(after.filter(planner)).toHaveLength(1)
+    const written = after.find(writerAsked)!
+    for (const part of ['交办的人已经查过设定和前文', '审校定的改法：写成一小段山下的暑气，蝉声、热浪', '那是盛夏。']) expect(written.prompt, part).toContain(part)
+    expect(written.prompt).not.toContain('## 设定')
+    const traced = after.find(planner)!
+    // The planner is told the one issue, what it rests on, and has both chapters before it: the one it was found in and the one it is at odds with.
+    // It goes on from what the reviewer closed: chapter 2 is before it as it would read with those changes in, they
+    // are named as waiting, and it is told so — nothing is proposed for those sentences a second time.
+    for (const part of [
+      '发现了下面 1 个问题', '第一章没交代季节', '它对不上的是（已核对过原处）：第 1 章：“从小如此”',
+      '### 第 2 章《下山》\n\n她左手握着剑下了山。山下是盛夏，蝉叫得人心烦，热浪贴着石阶往上涌。', `### 第 1 章《雨夜》\n\n${ONE}`,
+      '## 已经在案的', '等着作者确认的改动（它圈住的句子不再圈；要改得不一样才圈进来——那会取代它）', '上面给出的正文已经带着那些等着的改动',
+    ]) expect(traced.prompt, part).toContain(part)
+    // What is steady stands first, what is asked last: the book's base, the story so far, the text — then this piece of work.
+    const order = ['# 《七日未寄》', '## 前情', '## 章节正文', '## 已经在案的', '## 要修的问题', '只输出 JSON'].map(part => traced.prompt.indexOf(part))
+    expect(order.every(at => at >= 0)).toBe(true)
+    expect([...order].sort((left, right) => left - right)).toEqual(order)
+
+    // Three changes wait, each beneath the issue it is for, each saying whose words it is; the text is as it was.
     const waiting = (await project.proposals()).filter(item => item.status === 'pending')
-    expect(waiting).toHaveLength(1)
-    expect([...(waiting[0]!.issues ?? [])].sort()).toEqual(review.issues.map(issue => issue.id).sort())
+    expect(waiting.map(item => [item.chapterId, item.before, item.after, item.wroteBy, item.issues]).sort((left, right) => String(left[1]).localeCompare(String(right[1])))).toEqual([
+      // (Made in another chapter than the issue was found in: it is the issue's by its batch, and shown beneath it so.)
+      [ids.one, '从小如此。', '从小如此。那年夏天来得早。', 'planner', undefined],
+      [ids.two, '她右手握着剑下了山。', '她左手握着剑下了山。', 'analyst', [hand.id]],
+      [ids.two, '那是盛夏。', '山下是盛夏，蝉叫得人心烦，热浪贴着石阶往上涌。', 'writer', [bare.id]],
+    ].sort((left, right) => String(left[1]).localeCompare(String(right[1]))))
     expect(await project.chapterText(ids.two)).toBe(TWO)
-    const after = (await project.review(ids.two))!
-    expect(after.issues.every(issue => issue.mending === waiting[0]!.batchId && issue.resolved !== true)).toBe(true)
+    const now = (await project.review(ids.two))!
+    expect(now.issues.filter(issue => issue.mending !== undefined).map(issue => issue.id).sort()).toEqual([hand.id, season.id, bare.id].sort())
+    expect(now.issues.find(issue => issue.id === ending.id)!.mending).toBeUndefined()
 
-    // Handed over once: a second asking finds nothing that waits, and starts nothing.
-    expect(await unmended(bed.runtime, [ids.two])).toEqual([])
+    // Handed over once: a second asking finds nothing that waits to be handed on, and starts nothing.
     expect(await mendReviewed(bed.core, bed.runtime, [ids.two], task)).toBeUndefined()
     expect(mendJobs()).toHaveLength(1)
+  })
+
+  it('lists what it found and nothing more where the author has reviews only review', async () => {
+    const ids = await book()
+    crew()
+    const review = await reviewChapter(bed.core, bed.runtime, { chapter: ids.two }, task)
+    // Not asked how to close anything: the task says nothing of it.
+    expect(bed.llm.requests[0]!.prompt).not.toContain('了结：')
+    expect(bed.llm.requests[0]!.prompt).toContain('取证：')
+    expect(review.issues).toHaveLength(4)
   })
 
   it('starts nothing where the review found nothing, or what it found is settled', async () => {
@@ -114,14 +172,15 @@ describe('what a review finds goes on to be mended', () => {
     expect(bed.llm.requests.filter(planner)).toHaveLength(0)
 
     // Asked to: reviewed again, and then one mending for everything the two reviews found.
+    await bed.core.settings.update({ mendBy: 'auto' })
     const mended = await runBatch(await textPlan(bed.core, bed.runtime, { steps: ['review'], chapters: [ids.one, ids.two], redo: true, mend: true }), task, 'zh')
     expect(mended.done).toBe(2)
     expect(mendJobs()).toHaveLength(1)
     await settled()
-    expect(mendJobs()[0]).toMatchObject({ status: 'done', result: { output: { issues: 2, chapters: 1, places: 1 } } })
+    expect(mendJobs()[0]).toMatchObject({ status: 'done', result: { output: { issues: 3, places: 3, wrote: { analyst: 1, planner: 1, writer: 1 } } } })
     expect(bed.llm.requests.filter(planner)).toHaveLength(1)
     const waiting = (await project.proposals()).filter(item => item.status === 'pending')
-    expect(waiting.map(item => item.chapterId)).toEqual([ids.two])
+    expect(waiting.map(item => item.chapterId).sort()).toEqual([ids.one, ids.two, ids.two].sort())
     expect(await project.chapterText(ids.two)).toBe(TWO)
   })
 })

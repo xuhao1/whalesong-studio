@@ -13,7 +13,7 @@
  */
 import { providerDefault } from './recommended'
 import { hostOf, privateAddress, serviceOf, type ServiceId } from './services'
-import { IMAGE_SERVICE_KEYS, TTS_SERVICE_KEYS, parallelOf, writingSaid, type BookImageSettings, type ImageSettings, type NovelSettings, type ProjectManifest, type TtsSettings, type WritingSaid } from './types'
+import { IMAGE_SERVICE_KEYS, TTS_SERVICE_KEYS, autoSaid, parallelOf, writingSaid, type BookImageSettings, type ImageSettings, type NovelSettings, type ProjectManifest, type AutoSaid, type TtsSettings, type WritingSaid } from './types'
 
 /** OpenAI's own image models, wherever they are reached: a gateway on the author's network that hands on to them is no model of the author's. */
 const GPT_IMAGE = /^(gpt-image|dall-e|chatgpt-image)/i
@@ -278,22 +278,24 @@ export function withBookImage(settings: ImageSettings, book: BookImageSettings |
 }
 
 /** What of a book's manifest changes the settings that hold for it. */
-export type BookSettings = Pick<ProjectManifest, 'image' | 'tts' | 'sound' | 'embedding' | 'context' | 'vision'> & WritingSaid
+export type BookSettings = Pick<ProjectManifest, 'image' | 'tts' | 'sound' | 'embedding' | 'context' | 'vision'> & WritingSaid & AutoSaid
 
 /**
- * The settings as they hold for a book: its own pictures, speech, sound, retrieval, context budgets and ways of
- * writing and revising where it has them, the Studio's for the rest. (How much of its work goes out at once is
+ * The settings as they hold for a book: its own pictures, speech, sound, retrieval, context budgets, ways of
+ * writing and revising, and what follows by itself, where it has them — the Studio's for the rest. (How much of its work goes out at once is
  * counted apart: see the core's gates.)
  */
 export function withBook(settings: NovelSettings, book: BookSettings | undefined): NovelSettings {
   // Budgets that name nothing are none of the book's own.
   const context = Object.fromEntries(Object.entries(book?.context ?? {}).filter(([, value]) => value !== undefined && value !== null))
   const writing = writingSaid(book)
-  if (book === undefined || (book.image === undefined && book.tts === undefined && book.sound === undefined && book.embedding === undefined && book.vision === undefined && Object.keys(context).length === 0 && Object.keys(writing).length === 0)) return settings
+  const auto = autoSaid(book)
+  if (book === undefined || (book.image === undefined && book.tts === undefined && book.sound === undefined && book.embedding === undefined && book.vision === undefined && Object.keys(context).length === 0 && Object.keys(writing).length === 0 && Object.keys(auto).length === 0)) return settings
   const { kept: _kept, ...tts } = book.tts ?? { provider: undefined }
   return {
     ...settings,
     ...writing,
+    ...auto,
     image: withBookImage(settings.image, book.image),
     ...(book.tts !== undefined && tts.provider !== undefined ? { tts: tts as TtsSettings } : {}),
     ...(book.sound !== undefined ? { sound: book.sound } : {}),

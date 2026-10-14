@@ -23,6 +23,7 @@ import { errorMessage, isAbort } from '../util/async'
 import { scheduleDigest } from './digest'
 import { schedulePlanFollow } from './follow'
 import { guidePictures, picturesRead } from './guides'
+import { proposeSpan } from './onfile'
 import { chapterContext, figuresOf, mendsBold, mendsBy, onPending, partedAs, requireChapter, settleTakenIn, shouldApply, takenIn } from './revise'
 
 export interface AmendParams {
@@ -513,7 +514,7 @@ export async function amendChapter(core: NovelCore, runtime: ProjectRuntime, par
   result.places = parts.length
   if (apply) {
     await project.saveChapterText(chapter.plan.id, after, { reason: 'before-revise', status: chapter.plan.status === 'final' ? 'final' : 'revised' })
-    scheduleDigest(core, runtime, chapter.plan.id, task)
+    await scheduleDigest(core, runtime, chapter.plan.id, task)
     // (Written in at once, it is a change accepted: the chapter's plan follows it as it follows an accepted proposal.)
     schedulePlanFollow(core, runtime, chapter.plan.id, task)
     result.applied = true
@@ -529,8 +530,9 @@ export async function amendChapter(core: NovelCore, runtime: ProjectRuntime, par
     if (alone) {
       for (const { part, at } of places) {
         const why = whyOf(part, made, lang)
-        const proposal = await project.addProposal({ ...common, kind: 'span', before: part.before, after: part.after, at, ...(why !== undefined ? { rationale: why } : {}), ...(params.issues !== undefined && params.issues.length > 0 ? { issues: params.issues } : {}) })
-        result.proposalIds.push(proposal.id)
+        // (One place, one change that waits: the same words again are no new proposal, other words take the earlier one's place.)
+        const { proposal } = await proposeSpan(runtime, found.text, { ...common, kind: 'span', before: part.before, after: part.after, at, ...(why !== undefined ? { rationale: why } : {}), ...(params.issues !== undefined && params.issues.length > 0 ? { issues: params.issues } : {}) }, lang)
+        if (!result.proposalIds.includes(proposal.id)) result.proposalIds.push(proposal.id)
       }
     } else {
       // On top of what waited: one proposal for the chapter, with those changes and these in it.

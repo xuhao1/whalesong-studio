@@ -66,7 +66,7 @@ describe('a chapter written by the writer as an agent', () => {
     for (const part of ['陆沉来讨那支笔，沈璃不给。', '让陆沉先开口。', '【核心设定】', '【第二章的结尾】', '约 1200 字', '整章正文用 chapter_write 提交']) expect(asked.prompt, part).toContain(part)
     // Nobody chose anything for it: no card, no entry beyond the core, no earlier chapter whole.
     for (const part of ['【陆沉的卡片】', '【寄死笔的设定】', '【第一章独有】', '直接输出正文']) expect(asked.prompt, part).not.toContain(part)
-    expect(asked.tools.map(tool => tool.name)).toEqual(['book_read', 'book_search', 'chapter_write', 'chapter_read', 'chapter_edit', 'chapter_done'])
+    expect(asked.tools.map(tool => tool.name)).toEqual(['book_read', 'book_search', 'book_find', 'chapter_write', 'chapter_read', 'chapter_edit', 'chapter_done'])
 
     // What it read, it read with its tools; what it handed in was its own to change.
     expect(said.before).toContain('ERROR')

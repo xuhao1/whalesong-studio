@@ -102,6 +102,20 @@ export interface ProjectManifest {
   /** How far a revision of this book goes (see `NovelSettings.mendReach`). Absent: as the Studio has it. */
   mendReach?: MendReach
   /**
+   * What follows by itself for this book once text is written, changed or reviewed, where the book has its own way —
+   * each `true` or `false`, by the name of the Studio's switch (see `NovelSettings`): a chapter digested once it is
+   * written or changed (`autoDigest`), the names without a card looked through after digests (`siftCast`),
+   * suggestions for the bible settled by the planner (`settleSuggestions`), a plan set by its text once the text
+   * changed (`plansFollow`), what a review found handed on to be mended (`reviewMends`), open issues read again once
+   * a revision is accepted (`recheckIssues`). Absent: as the Studio has it.
+   */
+  autoDigest?: boolean
+  siftCast?: boolean
+  settleSuggestions?: boolean
+  plansFollow?: boolean
+  reviewMends?: boolean
+  recheckIssues?: boolean
+  /**
    * How many requests of a kind go out at once for this book, where it has a number of its own: counted for this
    * book alone, beside whatever the Studio is doing for the others.
    */
@@ -1230,8 +1244,8 @@ export interface Proposal {
   pictures?: PicturesRead
   /** Where the rewriting had not handed back the text's own pictures as they stood: what was done about it. */
   figures?: FiguresKept
-  /** Whose model wrote the changed words: the crew's (the planner) or the writer's. Absent on proposals made before this was kept. */
-  wroteBy?: 'planner' | 'writer'
+  /** Whose model wrote the changed words: the planner's, the writer's — or the reviewer's, who mended what it found itself. Absent on proposals made before this was kept. */
+  wroteBy?: 'planner' | 'writer' | 'analyst'
   createdBy: 'agent' | 'user'
   createdAt: Timestamp
   /** When it was accepted or turned down; absent while it waits, and on one settled before this was kept. */
@@ -1279,6 +1293,33 @@ export interface ReviewIssue {
    * the text by the planner — not something a review of the chapter turned up. It stays through a new review.
    */
   lead?: string
+  /**
+   * What the chapter is at odds with, where the issue comes of holding it against something else: the words it
+   * rests on and where they stand — another chapter, a card, an entry of the world. Looked for there when the issue
+   * was filed: an issue on file with this was not made from memory.
+   */
+  against?: IssueEvidence
+  /**
+   * It says the chapter is at odds with something else and does not say with what words, where (`against`): filed
+   * all the same — a fault is not let go of for want of a quotation — and said to be unchecked.
+   */
+  unverified?: true
+  /** Mending it takes a change in another chapter: it is the planner's to trace, not one place of this chapter's. */
+  wider?: true
+  /**
+   * How whoever found it would close it, where it can be closed in this chapter: `find` — the text of the place, as
+   * the chapter had it — with `replace` — what it is to read, written out (a small change: this is the proposal, and
+   * nobody is asked) — or `how` — what it is to read, described for the writer (a passage to be written).
+   */
+  fix?: { find: string; replace?: string; how?: string }
+}
+
+/** Where what a chapter is at odds with stands, and the words (see `ReviewIssue.against`). */
+export interface IssueEvidence {
+  /** `chapter`: another chapter's text (`ref` its number on its line); `here`: this chapter's own; `character` / `world`: a card or an entry (`ref` its name); `plan`: the chapter's plan; `style`: the style set; `reference`: a book this one goes by. */
+  kind: 'chapter' | 'here' | 'character' | 'world' | 'plan' | 'style' | 'reference'
+  ref?: string
+  quote: string
 }
 
 export interface ChapterReview {
@@ -1459,6 +1500,12 @@ export interface ContextSettings {
    * as an agent. Unset: {@link PLANNER_WHOLE_DEFAULT}.
    */
   plannerWholeTokens?: number
+  /**
+   * How much a review or a revision may read with its tools, in tokens of what they return, beside what it is handed
+   * to start from (the book's base, the story so far in outline, the chapter in hand): past it the reading tools say
+   * the reading is spent, and the work is handed in from what was found. Unset: {@link READ_DEFAULT}. `0`: no cap.
+   */
+  readTokens?: number
 }
 
 /** What a turn of an interlude carries when the author has set no figure of their own. */
@@ -1469,6 +1516,8 @@ export const PASSAGE_CONTEXT_DEFAULT = 24_000
 export const CHAPTER_CONTEXT_DEFAULT = 60_000
 /** Up to this size a line of the plot is put before the planner whole when it prepares a writer's material, when the author has set no figure of their own. */
 export const PLANNER_WHOLE_DEFAULT = 32_000
+/** Tokens a review or a revision may read with its tools where the author set no figure (`context.readTokens`). */
+export const READ_DEFAULT = 40_000
 
 /** How many requests of one kind run at once when the author has set no number of their own. */
 export const PARALLEL_DEFAULT = 8
@@ -3076,6 +3125,38 @@ export function writingSaid(said: WritingSaid | undefined): Partial<WritingSet> 
   if (said.rewriteBy === 'writer' || said.rewriteBy === 'planner') next.rewriteBy = said.rewriteBy
   if (said.mendReach === 'bold' || said.mendReach === 'careful') next.mendReach = said.mendReach
   return next
+}
+
+/**
+ * What the Studio does by itself once text is written, changed or reviewed — every one of them model calls nobody
+ * pressed a button for. Each is a switch of the Studio's for every book, and a book may have its own of any of them
+ * (the same names in its `novel.json`): a long book taken in is not digested as it goes because a short one is.
+ */
+export const AUTO_KEYS = ['autoDigest', 'siftCast', 'settleSuggestions', 'plansFollow', 'reviewMends', 'recheckIssues'] as const
+export type AutoKey = typeof AUTO_KEYS[number]
+
+/** What a book — or the Studio — says of them, as it was saved: any of it may be missing, or no switch at all. */
+export type AutoSaid = { [Key in AutoKey]?: boolean | null | undefined }
+
+/** Them as they hold: every one on or off. */
+export type AutoSet = Record<AutoKey, boolean>
+
+/** What `said` holds of them that is a switch: the rest is as good as not said. */
+export function autoSaid(said: AutoSaid | undefined): Partial<AutoSet> {
+  const next: Partial<AutoSet> = {}
+  if (said === undefined) return next
+  for (const key of AUTO_KEYS) if (typeof said[key] === 'boolean') next[key] = said[key] as boolean
+  return next
+}
+
+/**
+ * What follows by itself for a book, as it holds for it: its own where it has one, else the Studio's, else what
+ * holds where nobody set anything — every one of them on, but a plan set by its text (the plan is the author's design).
+ * @param studio - the Studio's settings.
+ * @param book - the book's manifest, for what it has of its own.
+ */
+export function autoOf(studio: AutoSaid | undefined, book?: AutoSaid): AutoSet {
+  return { autoDigest: true, siftCast: true, settleSuggestions: true, plansFollow: false, reviewMends: true, recheckIssues: true, ...autoSaid(studio), ...autoSaid(book) }
 }
 
 /**

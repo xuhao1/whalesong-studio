@@ -72,7 +72,9 @@ describe('a revision the planner judges place by place', () => {
       '一处只给 replace 和 how 当中的一个',
       '"replace": "小改动：这一处改好之后的全文"',
       '"how": "要成段新写的：这一处改成什么样（具体到位），交给写手"',
-      '## 这本书的文风（replace 照它写）',
+      // (How the book is written is in its base, at the head of the task: what the planner writes itself is written so.)
+      '## 设定的文风：',
+      '照这本书的文风写（见上）',
     ]) expect(asked, part).toContain(part)
     // The writer was told what the planner settled for its place.
     expect(llm.requests[1]!.prompt).toContain('写成一小段：她等到天亮，船还是没有来')

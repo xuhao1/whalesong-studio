@@ -5,7 +5,7 @@
  * written and passes a brief; this pipeline turns that into text on disk.
  */
 import { keptPictures } from '../../shared/embedded'
-import { chapterBudgetOf, MAIN_LINE, writingOf, type Beat, type ChapterInfo, type FiguresKept, type MaterialUsed, type PictureGuide, type PicturesRead } from '../../shared/types'
+import { autoOf, chapterBudgetOf, MAIN_LINE, writingOf, type Beat, type ChapterInfo, type FiguresKept, type MaterialUsed, type PictureGuide, type PicturesRead } from '../../shared/types'
 import { clip, clipTail, countWords, estimateTokens, normalizeProse, proseOnly } from '../../shared/text'
 import type { ContextPack } from '../context'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
@@ -406,7 +406,7 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
 
   let digested = false
   let undigested: string | undefined
-  const wantDigest = !dry && (params.digest ?? core.currentSettings().autoDigest)
+  const wantDigest = !dry && (params.digest ?? autoOf(core.currentSettings(), manifest).autoDigest)
   if (wantDigest) {
     task.job?.progress(2, 3, lang === 'zh' ? '收录记忆' : 'digesting')
     // What the scribe says of the chapter is no part of the chapter: it does not go where the chapter was shown as

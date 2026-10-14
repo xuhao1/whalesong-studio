@@ -12,7 +12,7 @@
  * compared: what that draft was written from.
  */
 import { useState } from 'react'
-import { writingOf, writingSaid, type MaterialKept, type MaterialUsed, type WritingKey, type WritingSet } from '../shared/types'
+import { autoOf, autoSaid, writingOf, writingSaid, type AutoKey, type AutoSet, type MaterialKept, type MaterialUsed, type WritingKey, type WritingSet } from '../shared/types'
 import { Icon } from './icons'
 import { Button, Menu, Modal, Spinner, useLoad, useProject, useShared, useSnapshot, useStudio, useT } from './ui'
 
@@ -44,6 +44,32 @@ export function useWriting(): { set: WritingSet; own: Partial<WritingSet> } {
   const studio = useSnapshot(snapshot => snapshot.settings?.settings)
   const book = useSnapshot(snapshot => snapshot.project?.manifest)
   return { set: writingOf(studio, book), own: writingSaid(book) }
+}
+
+/**
+ * What follows by itself for the book in hand once text is written, changed or reviewed, as it holds for it: its own
+ * switches where it has them, else the Studio's.
+ * @returns what holds (`set`), and what of it is the book's own (`own`).
+ */
+export function useAuto(): { set: AutoSet; own: Partial<AutoSet> } {
+  const studio = useSnapshot(snapshot => snapshot.settings?.settings)
+  const book = useSnapshot(snapshot => snapshot.project?.manifest)
+  return { set: autoOf(studio, book), own: autoSaid(book) }
+}
+
+/** The way to flip one of them from beside a button: saved in the book where the book has its own of it, else in the Studio's settings. */
+export function useAutoSave(): (key: AutoKey, on: boolean) => void {
+  const { controller } = useStudio()
+  const root = useSnapshot(snapshot => snapshot.root)
+  const { own } = useAuto()
+  return (key, on) => {
+    void controller.guard(async () => {
+      if (own[key] !== undefined && root !== undefined) {
+        await controller.api.call('project.update', { root, patch: { [key]: on } as never })
+        await controller.refreshProject()
+      } else await controller.saveSettings({ [key]: on })
+    })
+  }
 }
 
 /**

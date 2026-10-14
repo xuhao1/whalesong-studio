@@ -449,7 +449,8 @@ describe('pipelines', () => {
       if (request.prompt.includes('审读')) {
         const wrong = request.prompt.includes('右手握着剑') || (stubborn && request.prompt.includes('握着剑下了山'))
         asked.push(request.prompt.includes('握着剑下了山') ? 'review 2' : 'review 1')
-        return JSON.stringify({ verdict: '', issues: wrong ? [{ severity: 'high', type: 'continuity', quote: '握着剑', explanation: '第一章写她是左撇子。' }] : [] })
+        // (What it is at odds with is quoted from where it stands: chapter 1 has these words.)
+        return JSON.stringify({ verdict: '', issues: wrong ? [{ severity: 'high', type: 'continuity', quote: '握着剑', explanation: '第一章写她是左撇子。', against: { kind: 'chapter', ref: '1', quote: '她是左撇子' } }] : [] })
       }
       if (request.prompt.includes('审校在这一章发现了下面的问题')) {
         asked.push('rewrite 2')

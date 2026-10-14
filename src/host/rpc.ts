@@ -38,7 +38,7 @@ import {
 import { buildFoundation, derivedPlan, deriveBeats, deriveChapters, deriveToLook, planOfText, settleDerivedPlan, takeDerivedPlan, touchBeats, whatIf } from '../core/pipelines/plot'
 import { clearReview, listReviews, noteIssue, recheckIssues, resolveIssue, reviewChapter } from '../core/pipelines/review'
 import { plansOfText } from '../core/pipelines/follow'
-import { fixIssue, fixIssues, acceptProposal, rejectProposal, restoreProposal, reviewByLead, reviseBook, reviseChapter, reviseSpan, mendInTurn, mendReviewed, reviewMends, settledProposals } from '../core/pipelines/revise'
+import { fixIssue, fixIssues, acceptProposal, rejectProposal, restoreProposal, reviewByLead, reviseBook, reviseChapter, reviseSpan, mendInTurn, mendReviewed, mendsBy, reviewMends, settledProposals } from '../core/pipelines/revise'
 import { amendChapter } from '../core/pipelines/amend'
 import { writeChapter } from '../core/pipelines/write'
 import { keptMaterial } from '../core/pipelines/material'
@@ -568,7 +568,7 @@ export function createHandlers(service: NovelService): Handlers {
       const runtime = await open(root)
       return job(runtime, 'import', 'reread', undefined, async task => await rereadBook(core, runtime, { ...(plans === false ? { plans: false } : {}), ...(reviews === false ? { reviews: false } : {}), ...(style === false ? { style: false } : {}) }, task))
     },
-    'suggestion.settled': async ({ root }) => ({ items: await (await open(root)).project.settled(), auto: settlesItself(core) }),
+    'suggestion.settled': async ({ root }) => { const { project } = await open(root); return { items: await project.settled(), auto: settlesItself(core, await project.manifest()) } },
     'suggestion.settle': async ({ root }) => {
       const runtime = await open(root)
       return job(runtime, 'bible', 'settle suggestions', undefined, async task => await settleSuggestions(core, runtime, task))
@@ -824,7 +824,7 @@ export function createHandlers(service: NovelService): Handlers {
         return rest
       })
     },
-    'ai.fixIssue': async ({ root, chapter, issue, note, scope, order }) => {
+    'ai.fixIssue': async ({ root, chapter, issue, note, scope, order, anew }) => {
       const runtime = await open(root)
       const located = await runtime.project.findChapter(requireString(chapter, 'chapter'))
       if (located === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${chapter}"`)
@@ -836,6 +836,7 @@ export function createHandlers(service: NovelService): Handlers {
         issue: requireString(issue, 'issue'),
         scope: wide ? 'book' : whole ? 'chapter' : scope === 'place' ? 'place' : 'passage',
         ...(typeof note === 'string' && note.trim().length > 0 ? { note: note.trim() } : {}),
+        ...(anew === true ? { anew: true } : {}),
         ...(onto ? { onto: true } : {}),
       }, task)))
     },
@@ -875,13 +876,17 @@ export function createHandlers(service: NovelService): Handlers {
     'ai.review': async ({ root, chapter, focus, mend, order }) => {
       const runtime = await open(root)
       return job(runtime, 'review', 'review', chapter, async (task) => {
-        const review = await reviewChapter(core, runtime, { chapter, ...(focus !== undefined ? { focus } : {}) }, task)
+        // Where what it finds goes on to be mended, the reviewer is asked to close what it can itself — a small change
+        // written out, a passage described for the writer — by whoever the author has write a revision's words.
+        const book = await runtime.project.manifest()
+        const hands = reviewMends(core, typeof mend === 'boolean' ? mend : undefined, book)
+        const review = await reviewChapter(core, runtime, { chapter, ...(focus !== undefined ? { focus } : {}), ...(hands ? { mends: mendsBy(core, undefined, book) } : {}) }, task)
         // What it found goes on to be mended, where the author has it so: a job of its own, as this one ends.
         // (A mending that cannot be started does not undo the review.)
-        const mending = reviewMends(core, typeof mend === 'boolean' ? mend : undefined)
+        const mending = hands
           ? await mendReviewed(core, runtime, [review.chapterId], task, { order: order === 'apart' ? 'apart' : 'queue' }).catch((error: unknown) => { core.log('could not hand what the review found on to be mended', error); return undefined })
           : undefined
-        return { chapterId: review.chapterId, issues: review.issues.length, verdict: review.verdict, ...(mending !== undefined ? { mending } : {}) }
+        return { chapterId: review.chapterId, issues: review.issues.length, verdict: review.verdict, ...(mending !== undefined ? { mending } : {}), ...(review.unfounded !== undefined ? { unfounded: review.unfounded } : {}), ...(review.kept !== undefined ? { kept: review.kept } : {}), ...(review.read !== undefined ? { read: review.read } : {}) }
       })
     },
     'ai.deriveChapters': async ({ root, count, direction, volume, apply, line, after, mode, title, choice, guides, revise }) => {
@@ -1110,7 +1115,7 @@ export function createHandlers(service: NovelService): Handlers {
         ...(redo === true ? { redo: true } : {}),
         ...(typeof focus === 'string' && focus.trim().length > 0 ? { focus: focus.trim() } : {}),
         // Reviewed in a batch as one by one: what is found goes on to be mended, unless the author has it otherwise.
-        ...(reviewMends(core, typeof mend === 'boolean' ? mend : undefined) ? { mend: true } : {}),
+        ...(reviewMends(core, typeof mend === 'boolean' ? mend : undefined, await runtime.project.manifest()) ? { mend: true } : {}),
       }))
     },
     'batch.art': async ({ root, sheets, portraits, voices, places, items, scenes, cover, insert, force, sheetFirst, trials, trialBatch }) => {

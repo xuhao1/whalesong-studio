@@ -26,6 +26,7 @@ import {
 import { RemoteDialog } from '../Phone'
 import type { StudioController } from '../store'
 import { useBookActions } from '../actions'
+import { useAuto } from '../Material'
 
 /**
  * Take a book off the shelf, after asking. Its files go to the trash; the
@@ -630,6 +631,8 @@ export function HomeView() {
   const { project, root } = useProject()
   const jobs = useSnapshot(snapshot => snapshot.jobs)
   const settings = useSnapshot(snapshot => snapshot.settings)
+  // Whether this book's chapters are digested by themselves: its own switch where it has one, else the Studio's.
+  const autoDigest = useAuto().set.autoDigest
   const [editing, setEditing] = useState(false)
   const [redigesting, setRedigesting] = useState(false)
   const [exported, setExported] = useState<{ path: string; absolute: string } | undefined>()
@@ -754,7 +757,7 @@ export function HomeView() {
               />
             ) : null}
             {stats.undigested > 0 && project.analysis?.pending.includes('digest') !== true ? (
-              <Step icon="layers" title={t(`${stats.undigested} 章尚未收录记忆`, `${stats.undigested} chapters not digested`)} body={settings?.settings.autoDigest === false ? <>{t('自动收录关着：要收录在这里点。', 'Automatic digests are off: digest from here.')}{' '}<button type="button" className="nv-link" onClick={() => { controller.openSettings('auto') }}>{t('设置', 'Settings')}</button></> : t('收录后，后续写作才能记住这些章节发生了什么。', 'Later chapters only remember what has been digested.')} action={t('收录', 'Digest')} busy={running.some(job => job.kind === 'digest')} onClick={() => controller.guard(async () => { await actions.digest() })} />
+              <Step icon="layers" title={t(`${stats.undigested} 章尚未收录记忆`, `${stats.undigested} chapters not digested`)} body={!autoDigest ? <>{t('自动收录关着：要收录在这里点。', 'Automatic digests are off: digest from here.')}{' '}<button type="button" className="nv-link" onClick={() => { controller.openSettings('auto') }}>{t('设置', 'Settings')}</button></> : t('收录后，后续写作才能记住这些章节发生了什么。', 'Later chapters only remember what has been digested.')} action={t('收录', 'Digest')} busy={running.some(job => job.kind === 'digest')} onClick={() => controller.guard(async () => { await actions.digest() })} />
             ) : null}
             {next !== undefined ? (
               <Step

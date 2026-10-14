@@ -620,7 +620,7 @@ export async function analyzeBook(core: NovelCore, runtime: ProjectRuntime, para
     await finished('art', ok)
   }
   // What the digests proposed and no pass above made of: looked over by the planner and entered where it is worth it.
-  if (settlesItself(core) && (steps.includes('world') || steps.includes('cast') || steps.includes('digest'))) {
+  if (settlesItself(core, await runtime.project.manifest()) && (steps.includes('world') || steps.includes('cast') || steps.includes('digest'))) {
     try {
       const settled = await settleSuggestions(core, runtime, { ...task, job: undefined } as TaskContext)
       result.settled = { entered: settled.entered.length, merged: settled.merged.length, skipped: settled.skipped }

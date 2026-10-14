@@ -568,9 +568,10 @@ describe('a line of the plot reads itself', () => {
     const mainScope = scopes.find(prompt => prompt.includes('前面没交代信从哪来'))!
     const southScope = scopes.find(prompt => prompt.includes('开张得太突然'))!
     // Each planner reads the chapters of its own line, and nothing of the other's.
-    expect(mainScope).toContain('1. 码头')
+    // (In the outline of the book's base, at the head of what each is asked.)
+    expect(mainScope).toContain('1. 《码头》')
     expect(mainScope).not.toContain('开张')
-    expect(southScope).toContain('1. 开张')
+    expect(southScope).toContain('1. 《开张》')
     expect(southScope).not.toContain('码头')
     const proposals = (await project.proposals()).filter(item => item.status === 'pending')
     expect(proposals.map(item => item.chapterId).sort()).toEqual([book.m1.id, book.c1.id].sort())

@@ -6,7 +6,7 @@ import { digestPending, forgetChapter } from '../../core/pipelines/digest'
 import { correctMemory, editChapter, type EditAction, type MemoryPatch } from '../../core/pipelines/edit'
 import { analyzeBook, importManuscript, readBookFile, importLine, rereadBook } from '../../core/pipelines/import'
 import { reviewChapter } from '../../core/pipelines/review'
-import { acceptProposal, rejectProposal, restoreProposal, fixIssues, mendInTurn, mendReviewed, reviewByLead, reviseBook, reviseChapter, reviseSpan, settledProposals } from '../../core/pipelines/revise'
+import { acceptProposal, rejectProposal, restoreProposal, fixIssues, mendInTurn, mendReviewed, mendsBy, reviewByLead, reviseBook, reviseChapter, reviseSpan, settledProposals } from '../../core/pipelines/revise'
 import { amendChapter } from '../../core/pipelines/amend'
 import { writeChapter } from '../../core/pipelines/write'
 import { cleanGuides } from '../../core/pipelines/guides'
@@ -86,7 +86,7 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
             ? 'Memory digested: summary, facts and character states are up to date.'
             : result.undigested !== undefined
               ? `The text is saved, but the digest after it FAILED: ${result.undigested}. Tell the author; novel_digest tries again.`
-              : env.core.currentSettings().autoDigest
+              : (await env.core.autoFor(runtime)).autoDigest
                 ? 'Not digested yet — run novel_digest before writing later chapters.'
                 : MEMORY_LEFT,
           `Opens: ${result.preview.head}${result.preview.tail.length > 0 ? `\n…\nCloses: ${result.preview.tail}` : ''}`,
@@ -394,7 +394,7 @@ export function manuscriptTools(service: NovelService): ToolDefinition[] {
         const runtime = await env.project()
         const chapter = args.chapter
         const review = await env.job('review', 'review', chapter, async (task) => {
-          const read = await reviewChapter(env.core, runtime, { chapter, ...(args.focus !== undefined ? { focus: args.focus } : {}) }, task)
+          const read = await reviewChapter(env.core, runtime, { chapter, ...(args.focus !== undefined ? { focus: args.focus } : {}), ...(args.mend === true ? { mends: mendsBy(env.core, undefined, await runtime.project.manifest()) } : {}) }, task)
           const mending = args.mend === true ? await mendReviewed(env.core, runtime, [read.chapterId], task).catch(() => undefined) : undefined
           return { ...read, ...(mending !== undefined ? { mendingJob: mending } : {}) }
         })

@@ -20,6 +20,7 @@
  * in the background, a moment later.
  */
 import { hashText } from '../../shared/text'
+import { autoOf, type AutoSaid } from '../../shared/types'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { errorMessage, mapLimit } from '../util/async'
 import { L, promptLanguage } from '../render'
@@ -112,14 +113,13 @@ export const followTiming = { delay: 2500 }
  * Whether plans follow their texts by themselves (`plansFollow`). Unset: no — a plan is the author's design, and what
  * a model wrote is made the plan only where the author asks for it.
  */
-export const plansFollow = (core: NovelCore): boolean => core.currentSettings().plansFollow === true
+export const plansFollow = (core: NovelCore, book?: AutoSaid): boolean => autoOf(core.currentSettings(), book).plansFollow
 
 /**
  * Have a chapter's plan read against its text once the text was changed — in the background, a moment later.
  * Nothing is asked where the plan already stands by the text the chapter has.
  */
 export function schedulePlanFollow(core: NovelCore, runtime: ProjectRuntime, chapterId: string, task: Pick<TaskContext, 'origin' | 'agentRoute'>): void {
-  if (!plansFollow(core)) return
   const root = runtime.project.root
   const waiting = pending.get(root) ?? { timer: undefined, chapters: new Set<string>(), task }
   if (waiting.timer !== undefined) clearTimeout(waiting.timer)
@@ -135,6 +135,8 @@ export function schedulePlanFollow(core: NovelCore, runtime: ProjectRuntime, cha
     }
     pending.delete(root)
     void (async () => {
+      // (Of this book: its own switch where it has one, else the Studio's.)
+      if (!(await core.autoFor(runtime)).plansFollow) return
       const chapters: string[] = []
       for (const id of waiting.chapters) if (await due(runtime, id)) chapters.push(id)
       if (chapters.length === 0) return

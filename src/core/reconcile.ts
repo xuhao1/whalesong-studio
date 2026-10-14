@@ -35,7 +35,8 @@ async function reconcile(core: NovelCore, runtime: ProjectRuntime, paths: string
   if (chapters.length === 0 && others.length === 0) return
   const zh = promptLanguage((await project.manifest()).language) === 'zh'
   const infos = await project.chapterInfos()
-  const digesting = core.currentSettings().autoDigest
+  // (The book's own switch where it has one: a book the author keeps undigested stays so, whoever changed its files.)
+  const digesting = (await core.autoFor(runtime)).autoDigest
   for (const id of chapters) {
     const info = infos.find(candidate => candidate.id === id)
     // Not a chapter of the outline, or its memory still matches: nothing the book needs to catch up on.
@@ -48,7 +49,7 @@ async function reconcile(core: NovelCore, runtime: ProjectRuntime, paths: string
         ? `第 ${info.index} 章《${info.title}》的文件被工坊之外的程序直接改动（现在 ${info.words} 字）——没有留下改动前的版本；${digesting ? '记忆正在重新收录' : '记忆已过期，需要重新收录'}`
         : `The file of chapter ${info.index} "${info.title}" was changed outside Novel Studio (now ${info.words} words) — no version of the earlier text was kept; ${digesting ? 'its memory is being digested again' : 'its memory is stale and needs digesting'}`,
     })
-    scheduleDigest(core, runtime, id, { origin: 'user' })
+    await scheduleDigest(core, runtime, id, { origin: 'user' })
   }
   if (others.length > 0) {
     const names = others.slice(0, 4).join(', ')

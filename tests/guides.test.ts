@@ -271,6 +271,8 @@ describe('pictures given to steer by', () => {
       expect(bed.llm.requests.at(-1)!.images).toBeUndefined()
       expect(bed.llm.requests.at(-1)!.prompt).not.toContain('参考图')
       expect(bare.pictures).toBeUndefined()
+      // (Other words for the same passage: this one takes the first one's place — the same words again would be no new proposal.)
+      bed.llm.responder = () => '她数着船，一条，两条，三条。'
       const pictured = await reviseSpan(bed.core, bed.runtime, { chapter: chapter.id, quote: '她数着船。', instruction: '写成图里的样子', guides: [{ path: one }] }, { origin: 'user' })
       expect(bed.llm.requests.at(-1)!.images?.map(image => image.name)).toEqual(['one.png'])
       expect(bed.llm.requests.at(-1)!.prompt).toContain('作者给这一段的改写配了 1 张图')

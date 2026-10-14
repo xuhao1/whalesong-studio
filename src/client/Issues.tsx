@@ -14,7 +14,7 @@
  *   ReviewMendsMenu  beside the buttons that review: whether what a review finds goes on to be mended by itself
  *   issueMarks    where the issues of a chapter sit in its text, for a page that marks them
  */
-import { MAIN_LINE, type ChapterInfo, type ChapterReview, type JobInfo, type PictureGuide, type Proposal, type ReviewIssue } from '../shared/types'
+import { MAIN_LINE, type ChapterInfo, type ChapterReview, type IssueEvidence, type JobInfo, type PictureGuide, type Proposal, type ReviewIssue } from '../shared/types'
 import { clip, fuzzyFind } from '../shared/text'
 import { ISSUE_TYPE, SEVERITY, SEVERITY_TONE } from './labels'
 import { ProposalCard, SettleAll } from './components/ProposalCard'
@@ -22,7 +22,7 @@ import { useBookActions } from './actions'
 import { useBatchJob } from './Batch'
 import { GuidePictures } from './Guides'
 import { JobBar } from './JobBar'
-import { useMaterialBy, useMaterialItems, useWriting, useWritingSave } from './Material'
+import { useAuto, useAutoSave, useMaterialBy, useMaterialItems, useWriting, useWritingSave } from './Material'
 import { useState, type ReactNode } from 'react'
 import { Button, Chip, cx, Menu, Select, TextArea, TextInput, useAction, useBookLine, useConfirm, useKept, useProject, useRunningJob, useShared, useSnapshot, useStudio, useT } from './ui'
 
@@ -132,27 +132,26 @@ export function useReachItems(): { label: string; onSelect: () => void }[] {
 export const MEND_REVIEW_JOB = 'mend review'
 
 /**
- * Whether what a review finds goes on to be mended by itself, as the Studio's settings have it (`reviewMends`: yes
- * unless the author switched it off) — and the way to say otherwise from beside the buttons that review.
+ * Whether what a review finds goes on to be mended by itself, as it holds for the book in hand (`reviewMends`: the
+ * book's own switch, else the Studio's; yes unless the author switched it off) — and the way to say otherwise from
+ * beside the buttons that review.
+ * @returns whether; the way to flip it (saved where what holds is kept); and whether it is the book's own.
  */
-export function useReviewMends(): [boolean, (on: boolean) => void] {
-  const { controller } = useStudio()
-  const on = useSnapshot(snapshot => snapshot.settings?.settings.reviewMends) !== false
-  return [on, (next) => {
-    void controller.guard(async () => {
-      await controller.saveSettings({ reviewMends: next })
-    })
-  }]
+export function useReviewMends(): [boolean, (on: boolean) => void, boolean] {
+  const { set, own } = useAuto()
+  const save = useAutoSave()
+  return [set.reviewMends, (next) => { save('reviewMends', next) }, own.reviewMends !== undefined]
 }
 
 /** The small triangle beside the buttons that review: what a review finds is mended by itself, or only listed. */
 export function ReviewMendsMenu({ variant = 'ghost' }: { variant?: 'ghost' | 'outline' }) {
   const t = useT()
-  const [on, setOn] = useReviewMends()
+  const [on, setOn, ofBook] = useReviewMends()
+  const mine = ownWord(ofBook, t)
   return (
     <Menu icon="chevronDown" variant={variant} size="sm" align="end" label={on ? t('审校之后：出修订提案', 'After a review: proposals') : t('审校之后：只列问题', 'After a review: issues only')} items={[
-      { label: t(`${on ? '✓ ' : ''}审校之后把找到的问题交给策划修订：改动是提案，出现在各条问题下面`, `${on ? '✓ ' : ''}After a review, the planner mends what it found: each change a proposal beneath its issue`), onSelect: () => { setOn(true) } },
-      { label: t(`${on ? '' : '✓ '}只审校：列出问题，先不改`, `${on ? '' : '✓ '}Review only: the issues are listed, nothing changes`), onSelect: () => { setOn(false) } },
+      { label: t(`${on ? '✓ ' : ''}审校之后把找到的问题交给策划修订：改动是提案，出现在各条问题下面${mine}`, `${on ? '✓ ' : ''}After a review, the planner mends what it found: each change a proposal beneath its issue${mine}`), onSelect: () => { setOn(true) } },
+      { label: t(`${on ? '' : '✓ '}只审校：列出问题，先不改${mine}`, `${on ? '' : '✓ '}Review only: the issues are listed, nothing changes${mine}`), onSelect: () => { setOn(false) } },
     ]} />
   )
 }
@@ -225,6 +224,19 @@ export type MendScope = 'passage' | 'place' | 'book' | 'chapter'
  */
 const AT_THE_QUOTE = new Set(['style', 'language', 'pacing'])
 
+/** Where what an issue is at odds with stands, and the words — as the card says it. */
+export function evidenceWord(against: IssueEvidence, t: (zh: string, en: string) => string): string {
+  const number = against.ref?.replace(/[^\d]/g, '')
+  const where = against.kind === 'chapter' ? t(`第 ${number !== undefined && number.length > 0 ? number : against.ref ?? '?'} 章`, `chapter ${number !== undefined && number.length > 0 ? number : against.ref ?? '?'}`)
+    : against.kind === 'here' ? t('本章另一处', 'elsewhere in this chapter')
+      : against.kind === 'character' ? t(`人物卡“${against.ref ?? ''}”`, `the card "${against.ref ?? ''}"`)
+        : against.kind === 'world' ? t(`设定“${against.ref ?? ''}”`, `the entry "${against.ref ?? ''}"`)
+          : against.kind === 'plan' ? t('本章章纲', 'this chapter\'s plan')
+            : against.kind === 'style' ? t('设定的文风', 'the style set')
+              : t(`参考文献${against.ref !== undefined ? `《${against.ref}》` : ''}`, `a reference${against.ref !== undefined ? ` ("${against.ref}")` : ''}`)
+  return t(`${where}「${against.quote}」`, `${where}: "${against.quote}"`)
+}
+
 /** Under which name what the author is typing about an issue is kept on this screen. */
 export const issueNoteKey = (chapterId: string, issueId: string): string => `issue.note.${chapterId}.${issueId}`
 
@@ -275,13 +287,22 @@ export function IssueCard({ chapterId, issue, onLocate, onChanged, before, after
   const settle = useAction()
   // The mending the card's first button does: at the quoted place, or at the place the planner settles.
   const settled = issue.quote === undefined || !AT_THE_QUOTE.has(issue.type)
-  const fix = (scope: MendScope) => async (): Promise<void> => {
+  // What the review handed in for it, where nothing was done with that yet and the author has not written otherwise.
+  const ready = issue.fix !== undefined && issue.mending === undefined && note.trim().length === 0
+  // What the one button does: what the review said of the issue decides — it reaches another chapter (the planner
+  // traces it), or it is closed where it stands (at the quote, or where the planner settles).
+  const main: MendScope = issue.wider === true && !ready ? 'book' : settled ? 'place' : 'passage'
+  const fix = (scope: MendScope, anew = false) => async (): Promise<void> => {
     if (before !== undefined && !(await before())) return
-    await controller.api.call('ai.fixIssue', { root, chapter: chapterId, issue: issue.id, scope, order, ...(note.trim().length > 0 ? { note: note.trim() } : {}) })
+    await controller.api.call('ai.fixIssue', { root, chapter: chapterId, issue: issue.id, scope, order, ...(note.trim().length > 0 ? { note: note.trim() } : {}), ...(anew ? { anew: true } : {}) })
     await controller.refreshJobs()
     controller.toast('info', under > 0 && order === 'queue'
       ? t(`排在前面 ${under} 个修订后面，接着它们改；改好之后，对比会出现在这条问题下面。`, `In line behind ${under} mending(s), going on from them; the changes will show beneath this issue.`)
-      : scope === 'book'
+      : ready && !anew && scope !== 'book' && scope !== 'chapter'
+        ? issue.fix!.replace !== undefined
+          ? t('审校写好的改法成了提案，就在这条问题下面，等你确认。', 'The change the review wrote out is a proposal beneath this issue now, waiting for you.')
+          : t('写手照审校说的在写这一处；写好之后，对比会出现在这条问题下面。', 'The writer is writing this place by what the review said; the change will show beneath this issue.')
+        : scope === 'book'
         ? t('策划正在查这个问题牵涉到哪几处；改好之后，每一处的对比会出现在这条问题下面。', 'The planner is tracing which places this reaches; each change will show beneath this issue.')
         : scope === 'place' || (scope === 'passage' && issue.quote === undefined)
           ? bold
@@ -300,6 +321,9 @@ export function IssueCard({ chapterId, issue, onLocate, onChanged, before, after
         <Chip>{t(...ISSUE_TYPE[issue.type])}</Chip>
         {issue.lead !== undefined ? <Chip tone="violet" title={t(`照你说的这句话找到的：${issue.lead}`, `Found by what you said: ${issue.lead}`)}>{t('你提的', 'Yours')}</Chip> : null}
         {issue.mending !== undefined && open ? <Chip tone="blue">{t('已交给修订', 'Handed over')}</Chip> : null}
+        {issue.unverified === true && open ? <Chip tone="amber" title={t('审校说这一处和别处对不上，却没有写出是哪里的哪句话——可能是凭印象说的，动手前先核一下', 'The review says this is at odds with something and does not say with what words, where — it may be from memory: check before acting on it')}>{t('没附出处', 'No evidence given')}</Chip> : null}
+        {issue.wider === true && open && issue.mending === undefined ? <Chip title={t('审校说要动别的章节才能解决：点“修订”，策划去查该改哪一头', 'The review says mending it takes a change in another chapter: Revise has the planner trace which end changes')}>{t('牵连别章', 'Reaches another chapter')}</Chip> : null}
+        {issue.fix !== undefined && open && issue.mending === undefined ? <Chip tone="green" title={issue.fix.replace !== undefined ? t('审校已经写好了改法：点“修订”直接出提案，不再调模型', 'The review wrote the change out: Revise proposes it as it stands, with no further call') : t('审校说清了怎么改：点“修订”交给写手写这一处', 'The review said how it changes: Revise hands this place to the writer')}>{issue.fix.replace !== undefined ? t('改法已写好', 'Change written out') : t('改法已说清', 'Change described')}</Chip> : null}
       </header>
       {issue.quote !== undefined ? (
         onLocate !== undefined
@@ -307,6 +331,7 @@ export function IssueCard({ chapterId, issue, onLocate, onChanged, before, after
           : <blockquote className="nv-issue-quote">{issue.quote}</blockquote>
       ) : null}
       <p>{issue.explanation}</p>
+      {issue.against !== undefined ? <p className="nv-muted nv-small" title={t('审校引的这句话，已经到它说的地方核对过：那里确实有', 'What the review quotes was looked for where it says it stands: it is there')}>{t('对不上的是：', 'At odds with: ')}{evidenceWord(issue.against, t)}</p> : null}
       {issue.suggestion !== undefined ? <p className="nv-muted nv-small">{t('建议：', 'Suggestion: ')}{issue.suggestion}</p> : null}
       {issue.checked !== undefined && issue.checked.verdict !== 'stands' ? <p className="nv-muted nv-small">{issue.checked.verdict === 'fixed' ? t('修订后核对：已解决', 'Looked at again after a revision: settled') : t('修订后核对：已按现在的正文更新', 'Looked at again after a revision: brought up to the text')}{issue.checked.why !== undefined ? t(`——${issue.checked.why}`, ` — ${issue.checked.why}`) : ''}</p> : null}
       {open ? (
@@ -323,18 +348,25 @@ export function IssueCard({ chapterId, issue, onLocate, onChanged, before, after
       <footer>
         {open ? (
           <>
-            <Button size="sm" icon="wand" busy={here.busy} pending={t('正在开始…', 'Starting…')} onClick={() => here.run(fix(settled ? 'place' : 'passage'))} title={settled
-              ? bold ? t('策划定改哪几处，把它改到位——牵连到的呼应一并改', 'The planner settles which places change and mends it through — with what hangs on it') : t('策划定改哪一处最省，只改那一处', 'The planner settles which place mends it with the least change, and only that place changes')
-              : bold ? t('改引文所在的这一段', 'Rewrite the passage the quote stands in') : t('只改引文这一处', 'Rewrite the quoted place only')}>
-              {settled ? bold ? t('修订这个问题', 'Mend it') : t('修订一处', 'Mend one place') : t('修订这一处', 'Mend it here')}
-            </Button>
-            <Button size="sm" icon="layers" busy={everywhere.busy} pending={t('正在开始…', 'Starting…')} onClick={() => everywhere.run(fix('book'))} title={t('策划查清牵涉到别的章节和设定的哪几处，一处处改', 'The planner traces the chapters and the bible it reaches, and mends them together')}>
-              {t('全书修订', 'Mend it everywhere')}
+            {/* One button: how far it reaches is settled by whoever does it — what the review wrote out is proposed as it
+                stands, a passage goes to the writer, what reaches another chapter is traced by the planner. The ways to
+                say otherwise for this once are under the menu beside it. */}
+            <Button size="sm" icon="wand" busy={here.busy} pending={t('正在开始…', 'Starting…')} onClick={() => here.run(fix(main))} title={ready
+              ? issue.fix!.replace !== undefined
+                ? t('审校已经写好了改法：直接出提案，不再调模型', 'The review wrote the change out: it is proposed as it stands, with no further call')
+                : t('审校说清了怎么改：交给写手写这一处', 'The review said how it changes: the writer writes this place')
+              : main === 'book'
+                ? t('审校说要动别的章节才能解决：策划查清牵涉到哪几处，一处处改', 'The review says it takes a change in another chapter: the planner traces the places it reaches')
+                : main === 'place'
+                  ? bold ? t('策划定改哪几处，把它改到位——牵连到的呼应一并改', 'The planner settles which places change and mends it through — with what hangs on it') : t('策划定改哪一处最省，只改那一处', 'The planner settles which place mends it with the least change')
+                  : bold ? t('改引文所在的这一段', 'Rewrite the passage the quote stands in') : t('只改引文这一处', 'Rewrite the quoted place only')}>
+              {t('修订', 'Revise')}
             </Button>
             <Menu icon="more" variant="ghost" size="sm" align="end" items={[
-              ...(issue.quote !== undefined ? [settled
-                ? { label: bold ? t('只改引文所在的这一段', 'Rewrite only the passage the quote stands in') : t('只改引文这一处', 'Rewrite the quoted place only'), icon: 'wand' as const, onSelect: () => { void whole.run(fix('passage')) } }
-                : { label: bold ? t('让策划定改哪几处', 'Let the planner settle the places') : t('让策划定改哪一处', 'Let the planner settle the place'), icon: 'wand' as const, onSelect: () => { void whole.run(fix('place')) } }] : []),
+              ...(main !== 'book' ? [{ label: t('全书修订：把牵涉到的章节和设定都查一遍', 'Through the book: trace the chapters and the bible it reaches'), icon: 'layers' as const, onSelect: () => { void everywhere.run(fix('book')) } }] : []),
+              ...(issue.quote !== undefined ? [settled || main === 'book' || ready
+                ? { label: bold ? t('只改引文所在的这一段（另写一遍，不用审校的改法）', 'Rewrite only the passage the quote stands in (anew, not by the review\'s change)') : t('只改引文这一处（另写一遍，不用审校的改法）', 'Rewrite the quoted place only (anew, not by the review\'s change)'), icon: 'wand' as const, onSelect: () => { void whole.run(fix('passage', true)) } }
+                : { label: bold ? t('让策划定改哪几处', 'Let the planner settle the places') : t('让策划定改哪一处', 'Let the planner settle the place'), icon: 'wand' as const, onSelect: () => { void whole.run(fix('place', true)) } }] : []),
               { label: t('整章重写', 'Rewrite the whole chapter'), icon: 'refresh', onSelect: () => { void whole.run(fix('chapter')) } },
               'separator' as const,
               ...reaches,
@@ -373,17 +405,25 @@ export function IssueCard({ chapterId, issue, onLocate, onChanged, before, after
 }
 
 /** What the author's sentence came to (`ai.reviewLead`). */
-interface LeadOutput { found?: { chapterId: string; index: number }[]; chapters?: number; fix?: boolean; note?: string; book?: { results?: { index?: number }[]; failed?: unknown[]; direct?: boolean; wrote?: { planner?: number; writer?: number } } }
+interface LeadOutput { found?: { chapterId: string; index: number }[]; chapters?: number; fix?: boolean; note?: string; book?: { results?: { index?: number }[]; failed?: unknown[]; direct?: boolean; wrote?: { analyst?: number; planner?: number; writer?: number } } }
 
 /**
  * Whose words the changes of a revision are, in a few words: the planner's own, the writer's model's, or so many of
  * each — said with what the revision came to, since the two are not the same price.
  * @param direct - what a Host half older than this page says in place of the counts.
  */
-export function wroteWord(wrote: { planner?: number; writer?: number } | undefined, direct: boolean, t: (zh: string, en: string) => string): string {
+export function wroteWord(wrote: { analyst?: number; planner?: number; writer?: number } | undefined, direct: boolean, t: (zh: string, en: string) => string): string {
+  const found = wrote?.analyst ?? 0
   const own = wrote?.planner ?? 0
   const handed = wrote?.writer ?? 0
-  if (own > 0 && handed > 0) return t(`${own} 处策划直接改，${handed} 处交给写手写`, `${own} written by the planner itself, ${handed} by the writer`)
+  // (The reviewer's own small changes cost no call; the planner's cost its own run; the writer's a call a place.)
+  const parts = [
+    found > 0 ? t(`${found} 处场记审校时直接改好`, `${found} mended by the reviewer as it read`) : undefined,
+    own > 0 ? t(`${own} 处策划直接改`, `${own} written by the planner itself`) : undefined,
+    handed > 0 ? t(`${handed} 处交给写手写`, `${handed} by the writer`) : undefined,
+  ].filter((part): part is string => part !== undefined)
+  if (parts.length > 1) return parts.join(t('，', ', '))
+  if (found > 0) return t('场记审校时直接改好的', 'mended by the reviewer as it read')
   if (own > 0 || (wrote === undefined && direct)) return t('策划直接写的', 'written by the planner itself')
   if (handed > 0) return t('写手写的', 'written by the writer')
   return ''

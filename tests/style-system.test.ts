@@ -110,7 +110,8 @@ describe('a style\'s extra system prompt', () => {
     const direct = await reviseBook(core, runtime, { instruction: '等的是两夜', asked: true }, task)
     expect(direct.direct).toBe(true)
     expect(llm.requests).toHaveLength(1)
-    expect(llm.requests[0]!.prompt).toContain(`${HEAD_IN}\n${EXTRA}`)
+    // (In the book's base, at the head of what it is asked: every pass of the book is told what the author added for whoever writes it.)
+    expect(llm.requests[0]!.prompt).toContain(`作者给写手另加的要求（写这本书的每一位都被这样要求）：\n${EXTRA}`)
     expect(llm.requests[0]!.system).not.toContain(EXTRA)
     // The planner only settles where, the writer rewrites the place: the writer's system prompt ends with it.
     await core.settings.update({ mendBy: 'writer' })
@@ -118,7 +119,8 @@ describe('a style\'s extra system prompt', () => {
     llm.responder = request => planner(request) ? JSON.stringify({ edits: [{ chapter: 1, find: '渡口没有人。', how: '换个说法' }], chapters: [], note: '一处。' }) : '渡口空无一人。'
     await reviseBook(core, runtime, { instruction: '渡口那句换个说法', asked: true }, task)
     const [settles, rewrites] = llm.requests
-    expect(settles!.prompt).not.toContain(EXTRA)
+    // (The planner reads it in the book's base, as every pass does; its own system prompt is its own.)
+    expect(settles!.prompt).toContain(EXTRA)
     expect(settles!.system).not.toContain(EXTRA)
     expect(rewrites!.system!.endsWith(`\n\n${HEAD}\n${EXTRA}`)).toBe(true)
 

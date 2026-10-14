@@ -14,7 +14,7 @@
  */
 import { sameName, clip } from '../../shared/text'
 import { groupOf } from '../../shared/world'
-import type { SettledSuggestion, Suggestion, WorldCategory, WorldEntry } from '../../shared/types'
+import { autoOf, type AutoSaid, type SettledSuggestion, type Suggestion, type WorldCategory, type WorldEntry } from '../../shared/types'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { assign } from '../crew'
 import { asArray, asRecord, asText } from '../llm'
@@ -259,8 +259,11 @@ export async function overrule(runtime: ProjectRuntime, id: string, to: 'undo' |
   return (await project.resettle(id, 'undone'))!
 }
 
-/** Whether suggestions are settled by the planner as they come, or wait for the author one by one. */
-export const settlesItself = (core: NovelCore): boolean => core.currentSettings().settleSuggestions !== false
+/**
+ * Whether suggestions are settled by the planner as they come, or wait for the author one by one.
+ * @param book - the book they are for, for its own switch (`ProjectManifest.settleSuggestions`).
+ */
+export const settlesItself = (core: NovelCore, book?: AutoSaid): boolean => autoOf(core.currentSettings(), book).settleSuggestions
 
 const pending = new Map<string, ReturnType<typeof setTimeout>>()
 
@@ -269,13 +272,13 @@ const pending = new Map<string, ReturnType<typeof setTimeout>>()
  * without a card were looked through — one settling for all of it, not one per chapter.
  */
 export function scheduleSettle(core: NovelCore, runtime: ProjectRuntime, task: Pick<TaskContext, 'origin' | 'agentRoute'>, wait = 7000): void {
-  if (!settlesItself(core)) return
   const root = runtime.project.root
   const before = pending.get(root)
   if (before !== undefined) clearTimeout(before)
   const timer = setTimeout(() => {
     pending.delete(root)
     void (async () => {
+      if (!(await core.autoFor(runtime)).settleSuggestions) return
       const running = core.jobs.list(root).filter(job => job.status === 'running')
       if (running.some(job => job.kind === 'bible' && job.title === 'settle suggestions')) return
       // While chapters are still being digested, a book taken in, or the names looked through, the list is not yet what it will be.

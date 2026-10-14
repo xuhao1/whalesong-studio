@@ -37,7 +37,7 @@ describe('a chapter revised in place', () => {
       // The writer, on the writer's own tools and the book's: nothing of the conversation's.
       expect(agent.role).toBe('writer')
       expect(agent.inherit).toEqual({ mode: 'none' })
-      expect(agent.tools.map(tool => tool.name)).toEqual(['book_read', 'book_search', 'chapter_read', 'chapter_edit', 'submit_revision'])
+      expect(agent.tools.map(tool => tool.name)).toEqual(['book_read', 'book_search', 'book_find', 'chapter_read', 'chapter_edit', 'submit_revision'])
       expect(agent.prompt).toContain('把阿棠写得更慌')
       expect(agent.prompt).toContain('本章已有正文')
       expect(agent.prompt).toContain('雨下了一夜。')

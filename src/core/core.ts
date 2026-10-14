@@ -8,7 +8,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { mkdir, rename, rmdir, stat } from 'node:fs/promises'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 import { imageParallel, imageService, imageWays, localImages, ttsService, ttsWays, withBook } from '../shared/images'
-import { parallelOf, TTS_SERVICE_KEYS, type BookLock, type ImageSettings, type ModelRoute, type NovelSettings, type ProjectManifest, type ProjectRef, type TextRole, type TtsSettings } from '../shared/types'
+import { autoOf, parallelOf, TTS_SERVICE_KEYS, type AutoSet, type BookLock, type ImageSettings, type ModelRoute, type NovelSettings, type ProjectManifest, type ProjectRef, type TextRole, type TtsSettings } from '../shared/types'
 import { contextBudgets, ownsChapter, packContext, type ContextPack, type PackOptions } from './context'
 import { currentJob, JobManager, type JobContext } from './jobs'
 import { resolveRoute, retrying, type LlmBackend } from './llm'
@@ -825,6 +825,16 @@ export class NovelCore {
 
   currentSettings(): NovelSettings {
     return this.snapshot
+  }
+
+  /**
+   * What follows by itself for a book once text is written, changed or reviewed (`AUTO_KEYS`): the book's own
+   * switches where it has them, the Studio's for the rest. Read where the work is about to start — a book whose
+   * manifest cannot be read goes by the Studio's.
+   */
+  async autoFor(runtime: ProjectRuntime | undefined): Promise<AutoSet> {
+    const book = runtime !== undefined ? await runtime.project.manifest().catch(() => undefined) : undefined
+    return autoOf(this.snapshot, book)
   }
 
   /**

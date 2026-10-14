@@ -24,7 +24,7 @@ import { watch, type FSWatcher } from 'node:fs'
 import { basename, join } from 'node:path'
 import {
   analysisSteps, type AnalyzeStep,
-  belongsTo, castOrder, chapterBudgetOf, MAIN_LINE, WRITING_KEYS, writingSaid,
+  AUTO_KEYS, autoSaid, belongsTo, castOrder, chapterBudgetOf, MAIN_LINE, WRITING_KEYS, writingSaid,
   type ActivityEntry, type BookShows, type DerivedPlan, type ChapterTranslation, type GlossaryTerm, type HistoryKind, type HistoryVersion, type Timestamp, type CharacterLook, type CharacterMoment, type LifeMark, type ShowCount,
   type AudioScript, type CastPresence, type ChapterInfo, type ChapterMemory, type ChapterPlan, type ChapterReview, type ChapterStatus, type CharacterCard,
   type ComicBoard, type ComicPanel, type IllustrationInfo, type MaterialKept, type Outline, type PlaySession, type PlotLine, type PlotLineInfo, type PlotLineOrigin, type PlotThread, type ProjectManifest, type ProjectState, type ProjectStats, type Proposal, type RemovedChapter,
@@ -536,13 +536,16 @@ export class Project {
         else delete next.chapterBudget
       }
       // Services of the book's own named as nothing are taken off it: the Studio's hold for it again.
-      for (const key of ['image', 'tts', 'sound', 'embedding', 'context', 'parallel', 'vision', ...WRITING_KEYS] as const) if ((patch as Record<string, unknown>)[key] === null) delete next[key]
+      for (const key of ['image', 'tts', 'sound', 'embedding', 'context', 'parallel', 'vision', ...WRITING_KEYS, ...AUTO_KEYS] as const) if ((patch as Record<string, unknown>)[key] === null) delete next[key]
       // How it is written and revised, of its own: what is no value of its kind is none of its own.
       const writing = writingSaid(next) as Record<string, unknown>
       for (const key of WRITING_KEYS) {
         if (writing[key] === undefined) delete next[key]
         else (next as unknown as Record<string, unknown>)[key] = writing[key]
       }
+      // What follows by itself, of its own: a switch is on or off, and what is neither is none of its own.
+      const auto = autoSaid(next)
+      for (const key of AUTO_KEYS) if (auto[key] === undefined) delete next[key]
       // Budgets and numbers of its own that name nothing are none of its own.
       for (const key of ['context', 'parallel'] as const) if (next[key] !== undefined && Object.values(next[key]!).every(value => value === undefined || value === null)) delete next[key]
       // A cover named as nothing is no cover named: the latest one drawn stands in again.
@@ -2622,6 +2625,17 @@ export class Project {
       return [...settled, ...current.filter(item => item.status === 'pending'), proposal]
     })
     return proposal
+  }
+
+  /** Say more of a proposal that waits: the issues it answers for, the batches it belongs to. */
+  async noteProposal(id: string, patch: Pick<Partial<Proposal>, 'issues' | 'batches'>): Promise<Proposal | undefined> {
+    let found: Proposal | undefined
+    await this.updateState<Proposal[]>(['proposals.json'], [], current => current.map((item) => {
+      if (item.id !== id) return item
+      found = { ...item, ...patch }
+      return found
+    }))
+    return found
   }
 
   async setProposalStatus(id: string, status: Proposal['status']): Promise<Proposal | undefined> {
