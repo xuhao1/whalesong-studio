@@ -453,7 +453,7 @@ export function studioTools(service: NovelService) {
         'The small hand edits Novel Studio offers on its screens, for when the author asks for one in the conversation.',
         '- action=find: exact text search across the manuscript (`query`); novel_search is for meaning.',
         '- action=restore_version: put back an earlier version of `chapter` (`version` id from novel_read what=versions).',
-        '- action=resolve_issue: mark review `issue` of `chapter` as dealt with (or reopen it with resolved=false). action=delete_review: throw the whole review of `chapter` away.',
+        '- action=resolve_issue: mark a review issue as dealt with (or reopen it with resolved=false) — `issue` as `<chapter>:<issue id>`, the name novel_review and novel_read what=review list it under (or `chapter` and the bare id). action=delete_review: throw the whole review of `chapter` away.',
         '- action=edit_line: change line `id` of the audio script of `chapter` — `fields` {text, kind: narration|dialogue|thought, speaker (character id, "" for the narrator), direction, voiced (false leaves the line unspoken, true has a speech tag spoken after all)}.',
         '- action=edit_cue / add_cue / delete_cue: the sound cues of the audio script of `chapter` — `id` is the cue (edit, delete), `fields` {kind: bed|effect|music, at (line id), caption (what the reader sees), prompt (what the sound model is asked for), ambience (the browser\'s stand-in bed), intensity 0-1}. A changed cue keeps its old clip until sound is made again (novel_audio action=sound cues=[id]).',
         '- action=walkons: the people the page names who have no character card — where each turns up, the voice the audio drama gave them, whether they look like an existing character under another name, and what the planner said of them when it last looked through the list.',
@@ -521,9 +521,17 @@ export function studioTools(service: NovelService) {
           }
           case 'resolve_issue': {
             const resolved = args.resolved !== false
-            const done = await resolveIssue(runtime, need(args.chapter, 'chapter'), need(args.issue, 'issue'), resolved)
-            if (done === undefined) throw new ProjectError('novel/not-found', `no such review issue`)
-            return { text: `Issue ${args.issue} ${resolved ? 'marked as dealt with' : 'reopened'}.` }
+            // Named as the reviews list it, `<chapter>:<issue id>`, or by `chapter` and the bare id.
+            const named = need(args.issue, 'issue')
+            const at = named.lastIndexOf(':')
+            const id = (at > 0 ? named.slice(at + 1) : named).trim()
+            const ref = args.chapter?.trim() || (at > 0 ? named.slice(0, at).trim() : undefined)
+            if (ref === undefined) throw new ProjectError('novel/invalid', `"${named}" does not say whose issue it is: write <chapter>:<issue id>, as novel_review and novel_read what=review list it`)
+            const located = await project.findChapter(ref)
+            if (located === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${ref}"`)
+            const done = await resolveIssue(runtime, located.plan.id, id, resolved)
+            if (done === undefined) throw new ProjectError('novel/not-found', `chapter ${located.index} has no review issue "${id}" — novel_read what=review ref=${located.plan.id} lists its issues`)
+            return { text: `Issue ${located.plan.id}:${id} of chapter ${located.index} "${located.plan.title}" ${resolved ? 'marked as dealt with' : 'reopened'}.` }
           }
           case 'delete_review': {
             const done = await clearReview(runtime, need(args.chapter, 'chapter'))

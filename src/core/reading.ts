@@ -12,8 +12,9 @@ import { chapterAsMeant, threadWithout } from './plans'
 import { ProjectError, type LineScope, type Project } from './project'
 import { L, promptLanguage, renderCharacter, renderPlan, renderStyle, renderThread, renderWorld, roleLabel, styleExtra } from './render'
 import { lifeLine } from '../shared/life'
+import { mendsOf } from '../shared/issues'
 import { clip } from '../shared/text'
-import { MAIN_LINE, type PlotThread, type SearchSource } from '../shared/types'
+import { MAIN_LINE, type PlotThread, type Proposal, type ReviewIssue, type SearchSource } from '../shared/types'
 
 export const READ_KINDS = ['chapter', 'outline', 'character', 'world', 'style', 'memory', 'threads', 'review', 'versions', 'jottings', 'derivations'] as const
 export type ReadKind = typeof READ_KINDS[number]
@@ -35,9 +36,9 @@ export interface ReadRequest {
   ref?: string | undefined
   /** The line of the plot to read along, by id or name, where the reader is kept to none: chapter numbers count along it. Left out: the main line, and the whole book where a list is asked for. */
   line?: string | undefined
-  /** For chapter text: character offset to start from. */
+  /** For chapter text: character offset to start from; for the open issues of the book (what=review, no ref): how many to pass over. */
   offset?: number | undefined
-  /** For chapter text: most characters to return. */
+  /** For chapter text: most characters to return; for the open issues of the book: most issues to list. */
   limit?: number | undefined
 }
 
@@ -45,6 +46,37 @@ export interface Reading {
   text: string
   /** The thing itself, for callers that take structure. */
   data?: unknown
+}
+
+/**
+ * What the showrunner is told it can do with an issue it has read: the tools that act on one take it by the name it
+ * is listed under. The crew reads reviews without it.
+ */
+export const ISSUE_TOOLS = 'Each issue is named `<chapter>:<issue id>`, as at the head of its line — the tools take it so: novel_revise scope=issues issues=[…] mends it (every change waits as a proposal beneath it); novel_manage action=resolve_issue issue=<chapter>:<issue id> marks it dealt with (resolved=false reopens it); novel_revise scope=accept / reject proposal=<id> settles a proposal that waits beneath it.'
+
+/**
+ * One issue of a review as a reader is shown it: first its name — `<chapter id>:<issue id>`, the way the tools that
+ * act on an issue take it — then how grave, of what kind and where it stands (the proposals that wait beneath it, as
+ * the Studio's pages show them), then what it says. `brief`: one line, for a list of many.
+ */
+export function issueLine(chapterId: string, issue: ReviewIssue, proposals: readonly Proposal[], brief = false): string {
+  const open = issue.resolved !== true
+  const waiting = open ? mendsOf(proposals, chapterId, issue).map(proposal => proposal.id) : []
+  const state = [
+    open ? 'open' : 'dealt with',
+    issue.lead !== undefined ? 'the author noticed it' : undefined,
+    open && issue.mending !== undefined ? 'handed over to be mended' : undefined,
+    waiting.length > 0 ? `waiting beneath it: proposal ${waiting.join(', ')}` : undefined,
+    open && issue.mending === undefined && issue.fix !== undefined ? (issue.fix.replace !== undefined ? 'the reviewer wrote the change out' : 'the reviewer said how it changes') : undefined,
+    open && issue.mending === undefined && issue.wider === true ? 'mending it takes a change in another chapter' : undefined,
+    issue.unverified === true ? 'quotes nothing for what it is at odds with' : undefined,
+  ].filter((part): part is string => part !== undefined)
+  const quote = issue.quote !== undefined ? ` "${flat(issue.quote, brief ? 40 : 80)}" —` : ''
+  const head = `- ${chapterId}:${issue.id} [${issue.severity}/${issue.type}; ${state.join('; ')}]${quote} ${brief ? flat(issue.explanation, 160) : issue.explanation}`
+  if (brief) return head
+  const against = issue.against !== undefined ? `\n  at odds with ${issue.against.kind}${issue.against.ref !== undefined ? ` ${issue.against.ref}` : ''}: "${flat(issue.against.quote, 120)}"` : ''
+  const fix = issue.suggestion !== undefined ? `\n  fix: ${issue.suggestion}` : ''
+  return `${head}${against}${fix}`
 }
 
 function flat(text: string | undefined, max: number): string {
@@ -72,7 +104,8 @@ async function scopeOf(project: Project, asked: string | undefined, kept: ReadSc
 const lineName = (scope: LineScope): string => scope.title !== undefined ? `the line "${scope.title}"` : 'the main line'
 
 /**
- * @param tools - what the reader should be pointed at where something is missing: the names differ between the showrunner and the crew.
+ * @param tools - what the reader should be pointed at where something is missing: the names differ between the showrunner and the crew;
+ *   `issues`, what a reader of review issues can do with them (the showrunner's tools).
  * @param kept - the line of the plot this reader is kept to (a role at work on one line); the showrunner is kept to none.
  * @param texts - chapters to be read otherwise than the book has them, by id: the text a piece of work goes by where
  *   that is not the saved one (a mending that goes on from changes still waiting reads the chapter with them laid in).
@@ -80,7 +113,7 @@ const lineName = (scope: LineScope): string => scope.title !== undefined ? `the 
  *   it was meant and the threads without the marks its last draft left (see `plans.ts`).
  * @throws ProjectError `novel/not-found` or `novel/invalid`, in words the model can act on.
  */
-export async function readBook(runtime: ProjectRuntime, request: ReadRequest, tools: { read: string; digest?: string; review?: string } = { read: 'novel_read', digest: 'novel_digest', review: 'novel_review' }, kept?: ReadScope, texts?: ReadonlyMap<string, string>): Promise<Reading> {
+export async function readBook(runtime: ProjectRuntime, request: ReadRequest, tools: { read: string; digest?: string; review?: string; issues?: string } = { read: 'novel_read', digest: 'novel_digest', review: 'novel_review', issues: ISSUE_TOOLS }, kept?: ReadScope, texts?: ReadonlyMap<string, string>): Promise<Reading> {
   const { project } = runtime
   const manifest = await project.manifest()
   const lang = promptLanguage(manifest.language)
@@ -248,11 +281,45 @@ export async function readBook(runtime: ProjectRuntime, request: ReadRequest, to
       return { text: threads.map(thread => `${renderThread(thread, lang, label)} [${thread.id}; ${thread.status}${thread.auto === true ? '; unconfirmed' : ''}]`).join('\n'), data: threads }
     }
     case 'review': {
+      const proposals = await project.proposals()
+      const footer = tools.issues !== undefined ? `\n\n${tools.issues}` : ''
+      if (given === undefined) {
+        // Every open issue, chapter by chapter: of the line read along, else of the whole book — each line's own chapters numbered along it.
+        const chapters = scope !== undefined
+          ? await project.chapters(scope.line)
+          : [...await project.chapters(), ...(await Promise.all((await project.lines()).map(async line => (await project.chapters(line.id)).filter(chapter => chapter.line === line.id)))).flat()]
+        const lineTitle = new Map((await project.lines()).map(line => [line.id, line.title]))
+        const offset = Math.max(0, request.offset ?? 0)
+        const limit = Math.max(1, request.limit ?? 60)
+        const lines: string[] = []
+        let reviewed = 0
+        let open = 0
+        let withOpen = 0
+        for (const chapter of chapters) {
+          const review = await project.review(chapter.plan.id)
+          if (review === undefined) continue
+          reviewed += 1
+          const issues = review.issues.filter(issue => issue.resolved !== true)
+          if (issues.length === 0) continue
+          withOpen += 1
+          const shown = issues.filter((_, at) => open + at >= offset && open + at < offset + limit)
+          if (shown.length > 0) lines.push(`## Chapter ${chapter.index} "${chapter.plan.title}" (${chapter.plan.id})${chapter.line !== undefined && scope === undefined ? `, on the line "${lineTitle.get(chapter.line) ?? chapter.line}"` : ''}: ${issues.length} open`, ...shown.map(issue => issueLine(chapter.plan.id, issue, proposals, true)))
+          open += issues.length
+        }
+        const where = scope !== undefined ? ` on ${lineName(scope)}` : ''
+        if (reviewed === 0) return { text: `No chapter${where} has been reviewed yet${tools.review !== undefined ? ` — run ${tools.review}` : ''}.` }
+        if (open === 0) return { text: `No open issue${where}: ${reviewed} of ${chapters.length} chapter(s) reviewed, every issue they found dealt with.` }
+        const listed = Math.max(0, Math.min(open, offset + limit) - offset)
+        const more = offset + limit < open ? ` — ${open - offset - limit} more: offset=${offset + limit} for the next` : ''
+        return {
+          text: `${open} open issue(s) in ${withOpen} chapter(s)${where} (${reviewed} of ${chapters.length} reviewed)${listed === 0 ? `; offset=${offset} passes them all` : listed < open ? `; issues ${offset + 1}–${offset + listed} listed${more}` : ''}. ${tools.read} what=review ref=<chapter> reads one chapter's review whole.\n\n${lines.join('\n')}${footer}`,
+        }
+      }
       const chapter = await chapterOf()
       const review = await project.review(chapter.plan.id)
       if (review === undefined) return { text: `Chapter ${chapter.index} has not been reviewed${tools.review !== undefined ? ` — run ${tools.review}` : ''}.` }
       return {
-        text: `${review.verdict}\n\n${review.issues.map(issue => `- [${issue.severity}/${issue.type}${issue.resolved === true ? '/resolved' : ''}] ${issue.quote !== undefined ? `"${clip(issue.quote, 60)}" — ` : ''}${issue.explanation}${issue.suggestion !== undefined ? ` → ${issue.suggestion}` : ''}`).join('\n')}`,
+        text: `Chapter ${chapter.index} "${chapter.plan.title}" (${chapter.plan.id}): ${review.verdict}\n\n${review.issues.length === 0 ? 'No issues found.' : review.issues.map(issue => issueLine(chapter.plan.id, issue, proposals)).join('\n')}${review.issues.length > 0 ? footer : ''}`,
         data: review,
       }
     }

@@ -246,9 +246,10 @@ export async function reviewChapter(core: NovelCore, runtime: ProjectRuntime, pa
   return { ...review, title: chapter.plan.title, index: chapter.index, ...(unfounded > 0 ? { unfounded } : {}), ...(stays > 0 ? { kept: stays } : {}), ...(read !== undefined ? { read } : {}) }
 }
 
+/** Mark one issue of a chapter's review as dealt with, or open it again. Undefined where the chapter's review has no such issue. */
 export async function resolveIssue(runtime: ProjectRuntime, chapterId: string, issueId: string, resolved: boolean): Promise<ChapterReview | undefined> {
   const review = await runtime.project.review(chapterId)
-  if (review === undefined) return undefined
+  if (review === undefined || !review.issues.some(issue => issue.id === issueId)) return undefined
   const next: ChapterReview = { ...review, issues: review.issues.map(issue => issue.id === issueId ? { ...issue, resolved } : issue) }
   await runtime.project.saveReview(next)
   return next

@@ -16,6 +16,7 @@
  */
 import { MAIN_LINE, type ChapterInfo, type ChapterReview, type IssueEvidence, type JobInfo, type PictureGuide, type Proposal, type ReviewIssue } from '../shared/types'
 import { clip, fuzzyFind } from '../shared/text'
+import { mendsOf } from '../shared/issues'
 import { ISSUE_TYPE, SEVERITY, SEVERITY_TONE } from './labels'
 import { ProposalCard, SettleAll } from './components/ProposalCard'
 import { useBookActions } from './actions'
@@ -154,14 +155,6 @@ export function ReviewMendsMenu({ variant = 'ghost' }: { variant?: 'ghost' | 'ou
       { label: t(`${on ? '' : '✓ '}只审校：列出问题，先不改${mine}`, `${on ? '' : '✓ '}Review only: the issues are listed, nothing changes${mine}`), onSelect: () => { setOn(false) } },
     ]} />
   )
-}
-
-/**
- * The changes that wait to mend an issue: made for it by name — or, where it was handed over with a batch, that
- * batch's (of the batch, a change to this very chapter that names other issues is theirs, and shown beneath them).
- */
-export function mendsOf(proposals: readonly Proposal[], chapterId: string, issue: ReviewIssue): Proposal[] {
-  return proposals.filter(proposal => proposal.status === 'pending' && (proposal.issues?.includes(issue.id) === true || (issue.mending !== undefined && (proposal.batchId === issue.mending || proposal.batches?.includes(issue.mending) === true) && !(proposal.chapterId === chapterId && (proposal.issues?.length ?? 0) > 0))))
 }
 
 /** The small triangle beside the buttons that rewrite a passage: whose model does it. */
