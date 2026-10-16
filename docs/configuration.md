@@ -1,6 +1,6 @@
 # Configuration
 
-Everything described here can be changed in *Novel Studio → Settings* (the gear icon), and the showrunner can change it for you in the conversation ("set speech up with Bailian", "use Claude for the writer"). This page is the reference: what each field means, where it is stored, and the other places a setting can come from.
+Everything described here can be changed in *Whalesong Studio → Settings* (the gear icon), and the showrunner can change it for you in the conversation ("set speech up with Bailian", "use Claude for the writer"). This page is the reference: what each field means, where it is stored, and the other places a setting can come from.
 
 ## Two kinds of model
 

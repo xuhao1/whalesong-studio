@@ -47,7 +47,7 @@ async function reconcile(core: NovelCore, runtime: ProjectRuntime, paths: string
       chapter: id,
       summary: zh
         ? `第 ${info.index} 章《${info.title}》的文件被工坊之外的程序直接改动（现在 ${info.words} 字）——没有留下改动前的版本；${digesting ? '记忆正在重新收录' : '记忆已过期，需要重新收录'}`
-        : `The file of chapter ${info.index} "${info.title}" was changed outside Novel Studio (now ${info.words} words) — no version of the earlier text was kept; ${digesting ? 'its memory is being digested again' : 'its memory is stale and needs digesting'}`,
+        : `The file of chapter ${info.index} "${info.title}" was changed outside Whalesong Studio (now ${info.words} words) — no version of the earlier text was kept; ${digesting ? 'its memory is being digested again' : 'its memory is stale and needs digesting'}`,
     })
     await scheduleDigest(core, runtime, id, { origin: 'user' })
   }
@@ -58,7 +58,7 @@ async function reconcile(core: NovelCore, runtime: ProjectRuntime, paths: string
       tool: 'files',
       summary: zh
         ? `设定或大纲的文件被工坊之外的程序直接改动：${names}${others.length > 4 ? ' 等' : ''}——已写的正文可能与之不符，值得让总编核对一遍`
-        : `Bible or outline files were changed outside Novel Studio: ${names}${others.length > 4 ? ', …' : ''} — written chapters may now disagree with them; worth having the showrunner check`,
+        : `Bible or outline files were changed outside Whalesong Studio: ${names}${others.length > 4 ? ', …' : ''} — written chapters may now disagree with them; worth having the showrunner check`,
     })
   }
 }

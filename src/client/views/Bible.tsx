@@ -541,7 +541,7 @@ function WorldEditor({ entry, seen, derived, onDeleted }: { entry: WorldEntry; s
           <span className="nv-muted nv-small nv-named-in">
             {named.length > 0 ? (
               <>
-                <span>{t(`正文里 ${named.length} 章写到它：`, `Named in ${named.length} chapters: `)}</span>
+                <span>{t(`正文里 ${named.length} 章写到它：`, named.length === 1 ? 'Named in one chapter: ' : `Named in ${named.length} chapters: `)}</span>
                 {(allNamed ? named : named.slice(0, 24)).map(([id, at]) => <button key={id} type="button" className="nv-album-chapter" onClick={() => { controller.readAbout(id, [draft.name, ...(draft.aliases ?? [])]) }} title={t(`去读第 ${at} 章写到它的地方`, `To where chapter ${at} names it`)}>{at}</button>)}
                 {!allNamed && named.length > 24 ? <button type="button" className="nv-link nv-small" onClick={() => { setAllNamed(true) }}>{t(`…另 ${named.length - 24} 章`, `…${named.length - 24} more`)}</button> : null}
               </>

@@ -146,9 +146,27 @@ export interface IllustrateParams {
   trialBatch?: string
 }
 
+/** A shot named first — how the frame is taken, before what it shows. */
+const FRAMING = /^(?:extreme\s+)?(?:medium|wide|long|full|close[- ]?up|close|establishing|tight|aerial|overhead|high[- ]angle|low[- ]angle|eye[- ]level|bird'?s[- ]eye|over[- ]the[- ]shoulder|two[- ]shot|top[- ]down)\b|^(?:大?远景|全景|中近景|中景|近景|大?特写|俯视|俯拍|仰视|仰拍|平视|鸟瞰|镜头|机位)/i
+
+/**
+ * What a reader is told under a picture where the director gave no line for it: the description, less a short first
+ * sentence that only says how the frame is taken ("Medium shot, eye-level view.", "中景，略俯视角。"). A first sentence
+ * that goes on to what the picture shows is kept whole.
+ */
+export function captionFrom(description: string): string {
+  const text = description.trim()
+  const end = text.search(/[。.;；!！?？]/)
+  if (end < 0) return text
+  const first = text.slice(0, end + 1)
+  const rest = text.slice(end + 1).trim()
+  const short = first.length <= (/[\u3400-\u9fff]/.test(first) ? 20 : 48)
+  return FRAMING.test(first) && short && rest.length > 0 ? rest : text
+}
+
 export async function requireImages(core: NovelCore, runtime?: ProjectRuntime): Promise<ImageProvider> {
   const provider = await core.imageProvider(runtime)
-  if (provider === undefined) throw new ProviderError('image generation is not configured — set an image endpoint in Novel Studio → Settings', undefined, 'NOT_CONFIGURED')
+  if (provider === undefined) throw new ProviderError('image generation is not configured — set an image endpoint in Whalesong Studio → Settings', undefined, 'NOT_CONFIGURED')
   return provider
 }
 
@@ -2927,7 +2945,8 @@ export async function illustrate(core: NovelCore, runtime: ProjectRuntime, param
   }
   task.job?.result({ framed: framing })
   framedOf = framing
-  const alt = clip(description.replace(/[\]\n]/g, ' '), 60, '')
+  // Under the picture in the text, a reader is told what moment it is — the director's line for that, not how the frame was shot.
+  const alt = clip((asText(framed.caption)?.trim() || captionFrom(description)).replace(/[\]\n]/g, ' '), 120, '…')
   const passageInput: RenderInput = {
     subject: makings.subject,
     ...(makings.pieces !== undefined ? { pieces: makings.pieces } : {}),

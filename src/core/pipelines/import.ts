@@ -20,6 +20,7 @@ import { deriveGrowth } from './growth'
 import type { StyleProfile, WorldCategory, WorldEntry } from '../../shared/types'
 import { ANALYZE_STEPS, analysisSteps, type AnalyzeStep, type SettledSuggestion } from '../../shared/types'
 import { clip, countWords, sameName } from '../../shared/text'
+import { personNamed } from '../../shared/world'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { asArray, asList, asRecord, asText } from '../llm'
 import { assign } from '../crew'
@@ -373,9 +374,12 @@ export async function analyzeBook(core: NovelCore, runtime: ProjectRuntime, para
     try {
       const known = await project.world()
       const has = (name: string): boolean => known.some(entry => sameName(entry.name, name) || entry.aliases?.some(alias => sameName(alias, name)) === true)
+      // Somebody with a card is a person, not an entry of the world: what the digests say of them is on their card.
+      const cast = await project.characters()
+      const person = (name: string, kind: string | undefined): boolean => personNamed(cast, name, kind) !== undefined
       const seen = new Map<string, { kind: string; count: number; notes: string[]; looks: string[] }>()
       const note = (name: string, kind: string, text: string, looks?: string): void => {
-        if (has(name)) return
+        if (has(name) || person(name, kind)) return
         const entry = seen.get(name) ?? { kind, count: 0, notes: [], looks: [] }
         entry.count += 1
         if (entry.notes.length < 3) entry.notes.push(clip(text, 100))
@@ -410,8 +414,8 @@ export async function analyzeBook(core: NovelCore, runtime: ProjectRuntime, para
           for (const raw of asArray(value.entries)) {
             const item = asRecord(raw)
             const name = asText(item.name)
-            if (name === undefined) continue
             const category = asText(item.category) as WorldCategory | undefined
+            if (name === undefined || person(name, category)) continue
             const importance = Number(item.importance)
             const aliases = asList(item.aliases)
             const saved = await project.saveWorld({

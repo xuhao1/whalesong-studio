@@ -68,6 +68,14 @@ export function clipTail(text: string, max: number, ellipsis = '…'): string {
 }
 
 /** Stable 53-bit string hash (cyrb53) rendered as hex; not cryptographic. */
+/**
+ * Whether what was made of a chapter (its digest) was made of this text. Pictures placed in the text change nothing
+ * that was read, so the prose is what counts; a digest made before that, of the text with its pictures, still counts.
+ */
+export function digestOf(hash: string, text: string): boolean {
+  return hash === hashText(proseOnly(text)) || hash === hashText(text)
+}
+
 export function hashText(text: string, seed = 0): string {
   let h1 = 0xdeadbeef ^ seed
   let h2 = 0x41c6ce57 ^ seed
@@ -368,3 +376,6 @@ export const FFMPEG_INSTALL: readonly [string, string] = [
   'macOS：brew install ffmpeg；Windows：winget install ffmpeg；Linux：用发行版的包管理器（如 sudo apt install ffmpeg）',
   'macOS: brew install ffmpeg; Windows: winget install ffmpeg; Linux: your distribution\'s package manager (e.g. sudo apt install ffmpeg)',
 ]
+
+/** Markdown emphasis in a run of prose: `**strong**` (1), or `_em_` / `*em*` (delimiter 2, text 3) — not inside a word. */
+export const EMPHASIS = /\*\*(?=\S)(.+?)(?<=\S)\*\*|(?<![\p{L}\p{N}_*])([_*])(?=\S)(.+?)(?<=\S)\2(?![\p{L}\p{N}_*])/gu

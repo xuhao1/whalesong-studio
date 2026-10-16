@@ -139,7 +139,7 @@ export function studioTools(service: NovelService) {
     novelTool(service, {
       name: 'novel_settings',
       description: [
-        'Read and change how Novel Studio is set up — everything its Settings screen does, except typing keys.',
+        'Read and change how Whalesong Studio is set up — everything its Settings screen does, except typing keys.',
         '- action=show: which model plays each role (the writer, and the crew: analyst = continuity, architect = planner, director, producer = post-production), how each role of the crew is set to work, whether embeddings, images and speech are configured and have a key, what a ChatGPT subscription can do here, and — with a book open — the art direction and avoid list its pictures get and where each comes from.',
         '- action=setup: one-click setup for `service` (bailian, openrouter, openai, or codex for images from a ChatGPT subscription). It fills `parts` (embedding, image, tts; default all the service offers) with recommended models — text models are not set up here: every text role runs on a model of DSH\'s (its own Settings → Models) — using the key already saved for that service or found in its usual environment variable. `origin` overrides the service address (a Bailian workspace domain, a proxy).',
         '- action=studio: apply `patch` to the settings. Sections: models.{writer|analyst|architect|director|producer} = {provider, model, reasoningEffort?, temperature?, maxTokens?} — `provider` and `model` name a model configured in DSH (its Settings → Models); set a role to null to follow the chat model. crew.{analyst|architect|director|producer} = {mode: agent|call, tools: own|all, steps} — how a role of the crew works: as an agent with tools (the default) or by plain calls; with its own tools or with everything the conversation has; and how many tool calls a run may make (null resets a role). The Studio sets no output limit of its own: a reply runs as long as the model allows, and maxTokens is only a cap the author may add — a model that reasons spends its reasoning out of it, so a low cap cuts chapters, scripts and storyboards off; set it to null to remove it. context {strategy: auto (the nearest chapters word for word, the ones before as an outline) | full (as many chapters word for word as the window can hold at all) | retrieval (no chapter whole: outline, looked-up passages and the end of the chapter before — cheapest), budgetTokens: how many tokens of the manuscript\'s own text travel word for word — null for the default, half of the model\'s context window, spent in whole chapters, tailChars}; how many requests go out at once, over everything the Studio is doing (default 8, at most 256; a gate slows down by itself when its service answers "too fast" and makes the request again): textConcurrency (pieces of text work — a role\'s run on a script passage, a digest, a review), tts.concurrency (lines spoken), image.concurrency (pictures drawn), sound.concurrency (sounds made, when sound has an endpoint of its own); vision = {provider, model} — one of DSH\'s models that takes pictures: where the author gives pictures to steer a plan or a chapter and the model doing the work takes none, this one says in words what each shows (null: none); embedding / image / tts {provider, baseURL, model, …; image.lead says which picture of a person the others are held against — sheet (default: the design sheet is drawn from the words alone, a portrait and every other picture against it, and whoever lacks one gets it first; the result names it), portrait (a portrait is drawn from the words alone, the sheet against the portrait — after it where there is none — and other pictures against the sheet), none (nothing is drawn for the sake of another picture); tts.retakes = how many more times a line is spoken when a take fails the listening check, 0-4; tts.speechTags = drop (a "he said" between two spoken lines is left unspoken, as in an audio drama) | read (every word is read, as in an audiobook)}; sound {provider: auto (follow the speech setup) | qwen-audiogen | none, model, effects, music (whether the director places them), beds: generate | browser}; what the Studio does by itself once text is written or changed, each model calls nobody asked for one by one and each the author\'s to switch off: autoDigest (a chapter is digested once it is written or changed; off, memory waits for the author\'s word — then do not run novel_digest after every change on your own either: digest when the author asks, or when the work in hand cannot do without the memory, and say so), siftCast (after digests the planner looks through the names without a card), settleSuggestions (the planner settles what digests suggest for the bible), recheckIssues (after a revision is accepted the open issues of that chapter are read against the new text), reviewMends (a review the author starts from the Studio\'s pages hands what it found on to be mended, each change a proposal beneath its issue) — all true unless set false; plansFollow (the plan and beats of a chapter set by its text, by themselves, once the text is changed after a digest) — false unless the author set it true: a plan is the author\'s design, so this is never yours to switch on, and with it off you do not set a plan by its text on your own either; mendBy = auto | planner | writer — who writes the words of a change made by places (an issue mended, something the author noticed put right, a request carried through the book, a chapter gone through to an instruction): the planner tells place by place — a small change it writes itself, a place where a passage is to be written it hands to the writer model (auto, the default: the writer model, as a rule the dearer, is called only where prose is to be written); the crew\'s model writes every place itself, its hand-in the proposal (planner); or the writer model rewrites every place after the planner has settled them (writer); rewriteBy = writer | planner — whose model rewrites a passage (novel_revise scope=passage, the author\'s own selection on the writing page) and writes a chapter over whole (writer, the default; planner where the author wants the crew\'s model to do such rewriting too); mendReach = bold | careful — how far a change by places reaches: mended through — every place a problem shows, what has to change with each, a paragraph taken in where a sentence will not do (bold, the default) — or the least change that answers it (careful); materialBy = planner | rules | agent — who prepares what the writer is handed for a piece of writing (a chapter written or gone on with, a passage rewritten, a chapter written over): the planner, who looks at the piece first, reads in the book as far as it needs and hands the writer its material — what is asked, where the story stands, what must hold, whose cards, which of the world, the text to hold it against, the form, the voice (planner) — or the Studio by its standing rules, with nobody looking first (rules, the default: quicker) — or nobody at all (agent): a chapter written or gone on with is then the writer\'s own work as an agent — it reads in the book for itself, hands the text in with a tool and goes over it as often as it sees fit before it calls the work done (its model has to be one that can run as an agent; rewrites still have the planner\'s material) — none of the four is yours to change unasked; partBeats = how many beats of a chapter\'s plan one request writes where the writer writes in one request (default 3: a chapter with beats is then written in parts, beat by beat, whatever length is asked for — each beat gets its room, and the chapter comes out longer than one written in one go; 0: never in parts — always one request, whatever length is asked for); reviewAgentRevisions; prices {"<model id>": {input, output, image, minute, chars10k, currency} | null}.',
@@ -327,16 +327,29 @@ export function studioTools(service: NovelService) {
 
     novelTool(service, {
       name: 'novel_show',
-      description: 'Show something in Novel Studio next to the conversation: a screen (`view`: home 总览, cast 人物 — every character\'s card (looks, voice, relationships) with the table of each life, chapter by chapter along a line of the plot, the relationship graph and the walk-ons, bible 设定 — the world, the prose style and the art direction, outline 大纲, write 写作, read 观看 — the chapter as a reader meets it (the same screen holds the album of the book\'s people and its world), listen 听 — the same reader in its listening mode, where the audio drama plays and is produced, review 审校, stage 演出, settings 设置 — models, keys and services, setup 配置向导, usage 用量与成本), optionally at a `chapter`, and for the stage a `tab` (comic 有声漫, play 幕间, gallery 插图). Use it when the author asks to see, open or check something, when a key has to be pasted (view=settings), and after work the author will want to look at. It changes nothing in the project. The Studio always shows the book in play, so naming another `book` moves the session onto it.',
+      description: 'Show something in Whalesong Studio next to the conversation: a screen (`view`: home 总览, cast 人物 — every character\'s card (looks, voice, relationships) with the table of each life, chapter by chapter along a line of the plot, the relationship graph and the walk-ons, bible 设定 — the world, the prose style and the art direction, outline 大纲, write 写作, read 观看 — the chapter as a reader meets it (the same screen holds the album of the book\'s people and its world), listen 听 — the same reader in its listening mode, where the audio drama plays and is produced, review 审校, stage 演出, settings 设置 — models, keys and services, setup 配置向导, usage 用量与成本), optionally at a `chapter`, and for the stage a `tab` (comic 有声漫, play 幕间, gallery 插图). `of` opens the page of one person or one entry of the world (a place, a house, a thing) in the viewer — their picture large, who or what they are, what happens to them — by id, name or other name; it always opens the viewer, whatever `view` says. Use it when the author asks to see, open or check something, when a key has to be pasted (view=settings), and after work the author will want to look at. It changes nothing in the project. The Studio always shows the book in play, so naming another `book` moves the session onto it.',
       book: 'switch',
       parameters: {
         view: { type: 'string', required: true, enum: [...VIEWS] },
         chapter: { type: 'string', description: 'Chapter id, number or title to open the screen at.' },
         tab: { type: 'string', enum: [...STAGE_TABS], description: 'stage: which tab — production is where every chapter\'s stage production stands, with one button for what is missing.' },
+        of: { type: 'string', description: 'A character or an entry of the world — id, name or other name — whose page to open in the viewer.' },
       },
       async run(args, env) {
         let chapterId: string | undefined
         let title: string | undefined
+        // One person's or one place's page: found first, so that what is said to have opened is what opened.
+        if (args.of !== undefined && args.of.trim().length > 0) {
+          const { project } = await env.project()
+          const card = await project.findCharacter(args.of)
+          const entry = card === undefined ? await project.findWorld(args.of) : undefined
+          if (card === undefined && entry === undefined) throw new ProjectError('novel/not-found', `no character and no entry of the world matches "${args.of}" — novel_read what=cast or what=world lists them`)
+          const page = card !== undefined ? { type: 'character' as const, id: card.id, name: card.name } : { type: 'world' as const, id: entry!.id, name: entry!.name }
+          return {
+            text: `Opened Whalesong Studio at the page of ${page.name} (${page.type === 'character' ? 'a character' : 'an entry of the world'}) in the viewer.`,
+            data: toJson({ view: 'read', album: { section: page.type === 'character' ? 'people' : 'world', end: { type: page.type, id: page.id } } }),
+          }
+        }
         if (args.chapter !== undefined && args.chapter.trim().length > 0) {
           const runtime = await env.project()
           const located = await runtime.project.findChapter(args.chapter)
@@ -350,7 +363,7 @@ export function studioTools(service: NovelService) {
         const tab = listening ? undefined : args.tab
         // The Studio's tool row reads `data` and performs the navigation in the author's window.
         return {
-          text: `Opened Novel Studio at ${listening ? 'the reader, listening' : view}${tab !== undefined ? ` → ${tab}` : ''}${title !== undefined ? `, chapter "${title}"` : ''}.`,
+          text: `Opened Whalesong Studio at ${listening ? 'the reader, listening' : view}${tab !== undefined ? ` → ${tab}` : ''}${title !== undefined ? `, chapter "${title}"` : ''}.`,
           data: toJson({ view, ...(chapterId !== undefined ? { chapter: chapterId } : {}), ...(tab !== undefined ? { tab } : {}), ...(view === 'read' ? { mode: listening ? 'listen' : 'read' } : {}) }),
         }
       },
@@ -404,7 +417,7 @@ export function studioTools(service: NovelService) {
             ...(args.album === false ? { album: false } : {}),
             ...(args.video === false ? { video: false } : {}),
             ...(args.lines === false ? { lines: false } : {}),
-            credit: { name: manifest.language.toLowerCase().startsWith('zh') ? '小说工坊' : 'Novel Studio', url: PROJECT_HOMEPAGE },
+            credit: { name: manifest.language.toLowerCase().startsWith('zh') ? '鲸歌工坊' : 'Whalesong Studio', url: PROJECT_HOMEPAGE },
           }, task))
           const megabytes = (done.bytes / 1024 / 1024).toFixed(1)
           const mb = (bytes: number): string => `${(bytes / 1024 / 1024).toFixed(1)} MB`
@@ -450,7 +463,7 @@ export function studioTools(service: NovelService) {
     novelTool(service, {
       name: 'novel_manage',
       description: [
-        'The small hand edits Novel Studio offers on its screens, for when the author asks for one in the conversation.',
+        'The small hand edits Whalesong Studio offers on its screens, for when the author asks for one in the conversation.',
         '- action=find: exact text search across the manuscript (`query`); novel_search is for meaning.',
         '- action=restore_version: put back an earlier version of `chapter` (`version` id from novel_read what=versions).',
         '- action=resolve_issue: mark a review issue as dealt with (or reopen it with resolved=false) — `issue` as `<chapter>:<issue id>`, the name novel_review and novel_read what=review list it under (or `chapter` and the bare id). action=delete_review: throw the whole review of `chapter` away.',
@@ -675,14 +688,14 @@ export function studioTools(service: NovelService) {
           }
           case 'audition': {
             const sample = await audition(env.core, runtime, { text: need(args.text, 'text'), ...(args.voice !== undefined ? { voice: args.voice } : {}), ...(args.character !== undefined ? { character: args.character } : {}), ...(args.direction !== undefined ? { direction: args.direction } : {}) }, env.task)
-            return { text: `Audition sample (${sample.duration}s) saved at ${sample.path}; the author can play it from the character's card in Novel Studio → Bible.`, data: toJson(sample) }
+            return { text: `Audition sample (${sample.duration}s) saved at ${sample.path}; the author can play it from the character's card in Whalesong Studio → Bible.`, data: toJson(sample) }
           }
           case 'lock_book': {
             const lock = await env.core.lockOf(project.root)
-            if (!lock.sealed) return { text: 'This book is not sealed, so there is nothing to lock. Sealing a book — encrypting all of its files — is done by the author in Novel Studio (the book menu → Seal and lock), where they choose its password.', record: false }
+            if (!lock.sealed) return { text: 'This book is not sealed, so there is nothing to lock. Sealing a book — encrypting all of its files — is done by the author in Whalesong Studio (the book menu → Seal and lock), where they choose its password.', record: false }
             const title = (await project.manifest()).title
             await env.core.lockBook(project.root)
-            return { text: `"${title}" is locked. Nothing of it can be read until the author unlocks it in Novel Studio; do not rely on what you remember of it.`, record: false }
+            return { text: `"${title}" is locked. Nothing of it can be read until the author unlocks it in Whalesong Studio; do not rely on what you remember of it.`, record: false }
           }
           case 'delete_book': {
             const removed = await service.deleteBook(project.root)

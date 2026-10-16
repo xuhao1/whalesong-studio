@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: LGPL-3.0-or-later */
 /*
- * Novel Studio styles. One sheet, injected once; every class is prefixed `nv-`
+ * Whalesong Studio styles. One sheet, injected once; every class is prefixed `nv-`
  * and every colour comes from the Harness theme tokens (with fallbacks), so the
  * Studio follows light and dark themes without knowing which is on.
  */
@@ -1836,6 +1836,11 @@
   width: 132px;
 }
 
+/* What is done to the cover stays under it: its buttons wrap to the cover's width instead of running into the text. */
+.nv-hero-cover > .nv-row {
+  flex-wrap: wrap;
+}
+
 /* The cover is the way into reading: the picture sits inside a button, and is sized here wherever it sits. */
 .nv-hero-cover img,
 .nv-hero-blank {
@@ -2108,10 +2113,18 @@ button.nv-stat:hover {
 .nv-write-toolbar {
   display: flex;
   flex: none;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+  row-gap: 2px;
   min-height: 40px;
   padding: 6px 12px 2px;
+}
+
+/* Where the column is narrow (English labels are longer), the buttons go to a second row instead of running over the
+   panel beside it; the count of words stays on one line. */
+.nv-write-toolbar > .nv-small {
+  white-space: nowrap;
 }
 
 .nv-write-title {

@@ -1,4 +1,4 @@
-# dsh-novel-writer（小说工坊）— 给 Claude 的工作约定
+# 鲸歌工坊 · Whalesong Studio（包名 `dsh-novel-writer`，原名"小说工坊"）— 给 Claude 的工作约定
 
 这份文件每次会话开头都会被读到。作者（Dr. Xu）会一边测试一边不断追加要求，所以：
 

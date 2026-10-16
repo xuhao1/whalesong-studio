@@ -13,6 +13,7 @@
  * It is read off where the chapters name the entry, unless the author says.
  */
 import type { WorldCategory, WorldEntry } from './types'
+import { sameName } from './text'
 
 export type WorldGroup = 'places' | 'factions' | 'items' | 'ideas'
 
@@ -82,4 +83,18 @@ export function worldPresence(entries: readonly Pick<WorldEntry, 'id' | 'name' |
     }
     return { entry: entry.id, chapters: here }
   })
+}
+
+/** What an entry of the world can be under somebody's other name: a title, a byname. */
+const BYNAMES: readonly string[] = ['term', 'other']
+
+/**
+ * The person with a card an entry of the world is — or a name about to become one: the same name as theirs; or, for a
+ * title or a byname (`term`, `other`), one of their other names. A place, a house or a thing keeps its name even where
+ * somebody is also called so: the stone's other name is the jade, and the jade is a thing of its own. A category not
+ * known is not taken for a byname.
+ */
+export function personNamed<T extends { name: string; aliases?: readonly string[] }>(cards: readonly T[], name: string, category?: string): T | undefined {
+  return cards.find(card => sameName(card.name, name))
+    ?? (category !== undefined && BYNAMES.includes(category) ? cards.find(card => card.aliases?.some(alias => sameName(alias, name)) === true) : undefined)
 }

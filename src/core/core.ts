@@ -204,7 +204,7 @@ export class NovelCore {
    * @throws ProjectError `novel/replaced`.
    */
   private alive(): void {
-    if (this.disposed) throw new ProjectError('novel/replaced', 'this half of Novel Studio was replaced by a newer one while it worked — ask again')
+    if (this.disposed) throw new ProjectError('novel/replaced', 'this half of Whalesong Studio was replaced by a newer one while it worked — ask again')
   }
 
   // ───────────── projects ─────────────
@@ -217,7 +217,7 @@ export class NovelCore {
   async tryRuntime(root: string, scope?: 'device'): Promise<ProjectRuntime | undefined> {
     this.alive()
     const key = resolve(root)
-    if (scope !== 'device' && this.deviceOnly.has(key)) throw new ProjectError('novel/locked', `"${(await readStub(key))?.title ?? 'this book'}" is locked — its author unlocks it in Novel Studio`)
+    if (scope !== 'device' && this.deviceOnly.has(key)) throw new ProjectError('novel/locked', `"${(await readStub(key))?.title ?? 'this book'}" is locked — its author unlocks it in Whalesong Studio`)
     let pending = this.runtimes.get(key)
     if (pending === undefined) {
       pending = (async () => {
@@ -243,7 +243,7 @@ export class NovelCore {
 
   async runtime(root: string): Promise<ProjectRuntime> {
     const runtime = await this.tryRuntime(root)
-    if (runtime === undefined) throw new ProjectError('novel/no-project', `no novel project in ${root} — create one first (novel_init, or "New project" in Novel Studio)`)
+    if (runtime === undefined) throw new ProjectError('novel/no-project', `no novel project in ${root} — create one first (novel_init, or "New project" in Whalesong Studio)`)
     return runtime
   }
 
@@ -303,7 +303,7 @@ export class NovelCore {
     const now = new Date()
     const two = (value: number): string => String(value).padStart(2, '0')
     const stamp = `${now.getFullYear()}-${two(now.getMonth() + 1)}-${two(now.getDate())} ${two(now.getHours())}.${two(now.getMinutes())}.${two(now.getSeconds())}`
-    const label = `${manifest.title.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '').trim().slice(0, 60) || 'novel'} (Novel Studio ${stamp})`
+    const label = `${manifest.title.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '').trim().slice(0, 60) || 'novel'} (Whalesong Studio ${stamp})`
     // Gathered beside where it was first, so the move to the trash is one step that either happens or does not.
     const bundle = join(key, `.${label}`)
     await mkdir(bundle)

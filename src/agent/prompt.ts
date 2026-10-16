@@ -7,7 +7,7 @@
  */
 import type { WorkMode } from '../shared/types'
 
-export const ORCHESTRATOR_SECTION = `# Novel Studio
+export const ORCHESTRATOR_SECTION = `# Whalesong Studio (鲸歌工坊)
 
 You are the showrunner of a long-form fiction studio that serves one author. You plan, decide and coordinate — and you have the run of the whole studio: whatever its screens can do, you can do with the novel_* tools on the author's word.
 
@@ -26,7 +26,7 @@ You are the showrunner of a long-form fiction studio that serves one author. You
 
 ## One book, kept whole
 
-A project is one canon: a story bible (characters, world, style), an outline (volumes → chapters → beats, plus the plot threads the reader is waiting on), the manuscript, and a memory digested from it (summaries, hard facts, each character's state after every chapter). It lives in the workspace as Markdown and JSON, and the author sees and edits all of it in the Novel Studio panel next to this conversation.
+A project is one canon: a story bible (characters, world, style), an outline (volumes → chapters → beats, plus the plot threads the reader is waiting on), the manuscript, and a memory digested from it (summaries, hard facts, each character's state after every chapter). It lives in the workspace as Markdown and JSON, and the author sees and edits all of it in the Whalesong Studio panel next to this conversation.
 
 - Every change goes through a novel_* tool. Each keeps the rest in step: the text as it was is kept as a version, memory is digested again, search is re-indexed, and the change goes on the book's record, where the author reads what you did. A file changed around them — a raw write or edit, a shell redirect — leaves all of that describing a book that no longer exists; the Studio refuses such calls on a book's own files, and you never need them: there is a tool for every kind of change. Reading the files is always fine.
 - Follow a change to where it leads. Text changed: check it against the cards of the characters it names and against the chapters that come after. A card or a rule of the world changed: find the passages that now disagree (novel_search) and settle them with the author. Memory records something the page does not say: correct it (novel_memory). Tool results say where to look.
@@ -55,7 +55,7 @@ A conversation is on one book at a time — the book in play — and the Studio 
 
 ## The Studio beside you
 
-Novel Studio is open next to this conversation. The conversation is where the author says what they want; the screens are where they read, check and fine-tune. Set it up (novel_settings), show the screen that holds what you just did or what they want to check (novel_show), and make the hand edits its screens offer (novel_manage) when asked.
+Whalesong Studio is open next to this conversation. The conversation is where the author says what they want; the screens are where they read, check and fine-tune. Set it up (novel_settings), show the screen that holds what you just did or what they want to check (novel_show), and make the hand edits its screens offer (novel_manage) when asked.
 
 - When the author wants to see something, show it (novel_show) rather than describing where to click.
 - The author points at a picture of the book from the Studio (a picture opened large → *Quote to chat*): what lands here reads 〔图：立绘 · 沈蘅｜assets/images/….png〕 — what the picture is to them, and its path in the book. Look at it (novel_look) before you say anything of what it shows or change it; the path is what the picture tools take (novel_illustrate redraw / references, novel_manage action=show_image). Pictures of the book are looked at through novel_look, not with file tools: of a sealed book the file on disk is ciphertext.
@@ -83,7 +83,7 @@ Novel Studio is open next to this conversation. The conversation is where the au
 10. Media costs money and time: generate images, audio, sound, comics and videos when the author asks for them, not on your own initiative. The crew costs tokens too — a role's run is many requests, not one: use it for work that needs it, not to look up what novel_read would tell you.
 11. Say what you changed. After any change you made with your own hands, tell the author what and where in a line; nothing you do to the book should surprise them when they open it.
 
-Reply in the author's language. Be concrete and brief; show judgment, not process. Talk about the book, not about your machinery: say "收录第一章的记忆" or "digest chapter one", never tool identifiers like novel_digest.`
+Reply in the language the author writes to you in — not the language of the book, of the files or of anything else in your context. Be concrete and brief; show judgment, not process. Talk about the book, not about your machinery: say "收录第一章的记忆" or "digest chapter one", never tool identifiers like novel_digest.`
 
 const MODE_RULES: Record<WorkMode, [string, string]> = {
   ideate: [
@@ -136,7 +136,7 @@ export function lockedContext(detail: string, others: readonly { title: string; 
   const elsewhere = others.length > 0
     ? ` Other books in reach are not this one: ${others.slice(0, 8).map(book => `"${book.title}" (${book.relative})`).join(', ')}. When the author means one of those, name it with \`book\` on the call, or move the session onto it with novel_status project=….`
     : ''
-  return `[Book in play] Locked. ${detail}. A locked book is encrypted on disk: you cannot read it, change it or look anything up in it, and nothing you remember of it from earlier turns may be relied on or repeated. Do not ask for its password — the author unlocks it in Novel Studio, with the password or their computer's own unlock, and your tools work again from then on.${elsewhere}`
+  return `[Book in play] Locked. ${detail}. A locked book is encrypted on disk: you cannot read it, change it or look anything up in it, and nothing you remember of it from earlier turns may be relied on or repeated. Do not ask for its password — the author unlocks it in Whalesong Studio, with the password or their computer's own unlock, and your tools work again from then on.${elsewhere}`
 }
 
 /** What the model is told when the author changed book faster than the new book's digest could be read. */
@@ -160,7 +160,7 @@ export function focusLines(input: {
   const shelf = others.slice(0, 6)
   const lines = zh
     ? [
-        `【当前作品】《${title}》（${path}）——这场对话和旁边的小说工坊此刻都在这本书上，工具调用默认作用于它。`,
+        `【当前作品】《${title}》（${path}）——这场对话和旁边的鲸歌工坊此刻都在这本书上，工具调用默认作用于它。`,
         switched !== undefined
           ? `换书记录：${switched.by === 'author' ? '作者在工坊里' : '你通过工具'}把会话从《${switched.from}》切到了这本书（${when}）。在那之前的对话谈的是《${switched.from}》；那本书上若还有没做完的事，用 book 参数点名它去做，不要带进这本书。`
           : '',

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 /**
- * The Studio shell: one React tree that runs both as the global "Novel Studio"
+ * The Studio shell: one React tree that runs both as the global "Whalesong Studio"
  * page and as a per-session tab in the right sidebar. It owns a controller,
  * shows the project chrome (title, navigation, mode, jobs, search) and routes
  * to the views.
@@ -45,7 +45,7 @@ export interface StudioProps {
   host: StudioHost
   sessionId?: string
   /** Where to land when opened from a link (a tool card, the guide); the chapter may be an id, a number or a title. */
-  initial?: { view?: StudioView; chapter?: string; tab?: StageTab; mode?: ReadMode; nonce?: number }
+  initial?: { view?: StudioView; chapter?: string; tab?: StageTab; mode?: ReadMode; of?: string; nonce?: number }
   /** The Studio's own page, opened by the author just now: the conversation they came from, if any. See `StudioController`. */
   arrival?: { sessionId?: string }
 }
@@ -143,11 +143,11 @@ export function Studio({ api, locale, host, sessionId, initial, arrival }: Studi
   const status = useSyncExternalStore(controller.subscribe, () => controller.getSnapshot().status)
   const loaded = useSyncExternalStore(controller.subscribe, () => controller.getSnapshot().project !== undefined)
   useEffect(() => {
-    if (initial === undefined || (initial.view === undefined && initial.chapter === undefined && initial.tab === undefined)) return
+    if (initial === undefined || (initial.view === undefined && initial.chapter === undefined && initial.tab === undefined && initial.of === undefined)) return
     // A chapter named by title can only be found once the project is in hand; the view can switch at once.
     if (status !== 'ready') return
-    void controller.show({ ...(initial.view !== undefined ? { view: initial.view } : {}), ...(initial.chapter !== undefined ? { chapter: initial.chapter } : {}), ...(initial.tab !== undefined ? { tab: initial.tab } : {}), ...(initial.mode !== undefined ? { mode: initial.mode } : {}) })
-  }, [controller, status, loaded, initial?.view, initial?.chapter, initial?.tab, initial?.mode, initial?.nonce])
+    void controller.show({ ...(initial.view !== undefined ? { view: initial.view } : {}), ...(initial.chapter !== undefined ? { chapter: initial.chapter } : {}), ...(initial.tab !== undefined ? { tab: initial.tab } : {}), ...(initial.mode !== undefined ? { mode: initial.mode } : {}), ...(initial.of !== undefined ? { of: initial.of } : {}) })
+  }, [controller, status, loaded, initial?.view, initial?.chapter, initial?.tab, initial?.mode, initial?.of, initial?.nonce])
   const zh = locale.toLowerCase().startsWith('zh')
   const t: Translate = useMemo(() => (zhText, enText) => (zh ? zhText : enText), [zh])
   const value = useMemo(() => ({ controller, api, t, locale, host }), [controller, api, t, locale, host])
@@ -351,7 +351,7 @@ function Shell() {
   if (status === 'loading') return <div className="nv-center"><Spinner size={20} /></div>
   if (status === 'error') {
     return (
-      <Empty icon="alert" title={t('无法连接到小说工坊服务', 'Could not reach the Novel Studio service')}>
+      <Empty icon="alert" title={t('无法连接到鲸歌工坊的服务', 'Could not reach the Whalesong Studio service')}>
         <p>{error}</p>
         <Button onClick={() => { void controller.start() }} icon="refresh">{t('重试', 'Retry')}</Button>
       </Empty>
@@ -360,7 +360,7 @@ function Shell() {
   // A sealed book that is locked: nothing of it can be shown but the way to open it.
   if (lock !== undefined && view !== 'settings' && view !== 'setup' && view !== 'usage') return <><BareHeader /><div className="nv-body"><LockScreen /></div></>
   if (project === undefined) {
-    if (view === 'settings') return <><BareHeader title={t('小说工坊设置', 'Novel Studio settings')} /><div className="nv-body"><SettingsView /></div></>
+    if (view === 'settings') return <><BareHeader title={t('鲸歌工坊设置', 'Whalesong Studio settings')} /><div className="nv-body"><SettingsView /></div></>
     if (view === 'setup') return <><BareHeader title={t('开始之前', 'Before you start')} /><div className="nv-body"><SetupView /></div></>
     if (view === 'usage') return <><BareHeader title={t('用量与成本', 'Usage and cost')} /><div className="nv-body"><UsageView /></div></>
     return <><BareHeader /><div className="nv-body"><Onboarding /></div></>
@@ -424,7 +424,7 @@ function StaleHostNotice() {
     <div className="nv-banner is-warn nv-stale" role="status">
       <span>
         <Icon name="refresh" size={14} />
-        <b>{can ? t('小说工坊更新了', 'Novel Studio was updated') : t('请重启 DSH', 'Restart DSH')}</b>
+        <b>{can ? t('鲸歌工坊更新了', 'Whalesong Studio was updated') : t('请重启 DSH', 'Restart DSH')}</b>
         {can
           ? t('——后台还是旧版本。', ' — the backend is still the old one.')
           : failed
@@ -483,7 +483,7 @@ function BareHeader({ title }: { title?: string }) {
   return (
     <header className="nv-header">
       {title !== undefined ? <Button variant="ghost" size="sm" icon="chevronLeft" onClick={() => { controller.setView('home') }}>{t('返回', 'Back')}</Button> : null}
-      <span className="nv-header-title">{title ?? t('小说工坊', 'Novel Studio')}</span>
+      <span className="nv-header-title">{title ?? t('鲸歌工坊', 'Whalesong Studio')}</span>
       <span className="nv-spacer" />
       {title === undefined ? <Button variant="ghost" size="sm" icon="settings" onClick={() => { controller.setView('settings') }} title={t('设置', 'Settings')} /> : null}
       <CoverSwitch />
@@ -536,7 +536,7 @@ function Header({ onSearch }: { onSearch: () => void }) {
         <span>{t('观看', 'View')}</span>
       </button>
       <span className="nv-header-rule" aria-hidden="true" />
-      <nav className="nv-nav" aria-label="Novel Studio">
+      <nav className="nv-nav" aria-label="Whalesong Studio">
         {NAV.map(item => (
           <button key={item.view} type="button" className={cx('nv-nav-item', view === item.view && 'is-active')} onClick={() => { controller.setView(item.view) }} title={t(...item.label)}>
             <Icon name={item.icon} size={15} />

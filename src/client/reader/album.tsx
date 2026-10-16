@@ -240,7 +240,16 @@ export function AlbumView({ t, album, media, at, go, onRead, onEdit, worldTools,
   const last = album.chapters.at(-1)?.index ?? 0
   // Another page of the album starts at its top.
   const key = `${at.section}:${at.end?.type ?? ''}:${at.end?.id ?? ''}`
-  useEffect(() => { top.current?.scrollIntoView({ block: 'start' }) }, [key])
+  useEffect(() => {
+    const node = top.current
+    if (node === null) return
+    // Where the page is all its scroller holds, its top is the scroller's top — the way back above the picture included.
+    let scroller = node.parentElement
+    while (scroller !== null && !(scroller.scrollHeight > scroller.clientHeight && /auto|scroll/.test(getComputedStyle(scroller).overflowY))) scroller = scroller.parentElement
+    const within = scroller !== null ? node.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop : Number.POSITIVE_INFINITY
+    if (scroller !== null && within < 120) scroller.scrollTo({ top: 0 })
+    else node.scrollIntoView({ block: 'start' })
+  }, [key])
 
   const nameOf = (end: TieEnd): string => (end.type === 'character' ? people.get(end.id)?.name : entries.get(end.id)?.name) ?? end.id
   const pictured = (end: TieEnd): boolean => {
@@ -479,7 +488,7 @@ export function AlbumView({ t, album, media, at, go, onRead, onEdit, worldTools,
         {entry.body !== undefined ? <Prose text={entry.body} /> : null}
         {named.length > 0 ? (
           <p className="nv-album-named">
-            <span className="nv-muted">{t(`正文里 ${named.length} 章写到它：`, `Named in ${named.length} chapters: `)}</span>
+            <span className="nv-muted">{t(`正文里 ${named.length} 章写到它：`, named.length === 1 ? 'Named in one chapter: ' : `Named in ${named.length} chapters: `)}</span>
             {shownChapters.map(index => chapterChip(index, [entry.name, ...(entry.aliases ?? [])]))}
             {named.length > shownChapters.length ? <button type="button" className="nv-link nv-small" onClick={() => { setMore({ ...more, chapters: true }) }}>{t(`…另 ${named.length - shownChapters.length} 章`, `…${named.length - shownChapters.length} more`)}</button> : null}
           </p>

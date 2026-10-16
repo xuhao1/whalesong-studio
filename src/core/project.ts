@@ -33,8 +33,8 @@ import {
 import { lifeOf, statusAt, type Life } from '../shared/life'
 import type { LinePerson, LineThread, LineWorld } from '../shared/worldline'
 import { TIE_ENDS, TIE_KINDS, type Tie, type TieEnd } from '../shared/ties'
-import { worldPresence, type WorldPresence } from '../shared/world'
-import { countWords, hashText, newId, normalizeProse, proseOnly, sameName, slugify, fuzzyFind } from '../shared/text'
+import { personNamed, worldPresence, type WorldPresence } from '../shared/world'
+import { countWords, digestOf, hashText, newId, normalizeProse, proseOnly, sameName, slugify, fuzzyFind } from '../shared/text'
 import { KeyedMutex } from './util/async'
 import {
   containedPath, ensureDir, exists, listDir, mtimeOf, readJson, readText, relativePosix, removePath, writeAtomic, writeJson,
@@ -245,7 +245,7 @@ export class Project {
   static async open(root: string, key?: Buffer): Promise<Project | undefined> {
     if (!(await exists(join(root, MANIFEST_FILE)))) return undefined
     const stub = await readStub(root)
-    if (stub !== undefined && key === undefined) throw new ProjectError('novel/locked', `"${stub.title}" is locked — its author unlocks it in Novel Studio`)
+    if (stub !== undefined && key === undefined) throw new ProjectError('novel/locked', `"${stub.title}" is locked — its author unlocks it in Whalesong Studio`)
     const project = new Project(root, stub !== undefined ? new SealedFiles(root, key!) : new PlainFiles())
     await project.manifest()
     project.startWatching()
@@ -2379,8 +2379,8 @@ export class Project {
         words: countWords(proseOnly(text)),
         hasText: text.length > 0,
         ...(mtime > 0 ? { updatedAt: new Date(mtime).toISOString() } : {}),
-        digested: memory !== undefined && memory.textHash === hashText(text),
-        ...(memory !== undefined ? { memory: memory.textHash === hashText(text) ? 'current' as const : 'stale' as const } : {}),
+        digested: memory !== undefined && digestOf(memory.textHash, text),
+        ...(memory !== undefined ? { memory: digestOf(memory.textHash, text) ? 'current' as const : 'stale' as const } : {}),
         ...(review !== undefined ? { openIssues: review.issues.filter(issue => issue.resolved !== true).length } : {}),
         ...(review?.unread === true ? { unreviewed: true as const } : {}),
         ...(home !== undefined ? { line: home } : {}),
@@ -3632,6 +3632,11 @@ export class Project {
     // Pictures drawn to be compared that nobody has taken yet: said with the book, so that wherever the author is they can be found again.
     const waiting = (await this.illustrations()).filter(item => item.trial?.hang !== undefined).length
     const derived = await this.readState<DerivedPlan>('derived.json')
+    // Somebody filed twice — a card and an entry of the world under the same name — is a person: the entry is the one to go.
+    const twice = world.flatMap((entry) => {
+      const card = personNamed(characters, entry.name, entry.category)
+      return card !== undefined ? [{ id: entry.id, name: entry.name, card: card.id }] : []
+    })
     return {
       root: this.root,
       revision,
@@ -3653,6 +3658,7 @@ export class Project {
       ...(lines.length > 0 ? { lines } : {}),
       ...(pending.length > 0 ? { analysis: { pending } } : {}),
       ...(cast.uncarded.count > 0 ? { uncarded: cast.uncarded } : {}),
+      ...(twice.length > 0 ? { peopleInWorld: twice } : {}),
       ...(removed.length > 0 ? { removed } : {}),
       worldPresence: await this.worldSeen(world, chapters),
       ties: await this.ties(),
@@ -4148,6 +4154,6 @@ function defaultStyle(zh: boolean): StyleProfile {
 
 function stateReadme(zh: boolean): string {
   return zh
-    ? '# .novel\n\n这里是小说工坊维护的机器记忆：章节摘要与事实（memory/）、版本快照（versions/）、修订提案、审校结果、有声与分镜脚本、检索索引（index/，可随时重建）。\n\n可以纳入版本管理；`index/` 建议忽略。\n'
-    : '# .novel\n\nMachine memory maintained by Novel Writer: chapter digests (memory/), version snapshots (versions/), revision proposals, reviews, audio scripts, storyboards and the search index (index/, rebuildable at any time).\n\nSafe to commit; `index/` is best ignored.\n'
+    ? '# .novel\n\n这里是鲸歌工坊维护的机器记忆：章节摘要与事实（memory/）、版本快照（versions/）、修订提案、审校结果、有声与分镜脚本、检索索引（index/，可随时重建）。\n\n可以纳入版本管理；`index/` 建议忽略。\n'
+    : '# .novel\n\nMachine memory maintained by Whalesong Studio: chapter digests (memory/), version snapshots (versions/), revision proposals, reviews, audio scripts, storyboards and the search index (index/, rebuildable at any time).\n\nSafe to commit; `index/` is best ignored.\n'
 }

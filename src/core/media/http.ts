@@ -180,7 +180,7 @@ export async function findKey(source: KeySource, request: KeyRequest, what: stri
   if (ref !== undefined && ref.length > 0) {
     const named = await source.named(ref)
     if (named !== undefined && named.length > 0) return named
-    throw new ProviderError(`${what}: "${ref}" is not set — export it in the environment that starts Harness, or clear the name and paste the key in Novel Studio → Settings`, undefined, 'NO_CREDENTIAL')
+    throw new ProviderError(`${what}: "${ref}" is not set — export it in the environment that starts Harness, or clear the name and paste the key in Whalesong Studio → Settings`, undefined, 'NO_CREDENTIAL')
   }
   const saved = await source.forEndpoint(request.endpoint)
   return saved !== undefined && saved.length > 0 ? saved : undefined
@@ -194,7 +194,7 @@ export async function findKey(source: KeySource, request: KeyRequest, what: stri
 export async function requireKey(source: KeySource, request: KeyRequest, what: string): Promise<string> {
   const key = await findKey(source, request, what)
   if (key !== undefined) return key
-  throw new ProviderError(`${what}: no API key is saved for ${hostOf(request.endpoint) ?? request.endpoint} — paste it in Novel Studio → Settings`, undefined, 'NO_CREDENTIAL')
+  throw new ProviderError(`${what}: no API key is saved for ${hostOf(request.endpoint) ?? request.endpoint} — paste it in Whalesong Studio → Settings`, undefined, 'NO_CREDENTIAL')
 }
 
 /** GET JSON with an optional bearer key. Non-2xx replies become a ProviderError. */

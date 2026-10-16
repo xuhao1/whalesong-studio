@@ -63,7 +63,7 @@ describe('the book in play', () => {
 
   it('tells the model which book it is on, how the session got there and what else is near', () => {
     const plain = focusLines({ title: '白页遗骸', path: '白页遗骸', zh: true, others: [] })
-    expect(plain).toBe('【当前作品】《白页遗骸》（白页遗骸）——这场对话和旁边的小说工坊此刻都在这本书上，工具调用默认作用于它。')
+    expect(plain).toBe('【当前作品】《白页遗骸》（白页遗骸）——这场对话和旁边的鲸歌工坊此刻都在这本书上，工具调用默认作用于它。')
 
     const moved = focusLines({
       title: '白页遗骸',

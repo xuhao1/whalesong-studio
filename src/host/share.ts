@@ -660,7 +660,7 @@ function page(): string {
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#f6f1e7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#16181d" media="(prefers-color-scheme: dark)">
-<title>小说工坊 · Novel Studio</title>
+<title>鲸歌工坊 · Whalesong Studio</title>
 <style>html,body{margin:0;height:100%;background:#f6f1e7}@media(prefers-color-scheme:dark){html,body{background:#16181d}}#app{height:100%}</style>
 </head>
 <body>

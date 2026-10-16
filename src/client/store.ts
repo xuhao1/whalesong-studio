@@ -729,8 +729,20 @@ export class StudioController {
    * Follow a link into the Studio. The chapter may be named loosely — an id, a
    * number or a title — because links come from what the showrunner was told.
    */
-  navigate(target: { view?: StudioView; chapter?: string; tab?: StageTab; mode?: ReadMode }): void {
+  navigate(target: { view?: StudioView; chapter?: string; tab?: StageTab; mode?: ReadMode; of?: string }): void {
     this.navigated = true
+    // One person's or one place's page in the viewer: found by id, name or another name in the book on screen.
+    const of = target.of?.trim()
+    if (of !== undefined && of.length > 0) {
+      const project = this.snapshot.project
+      const named = (name: string, aliases: readonly string[] | undefined): boolean => name === of || aliases?.includes(of) === true || name.toLowerCase() === of.toLowerCase()
+      const card = project?.characters.find(item => item.id === of) ?? project?.characters.find(item => named(item.name, item.aliases))
+      const entry = card === undefined ? project?.world.find(item => item.id === of) ?? project?.world.find(item => named(item.name, item.aliases)) : undefined
+      if (card !== undefined || entry !== undefined) {
+        this.set({ view: 'read', album: card !== undefined ? { section: 'people', end: { type: 'character', id: card.id } } : { section: 'world', end: { type: 'world', id: entry!.id } } })
+        return
+      }
+    }
     const chapters = this.snapshot.project?.chapters ?? []
     const ref = target.chapter?.trim()
     const chapter = ref === undefined || ref.length === 0 ? undefined
@@ -757,7 +769,7 @@ export class StudioController {
    * another book a moment ago, so the Studio catches up with the conversation
    * before looking for the chapter.
    */
-  async show(target: { view?: StudioView; chapter?: string; tab?: StageTab; mode?: ReadMode }): Promise<void> {
+  async show(target: { view?: StudioView; chapter?: string; tab?: StageTab; mode?: ReadMode; of?: string }): Promise<void> {
     this.navigated = true
     if (target.view !== undefined) this.navigate({ view: target.view, ...(target.tab !== undefined ? { tab: target.tab } : {}), ...(target.mode !== undefined ? { mode: target.mode } : {}) })
     await this.syncSession().catch(() => {})

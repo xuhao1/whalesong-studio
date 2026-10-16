@@ -495,7 +495,7 @@ export async function reviseChapter(core: NovelCore, runtime: ProjectRuntime, pa
   const after = held.text
   const figures = figuresOf(held)
   if (response.finish === 'max-tokens' && countWords(after) < words * 0.8) {
-    throw new ProjectError('novel/truncated', `the revision was cut off at the output limit — clear or raise "max output tokens" on the ${who === 'planner' ? "planner's" : "writer's"} role in Novel Studio → Settings (a model that reasons spends its reasoning out of the same allowance), or revise the chapter in smaller passages`)
+    throw new ProjectError('novel/truncated', `the revision was cut off at the output limit — clear or raise "max output tokens" on the ${who === 'planner' ? "planner's" : "writer's"} role in Whalesong Studio → Settings (a model that reasons spends its reasoning out of the same allowance), or revise the chapter in smaller passages`)
   }
   const result: ReviseResult = {
     chapterId: chapter.plan.id,

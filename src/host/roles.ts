@@ -274,7 +274,7 @@ export function createRoleRunner(ctx: Context, options: {
         options.log(`could not ask the ${task.role} task what it still owes`, error)
       }
       const note = createUserMessage({
-        content: [{ type: 'text', text: `[Novel Studio] ${run.steps} of the ${run.limit} tool calls this task allows are used; ${left} are left. When they are gone only ${closing.join(', ') || 'your answer'} still works — so whatever is to be handed in has to exist before then.${own !== undefined && own.length > 0 ? `\n${own}` : ''}` }],
+        content: [{ type: 'text', text: `[Whalesong Studio] ${run.steps} of the ${run.limit} tool calls this task allows are used; ${left} are left. When they are gone only ${closing.join(', ') || 'your answer'} still works — so whatever is to be handed in has to exist before then.${own !== undefined && own.length > 0 ? `\n${own}` : ''}` }],
         source: { kind: 'novel-studio', form: 'notice', summary: `${run.steps}/${run.limit} tool calls used` },
       })
       return { ...decision, additionalContexts: [...(decision.additionalContexts ?? []), note] }
@@ -508,7 +508,7 @@ export function createRoleRunner(ctx: Context, options: {
 
     async start(request: ResolvedSubagentStartRequest): Promise<SubagentRun> {
       const run = staged.get(request.signal)
-      if (run === undefined) throw new Error(`the "${CREW_PROVIDER}" provider runs the roles of Novel Studio, which starts them itself; delegate with the novel_crew tool instead`)
+      if (run === undefined) throw new Error(`the "${CREW_PROVIDER}" provider runs the roles of Whalesong Studio, which starts them itself; delegate with the novel_crew tool instead`)
       if (request.signal.aborted) throw new Error('the role was cancelled before it started')
       const parent = request.parent
       const depth = resolveChildDepth(parent, request.maxDepth)

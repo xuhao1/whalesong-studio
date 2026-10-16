@@ -24,7 +24,7 @@ const SOUND_LEVEL: Record<SoundKind, number> = { bed: -34, effect: -24, music: -
 
 export async function requireSound(core: NovelCore, runtime?: ProjectRuntime): Promise<SoundProvider> {
   const provider = await core.soundProvider(runtime)
-  if (provider === undefined) throw new ProviderError('no sound model is set up — sound follows the speech setup when that is Bailian audio generation, or can be given an endpoint of its own in Novel Studio → Settings', undefined, 'NOT_CONFIGURED')
+  if (provider === undefined) throw new ProviderError('no sound model is set up — sound follows the speech setup when that is Bailian audio generation, or can be given an endpoint of its own in Whalesong Studio → Settings', undefined, 'NOT_CONFIGURED')
   return provider
 }
 

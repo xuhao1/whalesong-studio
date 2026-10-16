@@ -139,6 +139,17 @@ function cliInstruction(prompt: string, references: number, change = false): str
   ].join('\n')
 }
 
+/**
+ * A run of the CLI that ended without a picture. One picture not drawn says nothing of the plan: the agent's own
+ * words say why, where it gave any; only a run that said nothing at all leaves the plan as a thing to look at.
+ */
+export function noImage(said: string): ProviderError {
+  const words = said.replace(/\s+/g, ' ').trim()
+  if (words.length > 0 && !/^done\.?$/i.test(words)) return new ProviderError(`Codex drew no picture this time; it said: “${words.length > 300 ? `${words.slice(0, 300)}…` : words}”`)
+  if (words.length > 0) return new ProviderError('Codex said it was done, but no picture was filed under its home')
+  return new ProviderError('the Codex CLI finished without a picture and said nothing of why — if none has ever come of it, the ChatGPT plan may not include image generation')
+}
+
 async function viaCli(prompt: string, references: ImageReference[], signal: AbortSignal | undefined, change = false): Promise<ImageResult> {
   const binary = await findCodexCli()
   if (binary === undefined) throw new ProviderError('the Codex CLI is not installed on the machine that runs Harness', undefined, 'UNSUPPORTED')
@@ -152,6 +163,8 @@ async function viaCli(prompt: string, references: ImageReference[], signal: Abor
       attachments.push(file)
     }
     const instruction = cliInstruction(prompt, attachments.length, change)
+    // What the agent last said: when no picture comes of a run, that is the reason it gave (a refusal, a question).
+    let said = ''
     const threadId = await new Promise<string>((resolve, reject) => {
       // `-` reads the instructions from stdin, so nothing the manuscript says can reach a shell.
       // A `.cmd` shim only runs through a shell, where arguments are joined as written: quote the paths.
@@ -195,8 +208,9 @@ async function viaCli(prompt: string, references: ImageReference[], signal: Abor
           const line = stdout.slice(0, newline)
           stdout = stdout.slice(newline + 1)
           try {
-            const event = JSON.parse(line) as { type?: string; thread_id?: string }
+            const event = JSON.parse(line) as { type?: string; thread_id?: string; item?: { type?: string; text?: unknown } }
             if (event.type === 'thread.started' && typeof event.thread_id === 'string') thread = event.thread_id
+            if (event.type === 'item.completed' && event.item?.type === 'agent_message' && typeof event.item.text === 'string' && event.item.text.trim().length > 0) said = event.item.text.trim()
           } catch {
             // progress lines that are not JSON are not ours to read
           }
@@ -220,7 +234,7 @@ async function viaCli(prompt: string, references: ImageReference[], signal: Abor
       const info = await stat(path)
       if (newest === undefined || info.mtimeMs > newest.at) newest = { path, at: info.mtimeMs }
     }
-    if (newest === undefined) throw new ProviderError('the Codex CLI finished without generating an image (the ChatGPT plan may not include image generation)')
+    if (newest === undefined) throw noImage(said)
     const data = await readFile(newest.path)
     // The copy under the CLI's home was made for this run alone; the project keeps its own.
     await rm(dir, { recursive: true, force: true }).catch(() => {})

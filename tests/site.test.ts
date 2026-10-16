@@ -50,7 +50,7 @@ describe('a book as a site', () => {
 
   it('writes the reader, what the reader asks for, and the book\'s own files it shows and plays — and nothing else of the book', async () => {
     const id = (await bed.runtime.project.manifest()).id
-    const result = await publishSite(bed.core, bed.runtime, { out, reader: READER, credit: { name: 'Novel Studio', url: 'https://example.org' } })
+    const result = await publishSite(bed.core, bed.runtime, { out, reader: READER, credit: { name: 'Whalesong Studio', url: 'https://example.org' } })
     expect(await tree(out)).toEqual([
       'data/books.json',
       `data/${id}/book.json`,
@@ -78,7 +78,7 @@ describe('a book as a site', () => {
     const page = await readFile(join(out, 'index.html'), 'utf8')
     expect(page).toContain('<meta name="novel-site" content="static">')
     expect(page).toContain('<script src="reader.js" defer></script>')
-    expect(page).toContain('Novel Studio|https://example.org')
+    expect(page).toContain('Whalesong Studio|https://example.org')
   })
 
   it('writes only what changed when published again, and takes away what is no longer part of the book', async () => {

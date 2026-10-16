@@ -3008,6 +3008,8 @@ export interface ProjectState {
   analysis?: { pending: AnalyzeStep[] }
   /** People the chapters come back to who have no character card: how many, and the most present of them. */
   uncarded?: { count: number; names: string[] }
+  /** Entries of the world named after somebody who has a character card (an import before this filed some people twice): each entry, and whose card it is. */
+  peopleInWorld?: { id: string; name: string; card: string }[]
   /** Chapters taken out of the book that can be put back, newest first. Absent when there are none, and on a Host from before they were kept. */
   removed?: RemovedChapter[]
   /** Where each entry of the bible is named, chapter by chapter: what its weight in the story is read off. Absent on a Host from before entries were weighed. */

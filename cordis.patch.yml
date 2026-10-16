@@ -3,7 +3,7 @@
 # Applied after the Harness base and Web layers. It inserts two rows:
 #
 #   novel-writer      the Host half: project store, model routing, pipelines,
-#                     jobs, and the routes Novel Studio talks to. Because this
+#                     jobs, and the routes Whalesong Studio talks to. Because this
 #                     package declares `dsh.client`, the same row also puts the
 #                     Studio (lib/client.js) on the browser roster.
 #
@@ -11,7 +11,7 @@
 #                     showrunner persona and the novel_* tools; other sessions
 #                     are untouched. The crew's roles run as children of such a
 #                     session and join this same composition: what is mounted
-#                     here is what a role can be given (Novel Studio → Settings →
+#                     here is what a role can be given (Whalesong Studio → Settings →
 #                     Crew decides how much of it each role sees).
 #
 # What it depends on, beyond what every DSH has: the subagent service
@@ -37,7 +37,7 @@
       config:
         id: novelist
         name: 小说家 Novelist
-        description: 长篇小说工坊的总编：统筹设定、大纲、写作、修订与演出，正文交给写手模型。Showrunner for long-form fiction.
+        description: 鲸歌工坊的总编：统筹设定、大纲、写作、修订与演出，正文交给写手模型。Whalesong Studio's showrunner for long-form fiction.
         order: 5
         plugins:
           - id: persona

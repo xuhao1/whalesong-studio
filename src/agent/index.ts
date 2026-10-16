@@ -28,6 +28,6 @@ export function apply(ctx: Context): void {
   ctx.systemPrompt.context({
     name: 'novel:restart-needed',
     order: 200,
-    text: '[Novel Studio] The Novel Studio plugin was updated on disk while DSH was running, and the part of it that is running is older than the update. The novel_* tools are not available in this conversation until DSH is restarted. Tell the author exactly that — restart DSH, then come back to this conversation — and do not try to work on the book by other means.',
+    text: '[Whalesong Studio] The Whalesong Studio plugin was updated on disk while DSH was running, and the part of it that is running is older than the update. The novel_* tools are not available in this conversation until DSH is restarted. Tell the author exactly that — restart DSH, then come back to this conversation — and do not try to work on the book by other means.',
   })
 }

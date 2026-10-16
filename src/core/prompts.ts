@@ -1832,10 +1832,11 @@ ${avoid.length > 0 ? avoid : '（无特别限制）'}
 4. place：这一幕所在的地方，写设定里的条目名；设定里没有就不写。
 5. things：画面里看得见、设定里有条目的物件，写条目名。
 6. why：一句话，说给作者听：这一幕里有谁、在哪，你是凭什么认定的。
+7. caption：图注——图插进正文后，读者在图下面看到的那一句，用这本书的语言，一句话：哪一刻、谁在做什么。不写景别、机位、光线这些画法上的话。
 上面的材料认不出这一段里是谁、此刻穿什么、那件东西长什么样时，书里有：book_read 读前后文、人物卡和设定，book_search 找。
 
 只输出 JSON：
-{"picture": "画面", "people": ["姓名"], "wearing": {"姓名": "造型名"}, "place": "条目名", "things": ["条目名"], "why": "一句话"}`, `A passage of "${bare(base.title)}" is to be illustrated. Settle the picture: what it shows, who is in it, where, with what.
+{"picture": "画面", "people": ["姓名"], "wearing": {"姓名": "造型名"}, "place": "条目名", "things": ["条目名"], "why": "一句话", "caption": "图注"}`, `A passage of "${bare(base.title)}" is to be illustrated. Settle the picture: what it shows, who is in it, where, with what.
 
 ## The chapter
 ${base.chapter}
@@ -1862,10 +1863,11 @@ What to hand in:
 4. place: where the moment is set, by the name of its entry in the bible; nothing where the bible has none.
 5. things: the things in the frame that have an entry in the bible, by entry name.
 6. why: one sentence for the author: who is in it and where, and what told you so.
+7. caption: the line a reader sees under the picture once it stands in the text, in the book's language: which moment, who is doing what. Nothing of shot, viewpoint or light.
 Where the material above does not tell who the passage means, what they wear at this point or what a thing looks like, the book does: book_read reads the text around it, the cards and the entries; book_search finds.
 
 Output JSON only:
-{"picture": "the picture", "people": ["name"], "wearing": {"name": "look name"}, "place": "entry name", "things": ["entry name"], "why": "one sentence"}`)
+{"picture": "the picture", "people": ["name"], "wearing": {"name": "look name"}, "place": "entry name", "things": ["entry name"], "why": "one sentence", "caption": "one line"}`)
 }
 
 /** Distill a character's prose appearance into an anchor an image model can draw the same way every time. */

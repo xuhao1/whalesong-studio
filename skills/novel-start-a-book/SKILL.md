@@ -1,6 +1,6 @@
 ---
 name: novel-start-a-book
-description: Use when the author wants to begin a new novel from an idea, or bring an existing manuscript into Novel Studio — how to interview, lay the foundation (premise, cast, world, style, opening outline) and hand over a project that is ready to draft.
+description: Use when the author wants to begin a new novel from an idea, or bring an existing manuscript into Whalesong Studio — how to interview, lay the foundation (premise, cast, world, style, opening outline) and hand over a project that is ready to draft.
 ---
 
 # Starting a book

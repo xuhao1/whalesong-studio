@@ -165,7 +165,7 @@ export function CastView() {
         <div className="nv-advice-bar">
           <button type="button" className="nv-advice-line" onClick={() => { setNotes('open') }} title={t('展开调度提醒', 'Unfold the scheduling notes')}>
             <Icon name="alert" size={13} />
-            <span>{t(`调度提醒 ${advice.length} 条`, `${advice.length} scheduling notes`)}</span>
+            <span>{t(`调度提醒 ${advice.length} 条`, advice.length === 1 ? 'A scheduling note' : `${advice.length} scheduling notes`)}</span>
             <span className="nv-muted">{advice[0]!.text}</span>
             <Icon name="chevronDown" size={12} />
           </button>

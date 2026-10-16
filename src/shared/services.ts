@@ -211,7 +211,7 @@ export function setupPatch(setup: ServiceSetup, parts: readonly SetupPart[]): { 
 }
 
 /** The project's home page and the name it is signed with. */
-export const PROJECT_HOMEPAGE = 'https://dsh-novel-studio.xuhao1.me'
+export const PROJECT_HOMEPAGE = 'https://whalesong.xuhao1.me'
 export const PROJECT_AUTHOR = 'Dr. Xu'
 /** The author's own page. */
 export const PROJECT_AUTHOR_HOME = 'https://xuhao1.me'

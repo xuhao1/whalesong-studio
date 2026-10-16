@@ -1,4 +1,4 @@
-# Novel Studio · A first walk through
+# Whalesong Studio · A first walk through
 
 **English** | [简体中文](./tutorial.zh.md)
 
@@ -42,11 +42,11 @@ DeepSeek Harness `0.2.0-rc.2` or later (`< 0.3`).
 2. Fill in one of these and press **Install**:
    - the absolute path of a release package, e.g. `/Users/you/Downloads/dsh-novel-writer-0.1.0.tgz`;
    - the absolute path of a built source checkout — this is a *link*: rebuild the checkout later and the plugin follows;
-   - `github:xuhao1/dsh-novel-writer` — the app first asks whether the package may run its build script.
+   - `github:xuhao1/whalesong-studio` — the app first asks whether the package may run its build script.
 
 ![DSH's Plugins page: Add plugin](./images/tutorial/en/01-install-add.webp)
 
-3. The sidebar gains **Novel Studio**, and the preset menu of a new session gains **小说家 Novelist**. If they are missing, restart DSH once.
+3. The sidebar gains **Whalesong Studio**, and the preset menu of a new session gains **小说家 Novelist**. If they are missing, restart DSH once.
 
 ### Web UI (`dsh web`)
 
@@ -60,13 +60,13 @@ Where the package comes from, and how to build it yourself: [Install, in the REA
 
 ### Once it is in
 
-Press **Novel Studio** in the sidebar. This is the Studio's home: two large buttons (**Talk to the showrunner**, **New work**) and the bookshelf below.
+Press **Whalesong Studio** in the sidebar. This is the Studio's home: two large buttons (**Talk to the showrunner**, **New work**) and the bookshelf below.
 
-![Novel Studio's home: Talk to the showrunner, New work, and the bookshelf](./images/tutorial/en/02-home.webp)
+![Whalesong Studio's home: Talk to the showrunner, New work, and the bookshelf](./images/tutorial/en/02-home.webp)
 
 Two small things:
 
-- **Upgrading.** Installed from a package: remove it on the Plugins page and add the new one — books are plain folders in your workspace and are not touched. Installed as a link to a checkout: after a rebuild the Studio shows "Novel Studio was updated **[Restart]**" at its top; that restarts the Studio's own back half only — DSH and your conversations stay as they are.
+- **Upgrading.** Installed from a package: remove it on the Plugins page and add the new one — books are plain folders in your workspace and are not touched. Installed as a link to a checkout: after a rebuild the Studio shows "Whalesong Studio was updated **[Restart]**" at its top; that restarts the Studio's own back half only — DSH and your conversations stay as they are.
 - **Optional programs.** `ffmpeg` is needed to cut videos and to compress pictures and sound when publishing a site. Without it those places say so; nothing else is affected.
 
 ---
@@ -100,7 +100,7 @@ Keys go to DSH's credential store. They are not written into the settings file a
 
 ### Give the roles their models
 
-The cog at the right of the Studio's header is **Novel Studio settings**. The Models section starts with these few rows; the defaults are fine to begin with.
+The cog at the right of the Studio's header is **Whalesong Studio settings**. The Models section starts with these few rows; the defaults are fine to begin with.
 
 ![Settings: the writer's model, the crew's model, what the crew may do](./images/tutorial/en/05-settings-models.webp)
 
@@ -506,8 +506,8 @@ Worth knowing:
 
 | What you see | What to do |
 |---|---|
-| No "Novel Studio" in the sidebar | restart DSH once; check its version |
-| "Novel Studio was updated" at the top | press **Restart** (the Studio's back half only) |
+| No "Whalesong Studio" in the sidebar | restart DSH once; check its version |
+| "Whalesong Studio was updated" at the top | press **Restart** (the Studio's back half only) |
 | "Subagents are switched off" at the top | DSH's Plugins page: enable *Subagent* |
 | A button says images / speech are not set up | Settings → Guide, or that section of the settings |
 | Something has been turning for long | open the run from the bar at the bottom to see where it is; stop it — the next try goes on from what was done |
@@ -519,4 +519,4 @@ Worth knowing:
 | A card or an entry was spoiled | **History**, the clock icon |
 | People of two plot lines got mixed | file the cards under their lines; or digest that line's chapters again |
 
-Still there? Open an issue on [GitHub](https://github.com/xuhao1/dsh-novel-writer/issues) with what the page said.
+Still there? Open an issue on [GitHub](https://github.com/xuhao1/whalesong-studio/issues) with what the page said.

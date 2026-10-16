@@ -10,7 +10,7 @@ import type {
   ChapterMemory, CharacterCard, CharacterMoment, EntityCandidate, FactKind, MemoryFact, Outline, PlanBlank, SceneNote, Suggestion, ThreadTouch,
 } from '../../shared/types'
 import { MAIN_LINE } from '../../shared/types'
-import { clip, hashText, sameName } from '../../shared/text'
+import { clip, digestOf, hashText, proseOnly, sameName } from '../../shared/text'
 import type { ArcSummary } from '../context'
 import { callsFor } from '../calls'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
@@ -52,9 +52,10 @@ async function digestOne(core: NovelCore, runtime: ProjectRuntime, ref: string, 
   if (chapter === undefined) throw new ProjectError('novel/not-found', `no chapter matches "${ref}"`)
   const text = await project.chapterText(chapter.plan.id)
   if (text.length === 0) return undefined
-  const textHash = hashText(text)
+  // What was read is the prose: a picture placed in the text later does not call for the chapter to be read again.
+  const textHash = hashText(proseOnly(text))
   const existing = await project.memory(chapter.plan.id)
-  if (existing !== undefined && existing.textHash === textHash && options.force !== true) return existing
+  if (existing !== undefined && digestOf(existing.textHash, text) && options.force !== true) return existing
 
   const manifest = await project.manifest()
   const lang = promptLanguage(manifest.language)

@@ -429,7 +429,7 @@ function SettingsForm({ view, t }: { view: SettingsData; t: Translate }) {
     <div className={cx('nv-page nv-settings', scope === 'book' && 'is-book')} ref={page}>
       <header className="nv-settings-head">
         <div>
-          <h2>{t('小说工坊设置', 'Novel Studio settings')}</h2>
+          <h2>{t('鲸歌工坊设置', 'Whalesong Studio settings')}</h2>
         </div>
         <div className="nv-row-wrap">
           <Button variant="ghost" icon="clock" onClick={() => { controller.setView('usage') }}>{t('用量与成本', 'Usage and cost')}</Button>

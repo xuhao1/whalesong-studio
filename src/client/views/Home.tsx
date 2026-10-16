@@ -303,7 +303,7 @@ function Shelf({ onNew }: { onNew: () => void }) {
         <div className="nv-home-hero-text">
           <div className="nv-home-brand">
             <img src={studioIcon} alt="" width={44} height={44} />
-            <h1>{t('小说工坊', 'Novel Studio')}</h1>
+            <h1>{t('鲸歌工坊', 'Whalesong Studio')}</h1>
           </div>
           <p>{t('长篇小说的设定、大纲、写作、修订与演出。', 'The bible, outline, writing, revision and staging of a long novel.')}</p>
           <div className="nv-home-actions">
@@ -749,11 +749,24 @@ export function HomeView() {
             ) : project.uncarded !== undefined ? (
               <Step
                 icon="users"
-                title={t(`${project.uncarded.count} 个多次出场的人物还没有人物卡`, `${project.uncarded.count} people who keep coming back have no character card`)}
-                body={t(`${project.uncarded.names.join('、')}${project.uncarded.count > project.uncarded.names.length ? ' 等' : ''}多次出场，还没有人物卡。`, `${project.uncarded.names.join(', ')}${project.uncarded.count > project.uncarded.names.length ? ' and others' : ''} appear in several chapters and have no card.`)}
+                title={t(`${project.uncarded.count} 个多次出场的人物还没有人物卡`, project.uncarded.count === 1 ? 'Somebody who keeps coming back has no character card' : `${project.uncarded.count} people who keep coming back have no character card`)}
+                body={t(`${project.uncarded.names.join('、')}${project.uncarded.count > project.uncarded.names.length ? ' 等' : ''}多次出场，还没有人物卡。`, `${project.uncarded.names.join(', ')}${project.uncarded.count > project.uncarded.names.length ? ' and others' : ''} ${project.uncarded.count === 1 ? 'appears in several chapters and has' : 'appear in several chapters and have'} no card.`)}
                 action={t('归并人物表', 'Make the cast')}
                 busy={running.some(job => job.kind === 'import')}
                 onClick={() => controller.guard(async () => { await controller.api.call('ai.analyze', { root, steps: ['cast'] }) })}
+              />
+            ) : null}
+            {project.peopleInWorld !== undefined && project.peopleInWorld.length > 0 ? (
+              <Step
+                icon="users"
+                title={t(`${project.peopleInWorld.length} 条设定其实是有人物卡的人`, project.peopleInWorld.length === 1 ? 'An entry of the world is somebody with a character card' : `${project.peopleInWorld.length} entries of the world are people with character cards`)}
+                body={t(`${project.peopleInWorld.map(item => item.name).join('、')}既有人物卡，又在设定里各有一条。去掉设定里的这几条，人物卡不动；去掉的可以在设定页的"最近删除的设定"里放回。`, `${project.peopleInWorld.map(item => item.name).join(', ')} ${project.peopleInWorld.length === 1 ? 'has' : 'have'} a character card and an entry of the world as well. Taking the entries out leaves the cards as they are; what is taken out can be put back from Deleted entries on the Bible page.`)}
+                action={t('从设定里去掉', 'Take them out of the world')}
+                onClick={() => controller.guard(async () => {
+                  for (const item of project.peopleInWorld ?? []) await controller.api.call('world.delete', { root, id: item.id })
+                  await controller.refreshProject()
+                  controller.toast('success', t(`去掉了 ${project.peopleInWorld?.length ?? 0} 条设定`, `Took ${project.peopleInWorld?.length ?? 0} entries out of the world`))
+                })}
               />
             ) : null}
             {stats.undigested > 0 && project.analysis?.pending.includes('digest') !== true ? (

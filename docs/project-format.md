@@ -23,7 +23,7 @@ my-novel/
 └── .novel/              machine memory (see below)
 ```
 
-Novel Studio finds books by looking for `novel.json` in a workspace directory and in its direct subdirectories, so one workspace can hold several.
+Whalesong Studio finds books by looking for `novel.json` in a workspace directory and in its direct subdirectories, so one workspace can hold several.
 
 ## `novel.json`
 

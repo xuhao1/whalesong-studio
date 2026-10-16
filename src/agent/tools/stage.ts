@@ -193,7 +193,7 @@ export function stageTools(service: NovelService): ToolDefinition[] {
         '- action=design_voice: create a voice of their own for `character` from their persona (`prompt` overrides the description); needs a provider with voice design.',
         '- action=set_voice: assign `voice` (a provider voice id) and optional delivery `prompt` to `character`.',
         '- action=voices: list the stock voices of the configured provider.',
-        'The author listens in Novel Studio → Read, in its listening mode (novel_show view=listen), where the sound is laid under the voices. Single lines and cues are changed with novel_manage (edit_line, edit_cue, add_cue).',
+        'The author listens in Whalesong Studio → Read, in its listening mode (novel_show view=listen), where the sound is laid under the voices. Single lines and cues are changed with novel_manage (edit_line, edit_cue, add_cue).',
       ].join('\n'),
       mutating: args => args.action !== 'voices' && args.action !== 'cast',
       parameters: {
@@ -228,12 +228,12 @@ export function stageTools(service: NovelService): ToolDefinition[] {
         if (args.action === 'voices') {
           const settings = (await env.core.settingsOf(runtime)).tts
           const voices = stockVoices(settings.provider)
-          if (voices.length === 0) return { text: 'No speech provider is configured (Novel Studio → Settings).' }
+          if (voices.length === 0) return { text: 'No speech provider is configured (Whalesong Studio → Settings).' }
           return { text: `Stock voices of ${settings.provider}:\n${voices.map(voice => `- ${voice.id}: ${voice.gender}, ${voice.age}${voice.accent !== undefined ? `, ${voice.accent}` : ''} — ${voice.note}`).join('\n')}`, data: toJson(voices) }
         }
         if (args.action === 'cast') {
           const settings = (await env.core.settingsOf(runtime)).tts
-          if (settings.provider === 'none') return { text: 'No speech provider is configured (Novel Studio → Settings), so nobody has a voice yet.' }
+          if (settings.provider === 'none') return { text: 'No speech provider is configured (Whalesong Studio → Settings), so nobody has a voice yet.' }
           const sheet = await project.voiceCast()
           const characters = await project.characters()
           const voices = await previewVoices(project, settings)
@@ -289,7 +289,7 @@ export function stageTools(service: NovelService): ToolDefinition[] {
             result.flagged > 0 ? `${result.flagged} lines still stand out after their retakes (cut short, or not quite in the speaker's voice) — they are marked in the Studio, where the author can have any of them spoken again` : undefined,
           ].filter((part): part is string => part !== undefined)
           return {
-            text: `Audio for ${result.chapterId}: ${result.rendered} lines rendered, ${result.cached} already current, ${result.failed} failed; ${Math.round(result.duration)} seconds in total.${checked.length > 0 ? ` ${checked.join('; ')}.` : ''} The author can listen in Novel Studio → Read, in its listening mode.`,
+            text: `Audio for ${result.chapterId}: ${result.rendered} lines rendered, ${result.cached} already current, ${result.failed} failed; ${Math.round(result.duration)} seconds in total.${checked.length > 0 ? ` ${checked.join('; ')}.` : ''} The author can listen in Whalesong Studio → Read, in its listening mode.`,
             data: toJson(result),
           }
         }
@@ -304,7 +304,7 @@ export function stageTools(service: NovelService): ToolDefinition[] {
         'Turn a chapter into a motion comic.',
         '- action=storyboard: arrange the chapter\'s audio script into panels with image prompts (building the script first if needed). How finely it is cut is the author\'s call: `density` = sparse (a picture every 25 seconds or so), balanced (every 13), dense (every 6-7) or auto (the director decides where the picture should change); `max_panels` is a ceiling that holds whatever the density. Left out, both come from the book (novel_settings action=book fields.storyboard = {"density": …, "maxPanels": …}), else balanced with no ceiling. Every panel is a picture to draw, so say how many came out before rendering. A board that exists is kept unless force=true.',
         '- action=render: draw the panels that have no picture yet. Whoever is in them, comes back in the book and has no design sheet gets one drawn first (one more image call each): the author is asked first — unless they already said to go ahead, call with sheet_first=ask, tell them whose ("this will first draw N design sheets: …"), and render on their answer with sheet_first=draw or skip.',
-        'The player in Novel Studio → Stage shows each panel while its lines are spoken.',
+        'The player in Whalesong Studio → Stage shows each panel while its lines are spoken.',
       ].join('\n'),
       mutating: true,
       parameters: {
@@ -350,7 +350,7 @@ export function stageTools(service: NovelService): ToolDefinition[] {
       name: 'novel_play',
       description: [
         'Interludes: a playable scene branched off the canon, where the author steps into a character (or directs) and a director model plays everyone else. Nothing in the manuscript changes until the scene is novelized.',
-        '- action=start: set up a scene — `situation` (required), `cast` (characters present), `player` (the character the author plays; omit to let them direct), `anchor` (chapter it branches from; default the latest written), `location`, `tone`. The author then plays it in Novel Studio → Stage, with portraits, voices and ambience.',
+        '- action=start: set up a scene — `situation` (required), `cast` (characters present), `player` (the character the author plays; omit to let them direct), `anchor` (chapter it branches from; default the latest written), `location`, `tone`. The author then plays it in Whalesong Studio → Stage, with portraits, voices and ambience.',
         '- action=turn: play one turn here in the chat on the author\'s behalf (`session`, `text` = what they say or do).',
         '- action=list / action=read (`session`): see interludes and their logs.',
         '- action=novelize (`session`, optional `title`): rewrite the scene as a chapter and add it after its anchor — or, with as=line, as the first chapter of a line of the plot of its own that leaves after the anchor (`choice`: what is decided to go that way; the player\'s first move when left out): what was played is then another way the story goes, beside what is written, and can be gone on with (novel_derive line=…), joined to another line or made the main one (novel_outline).   - action=discard (`session`).',
@@ -389,7 +389,7 @@ export function stageTools(service: NovelService): ToolDefinition[] {
             ...(args.tone !== undefined ? { tone: args.tone } : {}),
             ...(args.title !== undefined ? { title: args.title } : {}),
           }, env.task)
-          return { text: `Interlude "${session.title}" (${session.id}) is ready in Novel Studio → Stage → Interludes. Opening:\n\n${renderTurn(session.turns[0]!)}`, data: toJson({ id: session.id }) }
+          return { text: `Interlude "${session.title}" (${session.id}) is ready in Whalesong Studio → Stage → Interludes. Opening:\n\n${renderTurn(session.turns[0]!)}`, data: toJson({ id: session.id }) }
         }
         if (args.session === undefined) throw new ProjectError('novel/invalid', `action=${args.action} needs \`session\``)
         const id = args.session

@@ -2,7 +2,7 @@
 
 **English** | [简体中文](./design.zh.md)
 
-Why Novel Studio is shaped the way it is: how a loose list of wishes was folded into a few mechanisms, and what each decision trades away. After reading it you should be able to tell where a new requirement belongs without reading the code first.
+Why Whalesong Studio is shaped the way it is: how a loose list of wishes was folded into a few mechanisms, and what each decision trades away. After reading it you should be able to tell where a new requirement belongs without reading the code first.
 
 ## 1. From thirteen wishes to five questions
 

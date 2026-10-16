@@ -230,14 +230,14 @@ export function mountAgent(ctx: Context): void {
       const policy = novel.core.currentSettings().agentFiles ?? 'guide'
       const target = policy === 'allow' ? undefined : await rawTarget(exec).catch(() => undefined)
       if (target !== undefined) {
-        const why = `${target.file} belongs to the book "${target.title}". Novel Studio keeps a version of what its text was, the memory digested from it, the search index and the book's record in step with every change made through its tools; a change made around them leaves all of that describing a book that no longer exists.`
+        const why = `${target.file} belongs to the book "${target.title}". Whalesong Studio keeps a version of what its text was, the memory digested from it, the search index and the book's record in step with every change made through its tools; a change made around them leaves all of that describing a book that no longer exists.`
         if (policy === 'ask') {
           return {
             kind: 'ask',
             reason: `${why} Prefer ${INSTEAD[target.kind]}.`,
             displayReason: {
-              en: `The showrunner wants to change ${target.file} of "${target.title}" with a raw file tool instead of Novel Studio's own. No version of the text is kept that way, and memory is only caught up afterwards.`,
-              zh: `总编想绕过小说工坊，直接用文件工具改《${target.title}》的 ${target.file}。这样改不会留下改动前的版本，记忆也只能事后补收录。`,
+              en: `The showrunner wants to change ${target.file} of "${target.title}" with a raw file tool instead of Whalesong Studio's own. No version of the text is kept that way, and memory is only caught up afterwards.`,
+              zh: `总编想绕过鲸歌工坊，直接用文件工具改《${target.title}》的 ${target.file}。这样改不会留下改动前的版本，记忆也只能事后补收录。`,
             },
           }
         }
@@ -310,7 +310,7 @@ export function mountAgent(ctx: Context): void {
   ctx.inject(['commands'], (inner) => {
     inner.commands.register({
       name: 'novel',
-      description: 'Novel Studio: status · mode <name> · digest · export <markdown|text|html|epub>',
+      description: 'Whalesong Studio: status · mode <name> · digest · export <markdown|text|html|epub>',
       input: { hint: 'status | mode draft | digest | export epub' },
       handler: async (invocation) => {
         const agent = invocation.agent
@@ -328,7 +328,7 @@ export function mountAgent(ctx: Context): void {
             return { kind: 'success', text: '/novel status — where the project stands\n/novel mode <ideate|bible|outline|draft|revise|review|stage|play>\n/novel digest — refresh memory for changed chapters\n/novel export <markdown|text|html|epub>' }
           }
           const runtime = await novel.projectOfAgent(agent)
-          if (runtime === undefined) return { kind: 'success', text: `No novel project in ${novel.workspaceOfAgent(agent)} yet. Ask the agent to start one, or create it in Novel Studio.` }
+          if (runtime === undefined) return { kind: 'success', text: `No novel project in ${novel.workspaceOfAgent(agent)} yet. Ask the agent to start one, or create it in Whalesong Studio.` }
           const where = displayPath(novel.workspaceOfAgent(agent), runtime.project.root)
           if (command === 'digest') {
             const started = novel.core.jobs.start({ kind: 'digest', title: 'digest', project: runtime.project.root, origin: 'user', signal: invocation.signal }, async job => await digestPending(novel.core, runtime, { origin: 'user', signal: job.signal, job }))

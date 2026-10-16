@@ -34,6 +34,8 @@ export interface StudioTarget {
   tab?: StageTab
   /** The reader: to read the chapter or to listen to it. */
   mode?: ReadMode
+  /** One person's or one entry of the world's page in the viewer — an id, a name or another name: the Studio resolves it. */
+  of?: string
 }
 
 interface Described {
@@ -122,6 +124,8 @@ function describe(tool: string, args: Record<string, unknown>): Described {
       const tab = text(args.tab)
       // The audio drama is the reader's listening mode, whichever way it was asked for.
       const listening = view === 'listen' || (view === 'stage' && tab === 'audio')
+      const of = text(args.of)
+      if (of !== undefined) return { icon: 'users', title: ['在工坊里打开', 'Show in the Studio'], summary: of, target: { view: 'read', of } }
       return {
         icon: listening ? 'headphones' : 'eye',
         title: ['在工坊里打开', 'Show in the Studio'],
@@ -208,7 +212,7 @@ export function createToolRow(deps: { open: (target?: StudioTarget) => void; sub
           {book !== undefined ? <span className="nv-tool-book" title={props.toolName === 'novel_status' || props.toolName === 'novel_show' ? t('把对话切到这本书', 'Moves the conversation onto this book') : t('只这一次作用于另一本书', 'Acts on another book for this call only')}>{short(book.replace(/^《|》$/g, ''), 24)}</span> : null}
           {info.summary !== undefined && info.summary.length > 0 ? <><span className="nv-tool-sep" aria-hidden="true" /><span className="nv-tool-summary">{failed ? output.split('\n')[0] : info.summary}</span></> : failed ? <><span className="nv-tool-sep" aria-hidden="true" /><span className="nv-tool-summary">{output.split('\n')[0]}</span></> : <span className="nv-tool-summary" />}
           {state === 'stopped' ? <span className="nv-tool-note">{t('已停止', 'stopped')}</span> : null}
-          <button type="button" className="nv-tool-open" title={t('在小说工坊中打开', 'Open in Novel Studio')} onClick={(event) => { event.stopPropagation(); deps.open(info.target) }}>
+          <button type="button" className="nv-tool-open" title={t('在鲸歌工坊中打开', 'Open in Whalesong Studio')} onClick={(event) => { event.stopPropagation(); deps.open(info.target) }}>
             <Icon name="arrowRight" size={13} />
           </button>
         </div>

@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for wanting to make Novel Studio better. This page covers how the code is laid out, how to run it, and the few rules that keep a Harness plugin healthy.
+Thanks for wanting to make Whalesong Studio better. This page covers how the code is laid out, how to run it, and the few rules that keep a Harness plugin healthy.
 
 ## Setup
 

@@ -157,8 +157,8 @@ function silence(request: LlmRequest, response: LlmResponse): LlmCallError {
     const limit = request.maxTokens ?? request.route.maxTokens
     return new LlmCallError(
       zh
-        ? `${model} 把输出上限${limit !== undefined ? `（${limit} tokens）` : ''}全部用在了思考上，一个字的回答都没写出来。请在「小说工坊 → 设置」里调高或清空这个角色的“最大输出 tokens”，或者把它的思考强度调低。`
-        : `${model} spent its whole output allowance${limit !== undefined ? ` of ${limit} tokens` : ''} on reasoning and wrote no answer — raise or clear "max output tokens" for this role in Novel Studio → Settings, or lower its reasoning effort`,
+        ? `${model} 把输出上限${limit !== undefined ? `（${limit} tokens）` : ''}全部用在了思考上，一个字的回答都没写出来。请在「鲸歌工坊 → 设置」里调高或清空这个角色的“最大输出 tokens”，或者把它的思考强度调低。`
+        : `${model} spent its whole output allowance${limit !== undefined ? ` of ${limit} tokens` : ''} on reasoning and wrote no answer — raise or clear "max output tokens" for this role in Whalesong Studio → Settings, or lower its reasoning effort`,
       'TRUNCATED',
     )
   }
@@ -252,8 +252,8 @@ export function retrying(backend: LlmBackend, random: () => number = Math.random
           if (retry === 0) throw failure
           throw new LlmCallError(
             zh
-              ? `${failure.message}——已重试 ${retry} 次，仍然如此。${silent ? '可以再试一次；如果反复出现，请在「小说工坊 → 设置」里把这个角色的思考强度调低，或换一个模型。模型想了什么，可以在这条任务的“思考”里看到。' : '请稍后再试。'}`
-              : `${failure.message} — tried ${retry + 1} times.${silent ? ' Try again; if it keeps happening, lower this role\'s reasoning effort in Novel Studio → Settings, or pick another model.' : ' Try again later.'}`,
+              ? `${failure.message}——已重试 ${retry} 次，仍然如此。${silent ? '可以再试一次；如果反复出现，请在「鲸歌工坊 → 设置」里把这个角色的思考强度调低，或换一个模型。模型想了什么，可以在这条任务的“思考”里看到。' : '请稍后再试。'}`
+              : `${failure.message} — tried ${retry + 1} times.${silent ? ' Try again; if it keeps happening, lower this role\'s reasoning effort in Whalesong Studio → Settings, or pick another model.' : ' Try again later.'}`,
             failure.code,
             { cause: failure },
           )
@@ -312,7 +312,7 @@ export function resolveRoute(role: TextRole, settings: NovelSettings, backend: L
   const configured = pick(role) ?? ROLE_FALLBACK[role].map(pick).find(route => route !== undefined)
   const route = configured ?? context.agentRoute ?? backend.defaultRoute()
   if (route === undefined) {
-    throw new LlmCallError(`no model is configured for the "${role}" role; choose one in Novel Studio → Settings`, 'NO_MODEL')
+    throw new LlmCallError(`no model is configured for the "${role}" role; choose one in Whalesong Studio → Settings`, 'NO_MODEL')
   }
   return { ...route, temperature: route.temperature ?? ROLE_TEMPERATURE[role] }
 }
@@ -441,7 +441,7 @@ export async function completeJson<T>(backend: LlmBackend, request: JsonRequest<
       const limit = request.maxTokens ?? request.route.maxTokens
       throw new LlmCallError(
         limit !== undefined
-          ? `the reply was cut off at the output limit of ${limit} tokens before it was complete — clear or raise "max output tokens" for this role in Novel Studio → Settings (a model that reasons spends its reasoning out of the same allowance)`
+          ? `the reply was cut off at the output limit of ${limit} tokens before it was complete — clear or raise "max output tokens" for this role in Whalesong Studio → Settings (a model that reasons spends its reasoning out of the same allowance)`
           : 'the reply was cut off at the model\'s own output limit before it was complete',
         'TRUNCATED',
       )

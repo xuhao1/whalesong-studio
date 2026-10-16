@@ -226,7 +226,7 @@ class OpenRouterTts implements TtsProvider {
       ...(voice !== undefined && voice.length > 0 ? { voice } : {}),
       response_format: 'pcm',
       ...(steerable && openai ? { instructions: direction } : {}),
-    }, { apiKey, headers: { 'x-title': 'Novel Studio' }, ...(request.signal !== undefined ? { signal: request.signal } : {}), timeoutMs: 180_000 })
+    }, { apiKey, headers: { 'x-title': 'Whalesong Studio' }, ...(request.signal !== undefined ? { signal: request.signal } : {}), timeoutMs: 180_000 })
     // A gateway that answers with a WAV container anyway is taken at its word.
     if (reply.data.length > 12 && String.fromCharCode(...reply.data.subarray(0, 4)) === 'RIFF') return parseWav(reply.data)
     if (reply.mime === 'audio/mpeg' || reply.mime === 'audio/mp3') throw new ProviderError(`${model} answered with MP3; this endpoint cannot be used until it serves PCM or WAV`, undefined, 'UNSUPPORTED')

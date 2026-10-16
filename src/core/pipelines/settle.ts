@@ -13,8 +13,8 @@
  * here — that is the author's to say.
  */
 import { sameName, clip } from '../../shared/text'
-import { groupOf } from '../../shared/world'
-import { autoOf, type AutoSaid, type SettledSuggestion, type Suggestion, type WorldCategory, type WorldEntry } from '../../shared/types'
+import { groupOf, personNamed } from '../../shared/world'
+import { autoOf, type AutoSaid, type CharacterCard, type SettledSuggestion, type Suggestion, type WorldCategory, type WorldEntry } from '../../shared/types'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { assign } from '../crew'
 import { asArray, asRecord, asText } from '../llm'
@@ -101,7 +101,22 @@ export async function settleSuggestions(core: NovelCore, runtime: ProjectRuntime
   }
 
   // ── what the digests found in the text: looked over by the planner, a batch a request ──
-  const judged = waiting.filter(item => JUDGED.includes(item.kind))
+  // A "new entry" named after somebody with a card is that person, already kept: left out without asking anyone.
+  const people = await project.characters()
+  const ofPerson = (item: Suggestion): CharacterCard | undefined => {
+    if (item.kind !== 'new-world') return undefined
+    const name = typeof item.payload.name === 'string' ? item.payload.name : item.title
+    return personNamed(people, name, typeof item.payload.category === 'string' ? item.payload.category : undefined)
+  }
+  for (const suggestion of waiting) {
+    const card = ofPerson(suggestion)
+    if (card === undefined) continue
+    await project.takeSuggestion(suggestion.id)
+    result.looked += 1
+    result.skipped += 1
+    kept(suggestion, 'skipped', { why: L(lang, `${card.name}有人物卡，是人物，不是设定条目`, `${card.name} has a character card: a person, not an entry of the world`), target: { type: 'character', id: card.id } })
+  }
+  const judged = waiting.filter(item => JUDGED.includes(item.kind) && ofPerson(item) === undefined)
   if (judged.length > 0) {
     const [world, outline, chapters] = await Promise.all([project.world(), project.outline(), project.chapters()])
     const indexOf = new Map(chapters.map(chapter => [chapter.plan.id, chapter.index]))

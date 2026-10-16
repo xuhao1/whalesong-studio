@@ -111,12 +111,12 @@ describe('the usage ledger', () => {
 
 describe('what is not set up', () => {
   it('tells a missing capability from an ordinary failure', () => {
-    expect(missingCapability('speech synthesis is not configured — set a speech endpoint in Novel Studio → Settings')).toBe('tts')
-    expect(missingCapability('Speech: no API key is saved for dashscope.aliyuncs.com — paste it in Novel Studio → Settings')).toBe('tts')
-    expect(missingCapability('image generation is not configured — set an image endpoint in Novel Studio → Settings')).toBe('image')
+    expect(missingCapability('speech synthesis is not configured — set a speech endpoint in Whalesong Studio → Settings')).toBe('tts')
+    expect(missingCapability('Speech: no API key is saved for dashscope.aliyuncs.com — paste it in Whalesong Studio → Settings')).toBe('tts')
+    expect(missingCapability('image generation is not configured — set an image endpoint in Whalesong Studio → Settings')).toBe('image')
     expect(missingCapability('ChatGPT is not signed in — authorize under Harness Settings → Models → Openai-Codex, then try again')).toBe('image')
-    expect(missingCapability('Embeddings: no API key is saved for openrouter.ai — paste it in Novel Studio → Settings')).toBe('embedding')
-    expect(missingCapability('qwen3.8-max: no API key is saved for dashscope.aliyuncs.com — paste it in Novel Studio → Settings')).toBe('text')
+    expect(missingCapability('Embeddings: no API key is saved for openrouter.ai — paste it in Whalesong Studio → Settings')).toBe('embedding')
+    expect(missingCapability('qwen3.8-max: no API key is saved for dashscope.aliyuncs.com — paste it in Whalesong Studio → Settings')).toBe('text')
     expect(missingCapability('qwen-image-3.0: HTTP 429 rate limited')).toBeUndefined()
     expect(missingCapability('no chapter matches "9"')).toBeUndefined()
   })

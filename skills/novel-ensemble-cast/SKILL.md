@@ -5,7 +5,7 @@ description: Use when a novel has many characters — planning who is on the pag
 
 # Running an ensemble
 
-A large cast fails in two ways: characters blur into each other, or they vanish for a hundred pages and return as strangers. Novel Studio tracks the facts — who is in which chapter along each line of the plot, in what state they were last seen, who is planned to appear — so you can make the calls.
+A large cast fails in two ways: characters blur into each other, or they vanish for a hundred pages and return as strangers. Whalesong Studio tracks the facts — who is in which chapter along each line of the plot, in what state they were last seen, who is planned to appear — so you can make the calls.
 
 ## Where somebody is in the book
 

@@ -59,7 +59,7 @@ import { RemoteDoor } from './remote'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
-    /** Novel Writer studio engine and workspace resolution. */
+    /** Whalesong Studio's studio engine and workspace resolution. */
     novel: NovelService
   }
 }
@@ -325,7 +325,7 @@ export class NovelService extends Service {
       const state = await this.core.shelfState()
       if (state.id === undefined) throw new ProjectError('novel/invalid', 'no private shelf is set up here')
       const zh = this.locale().startsWith('zh')
-      await this.byPresence({ id: this.shelfSecretId(state.id), set: state.devices.includes(this.deviceSlot()), reason: zh ? '打开小说工坊的私密书架' : 'open Novel Studio\'s private shelf', what: 'the private shelf' }, async (secret) => { await this.core.openShelfWith('device', this.deviceSlot(), secret) }, signal)
+      await this.byPresence({ id: this.shelfSecretId(state.id), set: state.devices.includes(this.deviceSlot()), reason: zh ? '打开鲸歌工坊的私密书架' : 'open Whalesong Studio\'s private shelf', what: 'the private shelf' }, async (secret) => { await this.core.openShelfWith('device', this.deviceSlot(), secret) }, signal)
     } catch (error) {
       if (error instanceof VaultError) throw new ProjectError(error.code === 'wrong-key' ? 'novel/wrong-key' : 'novel/invalid', error.message)
       throw error

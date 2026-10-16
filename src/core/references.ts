@@ -428,7 +428,7 @@ export async function referenceTools(core: NovelCore, runtime: ProjectRuntime, s
   }
   const ready = async (named: string | undefined): Promise<{ reference: ReferenceInfo; other?: ProjectRuntime }> => {
     const reference = pick(await consulted(core, runtime, lang), named)
-    if (reference.state === 'locked') throw new Error(`"${reference.name}" is locked: it cannot be read until its author unlocks it in Novel Studio — say so in your result, and work without it`)
+    if (reference.state === 'locked') throw new Error(`"${reference.name}" is locked: it cannot be read until its author unlocks it in Whalesong Studio — say so in your result, and work without it`)
     if (reference.state === 'missing') throw new Error(`"${reference.name}" is not where it was: it cannot be read — say so in your result, and work without it`)
     if (reference.kind === 'text') return { reference }
     const book = await shelfBook(core, reference)

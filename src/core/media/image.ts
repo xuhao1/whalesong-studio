@@ -360,7 +360,7 @@ class OpenAiImages implements ImageProvider {
     } catch (error) {
       // No key was sent because none is saved; the server turns out to want one.
       if (local && apiKey === undefined && error instanceof ProviderError && (error.status === 401 || error.status === 403)) {
-        throw new ProviderError(`${error.message} — this server asks for a key: paste it in Novel Studio → Settings`, error.status, 'NO_CREDENTIAL')
+        throw new ProviderError(`${error.message} — this server asks for a key: paste it in Whalesong Studio → Settings`, error.status, 'NO_CREDENTIAL')
       }
       // Asked with pictures, and refused as a request it cannot take — not for the key, not for being busy, not for a
       // fault of its own: it is the pictures. Whoever asked may ask again with the words alone. An endpoint that is
@@ -576,7 +576,7 @@ class OpenRouterImages implements ImageProvider {
     for (let round = 0; ; round++) {
       const ask = openRouterAsk(input, narrowed(listed, told))
       try {
-        const reply = await postJson<ImagesReply>(`${base}/images`, ask.body, { apiKey, headers: { 'x-title': 'Novel Studio' }, ...signalOption(request.signal), timeoutMs: 300_000 })
+        const reply = await postJson<ImagesReply>(`${base}/images`, ask.body, { apiKey, headers: { 'x-title': 'Whalesong Studio' }, ...signalOption(request.signal), timeoutMs: 300_000 })
         return { ...await fromReply(reply.data?.[0], request.signal), referencesUsed: ask.references, sent: { prompt, ...(ask.size !== undefined ? { size: ask.size } : {}) } }
       } catch (error) {
         if (!(error instanceof ProviderError)) throw error

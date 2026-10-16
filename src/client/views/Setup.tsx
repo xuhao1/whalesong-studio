@@ -78,9 +78,9 @@ function ServiceCard({ service, view, t, onDone }: { service: 'bailian' | 'openr
       <ul className="nv-setup-what">
         {setup !== undefined ? (
           <>
-            <li><Icon name="image" size={13} />{t('插图', 'Images')}：{modelName(service, 'image')}</li>
-            <li><Icon name="mic" size={13} />{t('配音', 'Speech')}：{modelName(service, 'tts')}</li>
-            <li><Icon name="search" size={13} />{t('检索', 'Retrieval')}：{setup.embedding.model}</li>
+            <li><Icon name="image" size={13} />{t('插图：', 'Images: ')}{modelName(service, 'image')}</li>
+            <li><Icon name="mic" size={13} />{t('配音：', 'Speech: ')}{modelName(service, 'tts')}</li>
+            <li><Icon name="search" size={13} />{t('检索：', 'Retrieval: ')}{setup.embedding.model}</li>
           </>
         ) : null}
       </ul>
@@ -126,7 +126,7 @@ function CodexCard({ view, t, onDone }: { view: SettingsData; t: Translate; onDo
   const line = (installed: boolean, signedIn: boolean, name: string, how: ReactNode): ReactNode => (
     <li>
       <Icon name={installed && signedIn ? 'checkCircle' : 'info'} size={13} />
-      {name}：{!installed ? t('未安装', 'not installed') : signedIn ? t('已登录', 'signed in') : <>{t('已安装，未登录', 'installed, not signed in')} — {how}</>}
+      {name}{t('：', ': ')}{!installed ? t('未安装', 'not installed') : signedIn ? t('已登录', 'signed in') : <>{t('已安装，未登录', 'installed, not signed in')} — {how}</>}
     </li>
   )
   return (
@@ -195,7 +195,7 @@ export function Signature({ version }: { version?: string | undefined }) {
   const t = useT()
   return (
     <p className="nv-muted nv-small nv-signature">
-      Novel Studio{version !== undefined ? ` · v${version}` : ''} · {t('作者', 'by')} {PROJECT_AUTHOR} · <a className="nv-link" href={PROJECT_HOMEPAGE} target="_blank" rel="noreferrer">{PROJECT_HOMEPAGE.replace(/^https?:\/\//, '')}</a> · LGPL-3.0-or-later
+      {t('鲸歌工坊', 'Whalesong Studio')}{version !== undefined ? ` · v${version}` : ''} · {t('作者', 'by')} {PROJECT_AUTHOR} · <a className="nv-link" href={PROJECT_HOMEPAGE} target="_blank" rel="noreferrer">{PROJECT_HOMEPAGE.replace(/^https?:\/\//, '')}</a> · LGPL-3.0-or-later
     </p>
   )
 }

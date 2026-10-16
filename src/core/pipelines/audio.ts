@@ -96,7 +96,7 @@ const anchoring = new Map<string, Promise<PcmAudio | undefined>>()
 
 export async function requireSpeech(core: NovelCore, runtime?: ProjectRuntime): Promise<TtsProvider> {
   const provider = await core.ttsProvider(runtime)
-  if (provider === undefined) throw new ProviderError('speech synthesis is not configured — set a speech endpoint in Novel Studio → Settings', undefined, 'NOT_CONFIGURED')
+  if (provider === undefined) throw new ProviderError('speech synthesis is not configured — set a speech endpoint in Whalesong Studio → Settings', undefined, 'NOT_CONFIGURED')
   return provider
 }
 

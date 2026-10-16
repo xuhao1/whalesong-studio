@@ -8,10 +8,10 @@
  * Nothing here talks to the Studio's controller: whoever uses a part hands it
  * the text, the script and a way to turn a media path into a URL.
  */
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { alignScript, blocksOf, fillsPane, pictureSizeOf, segmentsOf, stepPictureSize, type Block, type PictureRoom, type PictureSize } from '../../shared/reader'
-import { countWords, proseOnly } from '../../shared/text'
+import { countWords, EMPHASIS, proseOnly } from '../../shared/text'
 import type { AudioCue, AudioLine } from '../../shared/types'
 import { Icon } from '../icons'
 import { AMBIENCE } from '../labels'
@@ -621,6 +621,23 @@ export function ReaderPage({ t, bookTitle, chapter, text, prefs, media, lines, a
     if (last < run.length) out.push(run.slice(last))
     return out
   }
+  /**
+   * A run of text as a reader sees it: what the book's Markdown sets off — `_word_` or `*word*` in italics, `**word**`
+   * in bold, as a book brought in from a plain text marks them — set so, and the names in it marked as above.
+   */
+  const asRead = (run: string): ReactNode => {
+    const out: ReactNode[] = []
+    let last = 0
+    for (const match of run.matchAll(EMPHASIS)) {
+      const at = match.index
+      if (at > last) out.push(<Fragment key={`t${last}`}>{named(run.slice(last, at))}</Fragment>)
+      out.push(match[1] !== undefined ? <strong key={`e${at}`}>{named(match[1])}</strong> : <em key={`e${at}`}>{named(match[3] ?? '')}</em>)
+      last = at + match[0].length
+    }
+    if (out.length === 0) return named(run)
+    if (last < run.length) out.push(<Fragment key={`t${last}`}>{named(run.slice(last))}</Fragment>)
+    return out
+  }
   const ranges = useMemo(() => {
     if (text === undefined || lines === undefined || lines.length === 0) return []
     const found = alignScript(text, lines)
@@ -701,11 +718,11 @@ export function ReaderPage({ t, bookTitle, chapter, text, prefs, media, lines, a
           if (block.kind === 'heading') return <h3 key={block.offset} data-offset={block.offset}>{block.text}</h3>
           if (!listening || ranges.length === 0) {
             const noted = !listening && marks !== undefined && marks.length > 0 ? segmentsOf(block, marks) : undefined
-            if (noted === undefined || !noted.some(segment => segment.line !== undefined)) return [noteRow(block.offset), <p key={block.offset} data-offset={block.offset} className={cx(flash === block.offset && 'is-flash')}>{named(block.text)}</p>, momentsAfter(block.offset)]
+            if (noted === undefined || !noted.some(segment => segment.line !== undefined)) return [noteRow(block.offset), <p key={block.offset} data-offset={block.offset} className={cx(flash === block.offset && 'is-flash')}>{asRead(block.text)}</p>, momentsAfter(block.offset)]
             return [noteRow(block.offset), (
               <p key={block.offset} data-offset={block.offset} className={cx(flash === block.offset && 'is-flash')}>
                 {noted.map((segment, at) => segment.line === undefined
-                  ? <span key={at}>{named(segment.text)}</span>
+                  ? <span key={at}>{asRead(segment.text)}</span>
                   : (
                       <mark
                         key={at}
@@ -721,7 +738,7 @@ export function ReaderPage({ t, bookTitle, chapter, text, prefs, media, lines, a
                           const frame = host.getBoundingClientRect()
                           onMark?.(segment.line!, { top: box.top - frame.top + host.scrollTop, bottom: box.bottom - frame.top + host.scrollTop, left: box.left - frame.left })
                         }}
-                      >{named(segment.text)}</mark>
+                      >{asRead(segment.text)}</mark>
                     ))}
               </p>
             ), momentsAfter(block.offset)]
@@ -729,7 +746,7 @@ export function ReaderPage({ t, bookTitle, chapter, text, prefs, media, lines, a
           return [noteRow(block.offset), (
             <p key={block.offset} data-offset={block.offset} className={cx(flash === block.offset && 'is-flash')}>
               {segmentsOf(block, ranges).map((segment, at) => segment.line === undefined
-                ? <span key={at}>{named(segment.text)}</span>
+                ? <span key={at}>{asRead(segment.text)}</span>
                 : (
                     <span
                       key={at}
@@ -743,7 +760,7 @@ export function ReaderPage({ t, bookTitle, chapter, text, prefs, media, lines, a
                         const index = indexOf.get(segment.line!)
                         if (index !== undefined) onLine(index)
                       }}
-                    >{named(segment.text)}</span>
+                    >{asRead(segment.text)}</span>
                   ))}
             </p>
           ), momentsAfter(block.offset)]

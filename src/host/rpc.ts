@@ -1664,7 +1664,7 @@ export function createHandlers(service: NovelService): Handlers {
         ...(video === false ? { video: false } : {}),
         ...(lines === false ? { lines: false } : {}),
         // The site says what it was made with, in the book's own language.
-        credit: { name: manifest.language.toLowerCase().startsWith('zh') ? '小说工坊' : 'Novel Studio', url: PROJECT_HOMEPAGE },
+        credit: { name: manifest.language.toLowerCase().startsWith('zh') ? '鲸歌工坊' : 'Whalesong Studio', url: PROJECT_HOMEPAGE },
       }, task), ...(press !== false && soundPress === undefined ? { unpressed: true } : {}), ...(jpeg !== false && picturePress === undefined ? { unshrunk: true } : {}) }))
     },
 

@@ -136,7 +136,7 @@ export async function completeDirect(route: ModelRoute & { baseURL: string }, re
       try {
         response = await fetch(`${base}/chat/completions`, {
           method: 'POST',
-          headers: { 'content-type': 'application/json', accept: 'text/event-stream', authorization: `Bearer ${apiKey}`, 'x-title': 'Novel Studio' },
+          headers: { 'content-type': 'application/json', accept: 'text/event-stream', authorization: `Bearer ${apiKey}`, 'x-title': 'Whalesong Studio' },
           body: JSON.stringify(body),
           signal: anySignal(request.signal, idle.signal) ?? null,
         })

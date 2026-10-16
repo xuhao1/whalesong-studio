@@ -3,13 +3,13 @@
  * Browser half of the plugin. Writing a novel here is a conversation with the
  * showrunner, with the book open beside it:
  *
- * - "Novel Studio" is a tab type of the right sidebar, bound to the session it
+ * - "Whalesong Studio" is a tab type of the right sidebar, bound to the session it
  *   is opened in. It opens by itself when the showrunner starts working, and
  *   goes full screen and back with the sidebar's own switch;
  * - the rows of the `novel_*` tool calls in the conversation are doors into the
  *   Studio at the place each call was about, and the showrunner can open a
  *   screen for the author by itself;
- * - "Novel Studio" is also a page in the left sidebar: the bookshelf, the
+ * - "Whalesong Studio" is also a page in the left sidebar: the bookshelf, the
  *   settings, and any book without a conversation.
  *
  * Everything talks to the Host half through one route (see shared/rpc.ts).
@@ -95,7 +95,7 @@ export function apply(ctx: ClientContext): void {
   const subscribeLocale = (listener: () => void): (() => void) => ctx.locale.subscribe(listener)
   const getLocale = (): string => ctx.locale.getSnapshot().active
   const zh = (): boolean => getLocale().toLowerCase().startsWith('zh')
-  const title = (): string => (zh() ? '小说工坊' : 'Novel Studio')
+  const title = (): string => (zh() ? '鲸歌工坊' : 'Whalesong Studio')
   const workspaceUi = (): WorkspaceUi | undefined => {
     try {
       return (ctx as unknown as { get?(name: string): unknown }).get?.('uiWorkspace') as WorkspaceUi | undefined
@@ -321,6 +321,7 @@ export function apply(ctx: ClientContext): void {
     const chapter = params?.chapter
     const tab = params?.tab
     const mode = params?.mode
+    const of = params?.of
     const revision = navigation?.revision
     const actions = props.inputActions
     const fullscreen = info?.sidebar?.fullscreen === true
@@ -359,7 +360,7 @@ export function apply(ctx: ClientContext): void {
         },
       } : {}),
     }), [actions, fullscreen, props.sessionId])
-    const initial = useMemo(() => (view !== undefined || chapter !== undefined || tab !== undefined ? { ...(view !== undefined ? { view } : {}), ...(chapter !== undefined ? { chapter } : {}), ...(tab !== undefined ? { tab } : {}), ...(mode !== undefined ? { mode } : {}), ...(revision !== undefined ? { nonce: revision } : {}) } : undefined), [view, chapter, tab, mode, revision])
+    const initial = useMemo(() => (view !== undefined || chapter !== undefined || tab !== undefined || of !== undefined ? { ...(view !== undefined ? { view } : {}), ...(chapter !== undefined ? { chapter } : {}), ...(tab !== undefined ? { tab } : {}), ...(mode !== undefined ? { mode } : {}), ...(of !== undefined ? { of } : {}), ...(revision !== undefined ? { nonce: revision } : {}) } : undefined), [view, chapter, tab, mode, of, revision])
     return <Studio api={api} locale={locale} host={host} {...(props.sessionId !== undefined ? { sessionId: props.sessionId } : {})} {...(initial !== undefined ? { initial } : {})} />
   }
   // ── the Studio stays beside the author when they step into one of the conversation's agents ──

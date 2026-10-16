@@ -38,7 +38,7 @@ export function crewTools(service: NovelService): ToolDefinition[] {
             const plan = crewPlan(env.core, role, manifest)
             const route = await env.core.route(role, runtime, env.task).catch(() => undefined)
             const able = route !== undefined && env.core.roles?.can(route) === true
-            const how = plan.mode === 'call' ? 'set to plain calls (no tools)' : able ? `agent; tools: ${plan.open ? 'its own and everything this conversation has' : `its own${CREW[role].tools.length > 0 ? ` + ${CREW[role].tools.join(', ')} where present` : ''}`}` : 'cannot run as an agent: its model is a directly called endpoint — choose a DSH model for it in Novel Studio → Settings'
+            const how = plan.mode === 'call' ? 'set to plain calls (no tools)' : able ? `agent; tools: ${plan.open ? 'its own and everything this conversation has' : `its own${CREW[role].tools.length > 0 ? ` + ${CREW[role].tools.join(', ')} where present` : ''}`}` : 'cannot run as an agent: its model is a directly called endpoint — choose a DSH model for it in Whalesong Studio → Settings'
             lines.push(`- ${role} (${CREW[role].name[0]} / ${CREW[role].name[1]}) — ${CREW[role].does[1]}. Model: ${route?.model ?? 'none'}. ${how}.`)
             data.push({ role, model: route?.model ?? null, mode: plan.mode, agent: able, tools: plan.open ? 'all' : 'own' })
           }
@@ -68,7 +68,7 @@ export function crewTools(service: NovelService): ToolDefinition[] {
         '- action=status: what there is to cut from, whether a video exists already, and whether this computer can make one (ffmpeg, a model that can run as an agent).',
         '- action=produce: have it cut. `direction` carries what the author wants of it (pace, a title card, the look). The cut carries the lines as subtitles — a track in the file, and drawn into the picture where this computer\'s ffmpeg can; `subtitles=false` when the author wants none. A chapter that lacks voice or pictures is refused with what to make first.',
         '- action=delete: delete the chapter\'s video file; what it was cut from is untouched.',
-        'The video plays in Novel Studio → Stage beside the motion comic. This spends tokens of post-production\'s model for as many steps as the cut takes: do it when the author asks.',
+        'The video plays in Whalesong Studio → Stage beside the motion comic. This spends tokens of post-production\'s model for as many steps as the cut takes: do it when the author asks.',
       ].join('\n'),
       mutating: args => args.action === 'produce' || args.action === 'delete',
       parameters: {
@@ -87,7 +87,7 @@ export function crewTools(service: NovelService): ToolDefinition[] {
             existing !== undefined ? `Chapter ${chapter.index} has a video: ${existing.path}, ${existing.duration.toFixed(0)} s, ${existing.width}×${existing.height}, made ${existing.createdAt}.${existing.note !== undefined ? ` Post-production's note: ${existing.note}` : ''}` : `Chapter ${chapter.index} has no video yet.`,
             ready.counts !== undefined ? `Material: ${ready.counts.spoken} voiced lines (${ready.counts.seconds.toFixed(0)} s)${ready.counts.silent > 0 ? `, ${ready.counts.silent} lines without a voice` : ''}; ${ready.counts.drawn} panels drawn${ready.counts.undrawn > 0 ? `, ${ready.counts.undrawn} not drawn` : ''}; ${ready.counts.clips} sound clips.` : `Cannot be cut yet: ${ready.blocked ?? 'no material'}`,
             ready.ffmpeg ? '' : `ffmpeg / ffprobe are not on this computer — the author installs them (${FFMPEG_INSTALL[1]}).`,
-            ready.agent ? `Post-production runs on ${ready.model ?? 'the conversation\'s model'}.` : `Post-production cannot run as an agent: ${ready.model ?? 'its model'} is a directly called endpoint — the author chooses a DSH model for it in Novel Studio → Settings.`,
+            ready.agent ? `Post-production runs on ${ready.model ?? 'the conversation\'s model'}.` : `Post-production cannot run as an agent: ${ready.model ?? 'its model'} is a directly called endpoint — the author chooses a DSH model for it in Whalesong Studio → Settings.`,
           ]
           return { text: lines.filter(line => line.length > 0).join('\n'), data: toJson({ ...ready, video: existing ?? null }) }
         }
@@ -97,7 +97,7 @@ export function crewTools(service: NovelService): ToolDefinition[] {
         }
         const result = await env.job('video', 'video', chapter.plan.id, async task => await produceVideo(env.core, runtime, { chapter: chapter.plan.id, ...(args.subtitles === false ? { subtitles: false } : {}), ...(args.direction !== undefined && args.direction.trim().length > 0 ? { direction: args.direction.trim() } : {}) }, task))
         return {
-          text: `Video of chapter ${chapter.index} is in: ${result.video.path} — ${result.video.duration.toFixed(0)} s, ${result.video.width}×${result.video.height}, ${(result.video.size / 1_048_576).toFixed(1)} MB (${result.steps ?? 0} tool calls by post-production).\nIts note: ${result.report || '(none)'}\nIt plays in Novel Studio → Stage (novel_show view=stage).`,
+          text: `Video of chapter ${chapter.index} is in: ${result.video.path} — ${result.video.duration.toFixed(0)} s, ${result.video.width}×${result.video.height}, ${(result.video.size / 1_048_576).toFixed(1)} MB (${result.steps ?? 0} tool calls by post-production).\nIts note: ${result.report || '(none)'}\nIt plays in Whalesong Studio → Stage (novel_show view=stage).`,
           data: toJson(result.video),
           record: { summary: [`让后期剪出了第 ${chapter.index} 章的视频`, `Had post-production cut the video of chapter ${chapter.index}`], chapter: chapter.plan.id },
         }

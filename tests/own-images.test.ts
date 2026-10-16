@@ -645,7 +645,7 @@ describe('an image server of the author\'s own', () => {
     const refusal = await keyless.generate({ prompt: 'a boat' }).catch((error: unknown) => error) as Error & { status?: number; code?: string }
     expect(refusal).toMatchObject({ status: 401, code: 'NO_CREDENTIAL' })
     expect(refusal.message).toContain('Bearer token required')
-    expect(refusal.message).toContain('paste it in Novel Studio → Settings')
+    expect(refusal.message).toContain('paste it in Whalesong Studio → Settings')
     // A server that asks for none is drawn with as it is.
     rules.key = undefined
     const image = await keyless.generate({ prompt: 'a boat', size: '768x1152' })
