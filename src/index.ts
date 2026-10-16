@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 /**
- * dsh-novel-writer — Host half, as DSH loads it.
+ * whalesong-studio — Host half, as DSH loads it.
  *
  * This file is only the door (see `host/door.ts`): it puts up the Host half
  * proper, `host.js` beside it — the `novel` service (project store, model
@@ -8,8 +8,8 @@
  * the Studio talks to — and can put up a newer one in its place while DSH
  * runs. Keep it small: what is in this file changes only when DSH restarts.
  *
- * The agent-facing tools live in the `dsh-novel-writer/agent` entry, which a
- * preset mounts per session; the browser half is `dsh-novel-writer/client`.
+ * The agent-facing tools live in the `whalesong-studio/agent` entry, which a
+ * preset mounts per session; the browser half is `whalesong-studio/client`.
  */
 import type { Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'

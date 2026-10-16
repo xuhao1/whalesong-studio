@@ -6,7 +6,7 @@ import { completeJson, LlmCallError } from '../src/core/llm'
 import type { TtsProvider, TtsRequest, TtsResult } from '../src/core/media/tts'
 import { judge, leveled, measure, soundSpans, speechUnits, TARGET_LEVEL } from '../src/core/media/voiceprint'
 import { encodeWav, parseWav, type PcmAudio } from '../src/core/media/wav'
-import { audition, buildAudioScript, fallbackLines, isSkipped, isSpeechTag, openCast, playable, previewVoices, reshapeAudioScript, speakChecked, synthesizeChapter, TAKE_UNITS, tidyLines, voiceFor } from '../src/core/pipelines/audio'
+import { audition, buildAudioScript, fallbackLines, isSkipped, isSpeechTag, openCast, playable, previewVoices, reshapeAudioScript, speakChecked, speakerCard, synthesizeChapter, TAKE_UNITS, tidyLines, voiceFor } from '../src/core/pipelines/audio'
 import type { AudioLine, CharacterCard, TtsSettings } from '../src/shared/types'
 import { createTestBed, FakeLlm, type TestBed } from './support/harness'
 
@@ -370,6 +370,45 @@ describe('audio drama', () => {
     expect(voices).not.toContain('Cherry')
     // Asked again, each answers in the voice they were given.
     expect(voiceFor({ kind: 'dialogue', speakerName: '金发女人' }, cards, settings, taken, extras).voice).toBe(voices[1])
+  })
+
+  it('knows a speaker by the name with its aliases the director copied from the cast', () => {
+    const cards = [
+      { id: 'alice', name: 'Alice', aliases: ['Mary Ann'] },
+      { id: 'zhen', name: '甄士隐', aliases: ['士隐'] },
+      { id: 'monk', name: '茫茫大士', aliases: ['癞头和尚'] },
+    ] as CharacterCard[]
+    expect(speakerCard(cards, 'Alice(Mary Ann)')?.id).toBe('alice')
+    expect(speakerCard(cards, 'Alice (Mary Ann)')?.id).toBe('alice')
+    expect(speakerCard(cards, 'mary ann')?.id).toBe('alice')
+    expect(speakerCard(cards, '士隐')?.id).toBe('zhen')
+    expect(speakerCard(cards, '那僧（癞头和尚）')?.id).toBe('monk')
+    expect(speakerCard(cards, '众人')).toBeUndefined()
+    expect(speakerCard(cards, '丫鬟（小红）')).toBeUndefined()
+  })
+
+  it('voices a speaker the director wrote with aliases, or whose card came after the script, as the card', async () => {
+    const { project } = bed.runtime
+    const plan = await project.addChapter({ title: '拍卖厅' })
+    await project.saveChapterText(plan.id, TEXT)
+    // The heroine as the cast list shows her; the auctioneer has no card yet.
+    bed.llm.responder = () => JSON.stringify({ ...SCRIPT, lines: SCRIPT.lines.map(line => line.speaker === '白页' ? { ...line, speaker: '白页(零七)' } : line) })
+    const speech = new FakeSpeech(request => voice(130, natural(request.text)))
+    useSpeech(speech)
+    await synthesizeChapter(bed.core, bed.runtime, { chapter: plan.id }, { origin: 'user' })
+    const heroine = (await project.characters())[0]!
+    const voiceOf = (text: string): string | undefined => speech.requests.findLast(request => request.text === text)?.voice
+    expect(voiceOf('在。')).toBe((await project.voiceCast())!.characters[heroine.id])
+    expect((await project.audioScript(plan.id))!.lines.find(line => line.text === '在。')).toMatchObject({ speaker: heroine.id, speakerName: '白页' })
+    const stranger = voiceOf('零七。')
+    // The auctioneer is given a card afterwards: his lines are spoken again, in the card's voice, and the script names him.
+    const auctioneer = await project.saveCharacter({ name: '拍卖师', gender: '男', age: '50', role: 'supporting' })
+    speech.requests.length = 0
+    await synthesizeChapter(bed.core, bed.runtime, { chapter: plan.id }, { origin: 'user' })
+    expect(voiceOf('零七。')).toBe((await project.voiceCast())!.characters[auctioneer.id])
+    expect(voiceOf('零七。')).not.toBe(stranger)
+    expect(voiceOf('在。')).toBeUndefined()
+    expect((await project.audioScript(plan.id))!.lines.filter(line => line.speakerName === '拍卖师').every(line => line.speaker === auctioneer.id)).toBe(true)
   })
 
   it('listens to every take: retakes strays, evens levels, and re-checks what was rendered before', async () => {

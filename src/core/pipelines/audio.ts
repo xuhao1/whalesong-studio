@@ -335,7 +335,7 @@ export async function buildAudioScript(core: NovelCore, runtime: ProjectRuntime,
   const manifest = await project.manifest()
   const lang = promptLanguage(manifest.language)
   const characters = await project.characters()
-  const resolve = (name: string): CharacterCard | undefined => characters.find(card => sameName(card.name, name) || card.aliases?.some(alias => sameName(alias, name)) === true)
+  const resolve = (name: string): CharacterCard | undefined => speakerCard(characters, name)
   const castText = castFor(chapter, characters, text).map(card => `${card.name}${card.aliases !== undefined && card.aliases.length > 0 ? `(${card.aliases.join('/')})` : ''} | ${[card.gender, card.age, card.voice ?? card.personality].filter(Boolean).join('，')}`).join('\n')
   const ambienceText = AMBIENCE_KEYS.map(key => `${key}: ${AMBIENCE[key][lang === 'zh' ? 0 : 1]}`).join('\n')
   const sounds = soundPlan(await core.settingsOf(runtime))
@@ -656,6 +656,20 @@ export async function previewVoices(project: Project, settings: TtsSettings, lin
   return found
 }
 
+/**
+ * The card a speaker of a script is, by the name written for them. The director is shown the cast as
+ * "Name(alias/alias)" and can hand the whole of it back; a script written before the book had cards names
+ * people the cards came to hold later. A name with a part in brackets is tried whole, then each name in it.
+ */
+export function speakerCard(characters: readonly CharacterCard[], name: string): CharacterCard | undefined {
+  const named = (candidate: string): CharacterCard | undefined => characters.find(card => sameName(card.name, candidate) || card.aliases?.some(alias => sameName(alias, candidate)) === true)
+  const whole = named(name)
+  if (whole !== undefined) return whole
+  const parts = /^(.*?)\s*[(（]([^)）]*)[)）]\s*$/.exec(name.trim())
+  if (parts === null) return undefined
+  return [parts[1] ?? '', ...(parts[2] ?? '').split(/[/／、,，]/)].map(part => part.trim()).filter(part => part.length > 0).map(named).find(card => card !== undefined)
+}
+
 /** Decide which voice speaks a line and with what delivery. */
 export function voiceFor(line: Pick<AudioLine, 'kind' | 'speaker' | 'speakerName' | 'direction'>, characters: CharacterCard[], settings: TtsSettings, taken: Map<string, string>, extras: Map<string, string> = new Map()): VoiceChoice {
   const join = (...parts: (string | undefined)[]): string | undefined => {
@@ -668,7 +682,8 @@ export function voiceFor(line: Pick<AudioLine, 'kind' | 'speaker' | 'speakerName
     const direction = join(settings.narratorInstructions, line.direction)
     return { ...(narrator !== undefined ? { voice: narrator } : {}), ...(direction !== undefined ? { direction } : {}) }
   }
-  const card = characters.find(candidate => candidate.id === line.speaker)
+  // A line with no card named is looked up by its speaker's name: the card may have come after the script, or the name came with its aliases.
+  const card = characters.find(candidate => candidate.id === line.speaker) ?? (line.speaker === undefined && line.speakerName !== undefined ? speakerCard(characters, line.speakerName) : undefined)
   const who = card !== undefined
     ? `${card.name}${card.gender !== undefined ? `，${card.gender}` : ''}${card.age !== undefined ? `，${card.age}` : ''}${card.voice !== undefined ? `，${card.voice}` : ''}`
     : line.speakerName
@@ -916,6 +931,22 @@ export async function synthesizeChapter(core: NovelCore, runtime: ProjectRuntime
     await cast.save()
     return { cast, plan }
   })
+  // Speakers found by their name (speakerCard) go into the script as the cards they are: the page shows who speaks, not what the director copied.
+  const relinked = new Map(script.lines.flatMap(line => {
+    const card = line.kind !== 'narration' && line.speaker === undefined && line.speakerName !== undefined ? speakerCard(characters, line.speakerName) : undefined
+    return card !== undefined ? [[line.id, card] as const] : []
+  }))
+  if (relinked.size > 0) {
+    const saved = await changeScript(project, script.chapterId, current => ({
+      ...current,
+      lines: current.lines.map(line => {
+        const card = relinked.get(line.id)
+        return card !== undefined && line.speaker === undefined ? { ...line, speaker: card.id, speakerName: card.name } : line
+      }),
+      updatedAt: new Date().toISOString(),
+    }))
+    if (saved !== undefined) script = saved
+  }
   const reference = voiceBank(core, runtime, provider, settings, manifest.language, task.signal, (_voice, phase) => {
     tuning += phase === 'start' ? 1 : -1
     report()

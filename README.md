@@ -24,7 +24,7 @@ It isn't a role-play front end or a "generate a chapter" button: you make the ca
 
 <sub>*Lewis Carroll's* Alice's Adventures in Wonderland *imported into the Studio, open beside a conversation with the showrunner. Every picture in these screenshots was drawn in the Studio.*</sub>
 
-**See what it makes:** two classics published with Whalesong Studio — read *[Alice's Adventures in Wonderland](https://whalesong.xuhao1.me/books/alice/)* or *[Dream of the Red Chamber](https://whalesong.xuhao1.me/books/hongloumeng/)* (红楼梦, in Chinese) online.
+**See what it makes:** two classics published with Whalesong Studio — read *[Alice's Adventures in Wonderland](https://whalesong.xuhao1.me/books/alice/)* or *[Dream of the Red Chamber](https://whalesong.xuhao1.me/books/hongloumeng/)* (红楼梦, in Chinese) online. The first chapters can be listened to as well — the first three of *Alice*, the first ten of 红楼梦 — voiced by the Studio. Once inside, click **People** and **World** at the top: every character has a page of their own, the main ones with portraits, and the places can be walked into one inside another.
 
 > **New here?** The [tutorial](./docs/tutorial.md) walks you through it with screenshots, from installing to your first illustrated chapter.
 
@@ -100,8 +100,8 @@ The Desktop app owns its `desktop` profile, so plugins are installed from inside
 1. Open **Plugins** in the left sidebar and choose **Add plugin**.
 2. Enter one of:
    - `github:xuhao1/whalesong-studio` — the app asks before it runs the package's build script;
-   - the absolute path of a release tarball, e.g. `/Users/you/Downloads/dsh-novel-writer-0.1.0.tgz`;
-   - the absolute path of a built checkout, e.g. `/Users/you/src/dsh-novel-writer` — it is linked rather than copied, so rebuilding the checkout updates the plugin.
+   - the absolute path of a release tarball, e.g. `/Users/you/Downloads/whalesong-studio-0.1.0.tgz`;
+   - the absolute path of a built checkout, e.g. `/Users/you/src/whalesong-studio` — it is linked rather than copied, so rebuilding the checkout updates the plugin.
 3. Install. *Whalesong Studio* appears in the left sidebar and *小说家 Novelist* in the preset menu of a new session; restart the app if they do not.
 
 To upgrade, uninstall the plugin on the same page and add the new version. Your books are ordinary directories in your workspaces and are not touched.
@@ -111,8 +111,8 @@ To upgrade, uninstall the plugin on the same page and add the new version. Your 
 `dsh plugin` runs pnpm, which must be on your `PATH`.
 
 ```sh
-dsh plugin --profile web add /absolute/path/to/dsh-novel-writer-0.1.0.tgz
-dsh plugin --profile web remove dsh-novel-writer
+dsh plugin --profile web add /absolute/path/to/whalesong-studio-0.1.0.tgz
+dsh plugin --profile web remove whalesong-studio
 ```
 
 A built checkout path or `github:xuhao1/whalesong-studio` works in place of the tarball; for the latter pnpm must be allowed to run the build script, see [Package and install a plugin](https://deepseek-harness.github.io/deepseek-harness/en/develop/basic/publish).
@@ -125,7 +125,7 @@ Needs Node.js 22+.
 git clone https://github.com/xuhao1/whalesong-studio.git
 cd whalesong-studio
 npm install     # installs dependencies; builds lib/ when the checkout has none
-npm pack        # writes dsh-novel-writer-<version>.tgz
+npm pack        # writes whalesong-studio-<version>.tgz
 ```
 
 ## Quick start

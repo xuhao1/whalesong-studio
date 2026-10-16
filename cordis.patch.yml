@@ -1,4 +1,4 @@
-# dsh-novel-writer bundle patch.
+# whalesong-studio bundle patch.
 #
 # Applied after the Harness base and Web layers. It inserts two rows:
 #
@@ -25,7 +25,7 @@
 
 - insert:
     - id: novel-writer
-      name: dsh-novel-writer
+      name: whalesong-studio
       config:
         # Deployment defaults for the Studio's settings (models, context,
         # image / tts / embedding endpoints). What a user saves in the Studio
@@ -51,7 +51,7 @@
 
           # Tools, showrunner instructions, project digest, /novel command.
           - id: novel-agent
-            name: dsh-novel-writer/agent
+            name: whalesong-studio/agent
 
           # Project and user instructions (AGENTS.md) still apply to a writing session.
           - id: agent-instructions
@@ -127,7 +127,7 @@
             name: '@deepseek-ai/dsh-skill-filesystem'
             config:
               customSkillDirs:
-                - !!js process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:path').dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('dsh-novel-writer/package.json')), 'skills')
+                - !!js process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:path').dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('whalesong-studio/package.json')), 'skills')
           - id: tool-skill
             name: '@deepseek-ai/dsh-tool-skill'
 

@@ -40,7 +40,7 @@
 
 1. 打开左侧栏的 **插件**，点右上角的 **添加插件**。
 2. 在输入框里填下面任意一种，点 **安装**：
-   - 发布包的绝对路径，例如 `/Users/you/Downloads/dsh-novel-writer-0.1.0.tgz`；
+   - 发布包的绝对路径，例如 `/Users/you/Downloads/whalesong-studio-0.1.0.tgz`；
    - 已经构建好的源码目录的绝对路径——这是"链接"，以后在源码目录里重新构建，插件跟着更新；
    - `github:xuhao1/whalesong-studio`——应用会先问是否允许运行这个包的构建脚本。
 
@@ -53,7 +53,7 @@
 `dsh plugin` 要用到 pnpm，先确认它在 `PATH` 里。
 
 ```sh
-dsh plugin --profile web add /absolute/path/to/dsh-novel-writer-0.1.0.tgz
+dsh plugin --profile web add /absolute/path/to/whalesong-studio-0.1.0.tgz
 ```
 
 发布包怎么来、怎么自己构建，见 [README 的"安装"一节](../README.zh.md#安装)。

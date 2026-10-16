@@ -24,7 +24,7 @@
 
 <sub>导入工坊的《红楼梦》前八十回，开在和总编的对话旁边。截图里的每一张画都是在工坊里画的。</sub>
 
-**看看做出来的作品**：两部用鲸歌工坊发布的经典，在线就能读——[《红楼梦》](https://whalesong.xuhao1.me/books/hongloumeng/)、[《爱丽丝漫游奇境》](https://whalesong.xuhao1.me/books/alice/)（英文原版）。
+**看看做出来的作品**：两部用鲸歌工坊发布的经典，在线就能读——[《红楼梦》](https://whalesong.xuhao1.me/books/hongloumeng/)、[《爱丽丝漫游奇境》](https://whalesong.xuhao1.me/books/alice/)（英文原版）。前几章还能直接听：《红楼梦》前十回、《爱丽丝》前三章，都是工坊配的音。点进去以后，别忘了点点上面的「人物」「世界」：每个人物都有自己的一页，主要人物配了画像；书里的地方可以一层层走进去看。
 
 > **第一次用？** 看[新手教程](./docs/tutorial.zh.md)，带着截图一步步走：从安装到画出第一章的插图。
 
@@ -100,8 +100,8 @@
 1. 打开左侧栏的**插件**，点**添加插件**。
 2. 在"包名或地址"里填下面任意一种：
    - `github:xuhao1/whalesong-studio`——应用会先询问是否允许运行本包的构建脚本；
-   - 发布包的绝对路径，例如 `/Users/you/Downloads/dsh-novel-writer-0.1.0.tgz`；
-   - 已构建好的源码目录的绝对路径，例如 `/Users/you/src/dsh-novel-writer`——这种方式是"链接"而不是复制，之后重新构建源码目录，插件随之更新。
+   - 发布包的绝对路径，例如 `/Users/you/Downloads/whalesong-studio-0.1.0.tgz`；
+   - 已构建好的源码目录的绝对路径，例如 `/Users/you/src/whalesong-studio`——这种方式是"链接"而不是复制，之后重新构建源码目录，插件随之更新。
 3. 安装。左侧栏会出现*鲸歌工坊*，新会话的预设菜单里会出现*小说家 Novelist*；没出现就重启一次应用。
 
 升级：在同一页面卸载后再添加新版本。你的书只是工作区里的普通目录，不会被动到。
@@ -111,8 +111,8 @@
 `dsh plugin` 会调用 pnpm，需要它在 `PATH` 里。
 
 ```sh
-dsh plugin --profile web add /absolute/path/to/dsh-novel-writer-0.1.0.tgz
-dsh plugin --profile web remove dsh-novel-writer
+dsh plugin --profile web add /absolute/path/to/whalesong-studio-0.1.0.tgz
+dsh plugin --profile web remove whalesong-studio
 ```
 
 发布包也可以换成已构建的源码目录，或 `github:xuhao1/whalesong-studio`；后者需要允许 pnpm 运行构建脚本，见官方文档[打包与安装插件](https://deepseek-harness.github.io/deepseek-harness/en/develop/basic/publish)。
@@ -125,7 +125,7 @@ dsh plugin --profile web remove dsh-novel-writer
 git clone https://github.com/xuhao1/whalesong-studio.git
 cd whalesong-studio
 npm install     # 安装依赖；还没有 lib/ 时构建一份
-npm pack        # 生成 dsh-novel-writer-<版本>.tgz
+npm pack        # 生成 whalesong-studio-<版本>.tgz
 ```
 
 ## 快速开始

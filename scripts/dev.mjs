@@ -74,8 +74,16 @@ if (!existsSync(resolve(profileDir, 'package.json'))) {
 // Mirror what `dsh plugin add <checkout>` records: a linked dependency plus a bundle entry.
 const manifestPath = resolve(profileDir, 'package.json')
 const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+// The package was renamed (dsh-novel-writer → whalesong-studio): a home that linked this stage under an earlier
+// name would load its patch twice, once per name. Whatever else links this stage goes.
+const earlier = Object.entries(manifest.dependencies ?? {}).filter(([name, spec]) => name !== pkg.name && spec === `link:${stage}`).map(([name]) => name)
+for (const name of earlier) {
+  delete manifest.dependencies[name]
+  rmSync(resolve(profileDir, 'node_modules', name), { recursive: true, force: true })
+  console.log(`[dev] dropped ${name}, an earlier name of this package`)
+}
 manifest.dependencies = { ...manifest.dependencies, [pkg.name]: `link:${stage}` }
-const bundles = manifest.dsh?.profile?.bundles ?? []
+const bundles = (manifest.dsh?.profile?.bundles ?? []).filter(name => !earlier.includes(name))
 if (!bundles.includes(pkg.name)) bundles.push(pkg.name)
 manifest.dsh = { ...manifest.dsh, profile: { ...manifest.dsh?.profile, bundles } }
 writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)

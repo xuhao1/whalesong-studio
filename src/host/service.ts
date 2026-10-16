@@ -535,7 +535,7 @@ export class NovelService extends Service {
 
   /**
    * Give a session what a novelist's session has: tools, instructions, digest.
-   * Called by the entry a preset names (`dsh-novel-writer/agent`), which holds
+   * Called by the entry a preset names (`whalesong-studio/agent`), which holds
    * no code of its own — so what is mounted is always of this Host's build.
    */
   mountAgent(ctx: Context): void {

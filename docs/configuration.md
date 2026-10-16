@@ -29,7 +29,7 @@ Three layers, later ones win:
 
    ```yaml
    - id: novel-writer
-     name: dsh-novel-writer
+     name: whalesong-studio
      config:
        settings:
          models:

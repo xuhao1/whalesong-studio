@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 /**
- * dsh-novel-writer/agent — the entry a preset names to give its sessions the
+ * whalesong-studio/agent — the entry a preset names to give its sessions the
  * novel_* tools, the showrunner instructions and the project digest.
  *
  * It holds none of that itself. A Harness reads this file when the first

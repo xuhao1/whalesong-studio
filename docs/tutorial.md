@@ -40,7 +40,7 @@ DeepSeek Harness `0.2.0-rc.2` or later (`< 0.3`).
 
 1. Open **Plugins** in the left sidebar and press **Add plugin** at the top right.
 2. Fill in one of these and press **Install**:
-   - the absolute path of a release package, e.g. `/Users/you/Downloads/dsh-novel-writer-0.1.0.tgz`;
+   - the absolute path of a release package, e.g. `/Users/you/Downloads/whalesong-studio-0.1.0.tgz`;
    - the absolute path of a built source checkout — this is a *link*: rebuild the checkout later and the plugin follows;
    - `github:xuhao1/whalesong-studio` — the app first asks whether the package may run its build script.
 
@@ -53,7 +53,7 @@ DeepSeek Harness `0.2.0-rc.2` or later (`< 0.3`).
 `dsh plugin` calls pnpm; have it on `PATH`.
 
 ```sh
-dsh plugin --profile web add /absolute/path/to/dsh-novel-writer-0.1.0.tgz
+dsh plugin --profile web add /absolute/path/to/whalesong-studio-0.1.0.tgz
 ```
 
 Where the package comes from, and how to build it yourself: [Install, in the README](../README.md#install).
