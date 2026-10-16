@@ -12,15 +12,15 @@ import { CHATGPT_RECORD, chatgptPatch, ChatGPTSetup, ChatGPTSignIn, type Authori
 import { dshGrant, viaDsh } from '../src/host/codex'
 import { codexReady } from '../src/host/service'
 import { DEFAULT_SETTINGS, mergeSettings } from '../src/core/settings'
-import { textPicks } from '../src/shared/recommended'
+import { textNewer, textPicks } from '../src/shared/recommended'
 import type { ChatGPTAttempt } from '../src/shared/rpc'
 
 const MODELS = [{ id: 'gpt-5.3-codex-spark', name: 'GPT-5.3 Codex Spark' }, { id: 'gpt-6-luna', name: 'GPT-6 Luna' }, { id: 'gpt-6-sol', name: 'GPT-6 Sol' }]
 
 /** A DSH whose pi-ai adapter can serve `openai-codex` once its settings hold a profile for it. */
-function fakeDsh(options: { profile?: boolean; connect?: { signedIn: boolean }; signedIn?: boolean; flow?: boolean; writable?: boolean } = {}) {
+function fakeDsh(options: { profile?: boolean | Record<string, unknown>; connect?: { signedIn: boolean }; signedIn?: boolean; flow?: boolean; writable?: boolean; catalog?: { id: string; name: string }[] } = {}) {
   const sections: Record<string, { value: Record<string, unknown>; revision: number }> = {
-    'llm-pi-ai': { value: { providers: { bailian: {}, ...(options.profile === true ? { 'openai-codex': {} } : {}) } }, revision: 3 },
+    'llm-pi-ai': { value: { providers: { bailian: {}, ...(options.profile !== undefined && options.profile !== false ? { 'openai-codex': options.profile === true ? {} : options.profile } : {}) } }, revision: 3 },
     'agent-default-model': { value: { provider: 'bailian', model: 'qwen3.8-flash', reasoningEffort: 'high' }, revision: 7 },
   }
   const mutations: { ns: string; ops: unknown; revision: number | undefined }[] = []
@@ -43,7 +43,13 @@ function fakeDsh(options: { profile?: boolean; connect?: { signedIn: boolean }; 
   const served = (): boolean => options.connect !== undefined || (sections['llm-pi-ai']!.value.providers as Record<string, unknown>)['openai-codex'] !== undefined
   const llm: LlmLike = {
     listProviders: () => [{ id: 'bailian', name: 'Bailian' }, ...(served() ? [{ id: 'openai-codex', name: 'OpenAI Codex' }] : [])],
-    listModels: async provider => (provider === 'openai-codex' && served() ? MODELS.map(model => ({ ...model, provider: 'openai-codex' })) : []),
+    listModels: async (provider) => {
+      if (provider !== 'openai-codex' || !served()) return []
+      // A profile's models list replaces the catalog; an entry the catalog describes takes its name from it.
+      const listed = ((sections['llm-pi-ai']!.value.providers as Record<string, { models?: { id: string; name?: string }[] }>)['openai-codex'])?.models
+      const catalog = options.catalog ?? MODELS
+      return (listed !== undefined && listed.length > 0 ? listed : catalog).map(model => ({ id: model.id, name: model.name ?? catalog.find(known => known.id === model.id)?.name ?? model.id, provider: 'openai-codex' }))
+    },
     listConfigurableProviders: () => [{ provider: 'bailian', settingsNs: 'llm-pi-ai', settingsPath: ['providers', 'bailian'] }, { provider: 'openai-codex', settingsNs: 'llm-pi-ai', settingsPath: ['providers', 'openai-codex'] }],
   }
   let stored = options.signedIn === true
@@ -132,6 +138,47 @@ describe('where the ChatGPT route stands', () => {
     await new ChatGPTSetup(dsh.ports).addRoute()
     expect(dsh.mutations).toEqual([{ ns: 'llm-pi-ai', ops: [{ op: 'set', path: ['providers', 'openai-codex'], value: { displayName: 'ChatGPT' } }], revision: 3 }])
     expect((dsh.sections['llm-pi-ai']!.value.providers as Record<string, unknown>)['bailian']).toEqual({})
+  })
+
+  it('declares GPT-6.1 Sol on DSH\'s own route where its catalog lacks it, beside the models the catalog has', async () => {
+    // DSH reads a profile back with its schema's defaults: `models: []` is the catalog, not a list of none.
+    const dsh = fakeDsh({ profile: { displayName: 'ChatGPT', models: [] }, signedIn: true })
+    const setup = new ChatGPTSetup(dsh.ports)
+    expect(await setup.declareModels(textNewer('openai-codex'))).toEqual(['gpt-6.1-sol'])
+    const profile = (dsh.sections['llm-pi-ai']!.value.providers as Record<string, { models: { id: string }[] }>)['openai-codex']!
+    expect(profile.models.map(model => model.id)).toEqual(['gpt-5.3-codex-spark', 'gpt-6-luna', 'gpt-6-sol', 'gpt-6.1-sol'])
+    expect(profile.models[3]).toMatchObject({ id: 'gpt-6.1-sol', name: 'GPT-6.1 Sol', contextWindow: 500000, maxTokens: 128000, input: ['text', 'image'] })
+    expect((await setup.state()).models.map(model => model.id)).toContain('gpt-6.1-sol')
+    // Once there, nothing more is written.
+    expect(await setup.declareModels(textNewer('openai-codex'))).toEqual([])
+    expect(dsh.mutations).toHaveLength(1)
+  })
+
+  it('waits for a route just added to list its models, and writes no list from an empty catalog', async () => {
+    const dsh = fakeDsh({ profile: { displayName: 'ChatGPT' }, signedIn: true })
+    const llm = dsh.ports.llm()!
+    const real = llm.listModels.bind(llm)
+    // DSH lists the provider first and its models a moment later.
+    let calls = 0
+    const lagging: ChatGPTPorts = { ...dsh.ports, llm: () => ({ ...llm, listModels: async (provider?: string) => (++calls <= 2 ? [] : await real(provider)) }) }
+    expect(await new ChatGPTSetup(lagging).declareModels(textNewer('openai-codex'))).toEqual(['gpt-6.1-sol'])
+    expect(((dsh.sections['llm-pi-ai']!.value.providers as Record<string, { models: { id: string }[] }>)['openai-codex']!.models).map(model => model.id)).toEqual(['gpt-5.3-codex-spark', 'gpt-6-luna', 'gpt-6-sol', 'gpt-6.1-sol'])
+    // A catalog that never shows: nothing is written.
+    const never = fakeDsh({ profile: { displayName: 'ChatGPT' }, signedIn: true })
+    const empty: ChatGPTPorts = { ...never.ports, llm: () => ({ ...never.ports.llm()!, listModels: async () => [] }) }
+    expect(await new ChatGPTSetup(empty).declareModels(textNewer('openai-codex'))).toEqual([])
+    expect(never.mutations).toEqual([])
+  }, 15_000)
+
+  it('adds to a models list the route already has, and leaves a catalog that has the model, and Codex Connect\'s route, alone', async () => {
+    const listed = fakeDsh({ profile: { models: [{ id: 'gpt-6-sol' }] }, signedIn: true })
+    await new ChatGPTSetup(listed.ports).declareModels(textNewer('openai-codex'))
+    expect(((listed.sections['llm-pi-ai']!.value.providers as Record<string, { models: { id: string }[] }>)['openai-codex']!.models).map(model => model.id)).toEqual(['gpt-6-sol', 'gpt-6.1-sol'])
+    const newer = fakeDsh({ profile: true, signedIn: true, catalog: [...MODELS, { id: 'gpt-6.1-sol', name: 'GPT-6.1 Sol' }] })
+    expect(await new ChatGPTSetup(newer.ports).declareModels(textNewer('openai-codex'))).toEqual([])
+    const connect = fakeDsh({ connect: { signedIn: true } })
+    expect(await new ChatGPTSetup(connect.ports).declareModels(textNewer('openai-codex'))).toEqual([])
+    expect([...newer.mutations, ...connect.mutations]).toEqual([])
   })
 
   it('signs DSH out of its own ChatGPT sign-in, and leaves Codex Connect\'s alone', async () => {
@@ -355,6 +402,8 @@ describe('pictures on DSH\'s own sign-in', () => {
 
 describe('which models the one-click picks', () => {
   it('takes the first recommended the route offers', () => {
+    expect(textPicks('openai-codex', [...MODELS.map(model => model.id), 'gpt-6.1-sol'])).toEqual({ writer: 'gpt-6.1-sol', crew: 'gpt-6.1-sol' })
+    // A catalog without it (DSH 0.2.0-rc.2) and nothing declared: the next one down.
     expect(textPicks('openai-codex', MODELS.map(model => model.id))).toEqual({ writer: 'gpt-6-sol', crew: 'gpt-6-sol' })
   })
   it('falls back down the list', () => {
@@ -362,7 +411,7 @@ describe('which models the one-click picks', () => {
     expect(textPicks('openai-codex', ['gpt-5.5', 'gpt-5.6-luna'])).toEqual({ writer: 'gpt-5.5', crew: 'gpt-5.5' })
   })
   it('names the recommended ones while the route lists nothing yet', () => {
-    expect(textPicks('openai-codex', [])).toEqual({ writer: 'gpt-6-sol', crew: 'gpt-6-sol' })
+    expect(textPicks('openai-codex', [])).toEqual({ writer: 'gpt-6.1-sol', crew: 'gpt-6.1-sol' })
   })
 })
 

@@ -21,6 +21,7 @@ import { ProjectError } from '../core/project'
 import type { DeepPartial } from '../core/settings'
 import { CREW_ROLES, type ModelRoute, type NovelSettings } from '../shared/types'
 import { errorMessage, sleep } from '../core/util/async'
+import type { RecommendedModel } from '../shared/recommended'
 import type { ChatGPTAttempt, ChatGPTChoice, ChatGPTRoute } from '../shared/rpc'
 
 /** DSH's route for a ChatGPT subscription, as pi-ai and Codex Connect both name it. */
@@ -157,6 +158,45 @@ export class ChatGPTSetup {
       await sleep(100)
     }
     throw new ProjectError('novel/unsupported', 'DSH took the ChatGPT route into its settings but does not serve it yet — restart DSH and try again')
+  }
+
+  /**
+   * Declare models newer than DSH's catalog for the route in the route's profile, where the route is DSH's own and
+   * lacks them: DSH's model adapter serves a `models` entry its installed catalog does not describe (the route's
+   * protocol and address come from the catalog). A `models` list replaces the catalog, so the models the route has are
+   * listed with them, each by its id alone — the catalog still describes those. A catalog that has a model already is
+   * left as it is.
+   * @returns the ids declared.
+   */
+  async declareModels(newer: readonly RecommendedModel[]): Promise<string[]> {
+    const llm = this.ports.llm()
+    const state = await this.state()
+    if (state.route !== 'dsh' || llm === undefined) return []
+    // A route just added is listed before its models are: a list made then would replace the catalog with the new
+    // models alone. Wait for the catalog, and write nothing without it.
+    let offered = state.models.map(model => model.id)
+    for (let waited = 0; offered.length === 0 && waited < 5000; waited += 100) {
+      await sleep(100)
+      offered = (await llm.listModels(CHATGPT_PROVIDER)).map(model => model.id)
+    }
+    if (offered.length === 0) return []
+    const missing = newer.filter(model => !offered.includes(model.id))
+    if (missing.length === 0) return []
+    const entry = this.entry()
+    const forms = this.ports.forms()
+    if (entry === undefined || forms === undefined || !forms.writable) return []
+    const section = forms.describe().find(item => item.ns === entry.settingsNs)
+    // DSH's settings read back with their defaults: an empty list is the catalog, as the adapter takes it.
+    const listed = at(section?.value, [...entry.settingsPath, 'models'])
+    const models = Array.isArray(listed) && listed.length > 0 ? [...listed, ...missing] : [...offered.map(id => ({ id })), ...missing]
+    await forms.mutate(entry.settingsNs, [{ op: 'set', path: [...entry.settingsPath, 'models'], value: models }], section?.revision)
+    const ids = missing.map(model => model.id)
+    for (let waited = 0; waited < 5000; waited += 100) {
+      const now = (await llm.listModels(CHATGPT_PROVIDER)).map(model => model.id)
+      if (ids.every(id => now.includes(id))) return ids
+      await sleep(100)
+    }
+    throw new ProjectError('novel/unsupported', `DSH took ${ids.join(', ')} into the ChatGPT route's settings but does not list it yet — restart DSH and try again`)
   }
 
   /**

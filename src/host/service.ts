@@ -41,7 +41,7 @@ import { DEFAULT_SETTINGS, mergeSettings, SettingsStore, type DeepPartial } from
 import { errorMessage } from '../core/util/async'
 import { displayPath, exists } from '../core/util/fs'
 import type { ChatGPTApplied, ChatGPTChoice, ChatGPTView, CodexStatus, EndpointCheck, EndpointModel, HelpPackage, HelpView, KeyState, LockView, ModelKind, PrivateShelfState, ShareStatus, WorkspaceInfo } from '../shared/rpc'
-import { textPicks, unlistedModels } from '../shared/recommended'
+import { textNewer, textPicks, unlistedModels } from '../shared/recommended'
 import { localImages } from '../shared/images'
 import { compatibleBase, hostOf, originOf, recommendedSetup, SERVICES, serviceOf, setupPatch, speechProtocol, type ServiceId, type SetupPart } from '../shared/services'
 import { CREW_ROLES, type ModelRoute, type NovelSettings, type ProjectRef, type WorkMode } from '../shared/types'
@@ -1039,7 +1039,10 @@ export class NovelService extends Service {
   /** The one-click ChatGPT setup as the guide page shows it. */
   async chatgptView(settings: NovelSettings): Promise<ChatGPTView> {
     const state = await this.chatgpt.state()
-    const picks = textPicks(CHATGPT_PROVIDER, state.models.map(model => model.id))
+    // A model newer than DSH's catalog is offered where the one-click can declare it on DSH's own route.
+    const declarable = state.route === 'none' || state.route === 'dsh' ? textNewer(CHATGPT_PROVIDER).filter(model => !state.models.some(offered => offered.id === model.id)) : []
+    const models = [...state.models, ...declarable.map(model => ({ id: model.id, name: model.name ?? model.id }))]
+    const picks = textPicks(CHATGPT_PROVIDER, models.map(model => model.id))
     const on = (route: ModelRoute | undefined): boolean => route !== undefined && route.baseURL === undefined && route.provider === CHATGPT_PROVIDER
     const attempt = this.chatgptSignIn.current()
     return {
@@ -1047,7 +1050,7 @@ export class NovelService extends Service {
       canSignIn: state.canSignIn,
       signedIn: state.signedIn,
       canAddRoute: state.canAddRoute,
-      models: state.models,
+      models,
       picks,
       using: { writer: on(settings.models.writer), crew: CREW_ROLES.every(role => on(settings.models[role])), conversation: this.core.llm.defaultRoute()?.provider === CHATGPT_PROVIDER },
       ...(attempt !== undefined ? { attempt } : {}),
@@ -1073,6 +1076,8 @@ export class NovelService extends Service {
       await this.chatgpt.addRoute()
       state = await this.chatgpt.state()
     }
+    // The recommended models DSH's catalog does not have yet go into the route's profile first.
+    if ((await this.chatgpt.declareModels(textNewer(CHATGPT_PROVIDER))).length > 0) state = await this.chatgpt.state()
     const offered = state.models.map(model => model.id)
     const picks = textPicks(CHATGPT_PROVIDER, offered)
     const writer = choice.writer ?? picks.writer

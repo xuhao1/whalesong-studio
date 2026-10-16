@@ -1,10 +1,10 @@
 {
   "schema": 1,
-  "version": 3,
+  "version": 4,
   "date": "2026-10-16",
   "notes": {
-    "zh": "第 3 版：加入 ChatGPT 订阅（DSH 的 openai-codex）的文字模型推荐——写手和班底都用 GPT-6 Sol；只在一键接入 ChatGPT 时用到，已有的设置不动。",
-    "en": "Issue 3: text models for a ChatGPT subscription (DSH's openai-codex) — GPT-6 Sol for the writer and the crew; used only by the one-click ChatGPT setup, nothing already set moves."
+    "zh": "第 4 版：一键接入 ChatGPT 订阅时，写手和班底默认用 GPT-6.1 Sol；DSH 的模型目录里还没有它的（0.2.0-rc.2），一键配置把它加进 ChatGPT 这条路由。已有的设置不动。",
+    "en": "Issue 4: the one-click ChatGPT setup puts the writer and the crew on GPT-6.1 Sol; where DSH's model catalog does not have it yet (0.2.0-rc.2), the one-click adds it to the ChatGPT route. Nothing already set moves."
   },
   "services": {
     "bailian": {
@@ -70,8 +70,11 @@
   },
   "text": {
     "openai-codex": {
-      "writer": ["gpt-6-sol", "gpt-5.6-sol", "gpt-5.5"],
-      "crew": ["gpt-6-sol", "gpt-5.6-sol", "gpt-5.5"]
+      "writer": ["gpt-6.1-sol", "gpt-6-sol", "gpt-5.6-sol", "gpt-5.5"],
+      "crew": ["gpt-6.1-sol", "gpt-6-sol", "gpt-5.6-sol", "gpt-5.5"],
+      "newer": [
+        { "id": "gpt-6.1-sol", "name": "GPT-6.1 Sol", "contextWindow": 500000, "maxTokens": 128000, "input": ["text", "image"], "reasoningEfforts": { "low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh", "max": "max" } }
+      ]
     }
   },
   "providers": {

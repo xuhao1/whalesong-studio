@@ -44,6 +44,23 @@ export interface RecommendedProvider {
 export interface RecommendedText {
   writer?: string[]
   crew?: string[]
+  /**
+   * Models newer than some DSH's catalog for the route, with what a route's profile needs to serve one (DSH's model
+   * adapter takes a `models` entry newer than its installed catalog). Where a route of DSH's own lacks one, the
+   * one-click declares it there.
+   */
+  newer?: RecommendedModel[]
+}
+
+/** A model as a DSH route's profile declares it: the fields of a pi-ai `models` entry. */
+export interface RecommendedModel {
+  id: string
+  name?: string
+  contextWindow?: number
+  maxTokens?: number
+  input?: ('text' | 'image')[]
+  /** Level offered → what is sent for it; `false` for a model that does not reason. */
+  reasoningEfforts?: Record<string, string | null> | false
 }
 
 /** The parts of the Studio a kind of endpoint can serve. */
@@ -88,6 +105,16 @@ export interface Recommended {
 
 const isSlot = (value: unknown): value is RecommendedSlot => typeof value === 'object' && value !== null && typeof (value as RecommendedSlot).model === 'string' && typeof (value as RecommendedSlot).provider === 'string'
 const isProvider = (value: unknown): value is RecommendedProvider => typeof value === 'object' && value !== null && typeof (value as RecommendedProvider).model === 'string'
+/** A model entry is taken where its id is a word and what it says has the shape a profile takes. */
+const isModel = (value: unknown): value is RecommendedModel => {
+  if (typeof value !== 'object' || value === null) return false
+  const model = value as RecommendedModel
+  const count = (n: unknown): boolean => n === undefined || (typeof n === 'number' && Number.isInteger(n) && n > 0)
+  return typeof model.id === 'string' && model.id.length > 0 && (model.name === undefined || typeof model.name === 'string')
+    && count(model.contextWindow) && count(model.maxTokens)
+    && (model.input === undefined || (Array.isArray(model.input) && model.input.every(item => item === 'text' || item === 'image')))
+    && (model.reasoningEfforts === undefined || model.reasoningEfforts === false || (typeof model.reasoningEfforts === 'object' && model.reasoningEfforts !== null && Object.values(model.reasoningEfforts).every(wire => wire === null || typeof wire === 'string')))
+}
 const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string' && item.length > 0) : [])
 const isFigure = (value: unknown): value is ModelFigure => {
   if (typeof value !== 'object' || value === null) return false
@@ -131,7 +158,8 @@ export function parseRecommended(raw: unknown): Recommended | undefined {
       if (typeof roles !== 'object' || roles === null) continue
       const writer = strings((roles as RecommendedText).writer)
       const crew = strings((roles as RecommendedText).crew)
-      text[route] = { ...(writer.length > 0 ? { writer } : {}), ...(crew.length > 0 ? { crew } : {}) }
+      const newer = (Array.isArray((roles as RecommendedText).newer) ? (roles as RecommendedText).newer! : []).filter(isModel)
+      text[route] = { ...(writer.length > 0 ? { writer } : {}), ...(crew.length > 0 ? { crew } : {}), ...(newer.length > 0 ? { newer } : {}) }
     }
   }
   const unlisted: NonNullable<Recommended['unlisted']> = {}
@@ -199,6 +227,11 @@ export function textPicks(route: string, offered: readonly string[]): { writer?:
   const writer = pick(table.writer)
   const crew = pick(table.crew)
   return { ...(writer !== undefined ? { writer } : {}), ...(crew !== undefined ? { crew } : {}) }
+}
+
+/** Models newer than some DSH's catalog for a route, as its profile would declare them. */
+export function textNewer(route: string): RecommendedModel[] {
+  return active.text?.[route]?.newer ?? BUILTIN_RECOMMENDED.text?.[route]?.newer ?? []
 }
 
 /** Models a service serves without listing them. */

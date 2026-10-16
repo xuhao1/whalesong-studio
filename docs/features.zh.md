@@ -108,7 +108,7 @@
 
 **密钥**直接填在设置页里，和其他设置一起保存。它存进 Harness 的凭据库（按接口域名一条记录），不会写进设置文件，也不会回传到页面；同一个服务的各项能力共用一个密钥，填一次就够。习惯用环境变量的话，`DASHSCOPE_API_KEY`、`OPENROUTER_API_KEY`、`OPENAI_API_KEY` 会被自动识别，也可以给某一项指定别的变量名。
 
-**ChatGPT 订阅**——一键接上：引导页的“ChatGPT 订阅（Plus / Pro）”卡片用 **DSH 自己的 ChatGPT 登录**（它的模型适配器给 `openai-codex` 这条路由带的登录，DSH 的页面里没有入口，工坊替它点开），登录一次，就把这条路由加进 DSH 的模型设置、写手和班底配上 GPT 模型（默认都是 GPT-6 Sol）、插图用订阅里的 GPT Image，第一次配置时 DSH 新对话的默认模型也换成它（可以不勾）。登录由 DSH 保存和续期，工坊不另存；卡片上可以换账号、退出登录。装了 [Codex Connect](https://github.com/franksong2702/dsh-codex-connect) 插件的，用它自己的登录（同一条路由，二选一）；本机的 Codex CLI 用 ChatGPT 登录过的，插图也能走它。订阅里没有向量接口和语音合成接口，这两项请用上面的服务。一步步的说明见[用 ChatGPT 订阅](./chatgpt.zh.md)。
+**ChatGPT 订阅**——一键接上：引导页的“ChatGPT 订阅（Plus / Pro）”卡片用 **DSH 自己的 ChatGPT 登录**（它的模型适配器给 `openai-codex` 这条路由带的登录，DSH 的页面里没有入口，工坊替它点开），登录一次，就把这条路由加进 DSH 的模型设置、写手和班底配上 GPT 模型（默认都是 GPT-6.1 Sol；DSH 的目录里还没有它的，一键配置把它加进这条路由）、插图用订阅里的 GPT Image，第一次配置时 DSH 新对话的默认模型也换成它（可以不勾）。登录由 DSH 保存和续期，工坊不另存；卡片上可以换账号、退出登录。装了 [Codex Connect](https://github.com/franksong2702/dsh-codex-connect) 插件的，用它自己的登录（同一条路由，二选一）；本机的 Codex CLI 用 ChatGPT 登录过的，插图也能走它。订阅里没有向量接口和语音合成接口，这两项请用上面的服务。一步步的说明见[用 ChatGPT 订阅](./chatgpt.zh.md)。
 
 ## 一本书在磁盘上的样子
 

@@ -10,7 +10,7 @@ This page covers the one-click setup (recommended, no plugin to install), what t
 
 | | In the subscription | Not in it |
 |---|---|---|
-| Writing (writer, crew, showrunner) | GPT-6 Sol and other GPT models | |
+| Writing (writer, crew, showrunner) | GPT-6.1 Sol and other GPT models | |
 | Pictures | GPT Image | |
 | Voices | | ✗ use a Bailian or OpenRouter key |
 | Semantic retrieval | | ✗ the same (optional: without it, search goes by keywords) |
@@ -27,7 +27,7 @@ This page covers the one-click setup (recommended, no plugin to install), what t
 2. **Open the guide page.** The first time Whalesong Studio opens, its guide (*Connect the models first*) comes up by itself; later it is under *Whalesong Studio → Settings → One-click setup → Guide*.
 
 3. **Look over the first card, *ChatGPT subscription (Plus / Pro)*,** and change what you want before pressing the button:
-   - **Writer** and **Crew (continuity, planner, director, post)**: both GPT-6 Sol by default. To spare the allowance, put the crew on GPT-6 Luna — much cheaper, and the crew does a lot (each chapter's digest, reviews, storyboards…).
+   - **Writer** and **Crew (continuity, planner, director, post)**: both GPT-6.1 Sol by default. DSH 0.2.0-rc.2's model catalog does not have it yet, so the one click adds it to the ChatGPT route (later DSH has it already). To spare the allowance, put the crew on GPT-6 Luna — much cheaper, and the crew does a lot (each chapter's digest, reviews, storyboards…).
    - **DSH conversations (the showrunner) on the writer's model too**: ticked on a first setup. It makes the writer's model DSH's default for new conversations; if you already use another model in DSH and want conversations to stay on it, untick it.
    - **Pictures by GPT Image**: ticked.
 
@@ -39,7 +39,7 @@ This page covers the one-click setup (recommended, no plugin to install), what t
 
    <img src="./images/chatgpt/en/02-signin.webp" width="360" alt="After pressing sign in: open the sign-in page, copy link, a box for the address when the browser does not come back, a device code instead, cancel">
 
-5. **Done.** The card says what was set, for instance *Set up: the writer on GPT-6 Sol, the crew on GPT-6 Sol, new DSH conversations on the writer's model, pictures by the subscription's GPT Image.* The status pills above turn *Text models* and *Images* to *ready*.
+5. **Done.** The card says what was set, for instance *Set up: the writer on GPT-6.1 Sol, the crew on GPT-6.1 Sol, new DSH conversations on the writer's model, pictures by the subscription's GPT Image.* The status pills above turn *Text models* and *Images* to *ready*.
 
    <img src="./images/chatgpt/en/03-done.webp" width="360" alt="Set up: text models and images ready, the card saying what was set, with Sign in again and Sign out">
 
@@ -49,7 +49,7 @@ Start a book, or talk to the showrunner.
 
 All of it is in plain sight and can be put back:
 
-- **DSH Settings → Models** has a provider *ChatGPT* (route `openai-codex`) with the GPT models DSH lists. To drop it, delete that row there.
+- **DSH Settings → Models** has a provider *ChatGPT* (route `openai-codex`) with the GPT models DSH lists. Where DSH's catalog lacks GPT-6.1 Sol, that row's settings carry a list of models: the catalog's, and GPT-6.1 Sol. To drop it, delete that row there.
 - **DSH's default model** for new conversations is the writer's — only if *DSH conversations on the writer's model too* was ticked. Change it back in DSH's composer.
 - **Whalesong Studio → Settings → Models**: the writer and the crew point at ChatGPT models. Change them one by one there, or pick again on the guide card and press *Set up*.
 - **Whalesong Studio → Settings → Image generation**: the service is *ChatGPT subscription*, bridge *Automatic*, on this sign-in.
