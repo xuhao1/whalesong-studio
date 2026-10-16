@@ -178,10 +178,10 @@ npm pack        # 生成 whalesong-studio-<版本>.tgz
 
 [GNU Lesser General Public License v3.0 或更高版本](./LICENSE)（LGPL 是在 [GNU GPL v3](./COPYING) 之上附加的许可）。你可以在任何 Harness 环境中使用本插件，并与其他插件按各自的许可组合；对本插件自身的修改须继续以 LGPL 发布。
 
-**图标与配图**：DeepSeek 娘（“女仆鲸鱼娘”）——图标和封面是为本项目用 GPT Image（经 Codex）绘制的，工坊主页上的几张配图是照着它用 Qwen-Image 画的。形象参考：上善无形的原创角色“溟月”，以及 ZipZipPipe 的 DeepSeek 女仆版设定。截图里的两本书都是公版：曹雪芹的《红楼梦》，和 Lewis Carroll 的 *Alice's Adventures in Wonderland*（文本取自 [Project Gutenberg](https://www.gutenberg.org/ebooks/11)）；书里的画是在工坊里用 GPT Image（经 Codex）画的。
-
 你用它写出的小说，版权归你。
 
 ---
 
 作者：Dr. Xu · <https://whalesong.xuhao1.me>
+
+<sub>DeepSeek 娘的形象参考了上善无形的“溟月”和 ZipZipPipe 的 DeepSeek 女仆设定。</sub>

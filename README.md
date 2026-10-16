@@ -178,10 +178,10 @@ Or set each one up yourself: any OpenAI-compatible service, ComfyUI, or a model 
 
 [GNU Lesser General Public License v3.0 or later](./LICENSE) (the LGPL supplements the [GNU GPL v3](./COPYING)). You may use the plugin with any Harness setup and combine it with other plugins under their own terms; changes to the plugin itself stay under the LGPL.
 
-**Icon and art.** DeepSeek-chan, the "maid whale-girl" (女仆鲸鱼娘): the icon and the cover drawn for this project with GPT Image through Codex, the pictures on the Studio's home page with Qwen-Image after it. Character reference: 溟月 by 上善无形, in the DeepSeek maid design by ZipZipPipe. The books in the screenshots are in the public domain: *Alice's Adventures in Wonderland* by Lewis Carroll (text from [Project Gutenberg](https://www.gutenberg.org/ebooks/11)) and 《红楼梦》 by 曹雪芹; their pictures were drawn in the Studio with GPT Image through Codex.
-
 The novels you write with it are yours.
 
 ---
 
 By Dr. Xu · <https://whalesong.xuhao1.me>
+
+<sub>DeepSeek-chan after 溟月 by 上善无形 and the DeepSeek maid design by ZipZipPipe.</sub>
