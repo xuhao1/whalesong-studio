@@ -67,5 +67,5 @@ Claude 的会话经 [`CLAUDE.md`](./CLAUDE.md) 读到这份文件；别的 agent
 5. **推**：`npm run push`——推 `main`，也推指向 `main` 上提交的 `v主.次.修订` 标签。远端已有同名标签却指向别处时它拒绝，不强推、不挪标签。
 6. **GitHub Release**：`npm pack` 出 `whalesong-studio-x.y.z.tgz`（`lib/` 已在，`prepare` 不重新构建；核对包里 `lib/build.json` 的构建号就是刚发布的那个），然后
    `gh release create vx.y.z whalesong-studio-x.y.z.tgz --verify-tag --title "Whalesong Studio x.y.z" --notes-file <说明>`。
-   说明中英两段（中文在前）：中文写给用的人看的几条要点，英文是 `CHANGELOG.md` 里这一版那一节。写给公众看：不称"您"、不提开发实例和作者自己的书；要重装、要改配置的写在最前面。
+   说明中英两段（中文在前）：中文写给用的人看的几条要点，英文是 `CHANGELOG.md` 里这一版那一节（太长放不下时——GitHub 限 125,000 字——写要点，链接到这个标签下的 `CHANGELOG.md`，0.1.0 就是这样）。写给公众看：不称"您"、不提开发实例和作者自己的书；要重装、要改配置的写在最前面。
 7. 告诉作者"发布了 x.y.z，请重启 DSH"（次版本要动手的，说清楚要做什么）。
