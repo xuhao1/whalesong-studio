@@ -100,7 +100,7 @@ The Desktop app owns its `desktop` profile, so plugins are installed from inside
 1. Open **Plugins** in the left sidebar and choose **Add plugin**.
 2. Enter one of:
    - `github:xuhao1/whalesong-studio` — the app asks before it runs the package's build script;
-   - the absolute path of a release tarball, e.g. `/Users/you/Downloads/whalesong-studio-0.1.0.tgz`;
+   - the absolute path of a release tarball — download `whalesong-studio-x.y.z.tgz` from [Releases](https://github.com/xuhao1/whalesong-studio/releases) — e.g. `/Users/you/Downloads/whalesong-studio-0.1.0.tgz`;
    - the absolute path of a built checkout, e.g. `/Users/you/src/whalesong-studio` — it is linked rather than copied, so rebuilding the checkout updates the plugin.
 3. Install. *Whalesong Studio* appears in the left sidebar and *小说家 Novelist* in the preset menu of a new session; restart the app if they do not.
 

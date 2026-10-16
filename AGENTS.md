@@ -41,3 +41,31 @@ Claude 的会话经 [`CLAUDE.md`](./CLAUDE.md) 读到这份文件；别的 agent
   - 作者答复了的、过时了的，连同答复剪到 `todo/decided.md`。
 - **结束一轮之前看一眼 `TODO.md` 有多长**：过了两三百行，就是有做完的没搬走，或者"等您决定"又攒起来了。
 - **`todo/` 不整份读**。查以前的某一条：`grep -n '^### 273　' todo/*.md`（编号后面是全角空格），或先看 `todo/README.md` 的索引。搬的时候不改原文；要补一句说明，用〔日期 整理：……〕括起来。
+
+## 版本号：每发布一次就是一个版本
+
+作者 2026-10-17 的原话：**"我们现在也开始发版本号吧，后面release note有版本号，release也有会比较好"**（#456）。从 0.1.0 起用版本号；原来的"第 N 版"数到第 132 版为止。
+
+### 号怎么定
+
+- **只有一个来处**：`package.json` 的 `version`。构建把它写进 `lib/build.json`，工坊页脚显示 `v…`。格式按 [SemVer](https://semver.org/lang/zh-CN/)：`主.次.修订`。
+- **每发布一次（作者开口、`npm run release` 更新了 `lib/`）就是一个新版本号**。同一个号不发两次；发出去的号不收回、标签不挪。只改文档、网站、待办的提交不算发布，不打号。
+- **1.0 之前（`0.次.修订`）**，和 npm 的 `^0.x` 一个意思——用 `^0.1.0` 的人拿得到的，都是不用动手的更新：
+  - **次版本 +1、修订归零**（0.1.4 → 0.2.0）：用的人要动手，或者旧的东西不再成立——要重装插件（比如包名改了）、要改配置或迁移数据、书的文件格式改了旧版本读不了、要求更新的 DSH（peer 的下限提高）、去掉一个功能或改了它的用法。
+  - **修订 +1**（0.1.0 → 0.1.1）：其余的——新功能、修复、文档、支持新出的 DSH 而旧的照样能用。
+  - 一批里有一条够次版本，整批就是次版本；拿不准就按次版本。
+- **1.0.0 由作者定**（书的格式和设置稳定下来时）。不发到 npm（照旧）。
+
+### 发布一个版本
+
+在 `CLAUDE.md`"构建与发布"那套做法上加的；发布照旧只在作者开口时做。
+
+1. **定号、改号**：按上面的规则定号，`npm version <x.y.z> --no-git-tag-version`（只改 `package.json` 和 `package-lock.json`，不提交、不打标签），然后 `npm run release`。
+2. **变更日志**：`CHANGELOG.md` 里 `## [Unreleased]` 下面的内容归到 `## [x.y.z] - YYYY-MM-DD`，上面留一个空的 `## [Unreleased]`；文末的链接改成 `[Unreleased]: …/compare/vx.y.z...HEAD`，加一行 `[x.y.z]: …/releases/tag/vx.y.z`。
+3. **记下来**：`todo/releases.md` 最上面一条、`TODO.md`"版本状态"都写"发布了 x.y.z（构建号 …）"。
+4. **提交、打标签**：按路径提交，提交说明以 `Release x.y.z:` 开头；在这个提交上打注释标签：`git tag -a vx.y.z -m "Whalesong Studio x.y.z"`。
+5. **推**：`npm run push`——推 `main`，也推指向 `main` 上提交的 `v主.次.修订` 标签。远端已有同名标签却指向别处时它拒绝，不强推、不挪标签。
+6. **GitHub Release**：`npm pack` 出 `whalesong-studio-x.y.z.tgz`（`lib/` 已在，`prepare` 不重新构建；核对包里 `lib/build.json` 的构建号就是刚发布的那个），然后
+   `gh release create vx.y.z whalesong-studio-x.y.z.tgz --verify-tag --title "Whalesong Studio x.y.z" --notes-file <说明>`。
+   说明中英两段（中文在前）：中文写给用的人看的几条要点，英文是 `CHANGELOG.md` 里这一版那一节。写给公众看：不称"您"、不提开发实例和作者自己的书；要重装、要改配置的写在最前面。
+7. 告诉作者"发布了 x.y.z，请重启 DSH"（次版本要动手的，说清楚要做什么）。

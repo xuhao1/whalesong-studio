@@ -8,6 +8,8 @@ interface Push {
   keyShaped: (lines: Line[]) => Found[]
   heldIn: (lines: Line[], held: { name: string; value: string }[]) => Found[]
   heldHere: (env: Record<string, string | undefined>, read: (path: string) => string | undefined) => { name: string; value: string }[]
+  tagsToPush: (here: Map<string, string>, there: Map<string, string>, onMain: (commit: string) => boolean) => { push: string[]; clash: string[]; off: string[] }
+  remoteTags: (listing: string) => Map<string, string>
 }
 
 // (A script, not a module of the plugin: loaded by where it is.)
@@ -57,5 +59,25 @@ describe('the push that follows a release', () => {
     expect(found).toEqual([{ what: '$QWEN_DSH_NOVEL', commit: '2222222', file: 'docs/notes.md' }])
     expect(JSON.stringify(found)).not.toContain(held)
     expect(push.heldIn(push.addedLines('commit:5555555\n+++ b/a\n+nothing of the kind'), here)).toEqual([])
+  })
+
+  it('takes along the version tags of commits main has, and never moves one the remote has', () => {
+    const here = new Map([['v0.1.0', 'aaa'], ['v0.1.1', 'bbb'], ['v0.2.0', 'ccc'], ['v0.3.0', 'ddd'], ['spike', 'aaa'], ['v1.0', 'aaa']])
+    const there = new Map([['v0.1.0', 'aaa'], ['v0.2.0', 'zzz']])
+    const onMain = (commit: string) => commit !== 'ddd'
+    // Pushed already: left alone. New and on main: goes. The remote's on another commit: stops. Not on main: stays here.
+    // Not a version tag (a name of one's own, a version without its patch): not looked at.
+    expect(push.tagsToPush(here, there, onMain)).toEqual({ push: ['v0.1.1'], clash: ['v0.2.0'], off: ['v0.3.0'] })
+  })
+
+  it('reads the remote\'s tags by the commit they point at', () => {
+    const listing = [
+      `${'1'.repeat(40)}\trefs/heads/main`,
+      `${'2'.repeat(40)}\trefs/tags/v0.1.0`,
+      `${'3'.repeat(40)}\trefs/tags/v0.1.0^{}`,
+      `${'4'.repeat(40)}\trefs/tags/light`,
+    ].join('\n')
+    // An annotated tag is an object of its own; what it points at is on its `^{}` line.
+    expect([...push.remoteTags(listing)]).toEqual([['v0.1.0', '3'.repeat(40)], ['light', '4'.repeat(40)]])
   })
 })

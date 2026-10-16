@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: LGPL-3.0-or-later
 /**
- * Push `main` to GitHub: the step that follows a release and its commit.
+ * Push `main` to GitHub, with the version tags of its releases: the step that
+ * follows a release and its commit.
  *
  * Nobody looks a push over once it happens by itself, so it looks itself over
  * first. It only ever moves `origin/main` forward — never a force, never
@@ -9,6 +10,10 @@
  * that is one of the credentials this machine holds for development, and no
  * file from a place that is not the repository's to carry. What it finds it
  * names by commit and file; the text itself is never printed.
+ *
+ * A version tag (`v1.2.3`) goes along once it points at a commit `main` has;
+ * one the remote has already stays where it is there — a tag of the same name
+ * on another commit stops the push, it is never moved.
  *
  *   npm run push             # look over what would go out, then push it
  *   npm run push -- --dry    # look it over only
@@ -30,6 +35,9 @@ const SHAPES = [
   ['a signed token (JWT)', /\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/],
   ['a bearer token', /\bBearer [A-Za-z0-9._-]{24,}/],
 ]
+
+/** A version tag: `v` and a semantic version. */
+const VERSION_TAG = /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/
 
 /** Where nothing the repository carries may come from. */
 const NOT_OURS = [/^\.dev\//, /^lib\//, /^node_modules\//, /^\.claude\//, /(^|\/)\.credentials/, /(^|\/)\.env(\.|$)/]
@@ -85,6 +93,41 @@ export function heldHere(env, read) {
   return held
 }
 
+/**
+ * Which version tags go out: those here that point at a commit `main` has and that the remote has not got yet.
+ * @param here - this checkout's tags: name → the commit each points at
+ * @param there - the remote's tags: name → the commit each points at
+ * @param onMain - whether a commit is on `main` as it stands on the remote
+ * @returns the tags to push; those the remote has on another commit (never moved); those on no commit of `main`
+ */
+export function tagsToPush(here, there, onMain) {
+  const push = []
+  const clash = []
+  const off = []
+  for (const [name, commit] of here) {
+    if (!VERSION_TAG.test(name)) continue
+    const remote = there.get(name)
+    if (remote === commit) continue
+    if (remote !== undefined) clash.push(name)
+    else if (onMain(commit)) push.push(name)
+    else off.push(name)
+  }
+  return { push, clash, off }
+}
+
+/** Tags by the commit they point at, from `git ls-remote --tags` (an annotated tag's `^{}` line is its commit). */
+export function remoteTags(listing) {
+  const tags = new Map()
+  for (const line of listing.split('\n')) {
+    const [sha, ref] = line.trim().split(/\s+/)
+    if (sha === undefined || ref === undefined || !ref.startsWith('refs/tags/')) continue
+    const peeled = ref.endsWith('^{}')
+    const name = ref.slice('refs/tags/'.length, peeled ? -3 : undefined)
+    if (peeled || !tags.has(name)) tags.set(name, sha)
+  }
+  return tags
+}
+
 function git(...args) {
   return execFileSync('git', args, { cwd: root, encoding: 'utf8', maxBuffer: 1 << 30, stdio: ['ignore', 'pipe', 'pipe'] })
 }
@@ -106,7 +149,8 @@ function main() {
   }
   const commits = git('log', '--oneline', 'origin/main..HEAD').trim().split('\n').filter(line => line.length > 0)
   if (commits.length === 0) {
-    console.log('[push] origin/main already has everything')
+    console.log('[push] origin/main already has every commit')
+    pushTags(dry)
     return
   }
   console.log(`[push] ${commits.length} commit(s) to go out:`)
@@ -127,6 +171,7 @@ function main() {
   console.log(`[push] looked over ${lines.length} added line(s) in ${files.length} file(s): nothing that reads like a credential, none of the ${held.length} held here`)
   if (dry) {
     console.log('[push] --dry: nothing was pushed')
+    pushTags(dry)
     return
   }
   git('push', 'origin', 'HEAD:main')
@@ -134,6 +179,40 @@ function main() {
   const here = git('rev-parse', 'HEAD').trim()
   if (there !== here) refuse(`the push went through, but origin/main reads ${there.slice(0, 7)} and this checkout ${here.slice(0, 7)}`)
   console.log(`[push] origin/main is at ${here.slice(0, 7)}`)
+  pushTags(dry)
+}
+
+/** The version tags that go along with `main`: pushed one by one, never forced. */
+function pushTags(dry) {
+  const main = git('ls-remote', 'origin', 'refs/heads/main').slice(0, 40)
+  const here = new Map()
+  for (const line of git('for-each-ref', '--format=%(refname:short) %(objectname) %(*objectname)', 'refs/tags').trim().split('\n')) {
+    const [name, object, peeled] = line.trim().split(/\s+/)
+    if (name !== undefined && object !== undefined) here.set(name, peeled !== undefined && peeled.length > 0 ? peeled : object)
+  }
+  const onMain = (commit) => {
+    try {
+      git('merge-base', '--is-ancestor', commit, main)
+      return true
+    } catch {
+      return false
+    }
+  }
+  const { push, clash, off } = tagsToPush(here, remoteTags(git('ls-remote', '--tags', 'origin')), onMain)
+  for (const name of off) console.log(`[push] tag ${name} is on no commit of main as pushed: it stays here`)
+  if (clash.length > 0) refuse(`the remote has ${clash.join(', ')} on another commit; a version tag is never moved`)
+  if (push.length === 0) return
+  const said = push.flatMap(name => keyShaped([{ commit: name, file: 'tag message', text: git('tag', '-l', '--format=%(contents)', name) }]))
+  if (said.length > 0) refuse(`the message of ${said.map(item => item.commit).join(', ')} reads like a credential`)
+  if (dry) {
+    console.log(`[push] --dry: would push ${push.join(', ')}`)
+    return
+  }
+  for (const name of push) git('push', 'origin', `refs/tags/${name}:refs/tags/${name}`)
+  const after = remoteTags(git('ls-remote', '--tags', 'origin'))
+  const missing = push.filter(name => after.get(name) !== here.get(name))
+  if (missing.length > 0) refuse(`the push went through, but the remote does not show ${missing.join(', ')} where they are here`)
+  console.log(`[push] tag(s) ${push.join(', ')} pushed`)
 }
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) main()

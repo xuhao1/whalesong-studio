@@ -100,7 +100,7 @@
 1. 打开左侧栏的**插件**，点**添加插件**。
 2. 在"包名或地址"里填下面任意一种：
    - `github:xuhao1/whalesong-studio`——应用会先询问是否允许运行本包的构建脚本；
-   - 发布包的绝对路径，例如 `/Users/you/Downloads/whalesong-studio-0.1.0.tgz`；
+   - 发布包的绝对路径：在 [Releases](https://github.com/xuhao1/whalesong-studio/releases) 下载 `whalesong-studio-x.y.z.tgz`，例如 `/Users/you/Downloads/whalesong-studio-0.1.0.tgz`；
    - 已构建好的源码目录的绝对路径，例如 `/Users/you/src/whalesong-studio`——这种方式是"链接"而不是复制，之后重新构建源码目录，插件随之更新。
 3. 安装。左侧栏会出现*鲸歌工坊*，新会话的预设菜单里会出现*小说家 Novelist*；没出现就重启一次应用。
 

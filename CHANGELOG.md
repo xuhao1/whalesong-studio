@@ -4,6 +4,8 @@ All notable changes to this project are recorded here. The format follows [Keep 
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-17
+
 ### Added
 
 - **GPT-6.1 Sol by default on a ChatGPT subscription.** The one-click puts the writer and the crew on GPT-6.1 Sol (recommendations issue 4). DSH 0.2.0-rc.2's model catalog does not have it yet; where DSH's own `openai-codex` route lacks it, the one-click declares it in the route's profile — a `models` list of the catalog's models by id, and GPT-6.1 Sol with its context window (500k), output cap, input and reasoning levels, taken from the recommendations' new `newer` entries (`ChatGPTSetup.declareModels`). A later DSH whose catalog has it is left as it is; so is a route Codex Connect serves.
