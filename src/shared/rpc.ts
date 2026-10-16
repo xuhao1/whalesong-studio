@@ -122,6 +122,74 @@ export interface CodexStatus {
   /** The Codex CLI is installed on the machine that runs the Harness. */
   cli: boolean
   cliSignedIn: boolean
+  /** DSH can sign in to ChatGPT itself (its model adapter's `openai-codex` sign-in). Absent on a Host from before. */
+  dsh?: boolean
+  /** That sign-in is stored. */
+  dshSignedIn?: boolean
+}
+
+/** Who serves DSH's `openai-codex` route: DSH's own model adapter, Codex Connect, another plugin, or nobody yet. */
+export type ChatGPTRoute = 'dsh' | 'connect' | 'other' | 'none'
+
+/** What the one-click ChatGPT setup is to set. Left out: what the recommendations say, and yes. */
+export interface ChatGPTChoice {
+  /** The writer's model, an id of the route's. */
+  writer?: string
+  /** The crew's model (continuity, planner, director, post-production). */
+  crew?: string
+  /** DSH's own conversations — the showrunner's — start on the writer's model too. */
+  conversation?: boolean
+  /** Pictures by the subscription's GPT Image. */
+  images?: boolean
+}
+
+/** What the one-click ChatGPT setup did. */
+export interface ChatGPTApplied {
+  writer?: string
+  crew?: string
+  conversation: boolean
+  images: boolean
+  /** Whether it went; `message` says why not. */
+  check: EndpointCheck
+  /** What was left as it was, and why: no way to the GPT Image, DSH's default model not writable… */
+  notes?: string[]
+}
+
+/** A sign-in to ChatGPT through DSH, as the page follows it. */
+export interface ChatGPTAttempt {
+  id: string
+  state: 'running' | 'authorized' | 'cancelled' | 'failed'
+  /** Counts up with every change: what the long poll waits past. */
+  revision: number
+  /** The page to open to sign in. */
+  url?: string
+  /** The code to enter on that page (a sign-in on another device). */
+  code?: string
+  /** What DSH last said of the sign-in. */
+  message?: string
+  /** DSH asks for the code, or the address the browser landed on, while the browser has not come back. */
+  ask?: { message: string; placeholder?: string }
+  error?: string
+  /** What the one-click set once signed in. */
+  applied?: ChatGPTApplied
+}
+
+/** A ChatGPT subscription as DSH's text models: the one-click on the guide page. */
+export interface ChatGPTView {
+  route: ChatGPTRoute
+  /** DSH's own sign-in can be started from the Studio. */
+  canSignIn: boolean
+  signedIn: boolean
+  /** The route is not there yet, and the Studio can add it to DSH's model settings. */
+  canAddRoute: boolean
+  /** The route's models, once DSH serves it. */
+  models: { id: string; name: string }[]
+  /** What the one-click gives the writer and the crew by default: the first of the recommendations the route offers. */
+  picks: { writer?: string; crew?: string }
+  /** What already runs on the route. */
+  using: { writer: boolean; crew: boolean; conversation: boolean }
+  /** The sign-in under way, or the last one. */
+  attempt?: ChatGPTAttempt
 }
 
 export type ModelKind = 'text' | 'embedding' | 'image' | 'speech'
@@ -205,6 +273,8 @@ export interface SettingsView {
   /** Key availability by endpoint host: every endpoint in the settings plus the known services. */
   keys: Record<string, KeyState>
   codex: CodexStatus
+  /** A ChatGPT subscription as text models. Absent on a Host from before the one-click for it. */
+  chatgpt?: ChatGPTView
   /** What is usable right now, slot by slot. */
   ready: { text: boolean; embedding: boolean; image: boolean; tts: boolean; /** Something can generate effects, music and beds. Absent on a Host from before there was sound. */ sound?: boolean }
   /** Nothing has been set up and the first-run guide has not been put aside. */
@@ -978,6 +1048,17 @@ export interface NovelRpc {
   'endpoint.check': { params: { url: string; key?: string; ref?: string }; result: EndpointCheck }
   /** One-click setup: save the key and fill the chosen slots with the service's recommended models. */
   'setup.apply': { params: { service: ServiceId | 'codex'; key?: string; origin?: string; parts: SetupPart[] }; result: { view: SettingsView; check: EndpointCheck } }
+  /** Sign in to ChatGPT through DSH's own sign-in; once signed in, the one-click sets up what `choice` says. `device`: a code to enter on another device instead of this machine's browser. */
+  'chatgpt.signIn': { params: ChatGPTChoice & { device?: boolean }; result: ChatGPTAttempt }
+  /** The sign-in once it has moved past `since` (waits a while when nothing changes). */
+  'chatgpt.attempt': { params: { id: string; since: number }; result: ChatGPTAttempt | null }
+  /** Hand the sign-in the code, or the address the browser landed on. */
+  'chatgpt.answer': { params: { id: string; text: string }; result: ChatGPTAttempt }
+  'chatgpt.cancel': { params: { id: string }; result: ChatGPTAttempt | null }
+  /** Forget DSH's own ChatGPT sign-in (its credential record). The route and the roles stay as they are. */
+  'chatgpt.signOut': { params: Record<string, never>; result: SettingsView }
+  /** The one-click on a ChatGPT sign-in that is already there: the route into DSH, its models to the roles, pictures by its GPT Image. */
+  'chatgpt.apply': { params: ChatGPTChoice; result: { view: SettingsView; applied: ChatGPTApplied } }
   /** Mark the first-run guide as seen so it no longer opens by itself. */
   'setup.dismiss': { params: Record<string, never>; result: SettingsView }
   /** Settle the notice an issue of the recommendations left: take it up, keep what is there, take it back, or just have read it. */

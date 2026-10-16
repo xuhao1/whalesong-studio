@@ -4425,6 +4425,44 @@ button.nv-stat:hover {
   gap: 4px 14px;
 }
 
+/* The ChatGPT one-click stands first among the cards, side by side with them. */
+.nv-setup-chatgpt {
+  border-color: color-mix(in srgb, var(--nv-brand) 35%, var(--nv-border));
+}
+
+.nv-chatgpt-signin {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: var(--nv-radius-s);
+  background: var(--nv-surface-2);
+}
+
+.nv-chatgpt-steps {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.nv-chatgpt-steps li > .nv-keyrow {
+  margin-top: 6px;
+}
+
+a.nv-btn {
+  text-decoration: none;
+}
+
+.nv-chatgpt-code {
+  display: inline-block;
+  margin: 0 6px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--nv-surface);
+  font-size: 16px;
+  letter-spacing: 2px;
+}
+
 .nv-check.nv-check-inline {
   align-items: center;
   width: auto;

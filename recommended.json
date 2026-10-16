@@ -1,10 +1,10 @@
 {
   "schema": 1,
-  "version": 2,
-  "date": "2026-10-09",
+  "version": 3,
+  "date": "2026-10-16",
   "notes": {
-    "zh": "第 2 版：OpenRouter 的生图推荐加入 Gemini 3.1 Flash Image、Grok Imagine Image 2.0、Grok Imagine Image Quality；默认仍是 GPT Image 2.5。",
-    "en": "Issue 2: Gemini 3.1 Flash Image, Grok Imagine Image 2.0 and Grok Imagine Image Quality join the image models recommended on OpenRouter; GPT Image 2.5 stays the default."
+    "zh": "第 3 版：加入 ChatGPT 订阅（DSH 的 openai-codex）的文字模型推荐——写手和班底都用 GPT-6 Sol；只在一键接入 ChatGPT 时用到，已有的设置不动。",
+    "en": "Issue 3: text models for a ChatGPT subscription (DSH's openai-codex) — GPT-6 Sol for the writer and the crew; used only by the one-click ChatGPT setup, nothing already set moves."
   },
   "services": {
     "bailian": {
@@ -66,6 +66,12 @@
         "narratorVoice": "alloy",
         "suggestions": ["gpt-4o-mini-tts"]
       }
+    }
+  },
+  "text": {
+    "openai-codex": {
+      "writer": ["gpt-6-sol", "gpt-5.6-sol", "gpt-5.5"],
+      "crew": ["gpt-6-sol", "gpt-5.6-sol", "gpt-5.5"]
     }
   },
   "providers": {

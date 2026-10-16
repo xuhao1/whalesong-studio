@@ -132,7 +132,7 @@ npm pack        # 生成 whalesong-studio-<版本>.tgz
 
 想照着图一步步来，看[新手教程](./docs/tutorial.zh.md)；下面是最短的版本。
 
-1. 打开左侧栏的**鲸歌工坊**。第一次打开会先请你**接上模型**：选一家服务、贴一个 API key、点**一键配置**——画图、配音、检索就都配好了。写作用的是你在 DeepSeek Harness 里已经接好的文字模型，所以这一步也可以先跳过，之后随时补。
+1. 打开左侧栏的**鲸歌工坊**。第一次打开会先请你**接上模型**：选一家服务、贴一个 API key、点**一键配置**——画图、配音、检索就都配好了。写作用的是你在 DeepSeek Harness 里已经接好的文字模型，所以这一步也可以先跳过，之后随时补。**有 ChatGPT Plus / Pro 的话**，点第一张卡片的**用 ChatGPT 登录并配置**，在浏览器里登录一次，写作和插图就都接上了，不用 key（[详细步骤](./docs/chatgpt.zh.md)）。
 2. **开一本新书**：一句话或一段话讲讲你想写的故事就够了。勾上"让 AI 起草"，策划会给出故事核、主要人物、世界观、分卷和开头几章的章纲——都可以随便改。或者**导入写完的书**：把文件拖进来就行。
 3. 用**小说家 Novelist** 预设开一个会话，直接说你要什么："把第二章写出来，结尾停在敲门声"、"反派太扁平了，给他一个站得住的理由"、"如果她拒绝了这笔交易会怎样？"、"把第一章做成有声剧"。一开工，工坊就会出现在对话旁边。
 4. 在工坊里读这一章，选中想改的地方就能改；在*审校*里决定要不要采纳改动。需要大一点的地方就点全屏。
@@ -143,14 +143,14 @@ npm pack        # 生成 whalesong-studio-<版本>.tgz
 
 ## 配置
 
-所有设置都在*鲸歌工坊 → 设置*里，也可以直接让总编帮你改。**写作用的是 DeepSeek Harness 自己的模型**——你在它的"设置 → 模型"里接好的任何一个，包括登录接入的，比如经 [Codex Connect](https://github.com/franksong2702/dsh-codex-connect) 登录的 ChatGPT 订阅；在工坊里只需要给每个角色挑一个。工坊自己只需要画图、配音、检索三种模型，贴一个 key 就能一次配好：
+所有设置都在*鲸歌工坊 → 设置*里，也可以直接让总编帮你改。**写作用的是 DeepSeek Harness 自己的模型**——你在它的"设置 → 模型"里接好的任何一个；在工坊里只需要给每个角色挑一个。**ChatGPT 订阅**是个例外：DSH 自带用 ChatGPT 登录，只是它自己的页面里没有入口——工坊引导页上的 ChatGPT 卡片替它点开，登录一次就把这条路由加进 DSH、给各角色配好 GPT 模型（[用 ChatGPT 订阅](./docs/chatgpt.zh.md)）。工坊自己只需要画图、配音、检索三种模型，贴一个 key 就能一次配好：
 
 | 服务 | 插图 | 配音 | 语义检索 |
 |---|---|---|---|
 | 阿里云百炼 | Qwen-Image 3.0 | qwen-audio-3.1-tts-next | qwen3.7-text-embedding-flash |
 | OpenRouter | **GPT Image 2.5** | Gemini 3.8 Flash TTS | Qwen3 Embedding 8B |
 | OpenAI | GPT Image 2 | gpt-4o-mini-tts | text-embedding-3-small |
-| ChatGPT 订阅（Codex） | 订阅自带的 GPT Image，不用 key | — | — |
+| ChatGPT 订阅（Plus / Pro） | 订阅自带的 GPT Image；写作也用它。登录一次，不用 key | — | — |
 
 也可以一项一项自己配：任意 OpenAI 兼容的服务、ComfyUI，或者你自己电脑上的模型。密钥存在 DeepSeek Harness 的凭据库里，不会写进设置文件。每一项设置的详细说明见 [docs/configuration.md](./docs/configuration.md)（英文）。
 
@@ -159,6 +159,7 @@ npm pack        # 生成 whalesong-studio-<版本>.tgz
 | | |
 |---|---|
 | [新手教程](./docs/tutorial.zh.md) | 从安装到画册，带截图 |
+| [用 ChatGPT 订阅](./docs/chatgpt.zh.md) | Plus / Pro 用户：一键登录，写作和插图都用订阅 |
 | [全部功能](./docs/features.zh.md) | 工坊的每一项能力，完整说明 |
 | [配置](./docs/configuration.md) | 每一项设置、单本书的覆盖、部署默认值（英文） |
 | [一本书在磁盘上的样子](./docs/project-format.md) | 一本书的文件，逐个字段（英文） |

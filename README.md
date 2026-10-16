@@ -132,7 +132,7 @@ npm pack        # writes whalesong-studio-<version>.tgz
 
 The [tutorial](./docs/tutorial.md) does the same step by step, with screenshots; this is the short version.
 
-1. Open **Whalesong Studio** in the left sidebar. The first time, it asks you to **connect the models**: pick a service, paste one API key and click **Set up** — pictures, voices and search are configured at once. Writing uses the text models you already have in DeepSeek Harness, so you can also skip this and come back later.
+1. Open **Whalesong Studio** in the left sidebar. The first time, it asks you to **connect the models**: pick a service, paste one API key and click **Set up** — pictures, voices and search are configured at once. Writing uses the text models you already have in DeepSeek Harness, so you can also skip this and come back later. **With ChatGPT Plus or Pro**, press **Sign in with ChatGPT and set up** on the first card and sign in once in the browser: writing and pictures are both connected, no key ([step by step](./docs/chatgpt.md)).
 2. **Start a new book** from a sentence or a paragraph about the story. Tick "draft the foundation" and the planner proposes a premise, the main characters, the world, volumes and the opening chapters — all yours to change. Or **bring in a book you've written** by dropping in the file.
 3. Start a session with the **小说家 Novelist** preset and say what you want: "write chapter two and end it on the knock at the door", "the villain feels flat — give him a reason", "what if she turns the deal down?", "make chapter one into an audio drama". The Studio opens beside the conversation as soon as the work starts.
 4. Read the chapter in the Studio and select anything you'd like changed. Accept or turn down the proposed changes under *Review*. Go full screen when you want more room.
@@ -143,14 +143,14 @@ In the message box, `/novel status`, `/novel mode <ideate|bible|outline|draft|re
 
 ## Configuration
 
-Everything lives in *Whalesong Studio → Settings*, and the showrunner will change any of it for you if you ask. **Writing uses DeepSeek Harness's own models** — whatever you've connected under its *Settings → Models*, including sign-ins such as a ChatGPT subscription through [Codex Connect](https://github.com/franksong2702/dsh-codex-connect); in the Studio you just choose which role uses which. The Studio itself only needs models for pictures, voices and search, and one key sets them all up:
+Everything lives in *Whalesong Studio → Settings*, and the showrunner will change any of it for you if you ask. **Writing uses DeepSeek Harness's own models** — whatever you've connected under its *Settings → Models*; in the Studio you just choose which role uses which. **A ChatGPT subscription** is the exception: DSH can sign in to ChatGPT by itself but has no page that starts it — the ChatGPT card on the Studio's guide page does, and one sign-in adds the route to DSH and gives the roles GPT models ([On ChatGPT Plus / Pro](./docs/chatgpt.md)). The Studio itself only needs models for pictures, voices and search, and one key sets them all up:
 
 | Service | Images | Speech | Retrieval |
 |---|---|---|---|
 | Aliyun Bailian | Qwen-Image 3.0 | qwen-audio-3.1-tts-next | qwen3.7-text-embedding-flash |
 | OpenRouter | **GPT Image 2.5** | Gemini 3.8 Flash TTS | Qwen3 Embedding 8B |
 | OpenAI | GPT Image 2 | gpt-4o-mini-tts | text-embedding-3-small |
-| ChatGPT subscription (Codex) | the subscription's GPT Image, no key | — | — |
+| ChatGPT subscription (Plus / Pro) | the subscription's GPT Image; writing too. One sign-in, no key | — | — |
 
 Or set each one up yourself: any OpenAI-compatible service, ComfyUI, or a model on your own computer. Keys are kept in DeepSeek Harness's credential store, never in a settings file. Every option in detail: [docs/configuration.md](./docs/configuration.md).
 
@@ -159,6 +159,7 @@ Or set each one up yourself: any OpenAI-compatible service, ComfyUI, or a model 
 | | |
 |---|---|
 | [Tutorial](./docs/tutorial.md) | from installing to the album, with screenshots |
+| [On ChatGPT Plus / Pro](./docs/chatgpt.md) | one sign-in, and writing and pictures run on the subscription |
 | [Everything it does](./docs/features.md) | every part of the Studio, in full |
 | [Configuration](./docs/configuration.md) | each setting, per-book overrides, deployment defaults |
 | [What a book looks like on disk](./docs/project-format.md) | the files of a book, field by field |

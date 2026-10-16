@@ -2,11 +2,15 @@
 /**
  * Images from a ChatGPT subscription, without an OAuth flow of our own.
  *
- * Two bridges reach the subscription, and both already hold the sign-in:
+ * Three bridges reach the subscription, and each already holds the sign-in:
  *
  *   connect  The Codex Connect plugin (dsh-codex-connect) exposes a versioned
  *            Host service, `ctx.openaiCodexTransport`, meant for companion
  *            plugins. It keeps the tokens; we hand it a prompt and get bytes.
+ *   dsh      DSH's own ChatGPT sign-in: the grant its model adapter keeps in
+ *            DSH's credential store (`llm-pi-ai/openai-codex`, written by the
+ *            sign-in the guide page starts — see chatgpt.ts). The picture is
+ *            asked of the endpoint Codex's own image client uses.
  *   cli      The Codex CLI on the same machine, signed in with ChatGPT. One
  *            non-interactive run in a read-only sandbox produces the image.
  *
@@ -14,6 +18,7 @@
  * endpoint, so retrieval and audio stay on a keyed service.
  */
 import { spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { access, constants, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
@@ -72,16 +77,48 @@ export async function findCodexCli(): Promise<string | undefined> {
   return undefined
 }
 
+/** The record DSH's own ChatGPT sign-in keeps its grant in (`dsh-llm-pi-ai`, provider `openai-codex`). */
+const DSH_RECORD = 'llm-pi-ai/openai-codex'
+
+interface Grant { type?: string; access?: string; refresh?: string; expires?: number; accountId?: string }
+interface GrantRecord { kind: string; payload?: unknown }
+interface RecordStore {
+  describeRecord(key: string): Promise<{ configured: boolean }>
+  readRecord(key: string): Promise<GrantRecord | undefined>
+  modifyRecord(key: string, mutate: (current: GrantRecord | undefined) => Promise<GrantRecord | undefined>): Promise<GrantRecord | undefined>
+}
+
+function storeOf(ctx: Context): RecordStore | undefined {
+  try {
+    return (ctx as unknown as { get(name: string): unknown }).get('credentials') as RecordStore | undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** Whether DSH can sign in to ChatGPT itself: its model adapter registered the flow (or left a grant behind). */
+function dshSignIn(ctx: Context): boolean {
+  try {
+    const authorization = (ctx as unknown as { get(name: string): unknown }).get('authorization') as { describe?(key: string): unknown } | undefined
+    return typeof authorization?.describe === 'function' && authorization.describe(DSH_RECORD) !== undefined
+  } catch {
+    return false
+  }
+}
+
 /** What is available on this machine — presence only; no token is read. */
 export async function codexStatus(ctx: Context): Promise<CodexStatus> {
   const connect = transportOf(ctx) !== undefined
   const cli = await findCodexCli() !== undefined
+  const dshSignedIn = (await storeOf(ctx)?.describeRecord(DSH_RECORD).catch(() => undefined))?.configured === true
   return {
     connect,
     // Codex Connect documents this file as where its sign-in lives.
     connectSignedIn: connect && await present(join(resolveDshHome(), '.openai-codex-auth.json')),
     cli,
     cliSignedIn: cli && await present(join(codexHome(), 'auth.json')),
+    dsh: dshSignIn(ctx) || dshSignedIn,
+    dshSignedIn,
   }
 }
 
@@ -116,6 +153,109 @@ async function viaConnect(ctx: Context, prompt: string, references: ImageReferen
     if (code === 'OPENAI_CODEX_RATE_LIMITED') throw new ProviderError('the ChatGPT subscription is rate limited for images right now — try again later', 429, 'RATE_LIMIT')
     throw new ProviderError(`ChatGPT image generation failed: ${errorMessage(error)}`, undefined, typeof code === 'string' ? code : undefined)
   }
+}
+
+// ── DSH's own sign-in ──
+// The token endpoint and client of the sign-in DSH's adapter ran (pi-ai's "OpenAI (ChatGPT Plus/Pro)"): a grant from it
+// is refreshed against the same, under the store's lock, exactly as the adapter would — so either may be the one that
+// renews it, and neither finds the other's refresh token spent.
+const TOKEN_URL = 'https://auth.openai.com/oauth/token'
+const CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann'
+const IMAGES_URL = 'https://chatgpt.com/backend-api/codex/images/generations'
+const EDITS_URL = 'https://chatgpt.com/backend-api/codex/images/edits'
+/** The model the image endpoint is asked for, as Codex's own image client asks. */
+const IMAGE_MODEL = 'gpt-image-2'
+/** A grant this close to its end is renewed before a picture is asked for: a picture can take two minutes. */
+const RENEW_BEFORE_MS = 5 * 60_000
+const IMAGE_TIMEOUT_MS = 3 * 60_000
+
+const grantOf = (record: GrantRecord | undefined): Grant | undefined => (record?.kind === 'grant' && typeof record.payload === 'object' && record.payload !== null ? record.payload as Grant : undefined)
+const usable = (grant: Grant | undefined): grant is Grant & { access: string; accountId: string } => typeof grant?.access === 'string' && grant.access.length > 0 && typeof grant.accountId === 'string' && grant.accountId.length > 0
+
+async function renew(grant: Grant, fetcher: typeof fetch, signal: AbortSignal | undefined): Promise<Grant> {
+  if (typeof grant.refresh !== 'string' || grant.refresh.length === 0) throw new ProviderError('the ChatGPT sign-in in DSH has expired — sign in again from the Studio\'s guide page', 401, 'NO_CREDENTIAL')
+  const response = await fetcher(TOKEN_URL, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: grant.refresh, client_id: CLIENT_ID }),
+    signal: signal ?? AbortSignal.timeout(30_000),
+  })
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => {})
+    throw new ProviderError(response.status === 400 || response.status === 401 ? 'the ChatGPT sign-in in DSH has expired — sign in again from the Studio\'s guide page' : `ChatGPT could not renew the sign-in (${response.status})`, response.status, response.status === 400 || response.status === 401 ? 'NO_CREDENTIAL' : undefined)
+  }
+  const json = await response.json() as { access_token?: unknown; refresh_token?: unknown; expires_in?: unknown }
+  if (typeof json.access_token !== 'string' || typeof json.refresh_token !== 'string' || typeof json.expires_in !== 'number') throw new ProviderError('ChatGPT renewed the sign-in with an answer that lacks a token')
+  return { ...grant, access: json.access_token, refresh: json.refresh_token, expires: Date.now() + json.expires_in * 1000 }
+}
+
+/** The grant to ask with: as stored, or renewed in the store first where it is about to end. */
+export async function dshGrant(store: RecordStore, fetcher: typeof fetch = fetch, signal?: AbortSignal): Promise<Grant & { access: string; accountId: string }> {
+  const stored = grantOf(await store.readRecord(DSH_RECORD))
+  if (stored === undefined) throw new ProviderError('ChatGPT is not signed in in DSH — sign in from the Studio\'s guide page', undefined, 'NO_CREDENTIAL')
+  if (typeof stored.expires === 'number' && stored.expires - Date.now() > RENEW_BEFORE_MS && usable(stored)) return stored
+  let renewed: Grant | undefined
+  await store.modifyRecord(DSH_RECORD, async (current) => {
+    const grant = grantOf(current)
+    if (grant === undefined) throw new ProviderError('ChatGPT is not signed in in DSH — sign in from the Studio\'s guide page', undefined, 'NO_CREDENTIAL')
+    // Renewed by someone else while we waited for the lock: theirs is the one to use.
+    if (typeof grant.expires === 'number' && grant.expires - Date.now() > RENEW_BEFORE_MS) {
+      renewed = grant
+      return current
+    }
+    renewed = await renew(grant, fetcher, signal)
+    return { ...current!, payload: renewed }
+  })
+  if (!usable(renewed)) throw new ProviderError('the ChatGPT sign-in in DSH carries no account — sign in again from the Studio\'s guide page', undefined, 'NO_CREDENTIAL')
+  return renewed
+}
+
+export async function viaDsh(ctx: Context, prompt: string, references: ImageReference[], signal: AbortSignal | undefined, fetcher: typeof fetch = fetch): Promise<ImageResult> {
+  const store = storeOf(ctx)
+  if (store === undefined) throw new ProviderError('this DSH keeps no credentials, so it holds no ChatGPT sign-in', undefined, 'UNSUPPORTED')
+  const grant = await dshGrant(store, fetcher, signal)
+  const sent = prompt.slice(0, 32_000)
+  // At most five pictures go with one request, as the endpoint takes them.
+  const kept = references.slice(0, 5)
+  const body = kept.length > 0
+    ? { model: IMAGE_MODEL, prompt: sent, images: kept.map(reference => ({ image_url: `data:${sniff(reference.data)};base64,${Buffer.from(reference.data).toString('base64')}` })) }
+    : { model: IMAGE_MODEL, prompt: sent }
+  const timeout = AbortSignal.timeout(IMAGE_TIMEOUT_MS)
+  const response = await fetcher(kept.length > 0 ? EDITS_URL : IMAGES_URL, {
+    method: 'POST',
+    redirect: 'manual',
+    headers: {
+      authorization: `Bearer ${grant.access}`,
+      'chatgpt-account-id': grant.accountId,
+      'content-type': 'application/json',
+      accept: 'application/json',
+      'x-client-request-id': randomUUID(),
+      originator: 'deepseek-harness',
+      'user-agent': `whalesong-studio/${__NOVEL_VERSION__}`,
+    },
+    body: JSON.stringify(body),
+    signal: signal !== undefined ? AbortSignal.any([signal, timeout]) : timeout,
+  })
+  if (!response.ok) {
+    const text = await response.text().catch(() => '')
+    const said = (() => {
+      try {
+        const parsed = JSON.parse(text) as { error?: { message?: unknown } | string; detail?: unknown }
+        const message = typeof parsed.error === 'string' ? parsed.error : typeof parsed.error?.message === 'string' ? parsed.error.message : typeof parsed.detail === 'string' ? parsed.detail : undefined
+        return message !== undefined ? `: ${message.slice(0, 300)}` : ''
+      } catch {
+        return ''
+      }
+    })()
+    if (response.status === 401 || response.status === 403) throw new ProviderError(`ChatGPT refused the sign-in for images (${response.status})${said} — sign in again from the Studio's guide page`, response.status, 'NO_CREDENTIAL')
+    if (response.status === 429) throw new ProviderError(`the ChatGPT subscription is rate limited for images right now${said}`, 429, 'RATE_LIMIT')
+    throw new ProviderError(`ChatGPT image generation failed (${response.status})${said}`, response.status)
+  }
+  const reply = await response.json() as { data?: { b64_json?: unknown }[] }
+  const first = reply.data?.[0]?.b64_json
+  if (typeof first !== 'string' || first.length === 0) throw new ProviderError('ChatGPT returned no image')
+  const data = Buffer.from(first, 'base64')
+  return { data, mime: sniff(data), referencesUsed: kept.length, sent: { prompt: sent } }
 }
 
 /** What the CLI agent is told; the picture description travels on stdin, never on a command line. */
@@ -249,13 +389,17 @@ async function viaCli(prompt: string, references: ImageReference[], signal: Abor
 export function createCodexBridge(ctx: Context): CodexImageBridge {
   return async (prompt, { bridge, signal, references = [], change = false }) => {
     if (bridge === 'connect') return await viaConnect(ctx, prompt, references, signal)
+    if (bridge === 'dsh') return await viaDsh(ctx, prompt, references, signal)
     if (bridge === 'cli') return await viaCli(prompt, references, signal, change)
     const status = await codexStatus(ctx)
     if (status.connect && status.connectSignedIn) return await viaConnect(ctx, prompt, references, signal)
+    // DSH's own sign-in asks over HTTP; the CLI runs an agent for each picture.
+    if (status.dshSignedIn === true) return await viaDsh(ctx, prompt, references, signal)
     if (status.cli && status.cliSignedIn) return await viaCli(prompt, references, signal, change)
-    // Neither is signed in: say which step is missing for what is installed.
+    // None is signed in: say which step is missing for what is installed.
     if (status.connect) return await viaConnect(ctx, prompt, references, signal)
+    if (status.dsh === true) throw new ProviderError('ChatGPT is not signed in in DSH — sign in from the Studio\'s guide page (ChatGPT subscription)', undefined, 'NO_CREDENTIAL')
     if (status.cli) throw new ProviderError('the Codex CLI is not signed in — run `codex login` and choose "Sign in with ChatGPT"', undefined, 'NO_CREDENTIAL')
-    throw new ProviderError('images through a ChatGPT subscription need the Codex Connect plugin (Harness → Plugins) or the Codex CLI signed in on this machine', undefined, 'UNSUPPORTED')
+    throw new ProviderError('images through a ChatGPT subscription need a ChatGPT sign-in: DSH\'s own (the Studio\'s guide page), the Codex Connect plugin, or the Codex CLI signed in on this machine', undefined, 'UNSUPPORTED')
   }
 }

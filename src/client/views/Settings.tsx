@@ -1657,8 +1657,9 @@ function ImageSection({ value, keys, onChange, t, advanced, only }: { value: Ima
   const text = (key: 'baseURL' | 'model' | 'workflow' | 'editWorkflow' | 'python', placeholder: string) => ({ value: value[key] ?? '', placeholder, onChange: (event: { target: { value: string } }) => { onChange(without(value, key, event.target.value.length > 0 ? event.target.value : undefined)) } })
   const figure = (key: 'steps' | 'guidance') => ({ value: value[key] !== undefined ? String(value[key]) : '', onChange: (event: { target: { value: string } }) => { const given = Number(event.target.value); onChange(without(value, key, event.target.value.trim().length > 0 && Number.isFinite(given) && given >= 0 ? given : undefined)) } })
   const viaConnect = codex.connect && codex.connectSignedIn
+  const viaDsh = codex.dshSignedIn === true
   const viaCli = codex.cli && codex.cliSignedIn
-  const ready = value.bridge === 'connect' ? viaConnect : value.bridge === 'cli' ? viaCli : viaConnect || viaCli
+  const ready = value.bridge === 'connect' ? viaConnect : value.bridge === 'dsh' ? viaDsh : value.bridge === 'cli' ? viaCli : viaConnect || viaDsh || viaCli
   // A server of the author's own behind the custom endpoint: told by its address, and said outright where that misleads.
   const own = localImages(value)
   // What that server's own list says of the model chosen: how large it draws.
@@ -1684,9 +1685,10 @@ function ImageSection({ value, keys, onChange, t, advanced, only }: { value: Ima
           ] as { value: ImageSource; label: string }[]).map(option => (value.kept?.[option.value] !== undefined && option.value !== source ? { ...option, label: t(`${option.label} · 配过，换回去还在`, `${option.label} · set up before, kept`) } : option))} onChange={pick} />
         </Field>
         {value.provider === 'codex' ? (
-          <Field label={t('通道', 'Bridge')} hint={ready ? t('这条通道已登录，可以出图', 'This bridge is signed in and can draw') : value.bridge === 'cli' ? t('还没有登录：在终端运行 codex login，选择用 ChatGPT 登录', 'Not signed in yet: run codex login in a terminal and sign in with ChatGPT') : value.bridge === 'connect' ? t('还没有登录：在 DSH 设置 → 模型 → Openai-Codex 里授权', 'Not signed in yet: authorize under DSH Settings → Models → Openai-Codex') : t('还没有登录：在 DSH 设置 → 模型 → Openai-Codex 授权，或运行 codex login', 'Not signed in yet: authorize under DSH Settings → Models → Openai-Codex, or run codex login')}>
+          <Field label={t('通道', 'Bridge')} hint={ready ? t('这条通道已登录，可以出图', 'This bridge is signed in and can draw') : value.bridge === 'cli' ? t('还没有登录：在终端运行 codex login，选择用 ChatGPT 登录', 'Not signed in yet: run codex login in a terminal and sign in with ChatGPT') : value.bridge === 'connect' ? t('还没有登录：在 DSH 设置 → 模型 → Openai-Codex 里授权', 'Not signed in yet: authorize under DSH Settings → Models → Openai-Codex') : value.bridge === 'dsh' ? t('还没有登录：在工坊的引导页用 ChatGPT 登录', 'Not signed in yet: sign in with ChatGPT on the Studio\'s guide page') : t('还没有登录：在工坊的引导页用 ChatGPT 登录，或运行 codex login', 'Not signed in yet: sign in with ChatGPT on the Studio\'s guide page, or run codex login')}>
             <Select<CodexBridgeKind> value={value.bridge ?? 'auto'} options={[
-              { value: 'auto', label: t('自动（优先 Codex Connect）', 'Automatic (Codex Connect first)') },
+              { value: 'auto', label: t('自动（Codex Connect → DSH 的登录 → Codex CLI）', 'Automatic (Codex Connect, then DSH\'s sign-in, then the Codex CLI)') },
+              { value: 'dsh', label: `${t('DSH 自己的 ChatGPT 登录', 'DSH\'s own ChatGPT sign-in')}${codex.dsh === true || codex.dshSignedIn === true ? (codex.dshSignedIn === true ? t(' · 已登录', ' · signed in') : t(' · 未登录', ' · not signed in')) : t(' · 这个 DSH 没有', ' · not in this DSH')}` },
               { value: 'connect', label: `Codex Connect${codex.connect ? (codex.connectSignedIn ? t(' · 已登录', ' · signed in') : t(' · 未登录', ' · not signed in')) : t(' · 未安装', ' · not installed')}` },
               { value: 'cli', label: `Codex CLI${codex.cli ? (codex.cliSignedIn ? t(' · 已登录', ' · signed in') : t(' · 未登录', ' · not signed in')) : t(' · 未安装', ' · not installed')}` },
             ]} onChange={(bridge) => { onChange(without(value, 'bridge', bridge === 'auto' ? undefined : bridge)) }} />

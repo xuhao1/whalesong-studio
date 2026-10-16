@@ -40,11 +40,12 @@ import { SessionBooks, SessionStateStore, type SwitchedBy } from '../core/sessio
 import { DEFAULT_SETTINGS, mergeSettings, SettingsStore, type DeepPartial } from '../core/settings'
 import { errorMessage } from '../core/util/async'
 import { displayPath, exists } from '../core/util/fs'
-import type { CodexStatus, EndpointCheck, EndpointModel, HelpPackage, HelpView, KeyState, LockView, ModelKind, PrivateShelfState, ShareStatus, WorkspaceInfo } from '../shared/rpc'
-import { unlistedModels } from '../shared/recommended'
+import type { ChatGPTApplied, ChatGPTChoice, ChatGPTView, CodexStatus, EndpointCheck, EndpointModel, HelpPackage, HelpView, KeyState, LockView, ModelKind, PrivateShelfState, ShareStatus, WorkspaceInfo } from '../shared/rpc'
+import { textPicks, unlistedModels } from '../shared/recommended'
 import { localImages } from '../shared/images'
 import { compatibleBase, hostOf, originOf, recommendedSetup, SERVICES, serviceOf, setupPatch, speechProtocol, type ServiceId, type SetupPart } from '../shared/services'
-import type { ModelRoute, NovelSettings, ProjectRef, WorkMode } from '../shared/types'
+import { CREW_ROLES, type ModelRoute, type NovelSettings, type ProjectRef, type WorkMode } from '../shared/types'
+import { CHATGPT_PROVIDER, chatgptPatch, ChatGPTSetup, ChatGPTSignIn, chatgptPorts } from './chatgpt'
 import { codexStatus, createCodexBridge } from './codex'
 import { KeyStore } from './keys'
 import { followRecommended, loadRecommended, noteAdopted } from './recommended'
@@ -96,6 +97,9 @@ export class NovelService extends Service {
 
   /** Which build this Host half is, against the one installed now. */
   private readonly build = new BuildWatch()
+  /** A ChatGPT subscription as DSH's text models: where its route stands, and the sign-in the guide page starts. */
+  readonly chatgpt: ChatGPTSetup
+  readonly chatgptSignIn: ChatGPTSignIn
 
   /**
    * @param control - the door this Host half came in by, when it came in by one: what lets it be replaced while DSH runs.
@@ -150,6 +154,13 @@ export class NovelService extends Service {
     // Files changed behind the Studio's back are noticed, recorded and digested again.
     attachReconciler(this.core)
     ctx.effect(() => () => { this.core.dispose(); stopLocalWorkers() }, 'novel: studio engine')
+    const chatgptPortsOf = chatgptPorts(ctx, async () => {
+      const status = await codexStatus(ctx)
+      return status.connect ? { signedIn: status.connectSignedIn } : undefined
+    })
+    this.chatgpt = new ChatGPTSetup(chatgptPortsOf, (message, error) => { this.log(message, error) })
+    this.chatgptSignIn = new ChatGPTSignIn(chatgptPortsOf, async choice => (await this.applyChatGPT(choice)).applied, (message, error) => { this.log(message, error) })
+    ctx.effect(() => () => { this.chatgptSignIn.dispose() }, 'novel: ChatGPT sign-in')
     this.share = new ShareServer(this.core, (message, error) => { this.log(message, error) })
     ctx.effect(() => () => { void this.share.close().catch(() => {}) }, 'novel: reader for other devices')
     this.remote = new RemoteDoor((message, error) => { this.log(message, error) }, undefined, join(this.core.settings.folder, 'phone-door.json'))
@@ -1025,6 +1036,68 @@ export class NovelService extends Service {
     }
   }
 
+  /** The one-click ChatGPT setup as the guide page shows it. */
+  async chatgptView(settings: NovelSettings): Promise<ChatGPTView> {
+    const state = await this.chatgpt.state()
+    const picks = textPicks(CHATGPT_PROVIDER, state.models.map(model => model.id))
+    const on = (route: ModelRoute | undefined): boolean => route !== undefined && route.baseURL === undefined && route.provider === CHATGPT_PROVIDER
+    const attempt = this.chatgptSignIn.current()
+    return {
+      route: state.route,
+      canSignIn: state.canSignIn,
+      signedIn: state.signedIn,
+      canAddRoute: state.canAddRoute,
+      models: state.models,
+      picks,
+      using: { writer: on(settings.models.writer), crew: CREW_ROLES.every(role => on(settings.models[role])), conversation: this.core.llm.defaultRoute()?.provider === CHATGPT_PROVIDER },
+      ...(attempt !== undefined ? { attempt } : {}),
+    }
+  }
+
+  /**
+   * The one-click for a ChatGPT subscription that is signed in: DSH's route is
+   * added where it is not there yet, the writer and the crew take its models,
+   * DSH's conversations start on the writer's where asked, and pictures come
+   * from the subscription's GPT Image where a way to it is signed in. Voices and
+   * search are not the subscription's: they stay as they are.
+   */
+  async applyChatGPT(choice: ChatGPTChoice): Promise<{ settings: NovelSettings; applied: ChatGPTApplied }> {
+    const refused = async (message: string): Promise<{ settings: NovelSettings; applied: ChatGPTApplied }> => ({ settings: await this.core.settings.get(), applied: { conversation: false, images: false, check: { ok: false, message } } })
+    let state = await this.chatgpt.state()
+    if (!state.signedIn) {
+      return await refused(state.route === 'connect'
+        ? 'Codex Connect serves ChatGPT here, but it is not signed in yet — authorize under DSH Settings → Models → Openai-Codex'
+        : 'ChatGPT is not signed in yet')
+    }
+    if (state.route === 'none') {
+      await this.chatgpt.addRoute()
+      state = await this.chatgpt.state()
+    }
+    const offered = state.models.map(model => model.id)
+    const picks = textPicks(CHATGPT_PROVIDER, offered)
+    const writer = choice.writer ?? picks.writer
+    const crew = choice.crew ?? picks.crew
+    if (writer === undefined || crew === undefined) return await refused('DSH lists no ChatGPT model to give the roles')
+    for (const model of [writer, crew]) if (offered.length > 0 && !offered.includes(model)) throw new ProjectError('novel/invalid', `the ChatGPT route has no model "${model}"`)
+    const notes: string[] = []
+    let images = false
+    if (choice.images !== false) {
+      if (codexReady(await this.codex(), undefined)) images = true
+      else notes.push('no way to the subscription\'s GPT Image is signed in, so pictures stay as they were')
+    }
+    const settings = await this.core.settings.update({ ...chatgptPatch(writer, crew, images), setup: { done: true, at: new Date().toISOString() } } as DeepPartial<NovelSettings>)
+    let conversation = false
+    if (choice.conversation ?? this.core.llm.defaultRoute() === undefined) {
+      try {
+        await this.chatgpt.setDefaultModel(writer)
+        conversation = true
+      } catch (error) {
+        notes.push(`DSH's own conversations could not be moved to it: ${errorMessage(error)}`)
+      }
+    }
+    return { settings, applied: { writer, crew, conversation, images, check: { ok: true }, ...(notes.length > 0 ? { notes } : {}) } }
+  }
+
   /**
    * One-click setup: save the key, check it, and fill the chosen slots —
    * pictures, speech, search — with the service's recommended models. Text
@@ -1037,7 +1110,7 @@ export class NovelService extends Service {
       const status = await this.codex()
       const ready = codexReady(status, undefined)
       const settings = await this.core.settings.update({ image: { provider: 'codex', size: '1536x1024', baseURL: null, model: null, apiKeyRef: null }, ...done } as DeepPartial<NovelSettings>)
-      return { settings, check: ready ? { ok: true } : { ok: false, message: status.connect ? 'Codex Connect is installed but not signed in yet' : status.cli ? 'the Codex CLI is installed but not signed in yet' : 'neither Codex Connect nor the Codex CLI was found' } }
+      return { settings, check: ready ? { ok: true } : { ok: false, message: status.connect ? 'Codex Connect is installed but not signed in yet' : status.dsh === true ? 'ChatGPT is not signed in in DSH yet' : status.cli ? 'the Codex CLI is installed but not signed in yet' : 'neither Codex Connect nor the Codex CLI was found' } }
     }
     const origin = input.service === 'custom' ? input.origin?.trim() : originOf(input.origin) ?? SERVICES[input.service].origin
     const setup = recommendedSetup(input.service, origin)
@@ -1061,9 +1134,11 @@ export class NovelService extends Service {
 /** Whether the chosen way to a ChatGPT subscription is signed in. */
 export function codexReady(codex: CodexStatus, bridge: NovelSettings['image']['bridge']): boolean {
   const connect = codex.connect && codex.connectSignedIn
+  const dsh = codex.dshSignedIn === true
   const cli = codex.cli && codex.cliSignedIn
-  return bridge === 'connect' ? connect : bridge === 'cli' ? cli : connect || cli
+  return bridge === 'connect' ? connect : bridge === 'dsh' ? dsh : bridge === 'cli' ? cli : connect || dsh || cli
 }
+
 
 /** The endpoint a provider kind talks to when its slot leaves the address empty. */
 /** Whether pictures come from a service that is reached with a key. */

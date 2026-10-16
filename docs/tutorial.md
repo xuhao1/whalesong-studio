@@ -77,7 +77,9 @@ The Studio uses two kinds of models, connected in two places.
 
 ### Text models: in DSH
 
-The showrunner, the writer and the crew all run on **DSH's own models**. Open DSH's **Settings → Models** (bottom left) and give at least one provider its key — or sign one in (a ChatGPT subscription through Codex Connect, for instance).
+The showrunner, the writer and the crew all run on **DSH's own models**. Open DSH's **Settings → Models** (bottom left) and give at least one provider its key.
+
+> **ChatGPT Plus or Pro?** Skip this step: on the Studio's guide page below, press **Sign in with ChatGPT and set up** on the ChatGPT card and sign in once — the text models and the pictures are both connected. See [On ChatGPT Plus / Pro](./chatgpt.md).
 
 ![DSH's Settings → Models: text models are connected here](./images/tutorial/en/03-dsh-models.webp)
 
@@ -92,7 +94,7 @@ The first time the Studio opens, it opens on **Connect the models first**: pick 
 | Aliyun Bailian | pictures, speech, retrieval |
 | OpenRouter | pictures, speech, retrieval (every maker's models) |
 | OpenAI | pictures, speech, retrieval |
-| ChatGPT subscription (Codex) | pictures only, no key |
+| ChatGPT subscription (Plus / Pro) | text models and pictures, one sign-in, no key ([step by step](./chatgpt.md)) |
 
 Image models on your own machine connect too: **Settings → Image generation → Service** has a *custom endpoint* (OpenAI-compatible — a server of your own will do), *ComfyUI* and *Diffusers*.
 

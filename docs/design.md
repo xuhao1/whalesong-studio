@@ -331,7 +331,7 @@ Keys are kept **per endpoint host**, one record each, in the Harness credential 
 
 **The settings page starts short.** Two models to choose — the writer's, and one for the crew — and one line each for pictures, speech, sound and retrieval. Everything a role can be told beyond its model lives on that role's own block under *Advanced*: its way of working, its tools and its steps are not a second table somewhere else on the page.
 
-A ChatGPT subscription is the odd one out: it can draw, but it has no API key. The Studio adds no sign-in of its own and rides on one that exists — the image service the Codex Connect plugin exposes to companion plugins, or a Codex CLI already signed in on the machine. A subscription has no embedding or speech endpoint, and the Studio says so instead of pretending.
+A ChatGPT subscription is the odd one out: it can write and draw, but it has no API key. The Studio adds no sign-in of its own and rides on one that exists. DSH can sign in to ChatGPT itself — its model adapter carries the flow for the `openai-codex` route — but none of DSH's pages starts it, so the guide page's ChatGPT card does: the attempt is DSH's, through DSH's authorization seam, the grant goes to DSH's credential store, and the Studio only shows the page to open and the box to paste into. One sign-in, and the card adds the route to DSH's model settings, gives the roles its models, and draws through it — the text and the pictures on the same sign-in, as a subscriber would expect. Codex Connect's image service and a Codex CLI already signed in on the machine remain other ways to the pictures. A subscription has no embedding or speech endpoint, and the Studio says so instead of pretending.
 
 ### What the interface says: what a thing is, and no more
 

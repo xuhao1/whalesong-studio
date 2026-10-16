@@ -5,7 +5,7 @@
  * and stays current through one long-poll on the Host's change counters.
  * Views read a snapshot and call actions; they never talk to the wire.
  */
-import type { EndpointCheck, JobStarted, LockView, PrivateShelfState, RpcMethod, RpcParams, SettingsView, WorkspaceInfo } from '../shared/rpc'
+import type { ChatGPTApplied, ChatGPTAttempt, ChatGPTChoice, EndpointCheck, JobStarted, LockView, PrivateShelfState, RpcMethod, RpcParams, SettingsView, WorkspaceInfo } from '../shared/rpc'
 import { parseRecommended, setRecommended } from '../shared/recommended'
 import type { ServiceId, SetupPart } from '../shared/services'
 import { MAIN_LINE, type GateKind, type GateState, type JobInfo, type ProjectState, type WorkMode } from '../shared/types'
@@ -44,7 +44,7 @@ export interface Activity {
  * and is shown as work in progress until it answers.
  */
 const QUIET: ReadonlySet<RpcMethod> = new Set<RpcMethod>([
-  'events.wait', 'jobs.read', 'jobs.list', 'jobs.cancel', 'project.state', 'workspace.info', 'settings.get', 'key.state', 'model.info', 'conversation.open',
+  'events.wait', 'jobs.read', 'jobs.list', 'jobs.cancel', 'project.state', 'workspace.info', 'settings.get', 'key.state', 'model.info', 'conversation.open', 'chatgpt.attempt',
   'audio.script', 'comic.board', 'image.list', 'chapter.read', 'chapter.version', 'chapter.save', 'usage.summary', 'find', 'search',
   'play.list', 'play.get', 'share.status', 'reader.album', 'reader.sides', 'reader.position', 'world.pin', 'line.world', 'cast.lives',
 ])
@@ -1148,6 +1148,36 @@ export class StudioController {
     const { view, check } = await this.api.call('setup.apply', input)
     this.set({ settings: taking(view) })
     return check
+  }
+
+  /** Start signing in to ChatGPT through DSH; once signed in, the Host sets up what `choice` says by itself. */
+  async chatgptSignIn(choice: ChatGPTChoice, device = false): Promise<ChatGPTAttempt> {
+    return await this.api.call('chatgpt.signIn', { ...choice, ...(device ? { device: true } : {}) })
+  }
+
+  /** The sign-in once it has moved past `since`; the Host waits a while when nothing changes. */
+  async chatgptAttempt(id: string, since: number): Promise<ChatGPTAttempt | null> {
+    return await this.api.call('chatgpt.attempt', { id, since })
+  }
+
+  async chatgptAnswer(id: string, text: string): Promise<ChatGPTAttempt> {
+    return await this.api.call('chatgpt.answer', { id, text })
+  }
+
+  async chatgptCancel(id: string): Promise<ChatGPTAttempt | null> {
+    return await this.api.call('chatgpt.cancel', { id })
+  }
+
+  /** Forget DSH's own ChatGPT sign-in. */
+  async chatgptSignOut(): Promise<void> {
+    this.set({ settings: taking(await this.api.call('chatgpt.signOut', {})) })
+  }
+
+  /** The one-click on a ChatGPT sign-in that is already there. */
+  async chatgptApply(choice: ChatGPTChoice): Promise<ChatGPTApplied> {
+    const { view, applied } = await this.api.call('chatgpt.apply', choice)
+    this.set({ settings: taking(view) })
+    return applied
   }
 
   /** Put the first-run guide aside for good. */

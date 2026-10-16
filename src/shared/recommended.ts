@@ -40,6 +40,12 @@ export interface RecommendedProvider {
   suggestions?: string[]
 }
 
+/** The writer's and the crew's models on one route, best first. */
+export interface RecommendedText {
+  writer?: string[]
+  crew?: string[]
+}
+
 /** The parts of the Studio a kind of endpoint can serve. */
 export type ProviderPart = 'image' | 'tts' | 'sound'
 
@@ -65,6 +71,11 @@ export interface Recommended {
   /** What this issue changed, for the author. */
   notes?: { zh?: string; en?: string }
   services: Record<string, RecommendedService>
+  /**
+   * Text models for a DSH route one signs in to rather than pays by key (a ChatGPT subscription is `openai-codex`): by
+   * route, the writer's and the crew's, best first. The one-click for that route takes the first the route offers.
+   */
+  text?: Record<string, RecommendedText>
   /** By part, then by kind of endpoint: the model used when a slot names none, and what is offered beside the field. */
   providers?: Partial<Record<ProviderPart, Record<string, RecommendedProvider>>>
   /** Models a service serves without listing them, by service, then by part. */
@@ -114,6 +125,15 @@ export function parseRecommended(raw: unknown): Recommended | undefined {
       providers[part] = Object.fromEntries(Object.entries(kinds).filter((entry): entry is [string, RecommendedProvider] => isProvider(entry[1])))
     }
   }
+  const text: NonNullable<Recommended['text']> = {}
+  if (typeof record.text === 'object' && record.text !== null) {
+    for (const [route, roles] of Object.entries(record.text)) {
+      if (typeof roles !== 'object' || roles === null) continue
+      const writer = strings((roles as RecommendedText).writer)
+      const crew = strings((roles as RecommendedText).crew)
+      text[route] = { ...(writer.length > 0 ? { writer } : {}), ...(crew.length > 0 ? { crew } : {}) }
+    }
+  }
   const unlisted: NonNullable<Recommended['unlisted']> = {}
   if (typeof record.unlisted === 'object' && record.unlisted !== null) {
     for (const [id, parts] of Object.entries(record.unlisted)) {
@@ -127,6 +147,7 @@ export function parseRecommended(raw: unknown): Recommended | undefined {
     date: typeof record.date === 'string' ? record.date : '',
     ...(typeof record.notes === 'object' && record.notes !== null ? { notes: record.notes } : {}),
     services,
+    text,
     providers,
     unlisted,
     ...(Array.isArray(record.windows) ? { windows: record.windows.filter(isFigure) } : {}),
@@ -166,6 +187,18 @@ function compiled(): NonNullable<typeof figures> {
  */
 export function providerDefault(part: ProviderPart, provider: string): RecommendedProvider {
   return active.providers?.[part]?.[provider] ?? BUILTIN_RECOMMENDED.providers?.[part]?.[provider] ?? { model: '' }
+}
+
+/**
+ * The writer's and the crew's models for a route one signs in to: the first recommended that `offered` has, or the
+ * first recommended at all while the route lists nothing yet.
+ */
+export function textPicks(route: string, offered: readonly string[]): { writer?: string; crew?: string } {
+  const table = active.text?.[route] ?? BUILTIN_RECOMMENDED.text?.[route] ?? {}
+  const pick = (list: string[] | undefined): string | undefined => (offered.length === 0 ? list?.[0] : list?.find(model => offered.includes(model)) ?? offered[0])
+  const writer = pick(table.writer)
+  const crew = pick(table.crew)
+  return { ...(writer !== undefined ? { writer } : {}), ...(crew !== undefined ? { crew } : {}) }
 }
 
 /** Models a service serves without listing them. */

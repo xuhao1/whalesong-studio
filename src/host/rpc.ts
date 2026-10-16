@@ -58,7 +58,7 @@ import { checkPassword, readStub, VaultError } from '../core/util/vault'
 import type { DeepPartial } from '../core/settings'
 import { rangeStart, summarize, type UsageRange } from '../core/usage'
 import { sleep } from '../core/util/async'
-import type { BookSettingsView, CodexStatus, ContextView, CrewView, FindMatch, ModelKind, NovelRpc, RpcMethod, RpcParams, RpcResult, SettingsView, SitePlan } from '../shared/rpc'
+import type { BookSettingsView, ChatGPTChoice, CodexStatus, ContextView, CrewView, FindMatch, ModelKind, NovelRpc, RpcMethod, RpcParams, RpcResult, SettingsView, SitePlan } from '../shared/rpc'
 import { speechSetupName, switchTts, ttsService, ttsWays, withBook } from '../shared/images'
 import { PROJECT_HOMEPAGE, type SetupPart } from '../shared/services'
 import { hashText, proseOnly } from '../shared/text'
@@ -87,6 +87,20 @@ async function shelfWork(work: () => Promise<void>): Promise<void> {
     if (error instanceof VaultError) throw new ProjectError(error.code === 'wrong-key' ? 'novel/wrong-key' : 'novel/invalid', error.message)
     if (error instanceof ProjectError) throw error
     throw new ProjectError('novel/invalid', error instanceof Error ? error.message : String(error))
+  }
+}
+
+/** What the page asked of the one-click ChatGPT setup, as far as it is understood. */
+function chatgptChoice(raw: unknown): ChatGPTChoice {
+  const value = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>
+  const model = (key: string): string | undefined => (typeof value[key] === 'string' && (value[key] as string).trim().length > 0 ? (value[key] as string).trim() : undefined)
+  const writer = model('writer')
+  const crew = model('crew')
+  return {
+    ...(writer !== undefined ? { writer } : {}),
+    ...(crew !== undefined ? { crew } : {}),
+    ...(typeof value['conversation'] === 'boolean' ? { conversation: value['conversation'] } : {}),
+    ...(typeof value['images'] === 'boolean' ? { images: value['images'] } : {}),
   }
 }
 
@@ -230,7 +244,7 @@ export function createHandlers(service: NovelService): Handlers {
       providers = [...seen.values()]
     }
     const defaultRoute = core.llm.defaultRoute()
-    const [keys, codex] = await Promise.all([service.keyStates(settings), service.codex()])
+    const [keys, codex, chatgpt] = await Promise.all([service.keyStates(settings), service.codex(), service.chatgptView(settings).catch((error: unknown) => { service.log('could not tell where ChatGPT stands', error); return undefined })])
     const roles = Object.values(settings.models).filter((route): route is NonNullable<typeof route> => route !== undefined)
     const direct = roles.filter(route => route.baseURL !== undefined)
     const ready = {
@@ -247,6 +261,7 @@ export function createHandlers(service: NovelService): Handlers {
       voices: stockVoices(settings.tts.provider, settings.tts.model),
       keys,
       codex,
+      ...(chatgpt !== undefined ? { chatgpt } : {}),
       ready,
       setupNeeded: untouched && settings.setup?.done !== true,
       crew: await crewView(settings),
@@ -1768,6 +1783,18 @@ export function createHandlers(service: NovelService): Handlers {
     'recommended.settle': async ({ action }) => {
       await settleRecommended(core.settings, action === 'adopt' || action === 'keep' || action === 'revert' ? action : 'dismiss')
       return await settingsView()
+    },
+    'chatgpt.signIn': async ({ device, ...choice }) => service.chatgptSignIn.begin(chatgptChoice(choice), device === true),
+    'chatgpt.attempt': async ({ id, since }, signal) => (await service.chatgptSignIn.wait(String(id), Number(since) || 0, signal)) ?? null,
+    'chatgpt.answer': async ({ id, text }) => service.chatgptSignIn.answer(String(id), String(text ?? '')),
+    'chatgpt.cancel': async ({ id }) => service.chatgptSignIn.cancel(String(id)) ?? null,
+    'chatgpt.signOut': async () => {
+      await service.chatgpt.signOut()
+      return await settingsView()
+    },
+    'chatgpt.apply': async (choice) => {
+      const { applied } = await service.applyChatGPT(chatgptChoice(choice))
+      return { view: await settingsView(), applied }
     },
     'setup.dismiss': async () => {
       await core.settings.update({ setup: { done: true, at: new Date().toISOString() } } as DeepPartial<NovelSettings>)

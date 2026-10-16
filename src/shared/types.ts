@@ -1540,8 +1540,8 @@ export function parallelOf(value: unknown): number {
  */
 /** `comfyui` and `diffusers` draw on the author's own machine: a running ComfyUI server, or the Diffusers library in their Python. */
 export type ImageProviderKind = 'dashscope' | 'openai' | 'openrouter' | 'codex' | 'comfyui' | 'diffusers' | 'none'
-/** How a ChatGPT subscription is reached: the Codex Connect plugin, the local Codex CLI, or whichever is signed in. */
-export type CodexBridgeKind = 'auto' | 'connect' | 'cli'
+/** How a ChatGPT subscription is reached: the Codex Connect plugin, DSH's own ChatGPT sign-in, the local Codex CLI, or whichever is signed in. */
+export type CodexBridgeKind = 'auto' | 'connect' | 'dsh' | 'cli'
 export interface ImageSettings {
   provider: ImageProviderKind
   baseURL?: string

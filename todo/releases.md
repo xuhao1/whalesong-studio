@@ -4,6 +4,11 @@
 > 发布新的一版：在最上面添一条，并把 `TODO.md` 里"版本状态"的那一条换成它。
 > 各条里的 #编号 在 [`README.md`](./README.md) 的索引里查。
 
+- **10-16 17:08 发布了第 130 版（构建号 `0311d755de0a`）。请重启 DSH**——不过您桌面版的配置里插件还叫 `dsh-novel-writer`（我只读看了 `~/.dsh/profiles/desktop/package.json`），第 129 版改了包名，要**先照第 129 版那条重装一次**（插件页移除 `dsh-novel-writer`，再添加 `/Users/xuhao/develop/Harness/DSHNovelWriter`），再重启。这一版是 ChatGPT Plus / Pro 的一键接入（#447、#448）：
+  - **引导页第一张卡片"ChatGPT 订阅（Plus / Pro）"**，和百炼、OpenRouter 并排：点"用 ChatGPT 登录并配置"，用的是 **DSH 自带的 ChatGPT 登录**（不用装插件——DSH 有这个登录，只是它自己的页面里没有入口），浏览器里登录一次，工坊就把 ChatGPT 这条路由加进 DSH 的模型设置、写手和班底都换成 GPT-6 Sol、第一次配置时 DSH 新对话的默认模型也换成它（有个勾）、插图也走这份登录。卡上能换账号、退出登录；浏览器回不来时可以贴网址，或改用设备码。
+  - **装着 Codex Connect 的**（您的桌面版就装着，也登录过），卡片不另外登录，直接用 Codex Connect 的登录配置角色和插图。想试 DSH 自带的那条，先在插件页移除 Codex Connect、重启。
+  - **教程**：`docs/chatgpt.zh.md` / `docs/chatgpt.md`，各三张截图；README、新手教程等处都指过去了。
+  - **要您知道的**：没用真的 ChatGPT 账号登录过（要您的账号）——DSH 发起登录、取消、设备码、登录之后加路由和配角色这些在开发实例里都实测过（登录之后那段用的是假登录）；真写字、用这份登录真出图还没跑过。新增单元测试 28 条，全部 800 条通过。
 - **10-16 10:20 发布了第 129 版（构建号 `2a93343d1fef`）。这一版要您先把插件重装一次，再重启 DSH**——包名改了（#438）：
   - **包名 `dsh-novel-writer` → `whalesong-studio`。** DSH 认插件时要求包里写的名字和安装时的名字一样，您装着的这份（桌面版、`web` 两个配置都链接着这个仓库，名字是 `dsh-novel-writer`）在重装之前打不开工坊。做法：
     1. **桌面版**：左侧"插件"→ 找到 `dsh-novel-writer`（鲸歌工坊）→ 移除；再点"添加插件"，填 `/Users/xuhao/develop/Harness/DSHNovelWriter` → 安装；然后重启 DSH。**先移除、再添加**——反过来会装成两份。

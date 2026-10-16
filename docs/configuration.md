@@ -15,7 +15,7 @@ Everything described here can be changed in *Whalesong Studio → Settings* (the
 | Aliyun Bailian | `qwen-image-3.0` | `qwen-audio-3.1-tts-next` | `qwen3.7-text-embedding-flash` |
 | OpenRouter | `openai/gpt-image-2.5-sunburst` | `google/gemini-3.8-flash-tts` | `qwen/qwen3-embedding-8b` |
 | OpenAI | `gpt-image-2` | `gpt-4o-mini-tts` | `text-embedding-3-small` |
-| ChatGPT subscription (Codex) | the subscription's GPT Image | — | — |
+| ChatGPT subscription (Plus / Pro) | the subscription's GPT Image — and the text models | — | — |
 
 The models in this table are the recommendations at the time of writing. They are not written into the code: see [*The recommended setup*](#the-recommended-setup) below.
 
@@ -149,7 +149,7 @@ The showrunner never takes a key through the conversation. Asked to set somethin
 A role is one of two things:
 
 - **unset** — it follows the conversation model;
-- **a model of DSH's** — a route (`provider`, `model`) called through DSH's model runtime with its credentials and retry policy. The role's list names every provider DSH reaches, one entry each: those with a key under *Settings → Models*, and those that came with a sign-in — the ChatGPT subscription of Codex Connect appears as `OpenAI Codex`.
+- **a model of DSH's** — a route (`provider`, `model`) called through DSH's model runtime with its credentials and retry policy. The role's list names every provider DSH reaches, one entry each: those with a key under *Settings → Models*, and those that came with a sign-in — a ChatGPT subscription appears as `ChatGPT` when the Studio's one-click added it (see *A ChatGPT subscription as text models* below), as `OpenAI Codex` through Codex Connect.
 
 | Field | Meaning |
 |---|---|
@@ -301,7 +301,7 @@ Settings files saved by earlier versions carry budgets nobody chose (48,000, lat
 | `image.looks` | `pictured` (the default): somebody whose picture goes along with the prompt is pointed to there ("see Image 1") instead of being described again — a look restated beside a moment in other clothes pulls the picture back to the look; `always`: looks are written out whether a picture goes or not. A book may have its own |
 | `image.local` | `openai` only: `true` — the endpoint is a server of your own, asked the way such a server wants to be (see *An OpenAI-compatible server of your own*); `false` — it is not, whatever its address. Unset: judged by the address (this machine, a private network), unless the model is one of OpenAI's |
 | `image.sizes` | `openai` only: the sizes the endpoint draws, e.g. `["768x768", "768x512", "512x768"]`; a picture is asked for at whichever is nearest in shape. Unset: for a server of your own, what the server itself says its model draws (see below) or else those three; GPT Image's own three for GPT Image; and for anything else the size wanted as it is |
-| `image.bridge` | `codex` only: `auto` (default), `connect` or `cli` — see below |
+| `image.bridge` | `codex` only: `auto` (default), `connect`, `dsh` or `cli` — see below |
 | `image.workflow`, `image.editWorkflow` | `comfyui` only: the workflow to run, and the one for pictures with reference pictures — each the path of a file exported in API format, or the JSON itself |
 | `image.python`, `image.device`, `image.dtype` | `diffusers` only: the Python to run (`python3`), the device (`cuda`, `mps`, `cpu`; the best there is when left out) and the precision (`float16` on CUDA, `float32` elsewhere) |
 | `image.steps`, `image.guidance` | `comfyui`, `diffusers`: sampling steps and guidance scale; left out: for the built-in ComfyUI graph, what the server's own latest run of that model used (else 25 steps, and guidance 7 for a checkpoint, 3.5 for a diffusion model that comes alone); for Diffusers, the pipeline's own |
@@ -469,8 +469,21 @@ Prompts are written in the language of the book with each appearance as it stand
 `image.provider: codex` draws with the GPT Image included in a ChatGPT plan. The Studio has no sign-in of its own; it rides on one that already exists:
 
 - **`connect`** — the [Codex Connect](https://github.com/franksong2702/dsh-codex-connect) plugin. It exposes a Host service for companion plugins (`ctx.openaiCodexTransport`); the Studio hands it a prompt and receives the image. Authorize once under Harness *Settings → Models → Openai-Codex*.
+- **`dsh`** — DSH's own ChatGPT sign-in (below): the grant DSH's model adapter keeps in its credential store, `llm-pi-ai/openai-codex`. The picture is asked of the image endpoint Codex's own image client uses (`/backend-api/codex/images/generations`, and `…/images/edits` with reference pictures, up to five); a grant near its end is renewed in the store first, under the store's lock, as DSH's adapter would.
 - **`cli`** — the Codex CLI on the machine that runs the Harness, signed in with `codex login`. One non-interactive run in a read-only sandbox, with the prompt passed on standard input, produces the image (about a minute each).
-- **`auto`** uses Codex Connect when it is signed in, else the CLI.
+- **`auto`** takes the first of these that is signed in: Codex Connect, DSH's own sign-in, the CLI.
+
+### A ChatGPT subscription as text models
+
+DSH's model adapter (`dsh-llm-pi-ai`, 0.2.0-rc.2 and later) can sign in to ChatGPT for its `openai-codex` route — an authorization flow that keeps its grant in DSH's credential store and renews it — but no page of DSH starts that flow. The **ChatGPT subscription (Plus / Pro)** card of the Studio's guide page does ([step by step](./chatgpt.md)):
+
+1. **Sign in.** The Studio runs an attempt through DSH's authorization seam (`ctx.authorization`, key `llm-pi-ai/openai-codex`): DSH's flow, DSH's store. The Studio answers the flow's question of how to sign in (in this machine's browser, or with a device code), shows the page to open, and — while the browser has not come back to `localhost:1455` — a box for the address it landed on. Cancelling withdraws the attempt and the box.
+2. **Add the route.** Where DSH does not serve `openai-codex` yet, the Studio writes a profile for it into DSH's model settings — `{ displayName: 'ChatGPT' }` under the section and path DSH's provider directory names (`llm-pi-ai` → `providers.openai-codex`) — and waits until DSH serves it. The catalog supplies the models; the stored sign-in authenticates them.
+3. **Give the roles its models.** The writer and the four roles of the crew take whole new routes (`provider: openai-codex`, `model`) — nothing of the route before stays. Which models: what the card's two fields say, else the first of `text["openai-codex"]` in the recommendations that the route offers (GPT-6 Sol for both at the time of writing).
+4. **DSH's conversations**, where asked (ticked on a first setup): DSH's default model (`agent-default-model`) becomes the writer's, without the reasoning effort of the model before.
+5. **Pictures**, where asked and a bridge is signed in: `image.provider: codex`, bridge `auto`.
+
+Where Codex Connect is installed it serves the route with a sign-in of its own; the card then signs nothing in and runs steps 3–5 once Codex Connect is authorized. A route that another plugin serves is taken as it is. *Sign out* on the card deletes DSH's record, nothing else; *Sign in again* runs step 1 once more. The showrunner's `novel_settings action=setup service=codex` runs steps 2–5 where ChatGPT is signed in, and otherwise sends the author to the guide page — the sign-in is the author's, in a browser.
 
 A subscription has no embedding endpoint and no speech endpoint — retrieval and audio need a keyed service. Whether a plan includes image generation, and how much, is decided by OpenAI.
 

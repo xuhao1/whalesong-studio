@@ -77,7 +77,9 @@ dsh plugin --profile web add /absolute/path/to/whalesong-studio-0.1.0.tgz
 
 ### 文字模型：在 DSH 里接
 
-总编、写手、班底用的都是 **DSH 自己的模型**。打开 DSH 左下角的 **设置 → 模型**，给至少一家提供商填上 key（或用登录接入的，比如经 Codex Connect 登录的 ChatGPT 订阅）。
+总编、写手、班底用的都是 **DSH 自己的模型**。打开 DSH 左下角的 **设置 → 模型**，给至少一家提供商填上 key。
+
+> **有 ChatGPT Plus / Pro？** 这一步可以跳过：到下面工坊的引导页，点 ChatGPT 卡片上的 **用 ChatGPT 登录并配置**，登录一次，文字模型和插图就都接上了。详见[用 ChatGPT 订阅](./chatgpt.zh.md)。
 
 ![DSH 的"设置 → 模型"：文字模型在这里接](./images/tutorial/zh/03-dsh-models.webp)
 
@@ -92,7 +94,7 @@ dsh plugin --profile web add /absolute/path/to/whalesong-studio-0.1.0.tgz
 | 阿里云百炼 | 插图、配音、检索（国内直连） |
 | OpenRouter | 插图、配音、检索（各家的模型都在） |
 | OpenAI | 插图、配音、检索 |
-| ChatGPT 订阅（Codex） | 只有插图，不用 key |
+| ChatGPT 订阅（Plus / Pro） | 文字模型和插图，登录一次，不用 key（[详细步骤](./chatgpt.zh.md)） |
 
 本机的绘图也能接：**设置 → 图像生成 → 服务** 里有 *自定义接口*（OpenAI 兼容，也可以是你自己的服务器）、*ComfyUI*、*Diffusers*。
 
