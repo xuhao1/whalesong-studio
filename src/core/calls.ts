@@ -122,6 +122,8 @@ type About = Pick<CallRow, 'kind' | 'title' | 'job' | 'step'> & { ref?: string }
 
 interface Outcome {
   reply: string
+  /** Parameters the endpoint refused, which the call went without. */
+  unsent?: string[]
   finish?: string
   usage?: LlmResponse['usage']
   thought?: number
@@ -154,7 +156,7 @@ export class CallLog {
       let partial = ''
       try {
         const response = await llm.complete({ ...request, onText: (delta, total) => { partial = total; request.onText?.(delta, total) } })
-        await this.keep(book, request, about, started, { reply: response.text, finish: response.finish, ...(response.usage !== undefined ? { usage: response.usage } : {}), ...(response.thought !== undefined ? { thought: response.thought } : {}) })
+        await this.keep(book, request, about, started, { reply: response.text, ...(response.unsent !== undefined ? { unsent: response.unsent } : {}), finish: response.finish, ...(response.usage !== undefined ? { usage: response.usage } : {}), ...(response.thought !== undefined ? { thought: response.thought } : {}) })
         return response
       } catch (error) {
         const stopped = isAbort(error) || request.signal?.aborted === true
@@ -223,7 +225,8 @@ export class CallLog {
   }
 
   private async keep(root: string, request: LlmRequest, about: About, started: number, outcome: Outcome): Promise<void> {
-    const temperature = request.temperature ?? request.route.temperature
+    // On record is what went: a temperature the model refused was not sent.
+    const temperature = outcome.unsent?.includes('temperature') === true ? undefined : request.temperature ?? request.route.temperature
     const maxTokens = request.maxTokens ?? request.route.maxTokens
     await this.put(root, about, started, {
       route: request.route,

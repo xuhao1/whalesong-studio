@@ -4,6 +4,13 @@ All notable changes to this project are recorded here. The format follows [Keep 
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-17
+
+### Fixed
+
+- **Models that refuse a temperature (ChatGPT's GPT-6.1 Sol).** Every call the Studio makes outside an agent's run — digests, reviews, a chapter written in one request — sends the role's temperature, and DSH passes it on as it is. ChatGPT's endpoint answers `Unsupported parameter: temperature` (HTTP 400), so on a ChatGPT subscription every such call failed. A route that refuses one now gets the call again without it, and is sent none after that (`src/host/llm-backend.ts`); the record of calls no longer says a temperature went where none did, on direct routes either (`LlmResponse.unsent`).
+- **A batch that writes goes on when a digest fails.** Written one after the other, each chapter waited for the digest of the one before, and a digest that failed kept every chapter after it from being written: asked for three chapters, the batch wrote one. A chapter now waits for that digest to be over, however it ended, and is written from the text before it where it failed — its cell says so (*the chapter before is not in memory: written from its text*). A chapter that could not be written still keeps the next from being written (`BatchStep.waits`).
+
 ## [0.1.0] - 2026-10-17
 
 ### Added
@@ -510,5 +517,6 @@ First release, for DeepSeek Harness 0.2.0-rc.2.
 - **Calls that fail in passing are made again.** The Harness retries a failed model request for its agent's turns and for nobody else: a call a plugin makes through the model seam used to end at the first busy server, rate limit or dropped stream. The Studio now runs the provider's own retry policy (from Settings → Models; five tries with a growing wait by default) for every call it makes, says so on the job's progress line while it waits, and counts every attempt in the usage ledger. A reply that completes with reasoning in it and no answer at all — which providers produce now and then, and which the adapters let through as a normal end — is treated the same way and asked for again, unchanged, up to three times; when a model spends its whole output allowance reasoning, that is said at once, with what to change. Failures of this kind are worded in the book's language.
 - **Agent surface.** Twenty-four `novel_*` tools covering everything the Studio's screens can do — including its settings (`novel_settings`), showing a screen to the author (`novel_show`) and the small hand edits (`novel_manage`) — a project digest in the prompt, working modes, the `/novel` command, five workflow skills, tool rows that open the Studio, a Studio tab that opens by itself when the showrunner starts working and follows what it shows, and a confirmation gate for writes in read-only sessions, for removing a book and for opening one to the local network.
 
-[Unreleased]: https://github.com/xuhao1/whalesong-studio/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/xuhao1/whalesong-studio/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/xuhao1/whalesong-studio/releases/tag/v0.1.1
 [0.1.0]: https://github.com/xuhao1/whalesong-studio/releases/tag/v0.1.0

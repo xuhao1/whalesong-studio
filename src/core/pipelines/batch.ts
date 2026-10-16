@@ -49,6 +49,8 @@ export interface BatchStep {
   op: string
   /** Steps — as `target:op` — that have to be settled first. One that failed keeps this one from running. */
   after?: string[]
+  /** Steps that have to be over first, however they ended: one that failed does not keep this one from running. */
+  waits?: string[]
   /** Why there is nothing to do, in a few words; undefined when there is. Asked right before the step would run. */
   skip?(): Promise<string | undefined> | string | undefined
   /** Do it. @returns what came of it, in a few words. */
@@ -197,6 +199,7 @@ export async function runBatch(plan: BatchPlan, task: TaskContext, lang: PromptL
           continue
         }
         if (before.some(dependency => !SETTLED.includes(dependency.state))) continue
+        if ((step.waits ?? []).some(dependency => { const state = views.get(dependency)?.state; return state !== undefined && !SETTLED.includes(state) })) continue
         const lane = Math.max(1, plan.lanes[step.op] ?? 1)
         if ((running.get(step.op) ?? 0) >= lane) continue
         running.set(step.op, (running.get(step.op) ?? 0) + 1)
@@ -557,13 +560,18 @@ export async function textPlan(core: NovelCore, runtime: ProjectRuntime, params:
   for (const chapter of chapters) {
     const id = chapter.id
     const facts = infos.get(id)!
-    // Writing goes chapter after chapter: each is written knowing the one before, and what was learned from it.
-    const chain = writing && !together && previous !== undefined ? [key(previous, wanted.has('digest') ? 'digest' : 'write')] : []
+    // Writing goes chapter after chapter: each is written knowing the one before, and what was learned from it. A
+    // chapter that could not be written keeps the next from being written; one whose digest failed does not — the
+    // next is written from its text, as when memory is left out.
+    const before = previous
+    const chain = writing && !together && before !== undefined ? [key(before, 'write')] : []
+    const memory = writing && !together && before !== undefined && wanted.has('digest') ? [key(before, 'digest')] : []
     if (wanted.has('beats')) {
       steps.push({
         target: id,
         op: 'beats',
         after: chain,
+        waits: memory,
         skip: () => facts.hasText && !redo ? L(lang, '已有正文', 'already written') : facts.beats > 0 && !redo ? L(lang, `已有 ${facts.beats} 个节拍`, `has ${facts.beats} beats`) : undefined,
         async run(sub) {
           const result = await deriveBeats(core, runtime, { chapter: id }, sub)
@@ -576,6 +584,7 @@ export async function textPlan(core: NovelCore, runtime: ProjectRuntime, params:
         target: id,
         op: 'write',
         after: [...chain, ...(wanted.has('beats') ? [key(id, 'beats')] : [])],
+        waits: memory,
         stream: true,
         skip: () => facts.hasText && !redo ? L(lang, '已有正文', 'already written') : undefined,
         async run(sub) {
@@ -583,7 +592,9 @@ export async function textPlan(core: NovelCore, runtime: ProjectRuntime, params:
           const result = await writeChapter(core, runtime, { chapter: id, mode: 'draft', digest: false, ...(params.brief !== undefined ? { brief: params.brief } : {}), ...(params.words !== undefined && params.words > 0 ? { words: params.words } : {}) }, sub)
           facts.hasText = true
           facts.digested = false
-          return L(lang, `${result.wordsWritten} 字${result.budget === undefined ? '（篇幅由写手判断）' : ''}${result.cachedTokens !== undefined ? ` · 缓存命中 ${Math.round(result.cachedTokens / 1000)}K` : ''}`, `${result.wordsWritten} words${result.budget === undefined ? ' (length left to the writer)' : ''}${result.cachedTokens !== undefined ? ` · ${Math.round(result.cachedTokens / 1000)}K cached` : ''}`)
+          // Said where it shows: the chapter before went into memory, or this one was written from its text alone.
+          const unremembered = memory.length > 0 && infos.get(before!)?.digested !== true
+          return L(lang, `${result.wordsWritten} 字${result.budget === undefined ? '（篇幅由写手判断）' : ''}${result.cachedTokens !== undefined ? ` · 缓存命中 ${Math.round(result.cachedTokens / 1000)}K` : ''}${unremembered ? ' · 前一章没收录上，照它的正文写的' : ''}`, `${result.wordsWritten} words${result.budget === undefined ? ' (length left to the writer)' : ''}${result.cachedTokens !== undefined ? ` · ${Math.round(result.cachedTokens / 1000)}K cached` : ''}${unremembered ? ' · the chapter before is not in memory: written from its text' : ''}`)
         },
       })
     }

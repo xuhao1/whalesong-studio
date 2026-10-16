@@ -53,6 +53,8 @@ export interface LlmResponse {
   usage?: LlmUsage
   /** Characters of reasoning the model showed before its answer — or instead of one. */
   thought?: number
+  /** Parameters of the request the endpoint refused, and the call went without (`temperature`, …). */
+  unsent?: string[]
 }
 
 export interface ModelDescriptor {

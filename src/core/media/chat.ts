@@ -123,6 +123,8 @@ export async function completeDirect(route: ModelRoute & { baseURL: string }, re
   }
 
   const tried = new Set<string>()
+  // What the endpoint refused and the call went without (a respelled limit is still sent).
+  const unsent: string[] = []
   for (;;) {
     const idle = new AbortController()
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -152,7 +154,10 @@ export async function completeDirect(route: ModelRoute & { baseURL: string }, re
           const culprit = OPTIONAL_PARAMS.find(param => !tried.has(param.name) && param.matches.test(message))
           if (culprit !== undefined) {
             tried.add(culprit.name)
-            if (culprit.drop(body)) continue
+            if (culprit.drop(body)) {
+              if (culprit.name !== 'max_tokens') unsent.push(culprit.name)
+              continue
+            }
           }
         }
         const code = response.status === 401 || response.status === 403 ? 'INVALID_CREDENTIAL' : response.status === 429 ? 'RATE_LIMIT' : response.status === 404 ? 'UNKNOWN_MODEL' : response.status >= 500 ? 'SERVER' : 'PROVIDER'
@@ -161,7 +166,8 @@ export async function completeDirect(route: ModelRoute & { baseURL: string }, re
         throw new LlmCallError(`${label}: ${message}`, code, Number.isFinite(after) && after > 0 ? { retryAfterMs: after * 1000 } : undefined)
       }
       if (response.body === null) throw new LlmCallError(`${label}: the endpoint answered without a body`, 'PROVIDER')
-      return await readStream(response.body, request, label, touch, idle.signal)
+      const result = await readStream(response.body, request, label, touch, idle.signal)
+      return unsent.length > 0 ? { ...result, unsent } : result
     } finally {
       clearTimeout(timer)
     }

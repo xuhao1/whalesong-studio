@@ -1,6 +1,6 @@
 {
   "name": "whalesong-studio",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Whalesong Studio (鲸歌工坊), a long-form fiction studio for DeepSeek Harness: a showrunner agent and a crew of role agents (continuity, planning, directing, post-production) on the Harness's own agent loop, a dedicated prose model, a story bible, ensemble cast tracking, illustrations, audio drama, motion comics, videos and playable interludes",
   "keywords": [
     "dsh-plugin",

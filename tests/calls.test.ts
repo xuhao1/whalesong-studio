@@ -59,6 +59,12 @@ describe('the record of calls', () => {
     // Only this chapter's, when asked for by chapter.
     expect((await core.calls.list(project, { chapter: plan.id })).calls).toHaveLength(1)
     expect((await core.calls.list(project, { chapter: 'ch_other' })).calls).toHaveLength(0)
+
+    // A model that refused the temperature was sent none: the record does not say it was.
+    llm.responder = () => ({ text: '雨停了。', finish: 'stop', unsent: ['temperature'] })
+    await writeAsJob(plan.id)
+    const refused = (await core.calls.list(project)).calls.find(call => call.id !== row.id)!
+    expect(refused.temperature).toBeUndefined()
   })
 
   it('keeps a stretch many calls send once, and lets it go with the last call that names it', async () => {

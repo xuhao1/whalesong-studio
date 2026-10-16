@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { JobManager } from '../src/core/jobs'
+import { LlmCallError } from '../src/core/llm'
 import { artPlan, batchFailures, batchSummary, runBatch, stageOverview, stageReadiness, textPlan, type BatchPlan, type BatchStep } from '../src/core/pipelines/batch'
 import type { BatchView } from '../src/shared/types'
 import { createTestBed, FakeImages, type TestBed } from './support/harness'
@@ -202,6 +203,41 @@ describe('batches of real work', () => {
       expect(rest.rows.map(row => row.id)).toEqual([ids[3]])
       await runBatch(rest, { origin: 'user' }, 'zh')
       expect(order).toEqual(['beats', 'write 4', 'digest'])
+    })
+
+    it('goes on writing when a chapter cannot be taken into memory: the next is written from its text', async () => {
+      const { project } = bed.runtime
+      for (let n = 1; n <= 3; n++) await project.addChapter({ title: `第${n}回`, synopsis: `第 ${n} 回的梗概。`, beats: [{ id: `b${n}`, summary: '开场' }] })
+      const order: string[] = []
+      bed.llm.responder = (request) => {
+        const all = `${request.system ?? ''}${request.stable ?? ''}${request.prompt}`
+        if (all.includes('只输出小说正文')) {
+          const n = /本章章纲[\s\S]*?第(\d)回/.exec(request.prompt)?.[1] ?? '?'
+          order.push(`write ${n}`)
+          return `第${n}回的正文写在这里。`.repeat(5)
+        }
+        order.push('digest')
+        // What the author met: the scribe's model refused every call.
+        throw new LlmCallError('openai-codex/gpt-6.1-sol: {"detail":"Unsupported parameter: temperature"}', 'PROVIDER')
+      }
+      const result = await runBatch(await textPlan(bed.core, bed.runtime, { steps: ['write', 'digest'], count: 3 }), { origin: 'user' }, 'zh')
+      // Each chapter still waits for the digest of the one before; none is kept from being written by it.
+      expect(order).toEqual(['write 1', 'digest', 'write 2', 'digest', 'write 3', 'digest'])
+      expect((await project.chapterInfos()).map(info => [info.hasText, info.digested])).toEqual([[true, false], [true, false], [true, false]])
+      expect(result.failed.map(failure => `${failure.label} ${failure.op}`)).toEqual(['第1章 第1回 digest', '第2章 第2回 digest', '第3章 第3回 digest'])
+      expect(result.batch.rows.map(row => row.steps.write!.state)).toEqual(['done', 'done', 'done'])
+      expect(result.batch.rows[0]!.steps.write!.note).not.toContain('没收录上')
+      expect(result.batch.rows[1]!.steps.write!.note).toContain('前一章没收录上，照它的正文写的')
+      const writes = bed.llm.requests.filter(request => (request.system ?? '').includes('只输出小说正文'))
+      expect(writes[2]!.stable).toContain('第2回的正文写在这里。')
+
+      // A chapter that could not be written still keeps the next from being written.
+      const more = await project.addChapter({ title: '第4回', synopsis: '第 4 回的梗概。' })
+      await project.addChapter({ title: '第5回', synopsis: '第 5 回的梗概。' })
+      bed.llm.responder = (request) => { if (`${request.system ?? ''}`.includes('只输出小说正文')) throw new LlmCallError('the writer is out', 'SERVER'); return JSON.stringify({ brief: '摘要', summary: '事。', characters: [], facts: [], newEntities: [], threads: [] }) }
+      const stopped = await runBatch(await textPlan(bed.core, bed.runtime, { steps: ['write', 'digest'], count: 2 }), { origin: 'user' }, 'zh')
+      expect(stopped.batch.rows[0]!.id).toBe(more.id)
+      expect(stopped.batch.rows.map(row => row.steps.write!.state)).toEqual(['failed', 'blocked'])
     })
 
     it('writes a run without taking memory when the digests are left out — one after the other, and in rounds', async () => {
