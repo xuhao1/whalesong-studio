@@ -95,6 +95,37 @@ interface Staged {
   sent: Set<string>
   /** The request under way: what it sent, and what has come back so far. */
   asking?: Asking
+  /** Ended well with a word that may follow: whoever ends the run leaves the agent alive, and the Studio keeps it. */
+  held?: boolean
+  /** Ends the run's agent for good. */
+  release?: () => Promise<void>
+  /**
+   * Started as an activation the Harness manages (DSH 0.2.1 and later). Its run goes by an id of its own — the Harness
+   * turns away a run named like a session it has — and the Studio lists the child under its parent itself.
+   */
+  managed?: boolean
+}
+
+/** DSH 0.2.1 and later start a child as an activation the Harness manages. */
+interface Activations {
+  startActivation(spec: {
+    provider: string
+    label: string
+    request: { parent: Agent; prompt: unknown[]; agentOptions?: Record<string, unknown> }
+    signal: AbortSignal
+    delivery: 'caller'
+  }): Promise<Activation>
+}
+
+interface Activation {
+  childId: string
+  result: Promise<SubagentResult>
+  dispose(): Promise<void>
+}
+
+/** DSH 0.2.0 starts one and hands the run to the caller. */
+interface OneShots {
+  start(name: string, request: { label: string; prompt: unknown[]; parent: Agent; signal: AbortSignal; agentOptions?: Record<string, unknown> }): Promise<SubagentRun>
 }
 
 /** One request of a run, from the moment it goes out. */
@@ -157,8 +188,8 @@ export function createRoleRunner(ctx: Context, options: {
   onStep?: (step: AgentStep) => void
 }): CrewRunner {
   const can = (route: ModelRoute): boolean => route.baseURL === undefined && route.provider.length > 0 && route.model.length > 0 && ctx.get('agents') !== undefined
-  /** Runs being started, by the signal each start was given: how a task reaches the provider through the Harness's own request. */
-  const staged = new WeakMap<AbortSignal, Staged>()
+  /** Runs being started, by the prompt each start was given: how a task reaches the provider through the Harness's own request. */
+  const staged = new WeakMap<object, Staged>()
   const live = new Set<string>()
 
   /** Everything that makes a child this role: called inside the creation window, before anything can see the agent. */
@@ -488,7 +519,7 @@ export function createRoleRunner(ctx: Context, options: {
   }
 
   /** The one-shot descriptor goes into the child's log inside its first turn, before its first request. */
-  const describe = (scope: Context, descriptor: ResolvedSubagentStartRequest['descriptor']): void => {
+  const describe = (scope: Context, descriptor: unknown): void => {
     let appended = false
     scope.on('agent/pre-step', async ({ agent }, next) => {
       const decision = await next()
@@ -500,14 +531,29 @@ export function createRoleRunner(ctx: Context, options: {
     })
   }
 
+  /**
+   * A child entered in its parent's catalog of children the way DSH 0.2.0 enters a one-shot run, which 0.2.1 still
+   * reads: listed under the conversation and opened from its header as before. 0.2.1 lists only the children it
+   * makes itself.
+   */
+  const enter = (parent: Agent, child: Agent, label: string): void => {
+    try {
+      parent.session.append('subagent/catalog', { version: 0, childId: child.id, childCreatedAt: child.session.header.createdAt, mode: 'one-shot', label } as never)
+    } catch (error) {
+      // Not listed under its conversation; the work goes on.
+      options.log(`could not list the ${label} agent under its conversation`, error)
+    }
+  }
+
   const provider: SubagentProvider = {
     name: CREW_PROVIDER,
     // The crew is started by the Studio, which composes each child itself: none of the tool-facing options apply.
-    capabilities: { agentOptions: true, outputSchema: false, depthLimit: true, toolFilter: false, persona: false },
+    // (DSH 0.2.0 asks about toolFilter and persona, 0.2.1 about agentPreset.)
+    capabilities: { agentOptions: true, agentPreset: false, outputSchema: false, depthLimit: true, toolFilter: false, persona: false } as SubagentProvider['capabilities'],
     inheritsParentContext: false,
 
     async start(request: ResolvedSubagentStartRequest): Promise<SubagentRun> {
-      const run = staged.get(request.signal)
+      const run = staged.get(request.prompt)
       if (run === undefined) throw new Error(`the "${CREW_PROVIDER}" provider runs the roles of Whalesong Studio, which starts them itself; delegate with the novel_crew tool instead`)
       if (request.signal.aborted) throw new Error('the role was cancelled before it started')
       const parent = request.parent
@@ -533,24 +579,33 @@ export function createRoleRunner(ctx: Context, options: {
           // Joins the parent's composition and states the delegation's fixed scope; the persona and the tools are the role's own, below.
           applyChildComposition(scope, parent, {})
           compose(scope, child, run)
-          describe(scope, request.descriptor)
+          // DSH 0.2.0 hands the provider the descriptor; 0.2.1 has none for a child the provider makes: the same record 0.2.0 wrote.
+          describe(scope, (request as { descriptor?: unknown }).descriptor ?? { version: 3, mode: 'one-shot', provider: CREW_PROVIDER, label: run.task.label })
         },
       })
       const child = handle.agent
       const result: Promise<SubagentResult> = (async () => {
         const stop = await drive(child, run, request.signal)
+        run.held = run.task.keep !== undefined && stop === 'completed' && !run.cancelled
         return { output: run.last.trim().length > 0 ? [{ type: 'text', text: run.last.trim() }] : [], stopReason: stop } as SubagentResult
       })()
+      const release = async (): Promise<void> => {
+        run.held = false
+        run.cancelled = true
+        const settled = await Promise.allSettled([handle.dispose(), result])
+        if (settled[0].status === 'rejected') throw settled[0].reason
+      }
+      run.release = release
       return {
-        id: child.id,
+        id: run.managed === true ? randomUUID() : child.id,
+        // DSH 0.2.0 lists the child under its parent by this; 0.2.1 does not read it.
         localAgent: child,
         result,
+        // Whoever ends the run leaves an agent kept for a word that may follow: the Studio lets it go itself.
         async dispose(): Promise<void> {
-          run.cancelled = true
-          const settled = await Promise.allSettled([handle.dispose(), result])
-          if (settled[0].status === 'rejected') throw settled[0].reason
+          if (run.held !== true) await release()
         },
-      }
+      } as SubagentRun
     },
   }
 
@@ -642,39 +697,63 @@ export function createRoleRunner(ctx: Context, options: {
       // A parent that is gone cannot take a child; the work is still done.
       if (parent === undefined || subagents === undefined || subagents.getProvider(CREW_PROVIDER) === undefined || ctx.get('agents')?.get(parent.id) !== parent) return await alone(task, run)
 
-      // The Harness's own request carries the task to the provider by the identity of this signal.
+      // The Harness's own request carries the task to the provider by the identity of its prompt.
+      const prompt = [...run.pictures, { type: 'text', text: task.prompt }]
+      staged.set(prompt, run)
+      const agentOptions = {
+        provider: route.provider,
+        model: route.model,
+        ...(route.reasoningEffort !== undefined && route.reasoningEffort.length > 0 ? { reasoningEffort: route.reasoningEffort } : {}),
+        ...(route.maxTokens !== undefined && route.maxTokens > 0 ? { maxTokens: route.maxTokens } : {}),
+      }
       const controller = new AbortController()
       const abort = (): void => { controller.abort(task.signal?.reason) }
       task.signal?.addEventListener('abort', abort, { once: true })
       if (task.signal?.aborted === true) abort()
-      staged.set(controller.signal, run)
+
+      if (typeof (subagents as Partial<Activations>).startActivation === 'function') {
+        // DSH 0.2.1 and later: the Harness manages the child's activation and hands its result to the Studio alone.
+        run.managed = true
+        let activation: Activation
+        try {
+          activation = await (subagents as unknown as Activations).startActivation({ provider: CREW_PROVIDER, label: task.label, request: { parent, prompt, agentOptions }, signal: controller.signal, delivery: 'caller' })
+        } catch (error) {
+          task.signal?.removeEventListener('abort', abort)
+          throw error
+        }
+        // Taken in: listed under its conversation, as DSH 0.2.0 lists it.
+        if (run.child !== undefined) enter(parent, run.child, task.label)
+        // Once started, the start signal no longer stops it: its activation does.
+        const end = (): void => { void activation.dispose().catch((error: unknown) => { options.log(`could not stop the ${task.role} agent`, error) }) }
+        task.signal?.removeEventListener('abort', abort)
+        task.signal?.addEventListener('abort', end, { once: true })
+        if (task.signal?.aborted === true) end()
+        try {
+          const result = await activation.result
+          return { text: run.last.trim(), stop: result.stopReason as RoleOutcome['stop'], steps: run.steps, session: run.child?.id ?? activation.childId, parent: parent.id }
+        } finally {
+          task.signal?.removeEventListener('abort', end)
+          // Kept for a word that may follow, where the task asks for it and the run ended well; else gone (the Harness has let it go already).
+          if (run.held === true && task.keep !== undefined && run.child !== undefined) keep(task.keep, { run, child: run.child, parent: parent.id, dispose: async () => { await run.release?.() } })
+          else await activation.dispose().catch((error: unknown) => { options.log(`could not dispose the ${task.role} agent`, error) })
+        }
+      }
+
+      // DSH 0.2.0: the Studio holds the run the provider hands back.
       let started: SubagentRun
       try {
-        started = await subagents.start(CREW_PROVIDER, {
-          label: task.label,
-          prompt: [...run.pictures, { type: 'text', text: task.prompt }] as never,
-          parent,
-          signal: controller.signal,
-          agentOptions: {
-            provider: route.provider,
-            model: route.model,
-            ...(route.reasoningEffort !== undefined && route.reasoningEffort.length > 0 ? { reasoningEffort: route.reasoningEffort as never } : {}),
-            ...(route.maxTokens !== undefined && route.maxTokens > 0 ? { maxTokens: route.maxTokens } : {}),
-          },
-        })
+        started = await (subagents as unknown as OneShots).start(CREW_PROVIDER, { label: task.label, prompt, parent, signal: controller.signal, agentOptions })
       } catch (error) {
         task.signal?.removeEventListener('abort', abort)
         throw error
       }
-      let stop: RoleOutcome['stop'] = 'error'
       try {
         const result = await started.result
-        stop = result.stopReason as RoleOutcome['stop']
-        return { text: run.last.trim(), stop, steps: run.steps, session: started.id, parent: parent.id }
+        return { text: run.last.trim(), stop: result.stopReason as RoleOutcome['stop'], steps: run.steps, session: started.id, parent: parent.id }
       } finally {
         task.signal?.removeEventListener('abort', abort)
         // Kept for a word that may follow, where the task asks for it and the run ended well; else gone.
-        if (task.keep !== undefined && stop === 'completed' && !run.cancelled && run.child !== undefined) keep(task.keep, { run, child: run.child, parent: parent.id, dispose: async () => { await started.dispose() } })
+        if (run.held === true && task.keep !== undefined && run.child !== undefined) keep(task.keep, { run, child: run.child, parent: parent.id, dispose: async () => { run.held = false; await started.dispose() } })
         else await started.dispose().catch((error: unknown) => { options.log(`could not dispose the ${task.role} agent`, error) })
       }
     },

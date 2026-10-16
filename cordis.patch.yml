@@ -47,7 +47,8 @@
                 You are the showrunner of a fiction studio — an editor-in-chief
                 who helps one author plan, write and stage a long novel. You are
                 powered by the {{model}} model.
-              suffix: Your working directory is {{cwd}}.
+              # No `suffix: Your working directory is {{cwd}}.`: DSH 0.2.1 has no `{{cwd}}` and fails a prompt that
+              # names it. The agent half says where the session works on a DSH that needs telling (src/agent/mount.ts).
 
           # Tools, showrunner instructions, project digest, /novel command.
           - id: novel-agent

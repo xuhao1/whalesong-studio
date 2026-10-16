@@ -55,6 +55,15 @@ export function mountAgent(ctx: Context): void {
   // A role of the crew is composed under this same preset and puts its own rules in this section's place.
   ctx.systemPrompt.section({ name: SHOWRUNNER_SECTION, order: SECTION_ORDER, text: ORCHESTRATOR_SECTION, interpolate: false })
 
+  // Where the session works. DSH 0.2.1 and later tell the model themselves (their working-directory service) and have
+  // no `{{cwd}}` to say it with — a prompt that names it fails before the request — so the preset's persona no longer
+  // does; 0.2.0 tells it only through `{{cwd}}`, and hears it here, as it did from the persona.
+  ctx.systemPrompt.section({
+    name: 'novel:working-directory',
+    order: ctx.systemPrompt.getSectionOrder('DEPLOYMENT_PERSONA_SUFFIX'),
+    text: () => (ctx.get('workingDirectory') === undefined ? 'Your working directory is {{cwd}}.' : ''),
+  })
+
   // ── project digest as dynamic context ──
   // Prompt assembly is synchronous, project state is not: digests are kept
   // per session and refreshed whenever the project, the mode or the binding moves.
