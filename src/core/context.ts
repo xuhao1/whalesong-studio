@@ -663,6 +663,17 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
     if (made !== undefined && take('intents', lineIntentsTitle(lang), made.text, share(0.08)) > 0) intent = made.records
   }
 
+  // The volume the chapter is in: what it is about and where it must leave the story — to steer by, not to write ahead.
+  // (A chapter of another line is in a volume only as far as where that line leaves the main one: none goes with it.)
+  if (current !== undefined && planned && current.line === undefined) {
+    const volume = current.volume
+    const told = [
+      (volume.synopsis?.trim() ?? '').length > 0 ? `${L(lang, '梗概', 'Synopsis')}${colon}${volume.synopsis!.trim()}` : '',
+      (volume.goal?.trim() ?? '').length > 0 ? `${L(lang, '要把故事带到哪里', 'Where it must leave the story')}${colon}${volume.goal!.trim()}` : '',
+    ].filter(line => line.length > 0)
+    if (told.length > 0) take('volume', L(lang, `本卷「${volume.title}」（这一章所在的卷：用来把握方向；本章之后的事不要提前写）`, `This volume, "${volume.title}" (the one the chapter is in: to steer by — what comes after this chapter is not written ahead)`), told.join('\n'), share(0.08))
+  }
+
   // Where the story goes next, so the writer does not pre-empt it — unless the text that follows already says so.
   if (current !== undefined && followingWhole.length === 0 && (options.purpose === 'draft' || options.purpose === 'continue')) {
     const next = path.find(chapter => chapter.index === current.index + 1)
@@ -708,8 +719,8 @@ export async function packContext(project: Project, index: RetrievalIndex, optio
   // Chosen: the brief first, then who and what, then the text to hold it against, then where it joins and how it is to
   // be written; by rule: as it always was. Either way the chapter's own plan is read last.
   const rest = render(free
-    ? ['asked', 'situation', 'keep', 'cast', 'gone', 'threads', 'lore', 'earlier', 'story', 'passages', 'gap', 'following', 'followingOutline', 'next', 'tail', 'form', 'voice', 'current', 'intent', 'plan']
-    : ['gap', 'following', 'followingOutline', 'cast', 'gone', 'threads', 'lore', 'passages', 'jottings', 'intents', 'next', 'tail', 'current', 'intent', 'plan'])
+    ? ['asked', 'situation', 'keep', 'cast', 'gone', 'threads', 'lore', 'earlier', 'story', 'passages', 'gap', 'following', 'followingOutline', 'volume', 'next', 'tail', 'form', 'voice', 'current', 'intent', 'plan']
+    : ['gap', 'following', 'followingOutline', 'cast', 'gone', 'threads', 'lore', 'passages', 'jottings', 'intents', 'volume', 'next', 'tail', 'current', 'intent', 'plan'])
   const text = [stable, rest].filter(part => part.length > 0).join('\n\n')
   const stableTokens = estimateTokens(stable)
   return {

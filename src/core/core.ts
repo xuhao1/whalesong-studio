@@ -21,6 +21,7 @@ import { meterEmbedder, meterImages, meterLlm, meterSpeech, UsageStore } from '.
 import { CallLog } from './calls'
 import { hostOf } from '../shared/services'
 import { estimateTokens } from '../shared/text'
+import { createListener, type Listener } from './media/listen'
 import { createTtsProvider, type TtsProvider } from './media/tts'
 import { createSoundProvider, soundSetup, type SoundProvider } from './media/sound'
 import { BOOK_ENTRIES, MANIFEST_FILE, Project, ProjectError, type CreateProjectInput } from './project'
@@ -1043,6 +1044,33 @@ export class NovelCore {
       gated.designVoice = request => through(() => design(request), request.signal !== undefined ? { signal: request.signal } : {})
     }
     return gated
+  }
+
+  /**
+   * The model that listens to takes for a book (`tts.listenModel`), when listening is on; its calls go into the ledger
+   * as text, under `listen`.
+   */
+  async speechListener(runtime?: ProjectRuntime): Promise<Listener | undefined> {
+    const settings = (await this.settingsOf(runtime)).tts
+    const listener = createListener(settings, this.credentials)
+    if (listener === undefined) return undefined
+    const tag = await this.bookTag(runtime)
+    return {
+      model: listener.model,
+      via: listener.via,
+      hear: async (request) => {
+        const hearing = await listener.hear(request)
+        if (hearing.usage !== undefined) this.usage.record({ kind: 'text', model: listener.model, via: listener.via, role: 'listen', input: hearing.usage.input, output: hearing.usage.output, ...(tag !== undefined ? { book: tag.root, bookTitle: tag.title } : {}) })
+        return hearing
+      },
+      ...(listener.hearReel !== undefined ? {
+        hearReel: async (request) => {
+          const hearing = await listener.hearReel!(request)
+          if (hearing.usage !== undefined) this.usage.record({ kind: 'text', model: listener.model, via: listener.via, role: 'listen', input: hearing.usage.input, output: hearing.usage.output, ...(tag !== undefined ? { book: tag.root, bookTitle: tag.title } : {}) })
+          return hearing
+        },
+      } : {}),
+    }
   }
 
   /** The model that makes effects, music and generated beds — by default the speech setup, when it can. */

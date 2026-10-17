@@ -229,7 +229,7 @@ On **Outline**, the chapters are on the left and the chosen chapter's plan on th
 
 ![Outline: chapters on the left, the plan on the right](./images/tutorial/en/11-outline.webp)
 
-Press **Derive** above the chapter list:
+Press **Derive the next chapters** above the chapter list (a line beside it says what it does):
 
 ![Derive the next chapters: how many, after which chapter, a direction](./images/tutorial/en/12-derive.webp)
 

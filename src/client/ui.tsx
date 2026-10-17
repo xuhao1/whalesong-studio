@@ -2,7 +2,7 @@
 /** Studio context, hooks and the small set of controls every view shares. */
 import {
   createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore,
-  type ButtonHTMLAttributes, type CSSProperties, type HTMLAttributes, type InputHTMLAttributes, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject, type TextareaHTMLAttributes,
+  type ButtonHTMLAttributes, type ChangeEvent, type CSSProperties, type HTMLAttributes, type InputHTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject, type TextareaHTMLAttributes,
 } from 'react'
 import { createPortal } from 'react-dom'
 import { linePath } from '../shared/lines'
@@ -232,8 +232,81 @@ export function Field({ label, hint, children, row }: { label: string; hint?: st
   )
 }
 
+/** Kinds of field kept a plain `<input>`: what they hold is short, or the browser does something for them only an input can. */
+const ONE_LINE_MODES = new Set(['numeric', 'decimal', 'tel'])
+
+/**
+ * A field of one line of text. Text longer than the field wraps and the field
+ * grows with it, so what was typed can be read whole; it is still one line —
+ * Enter makes no new line (it is the field's to act on, as an input's), and a
+ * line break pasted in becomes a space. Passwords, numbers and fields with a
+ * list to choose from stay inputs.
+ */
 export function TextInput({ className, ...rest }: InputHTMLAttributes<HTMLInputElement>) {
-  return <input {...rest} className={cx('nv-input', className)} />
+  if ((rest.type !== undefined && rest.type !== 'text') || rest.list !== undefined || (rest.inputMode !== undefined && ONE_LINE_MODES.has(rest.inputMode))) {
+    return <input {...rest} className={cx('nv-input', className)} />
+  }
+  return <WrappingLine {...rest} className={className} />
+}
+
+function WrappingLine({ className, type: _type, onChange, onKeyDown, ...rest }: InputHTMLAttributes<HTMLInputElement>) {
+  const ref = useRef<HTMLTextAreaElement>(null)
+  useFitHeight(ref, rest.value, 8)
+  const props = rest as unknown as TextareaHTMLAttributes<HTMLTextAreaElement>
+  return (
+    <textarea
+      {...props}
+      ref={ref}
+      rows={1}
+      className={cx('nv-input nv-input-wrap', className)}
+      onChange={(event) => {
+        const field = event.currentTarget
+        if (field.value.includes('\n')) {
+          const { selectionStart, selectionEnd } = field
+          field.value = field.value.replace(/\n/g, ' ')
+          field.setSelectionRange(selectionStart, selectionEnd)
+        }
+        onChange?.(event as unknown as ChangeEvent<HTMLInputElement>)
+      }}
+      onKeyDown={(event) => {
+        onKeyDown?.(event as unknown as ReactKeyboardEvent<HTMLInputElement>)
+        // (An IME confirming a word with Enter is left to the IME.)
+        if (event.key === 'Enter' && !event.nativeEvent.isComposing && event.keyCode !== 229) event.preventDefault()
+      }}
+    />
+  )
+}
+
+/** Keeps a textarea as tall as its text, up to `maxRows` lines; past that it scrolls. */
+function useFitHeight(ref: RefObject<HTMLTextAreaElement | null>, value: unknown, maxRows: number): void {
+  useLayoutEffect(() => {
+    const element = ref.current
+    if (element === null) return
+    const fit = (): void => {
+      // Nothing can be measured while the Studio is hidden (a background sidebar tab).
+      if (element.clientWidth === 0) return
+      element.style.height = 'auto'
+      const style = getComputedStyle(element)
+      const px = (name: string): number => parseFloat(style.getPropertyValue(name)) || 0
+      const frame = px('border-top-width') + px('border-bottom-width')
+      const most = maxRows * (px('line-height') || 20) + px('padding-top') + px('padding-bottom') + frame
+      const needed = element.scrollHeight + frame
+      element.style.height = `${Math.min(most, needed)}px`
+      element.style.overflowY = needed > most ? 'auto' : 'hidden'
+    }
+    fit()
+    // (A field nobody holds the value of grows as it is typed into.)
+    element.addEventListener('input', fit)
+    // Wrapping changes with the width, and with it the height the text needs.
+    let width = element.clientWidth
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(() => {
+      if (element.clientWidth === width) return
+      width = element.clientWidth
+      fit()
+    })
+    observer?.observe(element)
+    return () => { element.removeEventListener('input', fit); observer?.disconnect() }
+  }, [ref, value, maxRows])
 }
 
 /** A textarea that grows with its content up to `maxRows`. */

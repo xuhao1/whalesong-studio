@@ -1,14 +1,18 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 /**
- * Listening to what was synthesized, without ears: how loud a clip is, how
- * high the voice sits, how long it spoke. A generative speech model does not
- * always do what it was asked — a line can come back in another voice, cut
- * short, or much louder than its neighbours — and these few measurements are
- * what lets the pipeline notice, take the line again, and level what it keeps.
+ * What arithmetic can tell about a take: how loud it is and how long it spoke.
+ * A generative speech model does not always do what it was asked — a line can
+ * come back cut short, padded, silent, or much louder than its neighbours —
+ * and these few measurements let the pipeline notice, take the line again, and
+ * level what it keeps. Whether it is still the voice, whether the words are
+ * right, and how the line was played are heard by a model with ears
+ * (`listen.ts`): the pitch of a voice says nothing about either, and judging by
+ * it kept the calmest take of every angry line.
  *
  * Everything here is plain arithmetic on PCM samples; nothing is sent anywhere.
  */
 import type { TakeIssue } from '../../shared/types'
+import type { Hearing } from './listen'
 import type { PcmAudio } from './wav'
 
 export interface VoiceMeasure {
@@ -20,99 +24,40 @@ export interface VoiceMeasure {
   level: number
   /** Loudest sample, in dBFS. */
   peak: number
-  /** Median pitch in Hz, when enough of the clip is voiced to tell. */
-  pitch?: number
-  /** How much of the clip the pitch was read from, in seconds. */
-  voiced: number
 }
 
-/** Pitch is searched between these, which covers children to deep basses. */
-const PITCH_LOW = 60
-const PITCH_HIGH = 420
 /** Frames quieter than this are pauses, not speech (linear, full scale = 1). */
 const SPEECH_FLOOR = 0.01
-const ANALYSIS_RATE = 8000
 
-/** Box-filtered decimation to about 8 kHz, as floats in -1…1: pitch needs no more, and the search gets nine times cheaper. */
-function decimate(audio: PcmAudio): { samples: Float32Array; rate: number } {
-  const factor = Math.max(1, Math.round(audio.sampleRate / ANALYSIS_RATE))
-  const length = Math.floor(audio.pcm.length / factor)
-  const samples = new Float32Array(length)
-  for (let i = 0; i < length; i++) {
-    let sum = 0
-    for (let k = 0; k < factor; k++) sum += audio.pcm[i * factor + k]!
-    samples[i] = sum / factor / 32768
-  }
-  return { samples, rate: audio.sampleRate / factor }
-}
-
-/** Measure a clip: level, pitch and how much of it is speech. */
+/** Measure a clip: level, and how much of it is speech. */
 export function measure(audio: PcmAudio): VoiceMeasure {
-  const { samples, rate } = decimate(audio)
-  const frame = Math.floor(rate * 0.04)
-  const hop = Math.floor(rate * 0.01)
-  const minLag = Math.max(2, Math.floor(rate / PITCH_HIGH))
-  const maxLag = Math.min(frame - 2, Math.ceil(rate / PITCH_LOW))
-  const pitches: number[] = []
-  const correlation = new Float32Array(maxLag + 1)
+  const { pcm, sampleRate } = audio
+  const frame = Math.floor(sampleRate * 0.04)
+  const hop = Math.floor(sampleRate * 0.01)
   let speechFrames = 0
   let energy = 0
-  for (let at = 0; at + frame <= samples.length; at += hop) {
+  for (let at = 0; at + frame <= pcm.length; at += hop) {
     let sum = 0
-    for (let i = 0; i < frame; i++) sum += samples[at + i]! * samples[at + i]!
+    for (let i = 0; i < frame; i++) {
+      const value = pcm[at + i]! / 32768
+      sum += value * value
+    }
     if (Math.sqrt(sum / frame) < SPEECH_FLOOR) continue
     speechFrames += 1
     energy += sum / frame
-    let best = 0
-    for (let lag = minLag; lag <= maxLag; lag++) {
-      let cross = 0
-      let left = 0
-      let right = 0
-      for (let i = 0; i + lag < frame; i++) {
-        const a = samples[at + i]!
-        const b = samples[at + i + lag]!
-        cross += a * b
-        left += a * a
-        right += b * b
-      }
-      const value = cross / Math.sqrt(left * right + 1e-12)
-      correlation[lag] = value
-      if (value > best) best = value
-    }
-    if (best < 0.6) continue
-    // A periodic signal correlates at every multiple of its period: the first strong peak is the period itself.
-    for (let lag = minLag + 1; lag < maxLag; lag++) {
-      const value = correlation[lag]!
-      if (value >= best * 0.88 && value >= correlation[lag - 1]! && value >= correlation[lag + 1]!) {
-        // The peak lies between samples: fit a parabola through it and its neighbours.
-        const before = correlation[lag - 1]!
-        const after = correlation[lag + 1]!
-        const shift = before - 2 * value + after !== 0 ? 0.5 * (before - after) / (before - 2 * value + after) : 0
-        pitches.push(rate / (lag + shift))
-        break
-      }
-    }
   }
   let peak = 0
-  for (let i = 0; i < audio.pcm.length; i++) {
-    const value = Math.abs(audio.pcm[i]!)
+  for (let i = 0; i < pcm.length; i++) {
+    const value = Math.abs(pcm[i]!)
     if (value > peak) peak = value
   }
-  pitches.sort((left, right) => left - right)
-  const voiced = pitches.length * 0.01
   return {
-    seconds: audio.pcm.length / audio.sampleRate,
+    seconds: pcm.length / sampleRate,
     speech: speechFrames * 0.01,
     level: speechFrames > 0 ? 20 * Math.log10(Math.sqrt(energy / speechFrames) + 1e-9) : -120,
     peak: 20 * Math.log10(peak / 32768 + 1e-9),
-    // A syllable or two says more about its tone than about the speaker.
-    ...(voiced >= MIN_VOICED ? { pitch: pitches[Math.floor(pitches.length / 2)]! } : {}),
-    voiced,
   }
 }
-
-/** Seconds of voiced sound a clip needs before its pitch says anything about who is speaking. */
-export const MIN_VOICED = 0.25
 
 /** The level every line is brought to, and the ceiling its peaks are held under (dBFS). */
 export const TARGET_LEVEL = -20
@@ -148,22 +93,21 @@ export function speechUnits(text: string): number {
 
 export interface TakeVerdict {
   issues: TakeIssue[]
-  /** Pitch of this take over the pitch the voice is known by, when both could be read. */
-  ratio?: number
   /** Syllables per second. */
   pace: number
+  /** What the listener heard, when the take was heard. */
+  heard?: Hearing
 }
 
-/** A voice may sit this far from where it is known to sit before the take counts as someone else. */
-const DRIFT_LOW = 0.74
-const DRIFT_HIGH = 1.42
+/** A delivery heard at this or below went hardly further than talking: the line is played again. */
+export const FLAT_DELIVERY = 2
 
 /**
  * Judge a take against what it should be: the whole line (not a fragment, not
- * a ramble), audible, and — where the voice's usual pitch is known and the
- * take is long enough to tell — in that voice.
+ * a ramble), audible — and, where it was heard, the words of the line, in its
+ * voice, played as asked.
  */
-export function judge(measured: VoiceMeasure, text: string, print?: number): TakeVerdict {
+export function judge(measured: VoiceMeasure, text: string, heard?: Hearing): TakeVerdict {
   const units = speechUnits(text)
   const pace = measured.seconds > 0 ? units / measured.seconds : 0
   const issues: TakeIssue[] = []
@@ -172,18 +116,22 @@ export function judge(measured: VoiceMeasure, text: string, print?: number): Tak
   else if (units >= 6 && pace > (units >= 10 ? 8.5 : 9.5)) issues.push('short')
   // A line that takes several times as long as its words was padded with something that was not asked for.
   else if (units >= 4 && measured.seconds > 4 && pace < 0.9) issues.push('long')
-  const ratio = print !== undefined && print > 0 && measured.pitch !== undefined ? measured.pitch / print : undefined
-  if (ratio !== undefined && (ratio < DRIFT_LOW || ratio > DRIFT_HIGH)) issues.push('drift')
-  return { issues, ...(ratio !== undefined ? { ratio } : {}), pace }
+  if (heard?.misread !== undefined) issues.push('misread')
+  if (heard?.stranger === true) issues.push('drift')
+  if (heard?.delivery !== undefined && heard.delivery <= FLAT_DELIVERY) issues.push('flat')
+  return { issues, pace, ...(heard !== undefined ? { heard } : {}) }
 }
 
-/** How bad a verdict is; lower is better. A missing or cut line outweighs any drift in pitch. */
+/** How bad a verdict is; lower is better. A missing or cut line outweighs another voice, which outweighs a wrong word or a flat delivery. */
 export function badness(verdict: TakeVerdict): number {
   let score = 0
   if (verdict.issues.includes('silent')) score += 100
   if (verdict.issues.includes('short')) score += 50
+  if (verdict.issues.includes('drift')) score += 40
+  if (verdict.issues.includes('misread')) score += 25
   if (verdict.issues.includes('long')) score += 20
-  if (verdict.ratio !== undefined) score += Math.abs(Math.log2(verdict.ratio)) * 10
+  // Of takes that pass, the one played further toward what was asked; a take nobody heard ranks as a middling one.
+  score += (5 - (verdict.heard?.delivery ?? 3)) * 4
   return score
 }
 

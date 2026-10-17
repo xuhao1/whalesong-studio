@@ -66,11 +66,17 @@ export interface TtsProvider {
   /** Create a persistent custom voice from a description, when the provider can. */
   designVoice?(request: VoiceDesignRequest): Promise<{ voice: string; preview?: PcmAudio }>
   /**
-   * Set when voices are descriptions rather than ids: speak a neutral sample in
-   * the described voice. The caller keeps the clip and hands it back as
+   * Set when voices are descriptions rather than ids: speak a sample of the
+   * described voice. The caller keeps the clip and hands it back as
    * `reference`, which is what makes one description sound like one person.
+   * The model speaks every line in the register of the clip it imitates — a
+   * calm clip keeps a roar calm, however the line is directed — so the sample
+   * is a voice actor's reel: the same voice talking, shouting, hushed, laughing
+   * and near tears, and each line is free to be any of them. `reference` is a
+   * clip the voice already has (a designed voice's preview), to make the reel
+   * in that very voice; `take` asks again for one that did not pass.
    */
-  anchor?(voice: string, options: { language?: string; signal?: AbortSignal }): Promise<PcmAudio>
+  anchor?(voice: string, options: { language?: string; signal?: AbortSignal; reference?: PcmAudio; take?: number }): Promise<PcmAudio>
 }
 
 const DASHSCOPE_BASE = 'https://dashscope.aliyuncs.com'
@@ -279,18 +285,20 @@ export function splitForSpeech(text: string, limit = AUDIOGEN_CHUNK): string[] {
 /** The words that tell the audio model who speaks, how, and what — and that nothing else should be heard. */
 export function audioGenPrompt(input: { text: string; voice?: string; direction?: string; referenced: boolean; language?: string }): string {
   const zh = (input.language ?? 'zh').toLowerCase().startsWith('zh')
-  const direction = input.direction?.trim()
+  const direction = input.direction?.trim().replace(/[。.．；;，,\s]+$/u, '')
+  const asked = direction !== undefined && direction.length > 0
   // A description lifted from a character card often ends its own sentence; here it is part of one.
   const voice = input.voice?.trim().replace(/[。.．；;，,\s]+$/u, '')
   const described = voice !== undefined && voice.length > 0
   // A clip alone does not always hold on a short line: saying in words whose voice it is keeps a man from answering as a girl.
+  // How the line is said is the act itself, not a remark in brackets beside it: in brackets it was heard as talking.
   if (zh) {
     const who = input.referenced
       ? `@voice1${described ? `（同一个人：${voice!.replace(/^一位/, '')}）` : ''}`
       : described ? `一位${voice!.replace(/^一位/, '')}` : '一位声音自然的讲述者'
     return [
-      '安静的录音棚，只有人声，没有背景音乐、环境音和音效。',
-      `${who}${direction !== undefined && direction.length > 0 ? `（这一句：${direction}）` : ''}一字不差地说：`,
+      '录音棚里只录人声，不要背景音乐、环境音和音效。',
+      `${who}${asked ? `${input.referenced ? '' : '，'}这一句${direction}，` : ''}一字不差地说：`,
       `“${input.text}”`,
     ].join('\n')
   }
@@ -298,9 +306,40 @@ export function audioGenPrompt(input: { text: string; voice?: string; direction?
     ? `@voice1${described ? ` (the same person: ${voice})` : ''}`
     : described ? `A speaker with this voice — ${voice} —` : 'A natural-sounding narrator'
   return [
-    'A quiet recording booth: voice only, no music, no ambience, no sound effects.',
-    `${who}${direction !== undefined && direction.length > 0 ? ` (for this line: ${direction})` : ''} says, word for word:`,
+    'A recording booth, voice only: no music, no ambience, no sound effects.',
+    `${who}${asked ? ` says this line ${direction}, word for word:` : ' says, word for word:'}`,
     `"${input.text}"`,
+  ].join('\n')
+}
+
+/**
+ * The sample a described voice is known by: one voice, five ways of speaking, each played in full. A line imitating a
+ * clip takes its register from the clip; given the range, it takes the one its direction asks for.
+ */
+export function reelPrompt(input: { voice: string; referenced: boolean; language?: string }): string {
+  const zh = (input.language ?? 'zh').toLowerCase().startsWith('zh')
+  const voice = input.voice.trim().replace(/[。.．；;，,\s]+$/u, '')
+  if (zh) {
+    const who = input.referenced ? `@voice1${voice.length > 0 ? `（同一个人：${voice.replace(/^一位/, '')}）` : ''}` : `一位${voice.replace(/^一位/, '')}，`
+    return [
+      '录音棚里只录人声，不要背景音乐、环境音和音效。',
+      `${who}给导演录一段嗓子样本：同一副嗓子，五种说法，一句接一句，中间停顿一下。每一句都要演到位，差别要大。`,
+      '平常说话，不快不慢：“这是我平常说话的声音。”',
+      '火冒三丈，扯开嗓子用尽全力大吼：“你给我站住！听见没有！”',
+      '压低声音，几乎是耳语：“别出声，有人来了。”',
+      '忍不住放声大笑：“哈哈哈！好小子，有你的！”',
+      '声音发颤，带着哭腔：“我……我真的尽力了……”',
+    ].join('\n')
+  }
+  const who = input.referenced ? `@voice1${voice.length > 0 ? ` (the same person: ${voice})` : ''}` : `A speaker with this voice — ${voice} —`
+  return [
+    'A recording booth, voice only: no music, no ambience, no sound effects.',
+    `${who} records a sample for the director: the same voice, five ways of speaking, one after another with a short pause between. Play each one in full; make them very different.`,
+    'Talking as usual, not fast, not slow: "This is how I usually speak."',
+    'Furious, shouting at the top of the lungs: "Stop right there! Do you hear me?"',
+    'Hushed, almost a whisper: "Quiet. Someone\'s coming."',
+    'Bursting out laughing: "Ha ha ha! Well done, you rascal!"',
+    'Voice trembling, close to tears: "I… I really did my best…"',
   ].join('\n')
 }
 
@@ -353,14 +392,11 @@ class QwenAudioGenTts implements TtsProvider {
     return segments.length === 1 ? segments[0]!.audio : concatAudio(segments)
   }
 
-  async anchor(voice: string, options: { language?: string; signal?: AbortSignal }): Promise<PcmAudio> {
+  async anchor(voice: string, options: { language?: string; signal?: AbortSignal; reference?: PcmAudio; take?: number }): Promise<PcmAudio> {
     const apiKey = await requireKey(this.keys, { ref: this.settings.apiKeyRef, endpoint: this.base() }, 'Speech')
-    const zh = (options.language ?? 'zh').toLowerCase().startsWith('zh')
-    const sample = zh
-      ? '这是我平常说话的声音。不快，也不慢，每个字都说得清清楚楚，像是坐在你对面，把一件事慢慢讲给你听。'
-      : 'This is how I usually speak. Not fast, not slow, every word clear — as if I were sitting across from you, telling you something worth hearing.'
-    const seed = parseInt(hashText(voice).slice(0, 7), 16) % 2_000_000_000
-    return await this.generate(apiKey, audioGenPrompt({ text: sample, voice, referenced: false, ...(options.language !== undefined ? { language: options.language } : {}) }), undefined, seed, options.signal)
+    const seed = (parseInt(hashText(voice).slice(0, 7), 16) + (options.take ?? 0) * 7919) % 2_000_000_000
+    const prompt = reelPrompt({ voice, referenced: options.reference !== undefined, ...(options.language !== undefined ? { language: options.language } : {}) })
+    return await this.generate(apiKey, prompt, options.reference, seed, options.signal)
   }
 
   async designVoice(request: VoiceDesignRequest): Promise<{ voice: string; preview?: PcmAudio }> {

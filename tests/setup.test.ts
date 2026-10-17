@@ -339,14 +339,15 @@ describe('speech', () => {
 
   it('tells the audio model who speaks, how, and nothing else', () => {
     const described = audioGenPrompt({ text: '你来晚了。', voice: '清冷克制的年轻女声', direction: '压着火气', referenced: false, language: 'zh' })
-    expect(described).toContain('一位清冷克制的年轻女声（这一句：压着火气）一字不差地说：')
+    // How it is said is the act itself, not a remark in brackets beside it.
+    expect(described).toContain('一位清冷克制的年轻女声，这一句压着火气，一字不差地说：')
     expect(described).toContain('“你来晚了。”')
-    expect(described).toContain('没有背景音乐')
+    expect(described).toContain('不要背景音乐')
     // With a clip to imitate, the words still say whose voice it is: a clip alone does not hold on a short line.
     const referenced = audioGenPrompt({ text: '你来晚了。', voice: '清冷克制的年轻女声', referenced: true, language: 'zh' })
     expect(referenced).toContain('@voice1（同一个人：清冷克制的年轻女声）一字不差地说：')
     expect(audioGenPrompt({ text: 'You are late.', referenced: true, language: 'en' })).toContain('@voice1 says, word for word:')
-    expect(audioGenPrompt({ text: 'You are late.', voice: 'a dry, low voice', direction: 'tired', referenced: true, language: 'en' })).toContain('@voice1 (the same person: a dry, low voice) (for this line: tired) says, word for word:')
+    expect(audioGenPrompt({ text: 'You are late.', voice: 'a dry, low voice', direction: 'tired', referenced: true, language: 'en' })).toContain('@voice1 (the same person: a dry, low voice) says this line tired, word for word:')
   })
 
   it('casts by description where voices are words, and by catalog elsewhere', () => {

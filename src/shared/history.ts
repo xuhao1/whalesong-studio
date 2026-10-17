@@ -22,7 +22,7 @@ export const PICTURE_FIELDS: Partial<Record<HistoryKind, readonly string[]>> = {
   book: ['cover'],
   // What was spoken and drawn for a script's lines and a storyboard's panels are files made for them, as a card's
   // pictures are: a script put back keeps the takes of the lines it still has, a storyboard the pictures of its panels.
-  script: ['lines[].audio', 'lines[].duration', 'lines[].renderKey', 'lines[].error', 'lines[].takes', 'lines[].check', 'lines[].voiced', 'cues[].audio', 'cues[].duration', 'cues[].renderKey', 'cues[].error'],
+  script: ['lines[].audio', 'lines[].duration', 'lines[].renderKey', 'lines[].error', 'lines[].takes', 'lines[].check', 'lines[].heard', 'lines[].voiced', 'cues[].audio', 'cues[].duration', 'cues[].renderKey', 'cues[].error'],
   board: ['panels[].image', 'panels[].error'],
 }
 

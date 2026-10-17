@@ -721,7 +721,16 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
                 }}
               />
             </span>
-          ) : <h2 className="nv-write-title" title={t('双击改标题', 'Double-click to rename')} onDoubleClick={() => { setRenaming(chapter.title) }}><span className="nv-muted">{chapter.index}</span> {chapter.title}</h2>}
+          ) : (
+            <h2
+              className="nv-write-title is-renamable"
+              role="button"
+              tabIndex={0}
+              title={t('点一下改标题', 'Press to rename')}
+              onClick={() => { setRenaming(chapter.title) }}
+              onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setRenaming(chapter.title) } }}
+            ><span className="nv-muted">{chapter.index}</span> {chapter.title}</h2>
+          )}
           <Chip tone={CHAPTER_STATUS_TONE[chapter.status]}>{t(...CHAPTER_STATUS[chapter.status])}</Chip>
           {translated !== undefined ? <Chip tone="violet" title={t('这一章是译文；原文在“版本”里，章节菜单里可以恢复', 'This chapter is a translation; its original is among the versions, and the chapter menu puts it back')}>{translated.from !== undefined ? t(`译自${languageLabel(translated.from)}`, `From ${languageLabel(translated.from)}`) : t('译文', 'Translated')}</Chip> : null}
           <span className="nv-muted nv-small" title={chapter.budget !== undefined ? t(`建议字数 ${chapter.budget}`, `Suggested length ${chapter.budget}`) : t('没有设建议字数，由写手判断', 'No suggested length: the writer judges')}>{formatCount(words, locale)}{chapter.budget !== undefined ? ` / ${formatCount(chapter.budget, locale)}` : ''}{t(' 字', ' words')}</span>

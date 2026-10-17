@@ -740,6 +740,14 @@ export interface NovelRpc {
   'ai.beat': { params: { root: string; chapter: string; ask: string; beats?: string[]; after?: string }; result: JobStarted }
   /** Several chapters' plans set by their texts in one job. A plan already read from the text its chapter has is left alone unless `force`. */
   'ai.plansOfText': { params: { root: string; chapters: string[]; force?: boolean }; result: JobStarted }
+  /**
+   * A volume's synopsis written off its chapters — the written ones by their digests, the others by their outlines —
+   * and its goal filled where it has none. `apply: false` hands it back without changing the volume. The synopsis as
+   * it was stays in the volume's history.
+   */
+  'ai.volumeSynopsis': { params: { root: string; volume: string; apply?: boolean }; result: JobStarted }
+  /** The synopses of several volumes — the ones named, or every one — written off their chapters in one job. */
+  'ai.volumeSynopses': { params: { root: string; volumes?: string[] }; result: JobStarted }
   'ai.whatIf': { params: { root: string; question: string; branches?: number; /** Pictures the ways on are weighed with. */ guides?: PictureGuide[] }; result: JobStarted }
   /** Read the book and write down what it says — the passes of an import's analysis, on a book that has its chapters. Without `steps`: what an analysis that was cut short has left to do (all of it where none was started). */
   'ai.analyze': { params: { root: string; steps?: AnalyzeStep[] }; result: JobStarted }

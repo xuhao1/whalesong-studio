@@ -60,6 +60,8 @@ export function JobProgress({ job, synthesizing, sounding, onStop }: { job: JobI
   const left = done > 0 && total > done ? (elapsed / done) * (total - done) : undefined
   const percent = total > 0 ? Math.round((done / total) * 100) : undefined
   const retaken = typeof job.result?.retaken === 'number' ? job.result.retaken : 0
+  const heard = typeof job.result?.heard === 'number' ? job.result.heard : 0
+  const unheard = typeof job.result?.unheard === 'string' ? job.result.unheard : undefined
   return (
     <div className="nv-jobprogress" role="status">
       <div className="nv-jobprogress-head">
@@ -74,6 +76,7 @@ export function JobProgress({ job, synthesizing, sounding, onStop }: { job: JobI
         <span className="nv-muted nv-small">
           {t(`已用 ${formatDuration(elapsed)}`, `${formatDuration(elapsed)} elapsed`)}
           {left !== undefined ? t(` · 大约还要 ${formatDuration(left)}`, ` · about ${formatDuration(left)} left`) : ''}
+          {heard > 0 ? t(` · 听检 ${heard} 次`, ` · ${heard} takes heard`) : ''}
           {retaken > 0 ? t(` · ${retaken} 句重念过`, ` · ${retaken} retaken`) : ''}
         </span>
         <span className="nv-spacer" />
@@ -83,6 +86,7 @@ export function JobProgress({ job, synthesizing, sounding, onStop }: { job: JobI
       {job.thinking !== undefined ? <p className="nv-jobprogress-now">{t(`模型思考中（${job.thinking} 字）…`, `The model is thinking (${job.thinking} chars)…`)}</p> : job.progress?.label !== undefined && job.progress.label.length > 0 ? <p className="nv-jobprogress-now">{job.progress.label}</p> : null}
       {sounding === true ? <p className="nv-muted nv-small">{t('停止后已生成的会保留。', 'What is already generated is kept when you stop.')}</p> : null}
       {synthesizing ? <p className="nv-muted nv-small">{t('合成好的句子可以先听。停止后已合成的会保留。', 'Lines can be heard as they are done. What is already synthesised is kept when you stop.')}</p> : null}
+      {synthesizing && unheard !== undefined ? <p className="nv-note">{t(`听检停了，后面的句子只查时长和音量：${unheard}`, `Listening stopped; the rest is checked for length and loudness only: ${unheard}`)}</p> : null}
     </div>
   )
 }
@@ -93,6 +97,16 @@ export interface ScriptView {
   cast?: { characters: Record<string, string>; extras: Record<string, string> }
   /** What can make sound for this book; absent when nothing can (or on a Host from before there was sound). */
   sound?: { model: string; shared: boolean; beds: 'generate' | 'browser' }
+}
+
+/** What the model that listens heard in a line's kept take, in a sentence or two; undefined when it was not heard. */
+function heardSays(line: AudioLine, t: Translate): string | undefined {
+  const heard = line.heard
+  if (heard === undefined) return undefined
+  return [
+    heard.note !== undefined ? t(`听检（${heard.by}）：${heard.note}`, `Heard by ${heard.by}: ${heard.note}`) : t(`听检过（${heard.by}）`, `Heard by ${heard.by}`),
+    heard.misread !== undefined ? t(`念错：${heard.misread}`, `Misread: ${heard.misread}`) : undefined,
+  ].filter((part): part is string => part !== undefined).join('\n')
 }
 
 const kindOf = (cue: AudioCue): SoundKind => cue.kind ?? 'bed'
@@ -380,8 +394,8 @@ export function ScriptTable({ chapter, lines, cues, state, player, job, sound, o
                         ? <span className="nv-line-busy"><Spinner size={11} /> {t('合成中', 'voicing')}</span>
                         : line.error !== undefined ? <Chip tone="red" title={line.error}>{t('合成失败', 'failed')}</Chip>
                           : queued.has(line.id) ? <span className="nv-muted nv-small">{t('排队中', 'queued')}</span>
-                            : line.audio !== undefined ? <span className="nv-muted nv-small">{formatDuration(line.duration ?? 0)}{line.takes !== undefined ? t(` · 念了 ${line.takes} 次`, ` · ${line.takes} takes`) : ''}</span> : null}
-                    {tools && !skipped && !inBooth.has(line.id) && line.check !== undefined ? line.check.map(issue => <Chip key={issue} tone="amber" title={t(TAKE_ISSUE_HINT[issue][0], TAKE_ISSUE_HINT[issue][1])}>{t(...TAKE_ISSUE[issue])}</Chip>) : null}
+                            : line.audio !== undefined ? <span className="nv-muted nv-small" title={heardSays(line, t)}>{formatDuration(line.duration ?? 0)}{line.takes !== undefined ? t(` · 念了 ${line.takes} 次`, ` · ${line.takes} takes`) : ''}{line.heard?.delivery !== undefined ? t(` · 语气 ${line.heard.delivery}/5`, ` · delivery ${line.heard.delivery}/5`) : ''}</span> : null}
+                    {tools && !skipped && !inBooth.has(line.id) && line.check !== undefined ? line.check.map(issue => <Chip key={issue} tone="amber" title={[t(TAKE_ISSUE_HINT[issue][0], TAKE_ISSUE_HINT[issue][1]), heardSays(line, t)].filter(Boolean).join('\n')}>{t(...TAKE_ISSUE[issue])}</Chip>) : null}
                   </div>
                   <p>{line.text}</p>
                 </div>

@@ -38,6 +38,8 @@ const ROLE: Record<string, [string, string]> = {
   other: ['其他文本调用', 'Other text calls'],
   image: ['绘图', 'Pictures'],
   speech: ['配音', 'Speech'],
+  listen: ['配音听检', 'Listening to takes'],
+  vision: ['看图', 'Looking at pictures'],
   embedding: ['语义检索', 'Retrieval'],
 }
 

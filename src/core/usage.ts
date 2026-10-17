@@ -149,7 +149,7 @@ function addTo(row: UsageRow, event: UsageEvent, cost: number | undefined, curre
   else row.cost.push({ currency, amount: cost })
 }
 
-const ROLE_ORDER: string[] = ['writer', 'architect', 'analyst', 'director', 'image', 'speech', 'embedding']
+const ROLE_ORDER: string[] = ['writer', 'architect', 'analyst', 'director', 'image', 'speech', 'listen', 'embedding']
 
 /**
  * Add a ledger up: in total, by model, by role, by book and by day.

@@ -12,7 +12,7 @@
 import { useState, type ReactNode } from 'react'
 import type { OutlineOpInput } from '../shared/rpc'
 import { formatCount } from '../shared/text'
-import { MAIN_LINE, type ChapterInfo, type ChapterPlan, type PlotLine, type Volume } from '../shared/types'
+import { MAIN_LINE, type ChapterInfo, type ChapterPlan, type PlotLine, type Volume, type VolumeSynopses, type VolumeSynopsisResult } from '../shared/types'
 import { HistoryButton } from './History'
 import { Icon } from './icons'
 import { CHAPTER_STATUS, CHAPTER_STATUS_TONE } from './labels'
@@ -128,6 +128,34 @@ export function ChapterTree({ active, onOpen, onLine, tools, note, footer, compa
         same > 0 ? t(`${same} 章已经是照现在的正文读的，没有重读`, `${same} already stood by the text as it is`) : undefined,
         failed > 0 ? t(`${failed} 章没读成，原因见“任务”`, `${failed} failed — see Tasks`) : undefined,
       ].filter((part): part is string => part !== undefined).join(t('；', '; ')) + t('。原来的在各章章纲的历史版本里。', '. What was there is in each plan\'s history.'), 9000)
+      await controller.refreshProject()
+    })
+  }
+
+  // ── a volume's synopsis, written off its chapters: one volume, or every one ──
+  // (Shown in two lines under the volume's name; pressed, whole.)
+  const [openVolumes, setOpenVolumes] = useState<Set<string>>(new Set())
+  const toggleVolume = (id: string): void => { setOpenVolumes((open) => { const next = new Set(open); if (!next.delete(id)) next.add(id); return next }) }
+  const writingVolume = (id?: string): boolean => jobs.some(job => job.status === 'running' && job.kind === 'derive' && (job.title === 'volume synopses' || (job.title === 'volume synopsis' && (id === undefined || job.target === id))))
+  const volumeSynopsis = (volume: Volume | undefined): void => {
+    void controller.guard(async () => {
+      if (volume !== undefined) {
+        const done = await controller.run('ai.volumeSynopsis', { root, volume: volume.id })
+        const read = done.result?.output as VolumeSynopsisResult | undefined
+        if (read !== undefined) controller.toast('success', volumeSaid(read, t), 12000)
+        setOpenVolumes(open => new Set(open).add(volume.id))
+      } else {
+        const done = await controller.run('ai.volumeSynopses', { root })
+        const all = done.result?.output as VolumeSynopses | undefined
+        if (all !== undefined) {
+          controller.toast(all.failed.length > 0 ? 'info' : 'success', [
+            t(`${all.read.length} 卷的梗概照各章写好了`, `${all.read.length} volume synopsis(es) written off their chapters`),
+            ...all.skipped.map(item => t(`「${item.title}」跳过了：${item.why}`, `"${item.title}" passed over: ${item.why}`)),
+            ...all.failed.map(item => t(`「${item.title}」没写成：${item.error}`, `"${item.title}" failed: ${item.error}`)),
+          ].join(t('；', '; ')) + t('。原来的在各卷的历史版本里。', '. What was there is in each volume\'s history.'), 12000)
+          setOpenVolumes(new Set(all.read.map(read => read.volumeId)))
+        }
+      }
       await controller.refreshProject()
     })
   }
@@ -288,7 +316,13 @@ export function ChapterTree({ active, onOpen, onLine, tools, note, footer, compa
             <header className="nv-volume-head">
               <div className="nv-volume-title">
                 <strong>{volume.title}</strong>
-                {volume.synopsis !== undefined ? <span className="nv-list-meta">{volume.synopsis}</span> : null}
+                {volume.synopsis !== undefined ? (
+                  <button type="button" className={cx('nv-volume-synopsis', openVolumes.has(volume.id) && 'is-open')} aria-expanded={openVolumes.has(volume.id)} onClick={() => { toggleVolume(volume.id) }} title={openVolumes.has(volume.id) ? t('收起', 'Fold it') : t('卷梗概：点一下看全文', 'The volume\'s synopsis: press to read it whole')}>
+                    {volume.synopsis}
+                    {openVolumes.has(volume.id) && volume.goal !== undefined ? <span className="nv-volume-goal">{t('本卷要把故事带到哪里：', 'Where it must leave the story: ')}{volume.goal}</span> : null}
+                  </button>
+                ) : <span className="nv-list-meta">{t('（还没有卷梗概）', '(no synopsis yet)')}</span>}
+                {writingVolume(volume.id) ? <span className="nv-list-meta nv-volume-busy"><Spinner size={10} />{t('场记在照各章写卷梗概…', 'Writing the synopsis off its chapters…')}</span> : null}
               </div>
               <HistoryButton kind="volume" id={volume.id} name={volume.title} />
               <Menu
@@ -297,6 +331,8 @@ export function ChapterTree({ active, onOpen, onLine, tools, note, footer, compa
                 items={[
                   { label: t('编辑分卷', 'Edit volume'), icon: 'pen', onSelect: () => { setEditingVolume(volume) } },
                   { label: t('添加章节', 'Add chapter'), icon: 'plus', onSelect: () => { addChapter(volume) } },
+                  { label: volume.synopsis !== undefined ? t('照各章更新卷梗概', 'Synopsis anew from its chapters') : t('照各章写卷梗概', 'Synopsis from its chapters'), icon: 'refresh', disabled: volume.chapters.length === 0 || writingVolume(), onSelect: () => { volumeSynopsis(volume) } },
+                  ...(project.outline.volumes.length > 1 ? [{ label: t('所有卷都照各章更新梗概', 'Every volume\'s synopsis from its chapters'), icon: 'refresh' as const, disabled: writingVolume(), onSelect: () => { volumeSynopsis(undefined) } }] : []),
                   { label: t('上移', 'Move up'), icon: 'arrowUp', disabled: volumeIndex === 0, onSelect: () => { void run(async () => { await apply([{ op: 'move-volume', volume: volume.id, before: project.outline.volumes[volumeIndex - 1]!.id }]) }) } },
                   { label: t('下移', 'Move down'), icon: 'arrowDown', disabled: volumeIndex === project.outline.volumes.length - 1, onSelect: () => {
                     const after = project.outline.volumes[volumeIndex + 2]
@@ -364,11 +400,34 @@ export function ChapterTree({ active, onOpen, onLine, tools, note, footer, compa
 
 function VolumeEditor({ volume, onClose }: { volume: Volume | undefined; onClose: () => void }) {
   const t = useT()
+  const { controller } = useStudio()
+  const { root } = useProject()
   const apply = useOutlineOps()
   const { busy, run } = useAction()
   const [title, setTitle] = useState(volume?.title ?? '')
   const [synopsis, setSynopsis] = useState(volume?.synopsis ?? '')
   const [goal, setGoal] = useState(volume?.goal ?? '')
+  // A synopsis written off the chapters, put in the field for the author to read and change before it is saved.
+  const [drafting, setDrafting] = useState(false)
+  // A click beside the dialog does not throw away what is not saved — above all a draft a model was paid to write.
+  const confirm = useConfirm()
+  const dirty = title !== (volume?.title ?? '') || synopsis !== (volume?.synopsis ?? '') || goal !== (volume?.goal ?? '')
+  const close = (): void => {
+    if (dirty || drafting) confirm.ask(drafting ? t('场记还在照各章写，关掉就看不到它写的了。关掉吗？', 'The synopsis is still being written; closed, it will not be shown. Close?') : t('还有没保存的修改，关掉就不要了。关掉吗？', 'There are edits not saved; closed, they are gone. Close?'), onClose)
+    else onClose()
+  }
+  const draft = (): void => {
+    if (volume === undefined) return
+    setDrafting(true)
+    void controller.guard(async () => {
+      const done = await controller.run('ai.volumeSynopsis', { root, volume: volume.id, apply: false })
+      const read = done.result?.output as VolumeSynopsisResult | undefined
+      if (read === undefined) return
+      setSynopsis(read.synopsis)
+      if (goal.trim().length === 0 && read.goal !== undefined) setGoal(read.goal)
+      controller.toast('success', `${volumeSaid(read, t)}${t('还没有保存：看过、改好再点“保存”。', ' Not saved yet: read it, change what you like, then Save.')}`, 12000)
+    }).finally(() => { setDrafting(false) })
+  }
   const save = (): Promise<unknown> => run(async () => {
     await apply([volume === undefined
       ? { op: 'add-volume', title, synopsis, goal }
@@ -376,10 +435,32 @@ function VolumeEditor({ volume, onClose }: { volume: Volume | undefined; onClose
     onClose()
   })
   return (
-    <Modal title={volume === undefined ? t('添加分卷', 'Add volume') : t('编辑分卷', 'Edit volume')} onClose={onClose} footer={<Button variant="primary" busy={busy} disabled={title.trim().length === 0} onClick={save}>{t('保存', 'Save')}</Button>}>
+    <Modal title={volume === undefined ? t('添加分卷', 'Add volume') : t('编辑分卷', 'Edit volume')} onClose={close} footer={<Button variant="primary" busy={busy} disabled={title.trim().length === 0} onClick={save}>{t('保存', 'Save')}</Button>}>
       <Field label={t('卷名', 'Title')}><TextInput autoFocus value={title} onChange={(event) => { setTitle(event.target.value) }} /></Field>
       <Field label={t('本卷梗概', 'Synopsis')}><TextArea value={synopsis} minRows={3} onChange={(event) => { setSynopsis(event.target.value) }} /></Field>
+      {volume !== undefined ? (
+        <div className="nv-row">
+          <Button size="sm" variant="outline" icon="refresh" busy={drafting} pending={t('场记在照各章写…', 'Writing it off the chapters…')} disabled={volume.chapters.length === 0} onClick={draft} title={volume.chapters.length === 0 ? t('这一卷还没有章节', 'This volume has no chapters yet') : t('写了的章节照收录的摘要、没写的照章纲，写一份卷梗概放进上面的框里；保存之前不改分卷', 'The written chapters by their digests, the others by their outlines: a synopsis put in the field above; the volume is not changed until you save')}>{t('照各章写一份', 'Write one from the chapters')}</Button>
+        </div>
+      ) : null}
       <Field label={t('本卷要把故事带到哪里', 'Where this volume must leave the story')}><TextArea value={goal} minRows={2} onChange={(event) => { setGoal(event.target.value) }} /></Field>
+      {confirm.element}
     </Modal>
   )
+}
+
+/** What a volume's synopsis written off its chapters came to, in a sentence or two. */
+function volumeSaid(read: VolumeSynopsisResult, t: (zh: string, en: string) => string): string {
+  const by = [
+    read.digested > 0 ? t(`${read.digested} 章照收录的摘要`, `${read.digested} by their digests`) : undefined,
+    read.planned > 0 ? t(`${read.planned} 章照章纲`, `${read.planned} by their outlines`) : undefined,
+    read.blank > 0 ? t(`${read.blank} 章什么也没有（没收录，章纲里也没有梗概）`, `${read.blank} with nothing to go by (not digested, no synopsis in the outline)`) : undefined,
+  ].filter((part): part is string => part !== undefined).join(t('、', ', '))
+  return [
+    t(`「${read.title}」的卷梗概照各章${read.applied ? '写好了' : '写了一份'}：共 ${read.chapters} 章，${by}。`, `"${read.title}": a synopsis ${read.applied ? 'written' : 'drafted'} off its ${read.chapters} chapter(s) — ${by}.`),
+    read.stale > 0 ? t(`其中 ${read.stale} 章的记忆是正文改动之前收的。`, ` ${read.stale} of those digests are of a text changed since.`) : undefined,
+    read.told === 'arcs' ? t('这一卷很长：按十章一段的阶段梗概交给场记。', ' A long volume: it went ten chapters at a time.') : read.told === 'briefs' ? t('这一卷很长：每章一句话交给场记。', ' A long volume: it went a line a chapter.') : read.told === 'clipped' ? t('这一卷太长，模型读不下，后面截掉了一部分。', ' Too long for the model: the end of it was cut.') : undefined,
+    read.goalSet ? t(`“本卷要把故事带到哪里”原来是空的，${read.applied ? '也填上了' : '也写了一句'}。`, ` Its goal was empty and ${read.applied ? 'is filled now' : 'has a line too'}.`) : undefined,
+    read.applied ? t('原来的在分卷的历史版本里。', ' What was there is in the volume\'s history.') : undefined,
+  ].filter((part): part is string => part !== undefined).join('')
 }

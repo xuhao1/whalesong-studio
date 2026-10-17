@@ -19,7 +19,7 @@ import type { Project } from '../project'
 import { ProjectError } from '../project'
 import { directorSystem, directorTask, novelizeSystem } from '../prompts'
 import { L, promptLanguage, renderStyle, withStyleExtra } from '../render'
-import { AMBIENCE, openCast, requireSpeech, retakesOf, speakChecked, speechRequest, voiceBank, voiceFor } from './audio'
+import { AMBIENCE, earsFor, openCast, requireSpeech, retakesOf, speakChecked, speechRequest, voiceBank, voiceFor } from './audio'
 import { scheduleDigest } from './digest'
 import { artDirectionOf, illustrate, renderImage } from './illustrate'
 import { cleanProse } from './write'
@@ -251,9 +251,10 @@ export async function voicePlayLine(core: NovelCore, runtime: ProjectRuntime, pa
   const key = hashText([settings.provider, choice.voice ?? '', choice.direction ?? '', text].join('|')).slice(0, 10)
   const relative = `audio/play/${session.id}/${key}.wav`
   if (!(await project.has(`assets/${relative}`))) {
-    const reference = voiceBank(core, runtime, provider, settings, manifest.language, task.signal, undefined, cast)
+    const ears = await earsFor(core, runtime)
+    const reference = voiceBank(core, runtime, provider, settings, manifest.language, task.signal, undefined, ears)
     // A turn is waited for: one retake at most.
-    const take = await speakChecked(provider, await speechRequest(choice, text, manifest.language, reference, task.signal), { print: cast.print(choice), retakes: Math.min(1, retakesOf(settings)) })
+    const take = await speakChecked(provider, await speechRequest(choice, text, manifest.language, reference, task.signal), { ears, retakes: Math.min(1, retakesOf(settings)) })
     await project.writeAsset(relative, encodeWav(take.audio))
   }
   await cast.save().catch(() => {})

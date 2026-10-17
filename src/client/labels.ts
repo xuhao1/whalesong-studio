@@ -144,14 +144,18 @@ export const TAKE_ISSUE: Record<TakeIssue, Label> = {
   silent: ['没有声音', 'Silent'],
   short: ['可能没念完', 'May be cut short'],
   long: ['念得过长', 'Runs long'],
-  drift: ['声线有偏差', 'Voice drifts'],
+  drift: ['不像这个声音', 'Not this voice'],
+  misread: ['念错了字', 'Misread'],
+  flat: ['语气不到位', 'Flat delivery'],
 }
 
 export const TAKE_ISSUE_HINT: Record<TakeIssue, Label> = {
   silent: ['这一句几乎没有声音。', 'This line is all but silent.'],
   short: ['音频比这句话该有的长度短得多，多半只念了一部分。', 'The audio is far shorter than the line needs; most likely only part of it was spoken.'],
   long: ['音频比这句话该有的长度长得多，可能念了多余的内容。', 'The audio is far longer than the line needs; something extra may have been spoken.'],
-  drift: ['音高和这个声音平时差得远，听起来可能不像同一个人。', 'The pitch sits far from where this voice usually does; it may not sound like the same person.'],
+  drift: ['听检的模型听着不像这个声音的样本，可能换了个人。', 'The listening model heard another voice than this voice\'s sample.'],
+  misread: ['听检的模型听出有字念错、漏了或多念了。', 'The listening model heard words misread, left out or added.'],
+  flat: ['导演要的语气没有演出来：听检的模型听着和平常说话差不多。', 'The delivery the director asked for did not come through: the listening model heard hardly more than talking.'],
 }
 
 /**
@@ -258,6 +262,8 @@ const JOB_TITLES: [RegExp, Label][] = [
   [/^review by lead$/, ['审校和修订', 'Review and revision']],
   [/^plans follow text$/, ['章纲跟上正文', 'Plans catching up with their texts']],
   [/^plans of text$/, ['照正文更新章纲', 'Setting plans by their texts']],
+  [/^volume synopsis$/, ['照各章写卷梗概', 'Writing a volume\'s synopsis']],
+  [/^volume synopses$/, ['照各章写各卷梗概', 'Writing the volumes\' synopses']],
   [/^read the references for a chapter$/, ['查参考文献', 'Reading the references']],
   [/^what-if$/, ['推演"如果"', 'Exploring a what-if']],
   [/^foundation$/, ['起草设定与开篇大纲', 'Drafting the bible and outline']],
@@ -332,11 +338,14 @@ export function jobTitle(job: Pick<JobInfo, 'title' | 'kind'>): Label {
 }
 
 /** What a job is about: a chapter by its number and title, a character or an entry by name. */
-export function jobTarget(job: Pick<JobInfo, 'target'>, project: Pick<ProjectState, 'chapters' | 'characters' | 'world'> | undefined, zh: boolean): string | undefined {
+export function jobTarget(job: Pick<JobInfo, 'target' | 'title'>, project: Pick<ProjectState, 'chapters' | 'characters' | 'world' | 'outline'> | undefined, zh: boolean): string | undefined {
   const ref = job.target
   if (ref === undefined || ref.length === 0) return undefined
   const chapter = project?.chapters.find(item => item.id === ref)
   if (chapter !== undefined) return zh ? `第 ${chapter.index} 章《${chapter.title}》` : `chapter ${chapter.index}, "${chapter.title}"`
+  // A volume, by its name (its id says nothing): only where the job is about one — a chapter's id may look the same.
+  const volume = /^volume /.test(job.title) ? project?.outline.volumes.find(item => item.id === ref || item.title === ref) : undefined
+  if (volume !== undefined) return zh ? `「${volume.title}」` : `"${volume.title}"`
   return project?.characters.find(item => item.id === ref)?.name ?? project?.world.find(item => item.id === ref)?.name ?? (/^(play_|job_)/.test(ref) ? undefined : ref)
 }
 

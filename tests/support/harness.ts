@@ -126,6 +126,8 @@ export async function createTestBed(options: { settings?: Partial<NovelSettings>
   await mkdir(join(dir, 'trash'))
   const core = new NovelCore({ llm, roles, credentials: namedKeySource(() => options.key), settings, usage, trash: { files: join(dir, 'trash') }, holding: join(dir, 'holding'), ...(options.bridges !== undefined ? { bridges: options.bridges } : {}) })
   await core.ready()
+  // Takes are not heard by a real model in a test: a test about listening hands in its own listener.
+  core.speechListener = async () => undefined
   const runtime = await core.create(join(dir, 'book'), { title: options.title ?? '测试之书', language: options.language ?? 'zh' })
   return {
     dir,

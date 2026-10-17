@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 /** Audio drama: the script that is directed, the voices that are cast, and the takes that are listened to. */
 import { readFile } from 'node:fs/promises'
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { completeJson, LlmCallError } from '../src/core/llm'
-import type { TtsProvider, TtsRequest, TtsResult } from '../src/core/media/tts'
+import { namedKeySource, ProviderError } from '../src/core/media/http'
+import { createListener, hearingPrompt, listenModelOf, OmniListener, readHearing, readReelHearing, reelHearingPrompt, reelPasses, type Hearing, type HearingRequest, type Listener, type ReelHearing, type ReelRequest } from '../src/core/media/listen'
+import { audioGenPrompt, reelPrompt, type TtsProvider, type TtsRequest, type TtsResult } from '../src/core/media/tts'
 import { judge, leveled, measure, soundSpans, speechUnits, TARGET_LEVEL } from '../src/core/media/voiceprint'
 import { encodeWav, parseWav, type PcmAudio } from '../src/core/media/wav'
-import { audition, buildAudioScript, fallbackLines, isSkipped, isSpeechTag, openCast, playable, previewVoices, reshapeAudioScript, speakChecked, speakerCard, synthesizeChapter, TAKE_UNITS, tidyLines, voiceFor } from '../src/core/pipelines/audio'
+import { audition, buildAudioScript, fallbackLines, isSkipped, isSpeechTag, playable, previewVoices, reelPath, reshapeAudioScript, speakChecked, speakerCard, synthesizeChapter, TAKE_UNITS, tidyLines, voiceFor, type Ears } from '../src/core/pipelines/audio'
 import type { AudioLine, CharacterCard, TtsSettings } from '../src/shared/types'
 import { createTestBed, FakeLlm, type TestBed } from './support/harness'
 
@@ -51,16 +55,28 @@ class FakeSpeech implements TtsProvider {
 
 const natural = (text: string): number => Math.max(0.4, speechUnits(text) * 0.21)
 
+/** A listener that hears what the test says it hears, and remembers what it was asked. */
+class FakeListener implements Listener {
+  readonly model = 'omni-test'
+  readonly via = 'listen.test'
+  readonly requests: HearingRequest[] = []
+  constructor(private readonly verdict: (request: HearingRequest, index: number) => Hearing) {}
+  async hear(request: HearingRequest): Promise<Hearing> {
+    this.requests.push(request)
+    return this.verdict(request, this.requests.length - 1)
+  }
+}
+
+const earsOf = (listener: Listener): Ears => ({ listener, heard: 0, missed: 0 })
+
 describe('listening without ears', () => {
-  it('reads the pitch and level of a clip', () => {
+  it('reads the level of a clip and how much of it is speech', () => {
     for (const pitch of [95, 120, 210, 300]) {
       const measured = measure(voice(pitch, 1.5))
-      expect(measured.pitch).toBeDefined()
-      expect(Math.abs(measured.pitch! / pitch - 1)).toBeLessThan(0.04)
       expect(measured.speech).toBeGreaterThan(1.3)
+      expect(measured.seconds).toBeCloseTo(1.5, 2)
     }
-    // A syllable says more about its tone than about the speaker: too short to read a pitch from.
-    expect(measure(voice(120, 0.15)).pitch).toBeUndefined()
+    expect(measure(join(silence(1), voice(120, 0.5))).speech).toBeLessThan(0.6)
     expect(measure(silence(1)).level).toBeLessThan(-80)
   })
 
@@ -76,18 +92,41 @@ describe('listening without ears', () => {
     expect(leveled(quiet)).toBe(quiet)
   })
 
-  it('tells a cut, a silent and a stray take from a good one', () => {
+  it('tells a cut and a silent take from a good one, and takes the rest from what was heard', () => {
     const line = '台下翻动纸页。很轻的沙沙声，像潮水退下去之后留在滩上的尾音。'
-    expect(judge(measure(voice(120, natural(line))), line, 120).issues).toEqual([])
-    expect(judge(measure(voice(120, 1.2)), line, 120).issues).toEqual(['short'])
-    expect(judge(measure(silence(2)), line, 120).issues).toEqual(['silent'])
-    expect(judge(measure(voice(215, natural(line))), line, 120).issues).toEqual(['drift'])
-    expect(judge(measure(voice(80, natural(line))), line, 120).issues).toEqual(['drift'])
-    // An actor may raise the voice; that is not another voice.
-    expect(judge(measure(voice(150, natural(line))), line, 120).issues).toEqual([])
-    // Without a known pitch there is nothing to drift from, and a word or two is never "cut short".
-    expect(judge(measure(voice(215, natural(line))), line).issues).toEqual([])
-    expect(judge(measure(voice(120, 0.4)), '在。', 120).issues).toEqual([])
+    expect(judge(measure(voice(120, natural(line))), line).issues).toEqual([])
+    expect(judge(measure(voice(120, 1.2)), line).issues).toEqual(['short'])
+    expect(judge(measure(silence(2)), line).issues).toEqual(['silent'])
+    // A voice is not judged by how high it sits: a shout is far higher than talking, and the same person.
+    expect(judge(measure(voice(330, natural(line))), line).issues).toEqual([])
+    // A word or two is never "cut short".
+    expect(judge(measure(voice(120, 0.4)), '在。').issues).toEqual([])
+    // What only ears can tell.
+    const good = measure(voice(120, natural(line)))
+    expect(judge(good, line, { stranger: true }).issues).toEqual(['drift'])
+    expect(judge(good, line, { misread: '沙沙→刷刷' }).issues).toEqual(['misread'])
+    expect(judge(good, line, { delivery: 2 }).issues).toEqual(['flat'])
+    expect(judge(good, line, { delivery: 3 }).issues).toEqual([])
+    expect(judge(good, line, { delivery: 4, note: '轻而慢' }).heard).toEqual({ delivery: 4, note: '轻而慢' })
+  })
+
+  it('asks the listener how far the take moved from the voice talking, not whether the words sound angry', () => {
+    const asked = hearingPrompt({ text: '去他娘的！', direction: '破锣嗓骤然爆开', sampled: true })
+    expect(asked.before).toContain('先是平常说话')
+    expect(asked.between).toContain('导演要求：“破锣嗓骤然爆开”')
+    expect(asked.after).toContain('不要因为台词的字面意思就认为语气到位')
+    expect(asked.after).toContain('"delivery"')
+    expect(asked.after).toContain('"voice"')
+    // Nothing asked, no sample: only the words are heard.
+    const plain = hearingPrompt({ text: 'The tide went out.', sampled: false, language: 'en' })
+    expect(plain.before).toBeUndefined()
+    expect(plain.after).not.toContain('delivery')
+    expect(plain.after).not.toContain('"voice"')
+    // What the model says, as a hearing.
+    expect(readHearing('```json\n{"misread":"","voice":"same","delivery":"4","note":"更响更急"}\n```', true)).toEqual({ delivery: 4, note: '更响更急' })
+    expect(readHearing('{"misread":"无","voice":"different","delivery":9}', true)).toEqual({ stranger: true, delivery: 5 })
+    expect(readHearing('{"misread":"签→切","delivery":2}', false)).toEqual({ misread: '签→切' })
+    expect(() => readHearing('听起来很平。', true)).toThrow(/JSON/)
   })
 
   it('finds the stretches of sound between pauses', () => {
@@ -97,23 +136,35 @@ describe('listening without ears', () => {
     expect(spans[1]!.end - spans[1]!.start).toBeCloseTo(0.4, 1)
   })
 
-  it('speaks a line again when the take is not the voice, and keeps the best', async () => {
+  it('speaks a line again when it is heard in another voice or played flat, and keeps the best', async () => {
     const line = '他把那封信折了三折，放回抽屉最里面。'
-    const pitches = [230, 124]
-    const speech = new FakeSpeech(request => voice(pitches[request.take ?? 0] ?? 124, natural(request.text), 0.05))
+    const sample = voice(120, 2)
+    const speech = new FakeSpeech(request => voice(124, natural(request.text), 0.05))
+    // Another voice the first time; the second take is the voice, played as asked.
+    const ears = earsOf(new FakeListener((_request, index) => (index === 0 ? { stranger: true, delivery: 4 } : { delivery: 4 })))
     const retakes: number[] = []
-    const take = await speakChecked(speech, { text: line }, { print: 120, retakes: 2, onRetake: (number) => { retakes.push(number) } })
+    const take = await speakChecked(speech, { text: line, reference: sample, direction: '压低声音' }, { ears, retakes: 2, onRetake: (number) => { retakes.push(number) } })
     expect(take.takes).toBe(2)
     expect(retakes).toEqual([1])
     expect(take.verdict.issues).toEqual([])
+    expect(take.verdict.heard).toEqual({ delivery: 4 })
+    expect(ears.heard).toBe(2)
+    // The listener was given the voice's sample, the words and what was asked.
+    const asked = (ears.listener as FakeListener).requests[0]!
+    expect(asked.sample).toBe(sample)
+    expect(asked).toMatchObject({ text: line, direction: '压低声音' })
     expect(Math.abs(measure(take.audio).level - TARGET_LEVEL)).toBeLessThan(1)
-    // Every take strays: the closest is kept and says what is wrong with it.
-    const stray = new FakeSpeech(request => voice([260, 190, 300][request.take ?? 0]!, natural(request.text)))
-    const kept = await speakChecked(stray, { text: line }, { print: 120, retakes: 2 })
+    // Every take is flat: the one played furthest is kept and says what is wrong with it.
+    const flat = earsOf(new FakeListener((_request, index) => ({ delivery: [1, 2, 1][index]! })))
+    const kept = await speakChecked(speech, { text: line, direction: '怒吼' }, { ears: flat, retakes: 2 })
     expect(kept.takes).toBe(3)
-    expect(kept.verdict.issues).toEqual(['drift'])
-    expect(Math.round(kept.measured.pitch!)).toBeGreaterThan(180)
-    expect(Math.round(kept.measured.pitch!)).toBeLessThan(200)
+    expect(kept.verdict.issues).toEqual(['flat'])
+    expect(kept.verdict.heard?.delivery).toBe(2)
+    // A take cut short is spoken again without being heard.
+    const once = earsOf(new FakeListener(() => ({})))
+    const cut = new FakeSpeech(request => voice(124, (request.take ?? 0) === 0 ? 0.8 : natural(request.text)))
+    expect((await speakChecked(cut, { text: line }, { ears: once, retakes: 2 })).takes).toBe(2)
+    expect(once.heard).toBe(1)
     // A retake that fails outright does not cost the line the take it has.
     let calls = 0
     const flaky = new FakeSpeech((request) => {
@@ -121,7 +172,57 @@ describe('listening without ears', () => {
       if (calls > 1) throw new Error('rate limited')
       return voice(240, natural(request.text))
     })
-    expect((await speakChecked(flaky, { text: line }, { print: 120, retakes: 2 })).takes).toBe(1)
+    expect((await speakChecked(flaky, { text: line }, { ears: earsOf(new FakeListener(() => ({ stranger: true }))), retakes: 2 })).takes).toBe(1)
+  })
+
+  it('sends the sample, then the take, to the listening model, and asks again when it does not answer in JSON', async () => {
+    const bodies: { model: string; messages: { content: { type: string; text?: string; input_audio?: { data: string; format: string } }[] }[] }[] = []
+    const server = createServer((request, response) => {
+      let raw = ''
+      request.on('data', (chunk: Buffer) => { raw += chunk.toString() })
+      request.on('end', () => {
+        bodies.push(JSON.parse(raw) as typeof bodies[number])
+        const content = bodies.length === 1 ? '<tool_call>"? No.' : '{"misread":"","voice":"same","delivery":4,"note":"更响更急"}'
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ choices: [{ message: { content } }], usage: { prompt_tokens: 300, completion_tokens: 40 } }))
+      })
+    })
+    await new Promise<void>(resolve => { server.listen(0, '127.0.0.1', resolve) })
+    try {
+      const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/compatible-mode/v1`
+      const listener = new OmniListener('omni-test', base, namedKeySource(name => (name === 'TEST_KEY' ? 'k' : undefined)), 'TEST_KEY')
+      const hearing = await listener.hear({ take: voice(120, 1), sample: voice(110, 3), text: '去他娘的！', direction: '破锣嗓骤然爆开' })
+      expect(hearing).toEqual({ delivery: 4, note: '更响更急', usage: { input: 600, output: 80 } })
+      expect(bodies).toHaveLength(2)
+      const parts = bodies[0]!.messages[0]!.content
+      expect(parts.map(part => part.type)).toEqual(['text', 'input_audio', 'text', 'input_audio', 'text'])
+      expect(parts[1]!.input_audio!.data.length).toBeGreaterThan(parts[3]!.input_audio!.data.length)
+      expect(parts[2]!.text).toContain('导演要求：“破锣嗓骤然爆开”')
+      expect(bodies[0]!.model).toBe('omni-test')
+    } finally {
+      server.close()
+    }
+    // Which model listens: the one named, else the one recommended beside Bailian's own speech; none switches it off.
+    expect(listenModelOf({ provider: 'qwen-audiogen' })).toBe('qwen3.8-omni-flash')
+    expect(listenModelOf({ provider: 'openai' })).toBeUndefined()
+    expect(listenModelOf({ provider: 'openai', listenModel: 'qwen3.5-omni-plus' })).toBe('qwen3.5-omni-plus')
+    expect(listenModelOf({ provider: 'qwen-audiogen', listenModel: 'none' })).toBeUndefined()
+    expect(createListener({ provider: 'qwen-audiogen', listenModel: 'none' }, namedKeySource(() => undefined))).toBeUndefined()
+    expect(createListener({ provider: 'qwen-audiogen', baseURL: 'https://dashscope.aliyuncs.com' }, namedKeySource(() => undefined))?.via).toBe('dashscope.aliyuncs.com')
+  })
+
+  it('stops listening when there is no key to listen with, and keeps speaking', async () => {
+    const line = '他把那封信折了三折，放回抽屉最里面。'
+    const speech = new FakeSpeech(request => voice(124, natural(request.text)))
+    const deaf: Listener = { model: 'omni-test', via: 'listen.test', hear: async () => { throw new ProviderError('Listening: no Bailian key is saved', undefined, 'NO_CREDENTIAL') } }
+    const ears = earsOf(deaf)
+    const first = await speakChecked(speech, { text: line, direction: '怒吼' }, { ears, retakes: 2 })
+    expect(first).toMatchObject({ takes: 1, verdict: { issues: [] } })
+    expect(ears.lost).toMatch(/no Bailian key/)
+    expect(ears.missed).toBe(1)
+    // Not asked again for the rest of the work.
+    await speakChecked(speech, { text: line }, { ears, retakes: 2 })
+    expect(ears.missed).toBe(1)
   })
 })
 
@@ -448,27 +549,33 @@ describe('audio drama', () => {
     expect(careful.requests).toHaveLength(0)
   })
 
-  it('learns how a voice sounds from its lines and catches the take that is someone else', async () => {
+  it('has every new take heard, speaks again what was heard wrong, and keeps what was heard on the line', async () => {
     const { project } = bed.runtime
     const plan = await project.addChapter({ title: '长夜' })
-    const paragraphs = Array.from({ length: 5 }, (_, index) => `第${index + 1}段旁白很长，讲的是海港的夜晚如何一点一点暗下去，灯又如何一盏一盏亮起来。`)
-    // A spoken line between the paragraphs keeps each of them a take of its own.
+    const paragraphs = Array.from({ length: 3 }, (_, index) => `第${index + 1}段旁白很长，讲的是海港的夜晚如何一点一点暗下去，灯又如何一盏一盏亮起来。`)
     const reply = '我去看看缆索，一会儿就回来。'
-    await project.saveChapterText(plan.id, paragraphs.map((text, index) => (index < 4 ? `${text}\n“${reply}”` : text)).join('\n'))
-    bed.llm.responder = () => JSON.stringify({ lines: paragraphs.flatMap((text, index) => [{ kind: 'narration', text }, ...(index < 4 ? [{ kind: 'dialogue', speaker: '老周', text: reply }] : [])]), cues: [] })
-    // The fifth paragraph comes back in another voice the first time it is spoken.
-    const speech = new FakeSpeech(request => voice(request.text.startsWith('第5段') && (request.take ?? 0) === 0 ? 250 : 118, natural(request.text)))
-    useSpeech(speech)
-    await bed.core.settings.update({ tts: { concurrency: 1 } })
+    await project.saveChapterText(plan.id, paragraphs.map((text, index) => (index < 2 ? `${text}\n“${reply}”` : text)).join('\n'))
+    bed.llm.responder = () => JSON.stringify({ lines: paragraphs.flatMap((text, index) => [{ kind: 'narration', text }, ...(index < 2 ? [{ kind: 'dialogue', speaker: '老周', text: reply, direction: '扯着嗓子喊' }] : [])]), cues: [] })
+    useSpeech(new FakeSpeech(request => voice(118, natural(request.text))))
+    // The third paragraph is heard in another voice the first time; 老周 never gets past talking.
+    let third = 0
+    const listener = new FakeListener((request) => {
+      if (request.text.startsWith('第3段') && third++ === 0) return { stranger: true }
+      if (request.text === reply) return { delivery: 1, note: '和平常说话一样' }
+      return {}
+    })
+    bed.core.speechListener = async () => listener
+    await bed.core.settings.update({ tts: { concurrency: 1, retakes: 1 } })
     const result = await synthesizeChapter(bed.core, bed.runtime, { chapter: plan.id }, { origin: 'user' })
-    expect(result).toMatchObject({ rendered: 9, retaken: 1, flagged: 0 })
-    const cast = await openCast(project, (await bed.core.settings.get()).tts)
-    // The narrator reads in the provider's own voice here; it is known by its lines all the same.
-    expect(Math.abs((cast.print({}) ?? 0) / 118 - 1)).toBeLessThan(0.05)
-    const fifth = (await project.audioScript(plan.id))!.lines[8]!
-    expect(fifth.takes).toBe(2)
-    expect(Math.abs(measure(parseWav(await readFile(project.path(fifth.audio!)))).pitch! / 118 - 1)).toBeLessThan(0.05)
-    expect(encodeWav(voice(118, 0.1)).length).toBeGreaterThan(44)
+    expect(result).toMatchObject({ rendered: 5, retaken: 3, flagged: 2, heard: 8 })
+    const lines = (await project.audioScript(plan.id))!.lines
+    expect(lines[4]).toMatchObject({ takes: 2, heard: { by: 'omni-test' } })
+    expect(lines[4]!.check).toBeUndefined()
+    expect(lines[1]).toMatchObject({ takes: 2, check: ['flat'], heard: { by: 'omni-test', delivery: 1, note: '和平常说话一样' } })
+    // Rendered lines are not heard again on the next run: that would be a call for every line, every time.
+    listener.requests.length = 0
+    expect(await synthesizeChapter(bed.core, bed.runtime, { chapter: plan.id }, { origin: 'user' })).toMatchObject({ rendered: 0, heard: 0 })
+    expect(listener.requests).toHaveLength(0)
   })
 
   it('joins the narration of a whole chapter, drops the stranded tag, and voices it only when asked to', async () => {
@@ -546,5 +653,138 @@ describe('audio drama', () => {
     expect(result.script.lines[2]!.tag).toBe(true)
     expect(result.script.cues.map(cue => [cue.id, cue.at])).toEqual([['c0', 'l0'], ['c1', 'l3']])
     expect(result.script.shape).toBe(2)
+  })
+})
+
+describe('one voice, many ways of speaking', () => {
+  let bed: TestBed
+  const TEXT = '舱里警报乱响。\n“闭嘴，抓稳扶手！”\n“好了，都回去吧。”'
+  const SCRIPT = {
+    lines: [
+      { kind: 'narration', text: '舱里警报乱响。' },
+      { kind: 'dialogue', speaker: '赵铁锚', text: '闭嘴，抓稳扶手！', direction: '顶着噪声粗哑怒喝，命令短促有力' },
+      { kind: 'dialogue', speaker: '赵铁锚', text: '好了，都回去吧。', direction: '缓下来，声音沙哑' },
+    ],
+    cues: [{ at: 0, ambience: 'none', intensity: 0.3 }],
+  }
+
+  /** Like Bailian's audio model: a described voice, a sample it imitates; it records a reel when asked for a voice. */
+  class ImitatingSpeech implements TtsProvider {
+    readonly kind = 'qwen-audiogen' as const
+    readonly requests: TtsRequest[] = []
+    readonly reels: { voice: string; reference?: PcmAudio; take?: number }[] = []
+    async anchor(voiceText: string, options: { reference?: PcmAudio; take?: number }): Promise<PcmAudio> {
+      this.reels.push({ voice: voiceText, ...(options.reference !== undefined ? { reference: options.reference } : {}), ...(options.take !== undefined ? { take: options.take } : {}) })
+      return join(voice(110, 1.5), silence(0.4), voice(260, 1.5, 0.4), silence(0.4), voice(140, 1.5, 0.05))
+    }
+    async synthesize(request: TtsRequest): Promise<TtsResult> {
+      this.requests.push(request)
+      return voice(120, natural(request.text))
+    }
+  }
+
+  beforeEach(async () => {
+    bed = await createTestBed({ settings: { tts: { provider: 'qwen-audiogen', model: 'audio-test', concurrency: 1 } as TtsSettings } })
+    await bed.runtime.project.saveCharacter({ name: '赵铁锚', gender: '男', age: '四十五', role: 'supporting', voice: '破锣嗓门、粗话直爽' })
+  })
+  afterEach(async () => { await bed.cleanup() })
+
+  it('says how the line is played as the act itself, not as a remark beside it', () => {
+    const angry = audioGenPrompt({ text: '闭嘴！', voice: '成年男性，破锣嗓门', direction: '顶着噪声粗哑怒喝。', referenced: true })
+    expect(angry).toContain('@voice1（同一个人：成年男性，破锣嗓门）这一句顶着噪声粗哑怒喝，一字不差地说：')
+    expect(angry).not.toContain('安静')
+    expect(angry).not.toContain('（这一句')
+    expect(audioGenPrompt({ text: '好了。', voice: '成年男性，破锣嗓门', referenced: true })).toContain('@voice1（同一个人：成年男性，破锣嗓门）一字不差地说：')
+    expect(audioGenPrompt({ text: 'Shut up!', voice: 'a hoarse man', direction: 'roaring over the engines', referenced: true, language: 'en' })).toContain('@voice1 (the same person: a hoarse man) says this line roaring over the engines, word for word:')
+    // The sample: one voice talking, shouting, hushed, laughing and near tears.
+    const reel = reelPrompt({ voice: '成年男性，破锣嗓门。', referenced: false })
+    for (const way of ['平常说话', '大吼', '耳语', '大笑', '哭腔']) expect(reel).toContain(way)
+    expect(reel).toContain('一位成年男性，破锣嗓门，给导演录一段嗓子样本')
+    expect(reelPrompt({ voice: 'a hoarse man', referenced: true, language: 'en' })).toContain('@voice1 (the same person: a hoarse man) records a sample')
+  })
+
+  it('records one reel for a voice and speaks every line of it from that reel, however it is directed', async () => {
+    const { project } = bed.runtime
+    const plan = await project.addChapter({ title: '接管' })
+    await project.saveChapterText(plan.id, TEXT)
+    bed.llm.responder = () => JSON.stringify(SCRIPT)
+    const speech = new ImitatingSpeech()
+    bed.core.ttsProvider = async () => speech
+    // A calm sample made by an earlier version is not read: every line imitating it came out calm.
+    const card = (await project.characters())[0]!
+    const settings = (await bed.core.settings.get()).tts
+    const choice = voiceFor({ kind: 'dialogue', speaker: card.id }, await project.characters(), settings, new Map())
+    await project.writeAsset(`audio/voices/anchor-${'0'.repeat(12)}.wav`, encodeWav(voice(110, 2)))
+    const result = await synthesizeChapter(bed.core, bed.runtime, { chapter: plan.id }, { origin: 'user' })
+    expect(result).toMatchObject({ rendered: 3, retaken: 0, flagged: 0, failed: 0 })
+    // One reel each for the narrator and 赵铁锚, made from words alone.
+    expect(speech.reels).toHaveLength(2)
+    expect(speech.reels.every(reel => reel.reference === undefined)).toBe(true)
+    const shout = speech.requests.find(request => request.text === '闭嘴，抓稳扶手！')!
+    const calm = speech.requests.find(request => request.text === '好了，都回去吧。')!
+    // The roar and the quiet line imitate the same reel; only the direction differs.
+    expect(shout.reference).toBeDefined()
+    expect(shout.reference).toBe(calm.reference)
+    expect(shout.direction).toContain('怒喝')
+    expect(calm.direction).toContain('缓下来')
+    expect(await project.has(`assets/${reelPath(settings, choice)}`)).toBe(true)
+    // Voiced again later, the reels are reused, and nothing is spoken again.
+    speech.requests.length = 0
+    expect(await synthesizeChapter(bed.core, bed.runtime, { chapter: plan.id }, { origin: 'user' })).toMatchObject({ rendered: 0, rechecked: 0 })
+    expect(speech.reels).toHaveLength(2)
+    expect(speech.requests).toHaveLength(0)
+  })
+
+  it('hears every reel before a line imitates it, and records again one whose shout pulled the voice thin', async () => {
+    const { project } = bed.runtime
+    const plan = await project.addChapter({ title: '接管' })
+    await project.saveChapterText(plan.id, TEXT)
+    bed.llm.responder = () => JSON.stringify(SCRIPT)
+    const speech = new ImitatingSpeech()
+    bed.core.ttsProvider = async () => speech
+    const reels: ReelRequest[] = []
+    const listener: Listener = {
+      model: 'omni-test',
+      via: 'listen.test',
+      hear: async () => ({ delivery: 4 }),
+      hearReel: async (request): Promise<ReelHearing> => {
+        reels.push(request)
+        // 赵铁锚's first reel shouts in a voice pulled thin; the narrator's is fine.
+        const his = reels.filter(reel => reel.voice?.includes('破锣嗓门') === true)
+        return request.voice?.includes('破锣嗓门') === true && his.length === 1 ? { same: false, fits: true, range: 4, note: '吼的那句被拉尖了' } : { same: true, fits: true, range: 4 }
+      },
+    }
+    bed.core.speechListener = async () => listener
+    const result = await synthesizeChapter(bed.core, bed.runtime, { chapter: plan.id }, { origin: 'user' })
+    expect(result).toMatchObject({ rendered: 3, flagged: 0 })
+    // His recorded twice — the second time from another draw — and heard each time, with the voice in words; the narrator's once.
+    const his = speech.reels.filter(reel => reel.voice.includes('破锣嗓门'))
+    expect(his.map(reel => reel.take)).toEqual([undefined, 1])
+    expect(speech.reels).toHaveLength(3)
+    expect(reels).toHaveLength(3)
+    expect(speech.requests.every(request => request.reference !== undefined)).toBe(true)
+    // The question, and reading the answer.
+    expect(reelHearingPrompt({ voice: '破锣嗓门的老船长' })).toContain('嗓子被拉尖、变细、像卡通或像换了个人，就是 false')
+    expect(reelHearingPrompt({ language: 'en' })).toContain('is it a natural human voice')
+    expect(readReelHearing('{"same":true,"fits":"false","range":"4","note":"像个年轻人"}')).toEqual({ same: true, fits: false, range: 4, note: '像个年轻人' })
+    expect(reelPasses({ same: true, fits: true, range: 2 })).toBe(false)
+    expect(reelPasses({ same: true, fits: true })).toBe(true)
+    expect(hearingPrompt({ text: '闭嘴！', direction: '怒喝', sampled: true }).after).toContain('嗓子被拉尖、变细、像卡通或像换了个人算 different')
+  })
+
+  it('makes the reel of a designed voice from its preview, so it stays the voice that was chosen', async () => {
+    const { project } = bed.runtime
+    const card = (await project.characters())[0]!
+    const preview = voice(105, 2)
+    const sample = await project.writeAsset(`audio/voices/${card.id}-design.wav`, encodeWav(preview))
+    await project.saveCharacter({ id: card.id, voiceProfile: { provider: 'qwen-audiogen', voice: '低沉沙哑的中年男声', sample } })
+    const speech = new ImitatingSpeech()
+    bed.core.ttsProvider = async () => speech
+    await audition(bed.core, bed.runtime, { character: card.name, text: '都给我站住！', direction: '怒吼' }, { origin: 'user' })
+    expect(speech.reels).toHaveLength(1)
+    expect(speech.reels[0]!.voice).toBe('低沉沙哑的中年男声')
+    expect(speech.reels[0]!.reference?.pcm.length).toBe(preview.pcm.length)
+    expect(speech.requests[0]!.reference).toBeDefined()
+    expect(speech.requests[0]!.reference!.pcm.length).toBeGreaterThan(preview.pcm.length)
   })
 })

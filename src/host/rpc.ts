@@ -38,6 +38,7 @@ import {
 import { buildFoundation, derivedPlan, deriveBeats, deriveChapters, deriveToLook, planOfText, settleDerivedPlan, takeDerivedPlan, touchBeats, whatIf } from '../core/pipelines/plot'
 import { clearReview, listReviews, noteIssue, recheckIssues, resolveIssue, reviewChapter } from '../core/pipelines/review'
 import { plansOfText } from '../core/pipelines/follow'
+import { volumeSynopses, volumeSynopsis } from '../core/pipelines/volume'
 import { fixIssue, fixIssues, acceptProposal, rejectProposal, restoreProposal, reviewByLead, reviseBook, reviseChapter, reviseSpan, mendInTurn, mendReviewed, mendsBy, reviewMends, settledProposals } from '../core/pipelines/revise'
 import { amendChapter } from '../core/pipelines/amend'
 import { writeChapter } from '../core/pipelines/write'
@@ -952,6 +953,15 @@ export function createHandlers(service: NovelService): Handlers {
     'ai.plansOfText': async ({ root, chapters, force }) => {
       const runtime = await open(root)
       return job(runtime, 'derive', 'plans of text', undefined, async task => await plansOfText(core, runtime, { chapters, ...(force === true ? { force: true } : {}) }, task))
+    },
+    'ai.volumeSynopsis': async ({ root, volume, apply }) => {
+      const runtime = await open(root)
+      const which = requireString(volume, 'volume')
+      return job(runtime, 'derive', 'volume synopsis', which, async task => await volumeSynopsis(core, runtime, { volume: which, ...(apply === false ? { apply: false } : {}) }, task))
+    },
+    'ai.volumeSynopses': async ({ root, volumes }) => {
+      const runtime = await open(root)
+      return job(runtime, 'derive', 'volume synopses', undefined, async task => await volumeSynopses(core, runtime, { ...(Array.isArray(volumes) ? { volumes: volumes.filter((item): item is string => typeof item === 'string') } : {}) }, task))
     },
     'ai.whatIf': async ({ root, question, branches, guides }) => {
       const runtime = await open(root)

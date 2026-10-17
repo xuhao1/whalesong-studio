@@ -229,7 +229,7 @@ dsh plugin --profile web add /absolute/path/to/whalesong-studio-0.1.0.tgz
 
 ![大纲：左边章节，右边章纲](./images/tutorial/zh/11-outline.webp)
 
-点章节列表上方的 **推演**：
+点章节列表上方的 **推演后续章节**（旁边一行小字说它做什么）：
 
 ![推演后续章节：章数、从哪一章之后、方向](./images/tutorial/zh/12-derive.webp)
 

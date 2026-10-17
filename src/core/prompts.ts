@@ -966,6 +966,88 @@ ${base.knownCharacters.trim().length > 0 ? base.knownCharacters : '(none)'}
 ${enAsk}`)
 }
 
+export function volumeSystem(lang: PromptLanguage): string {
+  return L(lang, '你是严谨的小说连续性编辑（场记）。只依据给出的内容，不推测、不评价、不添加给出的内容里没有的情节。严格按要求输出 JSON。', 'You are a meticulous continuity editor. Go only by what is given — no speculation, no critique, nothing it does not have. Output JSON exactly as requested.')
+}
+
+/**
+ * A volume's synopsis read off its chapters: what the written ones tell, as their digests have it, and what the
+ * ones not written yet are planned to — said as what is still to come. Nothing else of the volume is shown: not the
+ * synopsis it had (often its plan), nor its goal, nor what the next volume is to be — shown those, a model wrote the
+ * plan into the story as though it had happened. What of the plan the chapters have not reached is found after, by
+ * itself ({@link volumePlanTask}).
+ * @param base.volumeLabel - the volume by name, with which chapters of the book it holds and how many are written.
+ * @param base.chapters - the chapters in order, each with what it tells (or a stretch of ten at a time).
+ * @param base.before - the volume before it, in its synopsis: where this one takes the story up.
+ * @param base.unfinished - some of its chapters are not written yet.
+ */
+export function volumeSynopsisTask(base: Base & { logline?: string; volumeLabel: string; before?: string; chapters: string; count: number; unfinished: boolean }): string {
+  const has = (value: string | undefined): value is string => value !== undefined && value.trim().length > 0
+  const zhLength = base.count <= 3 ? '100-250 字' : base.count <= 10 ? '200-400 字' : base.count <= 40 ? '300-600 字' : '500-1000 字'
+  const enLength = base.count <= 3 ? '70-170 words' : base.count <= 10 ? '130-260 words' : base.count <= 40 ? '200-400 words' : '320-650 words'
+  return L(base.lang, `## 《${bare(base.title)}》${has(base.logline) ? `\n\n一句话梗概：${base.logline.trim()}` : ''}
+${has(base.before) ? `\n## 上一卷\n\n${base.before.trim()}\n` : ''}
+## 这一卷：${base.volumeLabel}
+
+${base.chapters.trim()}
+
+---
+请照上面的各章写出这一卷的梗概。之后读它的人——往下推演的策划、写这一卷各章的写手——要从它知道这一卷讲了什么、走到了哪里。
+- synopsis：这一卷讲了什么，${zhLength}，不要超出。把这一卷当成一个故事来讲，不要逐章复述，也不要把各章的摘要接起来缩短：主线怎么推进，人物的关系和处境有哪些关键的变化，埋下了什么、回收了什么，揭示了哪些重要的设定；卷末故事停在哪里。说事——发生了什么、因此变成了什么样——不写场面：谁说了哪句原话、东西什么样子、天气和动作，都不写。不评价。
+- 只写各章里有的：写了的章节照它们写了的写；${base.unfinished ? '还没写的章节照它们的章纲写，说成这一卷接下来要发生的，不要说成已经发生了。' : '各章之外的不写。'}
+- goal：这一卷结束时故事到了哪里，一两句。${base.unfinished ? '这一卷还没写完：照各章章纲说它要走到哪里。' : ''}
+
+只输出 JSON：
+{"synopsis": "这一卷的梗概", "goal": "这一卷结束时故事到了哪里"}`, `## "${bare(base.title)}"${has(base.logline) ? `\n\nLogline: ${base.logline.trim()}` : ''}
+${has(base.before) ? `\n## The volume before\n\n${base.before.trim()}\n` : ''}
+## This volume: ${base.volumeLabel}
+
+${base.chapters.trim()}
+
+---
+Write this volume's synopsis off the chapters above. Whoever reads it afterwards — the planner deriving what comes next, the writer of this volume's chapters — is to learn from it what the volume tells and where it has got to.
+- synopsis: what the volume tells, in ${enLength}, no more. Tell the volume as one story — not chapter by chapter, and not the chapters' summaries strung together and shortened: how the main plot moves, the key changes in the characters' relationships and situations, what is set up and what is paid off, the important reveals of the world; where the story stands at the volume's end. The events — what happens and what it changes — not the scenes: no lines quoted, no looks of things, no weather or gestures. No judgement.
+- Only what the chapters have: the written ones by what they tell;${base.unfinished ? ' the ones not written yet by their outlines — said as what is still to come in this volume, not as what has happened.' : ' nothing beyond them.'}
+- goal: where the story stands when the volume ends, in a sentence or two.${base.unfinished ? ' The volume is not all written: say where its outlines take it.' : ''}
+
+Output JSON only:
+{"synopsis": "the volume's synopsis", "goal": "where the story stands when the volume ends"}`)
+}
+
+/**
+ * What of the synopsis a volume had — often its plan, laid down before most of it was written — the synopsis just
+ * written off its chapters has not reached: taken apart point by point in its own words, each marked. The ones not
+ * reached are the plan for the rest of the volume, and are kept after the new synopsis as they stand. (Asked for in
+ * the same request as the synopsis, a model let the plan go, or wrote it into the story, or both.)
+ */
+export function volumePlanTask(base: Base & { volume: string; was: string; now: string }): string {
+  return L(base.lang, `## 《${bare(base.title)}》「${base.volume}」原来的卷梗概
+
+${base.was.trim()}
+
+## 这一卷现在照各章写的梗概
+
+${base.now.trim()}
+
+---
+原来的卷梗概可能是动笔之前定的计划。请把它拆成一件一件的事，按原来的顺序逐件列出，照原来的话，不改写、不补充；每件标 reached：现在的梗概里有没有这件事（意思到了就算，不必字面相同）。
+
+只输出 JSON：
+{"plan": [{"point": "原来卷梗概里的一件事（原话）", "reached": true}]}`, `## "${bare(base.title)}", the volume "${base.volume}": the synopsis it had
+
+${base.was.trim()}
+
+## The synopsis it has now, written off its chapters
+
+${base.now.trim()}
+
+---
+The synopsis it had may be the plan laid down before the writing. Take it apart into the things it says, one by one in its order, in its own words — not rewritten, nothing added — and mark each reached: whether the synopsis it has now has that (the same thing in other words counts).
+
+Output JSON only:
+{"plan": [{"point": "one thing the synopsis it had says (its own words)", "reached": true}]}`)
+}
+
 export function whatIfTask(base: Base & { context: string; question: string; branches: number }): string {
   return `${base.context}\n\n---\n${L(base.lang, `作者想做一次剧情推演（what-if）：
 
@@ -1294,7 +1376,7 @@ ${zhShape}
 
 - 名单上的每个人都要有一项，一个也不要漏；不要添加名单之外的人。
 - 名单上的某个名字如果其实是"已经有人物卡的人"里某人的别的称呼，或者是名单上另一个人的别的称呼，这一项只填 listed 和 same_as（写那个人的名字），其余留空。
-- role 按这个人在书里的分量定：protagonist 主角，deuteragonist 第二主角，antagonist 对立面，supporting 重要配角，minor 次要人物，cameo 只是露面。
+- role 照这个人在故事里的位置定，拿不准就往低定：protagonist 主角，故事跟着走的那个人，通常只有一个；deuteragonist 第二主角，故事同样跟着他走的人（双主角，或与主角并肩的恋人、搭档），只是戏份多、地位高不算；antagonist 反派，有意与主角为敌、要害主角或阻挠主角的人，情敌、对手、性情不合或立场不同的人都不算，很多书没有反派；supporting 重要配角，minor 次要人物，cameo 只是露面。名著照通行的理解定。
 - 没有依据的字段留空，不要编造。`, `Below is a batch of characters counted from the chapter digests of the novel "${bare(base.title)}", with what each did in which chapters. Write ${base.full ? 'a character card' : 'one line'} for every one of them.
 
 THIS BATCH
@@ -1308,7 +1390,7 @@ ${enShape}
 
 - One entry for every name in the batch, none left out; nobody who is not in the batch.
 - When a name in the batch is in fact another name of someone who has a card already, or of another person in the batch, fill in only \`listed\` and \`same_as\` (that person's name) and leave the rest empty.
-- \`role\` by the weight of the part in the book: protagonist, deuteragonist (second lead), antagonist, supporting (an important secondary part), minor, cameo (seen in passing).
+- \`role\` by the person's place in the story, and the lower one when unsure: protagonist — the one the story follows, usually only one; deuteragonist — a second lead the story follows as much (a co-lead, or the partner or lover at the protagonist's side), not merely someone with many scenes or high rank; antagonist — a villain who sets out against the protagonist, to harm or thwart them: a rival in love, a competitor, someone of another temper or side is not one, and many books have none; supporting (an important secondary part), minor, cameo (seen in passing). For a well-known book, follow the common reading.
 - Leave a field empty rather than invent.`)
 }
 

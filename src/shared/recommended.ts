@@ -36,6 +36,8 @@ export interface RecommendedProvider {
   model: string
   /** Speech: the model that speaks in voices designed for a character. */
   designedVoiceModel?: string
+  /** Speech: the model that listens to each take (words, voice, delivery), on Bailian. */
+  listenModel?: string
   narratorVoice?: string
   suggestions?: string[]
 }

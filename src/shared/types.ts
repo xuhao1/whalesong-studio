@@ -838,6 +838,43 @@ export interface Volume {
   chapters: ChapterPlan[]
 }
 
+/** How a volume's chapters went to the editor: what each digest says, a stretch of ten at a time where the book has those, a line each — or cut short. */
+export type VolumeTold = 'summaries' | 'arcs' | 'briefs' | 'clipped'
+
+/** What a volume's synopsis written off its chapters came to (`ai.volumeSynopsis`). */
+export interface VolumeSynopsisResult {
+  volumeId: string
+  title: string
+  synopsis: string
+  /** Of the synopsis it had, what no chapter has reached yet — the plan for the rest of the volume — kept at the end of the new one. */
+  ahead?: string
+  /** The synopsis it had before, where it had one. */
+  was?: string
+  /** The goal handed back; written into the volume only where it had none (`goalSet`). */
+  goal?: string
+  goalSet: boolean
+  chapters: number
+  written: number
+  /** Chapters told by what their digest says. */
+  digested: number
+  /** Of those, digests of a text that has changed since. */
+  stale: number
+  /** Chapters told by their outline: not written yet, or written and not digested. */
+  planned: number
+  /** Chapters there was nothing to tell of: no digest and no synopsis in their outline. */
+  blank: number
+  told: VolumeTold
+  applied: boolean
+}
+
+/** What writing the synopses of several volumes came to (`ai.volumeSynopses`). */
+export interface VolumeSynopses {
+  read: VolumeSynopsisResult[]
+  /** Volumes passed over: no chapters, or nothing in them to tell. */
+  skipped: { volumeId: string; title: string; why: string }[]
+  failed: { volumeId: string; title: string; error: string }[]
+}
+
 export type ThreadKind = 'foreshadow' | 'mystery' | 'subplot' | 'promise' | 'motif'
 export type ThreadStatus = 'open' | 'paid' | 'dropped'
 
@@ -1759,10 +1796,19 @@ export interface TtsSettings {
   concurrency?: number
   /**
    * How many more times a line is spoken when the take does not pass the
-   * listening check (cut short, silent, or not in the voice it was cast with).
-   * 0 switches the retakes off; the check still marks such lines.
+   * listening check (cut short, silent, misread, not in its voice, or played
+   * flat). 0 switches the retakes off; the check still marks such lines.
    */
   retakes?: number
+  /**
+   * The model that listens to every take — whether the words are the line's,
+   * whether it is still the voice, and how far the delivery went toward the
+   * direction: an omni model on Bailian, reached with the Bailian key. Unset:
+   * the one recommended for the speech setup (`qwen3.8-omni-flash` for
+   * Bailian's own; none for the others). `none` switches listening off; the
+   * duration and loudness checks stay.
+   */
+  listenModel?: string
   /**
    * What happens to narration that only says who spoke, between two spoken
    * lines: `drop` (default) leaves it unspoken, as an audio drama would; `read`
@@ -2063,8 +2109,8 @@ export interface UsageEvent {
   /** Root and title of the book the call was for, when known. */
   book?: string
   bookTitle?: string
-  /** Text calls: which role spoke — or `vision`, the model that looked at pictures for one. */
-  role?: TextRole | 'vision'
+  /** Text calls: which role spoke — or `vision`, the model that looked at pictures for one; `listen`, the model that listened to takes. */
+  role?: TextRole | 'vision' | 'listen'
   /** The kind of job the call was part of. */
   task?: JobKind
   origin?: 'agent' | 'user'
@@ -2322,6 +2368,8 @@ export interface AudioLine {
   takes?: number
   /** What the listening check still finds wrong with the kept take. */
   check?: TakeIssue[]
+  /** What the model that listens heard in the kept take, when it was heard. */
+  heard?: LineHearing
   /**
    * Narration that only says who spoke ("他说，", "she asked.") and sits
    * between two spoken lines. With a voice per speaker it tells the listener
@@ -2336,11 +2384,27 @@ export interface AudioLine {
 }
 
 /**
- * What can be wrong with a synthesized line, as far as measuring it can tell:
- * nothing audible, most of the words missing, far longer than its words, or a
- * voice that sits well away from the one the speaker was cast with.
+ * What can be wrong with a synthesized line. Measured: nothing audible, most of
+ * the words missing, far longer than its words. Heard by a model that listens
+ * (`tts.listenModel`): not the voice of its sample (`drift`), words misread,
+ * left out or added (`misread`), a delivery that went hardly further than
+ * talking when the direction asked for more (`flat`).
  */
-export type TakeIssue = 'silent' | 'short' | 'long' | 'drift'
+export type TakeIssue = 'silent' | 'short' | 'long' | 'drift' | 'misread' | 'flat'
+
+/** What the model that listens said of a take. */
+export interface LineHearing {
+  /** The model that listened. */
+  by: string
+  /** How far the delivery went toward the direction, 1 (no further than talking) to 5 (all the way); absent when the line had no direction. */
+  delivery?: number
+  /** Words it found misread, left out or added. */
+  misread?: string
+  /** It heard another voice than the voice's sample. */
+  stranger?: boolean
+  /** One sentence of what it heard. */
+  note?: string
+}
 
 /** Procedural ambience beds the browser can synthesize without any asset. */
 export type AmbiencePreset =
@@ -2419,17 +2483,13 @@ export interface VoiceCast {
   characters: Record<string, string>
   /** Speakers without a card, by name as written → voice. */
   extras: Record<string, string>
-  /** Voice → its usual pitch in Hz, read from its reference clip or from lines already spoken. */
-  prints: Record<string, VoicePrint>
+  /**
+   * Written by earlier versions: voice → its usual pitch in Hz, which takes were compared with. No longer read or written
+   * (a voice's pitch says nothing about whether a take is that voice, and judging by it kept the calmest take of every
+   * angry line); kept as it was in sheets that have it, and written empty on new ones, which earlier versions read.
+   */
+  prints?: Record<string, { pitch: number; samples: number; anchored?: boolean }>
   updatedAt: Timestamp
-}
-
-export interface VoicePrint {
-  pitch: number
-  /** How many clips the figure rests on. */
-  samples: number
-  /** Read from the voice's reference clip rather than learned from lines. */
-  anchored?: boolean
 }
 
 export type CameraMove = 'still' | 'zoom-in' | 'zoom-out' | 'pan-left' | 'pan-right' | 'pan-up' | 'pan-down'

@@ -474,6 +474,21 @@
   resize: none;
 }
 
+/* A field of one line that wraps what does not fit and grows with it: as tall as an input while it fits. */
+.nv-input-wrap {
+  padding: 5px 9px;
+  line-height: 20px;
+  resize: none;
+  overflow: hidden;
+  vertical-align: top;
+}
+
+/* Empty, it is one line high however long its hint: the hint is cut as an input's was, and typing does not shrink the box. */
+.nv-input-wrap:placeholder-shown {
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 .nv-select {
   padding-right: 4px;
   cursor: pointer;
@@ -1398,8 +1413,47 @@
 
 .nv-volume-title {
   display: flex;
+  flex: 1 1 0;
   flex-direction: column;
   min-width: 0;
+}
+
+/* The volume's history and its menu keep their size: a long synopsis beside them does not push them out of the list. */
+.nv-volume-head > :not(.nv-volume-title) {
+  flex-shrink: 0;
+}
+
+.nv-volume-synopsis {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--nv-text-3);
+  font: inherit;
+  font-size: 11.5px;
+  line-height: 1.5;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nv-volume-synopsis.is-open {
+  display: block;
+  -webkit-line-clamp: unset;
+  white-space: pre-wrap;
+}
+
+.nv-volume-goal {
+  display: block;
+  margin-top: 4px;
+}
+
+.nv-volume-busy {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .nv-beats {
@@ -1444,6 +1498,12 @@
 .nv-beat-extra .nv-input {
   height: 26px;
   font-size: 12px;
+}
+
+.nv-beat-extra .nv-input-wrap {
+  padding-top: 3px;
+  padding-bottom: 3px;
+  line-height: 18px;
 }
 
 .nv-beat-tools {
@@ -2140,6 +2200,23 @@ button.nv-stat:hover {
   font-weight: 400;
 }
 
+/* The title is changed where it is: one press, and it is a field. */
+.nv-write-title.is-renamable {
+  margin: 0 -4px;
+  padding: 0 4px;
+  border-radius: var(--nv-radius-s);
+  cursor: text;
+}
+
+.nv-write-title.is-renamable:hover {
+  background: var(--nv-hover);
+}
+
+.nv-write-title.is-renamable:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--nv-brand) 60%, transparent);
+  outline-offset: 1px;
+}
+
 .nv-save-state {
   color: var(--nv-text-3);
   font-size: 11.5px;
@@ -2158,6 +2235,11 @@ button.nv-stat:hover {
   gap: 6px;
   padding: 6px 12px 8px;
   border-bottom: 1px solid var(--nv-border);
+}
+
+/* The box grows downward as what is typed wraps; the buttons beside it stay where they were, level with its first line. */
+.nv-brief-bar {
+  align-items: flex-start;
 }
 
 /* The box the author writes in keeps a width worth writing in: where the buttons leave it none, it takes a line of its own. */
@@ -6477,6 +6559,34 @@ a.nv-btn {
   padding: 2px 4px 8px;
 }
 
+/* Deriving what comes next: the outline's main act, a full button with what it does said beside it. */
+.nv-derive-call {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--nv-brand) 28%, transparent);
+  border-radius: var(--nv-radius);
+  background: color-mix(in srgb, var(--nv-brand) 6%, transparent);
+}
+
+.nv-derive-call > .nv-btn {
+  flex: none;
+}
+
+.nv-derive-call.is-open {
+  border-color: var(--nv-brand);
+}
+
+.nv-derive-call-note {
+  flex: 1 1 160px;
+  min-width: 0;
+  color: var(--nv-text-2);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .nv-outline-fill {
   display: flex;
   align-items: center;
@@ -7174,6 +7284,11 @@ a.nv-btn {
   flex: none;
   width: 150px;
   height: 26px;
+}
+
+.nv-cast-filter-search.nv-input-wrap {
+  padding-top: 2px;
+  padding-bottom: 2px;
 }
 
 .nv-cast-filter-sort {
@@ -11307,6 +11422,12 @@ button.nv-album-chapter:hover {
 .nv-course-row .nv-input {
   height: 28px;
   font-size: 12.5px;
+}
+
+.nv-course-row .nv-input-wrap {
+  padding-top: 4px;
+  padding-bottom: 4px;
+  line-height: 18px;
 }
 
 @container studio (max-width: 720px) {

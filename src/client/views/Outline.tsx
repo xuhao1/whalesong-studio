@@ -92,13 +92,28 @@ function Chapters({ onGraph }: { onGraph: () => void }) {
           onOpen={(id) => { setDeriving(false); controller.focusChapter(id) }}
           onLine={() => { setDeriving(false) }}
           onGraph={onGraph}
-          tools={<><DerivationsButton /><Button size="sm" variant={deriving ? 'primary' : 'outline'} icon="sparkles" onClick={() => { setDeriving(!deriving) }} title={project.derived !== undefined ? t(`上次推演出的 ${project.derived.chapters} 章还没加入大纲：点开就在`, `${project.derived.chapters} chapter(s) derived before are not in the outline yet: they are here`) : t('让策划排出这条线接下来的章纲，或问一个"如果"', 'Have the planner plot what comes next on this line, or ask a what-if')}>{project.derived !== undefined ? t(`推演 · ${project.derived.chapters} 章待看`, `Derive · ${project.derived.chapters} to read`) : t('推演', 'Derive')}</Button></>}
-          note={fillable.data !== undefined && fillable.data.chapters > 0 ? (
-            <div className="nv-note nv-outline-fill">
-              <span>{t(`${fillable.data.chapters} 章的章纲还有空项，收录结果里有。`, `${fillable.data.chapters} chapter outline(s) have empty items the digests can fill.`)}</span>
-              <Button size="sm" icon="wand" busy={filling.busy} pending={t('正在补全…', 'Filling…')} onClick={fill} title={t('只填空着的项；已经写了内容的项不动', 'Only empty fields are filled; a field with anything in it is left alone')}>{t('按收录结果补全', 'Fill from the digests')}</Button>
+          tools={<DerivationsButton />}
+          note={<>
+            {/* What comes next is the outline's main business: said in a line beside the button, not in a tooltip. */}
+            <div className={cx('nv-derive-call', deriving && 'is-open')}>
+              <Button variant="primary" icon="sparkles" aria-pressed={deriving} onClick={() => { setDeriving(!deriving) }}>
+                {project.derived !== undefined ? t(`推演后续章节 · ${project.derived.chapters} 章待看`, `Derive the next chapters · ${project.derived.chapters} to read`) : t('推演后续章节', 'Derive the next chapters')}
+              </Button>
+              <span className="nv-derive-call-note">
+                {deriving
+                  ? t('在右边：定章数和方向，点“推演”。再点一下按钮回到章纲。', 'On the right: how many chapters and which way, then Derive. Press the button again to go back to the plan.')
+                  : project.derived !== undefined
+                    ? t(`上次推演出的 ${project.derived.chapters} 章还没加入大纲：点开看，加不加由你定。`, `The ${project.derived.chapters} chapter(s) derived last time are not in the outline yet: open them and decide.`)
+                    : t('策划照前文排出这条线接下来几章的章纲，你看过再定加不加进大纲；也可以问一个“如果……”，看故事往哪几个方向走。', 'The planner plots the next chapters of this line from what is written; you read them and decide what goes in. Or ask a what-if to see where the story could turn.')}
+              </span>
             </div>
-          ) : undefined}
+            {fillable.data !== undefined && fillable.data.chapters > 0 ? (
+              <div className="nv-note nv-outline-fill">
+                <span>{t(`${fillable.data.chapters} 章的章纲还有空项，收录结果里有。`, `${fillable.data.chapters} chapter outline(s) have empty items the digests can fill.`)}</span>
+                <Button size="sm" icon="wand" busy={filling.busy} pending={t('正在补全…', 'Filling…')} onClick={fill} title={t('只填空着的项；已经写了内容的项不动', 'Only empty fields are filled; a field with anything in it is left alone')}>{t('按收录结果补全', 'Fill from the digests')}</Button>
+              </div>
+            ) : null}
+          </>}
         />
       </aside>
       <section className="nv-split-detail" {...split.detail}>
@@ -113,7 +128,7 @@ function Chapters({ onGraph }: { onGraph: () => void }) {
           </>
         ) : selected !== undefined
           ? <ChapterPlanEditor key={selected.id} plan={selected} index={info.get(selected.id)?.index ?? 0} plans={plans} />
-          : <Empty icon="tree" title={t('这条线还没有章节', 'No chapters on this line yet')}>{t('在左侧添加章节，或点"推演"让策划排出来。', 'Add a chapter on the left, or have the planner plot them with Derive.')}</Empty>}
+          : <Empty icon="tree" title={t('这条线还没有章节', 'No chapters on this line yet')}>{t('在左侧添加章节，或点“推演后续章节”让策划排出来。', 'Add a chapter on the left, or have the planner plot them with Derive the next chapters.')}</Empty>}
       </section>
     </div>
   )
@@ -734,7 +749,7 @@ export function Derive({ onApplied, only, preset }: {
     if (!here.current) {
       // Nobody was looking when it came back: it waits with the book, and its author hears where — unless the form
       // is open again by now, and shows it.
-      if ((output?.chapters?.length ?? 0) > 0 && (openForms.get(root) ?? 0) === 0) controller.toast('success', t(`推演好了（${output!.chapters!.length} 章）：再打开“推演”就能看到，加不加进大纲由你定。`, `The derivation is back (${output!.chapters!.length} chapters): open Derive again to read it and decide what goes into the outline.`), 12_000)
+      if ((output?.chapters?.length ?? 0) > 0 && (openForms.get(root) ?? 0) === 0) controller.toast('success', t(`推演好了（${output!.chapters!.length} 章）：再打开大纲里的“推演后续章节”就能看到，加不加进大纲由你定。`, `The derivation is back (${output!.chapters!.length} chapters): open Derive the next chapters in the outline again to read it and decide what goes in.`), 12_000)
       await controller.refreshProject().catch(() => {})
       return
     }
@@ -875,7 +890,7 @@ export function Derive({ onApplied, only, preset }: {
           // Kept with the book like a plan derived alone: it is there when this form is opened again, and can be adjusted.
           if (taken.chapters.length > 0) void controller.api.call('outline.keepDerived', { root, ...taken, ...(direction.trim().length > 0 ? { direction: direction.trim() } : {}) }).then(() => { kept.reload() }, () => {})
         }} /> : null}
-        {working === 'chapters' && (!direct || derived !== undefined) ? <p className="nv-muted nv-small">{t('可以关掉这里：推演好的会留着，再打开“推演”就在。', 'This can be closed: what is derived is kept, and is here when Derive is opened again.')}</p> : null}
+        {working === 'chapters' && (!direct || derived !== undefined) ? <p className="nv-muted nv-small">{t('可以关掉这里：推演好的会留着，再打开“推演后续章节”就在。', 'This can be closed: what is derived is kept, and is here when Derive the next chapters is opened again.')}</p> : null}
         {working === 'chapters' && stream.length > 0 ? <pre className="nv-stream">{stream.slice(-900)}</pre> : null}
         {applied !== undefined ? (
           <p className="nv-note is-ok">

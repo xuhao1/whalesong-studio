@@ -286,7 +286,7 @@ export function stageTools(service: NovelService): ToolDefinition[] {
             result.rechecked > 0 ? `${result.rechecked} lines rendered earlier did not pass the listening check and were spoken again` : undefined,
             result.retaken > 0 ? `${result.retaken} lines needed more than one take` : undefined,
             result.leveled > 0 ? `${result.leveled} earlier lines were brought to the common level` : undefined,
-            result.flagged > 0 ? `${result.flagged} lines still stand out after their retakes (cut short, or not quite in the speaker's voice) — they are marked in the Studio, where the author can have any of them spoken again` : undefined,
+            result.flagged > 0 ? `${result.flagged} lines still stand out after their retakes (cut short, misread, not quite in the speaker's voice, or played flatter than the direction asked) — they are marked in the Studio with what the listening model heard, where the author can have any of them spoken again` : undefined,
           ].filter((part): part is string => part !== undefined)
           return {
             text: `Audio for ${result.chapterId}: ${result.rendered} lines rendered, ${result.cached} already current, ${result.failed} failed; ${Math.round(result.duration)} seconds in total.${checked.length > 0 ? ` ${checked.join('; ')}.` : ''} The author can listen in Whalesong Studio → Read, in its listening mode.`,

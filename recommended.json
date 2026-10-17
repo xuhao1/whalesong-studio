@@ -1,10 +1,10 @@
 {
   "schema": 1,
-  "version": 4,
-  "date": "2026-10-16",
+  "version": 5,
+  "date": "2026-10-17",
   "notes": {
-    "zh": "第 4 版：一键接入 ChatGPT 订阅时，写手和班底默认用 GPT-6.1 Sol；DSH 的模型目录里还没有它的（0.2.0-rc.2），一键配置把它加进 ChatGPT 这条路由。已有的设置不动。",
-    "en": "Issue 4: the one-click ChatGPT setup puts the writer and the crew on GPT-6.1 Sol; where DSH's model catalog does not have it yet (0.2.0-rc.2), the one-click adds it to the ChatGPT route. Nothing already set moves."
+    "zh": "第 5 版：用百炼配音时，每录一句由 qwen3.8-omni-flash 听一遍——字念对没有、还是不是这个声音、语气到没到位，不过关就重录。用的是同一个百炼的 key。设置里的“听检的模型”可以换，填 none 就不听。已有的设置不动。",
+    "en": "Issue 5: with Bailian speech, qwen3.8-omni-flash listens to every take — the words, the voice, how far the delivery went — and a take that fails is spoken again. It uses the same Bailian key. Change it under the speech settings' listening model, or set it to none. Nothing already set moves."
   },
   "services": {
     "bailian": {
@@ -86,16 +86,19 @@
     "tts": {
       "qwen-audiogen": {
         "model": "qwen-audio-3.1-tts-next",
+        "listenModel": "qwen3.8-omni-flash",
         "suggestions": ["qwen-audio-3.1-tts-next"]
       },
       "qwen-realtime": {
         "model": "qwen3.8-omni-flash-realtime",
+        "listenModel": "qwen3.8-omni-flash",
         "narratorVoice": "Serena",
         "suggestions": ["qwen3.8-omni-flash-realtime", "qwen3.5-omni-plus-realtime", "qwen3.5-omni-flash-realtime"]
       },
       "dashscope": {
         "model": "qwen3-tts-instruct-flash",
         "designedVoiceModel": "qwen3-tts-vd-2026-01-26",
+        "listenModel": "qwen3.8-omni-flash",
         "narratorVoice": "Serena",
         "suggestions": ["qwen3-tts-instruct-flash", "qwen3-tts-flash"]
       },
