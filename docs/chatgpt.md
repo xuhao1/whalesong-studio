@@ -76,6 +76,7 @@ For instance DSH runs on another machine and you reach it in a browser (`dsh web
 
 - **Keep Codex Connect**: authorize under *DSH Settings → Models → Openai-Codex*, then press *Set up* on the ChatGPT card of the guide page — the Studio sees Codex Connect's route and only gives the roles its models and sets the pictures, without signing in again.
 - **Move to DSH's own**: remove Codex Connect under DSH's *Plugins*, restart DSH, and do the one click above. (Codex Connect keeps its sign-in in `~/.dsh/.openai-codex-auth.json`; removing the plugin leaves it; delete it yourself if you like.)
+- **After a DSH update the roles fail with "no adapter registered"**: Codex Connect lists the DSH versions it supports, and a DSH it does not list does not load it at all (the startup log says `incompatible with dsh …`); the `openai-codex` route goes with it, and every role on it fails. Codex Connect 0.2.0-alpha.2, for one, stops at DSH 0.2.1-alpha.1; 0.2.0-alpha.11 on GitHub goes up to 0.2.1-rc.5. Uninstall it under *Plugins*, then add `https://github.com/franksong2702/dsh-codex-connect` again to get the current one (uninstalling leaves its sign-in file; if *DSH Settings → Models → Openai-Codex* then shows it unauthorized, authorize once more); or move to DSH's own, as above.
 
 ## Pictures only: the Codex CLI
 

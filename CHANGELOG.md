@@ -4,6 +4,13 @@ All notable changes to this project are recorded here. The format follows [Keep 
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-11-01
+
+### Changed
+
+- **Checked on DSH 0.2.1-rc.5** (npm `latest` since 2026-10-29). Nothing in the Studio had to change: what it uses of DSH is the same from 0.2.1-rc.2 to rc.5. Those releases added *More* menus to the left sidebar, the right sidebar's guide and the conversation header, make *New Session* go back to a blank conversation of the workspace instead of opening a new one, and hand reasoning renderers the raw text beside the display text; the Studio's sidebar entry and guide card stay where they were, and its *Talk to the showrunner* creates its conversation through the Host, under the Novelist preset, as before. Development now type-checks, tests and runs on it: the dev dependencies are `@deepseek-ai/dsh`, `dsh-tools` and `dsh-subagent` 0.2.1-rc.5, cordis 4.0.5. DSH 0.2.0-rc.2 and later (`< 0.3`) are still accepted.
+- **[ChatGPT subscription](docs/chatgpt.md) says what a DSH update does to Codex Connect.** A Codex Connect that does not list the new DSH is not loaded at all, its `openai-codex` route goes with it, and every role on that route fails ("no adapter registered"); 0.2.0-alpha.2 stops at DSH 0.2.1-alpha.1, 0.2.0-alpha.11 goes up to 0.2.1-rc.5. The page says how to get the current one.
+
 ## [0.1.2] - 2026-10-17
 
 ### Added
@@ -537,7 +544,8 @@ First release, for DeepSeek Harness 0.2.0-rc.2.
 - **Calls that fail in passing are made again.** The Harness retries a failed model request for its agent's turns and for nobody else: a call a plugin makes through the model seam used to end at the first busy server, rate limit or dropped stream. The Studio now runs the provider's own retry policy (from Settings → Models; five tries with a growing wait by default) for every call it makes, says so on the job's progress line while it waits, and counts every attempt in the usage ledger. A reply that completes with reasoning in it and no answer at all — which providers produce now and then, and which the adapters let through as a normal end — is treated the same way and asked for again, unchanged, up to three times; when a model spends its whole output allowance reasoning, that is said at once, with what to change. Failures of this kind are worded in the book's language.
 - **Agent surface.** Twenty-four `novel_*` tools covering everything the Studio's screens can do — including its settings (`novel_settings`), showing a screen to the author (`novel_show`) and the small hand edits (`novel_manage`) — a project digest in the prompt, working modes, the `/novel` command, five workflow skills, tool rows that open the Studio, a Studio tab that opens by itself when the showrunner starts working and follows what it shows, and a confirmation gate for writes in read-only sessions, for removing a book and for opening one to the local network.
 
-[Unreleased]: https://github.com/xuhao1/whalesong-studio/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/xuhao1/whalesong-studio/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/xuhao1/whalesong-studio/releases/tag/v0.1.3
 [0.1.2]: https://github.com/xuhao1/whalesong-studio/releases/tag/v0.1.2
 [0.1.1]: https://github.com/xuhao1/whalesong-studio/releases/tag/v0.1.1
 [0.1.0]: https://github.com/xuhao1/whalesong-studio/releases/tag/v0.1.0
