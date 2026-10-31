@@ -21,10 +21,7 @@
 
 ## ⏳ 进行中
 
-### 478　推送发布 ⏳
-> 推送发布
-
-- 发布 #477 那批（DSH 0.2.1-rc.5：开发依赖、Codex Connect 文档）。按 `AGENTS.md`"版本号"：修订 +1，0.1.3；`npm run release` → 变更日志 → 记下来 → 提交、打标签 → `npm run push` → GitHub Release。
+（现在没有。）
 
 ---
 
