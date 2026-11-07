@@ -64,6 +64,11 @@
           # produces. The manuscript itself is changed through the novel_* tools.
           - id: tool-fs
             name: '@deepseek-ai/dsh-tool-fs'
+            config:
+              # DSH 0.2.2's apply_patch (one patch, many files) is off in a novelist's session, as it is everywhere by
+              # default: a book is changed through the Studio's tools, which keep its versions and memory in step. The
+              # gate below covers it all the same, should a profile turn it on.
+              applyPatch: false
           - id: tool-fs-search
             name: '@deepseek-ai/dsh-tool-fs-search'
             config:

@@ -19,7 +19,7 @@ import type {} from '@deepseek-ai/dsh-system-prompt'
 import type { PreToolDecision } from '@deepseek-ai/dsh-tools'
 import { digestPending } from '../core/pipelines/digest'
 import { exportBook, type ExportFormat } from '../core/pipelines/export'
-import { managedKind } from '../core/reconcile'
+import { managedKind, patchPaths } from '../core/reconcile'
 import { promptLanguage } from '../core/render'
 import { ProjectError } from '../core/project'
 import { PROJECT_CONTEXT, SHOWRUNNER_SECTION } from '../core/roles'
@@ -212,6 +212,15 @@ export function mountAgent(ctx: Context): void {
     }
     if (exec.name === 'write' || exec.name === 'edit') return typeof args.file_path === 'string' ? inBook(args.file_path) : undefined
     if (exec.name === 'str_replace_editor') return typeof args.path === 'string' && args.command !== 'view' ? inBook(args.path) : undefined
+    if (exec.name === 'apply_patch') {
+      // DSH 0.2.2's one-patch-many-files tool: any file of a book in it makes the whole patch a book change.
+      if (typeof args.input !== 'string') return undefined
+      for (const path of patchPaths(args.input)) {
+        const found = inBook(path)
+        if (found !== undefined) return found
+      }
+      return undefined
+    }
     if (exec.name === 'bash' && typeof args.command === 'string') {
       // A shell line is not parsed, only looked at: something that writes, aimed at a path of a book.
       const command = args.command
@@ -235,7 +244,7 @@ export function mountAgent(ctx: Context): void {
 
   // ── ask before writing in a read-only session ──
   ctx.on('tools/pre-execute', async (exec, next): Promise<PreToolDecision> => {
-    if (exec.name === 'write' || exec.name === 'edit' || exec.name === 'str_replace_editor' || exec.name === 'bash') {
+    if (exec.name === 'write' || exec.name === 'edit' || exec.name === 'str_replace_editor' || exec.name === 'apply_patch' || exec.name === 'bash') {
       const policy = novel.core.currentSettings().agentFiles ?? 'guide'
       const target = policy === 'allow' ? undefined : await rawTarget(exec).catch(() => undefined)
       if (target !== undefined) {

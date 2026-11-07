@@ -4,6 +4,12 @@
 > 发布新的一版：在最上面添一条，并把 `TODO.md` 里"版本状态"的那一条换成它。
 > 各条里的 #编号 在 [`README.md`](./README.md) 的索引里查。
 
+- **11-07 23:32 发布了 0.1.4（构建号 `7ef1e65b1931`）。** 这一版（#479）是跟上 DSH 0.2.2-rc.1（npm 上的 latest，也是您桌面版的版本）：
+  - **接口没变，依赖换了**：工坊用到的 DSH 接口从 0.2.1-rc.5 到 0.2.2-rc.1 没变；开发依赖换成 0.2.2-rc.1，cordis 4.1.0、schemastery 3.19.0；peer 里 cordis 改成 `^4.0.4`，0.2.0-rc.2 起的 DSH 照样能装。0.2.2 自己要求 Node 24.9 以上（您桌面版自带 Node 24）。
+  - **补了一处**：DSH 0.2.2 新增的 `apply_patch`（一个补丁改多个文件）现在也受"书的文件要经工坊改"的闸门管；小说家预设里把它明确关掉。
+  - **ChatGPT 文档**：Codex Connect 0.2.0-alpha.12 只认到 DSH 0.2.2-alpha.3，0.2.2-rc.1 会跳过它，`openai-codex` 路由跟着没了；在它更新前改用 DSH 自带的 ChatGPT 登录。
+  - **要您在 DSH 里做的**：① 重启 DSH（只换插件，书的格式、设置、key 都不变）。② 插件还是按旧包名 `dsh-novel-writer` 装着，照 #477 第 1 条卸载重装。③ 您的 Codex Connect 会被 0.2.2-rc.1 跳过，四个角色的 `openai-codex` 路由调不通——改用 DSH 自带的 ChatGPT 登录，或等它更新。
+  - **怎么验证的**：`npm run release`（类型检查 + 全部 825 条测试，含 3 条新测试）；0.2.2-rc.1 开发实例里后台、三个 RPC、小说家预设建会话、无头浏览器里的书架和书页界面都正常，`defineTool` / `createUserMessage` 运行时形状核对过；`--dump-config` 里有小说家预设与 `applyPatch: false`。没在您的桌面版上看（不碰）。
 - **11-01 01:21 发布了 0.1.3（构建号 `ff323be4387e`）。** 这一版（#477）只是跟上 DSH 0.2.1-rc.5（npm 上的 latest，也是您桌面版的版本），工坊代码没变：
   - **开发依赖换成 rc.5**：类型检查、测试、开发实例都对着它跑。您桌面版是链接到这个文件夹装的，工坊后台用到的四个 DSH 包（cordis、dsh-llm、dsh-tools、dsh-subagent）也从 0.2.0-rc.2 换成了 rc.5，和您的 DSH 一致。
   - **ChatGPT 文档**补了"升级 DSH 以后 Codex Connect 被跳过、角色报'没有注册适配器'"一条。

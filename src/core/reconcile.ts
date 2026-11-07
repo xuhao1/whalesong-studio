@@ -14,6 +14,19 @@ import { scheduleDigest } from './pipelines/digest'
 import { promptLanguage } from './render'
 import { errorMessage } from './util/async'
 
+/**
+ * The files a Codex-style patch names: DSH 0.2.2's `apply_patch` tool takes one such patch for many files at once —
+ * `*** Add File:`, `*** Update File:`, `*** Delete File:`, and the `*** Move to:` of an update.
+ */
+export function patchPaths(input: string): string[] {
+  const paths: string[] = []
+  for (const line of input.split('\n')) {
+    const named = /^\*\*\*\s+(?:Add File|Update File|Delete File|Move to):\s*(.+?)\s*\r?$/.exec(line)
+    if (named !== null) paths.push(named[1]!)
+  }
+  return paths
+}
+
 /** Which of the book's own files a path is, or undefined for anything else. */
 export function managedKind(relative: string): 'chapter' | 'bible' | 'outline' | 'manifest' | 'state' | undefined {
   const path = relative.replace(/\\/g, '/').replace(/^\.\//, '')

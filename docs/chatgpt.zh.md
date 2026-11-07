@@ -76,7 +76,7 @@
 
 - **继续用 Codex Connect**：先在 *DSH 设置 → 模型 → Openai-Codex* 里授权，再回工坊引导页点 ChatGPT 卡片上的“一键配置”——工坊会认出是 Codex Connect 的路由，只给角色挑模型、配插图，不另外登录。
 - **改用 DSH 自带的**：在 DSH 左侧“插件”里移除 Codex Connect，重启 DSH，再按上面的一键接上。（Codex Connect 的登录存在 `~/.dsh/.openai-codex-auth.json`，移除插件不会删它；不用了可以自己删。）
-- **升级 DSH 以后，角色一调就报“没有注册适配器”**：Codex Connect 写明了它支持哪几版 DSH，对不上的 DSH 干脆不加载它（启动日志里是 `incompatible with dsh …`），`openai-codex` 这条路由跟着没了，用它的角色都调不通。比如 Codex Connect 0.2.0-alpha.2 只认到 DSH 0.2.1-alpha.1，GitHub 上的 0.2.0-alpha.11 认到 0.2.1-rc.5。在“插件”里卸载它，再在“添加插件”里填 `https://github.com/franksong2702/dsh-codex-connect` 装一次就是新的（卸载不删它的登录文件；装好后如果 *DSH 设置 → 模型 → Openai-Codex* 显示没授权，再授权一次）；或者照上一条改用 DSH 自带的。
+- **升级 DSH 以后，角色一调就报“没有注册适配器”**：Codex Connect 写明了它支持哪几版 DSH，对不上的 DSH 干脆不加载它（启动日志里是 `incompatible with dsh …`），`openai-codex` 这条路由跟着没了，用它的角色都调不通。比如 Codex Connect 0.2.0-alpha.2 只认到 DSH 0.2.1-alpha.1，0.2.0-alpha.11 认到 0.2.1-rc.5，GitHub 上现在的 0.2.0-alpha.12 认到 0.2.2-alpha.3——所以 DSH 0.2.2-rc.1 上它照样被跳过。在“插件”里卸载它，再在“添加插件”里填 `https://github.com/franksong2702/dsh-codex-connect` 装一次就是新的（卸载不删它的登录文件；装好后如果 *DSH 设置 → 模型 → Openai-Codex* 显示没授权，再授权一次）；Codex Connect 还没认到 0.2.2-rc.1 之前，就照上一条改用 DSH 自带的。
 
 ## 只想用订阅画图：Codex CLI
 

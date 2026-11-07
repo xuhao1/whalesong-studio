@@ -4,6 +4,17 @@ All notable changes to this project are recorded here. The format follows [Keep 
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-11-07
+
+### Changed
+
+- **Checked on DSH 0.2.2-rc.1** (npm `latest` since 2026-11-04, and the desktop app's version). What the Studio uses of DSH — the plugin manifest and its seven client modules, the Novelist preset and its `defineTool` tools, the session and workspace services behind *Talk to the showrunner* — is the same from 0.2.1-rc.5 to 0.2.2-rc.1; the one new tool needed covering (below). Development now type-checks, tests and runs on it: the dev dependencies are `@deepseek-ai/dsh`, `dsh-tools` and `dsh-subagent` 0.2.2-rc.1, cordis 4.1.0 (0.2.2 raised it from 4.0.5) and schemastery 3.19.0; the cordis peer range is `^4.0.4`, so a DSH from 0.2.0-rc.2 to before 0.3 is still accepted. 0.2.2 itself asks for Node 24.9 or later.
+- **[ChatGPT subscription](docs/chatgpt.md) says what 0.2.2 does to Codex Connect.** Codex Connect 0.2.0-alpha.12 — the current one on GitHub — lists DSH versions up to 0.2.2-alpha.3, so DSH 0.2.2-rc.1 skips it (and its `openai-codex` route with it); the page says to move to DSH's own sign-in until Codex Connect lists 0.2.2-rc.1.
+
+### Fixed
+
+- **A book is kept whole from DSH 0.2.2's `apply_patch` too.** The gate that stops a book's own files from being changed around the Studio — in a read-only session, and from raw file tools at all — knew `write`, `edit`, `str_replace_editor` and `bash`. `apply_patch`, new in DSH 0.2.2, changes many files in one Codex-style patch and went past it, so a profile that turns the tool on could have had `manuscript/`, `bible/`, `outline.json` or `novel.json` rewritten with no ask and no version kept. The gate now reads the patch's `*** Add File:`, `*** Update File:`, `*** Delete File:` and `*** Move to:` lines (`patchPaths`, `src/core/reconcile.ts`); the Novelist preset also states `applyPatch: false` on its `tool-fs` row, which is what DSH ships anyway.
+
 ## [0.1.3] - 2026-11-01
 
 ### Changed
@@ -544,7 +555,8 @@ First release, for DeepSeek Harness 0.2.0-rc.2.
 - **Calls that fail in passing are made again.** The Harness retries a failed model request for its agent's turns and for nobody else: a call a plugin makes through the model seam used to end at the first busy server, rate limit or dropped stream. The Studio now runs the provider's own retry policy (from Settings → Models; five tries with a growing wait by default) for every call it makes, says so on the job's progress line while it waits, and counts every attempt in the usage ledger. A reply that completes with reasoning in it and no answer at all — which providers produce now and then, and which the adapters let through as a normal end — is treated the same way and asked for again, unchanged, up to three times; when a model spends its whole output allowance reasoning, that is said at once, with what to change. Failures of this kind are worded in the book's language.
 - **Agent surface.** Twenty-four `novel_*` tools covering everything the Studio's screens can do — including its settings (`novel_settings`), showing a screen to the author (`novel_show`) and the small hand edits (`novel_manage`) — a project digest in the prompt, working modes, the `/novel` command, five workflow skills, tool rows that open the Studio, a Studio tab that opens by itself when the showrunner starts working and follows what it shows, and a confirmation gate for writes in read-only sessions, for removing a book and for opening one to the local network.
 
-[Unreleased]: https://github.com/xuhao1/whalesong-studio/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/xuhao1/whalesong-studio/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/xuhao1/whalesong-studio/releases/tag/v0.1.4
 [0.1.3]: https://github.com/xuhao1/whalesong-studio/releases/tag/v0.1.3
 [0.1.2]: https://github.com/xuhao1/whalesong-studio/releases/tag/v0.1.2
 [0.1.1]: https://github.com/xuhao1/whalesong-studio/releases/tag/v0.1.1

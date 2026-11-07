@@ -9,11 +9,12 @@
 
 ## 版本状态
 
-- **11-01 01:21 发布了 0.1.3（构建号 `ff323be4387e`）。** 这一版（#477）只是跟上 DSH 0.2.1-rc.5（npm 上的 latest，也是您桌面版的版本），工坊代码没变：
-  - **开发依赖换成 rc.5**：类型检查、测试、开发实例都对着它跑。您桌面版是链接到这个文件夹装的，工坊后台用到的四个 DSH 包（cordis、dsh-llm、dsh-tools、dsh-subagent）也从 0.2.0-rc.2 换成了 rc.5，和您的 DSH 一致。
-  - **ChatGPT 文档**补了"升级 DSH 以后 Codex Connect 被跳过、角色报'没有注册适配器'"一条。
-  - **要您在 DSH 里做的两件**（不做，总编和场记、策划、导演、后期都用不了）：① 插件 → 已安装插件里的"鲸歌工坊"（还是按旧名 `dsh-novel-writer` 装的）→ 卸载；右上"添加插件"填 `/Users/xuhao/develop/Harness/DSHNovelWriter` → 安装 → 立即启用——重装完就是 0.1.3，不用另外重启；书、设置、key、旧对话都在。② Codex Connect 同样卸载，"添加插件"填 `https://github.com/franksong2702/dsh-codex-connect` 重装（0.2.0-alpha.2 → alpha.11，rc.5 只认新的）；装好后 *DSH 设置 → 模型 → Openai-Codex* 若显示没授权，再授权一次。
-  - **怎么验证的**：`npm run release`（类型检查 + 全部 822 条测试）；rc.5 实例里的实测（子代理推演、旧名安装复现与重装、路由缺失时总编的提示）见归档 #477。
+- **11-07 23:32 发布了 0.1.4（构建号 `7ef1e65b1931`）。** 这一版（#479）是跟上 DSH 0.2.2-rc.1（npm 上的 latest，也是您桌面版的版本）：
+  - **接口没变，依赖换了**：工坊用到的 DSH 接口从 0.2.1-rc.5 到 0.2.2-rc.1 没变；开发依赖换成 0.2.2-rc.1，cordis 4.1.0、schemastery 3.19.0；peer 里 cordis 改成 `^4.0.4`，0.2.0-rc.2 起的 DSH 照样能装。0.2.2 自己要求 Node 24.9 以上（您的桌面版自带 Node 24，不受影响）。
+  - **补了一处**：DSH 0.2.2 新增的 `apply_patch`（一个补丁改多个文件）现在也受"书的文件要经工坊改"这道闸门管，只读会询问、绕过会被拒；小说家预设里把它明确关掉。
+  - **ChatGPT 文档更新**：Codex Connect 0.2.0-alpha.12（GitHub 上现在的）只认到 DSH 0.2.2-alpha.3，0.2.2-rc.1 会跳过它，`openai-codex` 路由跟着没了；在它更新前改用 DSH 自带的 ChatGPT 登录。
+  - **要您在 DSH 里做的**：① 重启 DSH（只换插件，书的格式、设置、key 都不变）。② 您桌面版的插件还是按旧包名 `dsh-novel-writer` 装的，照 #477 第 1 条在插件页卸载，再按 `/Users/xuhao/develop/Harness/DSHNovelWriter` 重装一次。③ 您的 Codex Connect 是 GitHub 装的 0.2.0-alpha.12，在 0.2.2-rc.1 上会被跳过，场记、策划、导演、后期的 `openai-codex` 路由调不通——改用 DSH 自带的 ChatGPT 登录，或等 Codex Connect 支持 0.2.2-rc.1。
+  - **怎么验证的**：`npm run release`（类型检查 + 全部 825 条测试，其中 3 条是新加的补丁路径测试）；0.2.2-rc.1 的开发实例（`dsh web`）里工坊后台起来，`workspace.info` / `model.info` / `conversation.open` 三个 RPC 正常，小说家预设能建会话，无头浏览器里书架和书的界面渲染、没有控制台错误；`defineTool` / `createUserMessage` 的运行时形状核对过；`dsh web --dump-config` 里小说家预设和 `applyPatch: false` 都在。没在您的桌面版上看（不碰）。详见归档 #479。
 - **做完了、还没发布的**（您说发布才发布，#362）：（现在没有。）
 - 更早的每一版、版本和提交的对照：[`todo/releases.md`](./todo/releases.md)。
 
@@ -26,6 +27,12 @@
 ---
 
 ## 📝 待办
+
+### 479　适配到最新的 DSH，版本号 +0.0.1，发布到 GitHub 📝
+> 帮我把本项目适配到最新版本的dsh，然后更新到github，版本号+0.0.1，release note是适配一类的
+
+- 现状（2026-11-07 查）：npm 上 `latest` 是 **0.2.2-rc.1**，您桌面版也是 0.2.2-rc.1；工坊的开发依赖还停在 0.2.1-rc.5（0.1.3），peer 范围 `>=0.2.0-rc.2 <0.3.0`。
+- 要做的：开发依赖换到 0.2.2-rc.1，比对工坊用到的 DSH 接口有没有变（类型检查 + 测试 + rc.1 开发实例实测），改代码或文档；然后按 `AGENTS.md`"版本号"发一版 **0.1.4**（修订 +1），CHANGELOG、标签、GitHub Release（说明写"适配"这一类，中英两段），`npm run push` 推 `main` 和标签。
 
 ### 475　译成英文以后人物卡的名字还是中文（实测中发现）📝
 （做 #473 时在开发实例的英文副本里看到的）
