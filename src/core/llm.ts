@@ -151,6 +151,13 @@ const NEVER_RETRY = new Set(['TRUNCATED', 'FILTERED', 'NO_MODEL', 'NO_CREDENTIAL
 /** The language to speak to whoever reads a job's label or its failure: the one the request itself is written in. */
 const inChinese = (request: LlmRequest): boolean => /[一-鿿]/.test(`${request.system ?? ''}${request.prompt}`.slice(0, 4000))
 
+/** What an attempt is told when the one before it broke off part way: the answer so far, to go on from. */
+function continuation(zh: boolean, sofar: string): string {
+  return zh
+    ? `上一次回答在中途断了。下面是已经写出的部分，原样保留，不要重复它，也不要加任何说明，直接从它停下的那个字接着写到结束。上面的要求一条不变：照原来的章纲和节拍走——已经写到的节拍不再重写，还没写到的照样一个个写足，节奏和篇幅照原来的把握，不要因为是接着写就赶着收尾：\n<<<已写出的部分\n${sofar}\n已写出的部分>>>`
+    : `The previous answer broke off part way. Below is what was already written; it stands as it is. Do not repeat it or add any remark: go straight on from the very character where it stopped, to the end. Everything asked above still holds: follow the outline and its beats as before — the beats already written are not written again, those not yet reached are each given their full room, at the same pace; do not hurry to close because you are picking up.\n<<<WRITTEN SO FAR\n${sofar}\nWRITTEN SO FAR>>>`
+}
+
 /** A reply without a word in it, as the failure it is. */
 function silence(request: LlmRequest, response: LlmResponse): LlmCallError {
   const zh = inChinese(request)
@@ -234,15 +241,29 @@ export function retrying(backend: LlmBackend, random: () => number = Math.random
     async complete(request) {
       const zh = inChinese(request)
       const policy = backend.retryPolicy?.(request.route) ?? DEFAULT_RETRY
+      // What earlier attempts got written before they broke off: kept, and the next attempt goes on from it.
+      let kept = ''
       for (let retry = 0; ; retry++) {
         let failure: LlmCallError
+        const before = kept
+        let streamed = ''
+        const attempt: LlmRequest = {
+          ...request,
+          ...(before.length > 0 ? { prompt: `${request.prompt}\n\n${continuation(zh, before)}` } : {}),
+          onText: (delta, total) => {
+            streamed = total
+            request.onText?.(delta, before + total)
+          },
+        }
         try {
-          const response = await backend.complete(request)
-          if (response.text.trim().length > 0) return response
+          const response = await backend.complete(attempt)
+          const text = before + response.text
+          if (text.trim().length > 0) return before.length > 0 ? { ...response, text } : response
           failure = silence(request, response)
         } catch (error) {
           if (isAbort(error) || request.signal?.aborted === true || !(error instanceof LlmCallError)) throw error
           failure = error
+          kept = before + streamed
         }
         const silent = failure.code === 'EMPTY_RESPONSE'
         const most = silent ? Math.min(policy.maxRetries, SILENT_RETRIES) : policy.maxRetries

@@ -57,3 +57,41 @@ describe('the DSH backend', () => {
     expect(sent).toHaveLength(1)
   })
 })
+
+describe('codeOfFailure', () => {
+  it('makes a stream the provider ended with finish_reason error one to try again', async () => {
+    const { codeOfFailure } = await import('../src/host/llm-backend.js')
+    expect(codeOfFailure('UNKNOWN', 'Provider finish_reason: error')).toBe('SERVER')
+    expect(codeOfFailure('UNKNOWN', 'Provider finish_reason: network_error')).toBe('NETWORK')
+    expect(codeOfFailure('FILTERED', 'Provider finish_reason: content_filter')).toBe('SERVER')
+    expect(codeOfFailure('AUTH', 'bad key')).toBe('AUTH')
+  })
+})
+
+describe('retrying goes on from where a broken answer stopped', () => {
+  it('keeps the text written before the failure and asks the next attempt to continue it', async () => {
+    const { retrying } = await import('../src/core/llm.js')
+    const prompts: string[] = []
+    const seen: string[] = []
+    let call = 0
+    const backend = {
+      listModels: async () => [], contextWindow: async () => undefined, defaultRoute: () => undefined,
+      retryPolicy: () => ({ maxRetries: 2, codes: ['SERVER'], initialDelayMs: 1, maxDelayMs: 1, jitterRatio: 0 }),
+      async complete(request: { prompt: string; onText?: (d: string, t: string) => void }) {
+        prompts.push(request.prompt)
+        if (call++ === 0) {
+          request.onText?.('第一段。', '第一段。')
+          throw new LlmCallError('Provider finish_reason: error', 'SERVER')
+        }
+        request.onText?.('第二段。', '第二段。')
+        return { text: '第二段。', finish: 'stop' }
+      },
+    }
+    const response = await retrying(backend as never).complete({ route: { provider: 'p', model: 'm' }, prompt: '写这一章', onText: (_d: string, t: string) => { seen.push(t) } } as never)
+    expect(response.text).toBe('第一段。第二段。')
+    expect(prompts[1]).toContain('写这一章')
+    expect(prompts[1]).toContain('第一段。')
+    expect(prompts[1]).toContain('节拍')
+    expect(seen.at(-1)).toBe('第一段。第二段。')
+  })
+})

@@ -16,6 +16,19 @@ import { imageBlocks } from './pictures'
 /** An endpoint's word that it does not take a temperature: ChatGPT's (`Unsupported parameter: temperature`), and the like. */
 const REFUSES_TEMPERATURE = /temperature/i
 
+/**
+ * A provider that ends its stream with `finish_reason: error` (OpenRouter does, for an upstream that gave way
+ * mid-answer) or `network_error` failed in passing: the same request can be made again. The adapter reports
+ * it under a code no retry policy names, so the call used to be given up at the first try. `content_filter` too:
+ * filters stop sound text often enough that asking again is worth it (the author, #480).
+ */
+const PASSING_FINISH = /finish_reason:\s*(error|network_error|content_filter)\b/i
+
+export function codeOfFailure(code: string, message: string): string {
+  if (PASSING_FINISH.test(message)) return /network/i.test(message) ? 'NETWORK' : 'SERVER'
+  return code
+}
+
 export function createHarnessLlm(ctx: Context): LlmBackend {
   /** Routes (`provider/model`) that refused a temperature: they are not sent one again. */
   const noTemperature = new Set<string>()
@@ -90,7 +103,7 @@ export function createHarnessLlm(ctx: Context): LlmBackend {
         }
         if (reason.kind === 'error') {
           if (temperature !== undefined && text.length === 0 && thought === 0 && REFUSES_TEMPERATURE.test(reason.failure.message)) return undefined
-          throw new LlmCallError(`${route.provider}/${route.model}: ${reason.failure.message}`, reason.failure.code, reason.failure.providerRetryAfterMs !== undefined ? { retryAfterMs: reason.failure.providerRetryAfterMs } : undefined)
+          throw new LlmCallError(`${route.provider}/${route.model}: ${reason.failure.message}`, codeOfFailure(reason.failure.code, reason.failure.message), reason.failure.providerRetryAfterMs !== undefined ? { retryAfterMs: reason.failure.providerRetryAfterMs } : undefined)
         }
         finish = reason.kind
       }

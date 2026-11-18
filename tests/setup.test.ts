@@ -3,7 +3,7 @@
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import type { Context } from '@deepseek-ai/cordis'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { LlmBackend } from '../src/core/llm'
 import { LlmCallError } from '../src/core/llm'
 import { completeDirect, createRoutedLlm, isDirect, reasoningParams } from '../src/core/media/chat'
@@ -108,6 +108,9 @@ describe('keys', () => {
   }
 
   it('stores a key per host under the plugin scope and never elsewhere', async () => {
+    // A key in the environment of whoever runs the tests is not one this test stored.
+    vi.stubEnv('OPENROUTER_API_KEY', '')
+    try {
     const { ctx, records } = fakeContext()
     const keys = new KeyStore(ctx, () => {})
     expect(await keys.describe('https://openrouter.ai/api/v1')).toEqual({ host: 'openrouter.ai', configured: false })
@@ -118,6 +121,9 @@ describe('keys', () => {
     expect(await keys.describe('https://openrouter.ai')).toEqual({ host: 'openrouter.ai', configured: true, source: 'saved' })
     await keys.clear('https://openrouter.ai/api/v1')
     expect(await keys.forEndpoint('https://openrouter.ai/api/v1')).toBeUndefined()
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 
   it('refuses blanks and anything that is not one token', async () => {
