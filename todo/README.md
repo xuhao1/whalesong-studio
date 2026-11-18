@@ -487,5 +487,6 @@
 | 478 | ✅ |  | 发布 0.1.3（`ff323be4387e`，#477 那批）：提交 `e52987a`、标签 `v0.1.3`、GitHub Release 附 tgz |
 | 479 | ✅ |  | DSH 0.2.2-rc.1（npm latest、桌面版）：接口没变、开发依赖换到 rc.1 / cordis 4.1.0；补了闸门对 0.2.2 新增 `apply_patch` 的覆盖；Codex Connect alpha.12 被 rc.1 跳过，改用 DSH 自带 ChatGPT 登录；发布 0.1.4 |
 | 480 | ✅ |  | OpenRouter 中途 `finish_reason: error` / `content_filter` 改为重试并从断处续写（照原节拍）；发布 0.1.5 |
+| 481 | 🔁 |  | 工坊顶栏可以拖动 DSH 窗口（macOS，`-webkit-app-region`） |
 | 358 | ✅ |  | 审校上下文太大：设上限、按需读（随 #403 做了） |
 | 467 | ✅ |  | 配音一个声音一段样带（几种语气），语气写成"这一句怎么说"；音高检查删掉，百炼 omni 听字、嗓子、语气并重录；样带先听，吼得拉尖的重录。取代 #464 的关键词 + 吼样本 |

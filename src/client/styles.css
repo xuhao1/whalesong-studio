@@ -103,6 +103,15 @@
   border-bottom: 1px solid var(--nv-border);
 }
 
+/* The Studio's top bar sits where a window's title bar would on macOS: it moves the window, as DSH's own headers do (#481). */
+[data-platform='darwin'] .nv-header {
+  -webkit-app-region: drag;
+}
+
+[data-platform='darwin'] .nv-header :is(button, a, input, select, textarea, label, summary, [role='button'], [role='tab'], [role='menu'], [role='menuitem'], [role='dialog'], [role='listbox'], [tabindex]) {
+  -webkit-app-region: no-drag;
+}
+
 .nv-header-title {
   font-weight: 600;
 }
