@@ -4,6 +4,12 @@ All notable changes to this project are recorded here. The format follows [Keep 
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-11-19
+
+### Changed
+
+- **The writing page on a phone** (#484). Where the Studio is narrow (560 px or less), the page scrolls as one — the bars above the text go up with it, and the text has the screen; the toolbar takes two lines (the chapter, its state and length; then what can be done with it), *Saved* is said only while it is not, and the box for what to write next has a line of its own with its buttons below it. Wider, nothing changes.
+
 ## [0.1.7] - 2026-11-19
 
 ### Added
@@ -578,7 +584,8 @@ First release, for DeepSeek Harness 0.2.0-rc.2.
 - **Calls that fail in passing are made again.** The Harness retries a failed model request for its agent's turns and for nobody else: a call a plugin makes through the model seam used to end at the first busy server, rate limit or dropped stream. The Studio now runs the provider's own retry policy (from Settings → Models; five tries with a growing wait by default) for every call it makes, says so on the job's progress line while it waits, and counts every attempt in the usage ledger. A reply that completes with reasoning in it and no answer at all — which providers produce now and then, and which the adapters let through as a normal end — is treated the same way and asked for again, unchanged, up to three times; when a model spends its whole output allowance reasoning, that is said at once, with what to change. Failures of this kind are worded in the book's language.
 - **Agent surface.** Twenty-four `novel_*` tools covering everything the Studio's screens can do — including its settings (`novel_settings`), showing a screen to the author (`novel_show`) and the small hand edits (`novel_manage`) — a project digest in the prompt, working modes, the `/novel` command, five workflow skills, tool rows that open the Studio, a Studio tab that opens by itself when the showrunner starts working and follows what it shows, and a confirmation gate for writes in read-only sessions, for removing a book and for opening one to the local network.
 
-[Unreleased]: https://github.com/xuhao1/whalesong-studio/compare/v0.1.7...HEAD
+[Unreleased]: https://github.com/xuhao1/whalesong-studio/compare/v0.1.8...HEAD
+[0.1.8]: https://github.com/xuhao1/whalesong-studio/releases/tag/v0.1.8
 [0.1.7]: https://github.com/xuhao1/whalesong-studio/releases/tag/v0.1.7
 [0.1.6]: https://github.com/xuhao1/whalesong-studio/releases/tag/v0.1.6
 [0.1.5]: https://github.com/xuhao1/whalesong-studio/releases/tag/v0.1.5
