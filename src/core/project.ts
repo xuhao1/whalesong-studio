@@ -15,6 +15,7 @@
  * Every write is atomic and bumps the project revision that the UI long-polls on.
  * Files edited by hand or by other tools are picked up through a directory watch.
  */
+import type { BeatMark, ChapterBeatMarks } from './beatmarks'
 import { sceneOfPicture, scenesOf } from '../shared/art'
 import { figureSpots, placeFigures, spotsNear, type ChapterFigure, type PortraitPlace } from '../shared/reader'
 import { mainSheetOf, sheetFronts, sheetPool } from '../shared/sheets'
@@ -2672,6 +2673,15 @@ export class Project {
       return { ...rest, status: 'pending' as const }
     }))
     return back
+  }
+
+  /** Where each beat of a chapter's plan begins in its text (#483); none where it was not written by its beats. */
+  async beatMarks(chapterId: string): Promise<BeatMark[]> {
+    return (await this.readState<ChapterBeatMarks>('beats', `${chapterId}.json`))?.marks ?? []
+  }
+
+  async saveBeatMarks(chapterId: string, marks: BeatMark[]): Promise<void> {
+    await this.writeState(['beats', `${chapterId}.json`], { chapterId, marks } satisfies ChapterBeatMarks)
   }
 
   async review(chapterId: string): Promise<ChapterReview | undefined> {

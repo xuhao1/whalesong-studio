@@ -4,6 +4,7 @@
  * context. The orchestrator never writes prose itself — it decides what gets
  * written and passes a brief; this pipeline turns that into text on disk.
  */
+import { type BeatMark, joinMarks, lastBeat, takeMarks } from '../beatmarks'
 import { keptPictures } from '../../shared/embedded'
 import { autoOf, chapterBudgetOf, MAIN_LINE, writingOf, type Beat, type ChapterInfo, type FiguresKept, type MaterialUsed, type PictureGuide, type PicturesRead } from '../../shared/types'
 import { clip, clipTail, countWords, estimateTokens, normalizeProse, proseOnly } from '../../shared/text'
@@ -136,6 +137,17 @@ export function cleanProse(reply: string, title?: string): string {
   return normalizeProse(lines.join('\n'))
 }
 
+/**
+ * The parts a chapter gone on with is written in (#483): from beat `at` — the one its text ends in, which may not be
+ * finished — to the last, at most `perPart` beats a part.
+ */
+export function resumeParts(beats: readonly Beat[], at: number, perPart: number): { from: number; to: number; words?: number }[] {
+  const parts: { from: number; to: number }[] = []
+  const size = Math.max(1, perPart)
+  for (let from = at; from < beats.length; from += size) parts.push({ from, to: Math.min(beats.length - 1, from + size - 1) })
+  return parts
+}
+
 /** About what a model writes when it is asked for a chapter in one go, whatever length it is asked for: a part is no longer. */
 const PART_WORDS = 3000
 
@@ -243,6 +255,10 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
   const asked = params.brief !== undefined && params.brief.trim().length > 0 ? { instruction: params.brief.trim() } : {}
   let written = ''
   let handed = ''
+  // Where the beats begin in the text (#483): as kept for the chapter, and as this writing marks them.
+  const oldMarks = dry ? [] : await project.beatMarks(chapter.plan.id).catch(() => [] as BeatMark[])
+  const newMarks: BeatMark[] = []
+  let marksTo: BeatMark[] | undefined
   let continued = false
   let cached = 0
   let pack: ContextPack
@@ -272,6 +288,7 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
     }
   }
   if (composed !== undefined) {
+    if (mode === 'draft' && oldMarks.length > 0) marksTo = []
     written = composed.text
     handed = composed.handed
     pack = composed.pack
@@ -316,20 +333,33 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
     // and where to stop — whatever length is asked for, unless the author has it otherwise (`partBeats`). Each beat
     // gets its room that way; and a model asked for ten thousand words in one request writes the chapter to its end
     // in half of that, and nothing brings the other half.
-    const parts = mode === 'draft' ? partsOf(chapter.plan.beats, target, perPart) : undefined
+    // A chapter gone on with, whose text was written by its beats, goes on by them too: from the beat its text ends
+    // in (#483) — unless the author said what to write next.
+    const beats = chapter.plan.beats ?? []
+    const resumeAt = mode === 'continue' && params.brief === undefined && perPart > 0 && beats.length > 0
+      ? lastBeat(existing, beats, oldMarks)
+      : undefined
+    const parts = mode === 'draft' ? partsOf(chapter.plan.beats, target, perPart) : resumeAt !== undefined ? resumeParts(beats, resumeAt, perPart) : undefined
+    const resume = resumeAt !== undefined
+    // A part begins its first beat unless it goes on with one: the first part of a chapter gone on with, or more of a part already begun.
+    const opensPart = (index: number): boolean => !(resume && index === 0) && begun !== index
+    // The marks the chapter keeps once this is in: a draft's own; a continuation's after those of the beats before it.
+    const marksAfter = (added: BeatMark[]): BeatMark[] => mode === 'draft' ? added : resumeAt !== undefined ? joinMarks(oldMarks, beats, resumeAt + 1, added) : oldMarks
     let at = 0
+    // The part whose first piece is in: what comes after it in the same part goes on with its beats, it does not begin them.
+    let begun = -1
     for (let round = 0; round < (parts !== undefined ? parts.length + 3 : 4); round++) {
       const soFar = written
       const part = parts?.[at]
       // What the parts before this one fell short of is made up over the parts still to come: this part's share of
       // what is left, by its beats (and never so much that one request could not hold it).
-      const beatsLeft = part !== undefined ? chapter.plan.beats!.length - part.from : 0
+      const beatsLeft = part !== undefined ? beats.length - part.from : 0
       const share = part?.words !== undefined ? Math.round((target! - countWords(proseOnly(soFar))) * (part.to - part.from + 1) / beatsLeft / 50) * 50 : 0
       const partly = part !== undefined
         ? {
             // (No length asked for: the part's own is left to the writer, who is told what the book's chapters run to.)
             ...(part.words !== undefined ? { words: Math.max(200, Math.min(Math.round(PART_WORDS * 1.6), Math.max(part.words, share))) } : {}),
-            how: partHow({ ...base, at, of: parts!.length, from: part.from, beats: chapter.plan.beats!.slice(part.from, part.to + 1).map(beat => beat.summary), all: chapter.plan.beats!.length, ...(target !== undefined ? { whole: target } : usual !== undefined ? { usual } : {}) }),
+            how: partHow({ ...base, at, of: parts!.length, from: part.from, beats: beats.slice(part.from, part.to + 1).map(beat => beat.summary), all: beats.length, ...(resume ? { resume: true } : {}), ...(target !== undefined && !resume ? { whole: target } : usual !== undefined ? { usual } : {}) }),
           }
         : undefined
       if (!dry && parts !== undefined) task.job?.progress(1, 3, `${lang === 'zh' ? `写作中（第 ${at + 1}/${parts.length} 段）` : `writing (part ${at + 1} of ${parts.length})`}${picturesLabel(guided, lang)}`)
@@ -369,15 +399,30 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
           core.log(`continuing ${chapter.plan.id} got no further`, error)
           break
         }
-        // Stopped mid-chapter: what was written is kept when it replaces nothing (an empty chapter, or a continuation).
-        const kept = [soFar, cleanProse(partial, chapter.plan.title)].filter(part => part.trim().length > 0).join('\n\n')
-        if (!dry && task.signal?.aborted === true && kept.length > 0 && (mode === 'continue' || existing.length === 0)) {
-          await project.saveChapterText(chapter.plan.id, mode === 'continue' ? `${existing}\n\n${kept}` : kept, { reason: 'before-continue' })
+        const cut = part !== undefined ? takeMarks(cleanProse(partial, chapter.plan.title), beats, part.from, part.to, opensPart(at)) : { text: cleanProse(partial, chapter.plan.title), marks: [] }
+        const kept = [soFar, cut.text].filter(piece => piece.trim().length > 0).join('\n\n')
+        const stopped = task.signal?.aborted === true || isAbort(error)
+        // Stopped by the author mid-chapter: what was written is kept when it replaces nothing (an empty chapter, or a
+        // continuation). Failed — the model gave out, however often it was asked again: what was written is kept
+        // all the same (#482), the text it takes the place of set aside as a version, and it is gone on with from there.
+        if (!dry && kept.trim().length > 0 && (!stopped || mode === 'continue' || existing.length === 0)) {
+          const text = mode === 'continue' ? `${existing}\n\n${kept}` : kept
+          await project.saveChapterText(chapter.plan.id, text, { reason: mode === 'continue' ? 'before-continue' : 'before-redraft' })
+          if (parts !== undefined || oldMarks.length > 0) await project.saveBeatMarks(chapter.plan.id, marksAfter([...newMarks, ...cut.marks])).catch((failure: unknown) => { core.log(`could not keep the beats of ${chapter.plan.id}`, failure) })
+          if (!stopped && error instanceof Error) {
+            const words = countWords(proseOnly(kept))
+            error.message = lang === 'zh'
+              ? `${error.message}（已经写出的 ${words} 字保存在这一章里了，可以点“续写”从断开的节拍接着写。）`
+              : `${error.message} (the ${words} words written so far are saved in the chapter: Continue goes on from the beat it broke off in.)`
+          }
         }
         throw error
       }
       cached += response.usage?.cachedTokens ?? 0
-      const piece = cleanProse(response.text, chapter.plan.title)
+      const taken = part !== undefined ? takeMarks(cleanProse(response.text, chapter.plan.title), beats, part.from, part.to, opensPart(at)) : { text: cleanProse(response.text, chapter.plan.title), marks: [] }
+      const piece = taken.text
+      newMarks.push(...taken.marks)
+      begun = at
       written = soFar.length > 0 ? `${soFar}\n\n${piece}` : piece
       // Cut short by the model's own limit: the same part is gone on with.
       if (response.finish === 'max-tokens' && !(target !== undefined && countWords(written) >= target * 1.4)) {
@@ -387,6 +432,8 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
       if (parts === undefined || at >= parts.length - 1) break
       at += 1
     }
+    // Written by its beats: where each begins is kept. Drafted over in one go: the beats kept for the old text are no longer where they were.
+    marksTo = parts !== undefined ? marksAfter(newMarks) : mode === 'draft' && oldMarks.length > 0 ? [] : undefined
   }
 
   const partsWritten = composed === undefined && mode === 'draft' ? partsOf(chapter.plan.beats, target, perPart)?.length : undefined
@@ -403,6 +450,7 @@ export async function writeChapter(core: NovelCore, runtime: ProjectRuntime, par
   if (!dry) task.job?.rewrite(written)
   // Written to be compared: the chapter keeps its text, and the draft goes back to whoever asked.
   const saved = dry ? { words: countWords(proseOnly(finalText)), changed: false } : await project.saveChapterText(chapter.plan.id, finalText, { reason: mode === 'continue' ? 'before-continue' : 'before-redraft' })
+  if (!dry && marksTo !== undefined) await project.saveBeatMarks(chapter.plan.id, marksTo).catch((error: unknown) => { core.log(`could not keep the beats of ${chapter.plan.id}`, error) })
 
   let digested = false
   let undigested: string | undefined

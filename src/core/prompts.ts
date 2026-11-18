@@ -2785,7 +2785,7 @@ export function termsTask(base: { lang: PromptLanguage; settled: string; names?:
  * @param base.whole - the length asked for the chapter, where one is: the length said above is then this part's.
  * @param base.usual - with no length asked for: how long the book's written chapters run, for the writer's sense of this part's share.
  */
-export function partHow(base: Base & { at: number; of: number; from: number; beats: string[]; all: number; whole?: number; usual?: number }): string {
+export function partHow(base: Base & { at: number; of: number; from: number; beats: string[]; all: number; whole?: number; usual?: number; resume?: boolean }): string {
   const first = base.from + 1
   const last = base.from + base.beats.length
   const which = base.beats.length > 1 ? `${first}–${last}` : String(first)
@@ -2796,9 +2796,19 @@ export function partHow(base: Base & { at: number; of: number; from: number; bea
     : L(base.lang,
         `上面说的篇幅是对整章说的：这一次只是其中 ${base.all} 个节拍里的 ${base.beats.length} 个${base.usual !== undefined ? `（本书已写的章节平均约 ${base.usual} 字，是整章的数）` : ''}，把这几个节拍写足就够，不要把别的节拍的篇幅也写进来。`,
         `What is said of length above is said of the whole chapter: this part is ${base.beats.length} of its ${base.all} beats${base.usual !== undefined ? ` (the chapters written so far run to about ${base.usual} words each — the whole of one)` : ''}; give these beats their room, and no more than theirs.`)
+  const resume = base.resume === true && base.at === 0
+  const start = resume
+    ? L(base.lang, `本章已有正文写到了第 ${first} 个节拍，它可能还没写完：从已有正文的最后一个字之后接着写，先把第 ${first} 个节拍写完，不要重写、不要重复已有内容，衔接处不能看出缝。`, `The text so far has reached beat ${first}, and may not have finished it: pick up right after its last word, finish beat ${first} first, rewrite and repeat nothing, and leave no seam.`)
+    : base.at > 0
+      ? L(base.lang, '从“本章已有正文”的最后一个字之后接着写，不要重复已有内容，衔接处不能看出缝。', 'Pick up right after the last word of "This chapter so far", repeat nothing, and leave no seam.')
+      : L(base.lang, '从本章第一句开始写。', 'Start from the first sentence of the chapter.')
+  // Where each beat begins is kept beside the text (#483): the writer marks it, and the Studio takes the marks out.
+  const marks = L(base.lang,
+    `每个节拍开始的地方，单独一行写一个标记【节拍 n】（n 是上面的节拍编号），下一行接着写正文${resume ? `；接着写的第 ${first} 个节拍不用再标` : ''}。标记只用来记下哪一段属于哪个节拍，工坊会把它拿掉，读者看不到；除此之外不要写任何标题、说明。`,
+    `Where each beat begins, write a mark on a line of its own — 【节拍 n】, n being the beat's number above — and go on with the prose on the next line${resume ? `; beat ${first}, being gone on with, needs none` : ''}. The marks only record which paragraph belongs to which beat; the Studio takes them out and no reader sees them. Beyond them, no heading or remark.`)
   return L(base.lang,
-    `这一章按章纲的节拍分 ${base.of} 次写，这是第 ${base.at + 1} 次。${length}\n${base.at > 0 ? '从“本章已有正文”的最后一个字之后接着写，不要重复已有内容，衔接处不能看出缝。' : '从本章第一句开始写。'}这一次只写章纲里的第 ${which} 个节拍：\n${list}\n${final ? '写完这几个节拍，这一章就到了结尾：照常收住。' : `写到第 ${last} 个节拍结束就停——后面的节拍留给下一次：不要提前写它们，也不要给这一章收尾。`}直接输出正文。`,
-    `This chapter is written in ${base.of} parts, by the beats of its outline, and this is part ${base.at + 1}. ${length}\n${base.at > 0 ? 'Pick up right after the last word of "This chapter so far", repeat nothing, and leave no seam.' : 'Start from the first sentence of the chapter.'} Write beat${base.beats.length > 1 ? 's' : ''} ${which} of the outline, and no other:\n${list}\n${final ? 'With these beats the chapter comes to its end: close it as it should close.' : `Stop where beat ${last} ends — the beats after it are for the next part: do not write them ahead, and do not bring the chapter to a close.`} Output the prose only.`)
+    `这一章按章纲的节拍分 ${base.of} 次写，这是第 ${base.at + 1} 次。${length}\n${start}这一次只写章纲里的第 ${which} 个节拍：\n${list}\n${final ? '写完这几个节拍，这一章就到了结尾：照常收住。' : `写到第 ${last} 个节拍结束就停——后面的节拍留给下一次：不要提前写它们，也不要给这一章收尾。`}\n${marks}直接输出正文。`,
+    `This chapter is written in ${base.of} parts, by the beats of its outline, and this is part ${base.at + 1}. ${length}\n${start} Write beat${base.beats.length > 1 ? 's' : ''} ${which} of the outline, and no other:\n${list}\n${final ? 'With these beats the chapter comes to its end: close it as it should close.' : `Stop where beat ${last} ends — the beats after it are for the next part: do not write them ahead, and do not bring the chapter to a close.`}\n${marks} Output the prose only.`)
 }
 
 // ───────────────────────────── a chapter written by the writer as an agent ─────────────────────────────

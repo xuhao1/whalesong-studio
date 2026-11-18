@@ -9,8 +9,9 @@
  * A revision either applies at once (the old text is snapshotted first) or
  * becomes a proposal that waits for accept/reject in the review panel.
  */
+import { beatsAt } from '../beatmarks'
 import { isPictureLine, keptPictures } from '../../shared/embedded'
-import { autoOf, CHAPTER_CONTEXT_DEFAULT, PASSAGE_CONTEXT_DEFAULT, MAIN_LINE, writingOf, type AutoSaid, type IssueEvidence, type MaterialUsed, type MendBy, type MendReach, type ChapterReview, type FiguresKept, type IssueSeverity, type IssueType, type PictureGuide, type PicturesRead, type Proposal, type ReviewIssue, type SettledProposal, type WritingSaid } from '../../shared/types'
+import { autoOf, CHAPTER_CONTEXT_DEFAULT, PASSAGE_CONTEXT_DEFAULT, MAIN_LINE, writingOf, type AutoSaid, type Beat, type PromptLanguage, type IssueEvidence, type MaterialUsed, type MendBy, type MendReach, type ChapterReview, type FiguresKept, type IssueSeverity, type IssueType, type PictureGuide, type PicturesRead, type Proposal, type ReviewIssue, type SettledProposal, type WritingSaid } from '../../shared/types'
 import { changedCore, clip, clipTail, countWords, fuzzyFind, hashText, newId, occurrences } from '../../shared/text'
 import type { NovelCore, ProjectRuntime, TaskContext } from '../core'
 import { asArray, asRecord, asText } from '../llm'
@@ -362,9 +363,11 @@ export async function reviseSpan(core: NovelCore, runtime: ProjectRuntime, param
       task.job?.result({ chapterId: chapter.plan.id, material })
       context = pack.text
     }
+    // Which beats of the chapter's plan the passage lies in, where the text was written by them (#483).
+    const lying = await beatsOfPassage(runtime, chapter.plan.id, chapter.plan.beats, text, range, base.lang).catch(() => '')
     const prompt = reviseSpanTask({
       ...base,
-      context: `${context}${guided !== undefined ? `\n\n${guided.text}` : ''}`,
+      context: `${context}${lying}${guided !== undefined ? `\n\n${guided.text}` : ''}`,
       before: clipTail(text.slice(0, range.start), 4000),
       passage: text.slice(range.start, range.end),
       after: clip(text.slice(range.end), 2000),
@@ -1748,4 +1751,16 @@ export async function restoreProposal(runtime: ProjectRuntime, id: string): Prom
   const back = (await project.setProposalStatus(id, 'pending'))!
   for (const earlier of proposal.supersedes ?? []) await project.supersedeProposal(earlier, id)
   return back
+}
+
+/** The beats a passage lies in, said for whoever rewrites it: empty where the chapter keeps no beats for its text. */
+async function beatsOfPassage(runtime: ProjectRuntime, chapterId: string, beats: readonly Beat[] | undefined, text: string, range: { start: number; end: number }, lang: PromptLanguage): Promise<string> {
+  if (beats === undefined || beats.length === 0) return ''
+  const marks = await runtime.project.beatMarks(chapterId)
+  const lying = beatsAt(text, beats, marks, range.start, range.end)
+  if (lying.length === 0) return ''
+  const list = lying.map(index => `${index + 1}. ${beats[index]!.summary}`).join('\n')
+  return lang === 'zh'
+    ? `\n\n## 这段文字属于章纲里的节拍\n${list}\n改的时候守住它在这个节拍里该做的事；别的节拍的事不要挪进来。`
+    : `\n\n## The beats of the outline this passage belongs to\n${list}\nWhat it is rewritten to still does its work in these beats; nothing of the other beats is moved into it.`
 }
