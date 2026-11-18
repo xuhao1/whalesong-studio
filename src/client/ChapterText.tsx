@@ -14,7 +14,7 @@
  */
 import { forwardRef, useImperativeHandle, useMemo, useRef, type KeyboardEvent, type ReactNode } from 'react'
 import { textBlocks, withProse, type PictureBlock, type ProseBlock } from '../shared/embedded'
-import { cx } from './ui'
+import { cx, scrollingBox } from './ui'
 
 /** A stretch of the text, or — where both ends are the same — a place in it. */
 export interface TextRange {
@@ -83,9 +83,9 @@ export const ChapterText = forwardRef<ChapterTextHandle, {
 
   /** The place in a stretch of prose, in the middle of what is seen. */
   const bring = (index: number, offset: number): void => {
-    const box = scroller.current
     const ghost = ghosts.current.get(index)
-    if (box === null || ghost === undefined) return
+    if (scroller.current === null || ghost === undefined) return
+    const box = scrollingBox(scroller.current)
     const rect = rectAt(ghost, offset)
     box.scrollTop += rect.top - box.getBoundingClientRect().top - box.clientHeight / 2 + rect.height / 2
   }

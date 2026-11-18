@@ -38,6 +38,7 @@ import { Derive, planOfTextWord, type PlanRead } from './Outline'
 import {
   Button, Chip, cx, Empty, Menu, Modal, Progress, Select, Spinner, Tabs, TextInput, ThoughtButton, ThoughtPanel, useAction, useConfirm, useJobStream, useJobTail, useLoad, useProject,
   useLineView, useQuote, useSnapshot, useStudio, useT, useWidth, waysOn, type Translate, plainEnter, ViewButton,
+  scrollingBox,
 } from '../ui'
 import { IssueList, MEND_REVIEW_JOB, ReviseBar, RewriteByMenu, useMendBy, useMendOrder, useReachItems, useRewriteBy } from '../Issues'
 import { BeatAsk } from '../Beats'
@@ -355,7 +356,7 @@ function ChapterEditor({ chapter, compact, panel, setPanel, panelInline, panelOp
   const { text: stream, thought } = useJobTail(writing?.id)
   const reviseStream = useJobStream(revising?.id)
   useEffect(() => {
-    const element = live.current
+    const element = live.current !== null ? scrollingBox(live.current) : null
     if (element !== null && element.scrollHeight - element.scrollTop - element.clientHeight < 240) element.scrollTop = element.scrollHeight
   }, [stream])
   useEffect(() => { if (writing === undefined) setAppending(false) }, [writing])

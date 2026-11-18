@@ -48,6 +48,19 @@ interface StudioContextValue {
 
 const StudioContext = createContext<StudioContextValue | undefined>(undefined)
 
+/**
+ * The box that scrolls where `element` is: itself where it does, else the nearest one around it that does. On a
+ * phone the writing page scrolls as a whole — the bars above the text go up with it — and the text is not a box of
+ * its own (#484).
+ */
+export function scrollingBox(element: HTMLElement): HTMLElement {
+  for (let at: HTMLElement | null = element; at !== null; at = at.parentElement) {
+    const overflow = getComputedStyle(at).overflowY
+    if ((overflow === 'auto' || overflow === 'scroll') && at.scrollHeight > at.clientHeight) return at
+  }
+  return element
+}
+
 export function StudioProvider({ value, children }: { value: StudioContextValue; children: ReactNode }) {
   return <StudioContext.Provider value={value}>{children}</StudioContext.Provider>
 }

@@ -13992,3 +13992,78 @@ h2 > .nv-memory-mark {
 .nv-beats-pick > li.is-ticked {
   color: var(--nv-text);
 }
+
+/* ───────────── the writing page on a phone (#484) ───────────── */
+
+@container studio (max-width: 560px) {
+  /* The page scrolls as one: the bars above the text go up with it, and the text has the screen. */
+  .nv-write-main {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .nv-write-main > .nv-editor-blocks,
+  .nv-write-main > .nv-live {
+    flex: none;
+    min-height: 70vh;
+    overflow: visible;
+  }
+
+  /* The chapter and where it stands on the first line; what can be done with it on the second. */
+  .nv-write-toolbar {
+    gap: 4px;
+    row-gap: 4px;
+    padding: 8px 12px 4px;
+  }
+
+  .nv-write-toolbar > .nv-chapter-select {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .nv-write-toolbar > .nv-spacer {
+    flex: 1 1 100%;
+    height: 0;
+  }
+
+  /* Saved is what it is as a rule: said only while it is not. */
+  .nv-write-toolbar > .nv-save-state.is-saved {
+    display: none;
+  }
+
+  .nv-write-toolbar > .nv-btn.nv-btn-sm,
+  .nv-write-toolbar > .nv-menu > .nv-btn.nv-btn-sm {
+    gap: 3px;
+    padding: 0 6px;
+  }
+
+  .nv-write-toolbar > .nv-view-btn {
+    gap: 3px;
+    margin-left: 2px;
+    padding: 0 9px;
+  }
+
+  /* The buttons that say what they are need no picture beside it (the last says only a number, and keeps its). */
+  .nv-write-toolbar > .nv-btn.nv-btn-sm:not(.nv-btn-icon):not(:last-child) > svg {
+    display: none;
+  }
+
+  /* What to write next on a line of its own, as wide as the screen; the buttons on the line below it. */
+  .nv-brief-bar > .nv-grow {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .nv-brief-bar > .nv-btn,
+  .nv-brief-bar > .nv-split-btn > .nv-btn:first-child {
+    padding-inline: 10px;
+  }
+
+  .nv-write-basis {
+    padding: 6px 12px 4px;
+  }
+
+  .nv-next-bar {
+    padding: 4px 12px;
+  }
+}
