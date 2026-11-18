@@ -4,6 +4,16 @@ All notable changes to this project are recorded here. The format follows [Keep 
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-11-19
+
+### Added
+
+- **A chapter's text knows its beats** (#483). Where a chapter is written by the beats of its plan, the writer marks where each beat begins; the marks are taken out of the text, and where each beat begins — the opening words of its paragraph — is kept beside the chapter (`beats/<chapter>.json` in the book's state). Nothing is added to the prose; a paragraph rewritten by hand loses only the beat it opened. *Continue* with nothing asked of it goes on from the beat the text ends in — finishing it first — and on by the beats after it, in parts as a draft is. A passage rewritten is told which beats of the outline it belongs to.
+
+### Fixed
+
+- **What was written is kept when writing fails** (#482). A chapter written in parts lost everything when one part failed however often it was asked again; the parts written and what came of the one that failed are now saved in the chapter (the text it replaces kept as a version), and the failure says so — *Continue* goes on from the beat it broke off in.
+
 ## [0.1.6] - 2026-11-18
 
 ### Fixed
@@ -568,7 +578,8 @@ First release, for DeepSeek Harness 0.2.0-rc.2.
 - **Calls that fail in passing are made again.** The Harness retries a failed model request for its agent's turns and for nobody else: a call a plugin makes through the model seam used to end at the first busy server, rate limit or dropped stream. The Studio now runs the provider's own retry policy (from Settings → Models; five tries with a growing wait by default) for every call it makes, says so on the job's progress line while it waits, and counts every attempt in the usage ledger. A reply that completes with reasoning in it and no answer at all — which providers produce now and then, and which the adapters let through as a normal end — is treated the same way and asked for again, unchanged, up to three times; when a model spends its whole output allowance reasoning, that is said at once, with what to change. Failures of this kind are worded in the book's language.
 - **Agent surface.** Twenty-four `novel_*` tools covering everything the Studio's screens can do — including its settings (`novel_settings`), showing a screen to the author (`novel_show`) and the small hand edits (`novel_manage`) — a project digest in the prompt, working modes, the `/novel` command, five workflow skills, tool rows that open the Studio, a Studio tab that opens by itself when the showrunner starts working and follows what it shows, and a confirmation gate for writes in read-only sessions, for removing a book and for opening one to the local network.
 
-[Unreleased]: https://github.com/xuhao1/whalesong-studio/compare/v0.1.6...HEAD
+[Unreleased]: https://github.com/xuhao1/whalesong-studio/compare/v0.1.7...HEAD
+[0.1.7]: https://github.com/xuhao1/whalesong-studio/releases/tag/v0.1.7
 [0.1.6]: https://github.com/xuhao1/whalesong-studio/releases/tag/v0.1.6
 [0.1.5]: https://github.com/xuhao1/whalesong-studio/releases/tag/v0.1.5
 [0.1.4]: https://github.com/xuhao1/whalesong-studio/releases/tag/v0.1.4
